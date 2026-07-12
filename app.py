@@ -29,8 +29,8 @@ DEFAULT_STATE = {**DEFAULT_PROFILE, "users": {}}
 PLAN_LIMITS = {
     "free": {"contact_limit": 1, "daily_reminders": 1, "channels": ["line"]},
     "trial": {"contact_limit": 1, "daily_reminders": 1, "channels": ["line"]},
-    "paid_199": {"contact_limit": 1, "daily_reminders": 2, "channels": ["line"]},
-    "paid_399": {"contact_limit": 3, "daily_reminders": 2, "channels": ["line", "sms"]},
+    "paid_199": {"contact_limit": 2, "daily_reminders": 2, "channels": ["line"]},
+    "paid_399": {"contact_limit": 5, "daily_reminders": 2, "channels": ["line"]},
     "paid_799": {"contact_limit": 10, "daily_reminders": 2, "channels": ["line", "sms", "phone"]},
 }
 
@@ -355,6 +355,14 @@ def create_app(config=None):
     def admin():
         return send_from_directory(app.static_folder, "admin.html")
 
+    @app.get("/terms")
+    def terms():
+        return send_from_directory(app.static_folder, "terms.html")
+
+    @app.get("/privacy")
+    def privacy():
+        return send_from_directory(app.static_folder, "privacy.html")
+
     @app.get("/api/config")
     def config_api():
         return jsonify(app_config(app.config))
@@ -431,6 +439,8 @@ class MiniClient:
         if route == "/api/config":
             return MiniResponse(app_config(self.app.config))
         if route == "/health":
+            return MiniResponse({"ok": True})
+        if route in ("/terms", "/privacy"):
             return MiniResponse({"ok": True})
         if route == "/api/status":
             return MiniResponse(self.app.status(params.get("line_user_id")))
@@ -539,6 +549,10 @@ class MiniApp:
                 file_name = "index.html" if route == "/" else route.lstrip("/")
                 if route == "/admin":
                     file_name = "admin.html"
+                if route == "/terms":
+                    file_name = "terms.html"
+                if route == "/privacy":
+                    file_name = "privacy.html"
                 file_path = static_root / file_name
                 if not file_path.exists() or not file_path.is_file():
                     handler.send_response(404)
