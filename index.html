@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>還活著嗎</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Noto Sans TC", sans-serif;
+      transition: background 0.35s ease, color 0.35s ease;
+      overflow-x: hidden;
+    }
+    body::before,
+    body::after {
+      content: "";
+      position: fixed;
+      inset: auto;
+      width: min(52vw, 360px);
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: var(--glow-a);
+      filter: blur(12px);
+      opacity: 0.75;
+      pointer-events: none;
+      z-index: 0;
+    }
+    body::before { top: -120px; left: -90px; }
+    body::after { right: -120px; bottom: -130px; background: var(--glow-b); }
+    button, input, select { font: inherit; }
+    .app {
+      width: min(100%, 480px);
+      padding: 24px 18px 28px;
+      border-radius: 28px;
+      text-align: center;
+      box-shadow: 0 24px 70px rgba(24, 36, 58, 0.18);
+      transition: background 0.35s ease, border-color 0.35s ease;
+      position: relative;
+      z-index: 1;
+      overflow: hidden;
+    }
+    .app::before {
+      content: "♡  ✦  ✿  ☁  ♡";
+      position: absolute;
+      top: 70px;
+      left: 0;
+      right: 0;
+      font-size: 24px;
+      letter-spacing: 16px;
+      color: var(--doodle);
+      opacity: 0.55;
+      pointer-events: none;
+      transform: rotate(-4deg);
+    }
+    .theme-switcher {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 18px;
+      position: relative;
+      z-index: 2;
+    }
+    .theme-btn {
+      min-height: 38px;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      cursor: pointer;
+      font-weight: 700;
+      color: inherit;
+      background: rgba(255,255,255,0.55);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.35);
+    }
+    .theme-btn.active {
+      transform: translateY(-1px);
+      border-color: currentColor;
+      background: var(--theme-active);
+    }
+    .hero {
+      position: relative;
+      z-index: 1;
+      padding: 10px 4px 4px;
+    }
+    .pet-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 30px;
+      padding: 5px 12px;
+      border-radius: 999px;
+      margin-bottom: 10px;
+      color: var(--badge-text);
+      background: var(--badge-bg);
+      border: 1px solid var(--line);
+      font-size: 13px;
+      font-weight: 800;
+    }
+    h1 { font-size: 30px; line-height: 1.2; margin-bottom: 6px; }
+    .subtitle { margin-bottom: 16px; color: var(--muted); }
+    .status-box, .calendar-box, .settings {
+      border-radius: 18px;
+      padding: 16px;
+      margin-bottom: 16px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: 0 14px 34px rgba(20, 28, 45, 0.08), inset 0 1px 0 rgba(255,255,255,0.25);
+      backdrop-filter: blur(16px);
+      position: relative;
+      z-index: 1;
+    }
+    .status-box { padding-top: 14px; }
+    .status-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+      text-align: left;
+    }
+    .mini-title {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      color: var(--text);
+      font-weight: 850;
+    }
+    .mini-title small {
+      color: var(--muted);
+      font-weight: 650;
+    }
+    .alive-pill {
+      flex: 0 0 auto;
+      border-radius: 999px;
+      padding: 7px 11px;
+      background: var(--pill);
+      color: var(--pill-text);
+      font-size: 13px;
+      font-weight: 850;
+      border: 1px solid var(--line);
+    }
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 7px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 15px;
+    }
+    .status-row:last-child { border-bottom: 0; }
+    .status-label { color: var(--muted); }
+    .status-value { font-weight: 750; color: var(--text); text-align: right; }
+    .countdown {
+      min-height: 52px;
+      display: grid;
+      place-items: end center;
+      font-size: clamp(30px, 9vw, 42px);
+      font-weight: 850;
+      letter-spacing: 0;
+      color: var(--accent);
+    }
+    .countdown-label { font-size: 13px; color: var(--muted); }
+    .check-btn {
+      width: 156px;
+      height: 156px;
+      border: 0;
+      border-radius: 50%;
+      color: #fff;
+      cursor: pointer;
+      margin: 4px auto 18px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 4px;
+      font-size: 22px;
+      font-weight: 850;
+      line-height: 1.2;
+      background: var(--button);
+      box-shadow: var(--button-shadow);
+      transition: transform 0.18s ease, filter 0.18s ease;
+      position: relative;
+      isolation: isolate;
+    }
+    .check-wrap {
+      position: relative;
+      display: grid;
+      place-items: center;
+      margin-bottom: 2px;
+    }
+    .check-wrap::before {
+      content: "";
+      position: absolute;
+      width: 184px;
+      height: 184px;
+      border-radius: 50%;
+      background: conic-gradient(from 180deg, transparent, var(--ring), transparent 72%);
+      opacity: 0.72;
+      animation: spin 8s linear infinite;
+    }
+    .check-btn::after {
+      content: "♡";
+      position: absolute;
+      right: 28px;
+      top: 26px;
+      font-size: 18px;
+      opacity: 0.72;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .check-btn:active { transform: scale(0.94); }
+    .check-btn .sub { font-size: 13px; font-weight: 500; opacity: 0.9; }
+    .check-btn.warning { background: #f59e0b; box-shadow: 0 12px 30px rgba(245, 158, 11, 0.32); }
+    .check-btn.danger { background: #ef4444; box-shadow: 0 12px 30px rgba(239, 68, 68, 0.34); animation: pulse 1.55s infinite; }
+    @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+    .calendar-nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      font-weight: 800;
+    }
+    .calendar-box::before,
+    .settings::before {
+      content: "";
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      top: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0.5;
+    }
+    .calendar-nav button {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: 1px solid var(--line);
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+    }
+    .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 4px;
+    }
+    .day-name, .day-cell {
+      min-width: 0;
+      aspect-ratio: 1;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      font-size: 13px;
+    }
+    .day-name { height: 28px; aspect-ratio: auto; color: var(--muted); font-weight: 800; }
+    .day-cell { color: var(--text); font-weight: 700; }
+    .day-cell.today { outline: 2px solid var(--today); outline-offset: -2px; }
+    .day-cell.checked {
+      background: var(--checked);
+      color: #fff;
+      box-shadow: 0 8px 14px rgba(20, 28, 45, 0.14);
+    }
+    .settings { text-align: left; margin-bottom: 12px; }
+    .settings-title { text-align: center; font-weight: 850; margin-bottom: 12px; }
+    .setting-row {
+      display: grid;
+      grid-template-columns: 88px 1fr;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .setting-row label { color: var(--muted); font-size: 14px; }
+    .setting-row input, .setting-row select {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+      color: var(--text);
+      background: var(--input);
+      outline: none;
+    }
+    .setting-row input:focus, .setting-row select:focus { border-color: var(--accent); }
+    .actions {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .action-btn {
+      min-height: 38px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      padding: 8px 14px;
+      color: var(--text);
+      background: var(--input);
+      cursor: pointer;
+      font-weight: 750;
+      transition: transform 0.16s ease, background 0.16s ease;
+    }
+    .action-btn:active { transform: translateY(1px); }
+    .plan-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .plan-chip {
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: var(--input);
+      padding: 10px 8px;
+      text-align: center;
+    }
+    .plan-chip strong { display: block; font-size: 15px; }
+    .plan-chip span { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+    .contact-card {
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: var(--input);
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+    .contact-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .contact-grid input, .contact-grid select {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+      color: var(--text);
+      background: var(--input);
+      outline: none;
+    }
+    .contact-list {
+      display: grid;
+      gap: 8px;
+      margin: 10px 0;
+    }
+    .contact-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      border-radius: 12px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      background: var(--soft);
+      color: var(--text);
+      font-size: 13px;
+    }
+    .note, .helper {
+      border-radius: 14px;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.55;
+      color: var(--muted);
+      background: var(--soft);
+      border: 1px solid var(--line);
+    }
+    .helper { margin-bottom: 10px; }
+    .highlight { color: #16a34a; }
+    .warning { color: #d97706; }
+    .danger { color: #dc2626; }
+    .gray { color: #8a8f98; }
+    body.classic {
+      --text: #162033; --muted: #667085; --panel: #f7f8fb; --line: #e3e7ef;
+      --input: #fff; --soft: #eef9f0; --accent: #16a34a; --today: #2563eb;
+      --checked: #22c55e; --button: linear-gradient(135deg,#22c55e,#16a34a);
+      --button-shadow: 0 14px 32px rgba(34,197,94,0.32);
+      --glow-a: radial-gradient(circle, rgba(134,239,172,0.55), transparent 62%);
+      --glow-b: radial-gradient(circle, rgba(147,197,253,0.42), transparent 64%);
+      --doodle: #22c55e; --ring: rgba(34,197,94,0.55);
+      --theme-active: #ecfdf5; --badge-bg: #f0fdf4; --badge-text: #166534;
+      --pill: #dcfce7; --pill-text: #166534;
+      background: #e9eef5; color: var(--text);
+    }
+    body.classic .app { background: rgba(255,255,255,0.88); }
+    body.neon {
+      --text: #e6f7fb; --muted: #92a8b6; --panel: rgba(255,255,255,0.055); --line: rgba(125,211,252,0.22);
+      --input: rgba(255,255,255,0.075); --soft: rgba(34,211,238,0.08); --accent: #22d3ee; --today: #facc15;
+      --checked: #0891b2; --button: linear-gradient(135deg,#22d3ee,#0f766e);
+      --button-shadow: 0 14px 34px rgba(34,211,238,0.26);
+      --glow-a: radial-gradient(circle, rgba(34,211,238,0.35), transparent 62%);
+      --glow-b: radial-gradient(circle, rgba(168,85,247,0.27), transparent 64%);
+      --doodle: #67e8f9; --ring: rgba(34,211,238,0.5);
+      --theme-active: rgba(34,211,238,0.12); --badge-bg: rgba(34,211,238,0.12); --badge-text: #a5f3fc;
+      --pill: rgba(20,184,166,0.18); --pill-text: #99f6e4;
+      background: #090f18; color: var(--text);
+    }
+    body.neon .app { background: #121a27; border: 1px solid rgba(125,211,252,0.24); }
+    body.cute {
+      --text: #4c1937; --muted: #9f466b; --panel: #fff1f5; --line: #f8b4c8;
+      --input: #fffafb; --soft: #fff7ed; --accent: #db2777; --today: #7c3aed;
+      --checked: #ec4899; --button: linear-gradient(135deg,#fb7185,#db2777);
+      --button-shadow: 0 14px 32px rgba(219,39,119,0.25);
+      --glow-a: radial-gradient(circle, rgba(251,113,133,0.38), transparent 62%);
+      --glow-b: radial-gradient(circle, rgba(196,181,253,0.42), transparent 64%);
+      --doodle: #ec4899; --ring: rgba(236,72,153,0.5);
+      --theme-active: #fff1f2; --badge-bg: #fff1f5; --badge-text: #9d174d;
+      --pill: #fce7f3; --pill-text: #9d174d;
+      background: #fde7ef; color: var(--text);
+    }
+    body.cute .app { background: #fff8fb; border: 1px solid #f8b4c8; }
+    @media (max-width: 420px) {
+      body { padding: 10px; align-items: start; }
+      .app { border-radius: 22px; padding: 18px 12px 22px; }
+      .check-btn { width: 138px; height: 138px; font-size: 20px; }
+      .setting-row { grid-template-columns: 1fr; }
+      .plan-strip, .contact-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body class="classic">
+  <main class="app">
+    <div class="theme-switcher" aria-label="主題切換">
+      <button class="theme-btn active" data-theme="classic" type="button">經典</button>
+      <button class="theme-btn" data-theme="neon" type="button">霓虹</button>
+      <button class="theme-btn" data-theme="cute" type="button">可愛</button>
+    </div>
+
+    <header class="hero">
+      <div class="pet-badge">♡ 今日平安小站</div>
+      <h1>還活著嗎 ✨</h1>
+      <p class="subtitle">每天點一下，幫自己留個安心紀錄。</p>
+    </header>
+
+    <section class="status-box" aria-label="簽到狀態">
+      <div class="status-header">
+        <div class="mini-title">
+          <span>守護儀表板</span>
+          <small>今天也有好好在這裡</small>
+        </div>
+        <div class="alive-pill" id="alivePill">待簽到</div>
+      </div>
+      <div class="status-row"><span class="status-label">☀ 今日簽到</span><span class="status-value" id="dailyStatus">--</span></div>
+      <div class="status-row"><span class="status-label">⏰ 上次簽到</span><span class="status-value" id="lastDate">--</span></div>
+      <div class="status-row"><span class="status-label">♡ 目前狀態</span><span class="status-value" id="statusText">--</span></div>
+      <div class="plan-strip">
+        <div class="plan-chip"><strong id="planName">試用中</strong><span>目前方案</span></div>
+        <div class="plan-chip"><strong id="trialDays">7</strong><span>試用剩餘天數</span></div>
+        <div class="plan-chip"><strong id="contactLimit">1</strong><span>聯絡人上限</span></div>
+      </div>
+      <div class="countdown" id="countdownDisplay">--:--:--</div>
+      <div class="countdown-label">下一次安心確認倒數</div>
+    </section>
+
+    <div class="check-wrap">
+      <button class="check-btn" id="checkBtn" type="button">
+        我還活著
+        <span class="sub">點一下簽到 ♡</span>
+      </button>
+    </div>
+
+    <section class="calendar-box" aria-label="簽到月曆">
+      <div class="calendar-nav">
+        <button id="prevMonth" type="button" aria-label="上一個月">&#8249;</button>
+        <span id="monthTitle">--</span>
+        <button id="nextMonth" type="button" aria-label="下一個月">&#8250;</button>
+      </div>
+      <div class="calendar-grid" id="calendarGrid"></div>
+      <div class="helper" style="margin-top:10px;">粉粉亮亮的日期，就是有乖乖簽到的日子。</div>
+    </section>
+
+    <section class="settings" aria-label="緊急與提醒設定">
+      <div class="settings-title">♡ 緊急與提醒設定</div>
+      <div class="setting-row">
+        <label for="contactEmail">聯絡人</label>
+        <input type="email" id="contactEmail" placeholder="example@email.com">
+      </div>
+      <div class="setting-row">
+        <label for="graceHours">寬限時間</label>
+        <select id="graceHours">
+          <option value="12">12 小時</option>
+          <option value="24">24 小時</option>
+          <option value="36">36 小時</option>
+          <option value="48">48 小時</option>
+          <option value="72">72 小時</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <label for="reminderTime">提醒時間</label>
+        <input type="time" id="reminderTime" value="09:00">
+      </div>
+      <div class="actions">
+        <button class="action-btn" id="resetBtn" type="button">↻ 重置</button>
+        <button class="action-btn" id="saveBtn" type="button">♡ 儲存</button>
+      </div>
+    </section>
+
+    <section class="settings" aria-label="緊急聯絡人">
+      <div class="settings-title">♡ 緊急聯絡人</div>
+      <div class="contact-card">
+        <div class="helper">免費與試用先放 1 位；升級後可放更多位。</div>
+        <div class="contact-list" id="contactList"></div>
+        <div class="contact-grid">
+          <input id="contactName" placeholder="姓名／暱稱">
+          <input id="contactPhone" placeholder="手機">
+          <input id="contactRelation" placeholder="關係，例如家人">
+          <select id="contactMethod">
+            <option value="line">LINE</option>
+            <option value="sms">簡訊</option>
+            <option value="phone">電話</option>
+          </select>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="action-btn" id="addContactBtn" type="button">＋ 加入</button>
+        <button class="action-btn" id="saveContactsBtn" type="button">♡ 儲存聯絡人</button>
+      </div>
+    </section>
+
+    <div class="helper" id="modeNote">目前會優先連接後端；如果沒有後端，會自動改用這台裝置的瀏覽器儲存。</div>
+    <div class="note">小提醒：Email 通知要另外接 SMTP 或寄信服務，這版先把欄位和 API 留好。</div>
+  </main>
+
+  <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script>
+    const STORAGE_KEY = "alive_checkin_state_v2";
+    const defaultState = {
+      last_check_in: null,
+      history: [],
+      contact_email: "",
+      grace_hours: 36,
+      reminder_time: "09:00"
+    };
+    let currentYear = new Date().getFullYear();
+    let currentMonth = new Date().getMonth();
+    let historyData = [];
+    let useLocalMode = location.protocol === "file:";
+    let lineUserId = "";
+    let lineDisplayName = "";
+    let contactData = [];
+    let currentContactLimit = 1;
+
+    const $ = (id) => document.getElementById(id);
+
+    function setTheme(theme) {
+      document.body.className = theme;
+      document.querySelectorAll(".theme-btn").forEach((button) => {
+        button.classList.toggle("active", button.dataset.theme === theme);
+      });
+      localStorage.setItem("preferred_theme", theme);
+    }
+
+    function getToday() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    }
+
+    function formatDate(ts) {
+      if (!ts) return "從未簽到";
+      const d = new Date(ts);
+      if (Number.isNaN(d.getTime())) return "時間格式錯誤";
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    }
+
+    function loadLocalState() {
+      try {
+        return { ...defaultState, ...JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") };
+      } catch (error) {
+        return { ...defaultState };
+      }
+    }
+
+    function saveLocalState(state) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+
+    function buildLocalStatus(state) {
+      const last = state.last_check_in ? new Date(state.last_check_in) : null;
+      const grace = Number(state.grace_hours || 36);
+      const deadline = last ? new Date(last.getTime() + grace * 3600000) : null;
+      const remaining = deadline ? Math.max(0, deadline.getTime() - Date.now()) : 0;
+      const isOverdue = Boolean(deadline && Date.now() > deadline.getTime());
+      let statusText = "還沒有簽到紀錄";
+      let statusClass = "gray";
+
+      if (last && isOverdue) {
+        statusText = "已超過寬限時間";
+        statusClass = "danger";
+      } else if (last && remaining <= 6 * 3600000) {
+        statusText = "快到提醒時間了";
+        statusClass = "warning";
+      } else if (last) {
+        statusText = "狀態正常";
+        statusClass = "highlight";
+      }
+
+      return {
+        ...state,
+        history: Array.from(new Set(state.history || [])).sort(),
+        is_today_checked: (state.history || []).includes(getToday()),
+        is_overdue: isOverdue,
+        remaining_ms: remaining,
+        status_text: statusText,
+        status_class: statusClass
+      };
+    }
+
+    async function apiGetStatus() {
+      if (useLocalMode) return buildLocalStatus(loadLocalState());
+      try {
+        const query = lineUserId ? `?line_user_id=${encodeURIComponent(lineUserId)}` : "";
+        const res = await fetch(`/api/status${query}`);
+        if (!res.ok) throw new Error("bad status");
+        return await res.json();
+      } catch (error) {
+        useLocalMode = true;
+        return buildLocalStatus(loadLocalState());
+      }
+    }
+
+    async function apiCheckin() {
+      if (useLocalMode) {
+        const state = loadLocalState();
+        const today = getToday();
+        state.last_check_in = new Date().toISOString();
+        state.history = Array.from(new Set([...(state.history || []), today])).sort();
+        saveLocalState(state);
+        return buildLocalStatus(state);
+      }
+      const res = await fetch("/api/checkin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId })
+      });
+      if (!res.ok) throw new Error("checkin failed");
+      return await res.json();
+    }
+
+    async function apiSaveSettings(payload) {
+      if (useLocalMode) {
+        const state = { ...loadLocalState(), ...payload };
+        saveLocalState(state);
+        return buildLocalStatus(state);
+      }
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, line_user_id: lineUserId })
+      });
+      if (!res.ok) throw new Error("settings failed");
+      return await res.json();
+    }
+
+    async function apiGetContacts() {
+      if (useLocalMode) {
+        return { contacts: loadLocalState().contacts || [], contact_limit: 1 };
+      }
+      const query = lineUserId ? `?line_user_id=${encodeURIComponent(lineUserId)}` : "";
+      const res = await fetch(`/api/contacts${query}`);
+      if (!res.ok) throw new Error("contacts failed");
+      return await res.json();
+    }
+
+    async function apiSaveContacts() {
+      if (useLocalMode) {
+        const state = loadLocalState();
+        state.contacts = contactData;
+        saveLocalState(state);
+        return { contacts: contactData, contact_limit: 1 };
+      }
+      const res = await fetch("/api/contacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId, contacts: contactData })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "contacts failed");
+      return data;
+    }
+
+    function planLabel(plan) {
+      return {
+        trial: "7 天試用",
+        free: "免費版",
+        paid_199: "199 活著價",
+        paid_399: "399 安心版",
+        paid_799: "799 守護版"
+      }[plan] || "試用中";
+    }
+
+    function renderContacts() {
+      $("contactList").innerHTML = contactData.length
+        ? contactData.map((contact, index) => `
+          <div class="contact-item">
+            <span>${contact.name || "未命名"}｜${contact.relationship || "聯絡人"}｜${contact.phone || "未填手機"}</span>
+            <button class="action-btn" type="button" onclick="removeContact(${index})">刪除</button>
+          </div>
+        `).join("")
+        : `<div class="helper">還沒加入聯絡人。</div>`;
+    }
+
+    async function refreshContacts() {
+      try {
+        const data = await apiGetContacts();
+        contactData = data.contacts || [];
+        currentContactLimit = data.contact_limit || currentContactLimit || 1;
+        renderContacts();
+      } catch (error) {
+        renderContacts();
+      }
+    }
+
+    function addContact() {
+      if (contactData.length >= currentContactLimit) {
+        alert(`目前方案最多 ${currentContactLimit} 位緊急聯絡人。`);
+        return;
+      }
+      const contact = {
+        name: $("contactName").value.trim(),
+        phone: $("contactPhone").value.trim(),
+        relationship: $("contactRelation").value.trim(),
+        notify_methods: [$("contactMethod").value],
+        priority: contactData.length + 1,
+        consent_status: "pending"
+      };
+      if (!contact.name || !contact.phone) {
+        alert("請至少填姓名和手機。");
+        return;
+      }
+      contactData.push(contact);
+      $("contactName").value = "";
+      $("contactPhone").value = "";
+      $("contactRelation").value = "";
+      renderContacts();
+    }
+
+    function removeContact(index) {
+      contactData.splice(index, 1);
+      renderContacts();
+    }
+
+    async function saveContacts() {
+      try {
+        const data = await apiSaveContacts();
+        contactData = data.contacts || [];
+        currentContactLimit = data.contact_limit || currentContactLimit;
+        renderContacts();
+        alert("聯絡人已儲存。");
+      } catch (error) {
+        alert(error.message || "聯絡人儲存失敗。");
+      }
+    }
+
+    async function initLine() {
+      if (useLocalMode || !window.liff) return;
+      try {
+        const configRes = await fetch("/api/config");
+        if (!configRes.ok) return;
+        const config = await configRes.json();
+        if (!config.liff_id) return;
+        await liff.init({ liffId: config.liff_id, withLoginOnExternalBrowser: true });
+        if (!liff.isLoggedIn()) {
+          liff.login();
+          return;
+        }
+        const profile = await liff.getProfile();
+        lineUserId = profile.userId || "";
+        lineDisplayName = profile.displayName || "";
+        if (!lineUserId) return;
+        await fetch("/api/line/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            line_user_id: lineUserId,
+            display_name: lineDisplayName,
+            picture_url: profile.pictureUrl || ""
+          })
+        });
+      } catch (error) {
+        console.warn("LINE 初始化未完成，改用一般模式。", error);
+      }
+    }
+
+    function renderCalendar(year, month, history) {
+      $("monthTitle").textContent = `${year}年 ${month + 1}月`;
+      const firstDay = new Date(year, month, 1).getDay();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const today = getToday();
+      let html = "";
+      ["日", "一", "二", "三", "四", "五", "六"].forEach((day) => {
+        html += `<div class="day-name">${day}</div>`;
+      });
+      for (let i = 0; i < firstDay; i += 1) html += `<div class="day-cell"></div>`;
+      for (let day = 1; day <= daysInMonth; day += 1) {
+        const ds = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        const classes = ["day-cell"];
+        if (history.includes(ds)) classes.push("checked");
+        if (ds === today) classes.push("today");
+        html += `<div class="${classes.join(" ")}">${day}</div>`;
+      }
+      $("calendarGrid").innerHTML = html;
+    }
+
+    function renderStatus(data) {
+      historyData = data.history || [];
+      $("dailyStatus").textContent = data.is_today_checked ? "今日已簽到" : "今日未簽到";
+      $("lastDate").textContent = formatDate(data.last_check_in);
+      $("statusText").innerHTML = `<span class="${data.status_class || "gray"}">${data.status_text || "--"}</span>`;
+      $("alivePill").textContent = data.is_overdue
+        ? "需要確認"
+        : data.is_today_checked
+          ? "今日平安"
+          : "待簽到";
+
+      const countdown = $("countdownDisplay");
+      if (data.is_overdue) {
+        countdown.textContent = "已逾期";
+        countdown.style.color = "#dc2626";
+      } else if (data.last_check_in) {
+        const rem = data.remaining_ms || 0;
+        const h = Math.floor(rem / 3600000);
+        const m = Math.floor((rem % 3600000) / 60000);
+        const s = Math.floor((rem % 60000) / 1000);
+        countdown.textContent = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+        countdown.style.color = "";
+      } else {
+        countdown.textContent = "--:--:--";
+        countdown.style.color = "";
+      }
+
+      $("checkBtn").className = "check-btn";
+      if (data.is_overdue) $("checkBtn").classList.add("danger");
+      else if (data.status_class === "warning") $("checkBtn").classList.add("warning");
+
+      $("contactEmail").value = data.contact_email || "";
+      $("graceHours").value = String(data.grace_hours || 36);
+      $("reminderTime").value = data.reminder_time || "09:00";
+      $("planName").textContent = planLabel(data.plan);
+      $("trialDays").textContent = String(data.trial_days_left ?? "-");
+      $("contactLimit").textContent = String(data.contact_limit || 1);
+      currentContactLimit = data.contact_limit || 1;
+      $("modeNote").textContent = useLocalMode
+        ? "目前使用瀏覽器儲存，資料只會留在這台裝置。"
+        : lineUserId
+          ? `目前已綁定 LINE：${lineDisplayName || "LINE 使用者"}。`
+          : "目前已連上後端，資料會存到本機 JSON 檔。";
+      renderCalendar(currentYear, currentMonth, historyData);
+    }
+
+    async function refreshStatus() {
+      renderStatus(await apiGetStatus());
+    }
+
+    async function doCheckin() {
+      try {
+        renderStatus(await apiCheckin());
+      } catch (error) {
+        alert("簽到失敗，請確認後端是否正常。");
+      }
+    }
+
+    async function saveSettings() {
+      try {
+        const payload = {
+          contact_email: $("contactEmail").value.trim(),
+          grace_hours: Number($("graceHours").value),
+          reminder_time: $("reminderTime").value
+        };
+        renderStatus(await apiSaveSettings(payload));
+        alert("設定已儲存。");
+      } catch (error) {
+        alert("儲存失敗，請稍後再試。");
+      }
+    }
+
+    async function resetCheckin() {
+      if (!confirm("要把現在記成最新簽到時間嗎？")) return;
+      await doCheckin();
+    }
+
+    function changeMonth(delta) {
+      currentMonth += delta;
+      if (currentMonth < 0) {
+        currentMonth = 11;
+        currentYear -= 1;
+      }
+      if (currentMonth > 11) {
+        currentMonth = 0;
+        currentYear += 1;
+      }
+      renderCalendar(currentYear, currentMonth, historyData);
+    }
+
+    document.querySelectorAll(".theme-btn").forEach((button) => {
+      button.addEventListener("click", () => setTheme(button.dataset.theme));
+    });
+    $("checkBtn").addEventListener("click", doCheckin);
+    $("saveBtn").addEventListener("click", saveSettings);
+    $("resetBtn").addEventListener("click", resetCheckin);
+    $("addContactBtn").addEventListener("click", addContact);
+    $("saveContactsBtn").addEventListener("click", saveContacts);
+    $("prevMonth").addEventListener("click", () => changeMonth(-1));
+    $("nextMonth").addEventListener("click", () => changeMonth(1));
+
+    setTheme(localStorage.getItem("preferred_theme") || "classic");
+    initLine().finally(async () => {
+      await refreshStatus();
+      await refreshContacts();
+    });
+    setInterval(refreshStatus, 5000);
+  </script>
+</body>
+</html>

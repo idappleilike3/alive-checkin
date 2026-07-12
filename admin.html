@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>還活著嗎後台</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Noto Sans TC", sans-serif;
+      color: #172033;
+      background:
+        radial-gradient(circle at 12% 8%, rgba(134,239,172,0.38), transparent 34%),
+        radial-gradient(circle at 92% 16%, rgba(251,113,133,0.25), transparent 32%),
+        #eef3f7;
+      padding: 24px;
+    }
+    .shell { max-width: 1080px; margin: 0 auto; }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    h1 { margin: 0; font-size: clamp(28px, 4vw, 42px); }
+    .subtitle { margin: 6px 0 0; color: #667085; }
+    .panel {
+      background: rgba(255,255,255,0.86);
+      border: 1px solid rgba(226,232,240,0.9);
+      border-radius: 18px;
+      box-shadow: 0 18px 48px rgba(25,35,55,0.12);
+      padding: 18px;
+      backdrop-filter: blur(14px);
+    }
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) auto auto;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    input, button {
+      min-height: 42px;
+      border-radius: 12px;
+      border: 1px solid #d8dee9;
+      padding: 9px 12px;
+      font: inherit;
+    }
+    button {
+      cursor: pointer;
+      font-weight: 800;
+      color: #fff;
+      border: 0;
+      background: linear-gradient(135deg, #22c55e, #16a34a);
+      box-shadow: 0 10px 22px rgba(34,197,94,0.22);
+    }
+    button.secondary { background: linear-gradient(135deg, #fb7185, #db2777); }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .stat {
+      border-radius: 16px;
+      padding: 14px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+    }
+    .stat strong { display: block; font-size: 28px; margin-bottom: 2px; }
+    .stat span { color: #667085; font-size: 13px; }
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+    }
+    th, td {
+      padding: 12px 10px;
+      text-align: left;
+      border-bottom: 1px solid #e8edf3;
+      font-size: 14px;
+      vertical-align: middle;
+    }
+    th { color: #667085; font-size: 12px; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-weight: 850;
+      font-size: 12px;
+      background: #e5e7eb;
+      color: #475569;
+    }
+    .badge.ok { background: #dcfce7; color: #166534; }
+    .badge.warn { background: #fef3c7; color: #92400e; }
+    .badge.bad { background: #fee2e2; color: #991b1b; }
+    .plan-select {
+      min-height: 34px;
+      border-radius: 10px;
+      border: 1px solid #d8dee9;
+      background: #0f1720;
+      color: #fff;
+      padding: 6px 8px;
+    }
+    .note {
+      margin-top: 12px;
+      color: #667085;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    @media (max-width: 760px) {
+      body { padding: 12px; }
+      .topbar, .toolbar { grid-template-columns: 1fr; display: grid; }
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar">
+      <div>
+        <h1>後台總覽 ♡</h1>
+        <p class="subtitle">看大家有沒有平安簽到，必要時推播提醒。</p>
+      </div>
+    </div>
+
+    <section class="panel">
+      <div class="toolbar">
+        <input id="password" type="password" placeholder="後台密碼，沒設定可留空">
+        <button id="refreshBtn" type="button">刷新</button>
+        <button id="remindBtn" class="secondary" type="button">推播逾期提醒</button>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><strong id="totalUsers">0</strong><span>LINE 使用者</span></div>
+        <div class="stat"><strong id="checkedToday">0</strong><span>今日已簽到</span></div>
+        <div class="stat"><strong id="warningUsers">0</strong><span>快到時間</span></div>
+        <div class="stat"><strong id="overdueUsers">0</strong><span>已逾期</span></div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>名稱</th>
+              <th>LINE ID</th>
+              <th>狀態</th>
+              <th>今日</th>
+              <th>上次簽到</th>
+              <th>方案</th>
+              <th>聯絡人</th>
+              <th>寬限</th>
+              <th>提醒</th>
+            </tr>
+          </thead>
+          <tbody id="usersBody">
+            <tr><td colspan="9">尚未載入資料</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="note" id="message">小提醒：推播需要設定 LINE_CHANNEL_ACCESS_TOKEN，使用者也要先加官方帳號好友。</p>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function apiPassword() {
+      return encodeURIComponent($("password").value.trim());
+    }
+
+    function formatDate(value) {
+      if (!value) return "從未簽到";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+    }
+
+    function statusBadge(user) {
+      if (user.is_overdue) return `<span class="badge bad">需要確認</span>`;
+      if (user.status_class === "warning") return `<span class="badge warn">快到時間</span>`;
+      if (user.last_check_in) return `<span class="badge ok">正常</span>`;
+      return `<span class="badge">未開始</span>`;
+    }
+
+    function planLabel(plan) {
+      return {
+        trial: "試用",
+        free: "免費",
+        paid_199: "199",
+        paid_399: "399",
+        paid_799: "799"
+      }[plan] || "試用";
+    }
+
+    async function updatePlan(lineUserId, plan) {
+      const res = await fetch(`/api/admin/user-plan?password=${apiPassword()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          line_user_id: lineUserId,
+          plan,
+          payment_status: plan.startsWith("paid") ? "active" : plan
+        })
+      });
+      const data = await res.json();
+      $("message").textContent = res.ok
+        ? `已更新 ${data.display_name || lineUserId} 的方案。`
+        : data.error || "方案更新失敗。";
+      await refresh();
+    }
+
+    async function refresh() {
+      const res = await fetch(`/api/admin/summary?password=${apiPassword()}`);
+      const data = await res.json();
+      if (!res.ok) {
+        $("message").textContent = "密碼不對，或後台目前不能讀取。";
+        return;
+      }
+      $("totalUsers").textContent = data.total_users;
+      $("checkedToday").textContent = data.checked_today;
+      $("warningUsers").textContent = data.warning_users;
+      $("overdueUsers").textContent = data.overdue_users;
+      $("usersBody").innerHTML = data.users.length
+        ? data.users.map((user) => `
+          <tr>
+            <td>${user.display_name || "LINE 使用者"}</td>
+            <td>${user.line_user_id || "-"}</td>
+            <td>${statusBadge(user)}</td>
+            <td>${user.is_today_checked ? "已簽到 ♡" : "還沒"}</td>
+            <td>${formatDate(user.last_check_in)}</td>
+            <td>
+              <select class="plan-select" onchange="updatePlan('${user.line_user_id}', this.value)">
+                ${["trial", "free", "paid_199", "paid_399", "paid_799"].map((plan) =>
+                  `<option value="${plan}" ${user.plan === plan ? "selected" : ""}>${planLabel(plan)}</option>`
+                ).join("")}
+              </select>
+            </td>
+            <td>${(user.contacts || []).length}/${user.contact_limit || 1}</td>
+            <td>${user.grace_hours} 小時</td>
+            <td>${user.reminder_time}</td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="9">還沒有 LINE 使用者進來簽到。</td></tr>`;
+      $("message").textContent = "資料已更新。";
+    }
+
+    async function sendReminders() {
+      if (!confirm("要推播提醒所有逾期使用者嗎？")) return;
+      const res = await fetch(`/api/admin/send-reminders?password=${apiPassword()}`, { method: "POST" });
+      const data = await res.json();
+      $("message").textContent = res.ok
+        ? `已送出 ${data.sent} 則提醒。`
+        : data.error || "推播失敗，請檢查 LINE 設定。";
+      await refresh();
+    }
+
+    $("refreshBtn").addEventListener("click", refresh);
+    $("remindBtn").addEventListener("click", sendReminders);
+    refresh();
+  </script>
+</body>
+</html>
