@@ -31,7 +31,7 @@
 
 | 變數名 | 必填 | 範例值 | 說明 |
 |---|---|---|---|
-| `SMSKING_USERNAME` | ✅ | `boss@alivecheckin.tw` | 簡訊王帳號 |
+| `SMSKING_USERNAME` | ✅ | `your-account@example.com` | 簡訊王帳號(申請後由簡訊王客服提供) |
 | `SMSKING_PASSWORD` | ✅ | `(申請後由業務提供)` | 簡訊王密碼(**不可明文 log**) |
 | `SMSKING_API_URL` | ✅ | `https://api.smsking.com.tw/sms/send` | **需跟業務索取當下正確端點**(規格書預留,實作前確認) |
 | `SMSKING_ENCODING` | ✅ | `BIG5` | `BIG5` 或 `UTF-8`,預設 BIG5(中文標準);改 UTF-8 須業務確認支援 |
