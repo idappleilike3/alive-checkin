@@ -1,0 +1,124 @@
+{
+  "type": "flex",
+  "altText": "歡迎來到「今天還在嗎」",
+  "contents": {
+    "type": "bubble",
+    "size": "mega",
+    "header": {
+      "type": "box",
+      "layout": "vertical",
+      "backgroundColor": "#1a0d2e",
+      "paddingAll": "24px",
+      "contents": [
+        {
+          "type": "text",
+          "text": "🛡️",
+          "size": "56px",
+          "align": "center"
+        },
+        {
+          "type": "text",
+          "text": "今天還在嗎",
+          "color": "#F39C12",
+          "size": "28px",
+          "weight": "bold",
+          "align": "center",
+          "margin": "md"
+        },
+        {
+          "type": "text",
+          "text": "陪您守護家人,也守護自己",
+          "color": "#ffffff",
+          "size": "16px",
+          "align": "center",
+          "margin": "sm"
+        }
+      ]
+    },
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "backgroundColor": "#2c1f4a",
+      "paddingAll": "24px",
+      "contents": [
+        {
+          "type": "text",
+          "text": "我是您的每日安全守護助手",
+          "color": "#ffffff",
+          "size": "18px",
+          "align": "center",
+          "margin": "md"
+        },
+        {
+          "type": "text",
+          "text": "每天點「今日簽到」按鈕",
+          "color": "#ffffff",
+          "size": "18px",
+          "align": "center",
+          "margin": "md"
+        },
+        {
+          "type": "text",
+          "text": "讓家人知道您平安",
+          "color": "#F39C12",
+          "size": "20px",
+          "weight": "bold",
+          "align": "center",
+          "margin": "md"
+        },
+        {
+          "type": "separator",
+          "margin": "xl"
+        },
+        {
+          "type": "text",
+          "text": "📞 緊急狀況請撥打 119",
+          "color": "#E74C3C",
+          "size": "14px",
+          "align": "center",
+          "margin": "lg"
+        }
+      ]
+    },
+    "footer": {
+      "type": "box",
+      "layout": "vertical",
+      "backgroundColor": "#1a0d2e",
+      "paddingAll": "20px",
+      "spacing": "md",
+      "contents": [
+        {
+          "type": "button",
+          "style": "primary",
+          "color": "#2ECC71",
+          "height": "sm",
+          "action": {
+            "type": "postback",
+            "label": "🎁 開始 3 天免費體驗",
+            "data": "action=start_trial&source=welcome"
+          }
+        },
+        {
+          "type": "button",
+          "style": "secondary",
+          "height": "sm",
+          "action": {
+            "type": "uri",
+            "label": "📋 查看方案",
+            "uri": "https://alive-checkin.onrender.com/liff/pricing"
+          }
+        },
+        {
+          "type": "button",
+          "style": "secondary",
+          "height": "sm",
+          "action": {
+            "type": "postback",
+            "label": "📞 聯絡客服",
+            "data": "action=contact_support&source=welcome"
+          }
+        }
+      ]
+    }
+  }
+}

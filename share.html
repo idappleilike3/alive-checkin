@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="每天花 10 秒報平安，平常不打擾，真的有事才通知守護人。">
+  <title>今天還在嗎｜LINE 平安守護</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Noto Sans TC", sans-serif;
+      color: #15261f;
+      background: #eff8f2;
+    }
+    .share-hero {
+      min-height: 100svh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      padding: clamp(22px, 5vw, 54px) clamp(20px, 6vw, 72px) max(24px, env(safe-area-inset-bottom));
+      position: relative;
+      isolation: isolate;
+      background: #dcefe3 url("assets/share-hero-family.png") center 36% / cover no-repeat;
+    }
+    .share-hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      background: rgba(255, 255, 255, 0.3);
+    }
+    .brand {
+      width: fit-content;
+      padding: 8px 12px;
+      border-left: 5px solid #079455;
+      color: #123c2c;
+      background: rgba(255, 255, 255, 0.88);
+      font-size: 17px;
+      font-weight: 900;
+    }
+    .hero-copy {
+      width: min(100%, 560px);
+      align-self: start;
+      margin-top: clamp(24px, 8vh, 84px);
+      padding: 18px 0;
+      text-shadow: 0 2px 12px rgba(255, 255, 255, 0.94);
+    }
+    h1 {
+      max-width: 9em;
+      margin: 0 0 14px;
+      color: #102e23;
+      font-size: clamp(36px, 9vw, 68px);
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+    .hero-copy p {
+      max-width: 24em;
+      margin: 0;
+      color: #173f30;
+      font-size: clamp(18px, 4.6vw, 24px);
+      line-height: 1.65;
+      font-weight: 800;
+    }
+    .hero-action {
+      width: min(100%, 520px);
+      justify-self: center;
+      padding: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.84);
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: 0 16px 44px rgba(20, 65, 45, 0.22);
+    }
+    .line-cta {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      border-radius: 8px;
+      color: #fff;
+      background: #06c755;
+      text-decoration: none;
+      font-size: clamp(19px, 5vw, 24px);
+      font-weight: 900;
+      box-shadow: 0 10px 24px rgba(6, 199, 85, 0.3);
+    }
+    .line-mark {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      color: #06a947;
+      background: #fff;
+      font-size: 10px;
+      font-weight: 950;
+    }
+    .action-note {
+      margin: 9px 4px 0;
+      color: #315746;
+      font-size: 14px;
+      line-height: 1.5;
+      text-align: center;
+      font-weight: 750;
+    }
+    @media (max-width: 540px) {
+      .share-hero { background-position: 56% center; }
+      .share-hero::before { background: rgba(255, 255, 255, 0.2); }
+      .hero-copy {
+        margin-top: 18px;
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.76);
+      }
+      h1 { max-width: 8em; }
+    }
+  </style>
+</head>
+<body>
+  <main class="share-hero">
+    <div class="brand">今天還在嗎</div>
+    <div class="hero-copy">
+      <h1>讓重要的人，知道你平安</h1>
+      <p>每天花 10 秒簽到。平常不打擾，真的有狀況時，才通知你指定的守護人。</p>
+    </div>
+    <div class="hero-action">
+      <a class="line-cta" href="https://liff.line.me/2010674803-rK98c0lo">
+        <span class="line-mark" aria-hidden="true">LINE</span>
+        用 LINE 開始守護
+      </a>
+      <p class="action-note">免下載 APP，使用 LINE 就能開始</p>
+    </div>
+  </main>
+</body>
+</html>

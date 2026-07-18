@@ -99,7 +99,50 @@
       font-weight: 800;
     }
     h1 { font-size: 30px; line-height: 1.2; margin-bottom: 6px; }
-    .subtitle { margin-bottom: 16px; color: var(--muted); }
+    .subtitle {
+      margin: 12px 0 18px;
+      padding: 14px 15px;
+      border: 1px solid #8be0b7;
+      border-left: 5px solid #12a86f;
+      border-radius: 8px;
+      background: #effcf5;
+      box-shadow: 0 10px 24px rgba(18, 168, 111, 0.12);
+      text-align: left;
+    }
+    .safety-headline {
+      margin-bottom: 7px;
+      color: #153e31;
+      font-size: 18px;
+      line-height: 1.45;
+      font-weight: 900;
+    }
+    .subtitle-safe { color: #078554; }
+    .safety-copy {
+      display: grid;
+      gap: 5px;
+      font-size: 15px;
+      line-height: 1.65;
+      font-weight: 750;
+    }
+    .subtitle-quiet { color: #0c75a8; }
+    body.neon .subtitle {
+      background: rgba(7, 34, 43, 0.92);
+      border-color: #43d7b0;
+      border-left-color: #67f0bf;
+      box-shadow: 0 10px 28px rgba(54, 224, 181, 0.18);
+    }
+    body.neon .safety-headline { color: #eafff8; }
+    body.neon .subtitle-safe { color: #67f0bf; }
+    body.neon .subtitle-quiet { color: #65d6ff; }
+    body.cute .subtitle {
+      background: #fff5f7;
+      border-color: #ffafc2;
+      border-left-color: #ed6688;
+      box-shadow: 0 10px 24px rgba(237, 102, 136, 0.14);
+    }
+    body.cute .safety-headline { color: #56333e; }
+    body.cute .subtitle-safe { color: #16845d; }
+    body.cute .subtitle-quiet { color: #1679a7; }
     .status-box, .calendar-box, .settings {
       border-radius: 18px;
       padding: 16px;
@@ -111,7 +154,25 @@
       position: relative;
       z-index: 1;
     }
-    .status-box { padding-top: 14px; }
+    .status-box { padding: 10px 14px; }
+    .status-toggle {
+      width: 100%;
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border: 0;
+      color: var(--text);
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+      font-weight: 900;
+    }
+    .status-toggle-label { display: grid; gap: 2px; }
+    .status-toggle-label small { color: var(--muted); font-size: 13px; font-weight: 700; }
+    .status-details { padding-top: 8px; border-top: 1px solid var(--line); }
+    .status-details[hidden] { display: none; }
     .status-header {
       display: flex;
       align-items: center;
@@ -163,19 +224,19 @@
     }
     .countdown-label { font-size: 13px; color: var(--muted); }
     .check-btn {
-      width: 156px;
-      height: 156px;
+      width: 184px;
+      height: 184px;
       border: 0;
       border-radius: 50%;
       color: #fff;
       cursor: pointer;
-      margin: 4px auto 18px;
+      margin: 8px auto 20px;
       display: flex;
       flex-direction: column;
       justify-content: center;
       align-items: center;
       gap: 4px;
-      font-size: 22px;
+      font-size: 25px;
       font-weight: 850;
       line-height: 1.2;
       background: var(--button);
@@ -193,8 +254,8 @@
     .check-wrap::before {
       content: "";
       position: absolute;
-      width: 184px;
-      height: 184px;
+      width: 214px;
+      height: 214px;
       border-radius: 50%;
       background: conic-gradient(from 180deg, transparent, var(--ring), transparent 72%);
       opacity: 0.72;
@@ -214,6 +275,32 @@
     .check-btn.warning { background: #f59e0b; box-shadow: 0 12px 30px rgba(245, 158, 11, 0.32); }
     .check-btn.danger { background: #ef4444; box-shadow: 0 12px 30px rgba(239, 68, 68, 0.34); animation: pulse 1.55s infinite; }
     @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+    .calendar-toggle {
+      width: 100%;
+      min-height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+    }
+    .calendar-toggle strong,
+    .calendar-toggle small { display: block; }
+    .calendar-toggle strong { font-size: 17px; }
+    .calendar-toggle small { margin-top: 3px; color: var(--muted); font-size: 13px; }
+    .calendar-chevron {
+      flex: 0 0 auto;
+      font-size: 24px;
+      color: var(--accent);
+      transition: transform 0.18s ease;
+    }
+    .calendar-toggle[aria-expanded="true"] .calendar-chevron { transform: rotate(180deg); }
+    #calendarDetails { padding-top: 10px; border-top: 1px solid var(--line); }
+    #calendarDetails[hidden] { display: none; }
     .calendar-nav {
       display: flex;
       justify-content: space-between;
@@ -264,6 +351,154 @@
     }
     .settings { text-align: left; margin-bottom: 12px; }
     .settings-title { text-align: center; font-weight: 850; margin-bottom: 12px; }
+    .member-center-toggle {
+      width: 100%;
+      min-height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      cursor: pointer;
+      text-align: left;
+      font-weight: 900;
+    }
+    .member-center-toggle span { color: var(--accent); font-size: 22px; }
+    .member-center-toggle[aria-expanded="true"] span { transform: rotate(180deg); }
+    .member-center-details { padding-top: 12px; border-top: 1px solid var(--line); }
+    .member-center-details[hidden] { display: none; }
+    .member-profile-row {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .member-avatar {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: #fff;
+      background: var(--button);
+      font-weight: 900;
+    }
+    .member-profile-row strong,
+    .member-profile-row small { display: block; }
+    .member-profile-row small { margin-top: 3px; color: var(--muted); line-height: 1.45; }
+    .member-upgrade-btn {
+      min-height: 44px;
+      padding: 9px 15px;
+      border: 0;
+      border-radius: 8px;
+      color: #fff;
+      background: linear-gradient(135deg, #ff4d2e, #e11d48);
+      box-shadow: 0 8px 18px rgba(225, 29, 72, 0.28);
+      font-size: 15px;
+      font-weight: 900;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .member-upgrade-btn:hover { transform: translateY(-1px); }
+    .member-upgrade-btn:focus-visible { outline: 3px solid rgba(255, 77, 46, 0.3); outline-offset: 2px; }
+    .payment-order-notice {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border: 2px solid #ff8a65;
+      border-radius: 8px;
+      color: #7c2d12;
+      background: #fff7ed;
+      font-size: 15px;
+      font-weight: 800;
+      line-height: 1.6;
+      text-align: left;
+    }
+    .payment-order-notice[hidden] { display: none; }
+    .member-data-section { padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .member-data-section:last-child { border-bottom: 0; padding-bottom: 0; }
+    .member-data-section h3 { margin-bottom: 8px; font-size: 15px; color: var(--text); }
+    .guardian-details-form { display: grid; gap: 9px; margin-top: 10px; }
+    .guardian-details-form input,
+    .guardian-details-form select {
+      width: 100%;
+      min-height: 46px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      background: var(--input);
+    }
+    .guardian-details-status {
+      padding: 10px 12px;
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      background: var(--soft);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.55;
+      font-weight: 750;
+    }
+    .member-data-list { display: grid; gap: 6px; }
+    .member-data-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .member-data-row + .member-data-row { border-top: 1px dashed var(--line); }
+    .member-data-row strong { color: var(--text); text-align: right; }
+    .member-advanced-note {
+      padding: 10px;
+      border-left: 4px solid var(--accent);
+      background: var(--soft);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .member-data-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .member-data-actions .action-btn { border-radius: 10px; padding: 9px 10px; }
+    .member-data-actions .danger-action {
+      grid-column: 1 / -1;
+      color: #b42318;
+      border-color: #fda29b;
+      background: #fff1f0;
+    }
+    .sos-section {
+      margin-top: 12px;
+      padding: 16px;
+      border: 2px solid #ef4444;
+      border-radius: 8px;
+      background: #fff1f2;
+    }
+    .sos-section h3 { color: #991b1b; font-size: 18px; }
+    .sos-section .helper { color: #7f1d1d; font-size: 15px; font-weight: 750; }
+    .sos-btn {
+      width: 100%;
+      min-height: 58px;
+      margin-top: 12px;
+      border: 0;
+      border-radius: 8px;
+      color: #fff;
+      background: #dc2626;
+      box-shadow: 0 8px 18px rgba(185, 28, 28, 0.28);
+      font-size: 19px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+    .sos-btn:disabled { opacity: 0.65; cursor: wait; }
+    .sos-btn:focus-visible { outline: 3px solid rgba(220, 38, 38, 0.3); outline-offset: 3px; }
     .setting-row {
       display: grid;
       grid-template-columns: 88px 1fr;
@@ -283,6 +518,21 @@
       outline: none;
     }
     .setting-row input:focus, .setting-row select:focus { border-color: var(--accent); }
+    .setting-choice {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr);
+      gap: 9px;
+      align-items: start;
+      margin: 4px 0 12px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--soft);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .setting-choice input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--accent); }
     .actions {
       display: flex;
       justify-content: center;
@@ -315,13 +565,83 @@
       text-align: center;
     }
     .plan-chip strong { display: block; font-size: 15px; }
-    .plan-chip span { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+    .plan-chip span { display: block; margin-top: 3px; color: var(--muted); font-size: 13px; line-height: 1.35; }
+    .plan-state-chip {
+      border-width: 2px;
+      border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+      background: color-mix(in srgb, var(--accent) 9%, var(--input));
+    }
+    .plan-strip[data-plan-tone="trial"] .plan-state-chip strong { color: #b45309; }
+    .plan-strip[data-plan-tone="free"] .plan-state-chip strong { color: var(--accent); }
+    .plan-strip[data-plan-tone="active"] .plan-state-chip strong { color: #047857; }
+    .trust-hook {
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--soft);
+      padding: 12px;
+      margin: 12px 0;
+      text-align: left;
+      color: var(--text);
+    }
+    .trust-hook strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 15px;
+    }
+    .trust-hook span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .guardian-status-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .guardian-status-card {
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: var(--input);
+      padding: 10px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .guardian-status-card strong {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--text);
+      font-size: 16px;
+    }
     .contact-card {
       border-radius: 14px;
       border: 1px solid var(--line);
       background: var(--input);
       padding: 12px;
       margin-bottom: 10px;
+    }
+    .contact-primary {
+      background: linear-gradient(135deg, rgba(236, 253, 245, 0.92), rgba(255,255,255,0.72));
+      border-color: #86efac;
+    }
+    .manual-contact-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 14px 0 8px;
+      font-weight: 900;
+      color: var(--text);
+    }
+    .manual-contact-title span {
+      border-radius: 999px;
+      padding: 4px 8px;
+      background: var(--soft);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
     }
     .contact-grid {
       display: grid;
@@ -355,9 +675,215 @@
       color: var(--text);
       font-size: 13px;
     }
+    .contact-main { min-width: 0; line-height: 1.55; }
+    .contact-main strong { color: var(--accent); }
+    .contact-actions { display: flex; gap: 5px; align-items: center; flex-shrink: 0; }
+    .contact-icon-btn {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--input);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 17px;
+      font-weight: 900;
+    }
+    .contact-icon-btn:disabled { opacity: 0.35; cursor: default; }
+    .map-panel {
+      min-height: 180px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, transparent 23px, rgba(148,163,184,0.16) 24px, transparent 25px),
+        linear-gradient(transparent 23px, rgba(148,163,184,0.16) 24px, transparent 25px),
+        var(--input);
+      background-size: 48px 48px;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .friend-pin {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: var(--soft);
+      padding: 10px;
+      font-size: 13px;
+    }
+    .friend-pin strong { display: block; font-size: 14px; color: var(--text); }
+    .friend-pin small { color: var(--muted); }
+    .friend-pin a {
+      color: var(--accent);
+      font-weight: 850;
+      text-decoration: none;
+    }
+    .friend-invite-row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .friend-invite-status {
+      min-height: 46px;
+      display: grid;
+      place-items: center;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      background: var(--soft);
+      font-size: 14px;
+      font-weight: 750;
+    }
+    .scan-qr-btn {
+      min-height: 46px;
+      padding: 9px 12px;
+      border: 2px solid var(--accent);
+      border-radius: 8px;
+      color: var(--accent);
+      background: var(--input);
+      font-weight: 900;
+      cursor: pointer;
+    }
+    .friend-location-actions {
+      position: sticky;
+      bottom: 8px;
+      z-index: 5;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 12px;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--input) 92%, transparent);
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+      backdrop-filter: blur(10px);
+    }
+    .friend-location-actions button {
+      min-height: 52px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+    .share-location-btn { border: 0; color: #fff; background: #079455; }
+    .stop-location-btn { border: 2px solid #64748b; color: #334155; background: #fff; }
+    .qr-video {
+      width: 100%;
+      min-height: 240px;
+      margin: 8px 0 12px;
+      border-radius: 8px;
+      background: #0f172a;
+      object-fit: cover;
+    }
     .pricing-grid {
       display: grid;
       gap: 10px;
+    }
+    .pricing-grid[hidden] { display: none; }
+    .plan-cards-six {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: stretch;
+    }
+    .plan-card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
+      text-align: left;
+      overflow: hidden;
+    }
+    .plan-card .price-btn { margin-top: auto; }
+    .plan-cycle-badge {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      min-height: 28px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 900;
+      color: var(--tier-ink);
+      background: var(--tier-soft);
+      border: 1px solid var(--tier-line);
+    }
+    .plan-price {
+      margin: 8px 0 3px;
+      color: var(--tier-ink);
+      font-size: 25px;
+      line-height: 1.15;
+      font-weight: 950;
+    }
+    .plan-price small { font-size: 13px; font-weight: 850; }
+    .plan-card-note {
+      min-height: 38px;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .plan-card ul { flex: 1; }
+    .tier-199 {
+      --tier-ink: #006bd6;
+      --tier-soft: #e8f4ff;
+      --tier-line: #53a8ff;
+      border-color: #53a8ff;
+      background: linear-gradient(155deg, #e8f4ff, #ffffff 68%);
+    }
+    .tier-399 {
+      --tier-ink: #08788c;
+      --tier-soft: #e8f9fb;
+      --tier-line: #71cad5;
+      border-color: #71cad5;
+      background: linear-gradient(155deg, #effcff, #ffffff 62%);
+    }
+    .tier-799 {
+      --tier-ink: #805006;
+      --tier-soft: #fff6d9;
+      --tier-line: #dfb344;
+      border-color: #dfb344;
+      background: linear-gradient(155deg, #fff9e8, #ffffff 62%);
+    }
+    .billing-year {
+      border-width: 2px;
+      box-shadow: 0 14px 34px color-mix(in srgb, var(--tier-line) 28%, transparent);
+    }
+    .annual-saving-banner {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 34px;
+      margin: 2px 0 10px;
+      padding: 7px 13px;
+      border: 2px solid #be123c;
+      border-radius: 8px;
+      color: #ffffff;
+      background: linear-gradient(135deg, #ff4d2e, #e11d48);
+      box-shadow: 0 8px 18px rgba(225, 29, 72, 0.28);
+      font-size: 15px;
+      font-weight: 950;
+    }
+    .plan-card.billing-year::after {
+      content: "年繳送 2 個月";
+      position: absolute;
+      top: 10px;
+      right: -35px;
+      width: 132px;
+      padding: 5px 0;
+      transform: rotate(35deg);
+      color: #fff;
+      background: #e11d48;
+      font-size: 10px;
+      font-weight: 900;
+      text-align: center;
     }
     .price-card {
       border-radius: 16px;
@@ -365,6 +891,83 @@
       background: var(--input);
       padding: 14px;
       box-shadow: inset 0 1px 0 rgba(255,255,255,0.22);
+    }
+    .premium-month-card {
+      border: 2px solid #c58a17;
+      background: linear-gradient(145deg, #fffaf0, #fffdf8);
+      box-shadow: 0 14px 34px rgba(146, 94, 12, 0.16), inset 0 1px 0 rgba(255,255,255,0.7);
+    }
+    .premium-month-card .price-head strong,
+    .premium-month-card .monthly-price,
+    .premium-year-card .price-head strong { color: #5f3b08; }
+    .premium-month-card ul { color: #604b2d; }
+    .monthly-price {
+      margin: -2px 0 10px;
+      color: var(--accent);
+      font-size: 20px;
+      font-weight: 950;
+      text-align: left;
+    }
+    .premium-year-card {
+      position: relative;
+      overflow: hidden;
+      border-color: #f6c453;
+      background: linear-gradient(145deg, rgba(255,251,235,0.98), rgba(255,255,255,0.92));
+      box-shadow: 0 18px 46px rgba(180, 128, 18, 0.22), inset 0 1px 0 rgba(255,255,255,0.72);
+      animation: goldGlow 2.8s ease-in-out infinite;
+    }
+    .premium-year-card::before {
+      content: "";
+      position: absolute;
+      inset: -40% auto auto -20%;
+      width: 90%;
+      height: 160%;
+      background: linear-gradient(110deg, transparent, rgba(255,255,255,0.58), transparent);
+      transform: rotate(18deg);
+      animation: shimmer 3.8s ease-in-out infinite;
+      pointer-events: none;
+    }
+    .premium-year-card .price-head,
+    .premium-year-card .price-meta,
+    .premium-year-card ul,
+    .premium-year-card .price-btn,
+    .premium-year-card .annual-proof {
+      position: relative;
+      z-index: 1;
+    }
+    .premium-year-card ul { color: #5f4520; }
+    .premium-year-card .price-btn {
+      background: linear-gradient(135deg, #f59e0b, #b45309);
+      box-shadow: 0 12px 28px rgba(180, 83, 9, 0.25);
+    }
+    .annual-proof {
+      margin-top: 8px;
+      color: #7c4a03;
+      font-size: 12px;
+      line-height: 1.5;
+      text-align: center;
+      font-weight: 850;
+    }
+    .anchor-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border-radius: 999px;
+      padding: 5px 9px;
+      background: #fff7ed;
+      color: #b45309;
+      border: 1px solid #fed7aa;
+      font-size: 12px;
+      font-weight: 900;
+    }
+    @keyframes goldGlow {
+      0%, 100% { box-shadow: 0 18px 46px rgba(180, 128, 18, 0.18), inset 0 1px 0 rgba(255,255,255,0.72); }
+      50% { box-shadow: 0 18px 54px rgba(245, 158, 11, 0.32), inset 0 1px 0 rgba(255,255,255,0.82); }
+    }
+    @keyframes shimmer {
+      0%, 35% { transform: translateX(-100%) rotate(18deg); opacity: 0; }
+      50% { opacity: 1; }
+      80%, 100% { transform: translateX(190%) rotate(18deg); opacity: 0; }
     }
     .price-head {
       display: flex;
@@ -381,6 +984,22 @@
       line-height: 1.7;
       font-size: 13px;
     }
+    .price-meta {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .price-meta span {
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: var(--soft);
+      padding: 8px;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 850;
+      text-align: center;
+    }
     .price-btn {
       width: 100%;
       min-height: 38px;
@@ -390,6 +1009,135 @@
       color: #fff;
       cursor: pointer;
       font-weight: 850;
+    }
+    .plan-toggle {
+      width: 100%;
+      min-height: 42px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--input);
+      color: var(--text);
+      cursor: pointer;
+      font-weight: 850;
+      margin-bottom: 10px;
+    }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      background: rgba(15, 23, 42, 0.46);
+      backdrop-filter: blur(8px);
+    }
+    .modal-backdrop[hidden] { display: none; }
+    .guardian-modal {
+      width: min(100%, 420px);
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      background: var(--input);
+      padding: 18px;
+      color: var(--text);
+      text-align: left;
+      box-shadow: 0 24px 70px rgba(15, 23, 42, 0.26);
+    }
+    .guardian-modal h2 { margin: 0 0 8px; font-size: 22px; }
+    .guardian-modal p { margin: 0 0 12px; color: var(--muted); line-height: 1.6; font-size: 14px; }
+    .line-trust {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      padding: 7px 10px;
+      background: #ecfdf5;
+      color: #047857;
+      border: 1px solid #bbf7d0;
+      font-weight: 900;
+      margin-bottom: 10px;
+    }
+    .line-logo {
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+      display: inline-grid;
+      place-items: center;
+      color: #fff;
+      background: #06c755;
+      font-size: 11px;
+      font-weight: 950;
+      letter-spacing: 0;
+    }
+    .agree-btn {
+      width: 100%;
+      min-height: 54px;
+      border: 0;
+      border-radius: 16px;
+      color: #fff;
+      background: linear-gradient(135deg, #22c55e, #16a34a);
+      font-weight: 950;
+      cursor: pointer;
+      box-shadow: 0 16px 34px rgba(34, 197, 94, 0.28);
+    }
+    .warning-modal {
+      border: 0;
+      background: linear-gradient(145deg, #991b1b, #ef4444);
+      color: #fff;
+      text-align: center;
+      animation: warningPulse 1.1s ease-in-out infinite;
+    }
+    .warning-modal p { color: rgba(255,255,255,0.88); }
+    .warning-countdown {
+      font-size: 58px;
+      line-height: 1;
+      font-weight: 950;
+      margin: 12px 0;
+      letter-spacing: 0;
+    }
+    .warning-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .warning-actions button {
+      min-height: 44px;
+      border-radius: 999px;
+      border: 0;
+      cursor: pointer;
+      font-weight: 950;
+    }
+    .cancel-warning-btn { background: #e5e7eb; color: #374151; }
+    .confirm-warning-btn { background: #7f1d1d; color: #fff; }
+    @keyframes warningPulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.015); }
+    }
+    .privacy-trigger {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--accent);
+      border: 0;
+      background: transparent;
+      padding: 0;
+      font-size: 12px;
+      font-weight: 850;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .privacy-points {
+      display: grid;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .privacy-point {
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: var(--soft);
+      padding: 10px;
+      color: var(--text);
+      font-weight: 800;
     }
     .legal-links {
       display: flex;
@@ -432,8 +1180,8 @@
     }
     body.classic .app { background: rgba(255,255,255,0.88); }
     body.neon {
-      --text: #e6f7fb; --muted: #92a8b6; --panel: rgba(255,255,255,0.055); --line: rgba(125,211,252,0.22);
-      --input: rgba(255,255,255,0.075); --soft: rgba(34,211,238,0.08); --accent: #22d3ee; --today: #facc15;
+      --text: #ffffff; --muted: #c7e2eb; --panel: #182638; --line: #4dbbd1;
+      --input: #1b2a3d; --soft: #20384a; --accent: #67e8f9; --today: #facc15;
       --checked: #0891b2; --button: linear-gradient(135deg,#22d3ee,#0f766e);
       --button-shadow: 0 14px 34px rgba(34,211,238,0.26);
       --glow-a: radial-gradient(circle, rgba(34,211,238,0.35), transparent 62%);
@@ -444,6 +1192,57 @@
       background: #090f18; color: var(--text);
     }
     body.neon .app { background: #121a27; border: 1px solid rgba(125,211,252,0.24); }
+    body.neon input,
+    body.neon select {
+      color: #ffffff;
+      background: #1b2a3d;
+      border-color: #58c5dc;
+    }
+    body.neon input::placeholder { color: #c0d8e1; opacity: 1; }
+    body.neon select option { color: #ffffff; background: #1b2a3d; }
+    body.neon .plan-card.tier-199 {
+      color: #102a43;
+      border-color: #53a8ff;
+      background: linear-gradient(155deg, #e8f4ff, #ffffff 68%);
+      box-shadow: 0 12px 30px rgba(0, 107, 214, 0.22);
+    }
+    body.neon .plan-card.tier-399 {
+      color: #123746;
+      border-color: #31c3d6;
+      background: linear-gradient(155deg, #e5fdff, #ffffff 68%);
+      box-shadow: 0 12px 30px rgba(0, 153, 174, 0.22);
+    }
+    body.neon .plan-card.tier-799 {
+      color: #3f2b08;
+      border-color: #f4bd32;
+      background: linear-gradient(155deg, #fff4bd, #ffffff 68%);
+      box-shadow: 0 12px 32px rgba(244, 189, 50, 0.26);
+    }
+    body.neon .plan-card ul { color: #24384a; }
+    body.neon .plan-card .plan-card-note { color: #455b6d; }
+    body.neon .plan-card .plan-cycle-badge {
+      color: #064e5b;
+      background: #d9fbff;
+      border-color: #46cde0;
+    }
+    body.neon .plan-card.tier-199 .price-head strong,
+    body.neon .plan-card.tier-199 .plan-price,
+    body.neon .plan-card.tier-399 .price-head strong,
+    body.neon .plan-card.tier-399 .plan-price { color: var(--tier-ink); }
+    body.neon .premium-month-card,
+    body.neon .premium-year-card {
+      border-color: #facc15;
+      background: linear-gradient(145deg, #2b2414, #171c25);
+      box-shadow: 0 16px 40px rgba(250, 204, 21, 0.2), inset 0 1px 0 rgba(255,255,255,0.1);
+    }
+    body.neon .premium-month-card .price-head strong,
+    body.neon .premium-month-card .monthly-price,
+    body.neon .premium-year-card .price-head strong { color: #fde68a; }
+    body.neon .premium-month-card ul,
+    body.neon .premium-year-card ul,
+    body.neon .premium-year-card .annual-proof { color: #fef3c7; }
+    body.neon .premium-month-card .price-meta span,
+    body.neon .premium-year-card .price-meta span { background: rgba(250,204,21,0.1); border-color: rgba(250,204,21,0.32); }
     body.cute {
       --text: #4c1937; --muted: #9f466b; --panel: #fff1f5; --line: #f8b4c8;
       --input: #fffafb; --soft: #fff7ed; --accent: #db2777; --today: #7c3aed;
@@ -457,12 +1256,27 @@
       background: #fde7ef; color: var(--text);
     }
     body.cute .app { background: #fff8fb; border: 1px solid #f8b4c8; }
+    body.cute .premium-month-card,
+    body.cute .premium-year-card {
+      border-color: #d99a20;
+      background: linear-gradient(145deg, #fff9e8, #fff7fb);
+    }
+    body.cute .premium-month-card .price-head strong,
+    body.cute .premium-month-card .monthly-price,
+    body.cute .premium-year-card .price-head strong { color: #70430a; }
+    @media (prefers-reduced-motion: reduce) {
+      .premium-year-card,
+      .premium-year-card::before { animation: none; }
+    }
     @media (max-width: 420px) {
+      .plan-cards-six { grid-template-columns: 1fr; }
       body { padding: 10px; align-items: start; }
       .app { border-radius: 22px; padding: 18px 12px 22px; }
-      .check-btn { width: 138px; height: 138px; font-size: 20px; }
+      .check-btn { width: 168px; height: 168px; font-size: 23px; }
       .setting-row { grid-template-columns: 1fr; }
       .plan-strip, .contact-grid { grid-template-columns: 1fr; }
+      .member-profile-row { grid-template-columns: 44px minmax(0, 1fr); }
+      .member-upgrade-btn { grid-column: 1 / -1; width: 100%; }
     }
   </style>
 </head>
@@ -476,29 +1290,14 @@
 
     <header class="hero">
       <div class="pet-badge">♡ 今日平安小站</div>
-      <h1>還活著嗎 ✨</h1>
-      <p class="subtitle">每天點一下，幫自己留個安心紀錄。</p>
+      <h1>今天還在嗎 ✨</h1>
+      <div class="subtitle colorful-subtitle" role="note" aria-label="平安守護說明">
+        <p class="safety-headline"><span class="subtitle-safe">不是監控</span>，是讓重要的人知道你平安</p>
+        <p class="safety-copy">
+          <span class="subtitle-quiet">你主動簽到時，不會打擾任何人</span>
+        </p>
+      </div>
     </header>
-
-    <section class="status-box" aria-label="簽到狀態">
-      <div class="status-header">
-        <div class="mini-title">
-          <span>守護儀表板</span>
-          <small>今天也有好好在這裡</small>
-        </div>
-        <div class="alive-pill" id="alivePill">待簽到</div>
-      </div>
-      <div class="status-row"><span class="status-label">☀ 今日簽到</span><span class="status-value" id="dailyStatus">--</span></div>
-      <div class="status-row"><span class="status-label">⏰ 上次簽到</span><span class="status-value" id="lastDate">--</span></div>
-      <div class="status-row"><span class="status-label">♡ 目前狀態</span><span class="status-value" id="statusText">--</span></div>
-      <div class="plan-strip">
-        <div class="plan-chip"><strong id="planName">試用中</strong><span>目前方案</span></div>
-        <div class="plan-chip"><strong id="trialDays">7</strong><span>試用剩餘天數</span></div>
-        <div class="plan-chip"><strong id="contactLimit">1</strong><span>聯絡人上限</span></div>
-      </div>
-      <div class="countdown" id="countdownDisplay">--:--:--</div>
-      <div class="countdown-label">下一次安心確認倒數</div>
-    </section>
 
     <div class="check-wrap">
       <button class="check-btn" id="checkBtn" type="button">
@@ -507,20 +1306,174 @@
       </button>
     </div>
 
-    <section class="calendar-box" aria-label="簽到月曆">
-      <div class="calendar-nav">
-        <button id="prevMonth" type="button" aria-label="上一個月">&#8249;</button>
-        <span id="monthTitle">--</span>
-        <button id="nextMonth" type="button" aria-label="下一個月">&#8250;</button>
+    <section class="status-box" aria-label="簽到狀態">
+      <button class="status-toggle" id="statusToggleBtn" type="button" aria-expanded="false" aria-controls="statusDetails">
+        <span class="status-toggle-label"><strong>查看今日狀態</strong><small>簽到紀錄、守護圈與下次提醒</small></span>
+        <span class="alive-pill" id="alivePill">待簽到</span>
+      </button>
+      <div class="status-details" id="statusDetails" hidden>
+        <div class="status-row"><span class="status-label">☀ 今日簽到</span><span class="status-value" id="dailyStatus">--</span></div>
+        <div class="status-row"><span class="status-label">⏰ 上次簽到</span><span class="status-value" id="lastDate">--</span></div>
+        <div class="status-row"><span class="status-label">♡ 目前狀態</span><span class="status-value" id="statusText">--</span></div>
+        <div class="plan-strip" id="planStrip" data-plan-tone="trial">
+          <div class="plan-chip plan-state-chip"><strong id="planStateLabel">安心體驗</strong><span id="planDetailText">還有 7 天完整體驗</span></div>
+          <div class="plan-chip"><strong id="planName">7 天試用</strong><span>守護方案</span></div>
+          <div class="plan-chip"><strong id="contactLimit">1</strong><span>守護人名額</span></div>
+        </div>
+        <div class="guardian-status-grid">
+          <div class="guardian-status-card"><strong>連續平安</strong><span id="streakText">0 天</span></div>
+          <div class="guardian-status-card"><strong>守護圈狀態</strong><span id="guardianCircleText">尚未綁定</span></div>
+        </div>
+        <div class="countdown" id="countdownDisplay">--:--:--</div>
+        <div class="countdown-label">下一次安心確認倒數</div>
       </div>
-      <div class="calendar-grid" id="calendarGrid"></div>
-      <div class="helper" style="margin-top:10px;">粉粉亮亮的日期，就是有乖乖簽到的日子。</div>
+    </section>
+
+    <section class="calendar-box" aria-label="簽到月曆">
+      <button class="calendar-toggle" id="calendarToggleBtn" type="button" aria-expanded="false" aria-controls="calendarDetails">
+        <span><strong id="monthCheckinSummary">本月已簽到 0 天</strong><small>展開簽到月曆</small></span>
+        <span class="calendar-chevron" aria-hidden="true">⌄</span>
+      </button>
+      <div id="calendarDetails" hidden>
+        <div class="calendar-nav">
+          <button id="prevMonth" type="button" aria-label="上一個月">&#8249;</button>
+          <span id="monthTitle">--</span>
+          <button id="nextMonth" type="button" aria-label="下一個月">&#8250;</button>
+        </div>
+        <div class="calendar-grid" id="calendarGrid"></div>
+        <div class="helper" style="margin-top:10px;">有標記的日期，就是你完成平安簽到的日子。</div>
+      </div>
+    </section>
+
+    <section class="settings" aria-label="會員個人中心">
+      <button class="member-center-toggle" id="memberCenterToggleBtn" type="button" aria-expanded="false" aria-controls="memberCenterDetails">
+        我的守護資料
+        <span aria-hidden="true">⌄</span>
+      </button>
+      <div class="member-center-details" id="memberCenterDetails" hidden>
+        <div class="member-profile-row">
+          <div class="member-avatar" id="memberAvatar">我</div>
+          <div>
+            <strong id="memberDisplayName">LINE 會員</strong>
+            <small><span id="memberPlanText">安心體驗</span>｜<span id="memberExpiryText">尚未設定到期日</span></small>
+          </div>
+          <button class="member-upgrade-btn" id="memberUpgradeBtn" type="button">立即升級 <span aria-hidden="true">→</span></button>
+        </div>
+
+        <div class="member-data-section">
+          <h3>個人資料與守護額度</h3>
+          <div class="member-data-list">
+            <div class="member-data-row"><span>LINE 帳號</span><strong id="memberLineAccount">尚未綁定</strong></div>
+            <div class="member-data-row"><span>聯絡信箱</span><strong id="memberContactEmail">尚未填寫</strong></div>
+            <div class="member-data-row"><span>守護對象</span><strong id="memberGuardianQuota">0/1 位</strong></div>
+          </div>
+        </div>
+
+        <div class="member-data-section">
+          <h3>守護人綁定狀態</h3>
+          <div class="helper">完成 LINE 綁定後，系統才能在你未準時簽到或發出 SOS 時，依優先順序通知對方。</div>
+          <div class="member-data-list" id="memberGuardianList">
+            <div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護人</strong></div>
+          </div>
+          <div class="member-data-actions">
+            <button class="action-btn" id="memberGuardianSettingsBtn" type="button">設定守護人</button>
+            <button class="action-btn" id="memberShareGuardianBtn" type="button">馬上分享守護人</button>
+          </div>
+        </div>
+
+        <div class="member-data-section" id="guardianDetails799" hidden>
+          <h3>我的守護資料</h3>
+          <div class="helper">799 方案請至少完成 1 位守護人的姓名、關係與電話。電話只會用於緊急通知，不會拿來做廣告。</div>
+          <div class="guardian-details-status" id="guardianDetailsStatus">尚未完成必要資料</div>
+          <div class="guardian-details-form">
+            <select id="guardianDetailsContact" aria-label="選擇已綁定守護人"></select>
+            <input id="guardianDetailsName" placeholder="守護人姓名或暱稱" autocomplete="name">
+            <select id="guardianDetailsRelation" aria-label="與守護人的關係">
+              <option value="">請選擇關係</option>
+              <option value="家人">家人</option>
+              <option value="朋友">朋友</option>
+              <option value="同事">同事</option>
+              <option value="鄰居">鄰居</option>
+              <option value="其他">其他</option>
+            </select>
+            <input id="guardianDetailsPhone" type="tel" inputmode="tel" placeholder="守護人聯絡電話" autocomplete="tel">
+          </div>
+          <label class="setting-choice" for="guardianDetailsReminderEnabled">
+            <input type="checkbox" id="guardianDetailsReminderEnabled" checked>
+            <span>資料尚未完成時，透過 LINE 提醒我一次</span>
+          </label>
+          <button class="action-btn" id="saveGuardianDetailsBtn" type="button">儲存守護資料</button>
+        </div>
+
+        <div class="member-data-section sos-section" id="sosSection" hidden>
+          <h3>SOS 緊急求助</h3>
+          <div class="helper">按下後會立即透過 LINE 通知核心守護人，並附上你最後一次可取得的位置。若有立即危險，請先撥打 119。</div>
+          <button class="sos-btn" id="sosBtn" type="button">發出 SOS 緊急求助</button>
+        </div>
+
+        <div class="member-data-section" id="guardianGroupsSection" hidden>
+          <h3>我的守護群</h3>
+          <div class="helper">799 年費會員最多可綁定 3 個 LINE 群組。把官方帳號加入群組後，在群組輸入「綁定守護群」即可啟用。</div>
+          <div class="member-data-list" id="guardianGroupsList">
+            <div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護群</strong></div>
+          </div>
+        </div>
+
+        <div class="member-data-section">
+          <h3>付款方案</h3>
+          <div class="member-data-list">
+            <div class="member-data-row"><span>會員方案</span><strong id="memberBillingPlan">安心體驗</strong></div>
+            <div class="member-data-row"><span>付費週期</span><strong id="memberBillingCycle">尚未付費</strong></div>
+            <div class="member-data-row"><span>付款狀態</span><strong id="memberPaymentStatus">尚未付費</strong></div>
+            <div class="member-data-row"><span>使用期限</span><strong id="memberBillingExpiry">尚未設定</strong></div>
+          </div>
+          <label class="setting-choice" for="memberAutoRenew">
+            <input type="checkbox" id="memberAutoRenew">
+            <span>申請每月自動續扣。完成藍新信用卡授權後才會生效，可在到期前提出取消。</span>
+          </label>
+          <button class="action-btn" id="saveBillingPreferencesBtn" type="button">儲存續扣設定</button>
+          <div class="helper" id="memberAutoRenewStatus">目前尚未啟用自動續扣。</div>
+          <div class="member-advanced-note">付款會前往藍新金流安全頁面完成；平台不會保存完整信用卡號，只保留付款結果、授權狀態與必要的卡號末四碼。</div>
+        </div>
+
+        <div class="member-data-section">
+          <h3>我的方案權益</h3>
+          <div class="member-data-list">
+            <div class="member-data-row"><span>方案週期</span><strong id="memberPlanCycle">安心體驗</strong></div>
+            <div class="member-data-row"><span>守護人名額</span><strong id="memberPlanBenefits">1 位</strong></div>
+            <div class="member-data-row"><span>好友定位名額</span><strong id="memberLocationQuota">1 位</strong></div>
+          </div>
+          <div class="member-advanced-note" id="memberPlanBenefitDetail">目前為安心體驗，可使用基本簽到與 LINE 提醒。</div>
+        </div>
+
+        <div class="member-data-section">
+          <h3>我的簽到紀錄</h3>
+          <div class="member-data-list" id="memberHistoryList">
+            <div class="member-data-row"><span>簽到紀錄</span><strong>目前沒有紀錄</strong></div>
+          </div>
+        </div>
+
+        <div class="member-data-section">
+          <h3>付費會員進階紀錄</h3>
+          <div class="member-advanced-note" id="memberAdvancedNote">升級守護方案後，可依方案使用較長的歷史保存、進階篩選、定位軌跡與回放功能。</div>
+        </div>
+
+        <div class="member-data-section">
+          <h3>我的資料管理</h3>
+          <div class="helper">所有會員都能匯出及刪除自己的個人資料，不會因方案不同而限制基本權利。</div>
+          <div class="member-data-actions">
+            <button class="action-btn" id="exportMyDataBtn" type="button">匯出我的資料</button>
+            <button class="action-btn" id="deleteCheckinHistoryBtn" type="button">刪除簽到紀錄</button>
+            <button class="action-btn danger-action" id="deleteAccountBtn" type="button">刪除帳號與個人資料</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section class="settings" aria-label="緊急與提醒設定">
       <div class="settings-title">♡ 緊急與提醒設定</div>
       <div class="setting-row">
-        <label for="contactEmail">聯絡人</label>
+        <label for="contactEmail">聯絡信箱</label>
         <input type="email" id="contactEmail" placeholder="example@email.com">
       </div>
       <div class="setting-row">
@@ -537,65 +1490,231 @@
         <label for="reminderTime">提醒時間</label>
         <input type="time" id="reminderTime" value="09:00">
       </div>
+      <div class="helper">尚未綁定任何守護人時，系統每天提醒一次，直到至少完成 1 位 LINE 綁定。</div>
+      <label class="setting-choice" for="contactCapacityReminder">
+        <input type="checkbox" id="contactCapacityReminder">
+        <span>已有守護人但尚未達方案名額時，每天提醒我繼續邀請；隨時可以取消勾選。</span>
+      </label>
       <div class="actions">
-        <button class="action-btn" id="resetBtn" type="button">↻ 重置</button>
+        <button class="action-btn" id="resetBtn" type="button">↻ 補簽現在</button>
         <button class="action-btn" id="saveBtn" type="button">♡ 儲存</button>
       </div>
     </section>
 
     <section class="settings" aria-label="升級方案">
       <div class="settings-title">♡ 升級方案</div>
-      <div class="pricing-grid">
+      <button class="plan-toggle" id="planToggleBtn" type="button">查看方案</button>
+      <div class="pricing-grid plan-cards-six" id="pricingGrid" hidden>
+        <article class="price-card plan-card tier-199 billing-month" data-plan-tier="199" data-billing-cycle="month">
+          <div class="price-head"><strong>199 活著價</strong><span class="plan-cycle-badge">月費方案</span></div>
+          <div class="plan-price">NT$199 <small>／月</small></div>
+          <div class="plan-card-note">適合日常平安簽到與基本位置分享。</div>
+          <ul>
+            <li>4 位緊急聯絡人、4 位好友定位</li>
+            <li>每日簽到提醒 1 次</li>
+            <li>24 小時快照定位</li>
+            <li>LINE 通知 3 位核心守護人</li>
+          </ul>
+          <button class="price-btn" type="button" data-plan="199-month">選擇 199 月費</button>
+        </article>
+        <article class="price-card plan-card tier-199 billing-year" data-plan-tier="199" data-billing-cycle="year">
+          <div class="price-head"><strong>199 活著價</strong><span class="plan-cycle-badge">年費方案</span></div>
+          <div class="plan-price">NT$1,990 <small>／年</small></div>
+          <div class="annual-saving-banner">年繳送 2 個月</div>
+          <div class="plan-card-note"><s>月付一年 NT$2,388</s>，年費只收 10 個月。</div>
+          <ul>
+            <li>6 位緊急聯絡人、6 位好友定位</li>
+            <li>每日簽到提醒 2 次</li>
+            <li>24 小時快照定位、軌跡回放 3 天</li>
+            <li>LINE 通知 3 位核心守護人</li>
+          </ul>
+          <button class="price-btn" type="button" data-plan="199-year">選擇 199 年費</button>
+        </article>
+        <article class="price-card plan-card tier-399 billing-month" data-plan-tier="399" data-billing-cycle="month">
+          <div class="price-head"><strong>399 安心版</strong><span class="plan-cycle-badge">月費方案</span></div>
+          <div class="plan-price">NT$399 <small>／月</small></div>
+          <div class="plan-card-note">適合日常出行，需要即時查看位置。</div>
+          <ul>
+            <li>15 位緊急聯絡人、15 位好友定位</li>
+            <li>每日簽到提醒 2 次</li>
+            <li>即時追蹤、軌跡回放 5 天</li>
+            <li>離線同步 24 小時</li>
+            <li>LINE 通知 3 位核心守護人，不含簡訊</li>
+          </ul>
+          <button class="price-btn" type="button" data-plan="399-month">選擇 399 月費</button>
+        </article>
+        <article class="price-card plan-card tier-399 billing-year" data-plan-tier="399" data-billing-cycle="year">
+          <div class="price-head"><strong>399 安心版</strong><span class="plan-cycle-badge">年費方案</span></div>
+          <div class="plan-price">NT$3,990 <small>／年</small></div>
+          <div class="annual-saving-banner">年繳送 2 個月</div>
+          <div class="plan-card-note"><s>月付一年 NT$4,788</s>，年費只收 10 個月。</div>
+          <ul>
+            <li>20 位緊急聯絡人、20 位好友定位</li>
+            <li>每日簽到提醒 3 次</li>
+            <li>即時追蹤、軌跡回放 7 天</li>
+            <li>離線同步 24 小時</li>
+            <li>30 天即時追蹤體驗</li>
+            <li>LINE 通知 3 位核心守護人，不含簡訊</li>
+          </ul>
+          <button class="price-btn" type="button" data-plan="399-year">選擇 399 年費</button>
+        </article>
+        <article class="price-card plan-card tier-799 billing-month premium-month-card" data-plan-tier="799" data-billing-cycle="month">
+          <div class="price-head"><strong>799 守護版</strong><span class="plan-cycle-badge">月費方案</span></div>
+          <div class="plan-price">NT$799 <small>／月</small></div>
+          <div class="plan-card-note">適合家庭守護與需要雙管道警報的會員。</div>
+          <ul>
+            <li>25 位緊急聯絡人、25 位好友定位</li>
+            <li>每日簽到提醒 3 次</li>
+            <li>即時追蹤、軌跡回放 14 天</li>
+            <li>完整離線同步 7 天、一鍵 SOS</li>
+            <li>LINE＋簡訊通知 3 位核心守護人</li>
+          </ul>
+          <button class="price-btn" type="button" data-plan="799-month">選擇 799 月費</button>
+        </article>
+        <article class="price-card plan-card tier-799 billing-year premium-year-card" data-plan-tier="799" data-billing-cycle="year">
+          <div class="price-head"><strong>799 守護版</strong><span class="plan-cycle-badge">年費方案</span></div>
+          <div class="plan-price">NT$7,990 <small>／年</small></div>
+          <div class="annual-saving-banner">年繳送 2 個月</div>
+          <div class="plan-card-note"><s>月付一年 NT$9,588</s>，家庭守護推薦。</div>
+          <ul>
+            <li>50 位緊急聯絡人、50 位好友定位</li>
+            <li>每日簽到提醒 5 次</li>
+            <li>即時追蹤、軌跡回放 30 天</li>
+            <li>完整離線同步 7 天、一鍵 SOS</li>
+            <li>LINE＋簡訊＋電話通知 5 位核心守護人</li>
+            <li>30 天即時追蹤體驗、最多建立 3 個守護群</li>
+          </ul>
+          <button class="price-btn" type="button" data-plan="799-year">選擇 799 年費</button>
+          <div class="annual-proof">平均一天約 NT$22，適合需要電話通知與完整軌跡的家庭。</div>
+        </article>
+      </div>
+      <div class="payment-order-notice" id="paymentOrderNotice" role="status" aria-live="polite" hidden></div>
+      <div class="pricing-grid legacy-plan-cards" hidden aria-hidden="true">
         <article class="price-card">
           <div class="price-head"><strong>199 活著價</strong><span>NT$199 / 月</span></div>
+          <div class="price-meta">
+            <span>年付 NT$1,990</span>
+            <span>月付一年 NT$2,388，現省 NT$398</span>
+          </div>
           <ul>
-            <li>2 位緊急聯絡人</li>
-            <li>每日提醒 2 次</li>
-            <li>LINE 通知</li>
+            <li>月費 4 位，年費 6 位</li>
+            <li>每日提醒月費 1 次，年費 2 次</li>
+            <li>LINE 通知 3 位核心守護人</li>
+            <li>24 小時快照定位，年費含 3 天軌跡回放</li>
           </ul>
           <button class="price-btn" type="button" data-plan="199">我要升級</button>
         </article>
         <article class="price-card">
           <div class="price-head"><strong>399 安心版</strong><span>NT$399 / 月</span></div>
+          <div class="price-meta">
+            <span>年付 NT$3,990</span>
+            <span>月付一年 NT$4,788，現省 NT$798</span>
+          </div>
           <ul>
-            <li>5 位緊急聯絡人</li>
-            <li>每日提醒 2 次</li>
-            <li>LINE 通知</li>
+            <li>月費 15 位，年費 20 位</li>
+            <li>每日提醒月費 2 次，年費 3 次</li>
+            <li>LINE 通知 3 位核心守護人，不含簡訊</li>
+            <li>即時追蹤、軌跡回放 5-7 天、離線同步 24 小時</li>
           </ul>
           <button class="price-btn" type="button" data-plan="399">我要升級</button>
         </article>
-        <article class="price-card">
-          <div class="price-head"><strong>799 守護版</strong><span>NT$799 / 月</span></div>
+        <article class="price-card premium-month-card">
+          <div class="price-head"><strong>799 守護版</strong><span class="anchor-tag">進階守護</span></div>
+          <div class="monthly-price">NT$799 / 月</div>
+          <div class="price-meta">
+            <span>年付 NT$7,990</span>
+            <span>月付一年 NT$9,588，現省 NT$1,598</span>
+          </div>
           <ul>
-            <li>10 位緊急聯絡人</li>
-            <li>每日提醒 2 次</li>
-            <li>LINE + 簡訊 + 電話通知</li>
+            <li>月費 25 位，年費 50 位</li>
+            <li>每日提醒月費 3 次，年費 5 次</li>
+            <li>月費 LINE＋簡訊通知 3 位核心守護人</li>
+            <li>年費 LINE＋簡訊＋電話通知 5 位核心守護人</li>
+            <li>一鍵 SOS：緊急時附上目前位置通知守護人</li>
+            <li>軌跡回放 14-30 天、完整離線同步 7 天</li>
           </ul>
           <button class="price-btn" type="button" data-plan="799">我要升級</button>
         </article>
+        <article class="price-card premium-year-card">
+          <div class="price-head">
+            <strong>799 守護版年費</strong>
+            <span class="anchor-tag">家庭守護推薦</span>
+          </div>
+          <div class="price-meta">
+            <span><s>月付原價 NT$9,588</s></span>
+            <span>現 NT$7,990，等於送 2 個月</span>
+          </div>
+          <ul>
+            <li>☎ 5 位核心守護人：緊急時 LINE＋簡訊＋電話三重通知</li>
+            <li>🆘 一鍵 SOS：附上目前位置通知核心守護人</li>
+            <li>📍 即時位置通知：預警觸發時附上目前定位</li>
+            <li>⏱ 30 天完整軌跡回放，僅限 799 年費</li>
+            <li>⏱ 30 天即時追蹤體驗：年費會員限定</li>
+          </ul>
+          <button class="price-btn" type="button" data-plan="799-year">立即升級 799 年費</button>
+          <div class="annual-proof">年費 NT$7,990，平均一天約 NT$22。需要電話通知、30 天軌跡回放、孩子通勤守護的家庭，建議選這個方案。</div>
+        </article>
       </div>
-      <div class="helper" style="margin-top:10px;">MVP 階段付款後由後台開通方案；之後可換成藍新金流訂閱連結。</div>
+      <div class="helper" style="margin-top:10px;">年付皆為 10 個月價，直接多送 2 個月。MVP 階段付款後由後台開通方案。</div>
+    </section>
+
+    <section class="settings" aria-label="安心守護邀請任務">
+      <div class="settings-title">🎁 安心守護邀請任務</div>
+      <div class="helper">邀請 1 位你信任的人完成 LINE 綁定，萬一你沒有準時簽到，系統才能第一時間通知對方。</div>
+      <div class="helper">分享邀請給聯絡人後，對方只要用 LINE 同意綁定，就能成為你的守護人。</div>
+      <div class="pricing-grid">
+        <article class="price-card">
+          <div class="price-head"><strong>完成 1 位綁定</strong><span>二選一獎勵</span></div>
+          <ul>
+            <li>選項 A：免費延長 7 天</li>
+            <li>選項 B：多 1 位緊急聯絡人名額 30 天</li>
+            <li>聯絡人需完成 LINE 綁定，獎勵才會生效</li>
+          </ul>
+          <button class="price-btn" id="shareContactInviteBtn" type="button">一鍵邀請守護人</button>
+        </article>
+      </div>
     </section>
 
     <section class="settings" aria-label="緊急聯絡人">
       <div class="settings-title">♡ 緊急聯絡人</div>
+      <div class="contact-card contact-primary">
+        <div class="price-head"><strong>優先用 LINE 一鍵邀請</strong><span>推薦</span></div>
+        <div class="helper" id="guardianRequirementStatus">至少要完成 1 位 LINE 綁定，系統才能在緊急時聯絡對方。</div>
+        <div class="helper">請先邀請身邊一位信任的人加入官方帳號並同意綁定。對方無須註冊，也能在緊急時收到 LINE 警報與位置通知。</div>
+        <button class="price-btn share-contact-invite-btn" type="button">一鍵邀請守護人</button>
+      </div>
       <div class="contact-card">
-        <div class="helper">免費與試用先放 1 位；升級後可放更多位。</div>
+        <div class="helper">免費與試用先放 1 位；升級後可放更多位。若要用 LINE 通知對方，對方需先加官方帳號或完成 LINE 綁定，只填 LINE 暱稱無法推播。</div>
+        <div class="helper">個人中心可查看綁定狀態，已授權的聯絡人會顯示 LINE 已綁定，未完成授權則顯示 LINE 未綁定。</div>
         <div class="contact-list" id="contactList"></div>
-        <div class="contact-grid">
-          <input id="contactName" placeholder="姓名／暱稱">
-          <input id="contactPhone" placeholder="手機">
-          <input id="contactRelation" placeholder="關係，例如家人">
-          <select id="contactMethod">
-            <option value="line">LINE</option>
-            <option value="sms">簡訊</option>
-            <option value="phone">電話</option>
-          </select>
-        </div>
+      </div>
+    </section>
+
+    <section class="settings" aria-label="好友地圖">
+      <div class="settings-title">♡ 好友地圖</div>
+      <div class="helper">雙方同意加好友後，可查看彼此位置（保留 24 小時），隨時停止分享</div>
+      <div class="contact-card contact-primary">
+        <div class="price-head"><strong>邀請好友一起分享位置</strong><span>推薦</span></div>
+        <div class="helper">按下後會直接開啟 LINE 好友清單，不用複製邀請碼。</div>
+        <button class="price-btn" id="shareFriendInviteBtn" type="button">分享給 LINE 好友</button>
+      </div>
+      <div class="helper">
+        我們需要開啟定位功能才能在您或家人遇到緊急狀況時，精準傳遞位置給守護人。您的定位資料僅用於安全守護，不會用於廣告或商業用途。
+        <button class="privacy-trigger" id="openPrivacyExplainBtn" type="button">🔒 查看我們如何保護您的位置資料</button>
+      </div>
+      <div class="friend-invite-row">
+        <button class="scan-qr-btn" id="scanQrBtn" type="button">掃描 QR Code</button>
+        <div class="friend-invite-status" id="friendInviteStatus" role="status">尚未讀取好友邀請</div>
       </div>
       <div class="actions">
-        <button class="action-btn" id="addContactBtn" type="button">＋ 加入</button>
-        <button class="action-btn" id="saveContactsBtn" type="button">♡ 儲存聯絡人</button>
+        <button class="action-btn" id="acceptInviteBtn" type="button">加入好友</button>
+      </div>
+      <div class="map-panel" id="friendMap">
+        <div class="helper">還沒有好友位置。邀請朋友加入後，這裡會顯示大家的位置連結。</div>
+      </div>
+      <div class="friend-location-actions">
+        <button class="share-location-btn" id="shareLocationBtn" type="button">分享我的位置</button>
+        <button class="stop-location-btn" id="stopLocationBtn" type="button">停止分享</button>
       </div>
     </section>
 
@@ -608,6 +1727,65 @@
     </nav>
   </main>
 
+  <div class="modal-backdrop" id="guardianPrompt" hidden>
+    <div class="guardian-modal">
+      <h2>添加緊急守護人</h2>
+      <p>註冊完成後，建議先邀請 1 位家人或朋友完成 LINE 綁定。緊急情況可快速觸達，系統會先送測試提醒確認通道正常。</p>
+      <p>對方只要點你的邀請連結，跳轉 LINE 官方授權頁面，一鍵同意綁定，約 10 秒即可完成關聯，無需另外註冊。</p>
+      <div class="actions">
+        <button class="action-btn" id="promptInviteBtn" type="button">前往綁定頁面</button>
+        <button class="action-btn" id="dismissGuardianPromptBtn" type="button">稍後再說</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="inviteAcceptPrompt" hidden>
+    <div class="guardian-modal">
+      <div class="line-trust"><span class="line-logo">LINE</span> LINE 官方授權綁定</div>
+      <h2>您收到一位親友的守護邀請</h2>
+      <p>點擊同意即可在緊急時接收位置通知，無需下載 APP。您只會收到這位親友的安全守護提醒，不會被公開個人資料。</p>
+      <button class="agree-btn" id="acceptGuardianInviteBtn" type="button">同意成為守護人</button>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="warningPrompt" hidden>
+    <div class="guardian-modal warning-modal">
+      <h2>預警即將送出</h2>
+      <div class="warning-countdown" id="warningCountdown">14:58</div>
+      <p>手機會有輕微震動提醒；心跳音效可關閉。</p>
+      <div class="warning-actions">
+        <button class="cancel-warning-btn" id="cancelWarningBtn" type="button">取消預警</button>
+        <button class="confirm-warning-btn" id="confirmWarningBtn" type="button">立即通知</button>
+      </div>
+      <p>若未取消，系統將於 15 分鐘後自動通知您的守護人。</p>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="privacyExplainPrompt" hidden>
+    <div class="guardian-modal">
+      <h2>我們如何保護您的位置資料</h2>
+      <div class="privacy-points">
+        <div class="privacy-point">🔒 資料不出境：位置資料以台灣服務器為主，不作廣告投放使用。</div>
+        <div class="privacy-point">🛡 僅加密存儲：敏感資料採加密保存，降低外洩風險。</div>
+        <div class="privacy-point">👥 僅授權聯絡人可見：只有您同意綁定的守護人，才能在緊急狀況收到位置。</div>
+      </div>
+      <div class="actions">
+        <button class="action-btn" id="closePrivacyExplainBtn" type="button">我知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="qrScannerPrompt" hidden>
+    <div class="guardian-modal">
+      <h2>掃描好友邀請碼</h2>
+      <p>請把好友的 QR Code 放進畫面中，掃描成功後會自動帶入邀請碼。</p>
+      <video class="qr-video" id="qrVideo" playsinline muted></video>
+      <div class="actions">
+        <button class="action-btn" id="closeQrScannerBtn" type="button">關閉相機</button>
+      </div>
+    </div>
+  </div>
+
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script>
     const STORAGE_KEY = "alive_checkin_state_v2";
@@ -616,16 +1794,28 @@
       history: [],
       contact_email: "",
       grace_hours: 36,
-      reminder_time: "09:00"
+      reminder_time: "09:00",
+      contact_capacity_reminder_enabled: false,
+      billing_cycle: "trial",
+      payment_status: "trial",
+      paid_until: "",
+      auto_renew_requested: false,
+      auto_renew_enabled: false,
+      auto_renew_status: "off"
     };
     let currentYear = new Date().getFullYear();
     let currentMonth = new Date().getMonth();
     let historyData = [];
     let useLocalMode = location.protocol === "file:";
     let lineUserId = "";
+    let qrScanStream = null;
+    let qrScanTimer = null;
+    let pendingFriendInviteCode = "";
     let lineDisplayName = "";
     let contactData = [];
     let currentContactLimit = 1;
+    let currentStatusData = null;
+    let accountDeleted = false;
 
     const $ = (id) => document.getElementById(id);
 
@@ -683,6 +1873,10 @@
 
       return {
         ...state,
+        plan: state.plan || "trial",
+        payment_status: state.payment_status || "trial",
+        trial_days_left: state.trial_days_left ?? 7,
+        contact_limit: state.contact_limit || 1,
         history: Array.from(new Set(state.history || [])).sort(),
         is_today_checked: (state.history || []).includes(getToday()),
         is_overdue: isOverdue,
@@ -738,6 +1932,58 @@
       return await res.json();
     }
 
+    async function apiSaveBillingPreferences(requested) {
+      if (useLocalMode || !lineUserId) {
+        const state = loadLocalState();
+        state.auto_renew_requested = requested;
+        state.auto_renew_enabled = false;
+        state.auto_renew_status = requested ? "pending_gateway" : "off";
+        saveLocalState(state);
+        return buildLocalStatus(state);
+      }
+      const res = await fetch("/api/billing/preferences", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId, auto_renew_requested: requested })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "billing preference failed");
+      return data;
+    }
+
+    async function apiCreatePaymentOrder(plan) {
+      const res = await fetch("/api/payments/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId, plan })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "payment order failed");
+      return data.order;
+    }
+
+    async function apiTriggerSos() {
+      const res = await fetch("/api/sos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "sos failed");
+      return data;
+    }
+
+    async function apiUnbindGuardianGroup(groupId) {
+      const res = await fetch("/api/guardian-groups/unbind", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId, group_id: groupId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "guardian group unbind failed");
+      return data;
+    }
+
     async function apiGetContacts() {
       if (useLocalMode) {
         return { contacts: loadLocalState().contacts || [], contact_limit: 1 };
@@ -748,7 +1994,7 @@
       return await res.json();
     }
 
-    async function apiSaveContacts() {
+    async function apiSaveContacts(requireCompleteGuardian = false) {
       if (useLocalMode) {
         const state = loadLocalState();
         state.contacts = contactData;
@@ -758,11 +2004,158 @@
       const res = await fetch("/api/contacts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ line_user_id: lineUserId, contacts: contactData })
+        body: JSON.stringify({
+          line_user_id: lineUserId,
+          contacts: contactData,
+          require_complete_guardian: requireCompleteGuardian
+        })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "contacts failed");
       return data;
+    }
+
+    async function apiDeleteCheckinHistory() {
+      if (useLocalMode) {
+        const state = loadLocalState();
+        const removedCount = (state.history || []).length;
+        state.history = [];
+        state.last_check_in = null;
+        saveLocalState(state);
+        return { deleted: true, record_type: "checkins", removed_count: removedCount };
+      }
+      const res = await fetch("/api/account/history/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId, record_type: "checkins" })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "delete history failed");
+      return data;
+    }
+
+    async function apiExportMyData() {
+      if (useLocalMode || !lineUserId) {
+        const state = loadLocalState();
+        return {
+          exported_at: new Date().toISOString(),
+          member: state,
+          orders: [],
+          support_tickets: [],
+          guardian_groups: [],
+          contact_rewards: [],
+          notification_logs: []
+        };
+      }
+      const res = await fetch("/api/account/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "export failed");
+      return data;
+    }
+
+    async function apiDeleteAccount() {
+      if (useLocalMode) {
+        localStorage.removeItem(STORAGE_KEY);
+        return { deleted: true };
+      }
+      const res = await fetch("/api/account/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "delete account failed");
+      return data;
+    }
+
+    function buildContactInvite(nickname = "") {
+      const bindUrl = lineUserId
+        ? `${location.origin}${location.pathname}?invite_from=${encodeURIComponent(lineUserId)}`
+        : `${location.origin}${location.pathname}`;
+      const nameText = nickname ? `嗨 ${nickname}，` : "";
+      const text = `${nameText}我正在使用「今天還在嗎」平安簽到服務，想邀請你成為我的守護人。\n\n你無須註冊，也不用下載 APP。只要點連結用 LINE 同意綁定，未來如果我遇到緊急狀況，你就能收到 LINE 警報與位置通知。\n\n守護邀請連結：\n${bindUrl}`;
+      return { bindUrl, text };
+    }
+
+    async function apiBindEmergencyContact(inviterLineUserId) {
+      if (useLocalMode || !lineUserId || !inviterLineUserId || inviterLineUserId === lineUserId) return null;
+      const res = await fetch("/api/emergency-contact/bind", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          inviter_line_user_id: inviterLineUserId,
+          contact_line_user_id: lineUserId,
+          contact_display_name: lineDisplayName || "LINE 聯絡人"
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "bind failed");
+      return data;
+    }
+
+    async function apiCreateFriendInvite() {
+      if (useLocalMode) throw new Error("好友地圖需要連上後端和 LINE 會員。");
+      const res = await fetch("/api/friends/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "invite failed");
+      return data;
+    }
+
+    async function apiAcceptFriendInvite(inviteCode) {
+      if (useLocalMode) throw new Error("好友地圖需要連上後端和 LINE 會員。");
+      const res = await fetch("/api/friends/accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId, invite_code: inviteCode })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "accept failed");
+      return data;
+    }
+
+    async function apiUpdateLocation(position, city) {
+      if (useLocalMode) throw new Error("好友地圖需要連上後端和 LINE 會員。");
+      const res = await fetch("/api/location/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          line_user_id: lineUserId,
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          city,
+          share_hours: 24
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "location failed");
+      return data;
+    }
+
+    async function apiStopLocation() {
+      if (useLocalMode) throw new Error("好友地圖需要連上後端和 LINE 會員。");
+      const res = await fetch("/api/location/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "stop failed");
+      return data;
+    }
+
+    async function apiGetFriendLocations() {
+      if (useLocalMode || !lineUserId) return { friends: [] };
+      const res = await fetch(`/api/friends/locations?line_user_id=${encodeURIComponent(lineUserId)}`);
+      if (!res.ok) throw new Error("locations failed");
+      return await res.json();
     }
 
     function planLabel(plan) {
@@ -770,20 +2163,256 @@
         trial: "7 天試用",
         free: "免費版",
         paid_199: "199 活著價",
+        paid_199_year: "199 活著價年費",
         paid_399: "399 安心版",
-        paid_799: "799 守護版"
+        paid_399_year: "399 安心版年費",
+        paid_799: "799 守護版",
+        paid_799_year: "799 守護版年費"
       }[plan] || "試用中";
+    }
+
+    function planPresentation(plan, trialDaysLeft) {
+      if (plan === "trial") {
+        return {
+          state: "安心體驗",
+          detail: `還有 ${trialDaysLeft ?? 0} 天完整體驗`,
+          tone: "trial"
+        };
+      }
+      if (plan === "free") {
+        return {
+          state: "基本守護",
+          detail: "基礎功能持續可用",
+          tone: "free"
+        };
+      }
+      return {
+        state: "守護已啟用",
+        detail: planLabel(plan),
+        tone: "active"
+      };
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>'"]/g, (character) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "'": "&#39;",
+        '"': "&quot;"
+      })[character]);
     }
 
     function renderContacts() {
       $("contactList").innerHTML = contactData.length
         ? contactData.map((contact, index) => `
           <div class="contact-item">
-            <span>${contact.name || "未命名"}｜${contact.relationship || "聯絡人"}｜${contact.phone || "未填手機"}</span>
-            <button class="action-btn" type="button" onclick="removeContact(${index})">刪除</button>
+            <span class="contact-main"><strong>優先 ${index + 1}</strong>｜${escapeHtml(contact.name || "未命名")}｜${escapeHtml(contact.relationship || "聯絡人")}<br>${escapeHtml(contact.phone || "未填手機")}｜${contact.line_id ? "LINE 已綁定" : "LINE 未綁定"}</span>
+            <span class="contact-actions">
+              <button class="contact-icon-btn" type="button" onclick="moveContact(${index}, -1)" aria-label="提高聯絡順位" title="提高順位" ${index === 0 ? "disabled" : ""}>↑</button>
+              <button class="contact-icon-btn" type="button" onclick="moveContact(${index}, 1)" aria-label="降低聯絡順位" title="降低順位" ${index === contactData.length - 1 ? "disabled" : ""}>↓</button>
+              <button class="contact-icon-btn" type="button" onclick="removeContact(${index})" aria-label="刪除聯絡人" title="刪除">×</button>
+            </span>
           </div>
         `).join("")
         : `<div class="helper">還沒加入聯絡人。</div>`;
+      const boundCount = contactData.filter((contact) => contact.line_id || contact.consent_status === "accepted").length;
+      if ($("guardianCircleText")) {
+        $("guardianCircleText").textContent = boundCount
+          ? `${boundCount} 位已綁定`
+          : "尚未綁定";
+      }
+      if ($("guardianRequirementStatus")) {
+        $("guardianRequirementStatus").textContent = boundCount
+          ? `已完成 ${boundCount} 位 LINE 綁定。系統會依「優先 1、2、3」順序聯絡守護人。`
+          : "尚未完成 LINE 綁定。請至少邀請 1 位守護人，系統每天會提醒一次。";
+      }
+      renderMemberCenter();
+    }
+
+    function moveContact(index, direction) {
+      const target = index + direction;
+      if (target < 0 || target >= contactData.length) return;
+      [contactData[index], contactData[target]] = [contactData[target], contactData[index]];
+      contactData = contactData.map((contact, position) => ({ ...contact, priority: position + 1 }));
+      renderContacts();
+    }
+
+    function memberPlanBenefits(plan) {
+      return {
+        paid_199: { cycle: "199 活著價｜月費方案", contacts: 4, locations: 4, detail: "每日提醒 1 次、24 小時快照定位、LINE 通知 3 位核心守護人。" },
+        paid_199_year: { cycle: "199 活著價｜年費方案", contacts: 6, locations: 6, detail: "每日提醒 2 次、24 小時快照定位、軌跡回放 3 天、LINE 通知 3 位核心守護人。" },
+        paid_399: { cycle: "399 安心版｜月費方案", contacts: 15, locations: 15, detail: "每日提醒 2 次、即時追蹤、軌跡回放 5 天、離線同步 24 小時、LINE 通知 3 位核心守護人。" },
+        paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 20, locations: 20, detail: "每日提醒 3 次、即時追蹤、軌跡回放 7 天、離線同步 24 小時、30 天即時追蹤體驗。" },
+        paid_799: { cycle: "799 守護版｜月費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、軌跡回放 14 天、完整離線同步 7 天、一鍵 SOS、LINE＋簡訊通知 3 位核心守護人。" },
+        paid_799_year: { cycle: "799 守護版｜年費方案", contacts: 50, locations: 50, detail: "每日提醒 5 次、30 天即時追蹤體驗、軌跡回放 30 天、完整離線同步 7 天、一鍵 SOS、LINE＋簡訊＋電話通知 5 位核心守護人。" },
+        free: { cycle: "基本守護｜免費方案", contacts: 1, locations: 1, detail: "基本簽到與 LINE 提醒。" },
+        trial: { cycle: "安心體驗｜7 天試用", contacts: 1, locations: 1, detail: "試用期間可使用基本簽到與 LINE 提醒。" }
+      }[plan] || { cycle: "尚未選擇方案", contacts: 1, locations: 1, detail: "請先選擇適合你的守護方案。" };
+    }
+
+    function renderMemberCenter() {
+      const status = currentStatusData || {};
+      const displayName = lineDisplayName || status.display_name || "LINE 會員";
+      const memberPlan = status.plan || "trial";
+      $("memberDisplayName").textContent = displayName;
+      $("memberAvatar").textContent = displayName.trim().slice(0, 1) || "我";
+      $("memberPlanText").textContent = planLabel(memberPlan);
+      $("memberExpiryText").textContent = status.paid_until
+        ? `使用期限 ${status.paid_until}`
+        : memberPlan === "trial"
+          ? `安心體驗剩餘 ${status.trial_days_left ?? 7} 天`
+          : "尚未設定到期日";
+      const boundCount = contactData.filter((contact) => contact.line_id || contact.consent_status === "accepted").length;
+      $("memberLineAccount").textContent = lineUserId || status.line_user_id ? "LINE 已綁定" : "尚未綁定 LINE";
+      $("memberContactEmail").textContent = status.contact_email || "尚未填寫";
+      $("memberGuardianQuota").textContent = `${boundCount}/${status.contact_limit || currentContactLimit || 1} 位`;
+      $("memberBillingPlan").textContent = planLabel(memberPlan);
+      $("memberBillingCycle").textContent = {
+        monthly: "月繳",
+        yearly: "年繳",
+        trial: "安心體驗"
+      }[status.billing_cycle] || "尚未設定";
+      $("memberPaymentStatus").textContent = {
+        active: "付款成功，方案使用中",
+        trial: "安心體驗中",
+        pending: "等待付款確認",
+        failed: "付款未完成",
+        expired: "方案已到期"
+      }[status.payment_status] || "尚未付費";
+      $("memberBillingExpiry").textContent = status.paid_until || (memberPlan === "trial" ? `體驗剩餘 ${status.trial_days_left ?? 7} 天` : "尚未設定");
+      const benefits = memberPlanBenefits(memberPlan);
+      $("memberPlanCycle").textContent = benefits.cycle;
+      $("memberPlanBenefits").textContent = `${benefits.contacts} 位`;
+      $("memberLocationQuota").textContent = `${benefits.locations} 位`;
+      $("memberPlanBenefitDetail").textContent = benefits.detail;
+      $("memberAutoRenew").checked = Boolean(status.auto_renew_requested || status.auto_renew_enabled);
+      $("memberAutoRenewStatus").textContent = status.auto_renew_enabled
+        ? `自動續扣已啟用${status.next_billing_date ? `，下次扣款日 ${status.next_billing_date}` : ""}。`
+        : status.auto_renew_requested
+          ? "已收到申請；待藍新定期定額完成授權後才會開始每月扣款。"
+          : "目前尚未啟用自動續扣。";
+
+      $("memberGuardianList").innerHTML = contactData.length
+        ? contactData.map((contact) => `
+          <div class="member-data-row">
+            <span>${escapeHtml(contact.name || "未命名守護人")}｜${escapeHtml(contact.relationship || "關係未設定")}</span>
+            <strong>${contact.line_id || contact.consent_status === "accepted" ? "LINE 已綁定" : "等待 LINE 授權"}</strong>
+          </div>
+        `).join("")
+        : `<div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護人</strong></div>`;
+
+      const recentHistory = [...historyData].sort().reverse().slice(0, 10);
+      $("memberHistoryList").innerHTML = recentHistory.length
+        ? recentHistory.map((date, index) => `
+          <div class="member-data-row">
+            <span>${index === 0 ? "最近簽到" : "平安簽到"}</span>
+            <strong>${escapeHtml(date)}</strong>
+          </div>
+        `).join("")
+        : `<div class="member-data-row"><span>簽到紀錄</span><strong>目前沒有紀錄</strong></div>`;
+
+      const isPaid = String(status.plan || "").startsWith("paid_");
+      $("memberUpgradeBtn").hidden = isPaid;
+      $("sosSection").hidden = !Boolean(status.sos_enabled);
+      const guardianGroupIds = status.guardian_group_ids || [];
+      $("guardianGroupsSection").hidden = !(status.guardian_group_limit > 0);
+      $("guardianGroupsList").innerHTML = guardianGroupIds.length
+        ? guardianGroupIds.map((groupId, index) => `
+          <div class="member-data-row">
+            <span>守護群 ${index + 1}</span>
+            <button class="action-btn guardian-group-unbind" type="button" data-group-id="${escapeHtml(groupId)}">解除綁定</button>
+          </div>
+        `).join("")
+        : `<div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護群</strong></div>`;
+      $("memberAdvancedNote").textContent = isPaid
+        ? `${planLabel(status.plan)}已具備進階紀錄資格；可用範圍會依方案開放歷史篩選、資料匯出與定位軌跡回放。`
+        : "升級守護方案後，可依方案使用較長的歷史保存、進階篩選、定位軌跡與回放功能。";
+      renderGuardianDetailsEditor();
+    }
+
+    function is799Plan(plan) {
+      return plan === "paid_799" || plan === "paid_799_year";
+    }
+
+    function guardianDetailsComplete(contact) {
+      return Boolean(
+        contact &&
+        String(contact.name || "").trim() &&
+        String(contact.relationship || "").trim() &&
+        String(contact.phone || "").trim() &&
+        (contact.line_id || contact.consent_status === "accepted")
+      );
+    }
+
+    function populateGuardianDetailsForm() {
+      const select = $("guardianDetailsContact");
+      const index = Number(select.value);
+      const contact = Number.isInteger(index) ? contactData[index] : null;
+      $("guardianDetailsName").value = contact?.name || "";
+      $("guardianDetailsRelation").value = contact?.relationship || "";
+      $("guardianDetailsPhone").value = contact?.phone || "";
+    }
+
+    function renderGuardianDetailsEditor() {
+      const panel = $("guardianDetails799");
+      if (!panel) return;
+      const status = currentStatusData || {};
+      panel.hidden = !is799Plan(status.plan);
+      if (panel.hidden) return;
+
+      const boundContacts = contactData
+        .map((contact, index) => ({ contact, index }))
+        .filter(({ contact }) => contact.line_id || contact.consent_status === "accepted");
+      const select = $("guardianDetailsContact");
+      const previousValue = select.value;
+      select.innerHTML = boundContacts.length
+        ? boundContacts.map(({ contact, index }) => `<option value="${index}">${escapeHtml(contact.name || `守護人 ${index + 1}`)}</option>`).join("")
+        : `<option value="">請先完成 LINE 守護人綁定</option>`;
+      select.disabled = !boundContacts.length;
+      if (boundContacts.some(({ index }) => String(index) === previousValue)) select.value = previousValue;
+      $("guardianDetailsReminderEnabled").checked = status.guardian_details_reminder_enabled !== false;
+
+      const completeCount = boundContacts.filter(({ contact }) => guardianDetailsComplete(contact)).length;
+      $("guardianDetailsStatus").textContent = completeCount
+        ? `已完成 ${completeCount} 位守護人必要資料`
+        : "請至少完成 1 位守護人的姓名、關係與電話";
+      populateGuardianDetailsForm();
+    }
+
+    async function saveGuardianDetails() {
+      const select = $("guardianDetailsContact");
+      const index = Number(select.value);
+      if (!Number.isInteger(index) || !contactData[index]) {
+        alert("請先用 LINE 邀請並綁定至少 1 位守護人。");
+        return;
+      }
+      const name = $("guardianDetailsName").value.trim();
+      const relationship = $("guardianDetailsRelation").value;
+      const phone = $("guardianDetailsPhone").value.trim();
+      if (!name || !relationship || !phone) {
+        alert("請填寫守護人姓名、關係與聯絡電話。");
+        return;
+      }
+
+      contactData[index] = { ...contactData[index], name, relationship, phone };
+      try {
+        const savedContacts = await apiSaveContacts(true);
+        contactData = savedContacts.contacts || contactData;
+        const status = currentStatusData || {};
+        const savedStatus = await apiSaveSettings({
+          contact_email: status.contact_email || "",
+          grace_hours: status.grace_hours || 36,
+          reminder_time: status.reminder_time || "09:00",
+          contact_capacity_reminder_enabled: Boolean(status.contact_capacity_reminder_enabled),
+          guardian_details_reminder_enabled: $("guardianDetailsReminderEnabled").checked
+        });
+        renderContacts();
+        renderStatus(savedStatus);
+        alert("守護資料已儲存。緊急時會依你設定的順序通知守護人。");
+      } catch (error) {
+        alert(error.message || "守護資料儲存失敗，請稍後再試。");
+      }
     }
 
     async function refreshContacts() {
@@ -805,6 +2434,7 @@
       const contact = {
         name: $("contactName").value.trim(),
         phone: $("contactPhone").value.trim(),
+        line_id: $("contactLineId").value.trim(),
         relationship: $("contactRelation").value.trim(),
         notify_methods: [$("contactMethod").value],
         priority: contactData.length + 1,
@@ -817,13 +2447,177 @@
       contactData.push(contact);
       $("contactName").value = "";
       $("contactPhone").value = "";
-      $("contactRelation").value = "";
+      $("contactLineId").value = "";
+      $("contactRelation").value = "家人";
       renderContacts();
     }
 
     function removeContact(index) {
       contactData.splice(index, 1);
       renderContacts();
+    }
+
+    async function shareContactInvite() {
+      const nickname = $("inviteNickname") ? $("inviteNickname").value.trim() : "";
+      const { bindUrl, text } = buildContactInvite(nickname);
+      try {
+        if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
+          await liff.shareTargetPicker([
+            {
+              type: "text",
+              text
+            }
+          ]);
+        } else if (navigator.share) {
+          await navigator.share({ title: "今天還在嗎 守護人邀請", text, url: bindUrl });
+        } else if (navigator.clipboard) {
+          await navigator.clipboard.writeText(text);
+          alert("邀請文案已複製，可以貼到 LINE 傳給聯絡人。");
+        } else {
+          alert(text);
+        }
+      } catch (error) {
+        alert("邀請已取消，想分享時可以再按一次。");
+      }
+    }
+
+    function maybeShowGuardianPrompt() {
+      if (localStorage.getItem("guardian_prompt_seen") === "1") return;
+      $("guardianPrompt").hidden = false;
+      localStorage.setItem("guardian_prompt_seen", "1");
+    }
+
+    function closeGuardianPrompt() {
+      $("guardianPrompt").hidden = true;
+    }
+
+    function goGuardianInvite() {
+      closeGuardianPrompt();
+      document.querySelector('[aria-label="安心守護邀請任務"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function openUpgradePlans() {
+      $("pricingGrid").hidden = false;
+      $("planToggleBtn").textContent = "收起方案";
+      document.querySelector('[aria-label="升級方案"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    async function startPlanCheckout(planChoice, button) {
+      const planMap = {
+        "199": "paid_199",
+        "199-month": "paid_199",
+        "199-year": "paid_199_year",
+        "399": "paid_399",
+        "399-month": "paid_399",
+        "399-year": "paid_399_year",
+        "799": "paid_799",
+        "799-month": "paid_799",
+        "799-year": "paid_799_year"
+      };
+      const plan = planMap[planChoice];
+      const notice = $("paymentOrderNotice");
+      if (!plan) return;
+      if (!lineUserId) {
+        notice.hidden = false;
+        notice.textContent = "請先用 LINE 開啟並完成一鍵登入，再選擇付款方案。";
+        if (window.liff && !liff.isLoggedIn()) liff.login();
+        return;
+      }
+
+      const originalText = button.textContent;
+      button.disabled = true;
+      button.textContent = "建立訂單中…";
+      try {
+        const order = await apiCreatePaymentOrder(plan);
+        notice.hidden = false;
+        notice.textContent = `訂單 ${order.order_id} 已建立，金額 NT$${Number(order.amount).toLocaleString("zh-TW")}。藍新商店審核與金鑰設定完成後，這裡會直接前往安全付款頁。現在不會扣款。`;
+        notice.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch (error) {
+        notice.hidden = false;
+        notice.textContent = "訂單暫時無法建立，請稍後再試，或聯絡客服協助。";
+      } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    }
+
+    function openRequestedPage() {
+      const page = new URLSearchParams(location.search).get("page");
+      if (!page) return;
+      if (page === "guardian") {
+        goGuardianInvite();
+        return;
+      }
+      if (page === "status") {
+        setCalendarExpanded(true);
+        document.querySelector('[aria-label="簽到月曆"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+      if (page === "profile") {
+        setMemberCenterExpanded(true);
+        document.querySelector('[aria-label="會員個人中心"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+      if (page === "plans") {
+        $("pricingGrid").hidden = false;
+        $("planToggleBtn").textContent = "收起方案";
+        document.querySelector('[aria-label="升級方案"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+
+    function openUpgradePlans() {
+      $("pricingGrid").hidden = false;
+      $("planToggleBtn").textContent = "收起方案";
+      document.querySelector('[aria-label="升級方案"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function maybeShowInviteAcceptPrompt() {
+      const inviteFrom = new URLSearchParams(location.search).get("invite_from");
+      if (!inviteFrom || inviteFrom === lineUserId) return;
+      $("inviteAcceptPrompt").hidden = false;
+    }
+
+    function closeInviteAcceptPrompt() {
+      $("inviteAcceptPrompt").hidden = true;
+    }
+
+    async function acceptGuardianInviteFromPrompt() {
+      const inviteFrom = new URLSearchParams(location.search).get("invite_from");
+      if (!inviteFrom) return closeInviteAcceptPrompt();
+      if (!lineUserId && window.liff && !liff.isLoggedIn()) {
+        liff.login();
+        return;
+      }
+      if (!lineUserId) {
+        alert("請先在 LINE 內開啟連結，完成官方授權後即可綁定。");
+        return;
+      }
+      const bindResult = await apiBindEmergencyContact(inviteFrom);
+      if (bindResult?.bound) {
+        closeInviteAcceptPrompt();
+        alert("綁定完成！你已成為對方的守護人，緊急時可收到 LINE 警報與位置通知。");
+      }
+    }
+
+    function openPrivacyExplain() {
+      $("privacyExplainPrompt").hidden = false;
+    }
+
+    function closePrivacyExplain() {
+      $("privacyExplainPrompt").hidden = true;
+    }
+
+    function showWarningPrompt(remainingMs) {
+      const total = Math.max(0, remainingMs || 15 * 60 * 1000);
+      const minutes = Math.floor(total / 60000);
+      const seconds = Math.floor((total % 60000) / 1000);
+      $("warningCountdown").textContent = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+      $("warningPrompt").hidden = false;
+      if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
+    }
+
+    function hideWarningPrompt() {
+      $("warningPrompt").hidden = true;
     }
 
     async function saveContacts() {
@@ -835,6 +2629,183 @@
         alert("聯絡人已儲存。");
       } catch (error) {
         alert(error.message || "聯絡人儲存失敗。");
+      }
+    }
+
+    function formatMapTime(value) {
+      if (!value) return "未知時間";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+    }
+
+    async function refreshFriendLocations() {
+      try {
+        const data = await apiGetFriendLocations();
+        $("friendMap").innerHTML = (data.friends || []).length
+          ? data.friends.map((friend) => {
+            const mapUrl = `https://www.google.com/maps?q=${friend.latitude},${friend.longitude}`;
+            return `
+              <div class="friend-pin">
+                <div>
+                  <strong>${friend.display_name || "LINE 好友"}</strong>
+                  <small>${friend.city || "未填縣市"}｜更新 ${formatMapTime(friend.updated_at)}</small>
+                </div>
+                <a href="${mapUrl}" target="_blank" rel="noopener">開地圖</a>
+              </div>
+            `;
+          }).join("")
+          : `<div class="helper">還沒有好友位置。邀請朋友加入後，這裡會顯示大家的地圖連結。</div>`;
+      } catch (error) {
+        $("friendMap").innerHTML = `<div class="helper">好友位置暫時讀取失敗，稍後再試。</div>`;
+      }
+    }
+
+    async function shareFriendInvite() {
+      try {
+        if (!lineUserId) throw new Error("請先在 LINE 裡開啟，完成會員綁定。");
+        const data = await apiCreateFriendInvite();
+        const inviteUrl = `${location.origin}${location.pathname}?friend_invite=${encodeURIComponent(data.invite_code)}`;
+        const text = `我正在使用「今天還在嗎」好友地圖，想邀請你互相分享 24 小時位置快照。\n\n點開連結後用 LINE 登入，邀請碼會自動帶入：\n${inviteUrl}`;
+        if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
+          await liff.shareTargetPicker([{ type: "text", text }]);
+        } else if (navigator.share) {
+          await navigator.share({ title: "今天還在嗎 好友地圖邀請", text, url: inviteUrl });
+        } else if (navigator.clipboard) {
+          await navigator.clipboard.writeText(text);
+          alert("好友地圖邀請已複製，可以貼到 LINE 傳給朋友。");
+        } else {
+          alert(text);
+        }
+      } catch (error) {
+        alert(error.message || "好友邀請分享失敗。");
+      }
+    }
+
+    function maybePrefillFriendInvite() {
+      const inviteCode = new URLSearchParams(location.search).get("friend_invite");
+      if (!inviteCode) return;
+      pendingFriendInviteCode = inviteCode.toUpperCase();
+      $("friendInviteStatus").textContent = "已收到 LINE 好友邀請，可以加入好友";
+      document.querySelector('[aria-label="好友地圖"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    async function acceptFriendInvite() {
+      try {
+        if (!lineUserId) throw new Error("請先從 LINE 裡開啟，完成會員綁定。");
+        if (!pendingFriendInviteCode) throw new Error("請先開啟好友傳來的 LINE 邀請連結，或掃描 QR Code。");
+        await apiAcceptFriendInvite(pendingFriendInviteCode);
+        pendingFriendInviteCode = "";
+        $("friendInviteStatus").textContent = "好友已加入";
+        await refreshFriendLocations();
+        alert("已加入好友。");
+      } catch (error) {
+        alert(error.message || "加入好友失敗。");
+      }
+    }
+
+    function inferTaiwanCounty(latitude, longitude) {
+      const countyCenters = [
+        ["基隆市", 25.1283, 121.7419], ["台北市", 25.0375, 121.5637],
+        ["新北市", 25.0114, 121.4618], ["桃園市", 24.9937, 121.3010],
+        ["新竹市", 24.8138, 120.9675], ["新竹縣", 24.8387, 121.0177],
+        ["苗栗縣", 24.5602, 120.8214], ["台中市", 24.1477, 120.6736],
+        ["彰化縣", 24.0756, 120.5440], ["南投縣", 23.9609, 120.9719],
+        ["雲林縣", 23.7092, 120.4313], ["嘉義市", 23.4801, 120.4491],
+        ["嘉義縣", 23.4518, 120.2555], ["台南市", 22.9997, 120.2270],
+        ["高雄市", 22.6273, 120.3014], ["屏東縣", 22.5519, 120.5488],
+        ["宜蘭縣", 24.7021, 121.7378], ["花蓮縣", 23.9911, 121.6112],
+        ["台東縣", 22.7554, 121.1500], ["澎湖縣", 23.5712, 119.5793],
+        ["金門縣", 24.4494, 118.3767], ["連江縣", 26.1605, 119.9517]
+      ];
+      const longitudeScale = Math.cos(latitude * Math.PI / 180);
+      return countyCenters.reduce((nearest, item) => {
+        const distance = Math.pow(latitude - item[1], 2) + Math.pow((longitude - item[2]) * longitudeScale, 2);
+        return distance < nearest.distance ? { name: item[0], distance } : nearest;
+      }, { name: "台灣", distance: Number.POSITIVE_INFINITY }).name;
+    }
+
+    function extractFriendInviteCode(rawValue) {
+      const value = String(rawValue || "").trim();
+      if (!value) return "";
+      try {
+        const url = new URL(value, location.href);
+        return String(url.searchParams.get("friend_invite") || "").trim().toUpperCase();
+      } catch (error) {
+        return /^[A-Z0-9-]{4,40}$/i.test(value) ? value.toUpperCase() : "";
+      }
+    }
+
+    function stopQrScanner() {
+      if (qrScanTimer) clearInterval(qrScanTimer);
+      qrScanTimer = null;
+      if (qrScanStream) qrScanStream.getTracks().forEach((track) => track.stop());
+      qrScanStream = null;
+      $("qrVideo").srcObject = null;
+      $("qrScannerPrompt").hidden = true;
+    }
+
+    async function startQrScanner() {
+      if (!("BarcodeDetector" in window) || !navigator.mediaDevices?.getUserMedia) {
+        alert("這台裝置暫時不支援直接掃描，請好友改用 LINE 分享邀請連結給你。");
+        return;
+      }
+      try {
+        const detector = new BarcodeDetector({ formats: ["qr_code"] });
+        qrScanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+        $("qrScannerPrompt").hidden = false;
+        $("qrVideo").srcObject = qrScanStream;
+        await $("qrVideo").play();
+        qrScanTimer = setInterval(async () => {
+          try {
+            const results = await detector.detect($("qrVideo"));
+            const code = extractFriendInviteCode(results[0]?.rawValue);
+            if (!code) return;
+            pendingFriendInviteCode = code;
+            $("friendInviteStatus").textContent = "已讀取好友邀請，可以加入好友";
+            stopQrScanner();
+            alert("已讀取好友邀請碼，確認後按「加入好友」。");
+          } catch (error) {
+            // Keep scanning while the camera is active.
+          }
+        }, 450);
+      } catch (error) {
+        stopQrScanner();
+        alert("目前無法開啟相機，請確認相機權限，或請好友改用 LINE 分享邀請連結。");
+      }
+    }
+
+    async function shareMyLocation() {
+      try {
+        if (!lineUserId) throw new Error("請先從 LINE 裡開啟，完成會員綁定。");
+        if (!navigator.geolocation) throw new Error("這台裝置不支援定位。");
+        navigator.geolocation.getCurrentPosition(
+          async (position) => {
+            try {
+              const city = inferTaiwanCounty(position.coords.latitude, position.coords.longitude);
+              await apiUpdateLocation(position, city);
+              await refreshFriendLocations();
+              alert(`已分享 ${city} 的位置，24 小時後會自動失效。`);
+            } catch (error) {
+              alert(error.message || "位置分享失敗。");
+            }
+          },
+          () => alert("沒有取得定位權限，所以無法分享位置。"),
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+        );
+      } catch (error) {
+        alert(error.message || "位置分享失敗。");
+      }
+    }
+
+    async function stopLocationSharing() {
+      try {
+        if (!lineUserId) throw new Error("請先從 LINE 裡開啟，完成會員綁定。");
+        await apiStopLocation();
+        await refreshFriendLocations();
+        alert("已停止分享位置。");
+      } catch (error) {
+        alert(error.message || "停止分享失敗。");
       }
     }
 
@@ -863,6 +2834,16 @@
             picture_url: profile.pictureUrl || ""
           })
         });
+        const inviteFrom = new URLSearchParams(location.search).get("invite_from");
+        if (inviteFrom && inviteFrom !== lineUserId) {
+          const bindResult = await apiBindEmergencyContact(inviteFrom);
+          if (bindResult?.bound) {
+            closeInviteAcceptPrompt();
+            alert("綁定完成！你已成為對方的緊急聯絡人，系統也已送出測試提醒。");
+          }
+        } else if (!inviteFrom) {
+          maybeShowGuardianPrompt();
+        }
       } catch (error) {
         console.warn("LINE 初始化未完成，改用一般模式。", error);
       }
@@ -870,6 +2851,9 @@
 
     function renderCalendar(year, month, history) {
       $("monthTitle").textContent = `${year}年 ${month + 1}月`;
+      const monthPrefix = `${year}-${String(month + 1).padStart(2, "0")}-`;
+      const monthCheckins = (history || []).filter((date) => date.startsWith(monthPrefix)).length;
+      $("monthCheckinSummary").textContent = `本月已簽到 ${monthCheckins} 天`;
       const firstDay = new Date(year, month, 1).getDay();
       const daysInMonth = new Date(year, month + 1, 0).getDate();
       const today = getToday();
@@ -888,7 +2872,169 @@
       $("calendarGrid").innerHTML = html;
     }
 
+    function setCalendarExpanded(expanded) {
+      $("calendarDetails").hidden = !expanded;
+      $("calendarToggleBtn").setAttribute("aria-expanded", String(expanded));
+      const hint = $("calendarToggleBtn").querySelector("small");
+      if (hint) hint.textContent = expanded ? "收起簽到月曆" : "展開簽到月曆";
+    }
+
+    function setStatusExpanded(expanded) {
+      $("statusDetails").hidden = !expanded;
+      $("statusToggleBtn").setAttribute("aria-expanded", String(expanded));
+      const label = $("statusToggleBtn").querySelector("strong");
+      if (label) label.textContent = expanded ? "收起今日狀態" : "查看今日狀態";
+    }
+
+    function setMemberCenterExpanded(expanded) {
+      $("memberCenterDetails").hidden = !expanded;
+      $("memberCenterToggleBtn").setAttribute("aria-expanded", String(expanded));
+    }
+
+    async function exportMyData() {
+      const button = $("exportMyDataBtn");
+      button.disabled = true;
+      button.textContent = "整理資料中…";
+      try {
+        const exportData = await apiExportMyData();
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `今天還在嗎_我的完整資料_${getToday()}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      } catch (error) {
+        alert("資料暫時無法匯出，請稍後再試。");
+      } finally {
+        button.disabled = false;
+        button.textContent = "匯出我的資料";
+      }
+    }
+
+    async function deleteCheckinHistory() {
+      if (!confirm("確定要刪除全部簽到紀錄嗎？守護人資料會保留。")) return;
+      try {
+        await apiDeleteCheckinHistory();
+        historyData = [];
+        if (currentStatusData) {
+          currentStatusData.history = [];
+          currentStatusData.last_check_in = null;
+        }
+        renderMemberCenter();
+        renderCalendar(currentYear, currentMonth, historyData);
+        await refreshStatus();
+        alert("簽到紀錄已刪除，守護人資料仍然保留。");
+      } catch (error) {
+        alert("刪除失敗，請稍後再試。");
+      }
+    }
+
+    async function deleteAccountAndData() {
+      if (!confirm("確定要刪除帳號與全部個人資料嗎？這個動作無法復原。")) return;
+      if (!confirm("再次確認：守護人、簽到與位置資料都會刪除。")) return;
+      try {
+        await apiDeleteAccount();
+        accountDeleted = true;
+        contactData = [];
+        historyData = [];
+        currentStatusData = buildLocalStatus({ ...defaultState });
+        renderContacts();
+        renderStatus(currentStatusData);
+        alert("帳號與個人資料已刪除。之後重新使用 LINE 登入時，會建立新的帳號。");
+        if (window.liff && liff.isInClient && liff.isInClient()) liff.closeWindow();
+      } catch (error) {
+        alert("帳號刪除失敗，請稍後再試或聯絡客服。");
+      }
+    }
+
+    function goGuardianSettings() {
+      document.querySelector('[aria-label="緊急聯絡人"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    async function saveBillingPreferences() {
+      try {
+        renderStatus(await apiSaveBillingPreferences($("memberAutoRenew").checked));
+        alert($("memberAutoRenew").checked
+          ? "已記錄自動續扣申請。完成藍新授權後才會正式生效。"
+          : "已記錄取消續扣申請；若原本已啟用，需等藍新確認後停止。"
+        );
+      } catch (error) {
+        alert("續扣設定暫時無法儲存，請稍後再試。");
+      }
+    }
+
+    async function refreshLocationForSos() {
+      if (!navigator.geolocation || !lineUserId || useLocalMode) return;
+      await new Promise((resolve) => {
+        navigator.geolocation.getCurrentPosition(async (position) => {
+          try {
+            await apiUpdateLocation(
+              position.coords.latitude,
+              position.coords.longitude,
+              inferTaiwanCounty(position.coords.latitude, position.coords.longitude)
+            );
+          } catch (error) {
+            // SOS 不能因定位失敗而被阻擋，後端仍會使用最後一次可用位置。
+          }
+          resolve();
+        }, resolve, { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 });
+      });
+    }
+
+    async function triggerSos() {
+      if (!lineUserId) {
+        alert("請先使用 LINE 一鍵登入，才能通知你的守護人。");
+        if (window.liff && !liff.isLoggedIn()) liff.login();
+        return;
+      }
+      if (!confirm("確定要發出 SOS 嗎？系統會立即通知你的核心守護人。")) return;
+      const button = $("sosBtn");
+      button.disabled = true;
+      button.textContent = "正在通知守護人…";
+      try {
+        await refreshLocationForSos();
+        const result = await apiTriggerSos();
+        alert(`SOS 已送出，成功通知 ${result.sent} 位核心守護人。`);
+      } catch (error) {
+        const message = String(error.message || "");
+        alert(message.includes("no bound LINE guardians")
+          ? "目前沒有可接收 LINE 的守護人，請先完成至少 1 位守護人綁定。"
+          : "SOS 暫時無法送出，請立即撥打 119，並直接聯絡親友。"
+        );
+      } finally {
+        button.disabled = false;
+        button.textContent = "發出 SOS 緊急求助";
+      }
+    }
+
+    async function unbindGuardianGroup(groupId) {
+      if (!groupId || !confirm("確定要解除這個守護群嗎？解除後，群組將不再收到緊急通知。")) return;
+      try {
+        const result = await apiUnbindGuardianGroup(groupId);
+        if (currentStatusData) currentStatusData.guardian_group_ids = result.guardian_group_ids || [];
+        renderMemberCenter();
+        alert("守護群已解除綁定。");
+      } catch (error) {
+        alert("暫時無法解除守護群，請稍後再試。");
+      }
+    }
+
+    function calculateStreak(history) {
+      const checkedDays = new Set(history || []);
+      let streak = 0;
+      const cursor = new Date();
+      while (checkedDays.has(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`)) {
+        streak += 1;
+        cursor.setDate(cursor.getDate() - 1);
+      }
+      return streak;
+    }
+
     function renderStatus(data) {
+      currentStatusData = data;
       historyData = data.history || [];
       $("dailyStatus").textContent = data.is_today_checked ? "今日已簽到" : "今日未簽到";
       $("lastDate").textContent = formatDate(data.last_check_in);
@@ -901,8 +3047,17 @@
 
       const countdown = $("countdownDisplay");
       if (data.is_overdue) {
+        setStatusExpanded(true);
         countdown.textContent = "已逾期";
         countdown.style.color = "#dc2626";
+        hideWarningPrompt();
+      } else if (data.is_prealert) {
+        const rem = data.cancel_remaining_ms || 15 * 60 * 1000;
+        const m = Math.floor(rem / 60000);
+        const s = Math.floor((rem % 60000) / 1000);
+        countdown.textContent = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+        countdown.style.color = "#dc2626";
+        showWarningPrompt(rem);
       } else if (data.last_check_in) {
         const rem = data.remaining_ms || 0;
         const h = Math.floor(rem / 3600000);
@@ -910,9 +3065,11 @@
         const s = Math.floor((rem % 60000) / 1000);
         countdown.textContent = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
         countdown.style.color = "";
+        hideWarningPrompt();
       } else {
         countdown.textContent = "--:--:--";
         countdown.style.color = "";
+        hideWarningPrompt();
       }
 
       $("checkBtn").className = "check-btn";
@@ -922,9 +3079,14 @@
       $("contactEmail").value = data.contact_email || "";
       $("graceHours").value = String(data.grace_hours || 36);
       $("reminderTime").value = data.reminder_time || "09:00";
+      $("contactCapacityReminder").checked = Boolean(data.contact_capacity_reminder_enabled);
+      const planView = planPresentation(data.plan, data.trial_days_left);
+      $("planStateLabel").textContent = planView.state;
+      $("planDetailText").textContent = planView.detail;
+      $("planStrip").dataset.planTone = planView.tone;
       $("planName").textContent = planLabel(data.plan);
-      $("trialDays").textContent = String(data.trial_days_left ?? "-");
       $("contactLimit").textContent = String(data.contact_limit || 1);
+      $("streakText").textContent = `${calculateStreak(historyData)} 天`;
       currentContactLimit = data.contact_limit || 1;
       $("modeNote").textContent = useLocalMode
         ? "目前使用瀏覽器儲存，資料只會留在這台裝置。"
@@ -932,9 +3094,11 @@
           ? `目前已綁定 LINE：${lineDisplayName || "LINE 使用者"}。`
           : "目前已連上後端，資料會存到本機 JSON 檔。";
       renderCalendar(currentYear, currentMonth, historyData);
+      renderMemberCenter();
     }
 
     async function refreshStatus() {
+      if (accountDeleted) return;
       renderStatus(await apiGetStatus());
     }
 
@@ -951,7 +3115,8 @@
         const payload = {
           contact_email: $("contactEmail").value.trim(),
           grace_hours: Number($("graceHours").value),
-          reminder_time: $("reminderTime").value
+          reminder_time: $("reminderTime").value,
+          contact_capacity_reminder_enabled: $("contactCapacityReminder").checked
         };
         renderStatus(await apiSaveSettings(payload));
         alert("設定已儲存。");
@@ -984,15 +3149,66 @@
     $("checkBtn").addEventListener("click", doCheckin);
     $("saveBtn").addEventListener("click", saveSettings);
     $("resetBtn").addEventListener("click", resetCheckin);
-    $("addContactBtn").addEventListener("click", addContact);
-    $("saveContactsBtn").addEventListener("click", saveContacts);
+    $("shareContactInviteBtn").addEventListener("click", shareContactInvite);
+    document.querySelectorAll(".share-contact-invite-btn").forEach((button) => {
+      button.addEventListener("click", shareContactInvite);
+    });
+    $("promptInviteBtn").addEventListener("click", goGuardianInvite);
+    $("dismissGuardianPromptBtn").addEventListener("click", closeGuardianPrompt);
+    $("acceptGuardianInviteBtn").addEventListener("click", acceptGuardianInviteFromPrompt);
+    $("cancelWarningBtn").addEventListener("click", hideWarningPrompt);
+    $("confirmWarningBtn").addEventListener("click", hideWarningPrompt);
+    $("openPrivacyExplainBtn").addEventListener("click", openPrivacyExplain);
+    $("closePrivacyExplainBtn").addEventListener("click", closePrivacyExplain);
+    $("shareFriendInviteBtn").addEventListener("click", shareFriendInvite);
+    $("acceptInviteBtn").addEventListener("click", acceptFriendInvite);
+    $("scanQrBtn").addEventListener("click", startQrScanner);
+    $("closeQrScannerBtn").addEventListener("click", stopQrScanner);
+    $("shareLocationBtn").addEventListener("click", shareMyLocation);
+    $("stopLocationBtn").addEventListener("click", stopLocationSharing);
+    $("memberUpgradeBtn").addEventListener("click", openUpgradePlans);
+    document.querySelectorAll(".price-btn[data-plan]").forEach((button) => {
+      button.addEventListener("click", () => startPlanCheckout(button.dataset.plan, button));
+    });
+    $("planToggleBtn").addEventListener("click", () => {
+      const pricing = $("pricingGrid");
+      const willShow = pricing.hidden;
+      pricing.hidden = !willShow;
+      $("planToggleBtn").textContent = willShow ? "收起方案" : "查看方案";
+    });
+    $("calendarToggleBtn").addEventListener("click", () => {
+      setCalendarExpanded($("calendarToggleBtn").getAttribute("aria-expanded") !== "true");
+    });
+    $("statusToggleBtn").addEventListener("click", () => {
+      setStatusExpanded($("statusToggleBtn").getAttribute("aria-expanded") !== "true");
+    });
+    $("memberCenterToggleBtn").addEventListener("click", () => {
+      setMemberCenterExpanded($("memberCenterToggleBtn").getAttribute("aria-expanded") !== "true");
+    });
+    $("exportMyDataBtn").addEventListener("click", exportMyData);
+    $("deleteCheckinHistoryBtn").addEventListener("click", deleteCheckinHistory);
+    $("deleteAccountBtn").addEventListener("click", deleteAccountAndData);
+    $("memberGuardianSettingsBtn").addEventListener("click", goGuardianSettings);
+    $("memberShareGuardianBtn").addEventListener("click", shareContactInvite);
+    $("guardianDetailsContact").addEventListener("change", populateGuardianDetailsForm);
+    $("saveGuardianDetailsBtn").addEventListener("click", saveGuardianDetails);
+    $("saveBillingPreferencesBtn").addEventListener("click", saveBillingPreferences);
+    $("sosBtn").addEventListener("click", triggerSos);
+    $("guardianGroupsList").addEventListener("click", (event) => {
+      const button = event.target.closest(".guardian-group-unbind");
+      if (button) unbindGuardianGroup(button.dataset.groupId);
+    });
     $("prevMonth").addEventListener("click", () => changeMonth(-1));
     $("nextMonth").addEventListener("click", () => changeMonth(1));
 
     setTheme(localStorage.getItem("preferred_theme") || "classic");
+    maybePrefillFriendInvite();
+    maybeShowInviteAcceptPrompt();
     initLine().finally(async () => {
       await refreshStatus();
       await refreshContacts();
+      await refreshFriendLocations();
+      openRequestedPage();
     });
     setInterval(refreshStatus, 5000);
   </script>

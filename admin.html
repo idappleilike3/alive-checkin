@@ -37,7 +37,7 @@
     }
     .toolbar {
       display: grid;
-      grid-template-columns: minmax(180px, 1fr) auto auto;
+      grid-template-columns: minmax(180px, 1fr) auto auto auto;
       gap: 10px;
       margin-bottom: 16px;
     }
@@ -57,9 +57,10 @@
       box-shadow: 0 10px 22px rgba(34,197,94,0.22);
     }
     button.secondary { background: linear-gradient(135deg, #fb7185, #db2777); }
+    button.info { background: linear-gradient(135deg, #38bdf8, #2563eb); }
     .stats {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
       gap: 12px;
       margin-bottom: 16px;
     }
@@ -71,7 +72,116 @@
     }
     .stat strong { display: block; font-size: 28px; margin-bottom: 2px; }
     .stat span { color: #667085; font-size: 13px; }
+    .release-status {
+      margin-bottom: 16px;
+      padding: 4px 0 10px;
+      border-top: 1px solid #e2e8f0;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .release-status h2 {
+      margin: 12px 0 8px;
+      font-size: 18px;
+    }
+    .release-row {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.4fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 0;
+      border-top: 1px solid #edf1f5;
+    }
+    .release-row:first-of-type { border-top: 0; }
+    .release-row strong { font-size: 14px; }
+    .release-row span:not(.badge) { color: #667085; font-size: 13px; line-height: 1.5; }
     .table-wrap { overflow-x: auto; }
+    .plan-reference {
+      margin-bottom: 16px;
+      border-radius: 16px;
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+      padding: 14px;
+      overflow-x: auto;
+    }
+    .plan-reference h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+    .plan-reference table {
+      min-width: 920px;
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .plan-reference .hot-plan {
+      background: #ecfdf5;
+    }
+    .plan-reference .gift {
+      color: #16a34a;
+      font-weight: 900;
+    }
+    .log-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .reward-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .support-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .support-item {
+      border: 1px solid #e8edf3;
+      border-radius: 14px;
+      background: #f8fafc;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+    .support-item textarea {
+      width: 100%;
+      min-height: 72px;
+      border-radius: 12px;
+      border: 1px solid #d8dee9;
+      padding: 10px 12px;
+      font: inherit;
+      resize: vertical;
+    }
+    .support-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      color: #667085;
+      font-size: 13px;
+    }
+    .reward-item {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid #e8edf3;
+      border-radius: 14px;
+      background: #f8fafc;
+      padding: 10px 12px;
+      font-size: 13px;
+    }
+    .log-item {
+      display: grid;
+      grid-template-columns: 120px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid #e8edf3;
+      border-radius: 14px;
+      background: #f8fafc;
+      padding: 10px 12px;
+      font-size: 13px;
+    }
+    .log-item strong { font-size: 14px; }
+    .log-item small { color: #667085; }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -85,6 +195,42 @@
       vertical-align: middle;
     }
     th { color: #667085; font-size: 12px; }
+    .plan-reference tbody tr { transition: background 0.18s ease; }
+    .plan-reference tbody tr:hover { filter: saturate(1.05); }
+    .plan-reference .tier-199 {
+      --tier-color: #0f8a61;
+      background: #f0fbf6;
+    }
+    .plan-reference .tier-399 {
+      --tier-color: #087f91;
+      background: #effafd;
+    }
+    .plan-reference .tier-799 {
+      --tier-color: #99620b;
+      background: #fff9e9;
+    }
+    .plan-reference tr[class*="tier-"] td:first-child {
+      border-left: 5px solid var(--tier-color);
+      color: var(--tier-color);
+      font-weight: 900;
+    }
+    .plan-reference .billing-year {
+      box-shadow: inset 0 1px 0 color-mix(in srgb, var(--tier-color) 24%, transparent),
+                  inset 0 -1px 0 color-mix(in srgb, var(--tier-color) 24%, transparent);
+      font-weight: 720;
+    }
+    .plan-reference .billing-year td:nth-child(2)::after {
+      content: "年繳送 2 個月";
+      display: block;
+      width: fit-content;
+      margin-top: 5px;
+      border-radius: 999px;
+      padding: 3px 7px;
+      color: #fff;
+      background: var(--tier-color);
+      font-size: 10px;
+      font-weight: 900;
+    }
     .badge {
       display: inline-flex;
       align-items: center;
@@ -116,6 +262,8 @@
       body { padding: 12px; }
       .topbar, .toolbar { grid-template-columns: 1fr; display: grid; }
       .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .release-row { grid-template-columns: 1fr auto; }
+      .release-row span:not(.badge) { grid-column: 1 / -1; }
     }
   </style>
 </head>
@@ -132,7 +280,10 @@
       <div class="toolbar">
         <input id="password" type="password" placeholder="後台密碼，沒設定可留空">
         <button id="refreshBtn" type="button">刷新</button>
+        <button id="contactRemindBtn" class="info" type="button">提醒填聯絡人</button>
         <button id="remindBtn" class="secondary" type="button">推播逾期提醒</button>
+        <button id="renewalRemindBtn" class="secondary" type="button">推播續費提醒</button>
+        <button id="createBackupBtn" class="info" type="button">立即備份</button>
       </div>
 
       <div class="stats">
@@ -140,6 +291,150 @@
         <div class="stat"><strong id="checkedToday">0</strong><span>今日已簽到</span></div>
         <div class="stat"><strong id="warningUsers">0</strong><span>快到時間</span></div>
         <div class="stat"><strong id="overdueUsers">0</strong><span>已逾期</span></div>
+        <div class="stat"><strong id="guardianGroups">0</strong><span>守護群</span></div>
+        <div class="stat"><strong id="paidRevenue">NT$0</strong><span>已付款營收</span></div>
+        <div class="stat"><strong id="paidOrders">0</strong><span>已付款訂單</span></div>
+        <div class="stat"><strong id="pendingOrders">0</strong><span>待付款訂單</span></div>
+      </div>
+
+      <h2 style="margin: 0 0 8px;">台灣縣市會員與訂單</h2>
+      <p class="note">依會員實際分享的位置縣市統計；尚未分享位置的會員會列在「未提供」。</p>
+      <div class="table-wrap" style="margin-bottom: 16px;">
+        <table>
+          <thead>
+            <tr>
+              <th>縣市</th>
+              <th>會員數</th>
+              <th>訂單數</th>
+              <th>已付款</th>
+              <th>營收</th>
+            </tr>
+          </thead>
+          <tbody id="countyStatsBody">
+            <tr><td colspan="5">尚未載入縣市資料</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <section class="release-status" aria-label="功能上線狀態">
+        <h2>功能上線狀態</h2>
+        <div class="release-row">
+          <strong>簽到、守護人與 LIFF 一鍵登入</strong>
+          <span>程式已完成；LIFF 需等 Render 公開網址設定為 Endpoint URL 後正式啟用。</span>
+          <span class="badge ok">已完成</span>
+        </div>
+        <div class="release-row">
+          <strong>會員方案與後台調整</strong>
+          <span>六種月費／年費方案、最新價格及 799 通知權益已同步。</span>
+          <span class="badge ok">已完成</span>
+        </div>
+        <div class="release-row">
+          <strong>守護群付費權限</strong>
+          <span>限有效 799 年費會員建立，最多綁定 3 群；資格不符時 Bot 會說明並退出。</span>
+          <span class="badge ok">已完成</span>
+        </div>
+        <div class="release-row">
+          <strong>藍新付款與訂單</strong>
+          <span>付款頁、Webhook、訂單金額、到期日與續費提醒仍需串接。</span>
+          <span class="badge warn">待串接</span>
+        </div>
+        <div class="release-row">
+          <strong>LINE／簡訊／電話實際發送</strong>
+          <span>LINE 基礎推播已具備；商用簡訊、電話與一鍵 SOS 發送尚未啟用。</span>
+          <span class="badge warn">待串接</span>
+        </div>
+        <div class="release-row">
+          <strong>即時定位與軌跡回放</strong>
+          <span>24 小時快照已有基礎流程；即時追蹤、離線同步與軌跡保存仍需開發。</span>
+          <span class="badge warn">待開發</span>
+        </div>
+      </section>
+
+      <div class="plan-reference">
+        <h2>方案差異表</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>會員檔位</th>
+              <th>付費類型</th>
+              <th>價格</th>
+              <th>緊急聯絡人上限</th>
+              <th>好友定位人數</th>
+              <th>每日簽到提醒</th>
+              <th>專屬功能</th>
+              <th>緊急通知方式</th>
+              <th>年費贈送</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="tier-199 billing-month" data-plan-tier="199" data-billing-cycle="month">
+              <td>199 活著價</td>
+              <td>月費方案</td>
+              <td>NT$199</td>
+              <td>4 位</td>
+              <td>4 位</td>
+              <td>1 次</td>
+              <td>24 小時快照定位</td>
+              <td>LINE，通知 3 位核心守護人</td>
+              <td>-</td>
+            </tr>
+            <tr class="tier-199 billing-year" data-plan-tier="199" data-billing-cycle="year">
+              <td>199 活著價</td>
+              <td>年費方案</td>
+              <td>NT$1,990</td>
+              <td>6 位</td>
+              <td>6 位</td>
+              <td>2 次</td>
+              <td>軌跡回放 3 天</td>
+              <td>LINE，通知 3 位核心守護人</td>
+              <td class="gift">送 2 個月</td>
+            </tr>
+            <tr class="hot-plan tier-399 billing-month" data-plan-tier="399" data-billing-cycle="month">
+              <td>399 安心版</td>
+              <td>月費方案</td>
+              <td>NT$399</td>
+              <td>15 位</td>
+              <td>15 位</td>
+              <td>2 次</td>
+              <td>即時追蹤，軌跡回放 5 天，離線同步 24 小時</td>
+              <td>LINE，通知 3 位核心守護人</td>
+              <td>-</td>
+            </tr>
+            <tr class="hot-plan tier-399 billing-year" data-plan-tier="399" data-billing-cycle="year">
+              <td>399 安心版</td>
+              <td>年費方案</td>
+              <td>NT$3,990</td>
+              <td>20 位</td>
+              <td>20 位</td>
+              <td>3 次</td>
+              <td>30 天即時追蹤體驗</td>
+              <td>LINE，通知 3 位核心守護人</td>
+              <td class="gift">送 2 個月 + 30 天即時追蹤體驗</td>
+            </tr>
+            <tr class="tier-799 billing-month" data-plan-tier="799" data-billing-cycle="month">
+              <td>799 守護版</td>
+              <td>月費方案</td>
+              <td>NT$799</td>
+              <td>25 位</td>
+              <td>25 位</td>
+              <td>3 次</td>
+              <td>家庭守護，軌跡回放 14 天，完整離線同步 7 天，一鍵 SOS</td>
+              <td>LINE＋簡訊，通知 3 位核心守護人</td>
+              <td>-</td>
+            </tr>
+            <tr class="tier-799 billing-year" data-plan-tier="799" data-billing-cycle="year">
+              <td>799 守護版</td>
+              <td>年費方案</td>
+              <td>NT$7,990</td>
+              <td>50 位</td>
+              <td>50 位</td>
+              <td>5 次</td>
+              <td>30 天即時追蹤體驗，軌跡回放 30 天，完整離線同步 7 天，一鍵 SOS</td>
+              <td>LINE＋簡訊＋電話，通知 5 位核心守護人</td>
+              <td class="gift">送 2 個月 + 30 天即時追蹤體驗</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
       <div class="table-wrap">
@@ -153,17 +448,78 @@
               <th>上次簽到</th>
               <th>方案</th>
               <th>聯絡人</th>
+              <th>守護群</th>
               <th>寬限</th>
               <th>提醒</th>
             </tr>
           </thead>
           <tbody id="usersBody">
-            <tr><td colspan="9">尚未載入資料</td></tr>
+            <tr><td colspan="10">尚未載入資料</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="plan-reference" style="margin-top:16px;">
+        <h2>付款訂單</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>訂單編號</th>
+              <th>會員</th>
+              <th>方案</th>
+              <th>金額</th>
+              <th>狀態</th>
+              <th>建立時間</th>
+              <th>付款時間</th>
+            </tr>
+          </thead>
+          <tbody id="ordersBody">
+            <tr><td colspan="7">尚未載入訂單</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 style="margin: 20px 0 8px;">資料備份紀錄</h2>
+      <p class="note">每次備份都會保留歷史紀錄，可隨時再次下載。系統最多保留最近 50 筆紀錄。</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>備份編號</th>
+              <th>建立時間</th>
+              <th>會員數</th>
+              <th>檔案</th>
+            </tr>
+          </thead>
+          <tbody id="backupsBody">
+            <tr><td colspan="4">尚未載入備份紀錄</td></tr>
           </tbody>
         </table>
       </div>
 
       <p class="note" id="message">小提醒：推播需要設定 LINE_CHANNEL_ACCESS_TOKEN，使用者也要先加官方帳號好友。</p>
+    </section>
+
+    <section class="panel" style="margin-top: 16px;">
+      <h2 style="margin: 0 0 8px;">綁定獎勵紀錄</h2>
+      <div class="reward-list" id="rewardList">
+        <div class="reward-item"><span>尚未載入</span><span></span><span></span></div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top: 16px;">
+      <h2 style="margin: 0 0 8px;">客服訊息</h2>
+      <p class="note">使用者在 LINE 留下問題後，會出現在這裡。輸入回覆後可直接推送到對方 LINE。</p>
+      <div class="support-list" id="supportList">
+        <div class="support-item">尚未載入客服訊息</div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top: 16px;">
+      <h2 style="margin: 0 0 8px;">最近推播紀錄</h2>
+      <div class="log-list" id="logList">
+        <div class="log-item"><span>尚未載入</span><span></span><span></span></div>
+      </div>
     </section>
   </main>
 
@@ -192,10 +548,41 @@
       return {
         trial: "試用",
         free: "免費",
-        paid_199: "199",
-        paid_399: "399",
-        paid_799: "799"
+        paid_199: "199 活著價",
+        paid_199_year: "199 活著價年費",
+        paid_399: "399 安心版",
+        paid_399_year: "399 安心版年費",
+        paid_799: "799 守護版",
+        paid_799_year: "799 守護版年費"
       }[plan] || "試用";
+    }
+
+    function logKindLabel(kind) {
+      return {
+        overdue: "逾期提醒",
+        missing_contact: "補填聯絡人",
+        checkin: "簽到提醒",
+        support_reply: "客服回覆"
+      }[kind] || "推播";
+    }
+
+    async function replySupportTicket(ticketId) {
+      const input = document.querySelector(`[data-support-reply="${ticketId}"]`);
+      const message = input?.value.trim();
+      if (!message) {
+        alert("請先輸入回覆內容。");
+        return;
+      }
+      const res = await fetch(`/api/admin/support-reply?password=${apiPassword()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticket_id: ticketId, message })
+      });
+      const data = await res.json();
+      $("message").textContent = res.ok
+        ? "客服回覆已送出。"
+        : data.error || "客服回覆失敗，請檢查 LINE 設定。";
+      await refresh();
     }
 
     async function updatePlan(lineUserId, plan) {
@@ -226,6 +613,21 @@
       $("checkedToday").textContent = data.checked_today;
       $("warningUsers").textContent = data.warning_users;
       $("overdueUsers").textContent = data.overdue_users;
+      $("guardianGroups").textContent = data.guardian_group_count || 0;
+      $("paidRevenue").textContent = `NT$${Number(data.paid_revenue || 0).toLocaleString("zh-TW")}`;
+      $("paidOrders").textContent = data.paid_order_count || 0;
+      $("pendingOrders").textContent = data.pending_order_count || 0;
+      $("countyStatsBody").innerHTML = (data.county_stats || []).length
+        ? data.county_stats.map((row) => `
+          <tr>
+            <td><strong>${row.county}</strong></td>
+            <td>${row.members || 0}</td>
+            <td>${row.orders || 0}</td>
+            <td>${row.paid_orders || 0}</td>
+            <td>NT$${Number(row.revenue || 0).toLocaleString("zh-TW")}</td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="5">目前還沒有縣市資料</td></tr>`;
       $("usersBody").innerHTML = data.users.length
         ? data.users.map((user) => `
           <tr>
@@ -236,18 +638,122 @@
             <td>${formatDate(user.last_check_in)}</td>
             <td>
               <select class="plan-select" onchange="updatePlan('${user.line_user_id}', this.value)">
-                ${["trial", "free", "paid_199", "paid_399", "paid_799"].map((plan) =>
+                ${["trial", "free", "paid_199", "paid_199_year", "paid_399", "paid_399_year", "paid_799", "paid_799_year"].map((plan) =>
                   `<option value="${plan}" ${user.plan === plan ? "selected" : ""}>${planLabel(plan)}</option>`
                 ).join("")}
               </select>
             </td>
             <td>${(user.contacts || []).length}/${user.contact_limit || 1}</td>
+            <td>${(user.guardian_group_ids || []).length}/${user.guardian_group_limit || 0}</td>
             <td>${user.grace_hours} 小時</td>
             <td>${user.reminder_time}</td>
           </tr>
         `).join("")
-        : `<tr><td colspan="9">還沒有 LINE 使用者進來簽到。</td></tr>`;
+        : `<tr><td colspan="10">還沒有 LINE 使用者進來簽到。</td></tr>`;
+      $("ordersBody").innerHTML = (data.orders || []).length
+        ? data.orders.map((order) => `
+          <tr>
+            <td>${order.order_id || "-"}</td>
+            <td>${order.display_name || order.line_user_id || "-"}</td>
+            <td>${planLabel(order.plan)}</td>
+            <td>NT$${Number(order.amount || 0).toLocaleString("zh-TW")}</td>
+            <td><span class="badge ${order.status === "paid" ? "ok" : "warn"}">${order.status === "paid" ? "已付款" : "待付款"}</span></td>
+            <td>${formatDate(order.created_at)}</td>
+            <td>${order.paid_at ? formatDate(order.paid_at) : "-"}</td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="7">目前沒有付款訂單</td></tr>`;
+      $("logList").innerHTML = (data.notification_logs || []).length
+        ? data.notification_logs.map((log) => `
+          <div class="log-item">
+            <div>
+              <strong>${logKindLabel(log.kind)}</strong><br>
+              <small>${log.created_at || ""}</small>
+            </div>
+            <div>
+              <strong>${log.line_user_id || "-"}</strong><br>
+              <small>${log.message || ""}</small>
+            </div>
+            <span class="badge ${log.status === "sent" ? "ok" : "bad"}">${log.status === "sent" ? "成功" : "失敗"}</span>
+          </div>
+        `).join("")
+        : `<div class="log-item"><span>還沒有推播紀錄</span><span></span><span></span></div>`;
+      $("rewardList").innerHTML = (data.contact_rewards || []).length
+        ? data.contact_rewards.map((reward) => `
+          <div class="reward-item">
+            <div>
+              <strong>邀請人</strong><br>
+              <small>${reward.inviter_line_user_id || "-"}</small>
+            </div>
+            <div>
+              <strong>綁定聯絡人</strong><br>
+              <small>${reward.contact_line_user_id || "-"}</small>
+            </div>
+            <span class="badge ${reward.status === "available" ? "ok" : ""}">${reward.status === "available" ? "可領取" : reward.status || "-"}</span>
+          </div>
+        `).join("")
+        : `<div class="reward-item"><span>還沒有綁定獎勵紀錄</span><span></span><span></span></div>`;
+      const ticketRes = await fetch(`/api/admin/support-tickets?password=${apiPassword()}`);
+      const ticketData = ticketRes.ok ? await ticketRes.json() : { tickets: [] };
+      $("supportList").innerHTML = (ticketData.tickets || []).length
+        ? ticketData.tickets.map((ticket) => `
+          <div class="support-item">
+            <div class="support-meta">
+              <strong>${ticket.display_name || "LINE 使用者"}</strong>
+              <span>${ticket.line_user_id || "-"}</span>
+              <span>${ticket.created_at || ""}</span>
+              <span class="badge ${ticket.status === "replied" ? "ok" : "warn"}">${ticket.status === "replied" ? "已回覆" : "待回覆"}</span>
+            </div>
+            <div>${ticket.message || ""}</div>
+            ${ticket.reply ? `<small>已回覆：${ticket.reply}</small>` : ""}
+            <textarea data-support-reply="${ticket.id}" placeholder="輸入要回覆給使用者的 LINE 訊息"></textarea>
+            <button type="button" onclick="replySupportTicket('${ticket.id}')">回覆 LINE</button>
+          </div>
+        `).join("")
+        : `<div class="support-item">目前沒有客服訊息</div>`;
+      await refreshBackups();
       $("message").textContent = "資料已更新。";
+    }
+
+    async function refreshBackups() {
+      const res = await fetch(`/api/admin/backups?password=${apiPassword()}`);
+      const data = res.ok ? await res.json() : { backups: [] };
+      $("backupsBody").innerHTML = (data.backups || []).length
+        ? data.backups.map((backup) => `
+          <tr>
+            <td>${backup.id}</td>
+            <td>${formatDate(backup.created_at)}</td>
+            <td>${backup.user_count || 0}</td>
+            <td><button type="button" onclick="downloadBackup('${backup.id}')">再次下載</button></td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="4">目前還沒有備份紀錄</td></tr>`;
+    }
+
+    async function createBackup() {
+      const res = await fetch(`/api/admin/backups?password=${apiPassword()}`, { method: "POST" });
+      const data = await res.json();
+      $("message").textContent = res.ok
+        ? `備份 ${data.backup.id} 已完成。`
+        : data.error || "備份失敗，請稍後再試。";
+      if (res.ok) await refreshBackups();
+    }
+
+    async function downloadBackup(backupId) {
+      const res = await fetch(`/api/admin/backups/${encodeURIComponent(backupId)}?password=${apiPassword()}`);
+      const data = await res.json();
+      if (!res.ok) {
+        $("message").textContent = data.error || "備份檔案下載失敗。";
+        return;
+      }
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${backupId}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      $("message").textContent = `備份 ${backupId} 已下載。`;
     }
 
     async function sendReminders() {
@@ -260,8 +766,31 @@
       await refresh();
     }
 
+    async function sendContactReminders() {
+      if (!confirm("要推播提醒未填緊急聯絡人的使用者嗎？")) return;
+      const res = await fetch(`/api/admin/send-contact-reminders?password=${apiPassword()}`, { method: "POST" });
+      const data = await res.json();
+      $("message").textContent = res.ok
+        ? `已送出 ${data.sent} 則緊急聯絡人提醒。`
+        : data.error || "推播失敗，請檢查 LINE 設定。";
+      await refresh();
+    }
+
+    async function sendRenewalReminders() {
+      if (!confirm("要推播提醒 7 天內即將到期的會員嗎？")) return;
+      const res = await fetch(`/api/admin/send-renewal-reminders?password=${apiPassword()}`, { method: "POST" });
+      const data = await res.json();
+      $("message").textContent = res.ok
+        ? `已送出 ${data.sent} 則續費提醒。`
+        : data.error || "續費提醒失敗，請檢查 LINE 設定。";
+      await refresh();
+    }
+
     $("refreshBtn").addEventListener("click", refresh);
+    $("contactRemindBtn").addEventListener("click", sendContactReminders);
     $("remindBtn").addEventListener("click", sendReminders);
+    $("renewalRemindBtn").addEventListener("click", sendRenewalReminders);
+    $("createBackupBtn").addEventListener("click", createBackup);
     refresh();
   </script>
 </body>

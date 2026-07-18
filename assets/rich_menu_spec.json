@@ -1,0 +1,76 @@
+{
+  "size": {
+    "width": 2500,
+    "height": 1686
+  },
+  "selected": false,
+  "name": "alive-checkin-rich-menu-v1",
+  "chatBarText": "點我打開選單",
+  "areas": [
+    {
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 1250,
+        "height": 843
+      },
+      "action": {
+        "type": "postback",
+        "label": "✅ 今日簽到",
+        "data": "action=check_in_today"
+      }
+    },
+    {
+      "bounds": {
+        "x": 1250,
+        "y": 0,
+        "width": 1250,
+        "height": 843
+      },
+      "action": {
+        "type": "uri",
+        "label": "🚨 SOS 緊急聯絡",
+        "uri": "https://alive-checkin.onrender.com/liff/sos"
+      }
+    },
+    {
+      "bounds": {
+        "x": 0,
+        "y": 843,
+        "width": 833,
+        "height": 843
+      },
+      "action": {
+        "type": "uri",
+        "label": "🛡️ 綁定守護人",
+        "uri": "https://alive-checkin.onrender.com/liff/contacts"
+      }
+    },
+    {
+      "bounds": {
+        "x": 833,
+        "y": 843,
+        "width": 834,
+        "height": 843
+      },
+      "action": {
+        "type": "uri",
+        "label": "👀 查看方案",
+        "uri": "https://alive-checkin.onrender.com/liff/pricing"
+      }
+    },
+    {
+      "bounds": {
+        "x": 1667,
+        "y": 843,
+        "width": 833,
+        "height": 843
+      },
+      "action": {
+        "type": "postback",
+        "label": "📞 聯絡客服",
+        "data": "action=contact_support"
+      }
+    }
+  ]
+}

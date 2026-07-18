@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>選擇方案 - 今天還在嗎</title>
+<style>
+  /* 內嵌 CSS,不使用外部框架,確保頁面 ≤ 500KB + 載入快 */
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", "Segoe UI", sans-serif;
+    background: linear-gradient(180deg, #1a0d2e 0%, #2c1f4a 100%);
+    min-height: 100vh;
+    color: #ffffff;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.6;
+  }
+  .container {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 24px 16px 80px;
+  }
+  /* 頁首 */
+  .header {
+    text-align: center;
+    padding: 32px 0 24px;
+  }
+  .logo {
+    font-size: 56px;
+    margin-bottom: 16px;
+  }
+  .header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    color: #F39C12;
+  }
+  .header p {
+    font-size: 16px;
+    color: #cccccc;
+  }
+  /* 方案卡片 */
+  .plans-grid {
+    display: grid;
+    gap: 16px;
+    margin-top: 24px;
+  }
+  .plan-card {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    padding: 20px;
+    position: relative;
+    transition: transform 0.2s;
+  }
+  .plan-card:active { transform: scale(0.98); }
+  .plan-card.featured {
+    background: rgba(243, 156, 18, 0.1);
+    border: 2px solid #F39C12;
+  }
+  .plan-card.recommended {
+    background: linear-gradient(135deg, rgba(243, 156, 18, 0.15), rgba(46, 204, 113, 0.15));
+    border: 2px solid #2ECC71;
+  }
+  .plan-badge {
+    position: absolute;
+    top: -12px;
+    right: 16px;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 700;
+    background: #F39C12;
+    color: #1a0d2e;
+  }
+  .plan-badge.recommended {
+    background: #2ECC71;
+  }
+  .plan-name {
+    font-size: 22px;
+    font-weight: 700;
+    color: #F39C12;
+    margin-bottom: 8px;
+  }
+  .plan-price {
+    font-size: 24px;
+    font-weight: 700;
+    color: #ffffff;
+    margin-bottom: 4px;
+  }
+  .plan-cycle {
+    font-size: 14px;
+    color: #cccccc;
+    margin-bottom: 4px;
+  }
+  .plan-savings {
+    font-size: 13px;
+    color: #2ECC71;
+    margin-bottom: 16px;
+    font-weight: 600;
+  }
+  .plan-features {
+    list-style: none;
+    margin: 16px 0;
+  }
+  .plan-features li {
+    padding: 6px 0;
+    font-size: 14px;
+    color: #e0e0e0;
+  }
+  .plan-features li::before {
+    content: "✓ ";
+    color: #2ECC71;
+    font-weight: 700;
+    margin-right: 8px;
+  }
+  .plan-features li.disabled {
+    color: #888;
+  }
+  .plan-features li.disabled::before {
+    content: "✗ ";
+    color: #888;
+  }
+  .cta-button {
+    display: block;
+    width: 100%;
+    padding: 14px;
+    margin-top: 16px;
+    background: #F39C12;
+    color: #1a0d2e;
+    border: none;
+    border-radius: 12px;
+    font-size: 18px;
+    font-weight: 700;
+    cursor: pointer;
+    text-align: center;
+    text-decoration: none;
+  }
+  .cta-button:active { opacity: 0.8; }
+  .cta-button.green { background: #2ECC71; }
+  /* 頁尾提醒 */
+  .footer-notes {
+    margin-top: 32px;
+    padding: 20px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.8;
+  }
+  .footer-notes p {
+    margin-bottom: 8px;
+    color: #cccccc;
+  }
+  .footer-notes .warning {
+    color: #E74C3C;
+    font-weight: 600;
+  }
+  .footer-notes .tip {
+    color: #F39C12;
+  }
+  .footer-notes .emergency {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    color: #E74C3C;
+    font-weight: 700;
+  }
+  /* 比較表(可摺疊) */
+  .compare-toggle {
+    display: block;
+    width: 100%;
+    margin-top: 24px;
+    padding: 12px;
+    background: transparent;
+    color: #F39C12;
+    border: 1px solid #F39C12;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .compare-table {
+    display: none;
+    margin-top: 16px;
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 12px;
+    overflow-x: auto;
+  }
+  .compare-table.show { display: block; }
+  .compare-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .compare-table th, .compare-table td {
+    padding: 8px 4px;
+    text-align: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .compare-table th {
+    color: #F39C12;
+    font-weight: 700;
+  }
+  .compare-table td.yes { color: #2ECC71; }
+  .compare-table td.no { color: #888; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- 頁首 -->
+  <header class="header">
+    <div class="logo">🛡️</div>
+    <h1>選擇最適合您的守護方案</h1>
+    <p>陪您守護家人,也守護自己</p>
+  </header>
+
+  <!-- 方案卡片 -->
+  <div class="plans-grid">
+
+    <!-- 199 月 -->
+    <div class="plan-card">
+      <div class="plan-name">199 活著版(月)</div>
+      <div class="plan-price">NT$199</div>
+      <div class="plan-cycle">每月</div>
+      <ul class="plan-features">
+        <li>4 位聯絡人</li>
+        <li>LINE 每日 1 次預警</li>
+        <li>24hr 快照定位</li>
+        <li>自訂簽到週期</li>
+        <li class="disabled">即時追蹤</li>
+        <li class="disabled">軌跡回放</li>
+        <li class="disabled">簡訊預警</li>
+        <li class="disabled">SOS 緊急求救</li>
+      </ul>
+      <a href="#" class="cta-button" data-plan="paid_199" data-cycle="monthly">立即購買 →</a>
+    </div>
+
+    <!-- 199 年 -->
+    <div class="plan-card">
+      <div class="plan-name">199 活著版(年)</div>
+      <div class="plan-price">NT$1,680</div>
+      <div class="plan-cycle">每年</div>
+      <div class="plan-savings">省 NT$708(年繳 7 折)</div>
+      <ul class="plan-features">
+        <li>6 位聯絡人</li>
+        <li>LINE 每日 2 次預警</li>
+        <li>24hr 快照定位</li>
+        <li>軌跡回放 3 天</li>
+        <li>自訂簽到週期</li>
+        <li class="disabled">即時追蹤</li>
+        <li class="disabled">簡訊預警</li>
+        <li class="disabled">SOS 緊急求救</li>
+      </ul>
+      <a href="#" class="cta-button" data-plan="paid_199_year" data-cycle="yearly">立即購買 →</a>
+    </div>
+
+    <!-- 399 月 -->
+    <div class="plan-card">
+      <div class="plan-name">399 安心版(月)</div>
+      <div class="plan-price">NT$399</div>
+      <div class="plan-cycle">每月</div>
+      <ul class="plan-features">
+        <li>15 位聯絡人</li>
+        <li>LINE 每日 2 次預警</li>
+        <li>即時追蹤定位</li>
+        <li>軌跡回放 5 天</li>
+        <li>24hr 離線同步</li>
+        <li>好友上線提醒</li>
+        <li class="disabled">簡訊預警</li>
+        <li class="disabled">SOS 緊急求救</li>
+      </ul>
+      <a href="#" class="cta-button" data-plan="paid_399" data-cycle="monthly">立即購買 →</a>
+    </div>
+
+    <!-- 399 年 -->
+    <div class="plan-card featured">
+      <span class="plan-badge">受歡迎</span>
+      <div class="plan-name">399 安心版(年)</div>
+      <div class="plan-price">NT$3,680</div>
+      <div class="plan-cycle">每年</div>
+      <div class="plan-savings">省 NT$1,108(年繳 7 折)</div>
+      <ul class="plan-features">
+        <li>25 位聯絡人</li>
+        <li>LINE 每日 3 次預警</li>
+        <li>即時追蹤定位</li>
+        <li>軌跡回放 7 天</li>
+        <li>24hr 離線同步</li>
+        <li>好友上線提醒</li>
+        <li>30 天即時追蹤體驗</li>
+        <li class="disabled">簡訊預警</li>
+        <li class="disabled">SOS 緊急求救</li>
+      </ul>
+      <a href="#" class="cta-button" data-plan="paid_399_year" data-cycle="yearly">立即購買 →</a>
+    </div>
+
+    <!-- 799 月 -->
+    <div class="plan-card featured">
+      <span class="plan-badge">含 SOS</span>
+      <div class="plan-name">799 守護版(月)</div>
+      <div class="plan-price">NT$799</div>
+      <div class="plan-cycle">每月</div>
+      <ul class="plan-features">
+        <li>25 位聯絡人</li>
+        <li>LINE + 簡訊預警(3 位)</li>
+        <li>即時追蹤定位</li>
+        <li>軌跡回放 14 天</li>
+        <li>7 天離線同步</li>
+        <li>好友上線提醒</li>
+        <li>SOS 一鍵求救 ✅</li>
+        <li class="disabled">守護群</li>
+      </ul>
+      <a href="#" class="cta-button" data-plan="paid_799" data-cycle="monthly">立即購買 →</a>
+    </div>
+
+    <!-- 799 年 — 最推薦 -->
+    <div class="plan-card recommended">
+      <span class="plan-badge recommended">👑 最推薦</span>
+      <div class="plan-name">799 守護版(年)</div>
+      <div class="plan-price">NT$7,200</div>
+      <div class="plan-cycle">每年</div>
+      <div class="plan-savings">省 NT$2,388(年繳 7 折)</div>
+      <ul class="plan-features">
+        <li>50 位聯絡人</li>
+        <li>LINE + 簡訊預警(5 位核心)</li>
+        <li>即時追蹤定位</li>
+        <li>軌跡回放 30 天</li>
+        <li>7 天離線同步</li>
+        <li>好友上線提醒</li>
+        <li>SOS 一鍵求救 ✅</li>
+        <li>守護群最多 3 群(每群 50 人)</li>
+        <li>長照專線一鍵聯動</li>
+        <li>個資全自主管理</li>
+      </ul>
+      <a href="#" class="cta-button green" data-plan="paid_799_year" data-cycle="yearly">立即購買 →</a>
+    </div>
+
+  </div>
+
+  <!-- 比較表按鈕 -->
+  <button class="compare-toggle" onclick="document.getElementById('compareTable').classList.toggle('show')">
+    📊 查看完整權益比較表(展開/收合)
+  </button>
+
+  <!-- 比較表 -->
+  <div id="compareTable" class="compare-table">
+    <table>
+      <thead>
+        <tr>
+          <th>權益</th>
+          <th>199月</th>
+          <th>199年</th>
+          <th>399月</th>
+          <th>399年</th>
+          <th>799月</th>
+          <th>799年</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>聯絡人</td><td>4</td><td>6</td><td>15</td><td>25</td><td>25</td><td>50</td></tr>
+        <tr><td>LINE 預警</td><td>1/日</td><td>2/日</td><td>2/日</td><td>3/日</td><td>3 位</td><td>5 位</td></tr>
+        <tr><td>簡訊預警</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓ 3位</td><td class="yes">✓ 5位</td></tr>
+        <tr><td>軌跡回放</td><td class="no">✗</td><td>3 天</td><td>5 天</td><td>7 天</td><td>14 天</td><td>30 天</td></tr>
+        <tr><td>離線同步</td><td class="no">✗</td><td class="no">✗</td><td>24hr</td><td>24hr</td><td>7 天</td><td>7 天</td></tr>
+        <tr><td>好友提醒</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td>SOS</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td>守護群</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓ 3 群</td></tr>
+        <tr><td>長照專線</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 頁尾提醒 -->
+  <div class="footer-notes">
+    <p class="warning">⚠️ 199 方案提醒:僅發送 LINE 訊息,若聯絡人未讀取,預警等同無效。</p>
+    <p class="tip">💡 升級提醒:補差額即可升級,無需重新設定聯絡人。</p>
+    <p>📞 客服:LINE 留言,4 小時內回覆(09:00-21:00)。</p>
+    <p class="emergency">⚠️ 緊急狀況請撥打 119 / 110 / 112。本服務僅供輔助提醒,不提供緊急救援。</p>
+  </div>
+
+</div>
+
+<script>
+  // CTA 按鈕點擊 → 觸發 LINE Pay / 藍新付款
+  document.querySelectorAll('.cta-button').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.preventDefault();
+      var plan = this.getAttribute('data-plan');
+      var cycle = this.getAttribute('data-cycle');
+      // TODO: 串接藍新金流後,改為跳轉付款頁
+      // 暫時跳轉 LINE Bot 並傳訊息
+      var msg = '我想升級 ' + plan + ' (' + cycle + ')';
+      var liffId = '2007786280-Ll9j1Sk';  // ⚠️ 蝦董的新 LINE Bot channel
+      var linePayUrl = 'https://line.me/R/oaMessage/' + liffId + '/?' + encodeURIComponent(msg);
+      window.location.href = linePayUrl;
+    });
+  });
+</script>
+
+</body>
+</html>
