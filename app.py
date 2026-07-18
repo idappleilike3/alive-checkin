@@ -742,22 +742,121 @@ def send_renewal_reminders(config):
 
 
 def normalize_contact(contact, index):
+    """正規化守護人聯絡人資料,包含穩定 id 與時間戳。
+
+    規則:
+    - id 一旦建立就不變(沒給就用 f"contact-{index+1}")
+    - is_primary 從 contact.get("is_primary") 讀,沒給就看 priority 是否 = 1
+    - binding_status: unbound / pending / accepted / declined
+    - line_user_id 跟 line_id 同義(新欄位優先)
+    - created_at 與 updated_at 為 ISO 8601 字串
+    """
     methods = contact.get("notify_methods") or contact.get("methods") or ["line"]
     if isinstance(methods, str):
         methods = [methods]
+    contact_id = str(contact.get("id") or f"contact-{index + 1}")
+    priority = int(contact.get("priority") or index + 1)
+    is_primary = bool(contact.get("is_primary", priority == 1))
+    line_user_id = str(
+        contact.get("line_user_id")
+        or contact.get("line_id")
+        or ""
+    ).strip()
     return {
-        "id": str(contact.get("id") or f"contact-{index + 1}"),
+        "id": contact_id,
         "name": str(contact.get("name") or "").strip(),
         "relationship": str(contact.get("relationship") or "").strip(),
         "phone": str(contact.get("phone") or "").strip(),
-        "line_id": str(contact.get("line_id") or "").strip(),
         "email": str(contact.get("email") or "").strip(),
-        "available_time": str(contact.get("available_time") or "").strip(),
+        "line_user_id": line_user_id,
+        "binding_status": str(contact.get("binding_status") or ("accepted" if line_user_id else "unbound")),
+        "is_primary": is_primary,
         "notify_methods": methods,
-        "priority": int(contact.get("priority") or index + 1),
+        "priority": priority,
         "consent_status": str(contact.get("consent_status") or "pending"),
+        "available_time": str(contact.get("available_time") or "").strip(),
+        "note": str(contact.get("note") or "").strip(),
+        "created_at": str(contact.get("created_at") or ""),
+        "updated_at": str(contact.get("updated_at") or ""),
+    }
+
+
+def validate_contact_payload(contact, existing=None, contact_limit=10):
+    """驗證單筆 contact payload。回傳 (ok, errors_list, cleaned_contact_or_None)。
+
+    規則:
+    - name 必填
+    - relationship 必填
+    - phone OR email 至少一個
+    - phone 格式基本驗證(台灣手機 09 開頭或國際格式)
+    - email 格式基本驗證
+    - 不允許完全重複(同 user 既有 contacts 比對 name+phone+email)
+    - 超過方案上限 → contact_limit_exceeded
+    """
+    import re
+    name = str(contact.get("name") or "").strip()
+    relationship = str(contact.get("relationship") or "").strip()
+    phone = str(contact.get("phone") or "").strip()
+    email = str(contact.get("email") or "").strip()
+
+    errors = []
+    if not name:
+        errors.append("name_required")
+    if not relationship:
+        errors.append("relationship_required")
+    if not phone and not email:
+        errors.append("phone_or_email_required")
+
+    # phone format: 接受 09xxxxxxxx(台灣)、9xxxxxxxx(去 0)、+8869xxxxxxxx、8869xxxxxxxx
+    if phone:
+        digits = re.sub(r"\D", "", phone.lstrip("+"))
+        if digits.startswith("0"):
+            digits = digits[1:]
+        if digits.startswith("886"):
+            digits = digits[3:]
+        if not re.match(r"^9\d{8}$", digits):
+            errors.append("phone_format_invalid")
+
+    # email format
+    if email:
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            errors.append("email_format_invalid")
+
+    # duplicate check (排除自己 by id)
+    if existing and not errors:
+        contact_id = str(contact.get("id") or "")
+        for c in existing:
+            if str(c.get("id") or "") == contact_id:
+                continue
+            same_name = c.get("name") == name
+            same_phone = c.get("phone") == phone and phone
+            same_email = c.get("email") == email and email
+            if same_name and (same_phone or same_email):
+                errors.append("duplicate_contact")
+                break
+
+    if errors:
+        return False, errors, None
+
+    cleaned = {
+        "name": name,
+        "relationship": relationship,
+        "phone": phone,
+        "email": email,
+        "line_user_id": str(contact.get("line_user_id") or "").strip(),
+        "binding_status": str(contact.get("binding_status") or "unbound"),
+        "is_primary": bool(contact.get("is_primary", False)),
+        "notify_methods": contact.get("notify_methods") or ["line"],
+        "available_time": str(contact.get("available_time") or "").strip(),
         "note": str(contact.get("note") or "").strip(),
     }
+    return True, [], cleaned
+
+
+def iso_now():
+    """回傳當下時間的 ISO 8601 字串(Asia/Taipei)。"""
+    from datetime import datetime, timezone, timedelta
+    return datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds")
 
 
 def complete_guardian_contact(contact):
@@ -780,6 +879,102 @@ def get_contacts(data_file, line_user_id=None):
         "guardian_details_complete": any(complete_guardian_contact(contact) for contact in (profile.get("contacts") or [])),
         "guardian_details_reminder_enabled": bool(profile.get("guardian_details_reminder_enabled", True)),
     }
+
+
+def add_single_contact(data_file, line_user_id, contact_payload):
+    """新增單一聯絡人,回傳 (status_code, response_dict)。"""
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if not profile:
+        return {"error": "user not registered", "line_user_id": line_user_id}, 404
+    existing = profile.get("contacts") or []
+    limit = plan_rules(profile)["contact_limit"]
+    if len(existing) >= limit:
+        return {
+            "error": "contact_limit_exceeded",
+            "contact_limit": limit,
+            "current_count": len(existing),
+            "message": f"目前方案最多 {limit} 位聯絡人,請升級方案或刪除現有聯絡人"
+        }, 400
+    ok, errors, cleaned = validate_contact_payload(contact_payload, existing=existing)
+    if not ok:
+        return {"error": "validation_failed", "fields": errors}, 400
+    now = iso_now()
+    # generate new id
+    used_ids = {str(c.get("id") or "") for c in existing}
+    new_id = f"contact-{len(existing) + 1}"
+    suffix = 1
+    while new_id in used_ids:
+        suffix += 1
+        new_id = f"contact-{len(existing) + suffix}"
+    cleaned["id"] = new_id
+    cleaned["created_at"] = now
+    cleaned["updated_at"] = now
+    # primary 邏輯:設為主要時自動取消其他
+    if cleaned["is_primary"]:
+        for c in existing:
+            c["is_primary"] = False
+            c["updated_at"] = now
+    existing.append(cleaned)
+    profile["contacts"] = existing
+    save_state(data_file, state)
+    return {"contact": cleaned, "contacts": existing, "contact_limit": limit}, 200
+
+
+def update_single_contact(data_file, line_user_id, contact_id, contact_payload):
+    """更新單一聯絡人,回傳 (status_code, response_dict)。"""
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if not profile:
+        return {"error": "user not registered", "line_user_id": line_user_id}, 404
+    existing = profile.get("contacts") or []
+    idx = None
+    for i, c in enumerate(existing):
+        if str(c.get("id") or "") == contact_id:
+            idx = i
+            break
+    if idx is None:
+        return {"error": "contact_not_found", "contact_id": contact_id}, 404
+    # 合併:保留 id 跟 created_at,其他從 payload
+    merged_payload = dict(contact_payload)
+    merged_payload["id"] = contact_id
+    merged_payload["created_at"] = existing[idx].get("created_at") or iso_now()
+    # 驗證(排除自己)
+    other = [c for i, c in enumerate(existing) if i != idx]
+    ok, errors, cleaned = validate_contact_payload(merged_payload, existing=other)
+    if not ok:
+        return {"error": "validation_failed", "fields": errors}, 400
+    now = iso_now()
+    cleaned["id"] = contact_id
+    cleaned["created_at"] = merged_payload["created_at"]
+    cleaned["updated_at"] = now
+    # primary 邏輯
+    if cleaned["is_primary"]:
+        for i, c in enumerate(existing):
+            if i != idx:
+                c["is_primary"] = False
+                c["updated_at"] = now
+    existing[idx] = cleaned
+    profile["contacts"] = existing
+    save_state(data_file, state)
+    return {"contact": cleaned, "contacts": existing}, 200
+
+
+def delete_single_contact(data_file, line_user_id, contact_id):
+    """刪除單一聯絡人,回傳 (status_code, response_dict)。"""
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if not profile:
+        return {"error": "user not registered", "line_user_id": line_user_id}, 404
+    existing = profile.get("contacts") or []
+    new_contacts = [c for c in existing if str(c.get("id") or "") != contact_id]
+    if len(new_contacts) == len(existing):
+        return {"error": "contact_not_found", "contact_id": contact_id}, 404
+    profile["contacts"] = new_contacts
+    save_state(data_file, state)
+    return {"deleted": True, "contact_id": contact_id, "contacts": new_contacts}, 200
+
+
 
 
 def save_contacts(data_file, payload):
@@ -993,21 +1188,42 @@ def unbind_guardian_group(data_file, payload):
 
 
 def create_friend_invite(data_file, payload):
+    """產生好友邀請碼。回傳包含 invite_code / invite_url / status / expires_at / inviter / invited_guardian。"""
     line_user_id = str(payload.get("line_user_id") or "").strip()
     if not line_user_id:
         return {"error": "missing line_user_id"}, 400
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
+    if not profile:
+        return {"error": "user not registered", "line_user_id": line_user_id}, 404
     code = str(payload.get("invite_code") or secrets.token_urlsafe(5)).replace("-", "").replace("_", "")[:8].upper()
+    now = datetime.now()
+    expires_at = (now + timedelta(days=7)).isoformat(timespec="seconds")
     state.setdefault("friend_invites", {})[code] = {
         "line_user_id": line_user_id,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "created_at": now.isoformat(timespec="seconds"),
+        "expires_at": expires_at,
+        "accepted_by": None,
+        "accepted_at": None,
+        "status": "pending",
     }
     save_state(data_file, state)
+    public_url = (
+        payload.get("public_url")
+        or os.environ.get("APP_PUBLIC_URL", "")
+        or "https://liff.line.me"
+    ).rstrip("/")
+    invite_url = f"{public_url}/?friend_invite={code}"
     return {
         "invite_code": code,
-        "line_user_id": line_user_id,
-        "display_name": profile.get("display_name", "LINE 使用者"),
+        "invite_url": invite_url,
+        "status": "pending",
+        "expires_at": expires_at,
+        "inviter": {
+            "line_user_id": line_user_id,
+            "display_name": profile.get("display_name", "LINE 使用者"),
+        },
+        "invited_guardian": None,
     }, 200
 
 
@@ -1991,6 +2207,119 @@ def create_app(config=None):
     def contacts_post():
         data, code = save_contacts(app.config["DATA_FILE"], request.get_json(silent=True) or {})
         return jsonify(data), code
+
+    @app.post("/api/contacts/add")
+    def contacts_add():
+        """新增單一守護人聯絡人。"""
+        payload = request.get_json(silent=True) or {}
+        line_user_id = (payload.get("line_user_id") or "").strip()
+        if not line_user_id:
+            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        data, code = add_single_contact(app.config["DATA_FILE"], line_user_id, payload)
+        if code == 200:
+            response = {"ok": True, "contact": data["contact"], "contacts": data["contacts"], "contact_limit": data["contact_limit"]}
+        else:
+            response = {"ok": False, "error": data.get("error"), "fields": data.get("fields"), "contact_limit": data.get("contact_limit"), "current_count": data.get("current_count"), "message": data.get("message")}
+        return jsonify(response), code
+
+    @app.put("/api/contacts/<contact_id>")
+    def contacts_update(contact_id):
+        """更新單一守護人聯絡人。"""
+        payload = request.get_json(silent=True) or {}
+        line_user_id = (payload.get("line_user_id") or "").strip()
+        if not line_user_id:
+            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        data, code = update_single_contact(app.config["DATA_FILE"], line_user_id, contact_id, payload)
+        if code == 200:
+            response = {"ok": True, "contact": data["contact"], "contacts": data["contacts"]}
+        else:
+            response = {"ok": False, "error": data.get("error"), "fields": data.get("fields")}
+        return jsonify(response), code
+
+    @app.delete("/api/contacts/<contact_id>")
+    def contacts_delete(contact_id):
+        """刪除單一守護人聯絡人。"""
+        line_user_id = (request.args.get("line_user_id") or "").strip()
+        if not line_user_id:
+            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        data, code = delete_single_contact(app.config["DATA_FILE"], line_user_id, contact_id)
+        if code == 200:
+            response = {"ok": True, "deleted": True, "contact_id": data["contact_id"], "contacts": data["contacts"]}
+        else:
+            response = {"ok": False, "error": data.get("error"), "contact_id": data.get("contact_id")}
+        return jsonify(response), code
+
+    @app.get("/api/onboarding")
+    def onboarding_get():
+        """回傳使用者 onboarding 狀態。"""
+        line_user_id = (request.args.get("line_user_id") or "").strip()
+        if not line_user_id:
+            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        state = load_state(app.config["DATA_FILE"])
+        profile = state.get("users", {}).get(line_user_id)
+        if not profile:
+            return jsonify({"ok": False, "error": "user not registered"}), 404
+        contacts = profile.get("contacts") or []
+        has_guardian = any(
+            (c.get("name") or "").strip() and (c.get("relationship") or "").strip()
+            for c in contacts
+        )
+        return jsonify({
+            "ok": True,
+            "line_user_id": line_user_id,
+            "is_onboarding_completed": bool(profile.get("is_onboarding_completed", False)),
+            "has_guardian": has_guardian,
+            "guardian_count": len(contacts),
+            "reminder_time": profile.get("reminder_time") or "09:00",
+            "display_name": profile.get("display_name", ""),
+        })
+
+    @app.post("/api/dev/upgrade-plan")
+    def dev_upgrade_plan():
+        """DEV ONLY: 升級 plan 到 paid_799_year(測試用)。
+        Production 部署時應該關閉或限制 access。
+        """
+        payload = request.get_json(silent=True) or {}
+        line_user_id = (payload.get("line_user_id") or "").strip()
+        plan = (payload.get("plan") or "paid_799_year").strip()
+        if not line_user_id:
+            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        state = load_state(app.config["DATA_FILE"])
+        profile = state.get("users", {}).get(line_user_id)
+        if not profile:
+            return jsonify({"ok": False, "error": "user not registered"}), 404
+        profile["plan"] = plan
+        save_state(app.config["DATA_FILE"], state)
+        return jsonify({"ok": True, "plan": plan}), 200
+
+    @app.post("/api/onboarding/complete")
+    def onboarding_complete():
+        """標記 onboarding 完成(必須至少有 1 位守護人)。"""
+        payload = request.get_json(silent=True) or {}
+        line_user_id = (payload.get("line_user_id") or "").strip()
+        if not line_user_id:
+            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        state = load_state(app.config["DATA_FILE"])
+        profile = state.get("users", {}).get(line_user_id)
+        if not profile:
+            return jsonify({"ok": False, "error": "user not registered"}), 404
+        contacts = profile.get("contacts") or []
+        has_guardian = any(
+            (c.get("name") or "").strip() and (c.get("relationship") or "").strip()
+            for c in contacts
+        )
+        if not has_guardian:
+            return jsonify({
+                "ok": False,
+                "error": "guardian_required",
+                "message": "必須先新增至少 1 位守護人"
+            }), 400
+        profile["is_onboarding_completed"] = True
+        # 順便儲存提醒時間(若使用者有更新)
+        if payload.get("reminder_time"):
+            profile["reminder_time"] = str(payload["reminder_time"])
+        save_state(app.config["DATA_FILE"], state)
+        return jsonify({"ok": True, "is_onboarding_completed": True}), 200
 
     @app.post("/api/emergency-contact/bind")
     def emergency_contact_bind_api():

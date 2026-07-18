@@ -1336,6 +1336,71 @@
       </button>
       <p id="inlineError" class="inline-error" hidden></p>
       <button class="action-btn reload-btn" id="reloadBtn" type="button">重新載入</button>
+      <div id="guardianSection" hidden>
+        <h3>守護人管理</h3>
+        <p class="helper">未簽到或 SOS 發生時,系統會送 LINE 與電話給以下守護人(依優先順序)</p>
+        <div id="guardianList"></div>
+        <p class="helper" id="guardianCount"></p>
+        <div class="guardian-actions">
+          <button class="action-btn" id="addGuardianBtn" type="button">+ 新增守護人</button>
+          <button class="action-btn" id="inviteGuardianBtn" type="button">生成邀請連結</button>
+        </div>
+        <div id="inviteArea" hidden>
+          <p>邀請連結:</p>
+          <textarea id="inviteUrlBox" readonly rows="2"></textarea>
+          <p class="helper" id="inviteMeta"></p>
+          <button class="action-btn" id="copyInviteBtn" type="button">複製連結</button>
+        </div>
+      </div>
+
+      <!-- 守護人新增 / 編輯 Modal -->
+      <div class="modal-backdrop" id="guardianEditorModal" hidden>
+        <div class="guardian-modal">
+          <h2 id="guardianEditorTitle">新增守護人</h2>
+          <p id="guardianEditorError" class="inline-error" hidden></p>
+          <label>姓名(*)<input type="text" id="gName" placeholder="例:王小明"></label>
+          <label>關系(*)<input type="text" id="gRelationship" placeholder="家人 / 朋友 / 同事"></label>
+          <label>手機號碼<input type="tel" id="gPhone" placeholder="0912345678"></label>
+          <label>Email<input type="email" id="gEmail" placeholder="example@email.com"></label>
+          <label>備註<textarea id="gNote" rows="2"></textarea></label>
+          <label class="setting-choice">
+            <input type="checkbox" id="gIsPrimary">
+            <span>設為主要聯絡人(糷見位最前)</span>
+          </label>
+          <p class="helper">(*) 姓名與關系必填；手機號碼與 Email 至少要填一個。</p>
+          <div class="actions">
+            <button class="action-btn" id="cancelGuardianBtn" type="button">取消</button>
+            <button class="action-btn primary" id="saveGuardianBtn" type="button">儲存</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 刪除確認 -->
+      <div class="modal-backdrop" id="deleteGuardianModal" hidden>
+        <div class="guardian-modal">
+          <h2>確認刪除</h2>
+          <p>你要刪除守護人 <strong id="deleteGuardianName"></strong> 嗎?沒法取消。</p>
+          <div class="actions">
+            <button class="action-btn" id="cancelDeleteGuardianBtn" type="button">取消</button>
+            <button class="action-btn danger" id="confirmDeleteGuardianBtn" type="button">確定刪除</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- C00 Onboarding Modal(首次使用強制新增守護人) -->
+      <div class="modal-backdrop" id="onboardingModal" hidden>
+        <div class="guardian-modal">
+          <h2>欢迎使用「今天還在嗎」</h2>
+          <p>为了保證你的安全,請先設定位守護人。<br>當你未如期簽到或危隣時,系統會及時聯絡他們。</p>
+          <p class="helper">步骤 1 / 2:新增第一位守護人</p>
+          <label>姓名(*)<input type="text" id="obName" placeholder="例:王小明"></label>
+          <label>關系(*)<input type="text" id="obRelationship" placeholder="家人 / 朋友 / 同事"></label>
+          <label>手機號碼(*)<input type="tel" id="obPhone" placeholder="0912345678"></label>
+          <label>Email<input type="email" id="obEmail" placeholder="可遺，但手機與 Email 至少要填一個"></label>
+          <p id="onboardingError" class="inline-error" hidden></p>
+          <button class="action-btn primary" id="onboardingSaveBtn" type="button">新增守護人並進入首頁</button>
+        </div>
+      </div>
     </div>
 
     <section class="status-box" aria-label="簽到狀態">
@@ -3288,6 +3353,400 @@
           return;
         }
         renderStatus(status);
+      } catch (error) {
+        showInlineError("載入狀態失敗:" + (error.message || "請確認服務是否正常"));
+      }
+    }
+
+    // ===== C00 Onboarding + C02 Guardian Management =====
+
+    let guardianList = []; // local cache for edit/delete
+
+    async function apiAddGuardian(payload) {
+      const res = await fetch("/api/contacts/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      return { status: res.status, data };
+    }
+
+    async function apiUpdateGuardian(contactId, payload) {
+      const res = await fetch(`/api/contacts/${encodeURIComponent(contactId)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      return { status: res.status, data };
+    }
+
+    async function apiDeleteGuardian(contactId, lineUserId) {
+      const res = await fetch(`/api/contacts/${encodeURIComponent(contactId)}?line_user_id=${encodeURIComponent(lineUserId)}`, {
+        method: "DELETE"
+      });
+      const data = await res.json();
+      return { status: res.status, data };
+    }
+
+    async function apiGetContacts(lineUserId) {
+      const res = await fetch(`/api/contacts?line_user_id=${encodeURIComponent(lineUserId)}`);
+      const data = await res.json();
+      return { status: res.status, data };
+    }
+
+    async function apiGetOnboarding(lineUserId) {
+      const res = await fetch(`/api/onboarding?line_user_id=${encodeURIComponent(lineUserId)}`);
+      const data = await res.json();
+      return { status: res.status, data };
+    }
+
+    async function apiCompleteOnboarding(lineUserId, reminderTime) {
+      const res = await fetch(`/api/onboarding/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId, reminder_time: reminderTime })
+      });
+      const data = await res.json();
+      return { status: res.status, data };
+    }
+
+    async function apiCreateFriendInvite(lineUserId) {
+      const res = await fetch("/api/friends/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId, public_url: location.origin })
+      });
+      const data = await res.json();
+      return { status: res.status, data };
+    }
+
+    function renderGuardians(contacts, contactLimit) {
+      guardianList = contacts || [];
+      const listEl = $("guardianList");
+      const countEl = $("guardianCount");
+      const sectionEl = $("guardianSection");
+      if (!listEl) return;
+
+      // 顯示守護人區塊
+      if (sectionEl) sectionEl.hidden = false;
+
+      // 渲染列表
+      if (contacts && contacts.length > 0) {
+        listEl.innerHTML = contacts.map((c, i) => `
+          <div class="guardian-item" data-id="${escapeHtml(c.id)}">
+            <div class="guardian-info">
+              <strong>${escapeHtml(c.name)}</strong>
+              ${c.is_primary ? '<span class="badge primary">主要</span>' : ''}
+              <small>${escapeHtml(c.relationship || '')}</small>
+              <small>${escapeHtml(c.phone || c.email || '')}</small>
+              <small>狀態: ${c.binding_status === 'accepted' ? '已綁定 LINE' : c.line_user_id ? '已綁定' : '未綁定'}</small>
+            </div>
+            <div class="guardian-actions-row">
+              <button class="contact-icon-btn edit-guardian" data-id="${escapeHtml(c.id)}">編輯</button>
+              <button class="contact-icon-btn delete-guardian danger" data-id="${escapeHtml(c.id)}">刪除</button>
+            </div>
+          </div>
+        `).join("");
+        // bind events
+        listEl.querySelectorAll(".edit-guardian").forEach(btn => {
+          btn.addEventListener("click", () => openGuardianEditor(btn.dataset.id));
+        });
+        listEl.querySelectorAll(".delete-guardian").forEach(btn => {
+          btn.addEventListener("click", () => confirmDeleteGuardian(btn.dataset.id));
+        });
+      } else {
+        listEl.innerHTML = '<p class="empty-state">尚未設定守護人,發生未簽到或 SOS 時將無人收到通知。</p>';
+      }
+
+      if (countEl) {
+        countEl.textContent = `目前 ${contacts ? contacts.length : 0} / ${contactLimit || '?'} 位`;
+      }
+    }
+
+    function openGuardianEditor(contactId) {
+      const modal = $("guardianEditorModal");
+      const errorEl = $("guardianEditorError");
+      const titleEl = $("guardianEditorTitle");
+      if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
+      if (contactId) {
+        const c = guardianList.find(x => x.id === contactId);
+        if (!c) return;
+        if (titleEl) titleEl.textContent = "編輯守護人";
+        $("gName").value = c.name || "";
+        $("gRelationship").value = c.relationship || "";
+        $("gPhone").value = c.phone || "";
+        $("gEmail").value = c.email || "";
+        $("gNote").value = c.note || "";
+        $("gIsPrimary").checked = !!c.is_primary;
+        modal.dataset.editId = contactId;
+      } else {
+        if (titleEl) titleEl.textContent = "新增守護人";
+        $("gName").value = "";
+        $("gRelationship").value = "家人";
+        $("gPhone").value = "";
+        $("gEmail").value = "";
+        $("gNote").value = "";
+        $("gIsPrimary").checked = guardianList.length === 0; // 第一位自動設為主要
+        delete modal.dataset.editId;
+      }
+      modal.hidden = false;
+    }
+
+    function closeGuardianEditor() {
+      const modal = $("guardianEditorModal");
+      modal.hidden = true;
+      delete modal.dataset.editId;
+    }
+
+    async function saveGuardian() {
+      const modal = $("guardianEditorModal");
+      const editId = modal.dataset.editId;
+      const errorEl = $("guardianEditorError");
+      const payload = {
+        line_user_id: lineUserId,
+        name: $("gName").value.trim(),
+        relationship: $("gRelationship").value.trim(),
+        phone: $("gPhone").value.trim(),
+        email: $("gEmail").value.trim(),
+        note: $("gNote").value.trim(),
+        is_primary: $("gIsPrimary").checked,
+      };
+      const saveBtn = $("saveGuardianBtn");
+      saveBtn.disabled = true;
+      saveBtn.textContent = "儲存中...";
+      if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
+      try {
+        let res;
+        if (editId) {
+          res = await apiUpdateGuardian(editId, payload);
+        } else {
+          res = await apiAddGuardian(payload);
+        }
+        if (res.status === 200 && res.data && res.data.ok !== false) {
+          renderGuardians(res.data.contacts || [], res.data.contact_limit);
+          closeGuardianEditor();
+        } else {
+          const errMsg = (res.data && (res.data.message || res.data.error)) || "儲存失敗";
+          const fields = (res.data && res.data.fields) ? `(${res.data.fields.join(", ")})` : "";
+          if (errorEl) {
+            errorEl.textContent = `${errMsg} ${fields}`;
+            errorEl.hidden = false;
+          }
+        }
+      } catch (error) {
+        if (errorEl) {
+          errorEl.textContent = "儲存失敗:" + error.message;
+          errorEl.hidden = false;
+        }
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "儲存";
+      }
+    }
+
+    function confirmDeleteGuardian(contactId) {
+      const c = guardianList.find(x => x.id === contactId);
+      if (!c) return;
+      const modal = $("deleteGuardianModal");
+      const nameEl = $("deleteGuardianName");
+      if (nameEl) nameEl.textContent = c.name;
+      modal.dataset.deleteId = contactId;
+      modal.hidden = false;
+    }
+
+    function closeDeleteGuardian() {
+      const modal = $("deleteGuardianModal");
+      modal.hidden = true;
+      delete modal.dataset.deleteId;
+    }
+
+    async function executeDeleteGuardian() {
+      const modal = $("deleteGuardianModal");
+      const id = modal.dataset.deleteId;
+      if (!id) return;
+      try {
+        const res = await apiDeleteGuardian(id, lineUserId);
+        if (res.status === 200 && res.data.ok !== false) {
+          renderGuardians(res.data.contacts || [], null);
+          closeDeleteGuardian();
+        } else {
+          alert("刪除失敗: " + ((res.data && res.data.error) || "未知錯誤"));
+        }
+      } catch (error) {
+        alert("刪除失敗: " + error.message);
+      }
+    }
+
+    async function generateInvite() {
+      const inviteArea = $("inviteArea");
+      const inviteUrlBox = $("inviteUrlBox");
+      const inviteMeta = $("inviteMeta");
+      if (!lineUserId) {
+        alert("請先設定守護人或登入");
+        return;
+      }
+      try {
+        const res = await apiCreateFriendInvite(lineUserId);
+        if (res.status === 200 && res.data.invite_code) {
+          inviteUrlBox.value = res.data.invite_url;
+          const exp = res.data.expires_at ? new Date(res.data.expires_at).toLocaleString("zh-TW") : "7 天";
+          inviteMeta.textContent = `代碼: ${res.data.invite_code} | 狀態: ${res.data.status} | 有效至: ${exp}`;
+          inviteArea.hidden = false;
+        } else {
+          alert("邀請產生失敗: " + ((res.data && res.data.error) || "未知錯誤"));
+        }
+      } catch (error) {
+        alert("邀請產生失敗: " + error.message);
+      }
+    }
+
+    async function copyInviteUrl() {
+      const inviteUrlBox = $("inviteUrlBox");
+      try {
+        await navigator.clipboard.writeText(inviteUrlBox.value);
+        alert("邀請連結已複製到剪貼簿");
+      } catch (e) {
+        inviteUrlBox.select();
+        document.execCommand("copy");
+        alert("已複製(請貼上)");
+      }
+    }
+
+    // C00 Onboarding
+    async function checkOnboarding() {
+      if (!lineUserId) return true;
+      try {
+        const res = await apiGetOnboarding(lineUserId);
+        if (res.status !== 200) return true;
+        return res.data.is_onboarding_completed === true;
+      } catch (e) {
+        return true; // API 失敗不擋
+      }
+    }
+
+    async function showOnboarding() {
+      const modal = $("onboardingModal");
+      const errorEl = $("onboardingError");
+      if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
+      $("obName").value = "";
+      $("obRelationship").value = "家人";
+      $("obPhone").value = "";
+      $("obEmail").value = "";
+      modal.hidden = false;
+    }
+
+    function closeOnboarding() {
+      const modal = $("onboardingModal");
+      modal.hidden = true;
+    }
+
+    async function saveOnboardingGuardian() {
+      const errorEl = $("onboardingError");
+      const saveBtn = $("onboardingSaveBtn");
+      saveBtn.disabled = true;
+      saveBtn.textContent = "儲存中...";
+      if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
+      const payload = {
+        line_user_id: lineUserId,
+        name: $("obName").value.trim(),
+        relationship: $("obRelationship").value.trim(),
+        phone: $("obPhone").value.trim(),
+        email: $("obEmail").value.trim(),
+        is_primary: true,
+      };
+      try {
+        const res = await apiAddGuardian(payload);
+        if (res.status !== 200 || res.data.ok === false) {
+          const errMsg = (res.data && (res.data.message || res.data.error)) || "儲存失敗";
+          const fields = (res.data && res.data.fields) ? `(${res.data.fields.join(", ")})` : "";
+          if (errorEl) {
+            errorEl.textContent = `${errMsg} ${fields}`;
+            errorEl.hidden = false;
+          }
+          return;
+        }
+        // 標記 onboarding 完成
+        const ob = await apiCompleteOnboarding(lineUserId, "09:00");
+        if (ob.status === 200 && ob.data.ok) {
+          renderGuardians(res.data.contacts || [], res.data.contact_limit);
+          closeOnboarding();
+        } else {
+          if (errorEl) {
+            errorEl.textContent = "儲存成功但 onboarding 標記失敗,請重整頁面";
+            errorEl.hidden = false;
+          }
+        }
+      } catch (error) {
+        if (errorEl) {
+          errorEl.textContent = "儲存失敗:" + error.message;
+          errorEl.hidden = false;
+        }
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "新增守護人並進入首頁";
+      }
+    }
+
+    // bind C02 events
+    function bindGuardianEvents() {
+      const addBtn = $("addGuardianBtn");
+      const inviteBtn = $("inviteGuardianBtn");
+      const copyBtn = $("copyInviteBtn");
+      const saveBtn = $("saveGuardianBtn");
+      const cancelBtn = $("cancelGuardianBtn");
+      const cancelDelBtn = $("cancelDeleteGuardianBtn");
+      const confirmDelBtn = $("confirmDeleteGuardianBtn");
+      const obSaveBtn = $("onboardingSaveBtn");
+      if (addBtn) addBtn.addEventListener("click", () => openGuardianEditor(null));
+      if (inviteBtn) inviteBtn.addEventListener("click", generateInvite);
+      if (copyBtn) copyBtn.addEventListener("click", copyInviteUrl);
+      if (saveBtn) saveBtn.addEventListener("click", saveGuardian);
+      if (cancelBtn) cancelBtn.addEventListener("click", closeGuardianEditor);
+      if (cancelDelBtn) cancelDelBtn.addEventListener("click", closeDeleteGuardian);
+      if (confirmDelBtn) confirmDelBtn.addEventListener("click", executeDeleteGuardian);
+      if (obSaveBtn) obSaveBtn.addEventListener("click", saveOnboardingGuardian);
+    }
+
+    // 整合到 initApp:載入守護人 + onboarding 檢查
+    async function initApp() {
+      const dailyEl = $("dailyStatus");
+      if (dailyEl) dailyEl.textContent = "讀取中...";
+
+      if (!lineUserId) {
+        if (dailyEl) dailyEl.textContent = "請從 LINE 開啟此服務";
+        return;
+      }
+      try {
+        await fetch("/api/line/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            line_user_id: lineUserId,
+            display_name: lineDisplayName || ("User " + lineUserId.slice(-4)),
+            picture_url: ""
+          })
+        });
+        const status = await apiGetStatus();
+        if (status && status.ok === false) {
+          showInlineError("載入狀態失敗: " + (status.error || "未知錯誤"));
+          return;
+        }
+        renderStatus(status);
+
+        // 載入守護人
+        const contactsRes = await apiGetContacts(lineUserId);
+        if (contactsRes.status === 200) {
+          renderGuardians(contactsRes.data.contacts || [], contactsRes.data.contact_limit);
+        }
+
+        // C00 Onboarding 檢查
+        bindGuardianEvents();
+        const obDone = await checkOnboarding();
+        if (!obDone) {
+          await showOnboarding();
+        }
       } catch (error) {
         showInlineError("載入狀態失敗:" + (error.message || "請確認服務是否正常"));
       }
