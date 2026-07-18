@@ -1808,6 +1808,15 @@
     let historyData = [];
     let useLocalMode = location.protocol === "file:";
     let lineUserId = "";
+    // Dev mode: 允許用 URL ?line_user_id=XXX 模擬使用者
+    // production 不受影響(LIFF 環境下使用者無法在 URL 加參數)
+    try {
+      const urlParams = new URLSearchParams(location.search);
+      const urlLineUserId = urlParams.get("line_user_id");
+      if (urlLineUserId) lineUserId = urlLineUserId;
+    } catch (e) {
+      // 忽略 URL 解析失敗
+    }
     let qrScanStream = null;
     let qrScanTimer = null;
     let pendingFriendInviteCode = "";
@@ -1888,15 +1897,15 @@
 
     async function apiGetStatus() {
       if (useLocalMode) return buildLocalStatus(loadLocalState());
-      try {
-        const query = lineUserId ? `?line_user_id=${encodeURIComponent(lineUserId)}` : "";
-        const res = await fetch(`/api/status${query}`);
-        if (!res.ok) throw new Error("bad status");
-        return await res.json();
-      } catch (error) {
-        useLocalMode = true;
-        return buildLocalStatus(loadLocalState());
+      if (!lineUserId) {
+        throw new Error("需要 LINE 登入,或在 URL 加 ?line_user_id=XXX 進入 dev 模式");
       }
+      const res = await fetch(`/api/status?line_user_id=${encodeURIComponent(lineUserId)}`);
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`API ${res.status}: ${text.slice(0, 80)}`);
+      }
+      return await res.json();
     }
 
     async function apiCheckin() {
@@ -1908,12 +1917,18 @@
         saveLocalState(state);
         return buildLocalStatus(state);
       }
+      if (!lineUserId) {
+        throw new Error("需要 LINE 登入才能簽到,或在 URL 加 ?line_user_id=XXX 進入 dev 模式");
+      }
       const res = await fetch("/api/checkin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ line_user_id: lineUserId })
       });
-      if (!res.ok) throw new Error("checkin failed");
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`checkin ${res.status}: ${text.slice(0, 80)}`);
+      }
       return await res.json();
     }
 
