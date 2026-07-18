@@ -403,6 +403,39 @@ def trial_active(profile):
     return (profile.get("plan") or "trial") == "trial" and trial_days_left(profile) > 0
 
 
+def compute_streak_days(history, today):
+    """計算連續簽到天數(以 Asia/Taipei 為主)。
+
+    規則:
+    - 今天有簽到 → 從今天往前連續算
+    - 今天沒簽到但昨天有簽到 → 從昨天往前算(代表昨天還平安)
+    - 中間缺一天就中斷
+    - history 重複日期不影響(set 化)
+    """
+    if not history:
+        return 0
+    history_set = set(history)
+    if today in history_set:
+        start = today
+    else:
+        from datetime import datetime as _dt, timedelta as _td
+        try:
+            yesterday = (_dt.strptime(today, "%Y-%m-%d") - _td(days=1)).strftime("%Y-%m-%d")
+        except ValueError:
+            return 0
+        if yesterday in history_set:
+            start = yesterday
+        else:
+            return 0
+    streak = 0
+    from datetime import datetime as _dt, timedelta as _td
+    cur = _dt.strptime(start, "%Y-%m-%d")
+    while cur.strftime("%Y-%m-%d") in history_set:
+        streak += 1
+        cur -= _td(days=1)
+    return streak
+
+
 def build_status(profile):
     profile = {**DEFAULT_PROFILE, **profile}
     now = datetime.now()
@@ -435,8 +468,11 @@ def build_status(profile):
         status_class = "highlight"
 
     return {
+        "ok": True,
         "line_user_id": profile.get("line_user_id"),
         "display_name": profile.get("display_name", ""),
+        "picture_url": profile.get("picture_url", ""),
+        "streak_days": compute_streak_days(profile.get("history") or [], today),
         "last_check_in": profile.get("last_check_in"),
         "history": sorted(set(profile.get("history") or [])),
         "contact_email": profile.get("contact_email", ""),
@@ -508,12 +544,17 @@ def record_checkin(data_file, payload=None):
     now = datetime.now()
     today = now.strftime("%Y-%m-%d")
     history = set(profile.get("history") or [])
-    history.add(today)
-    profile["history"] = sorted(history)
+    already_checked = today in history
+    if not already_checked:
+        history.add(today)
+        profile["history"] = sorted(history)
     profile["last_check_in"] = now.isoformat(timespec="seconds")
     profile["last_warning_cancelled_at"] = None
     save_state(data_file, state)
-    return build_status(profile)
+    status = build_status(profile)
+    status["already_checked_today"] = already_checked
+    status["is_duplicate"] = already_checked
+    return status
 
 
 def cancel_warning(data_file, payload=None, config=None):
@@ -1830,8 +1871,14 @@ def create_app(config=None):
 
     @app.get("/api/status")
     def status():
+        line_user_id = (request.args.get("line_user_id") or "").strip()
+        if not line_user_id:
+            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
         state = load_state(app.config["DATA_FILE"])
-        return jsonify(build_status(get_profile(state, request.args.get("line_user_id"))))
+        profile = state.get("users", {}).get(line_user_id)
+        if not profile:
+            return jsonify({"ok": False, "error": "user not registered", "line_user_id": line_user_id}), 404
+        return jsonify(build_status(profile))
 
     @app.post("/api/line/register")
     def line_register():
@@ -1840,7 +1887,16 @@ def create_app(config=None):
 
     @app.post("/api/checkin")
     def checkin():
-        return jsonify(record_checkin(app.config["DATA_FILE"], request.get_json(silent=True) or {}))
+        payload = request.get_json(silent=True) or {}
+        line_user_id = (payload.get("line_user_id") or "").strip()
+        if not line_user_id:
+            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        state = load_state(app.config["DATA_FILE"])
+        if line_user_id not in state.get("users", {}):
+            return jsonify({"ok": False, "error": "user not registered", "line_user_id": line_user_id}), 404
+        status = record_checkin(app.config["DATA_FILE"], payload)
+        status["ok"] = True
+        return jsonify(status)
 
     @app.post("/callback")
     def line_callback():

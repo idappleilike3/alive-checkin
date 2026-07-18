@@ -377,7 +377,8 @@
       padding-bottom: 12px;
       border-bottom: 1px solid var(--line);
     }
-    .member-avatar {
+    .member-avatar,
+    .member-avatar-img {
       width: 44px;
       height: 44px;
       display: grid;
@@ -386,6 +387,35 @@
       color: #fff;
       background: var(--button);
       font-weight: 900;
+      object-fit: cover;
+    }
+    .member-avatar-img[hidden] { display: none; }
+    .inline-error {
+      background: #fee2e2;
+      color: #991b1b;
+      padding: 10px 14px;
+      border-radius: 8px;
+      margin: 12px 0;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .inline-error[hidden] { display: none; }
+    .check-btn:disabled,
+    .reload-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .check-btn.checked {
+      background: #16a34a;
+      color: #fff;
+    }
+    .reload-btn {
+      margin-top: 10px;
+      width: 100%;
+    }
+    .helper {
+      color: var(--muted);
+      font-size: 13px;
     }
     .member-profile-row strong,
     .member-profile-row small { display: block; }
@@ -1304,6 +1334,8 @@
         我還活著
         <span class="sub">點一下簽到 ♡</span>
       </button>
+      <p id="inlineError" class="inline-error" hidden></p>
+      <button class="action-btn reload-btn" id="reloadBtn" type="button">重新載入</button>
     </div>
 
     <section class="status-box" aria-label="簽到狀態">
@@ -1352,9 +1384,11 @@
       </button>
       <div class="member-center-details" id="memberCenterDetails" hidden>
         <div class="member-profile-row">
+          <img class="member-avatar-img" id="userPicture" src="" alt="" hidden>
           <div class="member-avatar" id="memberAvatar">我</div>
           <div>
             <strong id="memberDisplayName">LINE 會員</strong>
+            <small id="todayDateText" class="helper"></small>
             <small><span id="memberPlanText">安心體驗</span>｜<span id="memberExpiryText">尚未設定到期日</span></small>
           </div>
           <button class="member-upgrade-btn" id="memberUpgradeBtn" type="button">立即升級 <span aria-hidden="true">→</span></button>
@@ -3061,6 +3095,51 @@
       historyData = data.history || [];
       $("dailyStatus").textContent = data.is_today_checked ? "今日已簽到" : "今日未簽到";
       $("lastDate").textContent = formatDate(data.last_check_in);
+
+      // 使用者頭像(用 LINE picture_url)
+      const userPic = $("userPicture");
+      const userAvatar = $("memberAvatar");
+      const pic = data.picture_url || "";
+      if (pic) {
+        userPic.src = pic;
+        userPic.hidden = false;
+        userAvatar.hidden = true;
+      } else {
+        userPic.hidden = true;
+        userAvatar.hidden = false;
+        userAvatar.textContent = (data.display_name || "?").trim().slice(0, 1) || "?";
+      }
+
+      // 今天日期(Asia/Taipei)
+      try {
+        $("todayDateText").textContent = "今天: " + new Intl.DateTimeFormat("zh-TW", {
+          timeZone: "Asia/Taipei",
+          year: "numeric", month: "2-digit", day: "2-digit",
+          weekday: "short"
+        }).format(new Date());
+      } catch (e) {
+        $("todayDateText").textContent = "今天: " + new Date().toLocaleDateString("zh-TW");
+      }
+
+      // 連續簽到天數:優先用後端 streak_days
+      if (typeof data.streak_days === "number") {
+        $("streakText").textContent = data.streak_days + " 天";
+      } else {
+        $("streakText").textContent = calculateStreak(historyData) + " 天";
+      }
+
+      // 簽到按鈕狀態(防重複送出)
+      const checkBtn = $("checkBtn");
+      if (checkBtn) {
+        checkBtn.disabled = Boolean(data.is_today_checked);
+        checkBtn.classList.toggle("checked", Boolean(data.is_today_checked));
+        checkBtn.dataset.state = data.is_today_checked ? "checked" : "pending";
+      }
+
+      // 成功 render 清掉錯誤訊息
+      const errBox = $("inlineError");
+      if (errBox) { errBox.hidden = true; errBox.textContent = ""; }
+
       $("statusText").innerHTML = `<span class="${data.status_class || "gray"}">${data.status_text || "--"}</span>`;
       $("alivePill").textContent = data.is_overdue
         ? "需要確認"
@@ -3095,9 +3174,10 @@
         hideWarningPrompt();
       }
 
-      $("checkBtn").className = "check-btn";
-      if (data.is_overdue) $("checkBtn").classList.add("danger");
-      else if (data.status_class === "warning") $("checkBtn").classList.add("warning");
+      const checkBtnEl = $("checkBtn");
+      checkBtnEl.classList.remove("danger", "warning");
+      if (data.is_overdue) checkBtnEl.classList.add("danger");
+      else if (data.status_class === "warning") checkBtnEl.classList.add("warning");
 
       $("contactEmail").value = data.contact_email || "";
       $("graceHours").value = String(data.grace_hours || 36);
@@ -3125,11 +3205,91 @@
       renderStatus(await apiGetStatus());
     }
 
+    function showInlineError(message) {
+      const errBox = $("inlineError");
+      if (!errBox) { alert(message); return; }
+      errBox.textContent = message;
+      errBox.hidden = false;
+    }
+
+    function hideInlineError() {
+      const errBox = $("inlineError");
+      if (errBox) { errBox.hidden = true; errBox.textContent = ""; }
+    }
+
     async function doCheckin() {
+      const checkBtn = $("checkBtn");
+      if (!checkBtn) return;
+
+      // 防重複送出:今日已簽到時不送 API
+      if (currentStatusData && currentStatusData.is_today_checked) {
+        showInlineError("今日已簽到，不需要再送出。");
+        return;
+      }
+
+      // loading 狀態
+      const originalText = checkBtn.innerHTML;
+      checkBtn.disabled = true;
+      checkBtn.dataset.state = "loading";
+      checkBtn.innerHTML = '<span class="status-row"><span class="status-label">簽到處理中…</span></span>';
+      hideInlineError();
+
       try {
-        renderStatus(await apiCheckin());
+        const result = await apiCheckin();
+        if (result && result.ok === false) {
+          showInlineError("簽到失敗: " + (result.error || "未知錯誤"));
+          checkBtn.disabled = false;
+          checkBtn.innerHTML = originalText;
+          return;
+        }
+        renderStatus(result);
       } catch (error) {
-        alert("簽到失敗，請確認後端是否正常。");
+        showInlineError("簽到失敗:" + (error.message || "請確認後端是否正常"));
+        checkBtn.disabled = false;
+        checkBtn.innerHTML = originalText;
+      }
+    }
+
+    async function reloadStatus() {
+      const reloadBtn = $("reloadBtn");
+      if (reloadBtn) { reloadBtn.disabled = true; reloadBtn.textContent = "重新載入中…"; }
+      hideInlineError();
+      try {
+        const status = await apiGetStatus();
+        renderStatus(status);
+      } catch (error) {
+        showInlineError("重新載入失敗:" + (error.message || "請確認後端是否正常"));
+      } finally {
+        if (reloadBtn) { reloadBtn.disabled = false; reloadBtn.textContent = "重新載入"; }
+      }
+    }
+
+    async function initApp() {
+      const dailyEl = $("dailyStatus");
+      if (dailyEl) dailyEl.textContent = "讀取中...";
+
+      if (!lineUserId) {
+        if (dailyEl) dailyEl.textContent = "請從 LINE 開啟此服務";
+        return;
+      }
+      try {
+        await fetch("/api/line/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            line_user_id: lineUserId,
+            display_name: lineDisplayName || ("User " + lineUserId.slice(-4)),
+            picture_url: ""
+          })
+        });
+        const status = await apiGetStatus();
+        if (status && status.ok === false) {
+          showInlineError("載入狀態失敗: " + (status.error || "未知錯誤"));
+          return;
+        }
+        renderStatus(status);
+      } catch (error) {
+        showInlineError("載入狀態失敗:" + (error.message || "請確認服務是否正常"));
       }
     }
 
@@ -3170,6 +3330,12 @@
       button.addEventListener("click", () => setTheme(button.dataset.theme));
     });
     $("checkBtn").addEventListener("click", doCheckin);
+    const reloadBtnEl = $("reloadBtn");
+    if (reloadBtnEl) reloadBtnEl.addEventListener("click", reloadStatus);
+
+    // 自動初始化:有 line_user_id 就 register + load status
+    initApp();
+
     $("saveBtn").addEventListener("click", saveSettings);
     $("resetBtn").addEventListener("click", resetCheckin);
     $("shareContactInviteBtn").addEventListener("click", shareContactInvite);
