@@ -1,6 +1,7 @@
 import json
 import os
 import secrets
+import sqlite3
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -226,13 +227,79 @@ def should_create_support_ticket(text):
     return not any(keyword in text for group in keyword_groups for keyword in group)
 
 
+def _resolve_db_path(data_file):
+    """Resolve SQLite database path from configured data file path.
+
+    Accepts legacy ``state.json`` paths and returns ``state.db`` sibling.
+    Also accepts explicit ``.db`` paths unchanged.
+    """
+    text = str(data_file)
+    if text.endswith(".json"):
+        return text[: -len(".json")] + ".db"
+    return text
+
+
+def _ensure_db(db_path):
+    """Create the SQLite database and kv_store table if missing."""
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS kv_store ("
+            "  key TEXT PRIMARY KEY,"
+            "  value TEXT NOT NULL,"
+            "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))"
+            ")"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _migrate_legacy_json(data_file, db_path):
+    """One-shot migration: read legacy state.json, write into SQLite, rename to .bak."""
+    json_path = Path(str(data_file))
+    if not json_path.exists():
+        return
+    try:
+        legacy = json.loads(json_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
+            ("default", json.dumps(legacy, ensure_ascii=False, indent=2)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        json_path.rename(str(json_path) + ".bak")
+    except OSError:
+        pass
+
+
 def load_state(data_file):
-    path = Path(data_file)
-    if not path.exists():
+    """Load state from SQLite (auto-migrates legacy state.json on first call)."""
+    db_path = _resolve_db_path(data_file)
+    if not Path(db_path).exists():
+        _ensure_db(db_path)
+        _migrate_legacy_json(data_file, db_path)
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT value FROM kv_store WHERE key = ?", ("default",)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not row:
         return {**DEFAULT_STATE, "users": {}}
     try:
-        saved = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+        saved = json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
         return {**DEFAULT_STATE, "users": {}}
 
     state = {**DEFAULT_STATE, **saved}
@@ -249,9 +316,20 @@ def load_state(data_file):
 
 
 def save_state(data_file, state):
-    path = Path(data_file)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    """Persist state to SQLite with an atomic transaction."""
+    db_path = _resolve_db_path(data_file)
+    _ensure_db(db_path)
+    payload = json.dumps(state, ensure_ascii=False, indent=2)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO kv_store (key, value, updated_at) "
+            "VALUES (?, ?, datetime('now'))",
+            ("default", payload),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def today_string():
