@@ -1809,14 +1809,22 @@
     let useLocalMode = location.protocol === "file:";
     let lineUserId = "";
     // Dev mode: 允許用 URL ?line_user_id=XXX 模擬使用者
-    // production 不受影響(LIFF 環境下使用者無法在 URL 加參數)
-    try {
-      const urlParams = new URLSearchParams(location.search);
-      const urlLineUserId = urlParams.get("line_user_id");
-      if (urlLineUserId) lineUserId = urlLineUserId;
-    } catch (e) {
-      // 忽略 URL 解析失敗
-    }
+    // 只在 localhost / 127.0.0.1 / 明確 DEV_MODE 才生效
+    // 正式網址一律忽略 query parameter 的 line_user_id
+    // 真實使用者身分只能來自 liff.getProfile()
+    (function applyDevUserIdFromUrl() {
+      try {
+        const host = location.hostname;
+        const urlParams = new URLSearchParams(location.search);
+        const forceDevMode = urlParams.get("dev_mode") === "1" || urlParams.get("dev") === "1";
+        const isLocal = host === "localhost" || host === "127.0.0.1" || host === "::1";
+        if (!isLocal && !forceDevMode) return;
+        const urlLineUserId = urlParams.get("line_user_id");
+        if (urlLineUserId) lineUserId = urlLineUserId;
+      } catch (e) {
+        // 忽略 URL 解析失敗
+      }
+    })();
     let qrScanStream = null;
     let qrScanTimer = null;
     let pendingFriendInviteCode = "";

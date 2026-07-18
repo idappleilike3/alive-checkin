@@ -381,16 +381,24 @@
 </div>
 
 <script>
+  // LIFF ID 統一從後端 /api/config 拿,不在前端硬編碼
+  var liffIdPromise = fetch('/api/config').then(function(r) {
+    if (!r.ok) throw new Error('config failed: ' + r.status);
+    return r.json();
+  }).then(function(c) { return c.liff_id || ''; }).catch(function() { return ''; });
+
   // CTA 按鈕點擊 → 觸發 LINE Pay / 藍新付款
   document.querySelectorAll('.cta-button').forEach(function(btn) {
-    btn.addEventListener('click', function(e) {
+    btn.addEventListener('click', async function(e) {
       e.preventDefault();
       var plan = this.getAttribute('data-plan');
       var cycle = this.getAttribute('data-cycle');
-      // TODO: 串接藍新金流後,改為跳轉付款頁
-      // 暫時跳轉 LINE Bot 並傳訊息
+      var liffId = await liffIdPromise;
+      if (!liffId) {
+        alert('尚未設定 LIFF ID,請到 Render Environment 設定 LIFF_ID');
+        return;
+      }
       var msg = '我想升級 ' + plan + ' (' + cycle + ')';
-      var liffId = '2007786280-Ll9j1Sk';  // ⚠️ 蝦董的新 LINE Bot channel
       var linePayUrl = 'https://line.me/R/oaMessage/' + liffId + '/?' + encodeURIComponent(msg);
       window.location.href = linePayUrl;
     });
