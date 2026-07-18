@@ -1411,8 +1411,10 @@ def delete_personal_history(data_file, payload):
 
 
 def admin_allowed(config, password):
-    expected = config.get("ADMIN_PASSWORD") or os.environ.get("ADMIN_PASSWORD", "")
-    return not expected or password == expected
+    expected = os.environ.get("ADMIN_PASSWORD") or config.get("ADMIN_PASSWORD", "")
+    if not expected:
+        return False
+    return secrets.compare_digest(str(expected), str(password or ""))
 
 
 def cron_allowed(config, secret):
