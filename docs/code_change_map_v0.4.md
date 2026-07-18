@@ -553,7 +553,7 @@ ALERT_WAVE_2_DELAY_MINUTES = 15       # 可調
 ALERT_WAVE_3_DELAY_MINUTES = 30       # 可調
 ALERT_AUTO_CANCEL_ON_CHECKIN = True    # 簽到自動取消
 ADMIN_LINE_USER_ID = "Uxxxxx"         # 管理員 LINE ID
-ADMIN_EMAIL = "alivecheckin.tw@gmail.com"
+ADMIN_EMAIL = "admin@example.com"
 ```
 
 ---

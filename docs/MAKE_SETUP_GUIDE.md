@@ -67,7 +67,7 @@
 4. **第一次會跳出授權視窗**:
    - 點「Add」
    - 選「Gmail」
-   - **登入您的 Gmail**(`alivecheckin.tw@gmail.com` 或您常用那個)
+   - **登入您的 Gmail**(`your-email@example.com` 或您常用那個)
    - **點「允許」**(授權 MAKE 寄信)
 5. 回到 Email 模組設定:
    - **To**:您的 email(同 Gmail)
