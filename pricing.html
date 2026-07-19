@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>價目表 - 今天還在嗎</title>
+  <link rel="stylesheet" href="index.html">
+  <style>
+    body { font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif; background: #f8fafc; color: #0f172a; line-height: 1.6; }
+    .pricing-container { max-width: 1080px; margin: 0 auto; padding: 24px 18px 100px; }
+    .pricing-header { text-align: center; padding: 32px 0 24px; }
+    .pricing-header h1 { font-size: 32px; font-weight: 800; margin-bottom: 8px; }
+    .pricing-header p { color: #64748b; font-size: 16px; }
+    .pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin: 24px 0; }
+    .price-card { background: #fff; border-radius: 16px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; display: flex; flex-direction: column; }
+    .price-card.featured { border: 2px solid #16a34a; position: relative; }
+    .price-card.featured::before { content: "最受推薦"; position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: #16a34a; color: #fff; padding: 4px 14px; border-radius: 12px; font-size: 12px; font-weight: 700; }
+    .price-tier { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+    .price-amount { font-size: 36px; font-weight: 800; color: #0f172a; margin: 8px 0; }
+    .price-amount small { font-size: 16px; color: #64748b; font-weight: 500; }
+    .price-sub { color: #64748b; font-size: 13px; margin-bottom: 16px; }
+    .price-features { list-style: none; margin: 0 0 20px; padding: 0; flex: 1; }
+    .price-features li { padding: 8px 0; border-bottom: 1px solid #f1f5f9; font-size: 14px; color: #334155; display: flex; align-items: flex-start; gap: 8px; }
+    .price-features li::before { content: "✓"; color: #16a34a; font-weight: 700; flex-shrink: 0; }
+    .price-cta { display: block; width: 100%; padding: 14px; border: 0; border-radius: 10px; font-size: 16px; font-weight: 700; cursor: pointer; text-align: center; text-decoration: none; }
+    .price-cta.primary { background: #16a34a; color: #fff; }
+    .price-cta.secondary { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+    .price-cta:hover { transform: translateY(-1px); transition: transform 0.15s; }
+    .price-faq { background: #f1f5f9; border-radius: 12px; padding: 20px 24px; margin-top: 28px; }
+    .price-faq h3 { font-size: 16px; font-weight: 700; margin-bottom: 12px; }
+    .price-faq p { font-size: 14px; color: #334155; margin-bottom: 8px; }
+    .back-link { display: inline-block; margin-bottom: 18px; color: #2563eb; text-decoration: none; font-weight: 600; font-size: 15px; }
+    .back-link:hover { text-decoration: underline; }
+    .price-notice { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 14px 18px; border-radius: 8px; margin: 24px 0; font-size: 14px; color: #78350f; }
+  </style>
+</head>
+<body>
+  <div class="pricing-container">
+    <a href="index.html" class="back-link">← 回首頁</a>
+
+    <div class="pricing-header">
+      <h1>選擇適合你的守護方案</h1>
+      <p>每天不到 NT$13,讓關心你的人永遠能找到你</p>
+    </div>
+
+    <div class="price-notice">
+      <strong>目前金流尚未串接完成</strong>,下方按鈕僅作方案展示。真實購買功能預計 2026 年 8 月開放,屆時會透過 LINE Pay 或信用卡(藍新金流)。
+    </div>
+
+    <div class="pricing-grid">
+      <!-- 免費體驗 -->
+      <article class="price-card">
+        <div class="price-tier">免費體驗</div>
+        <div class="price-amount">NT$0 <small>/ 永久</small></div>
+        <div class="price-sub">先試用看看,7 天完整體驗</div>
+        <ul class="price-features">
+          <li>每日簽到</li>
+          <li>1 位守護人</li>
+          <li>基本簽到紀錄</li>
+          <li>網頁內提醒</li>
+          <li>基礎使用教學</li>
+        </ul>
+        <a href="index.html" class="price-cta secondary">開始設定</a>
+      </article>
+
+      <!-- 399 安心會員 -->
+      <article class="price-card">
+        <div class="price-tier">安心會員</div>
+        <div class="price-amount">NT$399 <small>/ 月</small></div>
+        <div class="price-sub">適合日常平安簽到與基本守護</div>
+        <ul class="price-features">
+          <li>最多 3 位守護人</li>
+          <li>自訂每日提醒時間</li>
+          <li>未簽到提醒流程</li>
+          <li>守護群完成度追蹤</li>
+          <li>延後提醒選擇</li>
+          <li>較完整簽到紀錄(30 天)</li>
+        </ul>
+        <a href="#" class="price-cta secondary" onclick="alert('金流尚未開放,敬請期待 2026 年 8 月'); return false;">方案詳情</a>
+      </article>
+
+      <!-- 799 守護會員(featured) -->
+      <article class="price-card featured">
+        <div class="price-tier">守護會員</div>
+        <div class="price-amount">NT$799 <small>/ 月</small></div>
+        <div class="price-sub">完整守護 + 多階段提醒 + SOS 流程</div>
+        <ul class="price-features">
+          <li>最多 5 位守護人</li>
+          <li>多階段未簽到提醒</li>
+          <li>SOS 緊急通知流程</li>
+          <li>守護人優先順序設定</li>
+          <li>完整簽到紀錄(永久)</li>
+          <li>進階提醒選項</li>
+          <li>守護人綁定 LINE 通知</li>
+          <li>客服優先回覆</li>
+        </ul>
+        <a href="#" class="price-cta primary" onclick="alert('金流尚未開放,敬請期待 2026 年 8 月'); return false;">方案詳情</a>
+      </article>
+    </div>
+
+    <div class="price-faq">
+      <h3>常見問題</h3>
+      <p><strong>Q:免費版可以一直用嗎?</strong><br>可以。免費版永遠保留核心簽到功能,只有守護人數量限制為 1 位,提醒方式只有網頁內提醒。</p>
+      <p><strong>Q:可以中途升級或降級嗎?</strong><br>可以。升級立即生效,降級於下一個計費週期生效。</p>
+      <p><strong>Q:守護人收到通知要不要付費?</strong><br>不要。守護人只需要有 LINE,免費接收通知,不需要訂閱任何方案。</p>
+      <p><strong>Q:取消訂閱後資料會怎樣?</strong><br>你的簽到紀錄和守護人資料會保留 30 天,讓你反悔或重新訂閱。30 天後自動刪除。</p>
+    </div>
+
+    <a href="index.html" class="back-link" style="margin-top:24px;">← 回首頁</a>
+  </div>
+</body>
+</html>

@@ -1308,10 +1308,115 @@
       .member-profile-row { grid-template-columns: 44px minmax(0, 1fr); }
       .member-upgrade-btn { grid-column: 1 / -1; width: 100%; }
     }
-  </style>
+  
+    /* === D01: 底部導覽列(z-index 30 確保高於 onboarding modal) === */
+    .bottom-nav {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      background: var(--input);
+      border-top: 1px solid var(--line);
+      z-index: 30;
+      box-shadow: 0 -2px 12px rgba(15, 23, 42, 0.08);
+      padding-bottom: env(safe-area-inset-bottom, 0);
+    }
+    .nav-item {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 10px 6px;
+      min-height: 56px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 11px;
+      gap: 3px;
+      transition: color 0.15s;
+      cursor: pointer;
+    }
+    .nav-item.active { color: var(--button); font-weight: 700; }
+    .nav-icon { font-size: 20px; line-height: 1; }
+    .nav-label { font-size: 11px; }
+
+    /* === D01: SOS 浮動按鈕(z-index 35, 最高) === */
+    .sos-fab {
+      position: fixed;
+      bottom: 76px; right: 16px;
+      width: 60px; height: 60px;
+      border-radius: 50%;
+      background: #dc2626;
+      color: #fff;
+      border: 3px solid #fff;
+      box-shadow: 0 6px 18px rgba(220, 38, 38, 0.45);
+      z-index: 35;
+      display: grid; place-items: center;
+      cursor: pointer;
+      font-weight: 900;
+      font-size: 16px;
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+    .sos-fab:hover { transform: scale(1.08); box-shadow: 0 8px 22px rgba(220, 38, 38, 0.55); }
+    .sos-fab:active { transform: scale(0.96); }
+    .sos-fab-text { letter-spacing: 1px; }
+
+    /* === D01: 守護群完成度提示卡 === */
+    .guardian-prompt-card {
+      max-width: 380px;
+      border-left: 5px solid #f59e0b;
+    }
+
+    /* === D01: body padding for bottom nav === */
+    @media (max-width: 768px) {
+      main { padding-bottom: 80px; }
+    }
+
+    /* === D01: 守護群完成度提示卡內按鈕 full-width === */
+    .guardian-prompt-card .actions .action-btn {
+      width: 100%;
+    }
+
+</style>
 </head>
 <body class="classic">
   <main class="app">
+
+    <!-- D01: 底部導覽列(放這裡確保在 script 之前就 parse) -->
+    <nav class="bottom-nav" id="bottomNav" aria-label="主導覽" style="display:none;">
+      <a href="#home" class="nav-item active" data-tab="home"><span class="nav-icon">🏠</span><span class="nav-label">首頁</span></a>
+      <a href="#guardians" class="nav-item" data-tab="guardians"><span class="nav-icon">👥</span><span class="nav-label">守護群</span></a>
+      <a href="#history" class="nav-item" data-tab="history"><span class="nav-icon">📅</span><span class="nav-label">簽到紀錄</span></a>
+      <a href="#member" class="nav-item" data-tab="member"><span class="nav-icon">👤</span><span class="nav-label">會員中心</span></a>
+      <a href="#settings" class="nav-item" data-tab="settings"><span class="nav-icon">⚙️</span><span class="nav-label">我的設定</span></a>
+    </nav>
+
+    <!-- D01: SOS 浮動按鈕 -->
+    <button class="sos-fab" id="sosFab" type="button" aria-label="SOS 緊急求助">
+      <span class="sos-fab-text">SOS</span>
+    </button>
+
+    <!-- D01: 守護群完成度提示卡 -->
+    <div class="modal-backdrop" id="guardianCompleteModal" hidden>
+      <div class="guardian-modal guardian-prompt-card">
+        <h3 id="guardianPromptTitle">守護群尚未填滿</h3>
+        <p id="guardianPromptBody">你的守護群目前為 <strong id="guardianPromptCount">1/3</strong> 位。多設定一位守護人,緊急時就多一層保障。</p>
+        <div class="actions" style="flex-direction: column; gap: 10px;">
+          <button class="action-btn primary" id="guardianPromptNow" type="button">現在設定</button>
+          <button class="action-btn" id="guardianPromptTomorrow" type="button">明天提醒我</button>
+          <button class="action-btn" id="guardianPromptDismiss" type="button">暫時不要提醒</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- D01: SOS 二次確認 modal -->
+    <div class="modal-backdrop" id="sosConfirmModal" hidden>
+      <div class="guardian-modal sos-confirm-card">
+        <h2 style="color:#dc2626;">⚠️ SOS 緊急求助</h2>
+        <p>確認要發出 SOS 嗎?此動作會通知你的核心守護人,並附上你最後一次可取得的位置。</p>
+        <p class="helper">若有立即危險,請先撥打 119。</p>
+        <div class="actions">
+          <button class="action-btn" id="sosConfirmCancel" type="button">取消</button>
+          <button class="action-btn danger" id="sosConfirmSend" type="button">確認發出 SOS</button>
+        </div>
+      </div>
+    </div>
     <div class="theme-switcher" aria-label="主題切換">
       <button class="theme-btn active" data-theme="classic" type="button">經典</button>
       <button class="theme-btn" data-theme="neon" type="button">霓虹</button>
@@ -1448,6 +1553,10 @@
         <span aria-hidden="true">⌄</span>
       </button>
       <div class="member-center-details" id="memberCenterDetails" hidden>
+        <div class="member-data-section" style="background: #f1f5f9; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;">
+          <h3>📖 快速連結</h3>
+          <a href="help.html" class="action-btn" style="display: block; text-align: center; text-decoration: none; margin-top: 8px;">📖 使用教學</a>
+        </div>
         <div class="member-profile-row">
           <img class="member-avatar-img" id="userPicture" src="" alt="" hidden>
           <div class="member-avatar" id="memberAvatar">我</div>
@@ -1603,6 +1712,7 @@
     <section class="settings" aria-label="升級方案">
       <div class="settings-title">♡ 升級方案</div>
       <button class="plan-toggle" id="planToggleBtn" type="button">查看方案</button>
+      <a href="pricing.html" class="action-btn" style="display: block; text-align: center; text-decoration: none; margin-top: 8px; background: #fff; color: #475569; border: 1px solid #cbd5e1;">💰 查看完整價目表</a>
       <div class="pricing-grid plan-cards-six" id="pricingGrid" hidden>
         <article class="price-card plan-card tier-199 billing-month" data-plan-tier="199" data-billing-cycle="month">
           <div class="price-head"><strong>199 活著價</strong><span class="plan-cycle-badge">月費方案</span></div>
@@ -3718,6 +3828,16 @@
         if (dailyEl) dailyEl.textContent = "請從 LINE 開啟此服務";
         return;
       }
+
+      // D01: 立刻綁定 tab 切換 + SOS FAB + 守護人 + Guardian 編輯(這些不需要等 API)
+      // 這樣即使 onboarding modal 開著,nav 也能立即切換
+      bindTabEvents();
+      bindSosFab();
+      bindGuardianCompletePrompt();
+      const nav = document.getElementById("bottomNav");
+      if (nav) nav.style.display = "";
+      bindGuardianEvents();
+
       try {
         await fetch("/api/line/register", {
           method: "POST",
@@ -3742,15 +3862,166 @@
         }
 
         // C00 Onboarding 檢查
-        bindGuardianEvents();
         const obDone = await checkOnboarding();
         if (!obDone) {
           await showOnboarding();
+        } else {
+          // Onboarding 已完成 → 檢查是否該顯示守護群完成度提示
+          await maybeShowGuardianComplete();
         }
       } catch (error) {
         showInlineError("載入狀態失敗:" + (error.message || "請確認服務是否正常"));
       }
     }
+
+    // ===== D01: Tab 切換 + 底部導覽 + SOS FAB + 守護群完成度提示 =====
+
+    function showTab(tabName) {
+      // 隱藏所有 sections,只顯示當前 tab 的 sections
+      const allSections = document.querySelectorAll("main > section");
+      allSections.forEach(s => s.hidden = true);
+      // 對應 tab → 顯示哪些 sections(D01 修正:399/799 升級方案 → 會員中心)
+      const tabMap = {
+        home: ["簽到狀態"],
+        guardians: ["會員個人中心", "安心守護邀請任務", "緊急聯絡人", "好友地圖"],
+        history: ["簽到月曆"],
+        member: ["升級方案"],
+        settings: ["緊急與提醒設定"],
+      };
+      const showLabels = tabMap[tabName] || ["簽到狀態"];
+      allSections.forEach(s => {
+        const label = s.getAttribute("aria-label");
+        if (showLabels.includes(label)) s.hidden = false;
+      });
+      // 更新 nav active
+      document.querySelectorAll(".nav-item").forEach(n => {
+        n.classList.toggle("active", n.dataset.tab === tabName);
+      });
+      // 更新 hash
+      if (location.hash !== "#" + tabName) {
+        history.replaceState(null, "", "#" + tabName);
+      }
+    }
+
+    function bindTabEvents() {
+      // 底部 nav 點擊
+      document.querySelectorAll(".nav-item").forEach(n => {
+        n.addEventListener("click", (e) => {
+          e.preventDefault();
+          const tab = n.dataset.tab;
+          showTab(tab);
+          window.scrollTo(0, 0);
+        });
+      });
+      // hash 變化(直接打 URL)
+      window.addEventListener("hashchange", () => {
+        const h = location.hash.replace("#", "") || "home";
+        if (["home","guardians","history","member","settings"].includes(h)) showTab(h);
+      });
+      // 初始 tab
+      const initial = location.hash.replace("#", "") || "home";
+      showTab(initial);
+    }
+
+    // SOS FAB
+    function bindSosFab() {
+      const fab = $("sosFab");
+      const modal = $("sosConfirmModal");
+      const cancelBtn = $("sosConfirmCancel");
+      const sendBtn = $("sosConfirmSend");
+      if (!fab || !modal) return;
+      fab.addEventListener("click", () => { modal.hidden = false; });
+      cancelBtn.addEventListener("click", () => { modal.hidden = true; });
+      sendBtn.addEventListener("click", async () => {
+        if (!lineUserId) { alert("請先從 LINE 開啟"); modal.hidden = true; return; }
+        sendBtn.disabled = true;
+        sendBtn.textContent = "送出中...";
+        try {
+          const r = await fetch("/api/sos", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ line_user_id: lineUserId })
+          });
+          const data = await r.json();
+          if (r.status === 200 && data.ok !== false) {
+            alert("SOS 已送出,核心守護人會收到通知。");
+            modal.hidden = true;
+          } else {
+            alert("SOS 送出失敗: " + ((data && data.error) || "未知錯誤"));
+          }
+        } catch (e) {
+          alert("SOS 送出失敗: " + e.message);
+        } finally {
+          sendBtn.disabled = false;
+          sendBtn.textContent = "確認發出 SOS";
+        }
+      });
+    }
+
+    // 守護群完成度提示卡
+    async function maybeShowGuardianComplete() {
+      if (!lineUserId) return;
+      try {
+        const r = await fetch(`/api/interaction-state?line_user_id=${encodeURIComponent(lineUserId)}`);
+        if (r.status !== 200) return;
+        const data = await r.json();
+        const istate = data.interaction_state || {};
+        // 從 contacts 拿當前數量
+        const cr = await fetch(`/api/contacts?line_user_id=${encodeURIComponent(lineUserId)}`);
+        if (cr.status !== 200) return;
+        const cdata = await cr.json();
+        const count = (cdata.contacts || []).length;
+        const limit = cdata.contact_limit || 1;
+        // 判斷:399/799 + 未填滿 + 沒被 dismiss
+        if (limit <= 1) return; // 免費版不再催
+        if (count >= limit) return;
+        const pref = istate.guardian_reminder_preference || "";
+        if (pref === "dismissed") return;
+        if (pref === "tomorrow" || pref === "dismiss_7d") {
+          const until = istate.guardian_reminder_snoozed_until || "";
+          if (until && new Date(until).getTime() > Date.now()) return;
+        }
+        // 顯示
+        const modal = $("guardianCompleteModal");
+        const title = $("guardianPromptTitle");
+        const body = $("guardianPromptBody");
+        const cnt = $("guardianPromptCount");
+        if (title) title.textContent = "守護群尚未填滿";
+        if (body) body.innerHTML = `你的守護群目前為 <strong>${count}/${limit}</strong> 位。多設定一位守護人,緊急時就多一層保障。`;
+        if (cnt) cnt.textContent = `${count}/${limit}`;
+        modal.hidden = false;
+      } catch (e) {
+        console.warn("guardian complete check failed", e);
+      }
+    }
+
+    function bindGuardianCompletePrompt() {
+      const now = $("guardianPromptNow");
+      const tomorrow = $("guardianPromptTomorrow");
+      const dismiss = $("guardianPromptDismiss");
+      const modal = $("guardianCompleteModal");
+      if (!now || !modal) return;
+      const sendPreference = async (pref) => {
+        try {
+          await fetch("/api/guardian-reminder/dismiss", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ line_user_id: lineUserId, preference: pref })
+          });
+        } catch (e) { console.warn(e); }
+        modal.hidden = true;
+        if (pref === "now") {
+          // 開新增守護人 editor
+          if (typeof openGuardianEditor === "function") openGuardianEditor(null);
+        }
+      };
+      now.addEventListener("click", () => sendPreference("now"));
+      tomorrow.addEventListener("click", () => sendPreference("tomorrow"));
+      dismiss.addEventListener("click", () => sendPreference("dismiss_7d"));
+    }
+
+    // 把上面整合到 initApp 最後
+    const _origInitApp = initApp;
 
     async function saveSettings() {
       try {
@@ -3860,5 +4131,7 @@
     });
     setInterval(refreshStatus, 5000);
   </script>
+
+
 </body>
 </html>

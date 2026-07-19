@@ -76,10 +76,10 @@ PLAN_LIMITS = {
     "trial": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": False, "guardian_group_limit": 0},
     "paid_199": {"contact_limit": 4, "friend_location_limit": 4, "daily_reminders": 1, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 1, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": False, "guardian_group_limit": 0},
     "paid_199_year": {"contact_limit": 6, "friend_location_limit": 6, "daily_reminders": 2, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 2, "realtime_tracking": False, "trajectory_days": 3, "offline_sync_days": 0, "sos_enabled": False, "guardian_group_limit": 0},
-    "paid_399": {"contact_limit": 15, "friend_location_limit": 15, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 2, "realtime_tracking": True, "trajectory_days": 5, "offline_sync_days": 1, "sos_enabled": False, "guardian_group_limit": 0},
-    "paid_399_year": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 3, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 3, "realtime_tracking": True, "trajectory_days": 7, "offline_sync_days": 1, "sos_enabled": False, "guardian_group_limit": 0, "realtime_trial_days": 30},
-    "paid_799": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 3, "realtime_tracking": True, "trajectory_days": 14, "offline_sync_days": 7, "sos_enabled": True, "guardian_group_limit": 0, "dedicated_support": False},
-    "paid_799_year": {"contact_limit": 50, "friend_location_limit": 50, "daily_reminders": 5, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 5, "guardian_group_limit": 3, "realtime_tracking": True, "trajectory_days": 30, "offline_sync_days": 7, "sos_enabled": True, "guardian_group_limit": 3, "dedicated_support": False, "realtime_trial_days": 30},
+    "paid_399": {"contact_limit": 3, "friend_location_limit": 3, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 2, "realtime_tracking": True, "trajectory_days": 5, "offline_sync_days": 1, "sos_enabled": False, "guardian_group_limit": 0},
+    "paid_399_year": {"contact_limit": 3, "friend_location_limit": 3, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 2, "realtime_tracking": True, "trajectory_days": 5, "offline_sync_days": 1, "sos_enabled": False, "guardian_group_limit": 0, "realtime_trial_days": 30},
+    "paid_799": {"contact_limit": 5, "friend_location_limit": 5, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 3, "realtime_tracking": True, "trajectory_days": 14, "offline_sync_days": 7, "sos_enabled": True, "guardian_group_limit": 0, "dedicated_support": False},
+    "paid_799_year": {"contact_limit": 5, "friend_location_limit": 5, "daily_reminders": 5, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 3, "guardian_group_limit": 0, "realtime_tracking": True, "trajectory_days": 14, "offline_sync_days": 7, "sos_enabled": True, "guardian_group_limit": 0, "dedicated_support": False, "realtime_trial_days": 30},
 }
 
 PAYMENT_PRODUCTS = {
@@ -389,6 +389,69 @@ def get_profile(state, line_user_id=None):
 def plan_rules(profile):
     plan = profile.get("plan") or "trial"
     return PLAN_LIMITS.get(plan, PLAN_LIMITS["trial"])
+
+
+# === D01: 互動狀態(防每日重複相同內容) ===
+def default_interaction_state():
+    return {
+        "last_interaction_at": "",
+        "last_interaction_summary": "",
+        "completed_steps": [],
+        "pending_steps": [],
+        "dismissed_prompts": {},
+        "next_reminder_at": "",
+        "last_closing_message": "",
+        "onboarding_completed": False,
+        "guardian_prompt_status": "pending",  # pending / accepted / snoozed / dismissed
+        "guardian_reminder_preference": "",  # now / tomorrow / dismiss_7d / dismissed
+        "guardian_reminder_snoozed_until": "",
+        "guardian_last_prompted_at": "",
+    }
+
+
+def get_or_create_interaction_state(profile):
+    """讀取或初始化 profile.interaction_state。"""
+    if "interaction_state" not in profile or not isinstance(profile.get("interaction_state"), dict):
+        profile["interaction_state"] = default_interaction_state()
+    # 補齊缺漏欄位(往後加新欄位時不會壞舊資料)
+    defaults = default_interaction_state()
+    for k, v in defaults.items():
+        if k not in profile["interaction_state"]:
+            profile["interaction_state"][k] = v
+    return profile["interaction_state"]
+
+
+def should_show_guardian_prompt(profile, contact_count):
+    """判斷是否該彈守護人完成度提示卡。
+
+    規則:
+    - 已是 399/799 會員才顯示(免費/體驗只強制 1 位,不再催)
+    - contact_count >= limit → 不顯示
+    - contact_count < limit:
+      - 沒問過 OR last_prompted_at 超過 1 天前 → 顯示
+      - guardian_reminder_preference == 'tomorrow' 且 snoozed_until > now → 不顯示
+      - guardian_reminder_preference == 'dismiss_7d' 且 snoozed_until > now → 不顯示
+    """
+    plan = profile.get("plan") or "trial"
+    if plan not in ("paid_399", "paid_399_year", "paid_799", "paid_799_year"):
+        return False
+    limit = plan_rules(profile)["contact_limit"]
+    if contact_count >= limit:
+        return False
+    state = get_or_create_interaction_state(profile)
+    pref = state.get("guardian_reminder_preference", "")
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    if pref == "tomorrow" and state.get("guardian_reminder_snoozed_until", "") > now_iso:
+        return False
+    if pref == "dismiss_7d" and state.get("guardian_reminder_snoozed_until", "") > now_iso:
+        return False
+    if pref == "dismissed":
+        return False
+    last = state.get("guardian_last_prompted_at", "")
+    if last and last > now_iso:  # safety:未來時間就不顯示
+        return False
+    return True
+
 
 
 def trial_days_left(profile):
@@ -2274,6 +2337,82 @@ def create_app(config=None):
             "display_name": profile.get("display_name", ""),
         })
 
+    @app.get("/api/interaction-state")
+    def interaction_state_get():
+        """讀取使用者互動狀態(防每日重複相同內容用)。"""
+        line_user_id = (request.args.get("line_user_id") or "").strip()
+        if not line_user_id:
+            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        state = load_state(app.config["DATA_FILE"])
+        profile = state.get("users", {}).get(line_user_id)
+        if not profile:
+            return jsonify({"ok": False, "error": "user not registered"}), 404
+        istate = get_or_create_interaction_state(profile)
+        save_state(app.config["DATA_FILE"], state)
+        return jsonify({"ok": True, "line_user_id": line_user_id, "interaction_state": istate})
+
+    @app.post("/api/interaction-state")
+    def interaction_state_post():
+        """更新使用者互動狀態(completed_steps / dismissed_prompts / last_closing_message 等)。"""
+        payload = request.get_json(silent=True) or {}
+        line_user_id = (payload.get("line_user_id") or "").strip()
+        if not line_user_id:
+            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        state = load_state(app.config["DATA_FILE"])
+        profile = state.get("users", {}).get(line_user_id)
+        if not profile:
+            return jsonify({"ok": False, "error": "user not registered"}), 404
+        istate = get_or_create_interaction_state(profile)
+        # 合併允許更新的欄位
+        for field in ("last_interaction_at", "last_interaction_summary",
+                      "next_reminder_at", "last_closing_message",
+                      "onboarding_completed", "guardian_prompt_status"):
+            if field in payload:
+                istate[field] = payload[field]
+        if "completed_steps" in payload and isinstance(payload["completed_steps"], list):
+            istate["completed_steps"] = list(set(istate.get("completed_steps", []) + payload["completed_steps"]))
+        if "pending_steps" in payload and isinstance(payload["pending_steps"], list):
+            istate["pending_steps"] = payload["pending_steps"]
+        if "dismissed_prompts" in payload and isinstance(payload["dismissed_prompts"], dict):
+            merged = istate.get("dismissed_prompts", {})
+            merged.update(payload["dismissed_prompts"])
+            istate["dismissed_prompts"] = merged
+        istate["last_interaction_at"] = datetime.now().isoformat(timespec="seconds")
+        save_state(app.config["DATA_FILE"], state)
+        return jsonify({"ok": True, "interaction_state": istate})
+
+    @app.post("/api/guardian-reminder/dismiss")
+    def guardian_reminder_dismiss():
+        """使用者對守護人完成度提示的回應。
+
+        body.preference: 'now' | 'tomorrow' | 'dismiss_7d' | 'dismissed'
+        """
+        payload = request.get_json(silent=True) or {}
+        line_user_id = (payload.get("line_user_id") or "").strip()
+        pref = (payload.get("preference") or "").strip()
+        if not line_user_id:
+            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        if pref not in ("now", "tomorrow", "dismiss_7d", "dismissed"):
+            return jsonify({"ok": False, "error": "invalid preference"}), 400
+        state = load_state(app.config["DATA_FILE"])
+        profile = state.get("users", {}).get(line_user_id)
+        if not profile:
+            return jsonify({"ok": False, "error": "user not registered"}), 404
+        istate = get_or_create_interaction_state(profile)
+        istate["guardian_reminder_preference"] = pref
+        istate["guardian_last_prompted_at"] = datetime.now().isoformat(timespec="seconds")
+        now = datetime.now()
+        if pref == "tomorrow":
+            istate["guardian_reminder_snoozed_until"] = (now + timedelta(days=1)).isoformat(timespec="seconds")
+        elif pref == "dismiss_7d":
+            istate["guardian_reminder_snoozed_until"] = (now + timedelta(days=7)).isoformat(timespec="seconds")
+        else:
+            istate["guardian_reminder_snoozed_until"] = ""
+        save_state(app.config["DATA_FILE"], state)
+        return jsonify({"ok": True, "interaction_state": istate})
+
+
+
     @app.post("/api/dev/upgrade-plan")
     def dev_upgrade_plan():
         """DEV ONLY: 升級 plan 到 paid_799_year(測試用)。
@@ -2318,8 +2457,18 @@ def create_app(config=None):
         # 順便儲存提醒時間(若使用者有更新)
         if payload.get("reminder_time"):
             profile["reminder_time"] = str(payload["reminder_time"])
+        # 初始化互動狀態,標記完成步驟
+        istate = get_or_create_interaction_state(profile)
+        istate["onboarding_completed"] = True
+        if "add_first_guardian" not in istate["completed_steps"]:
+            istate["completed_steps"].append("add_first_guardian")
+        if payload.get("reminder_time") and "set_reminder_time" not in istate["completed_steps"]:
+            istate["completed_steps"].append("set_reminder_time")
+        if not istate.get("pending_steps"):
+            istate["pending_steps"] = ["explore_app", "read_help", "add_more_guardians_if_paid"]
+        istate["last_interaction_at"] = datetime.now().isoformat(timespec="seconds")
         save_state(app.config["DATA_FILE"], state)
-        return jsonify({"ok": True, "is_onboarding_completed": True}), 200
+        return jsonify({"ok": True, "is_onboarding_completed": True, "interaction_state": istate}), 200
 
     @app.post("/api/emergency-contact/bind")
     def emergency_contact_bind_api():
