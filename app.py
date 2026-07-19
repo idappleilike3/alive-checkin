@@ -2413,11 +2413,33 @@ def create_app(config=None):
 
 
 
-    @app.post("/api/dev/upgrade-plan")
-    def dev_upgrade_plan():
-        """DEV ONLY: 升級 plan 到 paid_799_year(測試用)。
-        Production 部署時應該關閉或限制 access。
+    # Production 完全不註冊 dev endpoint(gunicorn 不跑 app.run(),debug 是 False)
+    _is_dev = (
+        os.environ.get("DEV_MODE", "").lower() in ("1", "true", "yes")
+        or os.environ.get("FLASK_ENV", "").lower() in ("development", "dev")
+        or app.debug
+    )
+
+    if _is_dev:
+        @app.post("/api/dev/upgrade-plan")
+        def dev_upgrade_plan():
+            """DEV ONLY: 升級 plan (測試用)。
+
+        Production 一律回 404。只有以下情況才允許呼叫:
+        1. request.remote_addr 是 127.0.0.1 / ::1 (本機)
+        2. 或 env DEV_MODE=true 明確啟用
+        3. 或 host header 是 localhost / 127.0.0.1
         """
+        # 1. 本機 IP 允許
+        remote = (request.remote_addr or "").strip()
+        host = (request.host or "").lower()
+        is_local = remote in ("127.0.0.1", "::1", "localhost") or host.startswith("localhost") or host.startswith("127.")
+        # 2. env 明確啟用
+        dev_mode_enabled = os.environ.get("DEV_MODE", "").lower() in ("1", "true", "yes")
+        if not (is_local or dev_mode_enabled):
+            # Production 環境,拒絕存取(不透露 endpoint 存在)
+            return jsonify({"ok": False, "error": "not_found"}), 404
+        # 通過檢查,執行 dev 邏輯
         payload = request.get_json(silent=True) or {}
         line_user_id = (payload.get("line_user_id") or "").strip()
         plan = (payload.get("plan") or "paid_799_year").strip()
