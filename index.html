@@ -1180,8 +1180,11 @@
     }
     .onboarding-modal {
       width: min(100%, 520px);
+      height: min(780px, calc(100dvh - 28px));
       max-height: calc(100dvh - 28px);
-      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
       border-radius: 18px;
       padding: 26px 24px;
       background: #fff;
@@ -1211,9 +1214,19 @@
       font-weight: 850;
     }
     .onboarding-form {
+      min-height: 0;
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .onboarding-fields {
+      min-height: 0;
       display: grid;
       grid-template-columns: 1fr;
       gap: 15px;
+      overflow-y: auto;
+      padding: 2px 5px 4px 2px;
     }
     .onboarding-field {
       display: grid;
@@ -1850,31 +1863,33 @@
           <p class="onboarding-intro">為了在你未準時簽到或需要協助時，能通知你信任的人，請先新增至少 1 位守護人。</p>
           <p class="onboarding-step">步驟 1／2　新增第一位守護人</p>
           <div class="onboarding-form">
-            <label class="onboarding-field" for="obName">姓名 <span class="onboarding-required">必填</span>
-              <input type="text" id="obName" placeholder="例如：王小明" autocomplete="name" required>
-            </label>
-            <label class="onboarding-field" for="obRelationship">關係 <span class="onboarding-required">必選</span>
-              <select id="obRelationship" required>
-                <option value="">請選擇關係</option>
-                <option value="配偶">配偶</option>
-                <option value="父母">父母</option>
-                <option value="子女">子女</option>
-                <option value="兄弟姊妹">兄弟姊妹</option>
-                <option value="親戚">親戚</option>
-                <option value="朋友">朋友</option>
-                <option value="鄰居">鄰居</option>
-                <option value="照護人員">照護人員</option>
-                <option value="其他">其他</option>
-              </select>
-            </label>
-            <label class="onboarding-field" for="obPhone">手機號碼 <span class="onboarding-required">必填</span>
-              <input type="tel" id="obPhone" inputmode="tel" placeholder="例如：0912 345 678" autocomplete="tel" required>
-            </label>
-            <label class="onboarding-field" for="obEmail">電子信箱（選填）
-              <input type="email" id="obEmail" inputmode="email" placeholder="例如：name@example.com" autocomplete="email">
-            </label>
-            <p class="onboarding-note">手機號碼只會用於安全守護與緊急聯絡，不會拿來發送廣告。</p>
-            <p id="onboardingError" class="inline-error" role="alert" hidden></p>
+            <div class="onboarding-fields">
+              <label class="onboarding-field" for="obName">姓名 <span class="onboarding-required">必填</span>
+                <input type="text" id="obName" placeholder="例如：王小明" autocomplete="name" required>
+              </label>
+              <label class="onboarding-field" for="obRelationship">關係 <span class="onboarding-required">必選</span>
+                <select id="obRelationship" required>
+                  <option value="">請選擇關係</option>
+                  <option value="配偶">配偶</option>
+                  <option value="父母">父母</option>
+                  <option value="子女">子女</option>
+                  <option value="兄弟姊妹">兄弟姊妹</option>
+                  <option value="親戚">親戚</option>
+                  <option value="朋友">朋友</option>
+                  <option value="鄰居">鄰居</option>
+                  <option value="照護人員">照護人員</option>
+                  <option value="其他">其他</option>
+                </select>
+              </label>
+              <label class="onboarding-field" for="obPhone">手機號碼 <span class="onboarding-required">必填</span>
+                <input type="tel" id="obPhone" inputmode="tel" placeholder="例如：0912 345 678" autocomplete="tel" required>
+              </label>
+              <label class="onboarding-field" for="obEmail">電子信箱（選填）
+                <input type="email" id="obEmail" inputmode="email" placeholder="例如：name@example.com" autocomplete="email">
+              </label>
+              <p class="onboarding-note">手機號碼只會用於安全守護與緊急聯絡，不會拿來發送廣告。</p>
+              <p id="onboardingError" class="inline-error" role="alert" hidden></p>
+            </div>
             <button class="onboarding-submit" id="onboardingSaveBtn" type="button">新增守護人並進入首頁</button>
           </div>
         </div>
