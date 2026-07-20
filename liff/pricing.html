@@ -9,9 +9,9 @@
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", "Segoe UI", sans-serif;
-    background: linear-gradient(180deg, #1a0d2e 0%, #2c1f4a 100%);
+    background: #f4fbf7;
     min-height: 100vh;
-    color: #ffffff;
+    color: #132a22;
     -webkit-font-smoothing: antialiased;
     line-height: 1.6;
   }
@@ -33,11 +33,12 @@
     font-size: 28px;
     font-weight: 700;
     margin-bottom: 12px;
-    color: #F39C12;
+    color: #087f5b;
   }
   .header p {
-    font-size: 16px;
-    color: #cccccc;
+    font-size: 17px;
+    color: #34594b;
+    font-weight: 700;
   }
   /* 方案卡片 */
   .plans-grid {
@@ -46,21 +47,22 @@
     margin-top: 24px;
   }
   .plan-card {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 16px;
-    padding: 20px;
+    background: #ffffff;
+    border: 2px solid #b9decf;
+    border-radius: 8px;
+    padding: 22px;
     position: relative;
     transition: transform 0.2s;
   }
   .plan-card:active { transform: scale(0.98); }
   .plan-card.featured {
-    background: rgba(243, 156, 18, 0.1);
-    border: 2px solid #F39C12;
+    background: #fffaf0;
+    border: 3px solid #e9a321;
   }
   .plan-card.recommended {
-    background: linear-gradient(135deg, rgba(243, 156, 18, 0.15), rgba(46, 204, 113, 0.15));
-    border: 2px solid #2ECC71;
+    background: #fffdf5;
+    border: 3px solid #d39b16;
+    box-shadow: 0 12px 28px rgba(117, 79, 5, 0.18);
   }
   .plan-badge {
     position: absolute;
@@ -71,31 +73,31 @@
     font-size: 12px;
     font-weight: 700;
     background: #F39C12;
-    color: #1a0d2e;
+    color: #402b00;
   }
   .plan-badge.recommended {
     background: #2ECC71;
   }
   .plan-name {
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 700;
-    color: #F39C12;
+    color: #087f5b;
     margin-bottom: 8px;
   }
   .plan-price {
-    font-size: 24px;
+    font-size: 30px;
     font-weight: 700;
-    color: #ffffff;
+    color: #102820;
     margin-bottom: 4px;
   }
   .plan-cycle {
-    font-size: 14px;
-    color: #cccccc;
+    font-size: 16px;
+    color: #49685d;
     margin-bottom: 4px;
   }
   .plan-savings {
-    font-size: 13px;
-    color: #2ECC71;
+    font-size: 16px;
+    color: #9a5d00;
     margin-bottom: 16px;
     font-weight: 600;
   }
@@ -104,9 +106,10 @@
     margin: 16px 0;
   }
   .plan-features li {
-    padding: 6px 0;
-    font-size: 14px;
-    color: #e0e0e0;
+    padding: 7px 0;
+    font-size: 16px;
+    color: #243d34;
+    font-weight: 650;
   }
   .plan-features li::before {
     content: "✓ ";
@@ -115,7 +118,7 @@
     margin-right: 8px;
   }
   .plan-features li.disabled {
-    color: #888;
+    color: #768b83;
   }
   .plan-features li.disabled::before {
     content: "✗ ";
@@ -127,7 +130,7 @@
     padding: 14px;
     margin-top: 16px;
     background: #F39C12;
-    color: #1a0d2e;
+    color: #241800;
     border: none;
     border-radius: 12px;
     font-size: 18px;
@@ -142,14 +145,15 @@
   .footer-notes {
     margin-top: 32px;
     padding: 20px;
-    background: rgba(255, 255, 255, 0.03);
+    background: #ffffff;
+    border: 1px solid #cde6dc;
     border-radius: 12px;
     font-size: 13px;
     line-height: 1.8;
   }
   .footer-notes p {
     margin-bottom: 8px;
-    color: #cccccc;
+    color: #34594b;
   }
   .footer-notes .warning {
     color: #E74C3C;
@@ -182,7 +186,8 @@
     display: none;
     margin-top: 16px;
     padding: 16px;
-    background: rgba(255, 255, 255, 0.03);
+    background: #ffffff;
+    border: 1px solid #cde6dc;
     border-radius: 12px;
     overflow-x: auto;
   }
@@ -190,7 +195,7 @@
   .compare-table table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 12px;
+    font-size: 14px;
   }
   .compare-table th, .compare-table td {
     padding: 8px 4px;
@@ -220,12 +225,13 @@
 
     <!-- 199 月 -->
     <div class="plan-card">
-      <div class="plan-name">199 活著版(月)</div>
+      <div class="plan-name">199 平安版(月)</div>
       <div class="plan-price">NT$199</div>
       <div class="plan-cycle">每月</div>
       <ul class="plan-features">
         <li>4 位聯絡人</li>
-        <li>LINE 每日 1 次預警</li>
+        <li>每日簽到提醒 1 次</li>
+        <li>LINE 通知最多 2 位核心守護人</li>
         <li>24hr 快照定位</li>
         <li>自訂簽到週期</li>
         <li class="disabled">即時追蹤</li>
@@ -238,13 +244,14 @@
 
     <!-- 199 年 -->
     <div class="plan-card">
-      <div class="plan-name">199 活著版(年)</div>
+      <div class="plan-name">199 平安版(年)</div>
       <div class="plan-price">NT$1,680</div>
       <div class="plan-cycle">每年</div>
-      <div class="plan-savings">省 NT$708(年繳 7 折)</div>
+      <div class="plan-savings">年繳現省 NT$708，平均每月 NT$140</div>
       <ul class="plan-features">
         <li>6 位聯絡人</li>
-        <li>LINE 每日 2 次預警</li>
+        <li>每日簽到提醒 2 次</li>
+        <li>LINE 通知最多 2 位核心守護人</li>
         <li>24hr 快照定位</li>
         <li>軌跡回放 3 天</li>
         <li>自訂簽到週期</li>
@@ -262,11 +269,12 @@
       <div class="plan-cycle">每月</div>
       <ul class="plan-features">
         <li>15 位聯絡人</li>
-        <li>LINE 每日 2 次預警</li>
+        <li>每日簽到提醒 2 次</li>
+        <li>LINE 通知最多 2 位核心守護人</li>
         <li>即時追蹤定位</li>
         <li>軌跡回放 5 天</li>
         <li>24hr 離線同步</li>
-        <li>好友上線提醒</li>
+        <li>好友平安狀態更新（雙方同意）</li>
         <li class="disabled">簡訊預警</li>
         <li class="disabled">SOS 緊急求救</li>
       </ul>
@@ -279,14 +287,15 @@
       <div class="plan-name">399 安心版(年)</div>
       <div class="plan-price">NT$3,680</div>
       <div class="plan-cycle">每年</div>
-      <div class="plan-savings">省 NT$1,108(年繳 7 折)</div>
+      <div class="plan-savings">年繳現省 NT$1,108，平均每月約 NT$307</div>
       <ul class="plan-features">
         <li>25 位聯絡人</li>
-        <li>LINE 每日 3 次預警</li>
+        <li>每日簽到提醒 3 次</li>
+        <li>LINE 通知最多 3 位核心守護人</li>
         <li>即時追蹤定位</li>
         <li>軌跡回放 7 天</li>
         <li>24hr 離線同步</li>
-        <li>好友上線提醒</li>
+        <li>好友平安狀態更新（雙方同意）</li>
         <li>30 天即時追蹤體驗</li>
         <li class="disabled">簡訊預警</li>
         <li class="disabled">SOS 緊急求救</li>
@@ -302,13 +311,14 @@
       <div class="plan-cycle">每月</div>
       <ul class="plan-features">
         <li>25 位聯絡人</li>
+        <li>每日簽到提醒 3 次</li>
         <li>LINE + 簡訊預警(3 位)</li>
         <li>即時追蹤定位</li>
         <li>軌跡回放 14 天</li>
         <li>7 天離線同步</li>
-        <li>好友上線提醒</li>
+        <li>好友平安狀態更新（雙方同意）</li>
         <li>SOS 一鍵求救 ✅</li>
-        <li class="disabled">守護群</li>
+        <li>守護群最多 1 群</li>
       </ul>
       <a href="#" class="cta-button" data-plan="paid_799" data-cycle="monthly">立即購買 →</a>
     </div>
@@ -319,18 +329,17 @@
       <div class="plan-name">799 守護版(年)</div>
       <div class="plan-price">NT$7,200</div>
       <div class="plan-cycle">每年</div>
-      <div class="plan-savings">省 NT$2,388(年繳 7 折)</div>
+      <div class="plan-savings">年繳現省 NT$2,388，平均每月 NT$600</div>
       <ul class="plan-features">
         <li>50 位聯絡人</li>
+        <li>每日簽到提醒 3 次</li>
         <li>LINE + 簡訊預警(5 位核心)</li>
         <li>即時追蹤定位</li>
         <li>軌跡回放 30 天</li>
         <li>7 天離線同步</li>
-        <li>好友上線提醒</li>
+        <li>好友平安狀態更新（雙方同意）</li>
         <li>SOS 一鍵求救 ✅</li>
         <li>守護群最多 3 群(每群 50 人)</li>
-        <li>長照專線一鍵聯動</li>
-        <li>個資全自主管理</li>
       </ul>
       <a href="#" class="cta-button green" data-plan="paid_799_year" data-cycle="yearly">立即購買 →</a>
     </div>
@@ -358,14 +367,14 @@
       </thead>
       <tbody>
         <tr><td>聯絡人</td><td>4</td><td>6</td><td>15</td><td>25</td><td>25</td><td>50</td></tr>
-        <tr><td>LINE 預警</td><td>1/日</td><td>2/日</td><td>2/日</td><td>3/日</td><td>3 位</td><td>5 位</td></tr>
+        <tr><td>每日簽到提醒</td><td>1 次</td><td>2 次</td><td>2 次</td><td>3 次</td><td>3 次</td><td>3 次</td></tr>
+        <tr><td>核心守護人 LINE 預警</td><td>2 位</td><td>2 位</td><td>2 位</td><td>3 位</td><td>3 位</td><td>5 位</td></tr>
         <tr><td>簡訊預警</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓ 3位</td><td class="yes">✓ 5位</td></tr>
         <tr><td>軌跡回放</td><td class="no">✗</td><td>3 天</td><td>5 天</td><td>7 天</td><td>14 天</td><td>30 天</td></tr>
         <tr><td>離線同步</td><td class="no">✗</td><td class="no">✗</td><td>24hr</td><td>24hr</td><td>7 天</td><td>7 天</td></tr>
-        <tr><td>好友提醒</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td>好友平安狀態更新</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
         <tr><td>SOS</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-        <tr><td>守護群</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓ 3 群</td></tr>
-        <tr><td>長照專線</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td></tr>
+        <tr><td>守護群</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓ 1 群</td><td class="yes">✓ 3 群</td></tr>
       </tbody>
     </table>
   </div>

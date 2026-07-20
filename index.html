@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>還活著嗎</title>
+  <title>今天還在嗎</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       min-height: 100vh;
       display: grid;
-      place-items: center;
+      place-items: start center;
       padding: 18px;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Noto Sans TC", sans-serif;
       transition: background 0.35s ease, color 0.35s ease;
@@ -155,32 +155,20 @@
       z-index: 1;
     }
     .status-box { padding: 10px 14px; }
-    .status-toggle {
-      width: 100%;
+    .status-header {
       min-height: 48px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      border: 0;
       color: var(--text);
-      background: transparent;
-      cursor: pointer;
       text-align: left;
       font-weight: 900;
+      margin-bottom: 0;
     }
     .status-toggle-label { display: grid; gap: 2px; }
     .status-toggle-label small { color: var(--muted); font-size: 13px; font-weight: 700; }
     .status-details { padding-top: 8px; border-top: 1px solid var(--line); }
-    .status-details[hidden] { display: none; }
-    .status-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 10px;
-      text-align: left;
-    }
     .mini-title {
       display: flex;
       flex-direction: column;
@@ -222,7 +210,7 @@
       letter-spacing: 0;
       color: var(--accent);
     }
-    .countdown-label { font-size: 13px; color: var(--muted); }
+    .countdown-label { font-size: 13px; color: var(--muted); text-align: center; }
     .check-btn {
       width: 184px;
       height: 184px;
@@ -273,8 +261,21 @@
     .check-btn:active { transform: scale(0.94); }
     .check-btn .sub { font-size: 13px; font-weight: 500; opacity: 0.9; }
     .check-btn.warning { background: #f59e0b; box-shadow: 0 12px 30px rgba(245, 158, 11, 0.32); }
-    .check-btn.danger { background: #ef4444; box-shadow: 0 12px 30px rgba(239, 68, 68, 0.34); animation: pulse 1.55s infinite; }
+    .check-btn.danger {
+      color: #fff !important;
+      background: #ef4444;
+      box-shadow: 0 12px 30px rgba(239, 68, 68, 0.34);
+      animation: pulse 1.55s infinite;
+    }
+    .check-btn.danger .sub,
+    .check-btn.danger::after { color: #fff !important; }
     @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+    .calendar-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 10px;
+      align-items: center;
+    }
     .calendar-toggle {
       width: 100%;
       min-height: 56px;
@@ -291,7 +292,12 @@
     .calendar-toggle strong,
     .calendar-toggle small { display: block; }
     .calendar-toggle strong { font-size: 17px; }
-    .calendar-toggle small { margin-top: 3px; color: var(--muted); font-size: 13px; }
+    .calendar-toggle small { margin-top: 3px; color: var(--muted); font-size: 14px; font-weight: 750; }
+    .lunar-date {
+      color: #087f5b !important;
+      font-size: 15px !important;
+      font-weight: 850 !important;
+    }
     .calendar-chevron {
       flex: 0 0 auto;
       font-size: 24px;
@@ -338,16 +344,109 @@
       aspect-ratio: 1;
       display: grid;
       place-items: center;
-      border-radius: 50%;
+      border-radius: 8px;
       font-size: 13px;
     }
     .day-name { height: 28px; aspect-ratio: auto; color: var(--muted); font-weight: 800; }
-    .day-cell { color: var(--text); font-weight: 700; }
+    .day-cell {
+      position: relative;
+      align-content: center;
+      gap: 1px;
+      border: 1px solid transparent;
+      padding: 3px 1px;
+      color: var(--text);
+      background: transparent;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .day-cell.blank { cursor: default; }
+    .day-number { font-size: 14px; line-height: 1; }
+    .lunar-mini {
+      max-width: 100%;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 750;
+      line-height: 1.15;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .day-cell.festival { background: #fff7e6; border-color: #f2c879; }
+    .day-cell.festival .lunar-mini { color: #9a4e0b; font-weight: 900; }
+    .day-cell.has-note::after {
+      content: "";
+      position: absolute;
+      right: 4px;
+      top: 4px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #e5484d;
+      box-shadow: 0 0 0 2px var(--panel);
+    }
     .day-cell.today { outline: 2px solid var(--today); outline-offset: -2px; }
     .day-cell.checked {
-      background: var(--checked);
+      background: #12a86f;
       color: #fff;
-      box-shadow: 0 8px 14px rgba(20, 28, 45, 0.14);
+      box-shadow: 0 7px 14px rgba(18, 168, 111, 0.28);
+    }
+    .day-cell.checked .lunar-mini { color: #eafff4; }
+    .day-cell:focus-visible { outline: 3px solid rgba(18, 168, 111, 0.28); outline-offset: 1px; }
+    .calendar-note-modal { text-align: left; }
+    .calendar-note-date {
+      margin: 5px 0 12px;
+      color: #087f5b;
+      font-size: 15px;
+      font-weight: 850;
+    }
+    .calendar-note-modal textarea {
+      width: 100%;
+      min-height: 120px;
+      resize: vertical;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      background: var(--input);
+      font-size: 16px;
+      line-height: 1.6;
+    }
+    .calendar-note-modal textarea:focus { border-color: var(--accent); outline: 3px solid rgba(18, 168, 111, 0.16); }
+    .google-calendar-link {
+      min-height: 48px;
+      display: grid;
+      place-items: center;
+      margin-top: 10px;
+      border: 1px solid #74a7ff;
+      border-radius: 8px;
+      color: #174ea6;
+      background: #eef4ff;
+      font-size: 16px;
+      font-weight: 850;
+      text-decoration: none;
+    }
+    .public-support-card {
+      margin-top: 14px;
+      padding: 14px;
+      border: 1px solid #86d8ba;
+      border-radius: 8px;
+      background: #effcf5;
+      color: #153e31;
+    }
+    .public-support-card strong,
+    .public-support-card span { display: block; }
+    .public-support-card span { margin-top: 4px; font-size: 14px; line-height: 1.55; }
+    .public-support-call {
+      min-height: 48px;
+      display: grid;
+      place-items: center;
+      margin-top: 10px;
+      border-radius: 8px;
+      color: #fff;
+      background: #087f5b;
+      font-size: 17px;
+      font-weight: 900;
+      text-decoration: none;
     }
     .settings { text-align: left; margin-bottom: 12px; }
     .settings-title { text-align: center; font-weight: 850; margin-bottom: 12px; }
@@ -583,7 +682,7 @@
     .action-btn:active { transform: translateY(1px); }
     .plan-strip {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
       margin-top: 12px;
     }
@@ -1314,7 +1413,7 @@
       position: fixed;
       bottom: 0; left: 0; right: 0;
       display: grid;
-      grid-template-columns: repeat(5, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       background: var(--input);
       border-top: 1px solid var(--line);
       z-index: 30;
@@ -1356,6 +1455,69 @@
     .sos-fab:hover { transform: scale(1.08); box-shadow: 0 8px 22px rgba(220, 38, 38, 0.55); }
     .sos-fab:active { transform: scale(0.96); }
     .sos-fab-text { letter-spacing: 1px; }
+    .sos-confirm-card { max-width: 400px; text-align: left; }
+    .sos-confirm-card h2 { color: #b91c1c; font-size: 24px; }
+    .sos-emergency-links {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+    .sos-call-link {
+      min-height: 52px;
+      display: grid;
+      place-items: center;
+      border: 2px solid #b91c1c;
+      border-radius: 8px;
+      color: #991b1b;
+      background: #fff5f5;
+      font-size: 18px;
+      font-weight: 900;
+      text-decoration: none;
+    }
+    .sos-plan-status {
+      margin: 10px 0;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #fff7ed;
+      color: #7c2d12;
+      font-size: 15px;
+      font-weight: 800;
+      line-height: 1.55;
+    }
+    .sos-hold-button {
+      position: relative;
+      width: 100%;
+      min-height: 64px;
+      overflow: hidden;
+      border: 0;
+      border-radius: 8px;
+      color: #fff;
+      background: #b91c1c;
+      font-size: 19px;
+      font-weight: 950;
+      cursor: pointer;
+      touch-action: none;
+      user-select: none;
+    }
+    .sos-hold-button:disabled { cursor: not-allowed; background: #9ca3af; }
+    .sos-hold-progress {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 0;
+      background: #ef4444;
+      pointer-events: none;
+    }
+    .sos-hold-label { position: relative; z-index: 1; }
+    .sos-feedback { min-height: 24px; margin-top: 9px; color: #7f1d1d; font-weight: 800; }
+    .sos-upgrade-link {
+      display: block;
+      margin-top: 10px;
+      color: #075e32;
+      font-weight: 900;
+      text-align: center;
+    }
+    .sos-disclaimer { margin-top: 12px; color: var(--muted); font-size: 14px; line-height: 1.55; }
 
     /* === D01: 守護群完成度提示卡 === */
     .guardian-prompt-card {
@@ -1372,6 +1534,79 @@
     .guardian-prompt-card .actions .action-btn {
       width: 100%;
     }
+    .guardian-group-guide {
+      text-align: left;
+    }
+    .guardian-group-guide-intro {
+      margin: 10px 0 14px;
+      padding: 12px 14px;
+      border-left: 5px solid #06c755;
+      border-radius: 8px;
+      background: #ecfdf3;
+      color: #14532d;
+      font-size: 16px;
+      font-weight: 750;
+      line-height: 1.65;
+    }
+    .guardian-group-steps {
+      display: grid;
+      gap: 10px;
+    }
+    .guardian-group-step {
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr);
+      gap: 12px;
+      align-items: center;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--input);
+      box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
+    }
+    .guardian-group-step-number {
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: #06c755;
+      color: #fff;
+      font-size: 22px;
+      font-weight: 950;
+    }
+    .guardian-group-step strong {
+      display: block;
+      margin-bottom: 3px;
+      color: var(--text);
+      font-size: 17px;
+    }
+    .guardian-group-step p {
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 650;
+      line-height: 1.55;
+    }
+    .guardian-group-command {
+      display: inline-block;
+      margin-top: 5px;
+      padding: 5px 9px;
+      border: 2px solid #06c755;
+      border-radius: 6px;
+      background: #fff;
+      color: #075e32;
+      font-weight: 900;
+    }
+    .guardian-group-plan-note {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: #fff7ed;
+      border: 1px solid #fdba74;
+      color: #7c2d12;
+      font-size: 15px;
+      font-weight: 750;
+      line-height: 1.6;
+    }
 
 </style>
 </head>
@@ -1379,16 +1614,15 @@
   <main class="app">
 
     <!-- D01: 底部導覽列(放這裡確保在 script 之前就 parse) -->
-    <nav class="bottom-nav" id="bottomNav" aria-label="主導覽" style="display:none;">
+    <nav class="bottom-nav" id="bottomNav" aria-label="主導覽">
       <a href="#home" class="nav-item active" data-tab="home"><span class="nav-icon">🏠</span><span class="nav-label">首頁</span></a>
-      <a href="#guardians" class="nav-item" data-tab="guardians"><span class="nav-icon">👥</span><span class="nav-label">守護群</span></a>
+      <a href="#guardians" class="nav-item" data-tab="guardians"><span class="nav-icon">👥</span><span class="nav-label">守護群教學</span></a>
       <a href="#history" class="nav-item" data-tab="history"><span class="nav-icon">📅</span><span class="nav-label">簽到紀錄</span></a>
       <a href="#member" class="nav-item" data-tab="member"><span class="nav-icon">👤</span><span class="nav-label">會員中心</span></a>
-      <a href="#settings" class="nav-item" data-tab="settings"><span class="nav-icon">⚙️</span><span class="nav-label">我的設定</span></a>
     </nav>
 
     <!-- D01: SOS 浮動按鈕 -->
-    <button class="sos-fab" id="sosFab" type="button" aria-label="SOS 緊急求助">
+    <button class="sos-fab" id="sosFab" type="button" aria-label="SOS 緊急求助" hidden>
       <span class="sos-fab-text">SOS</span>
     </button>
 
@@ -1405,15 +1639,26 @@
       </div>
     </div>
 
-    <!-- D01: SOS 二次確認 modal -->
+    <!-- SOS 緊急入口：電話求助開放所有人，守護通知限有效 799 會員 -->
     <div class="modal-backdrop" id="sosConfirmModal" hidden>
-      <div class="guardian-modal sos-confirm-card">
-        <h2 style="color:#dc2626;">⚠️ SOS 緊急求助</h2>
-        <p>確認要發出 SOS 嗎?此動作會通知你的核心守護人,並附上你最後一次可取得的位置。</p>
-        <p class="helper">若有立即危險,請先撥打 119。</p>
+      <div class="guardian-modal sos-confirm-card" role="dialog" aria-modal="true" aria-labelledby="sosModalTitle">
+        <h2 id="sosModalTitle">SOS 緊急求助</h2>
+        <p>若有立即危險，請先打電話求助，不要只等待系統通知。</p>
+        <div class="sos-emergency-links">
+          <a class="sos-call-link" href="tel:119">撥打 119</a>
+          <a class="sos-call-link" href="tel:110">撥打 110</a>
+        </div>
+        <div class="sos-plan-status" id="sosPlanStatus">正在確認你的方案</div>
+        <p id="sosModalMessage">799 守護版可通知核心守護人，並附上可取得的位置。</p>
+        <button class="sos-hold-button" id="sosHoldButton" type="button" disabled>
+          <span class="sos-hold-progress" id="sosHoldProgress"></span>
+          <span class="sos-hold-label" id="sosHoldLabel">長按 3 秒發出 SOS</span>
+        </button>
+        <p class="sos-feedback" id="sosFeedback" aria-live="polite"></p>
+        <a class="sos-upgrade-link" id="sosUpgradeLink" href="./liff/pricing.html">查看 799 守護版</a>
+        <p class="sos-disclaimer">本服務不是報警或救援系統，也不保證訊息一定即時送達。</p>
         <div class="actions">
-          <button class="action-btn" id="sosConfirmCancel" type="button">取消</button>
-          <button class="action-btn danger" id="sosConfirmSend" type="button">確認發出 SOS</button>
+          <button class="action-btn" id="sosConfirmCancel" type="button">關閉</button>
         </div>
       </div>
     </div>
@@ -1436,14 +1681,18 @@
 
     <div class="check-wrap">
       <button class="check-btn" id="checkBtn" type="button">
-        我還活著
+        我已平安
         <span class="sub">點一下簽到 ♡</span>
       </button>
       <p id="inlineError" class="inline-error" hidden></p>
-      <button class="action-btn reload-btn" id="reloadBtn" type="button">重新載入</button>
-      <div id="guardianSection" hidden>
+    </div>
+
+    <div class="countdown" id="countdownDisplay">--:--:--</div>
+    <div class="countdown-label">下一次安心確認倒數</div>
+
+    <div id="guardianSection" hidden>
         <h3>守護人管理</h3>
-        <p class="helper">未簽到或 SOS 發生時,系統會送 LINE 與電話給以下守護人(依優先順序)</p>
+        <p class="helper">未簽到或 SOS 發生時，系統會依方案透過 LINE 或簡訊通知以下守護人（依優先順序）</p>
         <div id="guardianList"></div>
         <p class="helper" id="guardianCount"></p>
         <div class="guardian-actions">
@@ -1506,36 +1755,34 @@
           <button class="action-btn primary" id="onboardingSaveBtn" type="button">新增守護人並進入首頁</button>
         </div>
       </div>
-    </div>
 
     <section class="status-box" aria-label="簽到狀態">
-      <button class="status-toggle" id="statusToggleBtn" type="button" aria-expanded="false" aria-controls="statusDetails">
-        <span class="status-toggle-label"><strong>查看今日狀態</strong><small>簽到紀錄、守護圈與下次提醒</small></span>
+      <div class="status-header">
+        <span class="status-toggle-label"><strong>今日狀態</strong><small>簽到紀錄、守護圈與下次提醒</small></span>
         <span class="alive-pill" id="alivePill">待簽到</span>
-      </button>
-      <div class="status-details" id="statusDetails" hidden>
+      </div>
+      <div class="status-details" id="statusDetails">
         <div class="status-row"><span class="status-label">☀ 今日簽到</span><span class="status-value" id="dailyStatus">--</span></div>
         <div class="status-row"><span class="status-label">⏰ 上次簽到</span><span class="status-value" id="lastDate">--</span></div>
         <div class="status-row"><span class="status-label">♡ 目前狀態</span><span class="status-value" id="statusText">--</span></div>
         <div class="plan-strip" id="planStrip" data-plan-tone="trial">
-          <div class="plan-chip plan-state-chip"><strong id="planStateLabel">安心體驗</strong><span id="planDetailText">還有 7 天完整體驗</span></div>
-          <div class="plan-chip"><strong id="planName">7 天試用</strong><span>守護方案</span></div>
+          <div class="plan-chip plan-state-chip"><strong id="planStateLabel">7 天安心體驗</strong><span id="planDetailText">還有 7 天完整體驗</span></div>
           <div class="plan-chip"><strong id="contactLimit">1</strong><span>守護人名額</span></div>
         </div>
         <div class="guardian-status-grid">
           <div class="guardian-status-card"><strong>連續平安</strong><span id="streakText">0 天</span></div>
           <div class="guardian-status-card"><strong>守護圈狀態</strong><span id="guardianCircleText">尚未綁定</span></div>
         </div>
-        <div class="countdown" id="countdownDisplay">--:--:--</div>
-        <div class="countdown-label">下一次安心確認倒數</div>
       </div>
     </section>
 
     <section class="calendar-box" aria-label="簽到月曆">
-      <button class="calendar-toggle" id="calendarToggleBtn" type="button" aria-expanded="false" aria-controls="calendarDetails">
-        <span><strong id="monthCheckinSummary">本月已簽到 0 天</strong><small>展開簽到月曆</small></span>
-        <span class="calendar-chevron" aria-hidden="true">⌄</span>
-      </button>
+      <div class="calendar-header">
+        <button class="calendar-toggle" id="calendarToggleBtn" type="button" aria-expanded="false" aria-controls="calendarDetails">
+          <span><strong id="monthCheckinSummary">本月已簽到 0 天</strong><small class="lunar-date" id="lunarDateText">今日農曆載入中</small><small class="calendar-expand-hint">展開簽到月曆</small></span>
+          <span class="calendar-chevron" aria-hidden="true">⌄</span>
+        </button>
+      </div>
       <div id="calendarDetails" hidden>
         <div class="calendar-nav">
           <button id="prevMonth" type="button" aria-label="上一個月">&#8249;</button>
@@ -1543,8 +1790,32 @@
           <button id="nextMonth" type="button" aria-label="下一個月">&#8250;</button>
         </div>
         <div class="calendar-grid" id="calendarGrid"></div>
-        <div class="helper" style="margin-top:10px;">有標記的日期，就是你完成平安簽到的日子。</div>
+        <div class="helper" style="margin-top:10px;">綠色是已簽到，紅點是有記事。點日期可查看節日或新增記事。</div>
       </div>
+    </section>
+
+    <section class="settings guardian-group-guide" aria-label="守護群設定教學">
+      <div class="settings-title">LINE 守護群設定</div>
+      <div class="guardian-group-guide-intro">不用填群組代碼。照著下面四個步驟操作，Bot 會自動辨識並綁定你的 LINE 群組。</div>
+      <div class="guardian-group-steps">
+        <article class="guardian-group-step">
+          <span class="guardian-group-step-number">1</span>
+          <div><strong>建立 LINE 群組</strong><p>在 LINE 建立新群組，先把想一起守護的家人或親友加入。</p></div>
+        </article>
+        <article class="guardian-group-step">
+          <span class="guardian-group-step-number">2</span>
+          <div><strong>邀請官方帳號</strong><p>在群組成員設定中，邀請「今天還在嗎」官方帳號加入。找不到時，請先加入官方帳號好友。</p></div>
+        </article>
+        <article class="guardian-group-step">
+          <span class="guardian-group-step-number">3</span>
+          <div><strong>輸入「綁定守護群」</strong><p>請由購買方案的本人在群組輸入：</p><span class="guardian-group-command">綁定守護群</span></div>
+        </article>
+        <article class="guardian-group-step">
+          <span class="guardian-group-step-number">4</span>
+          <div><strong>看到啟用成功訊息</strong><p>Bot 回覆「守護群已啟用」就完成了，之後可在會員中心查看或解除綁定。</p></div>
+        </article>
+      </div>
+      <div class="guardian-group-plan-note">守護群限有效方案使用：799 月費最多 1 群，799 年費最多 3 群。每個 LINE 群組同一時間只能加入一個官方帳號。</div>
     </section>
 
     <section class="settings" aria-label="會員個人中心">
@@ -1615,13 +1886,13 @@
 
         <div class="member-data-section sos-section" id="sosSection" hidden>
           <h3>SOS 緊急求助</h3>
-          <div class="helper">按下後會立即透過 LINE 通知核心守護人，並附上你最後一次可取得的位置。若有立即危險，請先撥打 119。</div>
-          <button class="sos-btn" id="sosBtn" type="button">發出 SOS 緊急求助</button>
+          <div class="helper">有效的 799 守護版會員，可長按 3 秒通知核心守護人。</div>
+          <button class="sos-btn" id="sosBtn" type="button">開啟 SOS 緊急求助</button>
         </div>
 
         <div class="member-data-section" id="guardianGroupsSection" hidden>
           <h3>我的守護群</h3>
-          <div class="helper">799 年費會員最多可綁定 3 個 LINE 群組。把官方帳號加入群組後，在群組輸入「綁定守護群」即可啟用。</div>
+          <div class="helper">799 月費會員最多可綁定 1 個 LINE 群組，年費會員最多 3 個。把官方帳號加入群組後，在群組輸入「綁定守護群」即可啟用。</div>
           <div class="member-data-list" id="guardianGroupsList">
             <div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護群</strong></div>
           </div>
@@ -1678,64 +1949,32 @@
       </div>
     </section>
 
-    <section class="settings" aria-label="緊急與提醒設定">
-      <div class="settings-title">♡ 緊急與提醒設定</div>
-      <div class="setting-row">
-        <label for="contactEmail">聯絡信箱</label>
-        <input type="email" id="contactEmail" placeholder="example@email.com">
-      </div>
-      <div class="setting-row">
-        <label for="graceHours">寬限時間</label>
-        <select id="graceHours">
-          <option value="12">12 小時</option>
-          <option value="24">24 小時</option>
-          <option value="36">36 小時</option>
-          <option value="48">48 小時</option>
-          <option value="72">72 小時</option>
-        </select>
-      </div>
-      <div class="setting-row">
-        <label for="reminderTime">提醒時間</label>
-        <input type="time" id="reminderTime" value="09:00">
-      </div>
-      <div class="helper">尚未綁定任何守護人時，系統每天提醒一次，直到至少完成 1 位 LINE 綁定。</div>
-      <label class="setting-choice" for="contactCapacityReminder">
-        <input type="checkbox" id="contactCapacityReminder">
-        <span>已有守護人但尚未達方案名額時，每天提醒我繼續邀請；隨時可以取消勾選。</span>
-      </label>
-      <div class="actions">
-        <button class="action-btn" id="resetBtn" type="button">↻ 補簽現在</button>
-        <button class="action-btn" id="saveBtn" type="button">♡ 儲存</button>
-      </div>
-    </section>
-
     <section class="settings" aria-label="升級方案">
       <div class="settings-title">♡ 升級方案</div>
-      <button class="plan-toggle" id="planToggleBtn" type="button">查看方案</button>
-      <a href="pricing.html" class="action-btn" style="display: block; text-align: center; text-decoration: none; margin-top: 8px; background: #fff; color: #475569; border: 1px solid #cbd5e1;">💰 查看完整價目表</a>
+      <a href="liff/pricing.html" class="plan-toggle" id="pricingPageLink" style="display:grid; place-items:center; text-decoration:none;">查看完整方案與價目</a>
       <div class="pricing-grid plan-cards-six" id="pricingGrid" hidden>
         <article class="price-card plan-card tier-199 billing-month" data-plan-tier="199" data-billing-cycle="month">
-          <div class="price-head"><strong>199 活著價</strong><span class="plan-cycle-badge">月費方案</span></div>
+          <div class="price-head"><strong>199 平安版</strong><span class="plan-cycle-badge">月費方案</span></div>
           <div class="plan-price">NT$199 <small>／月</small></div>
           <div class="plan-card-note">適合日常平安簽到與基本位置分享。</div>
           <ul>
             <li>4 位緊急聯絡人、4 位好友定位</li>
             <li>每日簽到提醒 1 次</li>
             <li>24 小時快照定位</li>
-            <li>LINE 通知 3 位核心守護人</li>
+            <li>LINE 通知 2 位核心守護人</li>
           </ul>
           <button class="price-btn" type="button" data-plan="199-month">選擇 199 月費</button>
         </article>
         <article class="price-card plan-card tier-199 billing-year" data-plan-tier="199" data-billing-cycle="year">
-          <div class="price-head"><strong>199 活著價</strong><span class="plan-cycle-badge">年費方案</span></div>
-          <div class="plan-price">NT$1,990 <small>／年</small></div>
-          <div class="annual-saving-banner">年繳送 2 個月</div>
-          <div class="plan-card-note"><s>月付一年 NT$2,388</s>，年費只收 10 個月。</div>
+          <div class="price-head"><strong>199 平安版</strong><span class="plan-cycle-badge">年費方案</span></div>
+          <div class="plan-price">NT$1,680 <small>／年</small></div>
+          <div class="annual-saving-banner">年繳現省 NT$708</div>
+          <div class="plan-card-note"><s>月付一年 NT$2,388</s>，平均每月 NT$140。</div>
           <ul>
             <li>6 位緊急聯絡人、6 位好友定位</li>
             <li>每日簽到提醒 2 次</li>
             <li>24 小時快照定位、軌跡回放 3 天</li>
-            <li>LINE 通知 3 位核心守護人</li>
+            <li>LINE 通知 2 位核心守護人</li>
           </ul>
           <button class="price-btn" type="button" data-plan="199-year">選擇 199 年費</button>
         </article>
@@ -1748,17 +1987,17 @@
             <li>每日簽到提醒 2 次</li>
             <li>即時追蹤、軌跡回放 5 天</li>
             <li>離線同步 24 小時</li>
-            <li>LINE 通知 3 位核心守護人，不含簡訊</li>
+            <li>LINE 通知 2 位核心守護人，不含簡訊</li>
           </ul>
           <button class="price-btn" type="button" data-plan="399-month">選擇 399 月費</button>
         </article>
         <article class="price-card plan-card tier-399 billing-year" data-plan-tier="399" data-billing-cycle="year">
           <div class="price-head"><strong>399 安心版</strong><span class="plan-cycle-badge">年費方案</span></div>
-          <div class="plan-price">NT$3,990 <small>／年</small></div>
-          <div class="annual-saving-banner">年繳送 2 個月</div>
-          <div class="plan-card-note"><s>月付一年 NT$4,788</s>，年費只收 10 個月。</div>
+          <div class="plan-price">NT$3,680 <small>／年</small></div>
+          <div class="annual-saving-banner">年繳現省 NT$1,108</div>
+          <div class="plan-card-note"><s>月付一年 NT$4,788</s>，平均每月約 NT$307。</div>
           <ul>
-            <li>20 位緊急聯絡人、20 位好友定位</li>
+            <li>25 位緊急聯絡人、25 位好友定位</li>
             <li>每日簽到提醒 3 次</li>
             <li>即時追蹤、軌跡回放 7 天</li>
             <li>離線同步 24 小時</li>
@@ -1777,94 +2016,29 @@
             <li>即時追蹤、軌跡回放 14 天</li>
             <li>完整離線同步 7 天、一鍵 SOS</li>
             <li>LINE＋簡訊通知 3 位核心守護人</li>
+            <li>最多建立 1 個守護群</li>
           </ul>
           <button class="price-btn" type="button" data-plan="799-month">選擇 799 月費</button>
         </article>
         <article class="price-card plan-card tier-799 billing-year premium-year-card" data-plan-tier="799" data-billing-cycle="year">
           <div class="price-head"><strong>799 守護版</strong><span class="plan-cycle-badge">年費方案</span></div>
-          <div class="plan-price">NT$7,990 <small>／年</small></div>
-          <div class="annual-saving-banner">年繳送 2 個月</div>
-          <div class="plan-card-note"><s>月付一年 NT$9,588</s>，家庭守護推薦。</div>
+          <div class="plan-price">NT$7,200 <small>／年</small></div>
+          <div class="annual-saving-banner">年繳現省 NT$2,388</div>
+          <div class="plan-card-note"><s>月付一年 NT$9,588</s>，平均每月 NT$600。</div>
           <ul>
             <li>50 位緊急聯絡人、50 位好友定位</li>
-            <li>每日簽到提醒 5 次</li>
+            <li>每日簽到提醒 3 次</li>
             <li>即時追蹤、軌跡回放 30 天</li>
             <li>完整離線同步 7 天、一鍵 SOS</li>
-            <li>LINE＋簡訊＋電話通知 5 位核心守護人</li>
-            <li>30 天即時追蹤體驗、最多建立 3 個守護群</li>
+            <li>LINE＋簡訊通知 5 位核心守護人</li>
+            <li>最多建立 3 個守護群</li>
           </ul>
           <button class="price-btn" type="button" data-plan="799-year">選擇 799 年費</button>
-          <div class="annual-proof">平均一天約 NT$22，適合需要電話通知與完整軌跡的家庭。</div>
+          <div class="annual-proof">適合需要 30 天軌跡回放與多人家庭守護的會員。</div>
         </article>
       </div>
       <div class="payment-order-notice" id="paymentOrderNotice" role="status" aria-live="polite" hidden></div>
-      <div class="pricing-grid legacy-plan-cards" hidden aria-hidden="true">
-        <article class="price-card">
-          <div class="price-head"><strong>199 活著價</strong><span>NT$199 / 月</span></div>
-          <div class="price-meta">
-            <span>年付 NT$1,990</span>
-            <span>月付一年 NT$2,388，現省 NT$398</span>
-          </div>
-          <ul>
-            <li>月費 4 位，年費 6 位</li>
-            <li>每日提醒月費 1 次，年費 2 次</li>
-            <li>LINE 通知 3 位核心守護人</li>
-            <li>24 小時快照定位，年費含 3 天軌跡回放</li>
-          </ul>
-          <button class="price-btn" type="button" data-plan="199">我要升級</button>
-        </article>
-        <article class="price-card">
-          <div class="price-head"><strong>399 安心版</strong><span>NT$399 / 月</span></div>
-          <div class="price-meta">
-            <span>年付 NT$3,990</span>
-            <span>月付一年 NT$4,788，現省 NT$798</span>
-          </div>
-          <ul>
-            <li>月費 15 位，年費 20 位</li>
-            <li>每日提醒月費 2 次，年費 3 次</li>
-            <li>LINE 通知 3 位核心守護人，不含簡訊</li>
-            <li>即時追蹤、軌跡回放 5-7 天、離線同步 24 小時</li>
-          </ul>
-          <button class="price-btn" type="button" data-plan="399">我要升級</button>
-        </article>
-        <article class="price-card premium-month-card">
-          <div class="price-head"><strong>799 守護版</strong><span class="anchor-tag">進階守護</span></div>
-          <div class="monthly-price">NT$799 / 月</div>
-          <div class="price-meta">
-            <span>年付 NT$7,990</span>
-            <span>月付一年 NT$9,588，現省 NT$1,598</span>
-          </div>
-          <ul>
-            <li>月費 25 位，年費 50 位</li>
-            <li>每日提醒月費 3 次，年費 5 次</li>
-            <li>月費 LINE＋簡訊通知 3 位核心守護人</li>
-            <li>年費 LINE＋簡訊＋電話通知 5 位核心守護人</li>
-            <li>一鍵 SOS：緊急時附上目前位置通知守護人</li>
-            <li>軌跡回放 14-30 天、完整離線同步 7 天</li>
-          </ul>
-          <button class="price-btn" type="button" data-plan="799">我要升級</button>
-        </article>
-        <article class="price-card premium-year-card">
-          <div class="price-head">
-            <strong>799 守護版年費</strong>
-            <span class="anchor-tag">家庭守護推薦</span>
-          </div>
-          <div class="price-meta">
-            <span><s>月付原價 NT$9,588</s></span>
-            <span>現 NT$7,990，等於送 2 個月</span>
-          </div>
-          <ul>
-            <li>☎ 5 位核心守護人：緊急時 LINE＋簡訊＋電話三重通知</li>
-            <li>🆘 一鍵 SOS：附上目前位置通知核心守護人</li>
-            <li>📍 即時位置通知：預警觸發時附上目前定位</li>
-            <li>⏱ 30 天完整軌跡回放，僅限 799 年費</li>
-            <li>⏱ 30 天即時追蹤體驗：年費會員限定</li>
-          </ul>
-          <button class="price-btn" type="button" data-plan="799-year">立即升級 799 年費</button>
-          <div class="annual-proof">年費 NT$7,990，平均一天約 NT$22。需要電話通知、30 天軌跡回放、孩子通勤守護的家庭，建議選這個方案。</div>
-        </article>
-      </div>
-      <div class="helper" style="margin-top:10px;">年付皆為 10 個月價，直接多送 2 個月。MVP 階段付款後由後台開通方案。</div>
+      <div class="helper" style="margin-top:10px;">年費比逐月付款更省，實際優惠金額已標示於各方案。MVP 階段付款後由後台開通方案。</div>
     </section>
 
     <section class="settings" aria-label="安心守護邀請任務">
@@ -1995,6 +2169,22 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" id="calendarNoteModal" hidden>
+    <div class="guardian-modal calendar-note-modal" role="dialog" aria-modal="true" aria-labelledby="calendarNoteTitle">
+      <h2 id="calendarNoteTitle">日期記事</h2>
+      <div class="calendar-note-date" id="calendarNoteDateText"></div>
+      <label for="calendarNoteInput">今天想記下什麼？</label>
+      <textarea id="calendarNoteInput" maxlength="500" placeholder="例如：回診、領藥、和家人吃飯"></textarea>
+      <div class="helper" style="margin-top:6px;">記事會保存在你的會員資料中，最多 500 字。</div>
+      <a class="google-calendar-link" id="googleCalendarLink" href="#" target="_blank" rel="noopener">加入 Google 日曆</a>
+      <div class="actions">
+        <button class="action-btn" id="deleteCalendarNoteBtn" type="button">清除記事</button>
+        <button class="action-btn" id="closeCalendarNoteBtn" type="button">取消</button>
+        <button class="action-btn primary" id="saveCalendarNoteBtn" type="button">儲存記事</button>
+      </div>
+    </div>
+  </div>
+
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script>
     const STORAGE_KEY = "alive_checkin_state_v2";
@@ -2010,7 +2200,8 @@
       paid_until: "",
       auto_renew_requested: false,
       auto_renew_enabled: false,
-      auto_renew_status: "off"
+      auto_renew_status: "off",
+      calendar_notes: {}
     };
     let currentYear = new Date().getFullYear();
     let currentMonth = new Date().getMonth();
@@ -2042,6 +2233,8 @@
     let currentContactLimit = 1;
     let currentStatusData = null;
     let accountDeleted = false;
+    let calendarNotes = {};
+    let selectedCalendarDate = "";
 
     const $ = (id) => document.getElementById(id);
 
@@ -2125,6 +2318,36 @@
       return await res.json();
     }
 
+    async function apiGetCalendarNotes() {
+      if (useLocalMode) return { ok: true, notes: loadLocalState().calendar_notes || {} };
+      if (!lineUserId) return { ok: true, notes: {} };
+      const res = await fetch(`/api/calendar-notes?line_user_id=${encodeURIComponent(lineUserId)}`);
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error || "calendar notes failed");
+      return data;
+    }
+
+    async function apiSaveCalendarNote(date, content) {
+      if (useLocalMode) {
+        const state = loadLocalState();
+        const notes = { ...(state.calendar_notes || {}) };
+        const cleanContent = String(content || "").trim();
+        if (cleanContent) notes[date] = cleanContent;
+        else delete notes[date];
+        state.calendar_notes = notes;
+        saveLocalState(state);
+        return { ok: true, notes };
+      }
+      const res = await fetch("/api/calendar-notes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId, date, content })
+      });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error || "calendar note save failed");
+      return data;
+    }
+
     async function apiCheckin() {
       if (useLocalMode) {
         const state = loadLocalState();
@@ -2201,7 +2424,12 @@
         body: JSON.stringify({ line_user_id: lineUserId })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "sos failed");
+      if (!res.ok) {
+        const error = new Error(data.error || "sos failed");
+        error.status = res.status;
+        error.details = data;
+        throw error;
+      }
       return data;
     }
 
@@ -2472,12 +2700,12 @@
 
     function memberPlanBenefits(plan) {
       return {
-        paid_199: { cycle: "199 活著價｜月費方案", contacts: 4, locations: 4, detail: "每日提醒 1 次、24 小時快照定位、LINE 通知 3 位核心守護人。" },
-        paid_199_year: { cycle: "199 活著價｜年費方案", contacts: 6, locations: 6, detail: "每日提醒 2 次、24 小時快照定位、軌跡回放 3 天、LINE 通知 3 位核心守護人。" },
-        paid_399: { cycle: "399 安心版｜月費方案", contacts: 15, locations: 15, detail: "每日提醒 2 次、即時追蹤、軌跡回放 5 天、離線同步 24 小時、LINE 通知 3 位核心守護人。" },
-        paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 20, locations: 20, detail: "每日提醒 3 次、即時追蹤、軌跡回放 7 天、離線同步 24 小時、30 天即時追蹤體驗。" },
-        paid_799: { cycle: "799 守護版｜月費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、軌跡回放 14 天、完整離線同步 7 天、一鍵 SOS、LINE＋簡訊通知 3 位核心守護人。" },
-        paid_799_year: { cycle: "799 守護版｜年費方案", contacts: 50, locations: 50, detail: "每日提醒 5 次、30 天即時追蹤體驗、軌跡回放 30 天、完整離線同步 7 天、一鍵 SOS、LINE＋簡訊＋電話通知 5 位核心守護人。" },
+        paid_199: { cycle: "199 平安版｜月費方案", contacts: 4, locations: 4, detail: "每日提醒 1 次、24 小時快照定位、LINE 通知 2 位核心守護人。" },
+        paid_199_year: { cycle: "199 平安版｜年費方案", contacts: 6, locations: 6, detail: "每日提醒 2 次、24 小時快照定位、軌跡回放 3 天、LINE 通知 2 位核心守護人。" },
+        paid_399: { cycle: "399 安心版｜月費方案", contacts: 15, locations: 15, detail: "每日提醒 2 次、即時追蹤、軌跡回放 5 天、離線同步 24 小時、LINE 通知 2 位核心守護人。" },
+        paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、即時追蹤、軌跡回放 7 天、離線同步 24 小時、30 天即時追蹤體驗、LINE 通知 3 位核心守護人。" },
+        paid_799: { cycle: "799 守護版｜月費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、軌跡回放 14 天、完整離線同步 7 天、一鍵 SOS、LINE＋簡訊通知 3 位核心守護人、1 個守護群。" },
+        paid_799_year: { cycle: "799 守護版｜年費方案", contacts: 50, locations: 50, detail: "每日提醒 3 次、軌跡回放 30 天、完整離線同步 7 天、一鍵 SOS、LINE＋簡訊通知 5 位核心守護人、3 個守護群。" },
         free: { cycle: "基本守護｜免費方案", contacts: 1, locations: 1, detail: "基本簽到與 LINE 提醒。" },
         trial: { cycle: "安心體驗｜7 天試用", contacts: 1, locations: 1, detail: "試用期間可使用基本簽到與 LINE 提醒。" }
       }[plan] || { cycle: "尚未選擇方案", contacts: 1, locations: 1, detail: "請先選擇適合你的守護方案。" };
@@ -2546,7 +2774,8 @@
 
       const isPaid = String(status.plan || "").startsWith("paid_");
       $("memberUpgradeBtn").hidden = isPaid;
-      $("sosSection").hidden = !Boolean(status.sos_enabled);
+      $("sosSection").hidden = false;
+      renderSosAccess();
       const guardianGroupIds = status.guardian_group_ids || [];
       $("guardianGroupsSection").hidden = !(status.guardian_group_limit > 0);
       $("guardianGroupsList").innerHTML = guardianGroupIds.length
@@ -2729,9 +2958,7 @@
     }
 
     function openUpgradePlans() {
-      $("pricingGrid").hidden = false;
-      $("planToggleBtn").textContent = "收起方案";
-      document.querySelector('[aria-label="升級方案"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+      window.location.href = "liff/pricing.html";
     }
 
     async function startPlanCheckout(planChoice, button) {
@@ -2790,17 +3017,17 @@
         document.querySelector('[aria-label="會員個人中心"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
+      if (page === "sos") {
+        openSosModal();
+        return;
+      }
       if (page === "plans") {
-        $("pricingGrid").hidden = false;
-        $("planToggleBtn").textContent = "收起方案";
-        document.querySelector('[aria-label="升級方案"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+        window.location.href = "liff/pricing.html";
       }
     }
 
     function openUpgradePlans() {
-      $("pricingGrid").hidden = false;
-      $("planToggleBtn").textContent = "收起方案";
-      document.querySelector('[aria-label="升級方案"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+      window.location.href = "liff/pricing.html";
     }
 
     function maybeShowInviteAcceptPrompt() {
@@ -3081,8 +3308,62 @@
       }
     }
 
+    const LUNAR_DAY_NAMES = ["", "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十", "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十", "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"];
+    const LUNAR_MONTH_NAMES = ["", "正月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "冬月", "臘月"];
+    const TAIWAN_FESTIVALS = {
+      "01-01": "元旦",
+      "02-14": "情人節",
+      "02-28": "和平紀念日",
+      "04-04": "兒童節",
+      "05-01": "勞動節",
+      "08-08": "父親節",
+      "10-10": "國慶日",
+      "12-25": "聖誕節"
+    };
+    const LUNAR_FESTIVALS = {
+      "1-1": "春節",
+      "1-15": "元宵節",
+      "5-5": "端午節",
+      "7-7": "七夕",
+      "7-15": "中元節",
+      "8-15": "中秋節",
+      "9-9": "重陽節"
+    };
+
+    function lunarInfo(date) {
+      try {
+        const parts = new Intl.DateTimeFormat("zh-TW-u-ca-chinese", {
+          month: "numeric",
+          day: "numeric"
+        }).formatToParts(date);
+        const monthText = parts.find((part) => part.type === "month")?.value || "";
+        const dayNumber = Number(parts.find((part) => part.type === "day")?.value || 0);
+        const monthNumber = Number((monthText.match(/\d+/) || [0])[0]);
+        const dayLabel = LUNAR_DAY_NAMES[dayNumber] || `${dayNumber}`;
+        const monthLabel = LUNAR_MONTH_NAMES[monthNumber] || monthText;
+        return {
+          monthNumber,
+          dayNumber,
+          dayLabel,
+          fullLabel: `${monthLabel}${dayLabel}`,
+          festival: LUNAR_FESTIVALS[`${monthNumber}-${dayNumber}`] || ""
+        };
+      } catch (error) {
+        return { monthNumber: 0, dayNumber: 0, dayLabel: "農曆", fullLabel: "農曆日期", festival: "" };
+      }
+    }
+
+    function festivalForDate(date, lunar) {
+      const key = `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      if (TAIWAN_FESTIVALS[key]) return TAIWAN_FESTIVALS[key];
+      if (date.getMonth() === 4 && date.getDay() === 0 && date.getDate() >= 8 && date.getDate() <= 14) return "母親節";
+      return lunar.festival;
+    }
+
     function renderCalendar(year, month, history) {
       $("monthTitle").textContent = `${year}年 ${month + 1}月`;
+      const lunarDateText = $("lunarDateText");
+      if (lunarDateText) lunarDateText.textContent = `今日農曆 ${lunarInfo(new Date()).fullLabel}`;
       const monthPrefix = `${year}-${String(month + 1).padStart(2, "0")}-`;
       const monthCheckins = (history || []).filter((date) => date.startsWith(monthPrefix)).length;
       $("monthCheckinSummary").textContent = `本月已簽到 ${monthCheckins} 天`;
@@ -3093,29 +3374,92 @@
       ["日", "一", "二", "三", "四", "五", "六"].forEach((day) => {
         html += `<div class="day-name">${day}</div>`;
       });
-      for (let i = 0; i < firstDay; i += 1) html += `<div class="day-cell"></div>`;
+      for (let i = 0; i < firstDay; i += 1) html += `<div class="day-cell blank" aria-hidden="true"></div>`;
       for (let day = 1; day <= daysInMonth; day += 1) {
         const ds = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        const date = new Date(year, month, day, 12);
+        const lunar = lunarInfo(date);
+        const festival = festivalForDate(date, lunar);
         const classes = ["day-cell"];
-        if (history.includes(ds)) classes.push("checked");
+        if ((history || []).includes(ds)) classes.push("checked");
         if (ds === today) classes.push("today");
-        html += `<div class="${classes.join(" ")}">${day}</div>`;
+        if (festival) classes.push("festival");
+        if (calendarNotes[ds]) classes.push("has-note");
+        const miniLabel = festival || lunar.dayLabel;
+        const noteLabel = calendarNotes[ds] ? `，記事：${calendarNotes[ds]}` : "";
+        html += `<button type="button" class="${classes.join(" ")}" data-date="${ds}" aria-label="${month + 1}月${day}日，農曆${escapeHtml(lunar.fullLabel)}${festival ? `，${escapeHtml(festival)}` : ""}${escapeHtml(noteLabel)}"><span class="day-number">${day}</span><span class="lunar-mini">${escapeHtml(miniLabel)}</span></button>`;
       }
       $("calendarGrid").innerHTML = html;
+    }
+
+    function googleCalendarUrl(dateText, content) {
+      const start = dateText.replace(/-/g, "");
+      const endDate = new Date(`${dateText}T12:00:00`);
+      endDate.setDate(endDate.getDate() + 1);
+      const end = `${endDate.getFullYear()}${String(endDate.getMonth() + 1).padStart(2, "0")}${String(endDate.getDate()).padStart(2, "0")}`;
+      const params = new URLSearchParams({
+        action: "TEMPLATE",
+        text: content || "今天還在嗎｜平安記事",
+        dates: `${start}/${end}`,
+        details: content ? `平安記事：${content}` : "由「今天還在嗎」加入的平安記事"
+      });
+      return `https://calendar.google.com/calendar/render?${params.toString()}`;
+    }
+
+    function openCalendarNote(dateText) {
+      selectedCalendarDate = dateText;
+      const date = new Date(`${dateText}T12:00:00`);
+      const lunar = lunarInfo(date);
+      const festival = festivalForDate(date, lunar);
+      const content = calendarNotes[dateText] || "";
+      $("calendarNoteTitle").textContent = `${date.getMonth() + 1}月${date.getDate()}日記事`;
+      $("calendarNoteDateText").textContent = `農曆 ${lunar.fullLabel}${festival ? `｜${festival}` : ""}`;
+      $("calendarNoteInput").value = content;
+      $("deleteCalendarNoteBtn").disabled = !content;
+      $("googleCalendarLink").href = googleCalendarUrl(dateText, content);
+      $("calendarNoteModal").hidden = false;
+      window.setTimeout(() => $("calendarNoteInput").focus(), 100);
+    }
+
+    function closeCalendarNote() {
+      $("calendarNoteModal").hidden = true;
+      selectedCalendarDate = "";
+    }
+
+    async function saveSelectedCalendarNote(contentOverride) {
+      if (!selectedCalendarDate) return;
+      const saveButton = $("saveCalendarNoteBtn");
+      const content = contentOverride === undefined ? $("calendarNoteInput").value : contentOverride;
+      saveButton.disabled = true;
+      saveButton.textContent = "儲存中";
+      try {
+        const result = await apiSaveCalendarNote(selectedCalendarDate, content);
+        calendarNotes = result.notes || {};
+        renderCalendar(currentYear, currentMonth, historyData);
+        closeCalendarNote();
+      } catch (error) {
+        alert("記事暫時無法儲存，請稍後再試");
+      } finally {
+        saveButton.disabled = false;
+        saveButton.textContent = "儲存記事";
+      }
+    }
+
+    async function refreshCalendarNotes() {
+      try {
+        const result = await apiGetCalendarNotes();
+        calendarNotes = result.notes || {};
+        renderCalendar(currentYear, currentMonth, historyData);
+      } catch (error) {
+        calendarNotes = {};
+      }
     }
 
     function setCalendarExpanded(expanded) {
       $("calendarDetails").hidden = !expanded;
       $("calendarToggleBtn").setAttribute("aria-expanded", String(expanded));
-      const hint = $("calendarToggleBtn").querySelector("small");
+      const hint = $("calendarToggleBtn").querySelector(".calendar-expand-hint");
       if (hint) hint.textContent = expanded ? "收起簽到月曆" : "展開簽到月曆";
-    }
-
-    function setStatusExpanded(expanded) {
-      $("statusDetails").hidden = !expanded;
-      $("statusToggleBtn").setAttribute("aria-expanded", String(expanded));
-      const label = $("statusToggleBtn").querySelector("strong");
-      if (label) label.textContent = expanded ? "收起今日狀態" : "查看今日狀態";
     }
 
     function setMemberCenterExpanded(expanded) {
@@ -3199,8 +3543,8 @@
     }
 
     async function refreshLocationForSos() {
-      if (!navigator.geolocation || !lineUserId || useLocalMode) return;
-      await new Promise((resolve) => {
+      if (!navigator.geolocation || !lineUserId || useLocalMode) return false;
+      return await new Promise((resolve) => {
         navigator.geolocation.getCurrentPosition(async (position) => {
           try {
             await apiUpdateLocation(
@@ -3208,37 +3552,93 @@
               position.coords.longitude,
               inferTaiwanCounty(position.coords.latitude, position.coords.longitude)
             );
+            resolve(true);
           } catch (error) {
             // SOS 不能因定位失敗而被阻擋，後端仍會使用最後一次可用位置。
+            resolve(false);
           }
-          resolve();
-        }, resolve, { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 });
+        }, () => resolve(false), { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 });
       });
     }
 
-    async function triggerSos() {
+    function hasActiveSosAccess() {
+      return Boolean(currentStatusData && currentStatusData.sos_enabled);
+    }
+
+    function renderSosAccess() {
+      const enabled = hasActiveSosAccess();
+      const fab = $("sosFab");
+      const sosSection = $("sosSection");
+      const holdButton = $("sosHoldButton");
+      const planStatus = $("sosPlanStatus");
+      const modalMessage = $("sosModalMessage");
+      const upgradeLink = $("sosUpgradeLink");
+      if (fab) fab.hidden = !enabled;
+      if (sosSection) sosSection.hidden = !enabled;
+      if (!holdButton || !planStatus || !modalMessage || !upgradeLink) return;
+
+      holdButton.disabled = !enabled;
+      planStatus.textContent = enabled
+        ? "你的 799 守護版已啟用 SOS 守護通知"
+        : "目前方案可使用緊急電話，尚未開通守護人通知";
+      modalMessage.textContent = enabled
+        ? "長按 3 秒後，系統會通知核心守護人，並附上可取得的位置。"
+        : "升級有效的 799 守護版後，才能透過系統通知核心守護人。";
+      upgradeLink.hidden = enabled;
+    }
+
+    function openSosModal() {
+      if (!hasActiveSosAccess()) {
+        window.location.href = "liff/pricing.html";
+        return;
+      }
+      $("sosConfirmModal").hidden = false;
+      $("sosFeedback").textContent = "";
+      renderSosAccess();
+    }
+
+    function triggerSos() {
+      openSosModal();
+    }
+
+    async function sendSosAlert() {
+      const button = $("sosHoldButton");
+      const label = $("sosHoldLabel");
+      const feedback = $("sosFeedback");
+      if (!hasActiveSosAccess()) {
+        renderSosAccess();
+        return;
+      }
       if (!lineUserId) {
-        alert("請先使用 LINE 一鍵登入，才能通知你的守護人。");
+        feedback.textContent = "請先從 LINE 開啟並登入，才能通知守護人。";
         if (window.liff && !liff.isLoggedIn()) liff.login();
         return;
       }
-      if (!confirm("確定要發出 SOS 嗎？系統會立即通知你的核心守護人。")) return;
-      const button = $("sosBtn");
+
       button.disabled = true;
-      button.textContent = "正在通知守護人…";
+      label.textContent = "正在取得位置";
+      feedback.textContent = "請稍候，系統正在準備守護通知";
       try {
-        await refreshLocationForSos();
+        const locationUpdated = await refreshLocationForSos();
+        label.textContent = "正在通知守護人";
         const result = await apiTriggerSos();
-        alert(`SOS 已送出，成功通知 ${result.sent} 位核心守護人。`);
+        feedback.textContent = `SOS 已送出，已通知 ${result.sent} 個對象${locationUpdated || result.location_attached ? "，並附上位置" : ""}`;
+        label.textContent = "SOS 已送出";
+        if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
       } catch (error) {
         const message = String(error.message || "");
-        alert(message.includes("no bound LINE guardians")
-          ? "目前沒有可接收 LINE 的守護人，請先完成至少 1 位守護人綁定。"
-          : "SOS 暫時無法送出，請立即撥打 119，並直接聯絡親友。"
-        );
+        if (message.includes("no bound LINE guardians")) {
+          feedback.textContent = "尚未綁定可接收 LINE 的守護人，請先完成至少 1 位綁定";
+        } else if (message.includes("not active") || message.includes("not available")) {
+          feedback.textContent = "方案目前無法使用守護通知，請確認付款狀態或查看 799 方案";
+        } else if (error.status === 429) {
+          feedback.textContent = "為避免誤觸，SOS 暫時進入冷卻時間，若有危險請直接撥打 119 或 110";
+        } else {
+          feedback.textContent = "SOS 暫時無法送出，請直接撥打 119、110，並聯絡親友";
+        }
+        label.textContent = "長按 3 秒發出 SOS";
       } finally {
-        button.disabled = false;
-        button.textContent = "發出 SOS 緊急求助";
+        button.disabled = !hasActiveSosAccess();
       }
     }
 
@@ -3324,7 +3724,6 @@
 
       const countdown = $("countdownDisplay");
       if (data.is_overdue) {
-        setStatusExpanded(true);
         countdown.textContent = "已逾期";
         countdown.style.color = "#dc2626";
         hideWarningPrompt();
@@ -3354,15 +3753,12 @@
       if (data.is_overdue) checkBtnEl.classList.add("danger");
       else if (data.status_class === "warning") checkBtnEl.classList.add("warning");
 
-      $("contactEmail").value = data.contact_email || "";
-      $("graceHours").value = String(data.grace_hours || 36);
-      $("reminderTime").value = data.reminder_time || "09:00";
-      $("contactCapacityReminder").checked = Boolean(data.contact_capacity_reminder_enabled);
       const planView = planPresentation(data.plan, data.trial_days_left);
-      $("planStateLabel").textContent = planView.state;
+      $("planStateLabel").textContent = data.plan === "trial"
+        ? "7 天安心體驗"
+        : planLabel(data.plan);
       $("planDetailText").textContent = planView.detail;
       $("planStrip").dataset.planTone = planView.tone;
-      $("planName").textContent = planLabel(data.plan);
       $("contactLimit").textContent = String(data.contact_limit || 1);
       $("streakText").textContent = `${calculateStreak(historyData)} 天`;
       currentContactLimit = data.contact_limit || 1;
@@ -3422,20 +3818,6 @@
         showInlineError("簽到失敗:" + (error.message || "請確認後端是否正常"));
         checkBtn.disabled = false;
         checkBtn.innerHTML = originalText;
-      }
-    }
-
-    async function reloadStatus() {
-      const reloadBtn = $("reloadBtn");
-      if (reloadBtn) { reloadBtn.disabled = true; reloadBtn.textContent = "重新載入中…"; }
-      hideInlineError();
-      try {
-        const status = await apiGetStatus();
-        renderStatus(status);
-      } catch (error) {
-        showInlineError("重新載入失敗:" + (error.message || "請確認後端是否正常"));
-      } finally {
-        if (reloadBtn) { reloadBtn.disabled = false; reloadBtn.textContent = "重新載入"; }
       }
     }
 
@@ -3824,19 +4206,16 @@
       const dailyEl = $("dailyStatus");
       if (dailyEl) dailyEl.textContent = "讀取中...";
 
+      // 導覽與基本操作不依賴 LINE 身分，本機預覽也能正常切換。
+      bindTabEvents();
+      bindSosFab();
+      bindGuardianCompletePrompt();
+      bindGuardianEvents();
+
       if (!lineUserId) {
         if (dailyEl) dailyEl.textContent = "請從 LINE 開啟此服務";
         return;
       }
-
-      // D01: 立刻綁定 tab 切換 + SOS FAB + 守護人 + Guardian 編輯(這些不需要等 API)
-      // 這樣即使 onboarding modal 開著,nav 也能立即切換
-      bindTabEvents();
-      bindSosFab();
-      bindGuardianCompletePrompt();
-      const nav = document.getElementById("bottomNav");
-      if (nav) nav.style.display = "";
-      bindGuardianEvents();
 
       try {
         await fetch("/api/line/register", {
@@ -3883,10 +4262,9 @@
       // 對應 tab → 顯示哪些 sections(D01 修正:399/799 升級方案 → 會員中心)
       const tabMap = {
         home: ["簽到狀態"],
-        guardians: ["會員個人中心", "安心守護邀請任務", "緊急聯絡人", "好友地圖"],
+        guardians: ["守護群設定教學", "會員個人中心", "安心守護邀請任務", "緊急聯絡人", "好友地圖"],
         history: ["簽到月曆"],
         member: ["升級方案"],
-        settings: ["緊急與提醒設定"],
       };
       const showLabels = tabMap[tabName] || ["簽到狀態"];
       allSections.forEach(s => {
@@ -3916,45 +4294,72 @@
       // hash 變化(直接打 URL)
       window.addEventListener("hashchange", () => {
         const h = location.hash.replace("#", "") || "home";
-        if (["home","guardians","history","member","settings"].includes(h)) showTab(h);
+        showTab(["home", "guardians", "history", "member"].includes(h) ? h : "home");
       });
       // 初始 tab
-      const initial = location.hash.replace("#", "") || "home";
+      const requestedTab = location.hash.replace("#", "") || "home";
+      const initial = ["home", "guardians", "history", "member"].includes(requestedTab) ? requestedTab : "home";
       showTab(initial);
     }
 
-    // SOS FAB
+    const SOS_HOLD_DURATION_MS = 3000;
+
+    // SOS FAB：所有人可開啟，只有有效 799 會員可長按通知守護人。
     function bindSosFab() {
       const fab = $("sosFab");
       const modal = $("sosConfirmModal");
       const cancelBtn = $("sosConfirmCancel");
-      const sendBtn = $("sosConfirmSend");
-      if (!fab || !modal) return;
-      fab.addEventListener("click", () => { modal.hidden = false; });
-      cancelBtn.addEventListener("click", () => { modal.hidden = true; });
-      sendBtn.addEventListener("click", async () => {
-        if (!lineUserId) { alert("請先從 LINE 開啟"); modal.hidden = true; return; }
-        sendBtn.disabled = true;
-        sendBtn.textContent = "送出中...";
-        try {
-          const r = await fetch("/api/sos", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ line_user_id: lineUserId })
-          });
-          const data = await r.json();
-          if (r.status === 200 && data.ok !== false) {
-            alert("SOS 已送出,核心守護人會收到通知。");
-            modal.hidden = true;
-          } else {
-            alert("SOS 送出失敗: " + ((data && data.error) || "未知錯誤"));
-          }
-        } catch (e) {
-          alert("SOS 送出失敗: " + e.message);
-        } finally {
-          sendBtn.disabled = false;
-          sendBtn.textContent = "確認發出 SOS";
-        }
+      const holdButton = $("sosHoldButton");
+      const holdProgress = $("sosHoldProgress");
+      const holdLabel = $("sosHoldLabel");
+      if (!fab || !modal || !cancelBtn || !holdButton || fab.dataset.bound === "true") return;
+      fab.dataset.bound = "true";
+      let holdTimer = null;
+      let holdCompleted = false;
+
+      const resetHold = () => {
+        if (holdTimer) clearTimeout(holdTimer);
+        holdTimer = null;
+        holdProgress.style.transition = "none";
+        holdProgress.style.width = "0";
+        if (!holdCompleted) holdLabel.textContent = "長按 3 秒發出 SOS";
+      };
+      const startHold = (event) => {
+        if (holdButton.disabled || holdTimer) return;
+        event.preventDefault();
+        holdCompleted = false;
+        $("sosFeedback").textContent = "持續按住，放開就會取消";
+        holdLabel.textContent = "請持續按住";
+        holdProgress.style.transition = "none";
+        holdProgress.style.width = "0";
+        requestAnimationFrame(() => {
+          holdProgress.style.transition = `width ${SOS_HOLD_DURATION_MS}ms linear`;
+          holdProgress.style.width = "100%";
+        });
+        holdTimer = setTimeout(async () => {
+          holdTimer = null;
+          holdCompleted = true;
+          await sendSosAlert();
+        }, SOS_HOLD_DURATION_MS);
+      };
+      const cancelHold = () => {
+        if (!holdCompleted) $("sosFeedback").textContent = "已取消，沒有送出通知";
+        resetHold();
+      };
+
+      fab.addEventListener("click", openSosModal);
+      cancelBtn.addEventListener("click", () => { resetHold(); modal.hidden = true; });
+      modal.addEventListener("click", (event) => {
+        if (event.target === modal) { resetHold(); modal.hidden = true; }
+      });
+      holdButton.addEventListener("pointerdown", startHold);
+      holdButton.addEventListener("pointerup", cancelHold);
+      holdButton.addEventListener("pointercancel", cancelHold);
+      holdButton.addEventListener("keydown", (event) => {
+        if (event.key === " " || event.key === "Enter") startHold(event);
+      });
+      holdButton.addEventListener("keyup", (event) => {
+        if (event.key === " " || event.key === "Enter") cancelHold();
       });
     }
 
@@ -4023,26 +4428,6 @@
     // 把上面整合到 initApp 最後
     const _origInitApp = initApp;
 
-    async function saveSettings() {
-      try {
-        const payload = {
-          contact_email: $("contactEmail").value.trim(),
-          grace_hours: Number($("graceHours").value),
-          reminder_time: $("reminderTime").value,
-          contact_capacity_reminder_enabled: $("contactCapacityReminder").checked
-        };
-        renderStatus(await apiSaveSettings(payload));
-        alert("設定已儲存。");
-      } catch (error) {
-        alert("儲存失敗，請稍後再試。");
-      }
-    }
-
-    async function resetCheckin() {
-      if (!confirm("要把現在記成最新簽到時間嗎？")) return;
-      await doCheckin();
-    }
-
     function changeMonth(delta) {
       currentMonth += delta;
       if (currentMonth < 0) {
@@ -4060,14 +4445,10 @@
       button.addEventListener("click", () => setTheme(button.dataset.theme));
     });
     $("checkBtn").addEventListener("click", doCheckin);
-    const reloadBtnEl = $("reloadBtn");
-    if (reloadBtnEl) reloadBtnEl.addEventListener("click", reloadStatus);
 
     // 自動初始化:有 line_user_id 就 register + load status
     initApp();
 
-    $("saveBtn").addEventListener("click", saveSettings);
-    $("resetBtn").addEventListener("click", resetCheckin);
     $("shareContactInviteBtn").addEventListener("click", shareContactInvite);
     document.querySelectorAll(".share-contact-invite-btn").forEach((button) => {
       button.addEventListener("click", shareContactInvite);
@@ -4089,17 +4470,8 @@
     document.querySelectorAll(".price-btn[data-plan]").forEach((button) => {
       button.addEventListener("click", () => startPlanCheckout(button.dataset.plan, button));
     });
-    $("planToggleBtn").addEventListener("click", () => {
-      const pricing = $("pricingGrid");
-      const willShow = pricing.hidden;
-      pricing.hidden = !willShow;
-      $("planToggleBtn").textContent = willShow ? "收起方案" : "查看方案";
-    });
     $("calendarToggleBtn").addEventListener("click", () => {
       setCalendarExpanded($("calendarToggleBtn").getAttribute("aria-expanded") !== "true");
-    });
-    $("statusToggleBtn").addEventListener("click", () => {
-      setStatusExpanded($("statusToggleBtn").getAttribute("aria-expanded") !== "true");
     });
     $("memberCenterToggleBtn").addEventListener("click", () => {
       setMemberCenterExpanded($("memberCenterToggleBtn").getAttribute("aria-expanded") !== "true");
@@ -4117,6 +4489,21 @@
       const button = event.target.closest(".guardian-group-unbind");
       if (button) unbindGuardianGroup(button.dataset.groupId);
     });
+    $("calendarGrid").addEventListener("click", (event) => {
+      const dayButton = event.target.closest(".day-cell[data-date]");
+      if (dayButton) openCalendarNote(dayButton.dataset.date);
+    });
+    $("closeCalendarNoteBtn").addEventListener("click", closeCalendarNote);
+    $("saveCalendarNoteBtn").addEventListener("click", () => saveSelectedCalendarNote());
+    $("deleteCalendarNoteBtn").addEventListener("click", () => saveSelectedCalendarNote(""));
+    $("calendarNoteInput").addEventListener("input", () => {
+      if (selectedCalendarDate) {
+        $("googleCalendarLink").href = googleCalendarUrl(selectedCalendarDate, $("calendarNoteInput").value.trim());
+      }
+    });
+    $("calendarNoteModal").addEventListener("click", (event) => {
+      if (event.target === $("calendarNoteModal")) closeCalendarNote();
+    });
     $("prevMonth").addEventListener("click", () => changeMonth(-1));
     $("nextMonth").addEventListener("click", () => changeMonth(1));
 
@@ -4125,6 +4512,7 @@
     maybeShowInviteAcceptPrompt();
     initLine().finally(async () => {
       await refreshStatus();
+      await refreshCalendarNotes();
       await refreshContacts();
       await refreshFriendLocations();
       openRequestedPage();

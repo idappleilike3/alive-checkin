@@ -58,6 +58,7 @@ DEFAULT_PROFILE = {
     "friends": [],
     "location": {},
     "guardian_group_ids": [],
+    "calendar_notes": {},
 }
 DEFAULT_STATE = {
     **DEFAULT_PROFILE,
@@ -74,18 +75,18 @@ DEFAULT_STATE = {
 PLAN_LIMITS = {
     "free": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": False, "guardian_group_limit": 0},
     "trial": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": False, "guardian_group_limit": 0},
-    "paid_199": {"contact_limit": 4, "friend_location_limit": 4, "daily_reminders": 1, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 1, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": False, "guardian_group_limit": 0},
-    "paid_199_year": {"contact_limit": 6, "friend_location_limit": 6, "daily_reminders": 2, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 2, "realtime_tracking": False, "trajectory_days": 3, "offline_sync_days": 0, "sos_enabled": False, "guardian_group_limit": 0},
-    "paid_399": {"contact_limit": 3, "friend_location_limit": 3, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 2, "realtime_tracking": True, "trajectory_days": 5, "offline_sync_days": 1, "sos_enabled": False, "guardian_group_limit": 0},
-    "paid_399_year": {"contact_limit": 3, "friend_location_limit": 3, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 2, "realtime_tracking": True, "trajectory_days": 5, "offline_sync_days": 1, "sos_enabled": False, "guardian_group_limit": 0, "realtime_trial_days": 30},
-    "paid_799": {"contact_limit": 5, "friend_location_limit": 5, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 3, "realtime_tracking": True, "trajectory_days": 14, "offline_sync_days": 7, "sos_enabled": True, "guardian_group_limit": 0, "dedicated_support": False},
-    "paid_799_year": {"contact_limit": 5, "friend_location_limit": 5, "daily_reminders": 5, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 3, "guardian_group_limit": 0, "realtime_tracking": True, "trajectory_days": 14, "offline_sync_days": 7, "sos_enabled": True, "guardian_group_limit": 0, "dedicated_support": False, "realtime_trial_days": 30},
+    "paid_199": {"contact_limit": 4, "friend_location_limit": 4, "daily_reminders": 1, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": False, "guardian_group_limit": 0},
+    "paid_199_year": {"contact_limit": 6, "friend_location_limit": 6, "daily_reminders": 2, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 3, "offline_sync_days": 0, "sos_enabled": False, "guardian_group_limit": 0},
+    "paid_399": {"contact_limit": 15, "friend_location_limit": 15, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 3, "realtime_tracking": True, "trajectory_days": 5, "offline_sync_days": 1, "sos_enabled": False, "guardian_group_limit": 0},
+    "paid_399_year": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 3, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 3, "realtime_tracking": True, "trajectory_days": 7, "offline_sync_days": 1, "sos_enabled": False, "guardian_group_limit": 0, "realtime_trial_days": 30},
+    "paid_799": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 3, "realtime_tracking": True, "trajectory_days": 14, "offline_sync_days": 7, "sos_enabled": True, "guardian_group_limit": 1},
+    "paid_799_year": {"contact_limit": 50, "friend_location_limit": 50, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 5, "realtime_tracking": True, "trajectory_days": 30, "offline_sync_days": 7, "sos_enabled": True, "guardian_group_limit": 3},
 }
 
 PAYMENT_PRODUCTS = {
     # 🔴 v0.5 P0 更新:依蝦董 2026-07-17 最終版 16 章規格
-    "paid_199": {"amount": 199, "billing_cycle": "monthly", "duration_days": 30, "display_name": "199 活著版(月)", "tagline": "每天提醒自己簽到,讓自己安心"},
-    "paid_199_year": {"amount": 1680, "billing_cycle": "yearly", "duration_days": 365, "display_name": "199 活著版(年)", "tagline": "每天提醒自己簽到,讓自己安心"},
+    "paid_199": {"amount": 199, "billing_cycle": "monthly", "duration_days": 30, "display_name": "199 平安版(月)", "tagline": "每天提醒自己簽到,讓自己安心"},
+    "paid_199_year": {"amount": 1680, "billing_cycle": "yearly", "duration_days": 365, "display_name": "199 平安版(年)", "tagline": "每天提醒自己簽到,讓自己安心"},
     "paid_399": {"amount": 399, "billing_cycle": "monthly", "duration_days": 30, "display_name": "399 安心版(月)", "tagline": "讓家人隨時知道你在哪,即時追蹤定位"},
     "paid_399_year": {"amount": 3680, "billing_cycle": "yearly", "duration_days": 365, "display_name": "399 安心版(年)", "tagline": "讓家人隨時知道你在哪,即時追蹤定位"},
     "paid_799": {"amount": 799, "billing_cycle": "monthly", "duration_days": 30, "display_name": "799 守護版(月)", "tagline": "全家守護網絡 + LINE+簡訊預警 + SOS 緊急求救"},
@@ -134,10 +135,10 @@ def line_status_summary(status):
 def line_plan_message():
     return (
         "目前方案重點整理：\n"
-        "199 活著價：月費 4 位、年費 6 位，LINE 通知 3 位核心守護人。\n"
-        "399 安心版：月費 15 位、年費 20 位，LINE 通知 3 位核心守護人；年費含 30 天即時追蹤體驗。\n"
+        "199 平安版：月費 4 位、年費 6 位，LINE 通知 3 位核心守護人。\n"
+        "399 安心版：月費 15 位、年費 25 位，LINE 通知 3 位核心守護人；年費含 30 天即時追蹤體驗。\n"
         "799 守護版：月費 NT$799，25 位緊急聯絡人、軌跡回放 14 天、離線同步 7 天、LINE + 簡訊。\n\n"
-        "年費都有送 2 個月；799 年費另有 30 天軌跡回放與電話通知。"
+        "年費方案都有明確折扣；799 月費可建立 1 個守護群，年費可建立 3 個守護群。"
     )
 
 
@@ -170,7 +171,7 @@ def line_auto_reply_text(text, status=None):
         return (
             "守護群功能說明：\n"
             "守護群適合家人、親友或社區關懷小組一起接收平安狀態。\n"
-            "目前限有效的 799 年費會員建立，最多可綁定 3 個守護群。\n"
+            "有效的 799 月費會員可建立 1 群，年費會員最多可建立 3 群。\n"
             "請把 Bot 加入群組後，由方案本人輸入「綁定守護群」。若資格不符，Bot 會說明原因並退出群組。\n"
             "Bot 只處理簽到、預警與守護指令，不會把一般聊天內容存進會員資料。"
         )
@@ -178,8 +179,8 @@ def line_auto_reply_text(text, status=None):
         return (
             "緊急通知方式說明：\n"
             "199／399 以 LINE 通知為主。\n"
-            "799 月費可加入簡訊提醒；799 年費可規劃 LINE + 簡訊 + 電話通知。\n"
-            "簡訊與電話會產生成本，正式上線前會設定每位用戶的發送上限，避免誤報造成費用暴增。"
+            "799 月費可用 LINE + 簡訊通知 3 位核心守護人，年費可通知 5 位。\n"
+            "簡訊會產生成本，正式上線前會設定每位使用者的發送上限，避免誤報造成費用增加。"
         )
     if any(keyword in text for keyword in LARGE_TEXT_KEYWORDS):
         return (
@@ -386,6 +387,45 @@ def get_profile(state, line_user_id=None):
     return state
 
 
+def get_calendar_notes(data_file, line_user_id=None):
+    line_user_id = (line_user_id or "").strip()
+    if not line_user_id:
+        return {"ok": False, "error": "missing line_user_id", "notes": {}}
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id)
+    notes = profile.get("calendar_notes")
+    if not isinstance(notes, dict):
+        notes = {}
+    return {"ok": True, "notes": dict(notes)}
+
+
+def save_calendar_note(data_file, payload):
+    line_user_id = (payload.get("line_user_id") or "").strip()
+    note_date = (payload.get("date") or "").strip()
+    content = str(payload.get("content") or "").strip()
+    if not line_user_id:
+        return {"ok": False, "error": "missing line_user_id"}, 400
+    try:
+        parsed_date = datetime.strptime(note_date, "%Y-%m-%d")
+    except ValueError:
+        return {"ok": False, "error": "invalid date"}, 400
+    if parsed_date.strftime("%Y-%m-%d") != note_date:
+        return {"ok": False, "error": "invalid date"}, 400
+    if len(content) > 500:
+        return {"ok": False, "error": "note too long"}, 400
+
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id)
+    notes = dict(profile.get("calendar_notes") or {})
+    if content:
+        notes[note_date] = content
+    else:
+        notes.pop(note_date, None)
+    profile["calendar_notes"] = notes
+    save_state(data_file, state)
+    return {"ok": True, "notes": notes}, 200
+
+
 def plan_rules(profile):
     plan = profile.get("plan") or "trial"
     return PLAN_LIMITS.get(plan, PLAN_LIMITS["trial"])
@@ -571,7 +611,10 @@ def build_status(profile):
         "realtime_tracking": bool(plan_rules(profile).get("realtime_tracking", False)),
         "trajectory_days": int(plan_rules(profile).get("trajectory_days", 0)),
         "offline_sync_days": int(plan_rules(profile).get("offline_sync_days", 0)),
-        "sos_enabled": bool(plan_rules(profile).get("sos_enabled", False)),
+        "sos_enabled": bool(
+            plan_rules(profile).get("sos_enabled", False)
+            and paid_membership_is_active(profile)
+        ),
         "dedicated_support": bool(plan_rules(profile).get("dedicated_support", False)),
         "realtime_trial_days": int(plan_rules(profile).get("realtime_trial_days", 0)),
         "core_guardian_alert_limit": plan_rules(profile).get("core_guardian_alert_limit", 1),
@@ -1179,7 +1222,7 @@ def bind_guardian_group(data_file, payload):
                 "bound": True,
                 "already_bound": True,
                 "group_id": group_id,
-                "guardian_group_limit": 3,
+                "guardian_group_limit": plan_rules(profile).get("guardian_group_limit", 0),
                 "should_leave": False,
             }, 200
         return {
@@ -1187,11 +1230,11 @@ def bind_guardian_group(data_file, payload):
             "should_leave": False,
         }, 409
 
-    eligible = profile.get("plan") == "paid_799_year" and paid_membership_is_active(profile)
+    eligible = profile.get("plan") in {"paid_799", "paid_799_year"} and paid_membership_is_active(profile)
     if not eligible:
         return {
-            "error": "guardian groups require an active paid_799_year membership",
-            "required_plan": "paid_799_year",
+            "error": "guardian groups require an active paid_799 membership",
+            "required_plan": "paid_799",
             "should_leave": True,
         }, 403
 
@@ -1392,6 +1435,8 @@ def trigger_sos(data_file, payload, config=None):
     rules = plan_rules(profile)
     if not rules.get("sos_enabled"):
         return {"error": "sos is not available for this plan"}, 403
+    if not paid_membership_is_active(profile):
+        return {"error": "sos membership is not active"}, 403
 
     # === P0 FIX:3 層防護 ===
     now_dt = current_app_time(config or {})
@@ -1467,13 +1512,12 @@ def trigger_sos(data_file, payload, config=None):
             f"\n目前位置{place}："
             f"https://www.google.com/maps?q={location['latitude']},{location['longitude']}"
         )
-    # 🔴 P0 FIX:5 秒取消 token(這是 UI 端控制,後端記錄 sos_pending_id)
     import uuid
-    sos_pending_id = f"sos-{uuid.uuid4().hex[:10]}"
+    sos_event_id = f"sos-{uuid.uuid4().hex[:10]}"
     message = (
         f"🚨【SOS 緊急求助】{profile.get('display_name') or '你的親友'} 發出緊急求助，\n"
         f"請立即聯絡本人並確認安全。若有立即危險，請撥打 119。{location_text}\n\n"
-        f"取消碼：{sos_pending_id}"
+        "本通知不會自動聯絡警消，請依現場狀況主動求助。"
     )
 
     sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
@@ -1519,7 +1563,7 @@ def trigger_sos(data_file, payload, config=None):
     # 🔴 P0 FIX:累計今日 SOS 計數
     sos_log["count"] = sos_log.get("count", 0) + 1
     profile["sos_daily_log"] = sos_log
-    profile["last_sos_pending_id"] = sos_pending_id
+    profile["last_sos_event_id"] = sos_event_id
     save_state(data_file, state)
     code = 200 if sent else 502
     return {
@@ -1900,7 +1944,7 @@ def send_due_reminders(config):
         location_link = ""
         if profile.get("attach_location_on_alert") and location.get("latitude") and location.get("longitude"):
             location_link = f"\n最後位置：https://www.google.com/maps?q={location['latitude']},{location['longitude']}"
-        message = f"寶寶，該回來簽到囉 ♡\n點一下「我還活著」，讓大家安心。{location_link}"
+        message = f"該回來簽到囉 ♡\n點一下「我已平安」，讓重要的人放心。{location_link}"
         try:
             result = sender(token, user["line_user_id"], message)
             log_notification(config["DATA_FILE"], "overdue", user["line_user_id"], "sent", message, json.dumps(result, ensure_ascii=False))
@@ -2206,7 +2250,7 @@ def create_app(config=None):
                     )
                 elif result.get("should_leave"):
                     reply_text = (
-                        "這個群組目前無法啟用守護功能。守護群限有效的 799 年費會員建立，且最多 3 個。\n"
+                        "這個群組目前無法啟用守護功能。守護群限有效的 799 月費或年費會員建立；月費最多 1 群，年費最多 3 群。\n"
                         "請先完成升級，再重新邀請 Bot；我現在會退出群組。"
                     )
                 else:
@@ -2269,6 +2313,15 @@ def create_app(config=None):
     @app.post("/api/contacts")
     def contacts_post():
         data, code = save_contacts(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        return jsonify(data), code
+
+    @app.get("/api/calendar-notes")
+    def calendar_notes_get():
+        return jsonify(get_calendar_notes(app.config["DATA_FILE"], request.args.get("line_user_id")))
+
+    @app.post("/api/calendar-notes")
+    def calendar_notes_post():
+        data, code = save_calendar_note(app.config["DATA_FILE"], request.get_json(silent=True) or {})
         return jsonify(data), code
 
     @app.post("/api/contacts/add")
@@ -2715,6 +2768,8 @@ class MiniClient:
             return MiniResponse(body, code)
         if route == "/api/contacts":
             return MiniResponse(get_contacts(self.app.config["DATA_FILE"], params.get("line_user_id")))
+        if route == "/api/calendar-notes":
+            return MiniResponse(get_calendar_notes(self.app.config["DATA_FILE"], params.get("line_user_id")))
         if route == "/api/friends/locations":
             return MiniResponse(friend_locations(self.app.config["DATA_FILE"], params.get("line_user_id")))
         return MiniResponse({"error": "not found"}, 404)
@@ -2742,6 +2797,9 @@ class MiniClient:
             return MiniResponse(body, code)
         if route == "/api/contacts":
             body, code = save_contacts(self.app.config["DATA_FILE"], payload)
+            return MiniResponse(body, code)
+        if route == "/api/calendar-notes":
+            body, code = save_calendar_note(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
         if route == "/api/emergency-contact/bind":
             body, code = bind_emergency_contact(self.app.config["DATA_FILE"], payload, self.app.config)
@@ -2905,6 +2963,8 @@ class MiniApp:
                     return handler.send_json(admin_summary(data_file))
                 if route == "/api/contacts":
                     return handler.send_json(get_contacts(data_file, params.get("line_user_id")))
+                if route == "/api/calendar-notes":
+                    return handler.send_json(get_calendar_notes(data_file, params.get("line_user_id")))
                 if route == "/api/friends/locations":
                     return handler.send_json(friend_locations(data_file, params.get("line_user_id")))
                 if route == "/api/cron/contact-reminders":
@@ -2964,6 +3024,9 @@ class MiniApp:
                     return handler.send_json(data, code)
                 if route == "/api/contacts":
                     data, code = save_contacts(data_file, payload)
+                    return handler.send_json(data, code)
+                if route == "/api/calendar-notes":
+                    data, code = save_calendar_note(data_file, payload)
                     return handler.send_json(data, code)
                 if route == "/api/emergency-contact/bind":
                     data, code = bind_emergency_contact(data_file, payload, config)
