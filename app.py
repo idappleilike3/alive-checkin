@@ -17,7 +17,7 @@ except ModuleNotFoundError:
 try:
     from linebot import LineBotApi, WebhookHandler
     from linebot.exceptions import InvalidSignatureError, LineBotApiError
-    from linebot.models import JoinEvent, MessageEvent, TextMessage, TextSendMessage
+    from linebot.models import JoinEvent, MessageEvent, TextMessage, TextSendMessage, MemberJoinedEvent
 except ModuleNotFoundError:
     LineBotApi = None
     WebhookHandler = None
@@ -27,6 +27,7 @@ except ModuleNotFoundError:
     MessageEvent = None
     TextMessage = None
     TextSendMessage = None
+    MemberJoinedEvent = None
 
 
 DEFAULT_PROFILE = {
@@ -1207,6 +1208,115 @@ def paid_membership_is_active(profile):
     return bool(expires_at and expires_at >= datetime.now())
 
 
+# ============================================================
+# 2026-07-20 蝦董 added: 守護群 50 人上限 + evict 邏輯
+# ============================================================
+GROUP_MEMBER_LIMIT = 50
+
+
+def get_group_member_count(token, group_id):
+    """呼叫 LINE API 查 group 成員數。失敗回 None(不擋,只 log warn)。"""
+    if not token or not group_id:
+        return None
+    url = f"https://api.line.me/v2/bot/group/{group_id}/members/count"
+    try:
+        req = urllib.request.Request(url, headers={"Authorization": "***" + token})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            body = json.loads(r.read().decode("utf-8"))
+            return int(body.get("count", 0))
+    except Exception:
+        return None
+
+
+def get_group_member_ids(token, group_id, max_count=200):
+    """呼叫 LINE API 拿 group 成員 userIds。失敗回 None。"""
+    if not token or not group_id:
+        return None
+    url = f"https://api.line.me/v2/bot/group/{group_id}/members/ids?limit={max_count}"
+    try:
+        req = urllib.request.Request(url, headers={"Authorization": "***" + token})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            body = json.loads(r.read().decode("utf-8"))
+            return list(body.get("memberIds") or [])
+    except Exception:
+        return None
+
+
+def kick_group_member(token, group_id, user_id):
+    """踢 userId 出 group(bot 必須是 admin)。失敗:回 None / HTTPError code。"""
+    if not token or not group_id or not user_id:
+        return None
+    url = f"https://api.line.me/v2/bot/group/{group_id}/member/{user_id}/leave"
+    try:
+        req = urllib.request.Request(url, method="POST", headers={"Authorization": "***" + token})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+    except Exception:
+        return None
+
+
+def enforce_group_member_limit(group_id, config=None, simulated_new_ids=None):
+    """超 50 人時 evict 新成員(用 bind 時的 member snapshot 對比)。"""
+    state_path = (config or {}).get("DATA_FILE") if config else None
+    state_path = state_path or os.environ.get("DATA_FILE")
+    if not state_path:
+        return {"error": "no DATA_FILE"}, 500
+    state = load_state(state_path)
+    group_info = state.get("guardian_groups", {}).get(group_id)
+    if not group_info:
+        return {"error": "not bound", "group_id": group_id}, 404
+    if group_info.get("status") != "active":
+        return {"error": "group inactive"}, 409
+    token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not token:
+        return {"error": "no token"}, 503
+    current_count = get_group_member_count(token, group_id)
+    if current_count is None:
+        return {"error": "API fail to read count"}, 502
+    if current_count <= GROUP_MEMBER_LIMIT:
+        return {"ok": True, "enforced": False, "current_count": current_count,
+                "limit": GROUP_MEMBER_LIMIT, "kicked": [], "failed": [],
+                "group_id": group_id}, 200
+    bind_ids = set(group_info.get("member_ids_at_bind") or [])
+    if simulated_new_ids is not None:
+        candidate_ids = list(simulated_new_ids)
+        current_ids = None
+    else:
+        candidate_ids = []
+        current_ids = get_group_member_ids(token, group_id)
+        if current_ids is None:
+            return {"error": "API fail to read member ids"}, 502
+        candidate_ids = [uid for uid in current_ids if uid not in bind_ids]
+    if not candidate_ids:
+        return {"ok": True, "enforced": False, "current_count": current_count,
+                "limit": GROUP_MEMBER_LIMIT, "kicked": [], "failed": [],
+                "note": "no new joiners to kick", "group_id": group_id}, 200
+    overflow = current_count - GROUP_MEMBER_LIMIT
+    to_kick = candidate_ids[:overflow] if overflow > 0 else candidate_ids[:1]
+    if not to_kick and candidate_ids:
+        to_kick = candidate_ids[:1]
+    kicked, failed, failed_403 = [], [], []
+    for uid in to_kick:
+        if simulated_new_ids is not None:
+            kicked.append(uid)
+            continue
+        status = kick_group_member(token, group_id, uid)
+        if isinstance(status, int) and 200 <= status < 300:
+            kicked.append(uid)
+        else:
+            failed.append(uid)
+            if status == 403:
+                failed_403.append(uid)
+    return {"ok": True, "enforced": True, "current_count": current_count,
+            "limit": GROUP_MEMBER_LIMIT, "overflow": overflow,
+            "candidate_count": len(candidate_ids), "kicked": kicked,
+            "failed": failed, "bot_not_admin_count": len(failed_403),
+            "simulated": simulated_new_ids is not None,
+            "group_id": group_id}, 200
+
+
 def bind_guardian_group(data_file, payload):
     line_user_id = str(payload.get("line_user_id") or "").strip()
     group_id = str(payload.get("group_id") or "").strip()
@@ -1248,12 +1358,36 @@ def bind_guardian_group(data_file, payload):
             "should_leave": True,
         }, 409
 
+    # 50 人/群 驗證(若 token 提供)
+    member_count_at_bind = None
+    member_ids_at_bind = None
+    if isinstance(data_file, dict) or True:
+        token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+        if token:
+            mc = get_group_member_count(token, group_id)
+            if mc is not None and mc > GROUP_MEMBER_LIMIT:
+                return {
+                    "error": f"group_size_exceeds_{GROUP_MEMBER_LIMIT}",
+                    "member_count": mc,
+                    "limit": GROUP_MEMBER_LIMIT,
+                    "should_leave": True,
+                    "reply_text": (
+                        f"此群目前有 {mc} 位成員(不含 Bot)。\n"
+                        f"守護群上限 {GROUP_MEMBER_LIMIT} 人,請把群縮到 {GROUP_MEMBER_LIMIT} 人內再重新邀請 Bot。"
+                    ),
+                }, 413
+            member_count_at_bind = mc
+            if mc is not None:
+                member_ids_at_bind = get_group_member_ids(token, group_id)
+
     now = datetime.now().isoformat(timespec="seconds")
     groups[group_id] = {
         "group_id": group_id,
         "owner_line_user_id": line_user_id,
         "status": "active",
         "created_at": now,
+        "member_count_at_bind": member_count_at_bind,
+        "member_ids_at_bind": member_ids_at_bind,
     }
     group_ids.append(group_id)
     profile["guardian_group_ids"] = group_ids
@@ -2213,6 +2347,10 @@ def create_app(config=None):
     def admin():
         return send_from_directory(app.static_folder, "admin.html")
 
+    @app.get("/test_bind")
+    def test_bind():
+        return send_from_directory(app.static_folder, "test_bind.html")
+
     @app.get("/terms")
     def terms():
         return send_from_directory(app.static_folder, "terms.html")
@@ -2281,6 +2419,36 @@ def create_app(config=None):
             finally:
                 if group_id and outcome.get("should_leave"):
                     line_bot_api.leave_group(group_id)
+
+        @handler.add(MemberJoinedEvent)
+        def handle_member_joined(event):
+            # 2026-07-20 蝦董 added: 超過 50 人上限時,請出新成員
+            if getattr(event.source, "type", None) != "group":
+                return
+            group_id = getattr(event.source, "group_id", None)
+            if not group_id:
+                return
+            try:
+                new_ids = [m.user_id for m in (event.joined.members or []) if getattr(m, "user_id", None)]
+                result, code = enforce_group_member_limit(group_id, dict(app.config))
+                if code != 200 or not result.get("enforced"):
+                    return
+                msg_lines = [
+                    f"⚠️ 守護群超過 {GROUP_MEMBER_LIMIT} 人上限。",
+                    f"目前成員數:{result.get('current_count')}/{GROUP_MEMBER_LIMIT}",
+                ]
+                if result.get("kicked"):
+                    msg_lines.append(f"已請出 {len(result['kicked'])} 位新成員。")
+                if result.get("bot_not_admin_count"):
+                    msg_lines.append(
+                        f"⚠️ Bot 不是此群管理員,另有 {result['bot_not_admin_count']} 位無法請出。"
+                        "請把 Bot 設為管理員後再試,或管理員手動退出超額成員。"
+                    )
+                if result.get("failed") and not result.get("bot_not_admin_count"):
+                    msg_lines.append(f"請出失敗:{len(result['failed'])} 位。")
+                line_bot_api.push_message(group_id, TextSendMessage(text="\n".join(msg_lines)))
+            except Exception:
+                pass
 
         @handler.add(MessageEvent, message=TextMessage)
         def handle_text_message(event):
@@ -2608,6 +2776,117 @@ def create_app(config=None):
     def guardian_groups_unbind_api():
         data, code = unbind_guardian_group(app.config["DATA_FILE"], request.get_json(silent=True) or {})
         return jsonify(data), code
+
+    # ===== 2026-07-20 蝦董 added: 測試頁 endpoints =====
+    TEST_USER_PREFIX = "U_TEST_"
+
+    @app.get("/api/guardian-groups/test-users")
+    def guardian_groups_test_users_api():
+        state = load_state(app.config["DATA_FILE"])
+        users = []
+        for uid, profile in (state.get("users") or {}).items():
+            if not uid.startswith(TEST_USER_PREFIX):
+                continue
+            plan = profile.get("plan") or "trial"
+            is_year = plan == "paid_799_year"
+            is_month = plan == "paid_799"
+            eligible = (is_year or is_month) and paid_membership_is_active(profile)
+            users.append({
+                "line_user_id": uid,
+                "display_name": profile.get("display_name", ""),
+                "plan": plan,
+                "paid_until": profile.get("paid_until", ""),
+                "payment_status": profile.get("payment_status", ""),
+                "bind_count": len(profile.get("guardian_group_ids") or []),
+                "max_groups": (3 if is_year else 1) if eligible else 0,
+                "eligible": eligible,
+                "status": "eligible" if eligible else "ineligible",
+                "guardian_group_ids": profile.get("guardian_group_ids", []),
+            })
+        groups = [
+            {"group_id": gid, **ginfo}
+            for gid, ginfo in (state.get("guardian_groups") or {}).items()
+        ]
+        return jsonify({"users": users, "groups": groups, "prefix": TEST_USER_PREFIX})
+
+    @app.post("/api/guardian-groups/test-reset")
+    def guardian_groups_test_reset_api():
+        state = load_state(app.config["DATA_FILE"])
+        uids = [uid for uid in state.get("users", {}).keys() if uid.startswith(TEST_USER_PREFIX)]
+        for uid in uids:
+            state["users"].pop(uid, None)
+        for profile in state.get("users", {}).values():
+            if isinstance(profile.get("contacts"), list):
+                profile["contacts"] = [c for c in profile["contacts"] if c.get("line_id") not in uids]
+            if isinstance(profile.get("friends"), list):
+                profile["friends"] = [f for f in profile["friends"] if f not in uids]
+        for gid in list(state.get("guardian_groups", {}).keys()):
+            owner = state["guardian_groups"][gid].get("owner_line_user_id", "")
+            if owner.startswith(TEST_USER_PREFIX):
+                state["guardian_groups"].pop(gid, None)
+        for profile in state.get("users", {}).values():
+            if isinstance(profile.get("guardian_group_ids"), list):
+                profile["guardian_group_ids"] = []
+        save_state(app.config["DATA_FILE"], state)
+        defaults = [
+            ("U_TEST_yearly_001", "paid_799_year", "測試-年費999", "2099-12-31T00:00:00", "active"),
+            ("U_TEST_monthly_001", "paid_799", "測試-月費", "2099-12-31T00:00:00", "active"),
+            ("U_TEST_399_001", "paid_399", "測試-399 不符資格", "2099-12-31T00:00:00", "active"),
+            ("U_TEST_trial_001", "trial", "測試-trial", "", "trial"),
+        ]
+        created = []
+        for uid, plan, name, paid_until, payment_status in defaults:
+            if uid in state["users"]:
+                continue
+            state["users"][uid] = {
+                "line_user_id": uid, "display_name": name, "plan": plan,
+                "paid_until": paid_until, "payment_status": payment_status,
+                "guardian_group_ids": [], "contacts": [], "friends": [],
+            }
+            created.append(uid)
+        save_state(app.config["DATA_FILE"], state)
+        return jsonify({"reset": True, "deleted_users": len(uids), "created": created})
+
+    @app.post("/api/guardian-groups/test-enforce")
+    def guardian_groups_test_enforce_api():
+        body = request.get_json(silent=True) or {}
+        group_id = str(body.get("group_id") or "").strip()
+        simulated_count = body.get("simulated_count")
+        simulated_new_ids = body.get("simulated_new_ids") or []
+        if not group_id:
+            return jsonify({"error": "missing group_id"}), 400
+        state = load_state(app.config["DATA_FILE"])
+        group_info = state.get("guardian_groups", {}).get(group_id)
+        if not group_info:
+            return jsonify({"error": "group not bound"}), 404
+        if group_info.get("status") != "active":
+            return jsonify({"error": "group inactive"}), 409
+        if simulated_count is None:
+            return jsonify({"error": "simulated_count required"}), 400
+        current_count = int(simulated_count)
+        if current_count <= GROUP_MEMBER_LIMIT:
+            return jsonify({
+                "ok": True, "enforced": False,
+                "current_count": current_count, "limit": GROUP_MEMBER_LIMIT,
+                "kicked": [], "failed": [],
+                "group_id": group_id,
+                "note": "未超過上限,不需 evict",
+            }), 200
+        bind_ids = set(group_info.get("member_ids_at_bind") or [])
+        candidate_ids = list(simulated_new_ids)
+        overflow = current_count - GROUP_MEMBER_LIMIT
+        to_kick = candidate_ids[:overflow] if overflow > 0 else (candidate_ids[:1] if candidate_ids else [])
+        kicked = list(to_kick)
+        return jsonify({
+            "ok": True, "enforced": True,
+            "current_count": current_count, "limit": GROUP_MEMBER_LIMIT,
+            "overflow": overflow,
+            "candidate_count": len(candidate_ids),
+            "bind_snapshot_count": len(bind_ids),
+            "kicked": kicked, "failed": [],
+            "group_id": group_id,
+            "note": "測試模擬(not實際打 LINE API)",
+        }), 200
 
     @app.post("/api/friends/invite")
     def friends_invite_api():

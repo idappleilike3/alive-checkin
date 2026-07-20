@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>守護群綁定測試 — 今天還在嗎</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Segoe UI", sans-serif;
+         margin: 0; padding: 20px; background: #f8f6f3; color: #1e293b; line-height: 1.5; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .subtitle { color: #64748b; font-size: 13px; margin-bottom: 16px; }
+  h2 { font-size: 15px; margin: 24px 0 12px; color: #0f766e; border-bottom: 2px solid #0f766e;
+        padding-bottom: 4px; letter-spacing: 0.05em; }
+  .card { background: white; border-radius: 12px; padding: 16px; margin-bottom: 12px;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .step { background: #fef3c7; padding: 14px 16px; border-radius: 10px; margin-bottom: 16px;
+          font-size: 13px; line-height: 1.7; border-left: 4px solid #f59e0b; }
+  .step strong { color: #92400e; }
+  .step ol { margin: 8px 0 0; padding-left: 22px; }
+  .step li { margin-bottom: 4px; }
+  .user-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+  .user-tile { padding: 10px 12px; border-radius: 8px; border: 2px solid #e2e8f0;
+               background: #fafafa; }
+  .user-tile.eligible { border-color: #10b981; background: #ecfdf5; }
+  .user-tile.ineligible { border-color: #f43f5e; background: #fef2f2; }
+  .user-tile h3 { margin: 0 0 4px; font-size: 13px; font-family: ui-monospace, monospace;
+                  color: #1e293b; word-break: break-all; }
+  .user-tile .meta { font-size: 11px; color: #475569; margin-top: 4px; }
+  .plan-tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px;
+              font-weight: 600; margin-right: 4px; vertical-align: middle; }
+  .plan-tag.yearly  { background: #fef3c7; color: #92400e; }
+  .plan-tag.monthly { background: #d1fae5; color: #065f46; }
+  .plan-tag.paid399 { background: #e0e7ff; color: #3730a3; }
+  .plan-tag.trial   { background: #f1f5f9; color: #64748b; }
+  form { display: grid; gap: 8px; max-width: 560px; }
+  input, select, button { padding: 8px 12px; border-radius: 6px; border: 1px solid #cbd5e1;
+                          font-size: 14px; font-family: inherit; }
+  input:focus, select:focus { outline: 2px solid #0f766e; border-color: #0f766e; }
+  button { background: #0f766e; color: white; border: none; cursor: pointer; font-weight: 600; }
+  button:hover:not(:disabled) { background: #115e59; }
+  button:disabled { background: #94a3b8; cursor: not-allowed; }
+  button.secondary { background: #475569; }
+  button.secondary:hover:not(:disabled) { background: #334155; }
+  button.danger { background: #b91c1c; }
+  button.danger:hover:not(:disabled) { background: #991b1b; }
+  pre { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 8px; font-size: 12px;
+        overflow-x: auto; max-height: 360px; margin: 8px 0 0; line-height: 1.45; }
+  .result { border-radius: 8px; padding: 12px; margin-top: 12px; }
+  .result.success { background: #ecfdf5; border-left: 4px solid #10b981; }
+  .result.warning { background: #fef3c7; border-left: 4px solid #f59e0b; }
+  .result.error   { background: #fee2e2; border-left: 4px solid #ef4444; }
+  .result .label { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+  .reply-text { background: white; padding: 8px 10px; border-radius: 4px; margin-top: 6px;
+                font-family: ui-monospace, monospace; font-size: 12px; color: #0f172a;
+                border: 1px solid #e2e8f0; white-space: pre-wrap; }
+  .reply-label { font-size: 11px; color: #64748b; margin-top: 6px; font-weight: 600; }
+  .group-row { display: flex; gap: 8px; align-items: center; padding: 6px 10px;
+               border-radius: 6px; background: #f8fafc; margin-bottom: 4px; font-size: 12px; }
+  .group-row .gid { font-family: ui-monospace, monospace; color: #0f172a; flex: 1; word-break: break-all; }
+  .group-row .owner { color: #64748b; font-size: 11px; }
+  .empty { color: #94a3b8; font-size: 12px; font-style: italic; padding: 4px 0; }
+  .refresh-btn { font-size: 12px; padding: 4px 10px; }
+</style>
+</head>
+<body>
+  <h1>🛡️ 守護群綁定測試頁</h1>
+  <div class="subtitle">alive_checkin Flask local — 2026-07-20 改完</div>
+
+  <div class="step">
+    <strong>使用方式</strong>
+    <ol>
+      <li>下面 4 個測試帳號已預載(<code>U_TEST_*</code> 前綴),點「重新整理」可更新狀態</li>
+      <li>選 user + 輸入任意 <code>groupId</code>(例:<code>G_001</code>)→ 按「綁定」</li>
+      <li>觀察回應:HTTP code + <strong>reply_text</strong>(這是實際會送給用戶的 LINE 訊息)</li>
+      <li>每個 user 可依方案試綁到上限為止:<code>paid_799</code> 1 群 / <code>paid_799_year</code> 3 群</li>
+      <li><code>paid_399</code> / <code>trial</code> 帳號 → 試綁 → 應被拒(資格不符)</li>
+      <li>用完按下方「重置測試資料」清回預設狀態</li>
+    </ol>
+    <strong style="color:#b91c1c">注意:</strong>
+    <code>U_TEST_*</code> 前綴的帳號與群組都是測試用的,重置會清掉,但<strong>不會影響真實用戶</strong>。
+  </div>
+
+  <h2>👥 測試帳號 <button class="secondary refresh-btn" onclick="refresh()">重新整理</button></h2>
+  <div class="card">
+    <div id="user-list" class="user-grid"></div>
+  </div>
+
+  <h2>🔧 綁定操作</h2>
+  <div class="card">
+    <form id="bind-form">
+      <select id="user-select" required></select>
+      <input id="group-id" placeholder="groupId(任意字串,例 G_test_001)" required>
+      <button type="submit" id="bind-btn">綁定</button>
+    </form>
+    <div id="bind-result"></div>
+  </div>
+
+  <h2>🧹 解綁</h2>
+  <div class="card">
+    <form id="unbind-form">
+      <select id="unbind-group-select"></select>
+      <button type="submit" class="secondary">解綁該群</button>
+    </form>
+    <div id="unbind-result"></div>
+  </div>
+
+  <h2>📋 守護群狀態(全部)</h2>
+  <div class="card">
+    <div id="groups-state"></div>
+  </div>
+
+  <h2>⚠️ 超 50 人請出測試(模擬)</h2>
+  <div class="card">
+    <p style="font-size:13px; color:#64748b; margin:0 0 10px;">
+      模擬「用户事後加人」:輸入假裝的當前人數,測試 bot 應該請出幾位新成員。
+      <strong>不實際呼叫 LINE API</strong>,純粹查邏輯。
+    </p>
+    <form id="enforce-form">
+      <select id="enforce-group-select" required></select>
+      <input id="enforce-count" type="number" placeholder="模擬當前總人數(例 55,超過 50 觸發)" min="0" max="500" required>
+      <input id="enforce-new-ids" placeholder="模擬新加入的 userId(逗號分隔,例 U_new1,U_new2,U_new3)">
+      <button type="submit" class="danger">測試請出</button>
+    </form>
+    <div id="enforce-result"></div>
+  </div>
+
+  <h2>💣 重置測試資料</h2>
+  <div class="card">
+    <p style="font-size:13px; color:#64748b; margin:0 0 10px;">
+      刪掉所有 <code>U_TEST_*</code> 帳號與其綁的群組,然後重建 4 個預設測試帳號。
+    </p>
+    <button class="danger" id="reset-btn">清掉並重建測試資料</button>
+  </div>
+
+<script>
+async function refresh() {
+  try {
+    const r = await fetch('/api/guardian-groups/test-users');
+    const data = await r.json();
+    const grid = document.getElementById('user-list');
+    const sel = document.getElementById('user-select');
+    const ubSel = document.getElementById('unbind-group-select');
+    grid.innerHTML = ''; sel.innerHTML = ''; ubSel.innerHTML = '';
+    data.users.forEach(u => {
+      const cls = u.eligible ? 'eligible' : 'ineligible';
+      const planCls = u.plan === 'paid_799_year' ? 'yearly'
+                    : u.plan === 'paid_799' ? 'monthly'
+                    : u.plan === 'paid_399' ? 'paid399' : 'trial';
+      grid.insertAdjacentHTML('beforeend', `
+        <div class="user-tile ${cls}">
+          <h3>${u.line_user_id}</h3>
+          <span class="plan-tag ${planCls}">${u.plan}</span>
+          <span style="font-size:11px; color:${u.eligible ? '#065f46' : '#9f1239'}">${u.status}</span>
+          <div class="meta">綁 ${u.bind_count}/${u.max_groups} 群 ・ ${u.display_name}</div>
+          ${u.guardian_group_ids && u.guardian_group_ids.length ? `<div class="meta" style="margin-top:4px;">${u.guardian_group_ids.map(g => '<code>' + g + '</code>').join(', ')}</div>` : ''}
+        </div>
+      `);
+      const optLabel = u.line_user_id + ' (' + u.plan + ', ' + u.bind_count + '/' + u.max_groups + ')';
+      sel.insertAdjacentHTML('beforeend', `<option value="${u.line_user_id}">${optLabel}</option>`);
+    });
+    data.groups.forEach(g => {
+      ubSel.insertAdjacentHTML('beforeend',
+        `<option value="${g.group_id}">${g.group_id} → ${g.owner_line_user_id}</option>`);
+    });
+    const st = document.getElementById('groups-state');
+    if (data.groups.length === 0) {
+      st.innerHTML = '<div class="empty">尚無守護群綁定</div>';
+    } else {
+      st.innerHTML = data.groups.map(g =>
+        `<div class="group-row">
+           <span class="gid">${g.group_id}</span>
+           <span class="owner">→ ${g.owner_line_user_id}</span>
+           <span style="font-size:10px; color:#94a3b8;">${g.created_at || ''}</span>
+         </div>`).join('');
+    }
+  } catch (e) {
+    document.getElementById('user-list').innerHTML =
+      '<div class="empty">載入失敗:' + e.message + '</div>';
+  }
+}
+
+function showResult(targetEl, status, body, replyText) {
+  const cls = status === 200 ? 'success' : status === 403 || status === 413 ? 'warning' : 'error';
+  const label = status === 200 ? '✅ 成功'
+              : status === 403 ? '🚫 拒絕(資格/方案不符)'
+              : status === 409 ? '🚫 衝突(已綁/超限/被佔)'
+              : status === 413 ? '📏 超過 50 人上限'
+              : status === 400 ? '⚠️ 請求缺資料'
+              : '❌ 失敗 HTTP ' + status;
+  targetEl.innerHTML = `
+    <div class="result ${cls}">
+      <div class="label">${label}</div>
+      <pre>${JSON.stringify(body, null, 2)}</pre>
+      ${replyText ? `
+        <div class="reply-label">📨 bot 會回給用戶的 LINE 訊息:</div>
+        <div class="reply-text">${replyText}</div>` : ''}
+    </div>`;
+}
+
+document.getElementById('bind-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('bind-btn');
+  btn.disabled = true; btn.textContent = '綁定中...';
+  const uid = document.getElementById('user-select').value;
+  const gid = document.getElementById('group-id').value.trim();
+  try {
+    const r = await fetch('/api/guardian-groups/bind', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({line_user_id: uid, group_id: gid}),
+    });
+    const data = await r.json();
+    showResult(document.getElementById('bind-result'), r.status, data, data.reply_text);
+    document.getElementById('group-id').value = '';
+    refresh();
+  } catch (e) {
+    showResult(document.getElementById('bind-result'), 0, {error: e.message});
+  } finally {
+    btn.disabled = false; btn.textContent = '綁定';
+  }
+});
+
+document.getElementById('unbind-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const gid = document.getElementById('unbind-group-select').value;
+  if (!gid) return;
+  // 拿 owner 從 group state 推
+  const users = await (await fetch('/api/guardian-groups/test-users')).json();
+  const grp = users.groups.find(g => g.group_id === gid);
+  if (!grp) return alert('找不到該群');
+  const r = await fetch('/api/guardian-groups/unbind', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({line_user_id: grp.owner_line_user_id, group_id: gid}),
+  });
+  const data = await r.json();
+  showResult(document.getElementById('unbind-result'), r.status, data, null);
+  refresh();
+});
+
+document.getElementById('reset-btn').addEventListener('click', async () => {
+  if (!confirm('清掉所有 U_TEST_* 帳號與其綁的守護群,然後重建 4 個預設測試帳號?')) return;
+  const r = await fetch('/api/guardian-groups/test-reset', {method: 'POST'});
+  const data = await r.json();
+  alert('重置完成\n\n刪除 ' + (data.deleted_users || 0) + ' 個帳號\n新建 ' + (data.setup?.created?.length || 0) + ' 個');
+  document.getElementById('bind-result').innerHTML = '';
+  document.getElementById('unbind-result').innerHTML = '';
+  refresh();
+});
+
+refresh();
+</script>
+</body>
+</html>
