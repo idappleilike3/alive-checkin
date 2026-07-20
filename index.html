@@ -1680,7 +1680,7 @@
     </header>
 
     <div class="check-wrap">
-      <button class="check-btn" id="checkBtn" type="button">
+      <button class="check-btn" id="checkBtn" type="button" disabled aria-busy="true">
         我已平安
         <span class="sub">點一下簽到 ♡</span>
       </button>
@@ -2878,7 +2878,7 @@
 
     async function refreshContacts() {
       try {
-        const data = await apiGetContacts();
+        const data = await apiGetContacts(lineUserId);
         contactData = data.contacts || [];
         currentContactLimit = data.contact_limit || currentContactLimit || 1;
         renderContacts();
@@ -3269,21 +3269,22 @@
     }
 
     async function initLine() {
-      if (useLocalMode || !window.liff) return;
+      if (useLocalMode) return true;
+      if (!window.liff) return false;
       try {
         const configRes = await fetch("/api/config");
-        if (!configRes.ok) return;
+        if (!configRes.ok) return false;
         const config = await configRes.json();
-        if (!config.liff_id) return;
+        if (!config.liff_id) return false;
         await liff.init({ liffId: config.liff_id, withLoginOnExternalBrowser: true });
         if (!liff.isLoggedIn()) {
           liff.login();
-          return;
+          return false;
         }
         const profile = await liff.getProfile();
         lineUserId = profile.userId || "";
         lineDisplayName = profile.displayName || "";
-        if (!lineUserId) return;
+        if (!lineUserId) return false;
         await fetch("/api/line/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -3303,8 +3304,10 @@
         } else if (!inviteFrom) {
           maybeShowGuardianPrompt();
         }
+        return true;
       } catch (error) {
         console.warn("LINE 初始化未完成，改用一般模式。", error);
+        return false;
       }
     }
 
@@ -3707,6 +3710,7 @@
       const checkBtn = $("checkBtn");
       if (checkBtn) {
         checkBtn.disabled = Boolean(data.is_today_checked);
+        checkBtn.setAttribute("aria-busy", "false");
         checkBtn.classList.toggle("checked", Boolean(data.is_today_checked));
         checkBtn.dataset.state = data.is_today_checked ? "checked" : "pending";
       }
@@ -3783,6 +3787,25 @@
       errBox.hidden = false;
     }
 
+    function showLineLoginRequired() {
+      const checkBtn = $("checkBtn");
+      const dailyEl = $("dailyStatus");
+      const errBox = $("inlineError");
+      const query = location.search || "";
+      const hash = location.hash || "";
+      const liffEntry = `https://liff.line.me/2010674803-rK98c0lo${query}${hash}`;
+      if (checkBtn) {
+        checkBtn.disabled = true;
+        checkBtn.setAttribute("aria-busy", "false");
+        checkBtn.dataset.state = "login-required";
+      }
+      if (dailyEl) dailyEl.textContent = "請先完成 LINE 登入";
+      if (errBox) {
+        errBox.innerHTML = `請從 LINE 開啟並完成會員登入後再簽到<br><a href="${liffEntry}">用 LINE 開啟並登入</a>`;
+        errBox.hidden = false;
+      }
+    }
+
     function hideInlineError() {
       const errBox = $("inlineError");
       if (errBox) { errBox.hidden = true; errBox.textContent = ""; }
@@ -3791,6 +3814,10 @@
     async function doCheckin() {
       const checkBtn = $("checkBtn");
       if (!checkBtn) return;
+      if (!useLocalMode && !lineUserId) {
+        showLineLoginRequired();
+        return;
+      }
 
       // 防重複送出:今日已簽到時不送 API
       if (currentStatusData && currentStatusData.is_today_checked) {
@@ -4446,9 +4473,6 @@
     });
     $("checkBtn").addEventListener("click", doCheckin);
 
-    // 自動初始化:有 line_user_id 就 register + load status
-    initApp();
-
     $("shareContactInviteBtn").addEventListener("click", shareContactInvite);
     document.querySelectorAll(".share-contact-invite-btn").forEach((button) => {
       button.addEventListener("click", shareContactInvite);
@@ -4510,14 +4534,33 @@
     setTheme(localStorage.getItem("preferred_theme") || "classic");
     maybePrefillFriendInvite();
     maybeShowInviteAcceptPrompt();
-    initLine().finally(async () => {
-      await refreshStatus();
-      await refreshCalendarNotes();
-      await refreshContacts();
-      await refreshFriendLocations();
-      openRequestedPage();
-    });
-    setInterval(refreshStatus, 5000);
+
+    async function bootstrapApp() {
+      try {
+        const lineReady = lineUserId ? true : await initLine();
+        if (!useLocalMode && (!lineReady || !lineUserId)) {
+          showLineLoginRequired();
+          return;
+        }
+
+        await initApp();
+        if (useLocalMode) renderStatus(buildLocalStatus(loadLocalState()));
+        await refreshCalendarNotes();
+        if (!useLocalMode) {
+          await refreshContacts();
+          await refreshFriendLocations();
+        }
+        openRequestedPage();
+      } catch (error) {
+        console.warn("頁面初始化失敗", error);
+        showLineLoginRequired();
+      }
+    }
+
+    bootstrapApp();
+    setInterval(() => {
+      if (lineUserId) refreshStatus().catch((error) => console.warn("狀態更新失敗", error));
+    }, 5000);
   </script>
 
 

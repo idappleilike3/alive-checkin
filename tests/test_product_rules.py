@@ -145,5 +145,23 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("所有會員都能使用 119／110 快捷入口", help_page)
 
 
+    def test_line_login_finishes_before_checkin_is_enabled(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="checkBtn" type="button" disabled', page)
+        self.assertIn('async function bootstrapApp()', page)
+        bootstrap = page[
+            page.index("async function bootstrapApp()") : page.index("bootstrapApp();")
+        ]
+        self.assertLess(bootstrap.index("await initLine()"), bootstrap.index("await initApp()"))
+        self.assertIn("const lineReady = lineUserId ? true : await initLine()", bootstrap)
+        self.assertIn("showLineLoginRequired", bootstrap)
+        self.assertNotIn("\n    initApp();\n", page)
+        refresh_contacts = page[
+            page.index("async function refreshContacts()") : page.index("function addContact()")
+        ]
+        self.assertIn("apiGetContacts(lineUserId)", refresh_contacts)
+
+
 if __name__ == "__main__":
     unittest.main()
