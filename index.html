@@ -3277,10 +3277,7 @@
         const config = await configRes.json();
         if (!config.liff_id) return false;
         await liff.init({ liffId: config.liff_id, withLoginOnExternalBrowser: true });
-        if (!liff.isLoggedIn()) {
-          liff.login();
-          return false;
-        }
+        if (!liff.isLoggedIn()) return false;
         const profile = await liff.getProfile();
         lineUserId = profile.userId || "";
         lineDisplayName = profile.displayName || "";

@@ -17,12 +17,13 @@ except ModuleNotFoundError:
 try:
     from linebot import LineBotApi, WebhookHandler
     from linebot.exceptions import InvalidSignatureError, LineBotApiError
-    from linebot.models import MessageEvent, TextMessage, TextSendMessage
+    from linebot.models import JoinEvent, MessageEvent, TextMessage, TextSendMessage
 except ModuleNotFoundError:
     LineBotApi = None
     WebhookHandler = None
     InvalidSignatureError = Exception
     LineBotApiError = Exception
+    JoinEvent = None
     MessageEvent = None
     TextMessage = None
     TextSendMessage = None
@@ -1267,6 +1268,38 @@ def bind_guardian_group(data_file, payload):
     }, 200
 
 
+def guardian_group_join_outcome(data_file, line_user_id, group_id):
+    if not line_user_id or not group_id:
+        return {
+            "reply_text": (
+                "目前無法確認邀請人的會員身分，因此不能啟用守護群。\n"
+                "請由有效的 799 守護版會員重新邀請我加入；我會先退出這個群組。"
+            ),
+            "should_leave": True,
+        }, 400
+
+    result, status = bind_guardian_group(
+        data_file,
+        {"line_user_id": line_user_id, "group_id": group_id},
+    )
+    outcome = dict(result)
+    if status == 200:
+        outcome["reply_text"] = (
+            "守護群已啟用。之後若發生逾期未簽到或 SOS，系統會在這裡發送提醒。\n"
+            f"目前已綁定 {result.get('guardian_group_count', 1)}/"
+            f"{result.get('guardian_group_limit', 1)} 個守護群。"
+        )
+    elif result.get("should_leave"):
+        outcome["reply_text"] = (
+            "這個群組目前無法啟用守護功能。守護群只開放給有效的 799 守護版會員；"
+            "月費最多 1 群，年費最多 3 群。\n"
+            "我會先退出群組，完成升級後再重新邀請即可。"
+        )
+    else:
+        outcome["reply_text"] = "這個群組已綁定其他會員，請由原建立者管理守護設定。"
+    return outcome, status
+
+
 def unbind_guardian_group(data_file, payload):
     line_user_id = str(payload.get("line_user_id") or "").strip()
     group_id = str(payload.get("group_id") or "").strip()
@@ -2232,6 +2265,22 @@ def create_app(config=None):
 
         line_bot_api = LineBotApi(token)
         handler = WebhookHandler(secret)
+
+        @handler.add(JoinEvent)
+        def handle_group_join(event):
+            line_user_id = getattr(event.source, "user_id", None)
+            group_id = getattr(event.source, "group_id", None)
+            outcome, _status = guardian_group_join_outcome(
+                app.config["DATA_FILE"], line_user_id, group_id
+            )
+            try:
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text=outcome["reply_text"]),
+                )
+            finally:
+                if group_id and outcome.get("should_leave"):
+                    line_bot_api.leave_group(group_id)
 
         @handler.add(MessageEvent, message=TextMessage)
         def handle_text_message(event):

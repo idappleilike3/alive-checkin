@@ -162,6 +162,15 @@ class ProductRulesTests(unittest.TestCase):
         ]
         self.assertIn("apiGetContacts(lineUserId)", refresh_contacts)
 
+    def test_liff_initialization_uses_only_one_automatic_login_flow(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        init_line = page[
+            page.index("async function initLine()") : page.index("function lunarInfo")
+        ]
+
+        self.assertIn("withLoginOnExternalBrowser: true", init_line)
+        self.assertNotIn("liff.login()", init_line)
+
 
 if __name__ == "__main__":
     unittest.main()
