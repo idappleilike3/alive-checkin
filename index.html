@@ -1173,6 +1173,108 @@
     }
     .guardian-modal h2 { margin: 0 0 8px; font-size: 22px; }
     .guardian-modal p { margin: 0 0 12px; color: var(--muted); line-height: 1.6; font-size: 14px; }
+    #onboardingModal {
+      z-index: 60;
+      align-items: center;
+      overflow-y: auto;
+    }
+    .onboarding-modal {
+      width: min(100%, 520px);
+      max-height: calc(100dvh - 28px);
+      overflow-y: auto;
+      border-radius: 18px;
+      padding: 26px 24px;
+      background: #fff;
+      border: 2px solid #9fd9bd;
+    }
+    .onboarding-modal h2 {
+      margin-bottom: 10px;
+      color: #17324d;
+      font-size: 27px;
+      line-height: 1.35;
+      font-weight: 900;
+    }
+    .onboarding-modal .onboarding-intro {
+      margin-bottom: 16px;
+      color: #42566d;
+      font-size: 18px;
+      line-height: 1.65;
+    }
+    .onboarding-modal .onboarding-step {
+      margin-bottom: 18px;
+      padding: 11px 14px;
+      border: 1px solid #b7e4ca;
+      border-radius: 10px;
+      background: #eaf8f0;
+      color: #176342;
+      font-size: 18px;
+      font-weight: 850;
+    }
+    .onboarding-form {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 15px;
+    }
+    .onboarding-field {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+      color: #172b42;
+      font-size: 18px;
+      font-weight: 850;
+    }
+    .onboarding-field input,
+    .onboarding-field select {
+      width: 100%;
+      min-height: 56px;
+      margin: 0;
+      padding: 0 15px;
+      border: 2px solid #b9c8d8;
+      border-radius: 10px;
+      background: #fff;
+      color: #172b42;
+      font: inherit;
+      font-size: 19px;
+    }
+    .onboarding-field input:focus,
+    .onboarding-field select:focus {
+      border-color: #0a8f61;
+      outline: 3px solid rgba(10, 143, 97, 0.18);
+    }
+    .onboarding-field input::placeholder { color: #718096; opacity: 1; }
+    .onboarding-required { color: #b42318; }
+    .onboarding-note {
+      margin: 0;
+      color: #52677d;
+      font-size: 16px;
+      line-height: 1.55;
+    }
+    .onboarding-submit {
+      width: 100%;
+      min-height: 62px;
+      margin-top: 4px;
+      border: 0;
+      border-radius: 12px;
+      background: #087f57;
+      color: #fff;
+      font-size: 21px;
+      font-weight: 900;
+      box-shadow: 0 8px 18px rgba(8, 127, 87, 0.24);
+    }
+    .onboarding-submit:hover { background: #066b49; }
+    .onboarding-submit:focus-visible {
+      outline: 4px solid rgba(8, 127, 87, 0.25);
+      outline-offset: 3px;
+    }
+    .onboarding-submit:disabled { opacity: 0.65; }
+    @media (max-width: 420px) {
+      #onboardingModal { padding: 10px; align-items: start; }
+      .onboarding-modal { padding: 22px 18px; max-height: calc(100dvh - 20px); }
+      .onboarding-modal h2 { font-size: 25px; }
+      .onboarding-modal .onboarding-intro,
+      .onboarding-modal .onboarding-step,
+      .onboarding-field { font-size: 18px; }
+    }
     .line-trust {
       display: inline-flex;
       align-items: center;
@@ -1743,16 +1845,38 @@
 
       <!-- C00 Onboarding Modal(首次使用強制新增守護人) -->
       <div class="modal-backdrop" id="onboardingModal" hidden>
-        <div class="guardian-modal">
-          <h2>欢迎使用「今天還在嗎」</h2>
-          <p>为了保證你的安全,請先設定位守護人。<br>當你未如期簽到或危隣時,系統會及時聯絡他們。</p>
-          <p class="helper">步骤 1 / 2:新增第一位守護人</p>
-          <label>姓名(*)<input type="text" id="obName" placeholder="例:王小明"></label>
-          <label>關系(*)<input type="text" id="obRelationship" placeholder="家人 / 朋友 / 同事"></label>
-          <label>手機號碼(*)<input type="tel" id="obPhone" placeholder="0912345678"></label>
-          <label>Email<input type="email" id="obEmail" placeholder="可遺，但手機與 Email 至少要填一個"></label>
-          <p id="onboardingError" class="inline-error" hidden></p>
-          <button class="action-btn primary" id="onboardingSaveBtn" type="button">新增守護人並進入首頁</button>
+        <div class="guardian-modal onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle">
+          <h2 id="onboardingTitle">歡迎使用「今天還在嗎」</h2>
+          <p class="onboarding-intro">為了在你未準時簽到或需要協助時，能通知你信任的人，請先新增至少 1 位守護人。</p>
+          <p class="onboarding-step">步驟 1／2　新增第一位守護人</p>
+          <div class="onboarding-form">
+            <label class="onboarding-field" for="obName">姓名 <span class="onboarding-required">必填</span>
+              <input type="text" id="obName" placeholder="例如：王小明" autocomplete="name" required>
+            </label>
+            <label class="onboarding-field" for="obRelationship">關係 <span class="onboarding-required">必選</span>
+              <select id="obRelationship" required>
+                <option value="">請選擇關係</option>
+                <option value="配偶">配偶</option>
+                <option value="父母">父母</option>
+                <option value="子女">子女</option>
+                <option value="兄弟姊妹">兄弟姊妹</option>
+                <option value="親戚">親戚</option>
+                <option value="朋友">朋友</option>
+                <option value="鄰居">鄰居</option>
+                <option value="照護人員">照護人員</option>
+                <option value="其他">其他</option>
+              </select>
+            </label>
+            <label class="onboarding-field" for="obPhone">手機號碼 <span class="onboarding-required">必填</span>
+              <input type="tel" id="obPhone" inputmode="tel" placeholder="例如：0912 345 678" autocomplete="tel" required>
+            </label>
+            <label class="onboarding-field" for="obEmail">電子信箱（選填）
+              <input type="email" id="obEmail" inputmode="email" placeholder="例如：name@example.com" autocomplete="email">
+            </label>
+            <p class="onboarding-note">手機號碼只會用於安全守護與緊急聯絡，不會拿來發送廣告。</p>
+            <p id="onboardingError" class="inline-error" role="alert" hidden></p>
+            <button class="onboarding-submit" id="onboardingSaveBtn" type="button">新增守護人並進入首頁</button>
+          </div>
         </div>
       </div>
 
@@ -4147,10 +4271,11 @@
       const errorEl = $("onboardingError");
       if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
       $("obName").value = "";
-      $("obRelationship").value = "家人";
+      $("obRelationship").value = "";
       $("obPhone").value = "";
       $("obEmail").value = "";
       modal.hidden = false;
+      setTimeout(() => $("obName").focus(), 50);
     }
 
     function closeOnboarding() {
@@ -4161,8 +4286,6 @@
     async function saveOnboardingGuardian() {
       const errorEl = $("onboardingError");
       const saveBtn = $("onboardingSaveBtn");
-      saveBtn.disabled = true;
-      saveBtn.textContent = "儲存中...";
       if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
       const payload = {
         line_user_id: lineUserId,
@@ -4172,6 +4295,22 @@
         email: $("obEmail").value.trim(),
         is_primary: true,
       };
+      const requiredFields = [
+        ["obName", payload.name, "請填寫守護人的姓名"],
+        ["obRelationship", payload.relationship, "請選擇你和守護人的關係"],
+        ["obPhone", payload.phone, "請填寫守護人的手機號碼"],
+      ];
+      const missing = requiredFields.find(([, value]) => !value);
+      if (missing) {
+        if (errorEl) {
+          errorEl.textContent = missing[2];
+          errorEl.hidden = false;
+        }
+        $(missing[0]).focus();
+        return;
+      }
+      saveBtn.disabled = true;
+      saveBtn.textContent = "正在新增守護人...";
       try {
         const res = await apiAddGuardian(payload);
         if (res.status !== 200 || res.data.ok === false) {
@@ -4183,20 +4322,20 @@
           }
           return;
         }
-        // 標記 onboarding 完成
+        // 完成首次設定
         const ob = await apiCompleteOnboarding(lineUserId, "09:00");
         if (ob.status === 200 && ob.data.ok) {
           renderGuardians(res.data.contacts || [], res.data.contact_limit);
           closeOnboarding();
         } else {
           if (errorEl) {
-            errorEl.textContent = "儲存成功但 onboarding 標記失敗,請重整頁面";
+            errorEl.textContent = "守護人已儲存，但首次設定尚未完成，請重新整理頁面後再試一次";
             errorEl.hidden = false;
           }
         }
       } catch (error) {
         if (errorEl) {
-          errorEl.textContent = "儲存失敗:" + error.message;
+          errorEl.textContent = "儲存失敗：" + error.message;
           errorEl.hidden = false;
         }
       } finally {

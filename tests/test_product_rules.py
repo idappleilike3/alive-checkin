@@ -171,6 +171,28 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("withLoginOnExternalBrowser: true", init_line)
         self.assertNotIn("liff.login()", init_line)
 
+    def test_onboarding_guardian_form_is_senior_friendly_and_traditional_chinese(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        onboarding = page[
+            page.index('id="onboardingModal"') : page.index(
+                '<section class="status-box" aria-label="簽到狀態">'
+            )
+        ]
+
+        self.assertIn('class="guardian-modal onboarding-modal"', onboarding)
+        self.assertIn("歡迎使用「今天還在嗎」", onboarding)
+        self.assertIn('for="obName">姓名', onboarding)
+        self.assertIn('id="obRelationship"', onboarding)
+        self.assertIn('<select id="obRelationship"', onboarding)
+        self.assertIn('for="obPhone">手機號碼', onboarding)
+        self.assertIn('id="obPhone"', onboarding)
+        self.assertIn("required", onboarding)
+        self.assertIn('for="obEmail">電子信箱（選填）', onboarding)
+        self.assertIn("新增守護人並進入首頁", onboarding)
+        self.assertNotIn("欢迎", onboarding)
+        self.assertNotIn("关系", onboarding)
+        self.assertIn(".onboarding-submit", page)
+
 
 if __name__ == "__main__":
     unittest.main()
