@@ -2948,15 +2948,15 @@ def create_app(config=None):
                     display_name = None
             name = (display_name or "").strip() or "您"
             welcome_fallback = (
-                f"👋 {name} 您好，歡迎加入今天還在嗎\n\n"
-                "我是您的每日平安小助手，會在您設定的時間提醒您報平安，"
-                "只有超過時間仍未報平安，才會通知您指定的守護人\n\n"
-                "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間\n\n"
-                "🎁 完成設定即享 7 天免費安心體驗\n\n"
-                "🚨 緊急狀況請直接撥打 119，聊天訊息可能因網路延遲\n\n"
+                "🚨 緊急狀況，直接撥 119\n\n"
+                f"👋 {name} 您好\n"
+                "歡迎加入今天還在嗎\n"
+                "我是您的平安小管家\n\n"
+                "每天一個問候一句話報平安\n"
+                "逾時通知緊急連絡人\n\n"
                 f"請開啟：{(liff_entry_url(open_action='onboarding') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo?open=onboarding')}"
             )
-            alt_text = f"👋 {name} 您好，歡迎加入今天還在嗎 — 完成設定即享 7 天免費安心體驗"
+            alt_text = f"👋 {name} 您好，歡迎加入今天還在嗎 — 立即免費試用 7 天"
             flex_contents = welcome_flex(display_name) if welcome_flex is not None else None
             try:
                 if FlexSendMessage is not None and flex_contents is not None:

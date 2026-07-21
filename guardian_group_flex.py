@@ -1000,14 +1000,13 @@ def _owner_status_block(owner_info):
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友歡迎 Flex：Exact 歡迎文案 + 單一主 CTA「立即綁定守護人」。
+    """加好友歡迎 Flex：2026-07-22 老人家友善版（119 紅字上移 + 小管家文案）。
 
     display_name：LINE 顯示名稱；缺省時用「您」。
     主 CTA：永久 liff.line.me 入口（內嵌）→ 先一鍵分享邀請 → 再填守護人表單 → 私訊預警提醒設定。
     僅保留一個大按鈕；標題／內文放大方便閱讀。不使用 BOT 字眼。
     """
     name = (display_name or "").strip() or "您"
-    greeting = f"👋 {name} 您好，歡迎加入今天還在嗎"
     # 永久連結：開 LIFF 內嵌 → onboarding（分享邀請 → 守護人表單 → 提醒）。勿硬編碼 OAuth code/state。
     bind_uri = liff_entry_url(open_action="onboarding")
     return {
@@ -1016,17 +1015,17 @@ def welcome_flex(display_name: str | None = None):
         "header": {
             "type": "box",
             "layout": "vertical",
-            "backgroundColor": GREEN_DARK,
-            "paddingTop": "xl",
-            "paddingBottom": "xl",
+            "backgroundColor": RED_WARN,
+            "paddingTop": "lg",
+            "paddingBottom": "lg",
             "paddingStart": "lg",
             "paddingEnd": "lg",
             "contents": [
                 {
                     "type": "text",
-                    "text": greeting,
+                    "text": "🚨 緊急狀況，直接撥 119",
                     "color": "#FFFFFF",
-                    "size": "xxl",
+                    "size": "xl",
                     "weight": "bold",
                     "align": "center",
                     "wrap": True,
@@ -1041,48 +1040,56 @@ def welcome_flex(display_name: str | None = None):
             "paddingBottom": "md",
             "contents": [
                 {
-                    "type": "text",
-                    "text": (
-                        "我是您的每日平安小助手，會在您設定的時間提醒您報平安，"
-                        "只有超過時間仍未報平安，才會通知您指定的守護人"
-                    ),
-                    "size": "lg",
-                    "color": GRAY,
-                    "wrap": True,
-                },
-                {
-                    "type": "text",
-                    "text": "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間",
-                    "size": "lg",
-                    "color": GRAY,
-                    "wrap": True,
-                    "weight": "bold",
-                },
-                {
                     "type": "box",
                     "layout": "vertical",
-                    "spacing": "xs",
-                    "backgroundColor": "#FFF8E6",
+                    "spacing": "sm",
+                    "backgroundColor": GREEN_DARK,
                     "cornerRadius": "md",
-                    "paddingAll": "md",
-                    "borderColor": ORANGE,
-                    "borderWidth": "1px",
+                    "paddingAll": "lg",
                     "contents": [
                         {
                             "type": "text",
-                            "text": "🎁 完成設定即享 7 天免費安心體驗",
-                            "size": "lg",
+                            "text": f"👋 {name} 您好,",
+                            "color": "#FFFFFF",
+                            "size": "xxl",
                             "weight": "bold",
-                            "color": ORANGE,
+                            "wrap": True,
+                        },
+                        {
+                            "type": "text",
+                            "text": "歡迎加入今天還在嗎",
+                            "color": "#FFFFFF",
+                            "size": "xxl",
+                            "weight": "bold",
+                            "wrap": True,
+                        },
+                        {
+                            "type": "text",
+                            "text": "我是您的平安小管家",
+                            "color": "#FFFFFF",
+                            "size": "xl",
                             "wrap": True,
                         },
                     ],
                 },
                 {
+                    "type": "separator",
+                    "margin": "md",
+                },
+                {
                     "type": "text",
-                    "text": "🚨 緊急狀況請直接撥打 119，聊天訊息可能因網路延遲",
+                    "text": "每天一個問候一句話報平安",
                     "size": "lg",
-                    "color": GRAY_LIGHT,
+                    "weight": "bold",
+                    "color": GRAY,
+                    "wrap": True,
+                },
+                {
+                    "type": "text",
+                    "text": "逾時通知緊急連絡人",
+                    "size": "lg",
+                    "weight": "bold",
+                    "color": GRAY,
                     "wrap": True,
                 },
             ],
@@ -1098,7 +1105,7 @@ def welcome_flex(display_name: str | None = None):
                     "type": "button",
                     "action": {
                         "type": "uri",
-                        "label": "立即綁定守護人",
+                        "label": "立即免費試用 7 天",
                         "uri": bind_uri,
                     },
                     "style": "primary",
