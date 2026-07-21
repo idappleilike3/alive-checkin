@@ -7,12 +7,23 @@
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  html {
+    height: auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif;
     background: linear-gradient(135deg, #E8F8EE, #F0F9F4);
-    min-height: 100vh;
+    min-height: 100%;
+    min-height: 100dvh;
     padding: 20px;
+    padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
     color: #333;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
   }
   .container { max-width: 480px; margin: 0 auto; }
   .card {
