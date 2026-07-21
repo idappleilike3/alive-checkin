@@ -2621,12 +2621,7 @@ def create_app(config=None):
                 app.config["DATA_FILE"], line_user_id, group_id
             )
             try:
-                # 2026-07-21 patch 17: 計算 owner_info 供 intro_flex 顯示管理員狀態
-                # - bound: 該群是否已綁定
-                # - is_owner: 進群的人是不是 owner
-                # - owner_id: owner 的 LINE userId
-                # - is_active: owner 的方案是否仍有效(軟降級依據)
-                # - owner_plan: owner 的方案名稱(顯示用)
+                # 2026-07-21 patch 27: 計算 owner_info 供 intro_flex 顯示管理員狀態
                 owner_info = {"bound": False, "is_owner": False, "owner_id": None,
                               "is_active": False, "owner_plan": None}
                 state = load_state(app.config["DATA_FILE"])
@@ -2644,35 +2639,44 @@ def create_app(config=None):
                         "owner_plan": owner_plan,
                     }
 
-                # 2026-07-21 patch 11: 用 Flex Message 自我介紹取代純文字
-                # 成功綁定 → 綠色 intro Flex
-                # 已綁定同一用戶 → 綠色 intro Flex(再次提示)
-                # 失敗 → 紅色 bind_fail Flex(其他會員佔用/非 799/超限)
-                # 若 Flex 構建器 import 失敗,fallback 純文字
-                if _status == 200 and FlexSendMessage is not None and guardian_group_intro_flex is not None:
+                # 2026-07-21 patch 27: 一律先自我介紹(讓所有用戶都看到 bot 是什麼)
+                # 不論綁定成功或失敗,都先送 intro Flex(8 區塊)
+                # 如果未綁定,owner_info.bound=False → 不顯示 owner 區塊
+                # 在 footer 加 CTA 提示用戶對應動作
+                if FlexSendMessage is not None and guardian_group_intro_flex is not None:
                     line_bot_api.reply_message(
                         event.reply_token,
                         FlexSendMessage(
-                            alt_text="🛡️ 平安守護助理已加入",
+                            alt_text="🛡️ 平安守護助理已加入,以下是自我介紹",
                             contents=guardian_group_intro_flex(owner_info),
                         ),
                     )
-                elif _status != 200 and FlexSendMessage is not None and guardian_group_bind_fail_flex is not None:
-                    reason = outcome.get("reply_text", "無法綁定此守護群")
-                    line_bot_api.reply_message(
-                        event.reply_token,
-                        FlexSendMessage(
-                            alt_text="❌ 無法綁定此群",
-                            contents=guardian_group_bind_fail_flex(reason),
-                        ),
-                    )
+                    # 如果資格不符(需 799 但用戶不是),在自我介紹後補一張「如何啟用」Flex
+                    if _status != 200 and outcome.get("should_leave") is False:
+                        # 資格不符但不是「已被佔用」,發提醒
+                        reason = outcome.get("reply_text", "需要 799 守護版才能建立守護群")
+                        # 簡短文字提醒(因為剛才已送了 intro Flex)
+                        try:
+                            line_bot_api.push_message(
+                                group_id,
+                                TextSendMessage(text=(
+                                    f"💡 {reason}\n\n"
+                                    "升級 799 守護版(月費/年費)即可在群裡綁定守護群\n"
+                                    "在 LINE 主選單點「查看方案」了解更多"
+                                )),
+                            )
+                        except Exception:
+                            pass
                 else:
                     line_bot_api.reply_message(
                         event.reply_token,
                         TextSendMessage(text=outcome["reply_text"]),
                     )
             finally:
-                if group_id and outcome.get("should_leave"):
+                # 已被其他會員佔用 → 直接離開(沒辦法搶別人的群)
+                # 資格不符 → 保留在群(讓用戶升級後可以綁)
+                # 2026-07-21 patch 27: 只在被佔用時離開
+                if group_id and _status == 409:
                     line_bot_api.leave_group(group_id)
 
         @handler.add(FollowEvent)
