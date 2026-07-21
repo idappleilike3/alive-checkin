@@ -12,11 +12,11 @@ CELL_H = 843
 
 ITEMS = [
     ("報平安", "check", "點一下報平安"),
-    ("綁定守護人", "heart", "邀請家人守護"),
-    ("我的狀態", "info", "今天是否平安"),
+    ("守護人", "heart", "邀請家人守護"),
+    ("SOS 求救", "sos", "3 次連按立刻發送"),
+    ("我的會員", "user", "訂閱 / 守護群管理"),
     ("查看方案", "price", "月費年費說明"),
-    ("問與答", "faq", "常見問題快速看"),
-    ("聯絡客服", "support", "需要協助找我們"),
+    ("守護群", "shield", "年費限定 · 群組簽到提醒"),
 ]
 
 
@@ -62,6 +62,20 @@ def draw_icon(draw, cx, cy, kind, color):
         draw.rounded_rectangle((cx - 100, cy - 10, cx - 64, cy + 54), radius=12, outline=color, width=13)
         draw.rounded_rectangle((cx + 64, cy - 10, cx + 100, cy + 54), radius=12, outline=color, width=13)
         draw.line((cx + 52, cy + 72, cx + 14, cy + 88), fill=color, width=13)
+    elif kind == "sos":
+        # 紅十字
+        draw.rectangle((cx - 96, cy - 26, cx + 96, cy + 26), fill=color)
+        draw.rectangle((cx - 26, cy - 96, cx + 26, cy + 96), fill=color)
+    elif kind == "user":
+        # 圓頭人像
+        draw.ellipse((cx - 56, cy - 88, cx + 56, cy + 24), fill=color)
+        draw.arc((cx - 96, cy - 8, cx + 96, cy + 124), 0, 180, fill=color)
+    elif kind == "shield":
+        # 盾牌
+        draw.polygon(
+            [(cx, cy - 100), (cx + 90, cy - 60), (cx + 78, cy + 60), (cx, cy + 100), (cx - 78, cy + 60), (cx - 90, cy - 60)],
+            fill=color,
+        )
 
 
 def main():
@@ -72,10 +86,11 @@ def main():
     subtitle_font = font(58, bold=True)
 
     x_positions = [0, CELL_W[0], CELL_W[0] + CELL_W[1]]
-    colors = ["#c9f5dc", "#ffe8ad", "#cde2ff", "#eadcff", "#cef6ff", "#ffd5df"]
-    accent = ["#0c9a53", "#e99b00", "#246de8", "#6f48da", "#00899d", "#d93561"]
-    text_colors = ["#06351e", "#3e2a00", "#0b2857", "#271659", "#053a44", "#541228"]
-    desc_colors = ["#0f6a40", "#885800", "#28599d", "#5941a7", "#087486", "#a52b4d"]
+    # 2026-07-21 patch 22: 6 格重排,加入 SOS(紅色突出)+ 我的會員 + 守護群
+    colors = ["#c9f5dc", "#ffe8ad", "#FDECEA", "#eadcff", "#cef6ff", "#e8f5d4"]
+    accent = ["#0c9a53", "#e99b00", "#D6322C", "#6f48da", "#00899d", "#2e7d32"]
+    text_colors = ["#06351e", "#3e2a00", "#7a1f1a", "#271659", "#053a44", "#1b3d1f"]
+    desc_colors = ["#0f6a40", "#885800", "#a52b4d", "#5941a7", "#087486", "#2e7d32"]
 
     for index, (label, icon, desc) in enumerate(ITEMS):
         row = index // 3

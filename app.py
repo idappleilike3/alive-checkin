@@ -2618,9 +2618,9 @@ def create_app(config=None):
 
         @handler.add(FollowEvent)
         def handle_follow(event):
-            """2026-07-21 patch 19: 加好友時推送 2 條訊息。
+            """2026-07-21 patch 19+22: 加好友時推送 2 條訊息。
 
-            1) 純文字歡迎訊息(使用者指定的正式文案,含 顯示名稱/守護人/119 提醒)
+            1) 純文字歡迎訊息(使用者指定的正式文案 + 「開始體驗設定守護人」主按鈕)
             2) Flex 歡迎卡片(3 大功能 + CTA 按鈕)
 
             LINE reply_message 一次只能回 1 個訊息,所以先回文字,再 push Flex。
@@ -2638,17 +2638,23 @@ def create_app(config=None):
             greeting = "您好" if not display_name else f"{display_name} 您好"
             welcome_text = (
                 f"👋 {greeting}，歡迎加入「今天還在嗎」\n\n"
-                "我是您的每日平安小幫手,會在您設定的時間提醒您簽到。只有超過時間仍未簽到，才會通知您指定的守護人。\n\n"
-                "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間。\n\n"
+                "我是您的每日平安守護助手，會在您設定的時間提醒您簽到\n"
+                "只有超過時間仍未簽到，才會通知您指定的守護人\n\n"
+                "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間\n\n"
                 "🎁 完成設定即享 7 天免費安心體驗\n\n"
                 "🚨 緊急狀況請直接撥打 119，LINE Bot 訊息可能因網路狀況延遲。"
             )
 
+            # 主按鈕:在文字訊息加 QuickReply + 在 Flex 也加一個綁定守護人按鈕
             try:
-                # 第 1 條:純文字歡迎訊息
+                from linebot.models import QuickReply, QuickReplyButton, MessageAction
+                quick_reply = QuickReply(items=[
+                    QuickReplyButton(action=MessageAction(label="開始體驗設定守護人", text="開始體驗設定守護人")),
+                    QuickReplyButton(action=MessageAction(label="查看方案", text="查看方案")),
+                ])
                 line_bot_api.reply_message(
                     event.reply_token,
-                    TextSendMessage(text=welcome_text),
+                    TextSendMessage(text=welcome_text, quick_reply=quick_reply),
                 )
                 # 第 2 條: Flex 歡迎卡片(push_message 不是 reply_token)
                 if FlexSendMessage is not None and welcome_flex is not None and line_user_id:
@@ -2663,7 +2669,7 @@ def create_app(config=None):
                 try:
                     line_bot_api.reply_message(
                         event.reply_token,
-                        TextSendMessage(text="歡迎加入「今天還在嗎」!這是「平安守護助手」,打「報平安」開始使用"),
+                        TextSendMessage(text=welcome_text),
                     )
                 except Exception:
                     pass
@@ -3280,6 +3286,68 @@ def create_app(config=None):
     def sos_api():
         data, code = trigger_sos(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
         return jsonify(data), code
+
+    @app.get("/api/bot/guardian-groups")
+    def bot_guardian_groups_api():
+        """2026-07-21 patch 22: 返回所有守護群清單(供 bot_admin.html)。"""
+        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
+        if not admin_allowed(app.config, password):
+            return jsonify({"error": "unauthorized"}), 401
+
+        state = load_state(app.config["DATA_FILE"])
+        groups = state.get("guardian_groups", {})
+        users = state.get("users", {})
+        out = []
+        for gid, g in groups.items():
+            owner_id = g.get("owner_line_user_id", "")
+            owner_profile = users.get(owner_id, {})
+            out.append({
+                "group_id": gid,
+                "owner_id": owner_id[:6] + "..." + owner_id[-4:] if owner_id else None,
+                "owner_plan": owner_profile.get("plan"),
+                "member_count_at_bind": g.get("member_count_at_bind"),
+                "created_at": g.get("created_at"),
+                "status": g.get("status"),
+            })
+        return jsonify({"groups": out, "total": len(out)})
+
+    @app.get("/api/bot/sos-pending")
+    def bot_sos_pending_api():
+        """2026-07-21 patch 22: 返回所有 SOS 預約狀態。"""
+        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
+        if not admin_allowed(app.config, password):
+            return jsonify({"error": "unauthorized"}), 401
+
+        state = load_state(app.config["DATA_FILE"])
+        pending = state.get("sos_pending", {})
+        out = []
+        for uid, p in pending.items():
+            out.append({
+                "user_id": uid[:6] + "..." + uid[-4:],
+                "stage": p.get("stage"),
+                "tap_count": p.get("tap_count"),
+                "first_tap_at": p.get("first_tap_at"),
+                "last_tap_at": p.get("last_tap_at"),
+                "sent_at": p.get("sent_at"),
+                "event_id": p.get("event_id"),
+                "cancelled_at": p.get("cancelled_at"),
+            })
+        # active 在前(警告/warning),sent,cancelled 在後
+        out.sort(key=lambda x: (x.get("stage", "") not in ("warning_1", "warning_2", "warning_3"), x.get("last_tap_at") or ""))
+        return jsonify({"pending": out, "total": len(out)})
+
+    @app.get("/api/bot/recent-events")
+    def bot_recent_events_api():
+        """2026-07-21 patch 22: 返回最近的 webhook 事件(使用 notification_log)。"""
+        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
+        if not admin_allowed(app.config, password):
+            return jsonify({"error": "unauthorized"}), 401
+
+        state = load_state(app.config["DATA_FILE"])
+        log = state.get("notification_log", [])
+        recent = log[-20:]  # 最近 20 條
+        recent.reverse()
+        return jsonify({"recent": recent, "total": len(log)})
 
     @app.post("/api/sos/check-scheduled")
     def sos_check_scheduled_api():
