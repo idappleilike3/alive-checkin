@@ -13,23 +13,23 @@
     },
     {
       "bounds": { "x": 833, "y": 0, "width": 834, "height": 843 },
-      "action": { "type": "uri", "label": "綁定守護人", "uri": "https://liff.line.me/2010674803-sLl9j1Sk?page=guardian" }
+      "action": { "type": "uri", "label": "守護人", "uri": "https://liff.line.me/2010674803-sLl9j1Sk?page=guardian" }
     },
     {
       "bounds": { "x": 1667, "y": 0, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "我的狀態", "uri": "https://liff.line.me/2010674803-sLl9j1Sk?page=status" }
+      "action": { "type": "message", "label": "SOS 求救", "text": "SOS" }
     },
     {
       "bounds": { "x": 0, "y": 843, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "查看方案", "uri": "https://liff.line.me/2010674803-sLl9j1Sk?page=plans" }
+      "action": { "type": "uri", "label": "我的狀態", "uri": "https://liff.line.me/2010674803-sLl9j1Sk?page=status" }
     },
     {
       "bounds": { "x": 833, "y": 843, "width": 834, "height": 843 },
-      "action": { "type": "message", "label": "問與答", "text": "問與答" }
+      "action": { "type": "uri", "label": "查看方案", "uri": "https://liff.line.me/2010674803-sLl9j1Sk?page=plans" }
     },
     {
       "bounds": { "x": 1667, "y": 843, "width": 833, "height": 843 },
-      "action": { "type": "message", "label": "聯絡客服", "text": "聯絡客服" }
+      "action": { "type": "uri", "label": "聯絡客服", "uri": "https://liff.line.me/2010674803-sLl9j1Sk?page=support" }
     }
   ]
 }
