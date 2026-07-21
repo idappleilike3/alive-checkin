@@ -4,24 +4,24 @@
     "height": 1686
   },
   "selected": true,
-  "name": "今天還在嗎六格主選單",
+  "name": "今天還在嗎 - 平安守護助手主選單",
   "chatBarText": "平安守護選單",
   "areas": [
     {
       "bounds": { "x": 0, "y": 0, "width": 833, "height": 843 },
-      "action": { "type": "message", "label": "今日簽到", "text": "今日簽到" }
+      "action": { "type": "message", "label": "報平安", "text": "報平安" }
     },
     {
       "bounds": { "x": 833, "y": 0, "width": 834, "height": 843 },
-      "action": { "type": "uri", "label": "綁定守護人", "uri": "https://liff.line.me/2010674803-rK98c0lo?page=guardian" }
+      "action": { "type": "uri", "label": "綁定守護人", "uri": "https://liff.line.me/2010674803-sLl9j1Sk?page=guardian" }
     },
     {
       "bounds": { "x": 1667, "y": 0, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "我的狀態", "uri": "https://liff.line.me/2010674803-rK98c0lo?page=status" }
+      "action": { "type": "uri", "label": "我的狀態", "uri": "https://liff.line.me/2010674803-sLl9j1Sk?page=status" }
     },
     {
       "bounds": { "x": 0, "y": 843, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "查看方案", "uri": "https://liff.line.me/2010674803-rK98c0lo?page=plans" }
+      "action": { "type": "uri", "label": "查看方案", "uri": "https://liff.line.me/2010674803-sLl9j1Sk?page=plans" }
     },
     {
       "bounds": { "x": 833, "y": 843, "width": 834, "height": 843 },

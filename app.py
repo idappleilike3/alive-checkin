@@ -2532,28 +2532,52 @@ def create_app(config=None):
 
         @handler.add(FollowEvent)
         def handle_follow(event):
-            """2026-07-21 patch 17: 使用者加 Bot 為好友時,回一張歡迎詞 Flex。"""
+            """2026-07-21 patch 19: 加好友時推送 2 條訊息。
+
+            1) 純文字歡迎訊息(使用者指定的正式文案,含 顯示名稱/守護人/119 提醒)
+            2) Flex 歡迎卡片(3 大功能 + CTA 按鈕)
+
+            LINE reply_message 一次只能回 1 個訊息,所以先回文字,再 push Flex。
+            """
             line_user_id = getattr(event.source, "user_id", None)
+            # 試試拿使用者顯示名稱(若 LINE API 成功)
+            display_name = None
+            if line_user_id and token:
+                try:
+                    profile = line_bot_api.get_profile(line_user_id)
+                    display_name = profile.display_name
+                except Exception:
+                    display_name = None
+
+            greeting = "您好" if not display_name else f"{display_name} 您好"
+            welcome_text = (
+                f"👋 {greeting}，歡迎加入「今天還在嗎」\n\n"
+                "我是您的每日平安小幫手,會在您設定的時間提醒您簽到。只有超過時間仍未簽到，才會通知您指定的守護人。\n\n"
+                "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間。\n\n"
+                "🎁 完成設定即享 7 天免費安心體驗\n\n"
+                "🚨 緊急狀況請直接撥打 119，LINE Bot 訊息可能因網路狀況延遲。"
+            )
+
             try:
-                if FlexSendMessage is not None and welcome_flex is not None:
-                    line_bot_api.reply_message(
-                        event.reply_token,
+                # 第 1 條:純文字歡迎訊息
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text=welcome_text),
+                )
+                # 第 2 條: Flex 歡迎卡片(push_message 不是 reply_token)
+                if FlexSendMessage is not None and welcome_flex is not None and line_user_id:
+                    line_bot_api.push_message(
+                        line_user_id,
                         FlexSendMessage(
                             alt_text="🎉 歡迎加入「今天還在嗎」",
                             contents=welcome_flex(),
                         ),
                     )
-                else:
-                    line_bot_api.reply_message(
-                        event.reply_token,
-                        TextSendMessage(text="🎉 歡迎加入「今天還在嗎」!\\n這是「平安守護助手」,專門守護長輩平安。\\n打「簽到」或「查看方案」開始使用"),
-                    )
             except Exception:
-                # Fallback: 純文字歡迎詞,避免用戶加好友後什麼都看不到
                 try:
                     line_bot_api.reply_message(
                         event.reply_token,
-                        TextSendMessage(text="歡迎加入「今天還在嗎」!這是「平安守護助手」,打「簽到」開始使用"),
+                        TextSendMessage(text="歡迎加入「今天還在嗎」!這是「平安守護助手」,打「報平安」開始使用"),
                     )
                 except Exception:
                     pass
