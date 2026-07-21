@@ -17,7 +17,15 @@ except ModuleNotFoundError:
 try:
     from linebot import LineBotApi, WebhookHandler
     from linebot.exceptions import InvalidSignatureError, LineBotApiError
-    from linebot.models import JoinEvent, MessageEvent, TextMessage, TextSendMessage, MemberJoinedEvent
+    from linebot.models import (
+        JoinEvent,
+        MessageEvent,
+        TextMessage,
+        TextSendMessage,
+        MemberJoinedEvent,
+        FlexSendMessage,
+        FollowEvent,
+    )
 except ModuleNotFoundError:
     LineBotApi = None
     WebhookHandler = None
@@ -28,6 +36,32 @@ except ModuleNotFoundError:
     TextMessage = None
     TextSendMessage = None
     MemberJoinedEvent = None
+    FlexSendMessage = None
+    FollowEvent = None
+
+# 守護群 Flex 構建器(2026-07-21 patch 11)
+try:
+    from guardian_group_flex import (
+        guardian_group_intro_flex,
+        guardian_group_status_flex,
+        guardian_group_bind_confirm_flex,
+        guardian_group_bind_fail_flex,
+        guardian_group_user_guide_flex,
+        guardian_group_admin_setup_flex,
+        welcome_flex,
+    )
+except Exception:
+    guardian_group_intro_flex = None
+    guardian_group_status_flex = None
+    guardian_group_bind_confirm_flex = None
+    guardian_group_bind_fail_flex = None
+    guardian_group_user_guide_flex = None
+    guardian_group_admin_setup_flex = None
+    welcome_flex = None
+
+# 註:patch 15 的全域白名單機制(GROUP_ADMINS / is_group_admin / deny_if_not_admin)
+# 已於 2026-07-21 移除。「管理員」= 每個守護群的 owner_line_user_id(在 guardian_groups 裡)。
+# patch 16 加強 self-intro 顯示 owner 狀態。
 
 
 DEFAULT_PROFILE = {
@@ -174,8 +208,8 @@ def line_auto_reply_text(text, status=None):
             "守護群功能說明：\n"
             "守護群適合家人、親友或社區關懷小組一起接收平安狀態。\n"
             "有效的 799 月費會員可建立 1 群，年費會員最多可建立 3 群。\n"
-            "請把 Bot 加入群組後，由方案本人輸入「綁定守護群」。若資格不符，Bot 會說明原因並退出群組。\n"
-            "Bot 只處理簽到、預警與守護指令，不會把一般聊天內容存進會員資料。"
+            "請把「平安守護助手」加入群組後，由方案本人輸入「綁定平安守護助手」。若資格不符，「平安守護助手」會說明原因並退出群組。\n"
+            "「平安守護助手」只處理簽到、預警與守護指令，不會把一般聊天內容存進會員資料。"
         )
     if any(keyword in text for keyword in ALERT_CHANNEL_KEYWORDS):
         return (
@@ -1372,8 +1406,8 @@ def bind_guardian_group(data_file, payload):
                     "limit": GROUP_MEMBER_LIMIT,
                     "should_leave": True,
                     "reply_text": (
-                        f"此群目前有 {mc} 位成員(不含 Bot)。\n"
-                        f"守護群上限 {GROUP_MEMBER_LIMIT} 人,請把群縮到 {GROUP_MEMBER_LIMIT} 人內再重新邀請 Bot。"
+                        f"此群目前有 {mc} 位成員(不含「平安守護助手」)。\n"
+                        f"守護群上限 {GROUP_MEMBER_LIMIT} 人,請把群縮到 {GROUP_MEMBER_LIMIT} 人內再重新邀請「平安守護助手」。"
                     ),
                 }, 413
             member_count_at_bind = mc
@@ -2322,6 +2356,7 @@ def create_app(config=None):
         return MiniApp(config)
 
     app = Flask(__name__, static_folder=".", static_url_path="")
+    app._start_time = datetime.now()  # 2026-07-21 patch 17: 供 /api/bot/status 計算 uptime
     app.config.update(
         DATA_FILE=os.environ.get("DATA_FILE", str(Path(__file__).resolve().parent / "data" / "state.json")),
         ADMIN_PASSWORD=os.environ.get("ADMIN_PASSWORD", ""),
@@ -2362,6 +2397,35 @@ def create_app(config=None):
     @app.get("/api/config")
     def config_api():
         return jsonify(app_config(app.config))
+
+    @app.get("/api/bot/status")
+    def bot_status_api():
+        """2026-07-21 patch 17: Bot 整體健康狀態(給虱董看)。
+
+        Returns:
+            - service: alive-checkin
+            - bot_name: 平安守護助手
+            - uptime_seconds: 進程啟動後秒數
+            - users_total: 註冊人數
+            - guardian_groups_total: 守護群綁定總數
+            - guardian_groups_active: 有效的守護群數
+            - timestamp: 當下時間
+        """
+        state = load_state(app.config["DATA_FILE"])
+        groups = state.get("guardian_groups", {})
+        active_groups = sum(1 for g in groups.values() if g.get("status") == "active")
+        now = datetime.now()
+        proc_start = getattr(app, "_start_time", None)
+        uptime = (now - proc_start).total_seconds() if proc_start else None
+        return jsonify({
+            "service": "alive-checkin",
+            "bot_name": "平安守護助手",
+            "uptime_seconds": round(uptime, 1) if uptime else None,
+            "users_total": len(state.get("users", {})),
+            "guardian_groups_total": len(groups),
+            "guardian_groups_active": active_groups,
+            "timestamp": now.isoformat(timespec="seconds"),
+        })
 
     @app.get("/api/status")
     def status():
@@ -2412,17 +2476,92 @@ def create_app(config=None):
                 app.config["DATA_FILE"], line_user_id, group_id
             )
             try:
-                line_bot_api.reply_message(
-                    event.reply_token,
-                    TextSendMessage(text=outcome["reply_text"]),
-                )
+                # 2026-07-21 patch 17: 計算 owner_info 供 intro_flex 顯示管理員狀態
+                # - bound: 該群是否已綁定
+                # - is_owner: 進群的人是不是 owner
+                # - owner_id: owner 的 LINE userId
+                # - is_active: owner 的方案是否仍有效(軟降級依據)
+                # - owner_plan: owner 的方案名稱(顯示用)
+                owner_info = {"bound": False, "is_owner": False, "owner_id": None,
+                              "is_active": False, "owner_plan": None}
+                state = load_state(app.config["DATA_FILE"])
+                existing_group = state.get("guardian_groups", {}).get(group_id or "", {})
+                if existing_group.get("status") == "active":
+                    owner_id = existing_group.get("owner_line_user_id")
+                    owner_profile = state.get("users", {}).get(owner_id, {})
+                    owner_plan = owner_profile.get("plan")
+                    is_active = bool(owner_profile) and paid_membership_is_active(owner_profile)
+                    owner_info = {
+                        "bound": True,
+                        "is_owner": (line_user_id == owner_id),
+                        "owner_id": owner_id,
+                        "is_active": is_active,
+                        "owner_plan": owner_plan,
+                    }
+
+                # 2026-07-21 patch 11: 用 Flex Message 自我介紹取代純文字
+                # 成功綁定 → 綠色 intro Flex
+                # 已綁定同一用戶 → 綠色 intro Flex(再次提示)
+                # 失敗 → 紅色 bind_fail Flex(其他會員佔用/非 799/超限)
+                # 若 Flex 構建器 import 失敗,fallback 純文字
+                if _status == 200 and FlexSendMessage is not None and guardian_group_intro_flex is not None:
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        FlexSendMessage(
+                            alt_text="🛡️ 平安守護助手已加入",
+                            contents=guardian_group_intro_flex(owner_info),
+                        ),
+                    )
+                elif _status != 200 and FlexSendMessage is not None and guardian_group_bind_fail_flex is not None:
+                    reason = outcome.get("reply_text", "無法綁定此守護群")
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        FlexSendMessage(
+                            alt_text="❌ 無法綁定此群",
+                            contents=guardian_group_bind_fail_flex(reason),
+                        ),
+                    )
+                else:
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        TextSendMessage(text=outcome["reply_text"]),
+                    )
             finally:
                 if group_id and outcome.get("should_leave"):
                     line_bot_api.leave_group(group_id)
 
+        @handler.add(FollowEvent)
+        def handle_follow(event):
+            """2026-07-21 patch 17: 使用者加 Bot 為好友時,回一張歡迎詞 Flex。"""
+            line_user_id = getattr(event.source, "user_id", None)
+            try:
+                if FlexSendMessage is not None and welcome_flex is not None:
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        FlexSendMessage(
+                            alt_text="🎉 歡迎加入「今天還在嗎」",
+                            contents=welcome_flex(),
+                        ),
+                    )
+                else:
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        TextSendMessage(text="🎉 歡迎加入「今天還在嗎」!\\n這是「平安守護助手」,專門守護長輩平安。\\n打「簽到」或「查看方案」開始使用"),
+                    )
+            except Exception:
+                # Fallback: 純文字歡迎詞,避免用戶加好友後什麼都看不到
+                try:
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        TextSendMessage(text="歡迎加入「今天還在嗎」!這是「平安守護助手」,打「簽到」開始使用"),
+                    )
+                except Exception:
+                    pass
+
         @handler.add(MemberJoinedEvent)
         def handle_member_joined(event):
             # 2026-07-20 蝦董 added: 超過 50 人上限時,請出新成員
+            # 2026-07-21 patch 11: 額外提示「記得把 Bot 設為管理員」
             if getattr(event.source, "type", None) != "group":
                 return
             group_id = getattr(event.source, "group_id", None)
@@ -2441,11 +2580,13 @@ def create_app(config=None):
                     msg_lines.append(f"已請出 {len(result['kicked'])} 位新成員。")
                 if result.get("bot_not_admin_count"):
                     msg_lines.append(
-                        f"⚠️ Bot 不是此群管理員,另有 {result['bot_not_admin_count']} 位無法請出。"
-                        "請把 Bot 設為管理員後再試,或管理員手動退出超額成員。"
+                        f"⚠️ 「平安守護助手」不是此群管理員,另有 {result['bot_not_admin_count']} 位無法請出。"
+                        "請把「平安守護助手」設為管理員後再試,或管理員手動退出超額成員。"
                     )
                 if result.get("failed") and not result.get("bot_not_admin_count"):
                     msg_lines.append(f"請出失敗:{len(result['failed'])} 位。")
+                # 2026-07-21 patch 11: 額外提醒把 Bot 設為管理員
+                msg_lines.append("💡 在群裡打「管理員設定」可看 6 步驟教學")
                 line_bot_api.push_message(group_id, TextSendMessage(text="\n".join(msg_lines)))
             except Exception:
                 pass
@@ -2455,27 +2596,134 @@ def create_app(config=None):
             text = event.message.text
             line_user_id = getattr(event.source, "user_id", None)
             group_id = getattr(event.source, "group_id", None)
-            if group_id and text.strip() == "綁定守護群":
-                result, code = bind_guardian_group(
-                    app.config["DATA_FILE"],
-                    {"line_user_id": line_user_id, "group_id": group_id},
+            stripped = text.strip()
+
+            # 2026-07-21 patch 17: BOT 狀態查詢(DM + 群組都可用)
+            if stripped in ("BOT 狀態", "bot 狀態", "機器人狀態", "機器人狀況"):
+                state = load_state(app.config["DATA_FILE"])
+                groups = state.get("guardian_groups", {})
+                active_groups = sum(1 for g in groups.values() if g.get("status") == "active")
+                uptime_sec = (datetime.now() - app._start_time).total_seconds()
+                hours = int(uptime_sec // 3600)
+                minutes = int((uptime_sec % 3600) // 60)
+                status_text = (
+                    f"🤖 我是「平安守護助手」\\n"
+                    f"屬於「今天還在嗎」這個服務\\n\\n"
+                    f"✅ 目前啟用中(已連續 {hours} 小時 {minutes} 分)\\n"
+                    f"👥 已註冊人數:{len(state.get('users', {}))}\\n"
+                    f"🛡️ 守護群:{active_groups} 群有效綁定\\n\\n"
+                    f"🔧 可用指令(私訊):\\n"
+                    f"• 簽到 / 報平安\\n"
+                    f"• 綁定守護人\\n"
+                    f"• 查看方案 / 我的狀態\\n\\n"
+                    f"👥 群組指令:管理員設定 / 使用說明 / 守護群狀態"
                 )
-                if code == 200:
-                    reply_text = (
-                        "守護群已啟用。之後系統可在這裡發送必要的簽到與緊急預警。\n"
-                        f"目前已綁定 {result.get('guardian_group_count', 1)}/{result.get('guardian_group_limit', 3)} 個群組。"
-                    )
-                elif result.get("should_leave"):
-                    reply_text = (
-                        "這個群組目前無法啟用守護功能。守護群限有效的 799 月費或年費會員建立；月費最多 1 群，年費最多 3 群。\n"
-                        "請先完成升級，再重新邀請 Bot；我現在會退出群組。"
-                    )
-                else:
-                    reply_text = "這個群組已綁定其他會員，請由原建立者管理守護設定。"
-                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-                if result.get("should_leave"):
-                    line_bot_api.leave_group(group_id)
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=status_text))
                 return
+
+            # 2026-07-21 patch 11: 守護群相關 4 個 Flex 指令(群組限定)
+            if group_id:
+                # 1) 綁定平安守護助手(2026-07-21 patch 14: 新用詞 + 舊「綁定守護群」保留 alias)
+                if stripped in ("綁定平安守護助手", "綁定守護群"):
+                    result, code = bind_guardian_group(
+                        app.config["DATA_FILE"],
+                        {"line_user_id": line_user_id, "group_id": group_id},
+                    )
+                    if FlexSendMessage is not None and guardian_group_bind_confirm_flex is not None:
+                        if code == 200:
+                            line_bot_api.reply_message(
+                                event.reply_token,
+                                FlexSendMessage(
+                                    alt_text="✅ 已完成綁定平安守護助手",
+                                    contents=guardian_group_bind_confirm_flex(result),
+                                ),
+                            )
+                        else:
+                            reason = result.get(
+                                "reply_text",
+                                "這個群組目前無法啟用守護功能,請檢查 799 訂閱狀態或由原建立者操作",
+                            )
+                            line_bot_api.reply_message(
+                                event.reply_token,
+                                FlexSendMessage(
+                                    alt_text="❌ 無法綁定此群",
+                                    contents=guardian_group_bind_fail_flex(reason),
+                                ),
+                            )
+                    else:
+                        # fallback 純文字
+                        if code == 200:
+                            reply_text = (
+                                "守護群已啟用。之後系統可在這裡發送必要的簽到與緊急預警。\n"
+                                f"目前已綁定 {result.get('guardian_group_count', 1)}/{result.get('guardian_group_limit', 3)} 個群組。"
+                            )
+                        elif result.get("should_leave"):
+                            reply_text = (
+                                "這個群組目前無法啟用守護功能。守護群限有效的 799 月費或年費會員建立；月費最多 1 群，年費最多 3 群。\n"
+                                "請先完成升級，再重新邀請「平安守護助手」；我現在會退出群組。"
+                            )
+                        else:
+                            reply_text = "這個群組已綁定其他會員，請由原建立者管理守護設定。"
+                        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+                    if result.get("should_leave"):
+                        line_bot_api.leave_group(group_id)
+                    return
+
+                # 2) 守護群狀態
+                if stripped in ("守護群狀態", "群狀態", "狀態"):
+                    state = load_state(app.config["DATA_FILE"])
+                    profile = get_profile(state, line_user_id) or {}
+                    if FlexSendMessage is not None and guardian_group_status_flex is not None:
+                        line_bot_api.reply_message(
+                            event.reply_token,
+                            FlexSendMessage(
+                                alt_text="📊 守護群狀態",
+                                contents=guardian_group_status_flex(profile, state),
+                            ),
+                        )
+                    else:
+                        # fallback
+                        owned_count = len(profile.get("guardian_group_ids") or [])
+                        line_bot_api.reply_message(
+                            event.reply_token,
+                            TextSendMessage(text=f"目前已綁定 {owned_count} 個守護群"),
+                        )
+                    return
+
+                # 3) 使用說明 / 使用者說明
+                if stripped in ("使用說明", "使用者說明", "教學", "怎麼用"):
+                    if FlexSendMessage is not None and guardian_group_user_guide_flex is not None:
+                        line_bot_api.reply_message(
+                            event.reply_token,
+                            FlexSendMessage(
+                                alt_text="📖 守護群使用說明",
+                                contents=guardian_group_user_guide_flex(),
+                            ),
+                        )
+                    else:
+                        line_bot_api.reply_message(
+                            event.reply_token,
+                            TextSendMessage(text="使用說明:1.升級 799 → 2.建群 → 3.邀「平安守護助手」 → 4.設管理員 → 5.打「綁定平安守護助手」"),
+                        )
+                    return
+
+                # 4) 管理員設定 / 怎麼設管理員
+                if stripped in ("管理員設定", "設管理員", "怎麼設管理員", "6步驟"):
+                    if FlexSendMessage is not None and guardian_group_admin_setup_flex is not None:
+                        line_bot_api.reply_message(
+                            event.reply_token,
+                            FlexSendMessage(
+                                alt_text="⚙️ 設定「平安守護助手」為管理員 6 步驟",
+                                contents=guardian_group_admin_setup_flex(),
+                            ),
+                        )
+                    else:
+                        line_bot_api.reply_message(
+                            event.reply_token,
+                            TextSendMessage(text="管理員設定 6 步驟:1.群右上「≡」→ 2.選成員 → 3.長按「平安守護助手」 → 4.設為管理員 → 5.確定 → 6.完成"),
+                        )
+                    return
+
             status = None
             if any(keyword in text for keyword in CHECKIN_KEYWORDS):
                 status = record_checkin(app.config["DATA_FILE"], {"line_user_id": line_user_id})
