@@ -1459,7 +1459,7 @@ def guardian_group_join_outcome(data_file, line_user_id, group_id):
     outcome = dict(result)
     if status == 200:
         outcome["reply_text"] = (
-            "守護群已啟用。之後若發生逾期未簽到或 SOS，系統會在這裡發送提醒。\n"
+            "我已綁定守護群\n"
             f"目前已綁定 {result.get('guardian_group_count', 1)}/"
             f"{result.get('guardian_group_limit', 1)} 個守護群。"
         )
@@ -2660,7 +2660,7 @@ def create_app(config=None):
                     line_bot_api.reply_message(
                         event.reply_token,
                         FlexSendMessage(
-                            alt_text="🛡️ 平安守護助理已加入,以下是自我介紹",
+                            alt_text="🛡️ 守護群已就緒,管理員可一鍵綁定",
                             contents=guardian_group_intro_flex(owner_info),
                         ),
                     )
@@ -2694,53 +2694,50 @@ def create_app(config=None):
 
         @handler.add(FollowEvent)
         def handle_follow(event):
-            """2026-07-21 patch 19+23: 加好友時推送 2 條訊息。
+            """加好友歡迎：優先回 Flex(強調 7 天免費體驗 + 立即綁定守護人 1 位)。
 
-            1) 純文字歡迎訊息(使用者指定的正式文案 + 「開始設定守護人」主按鈕)
-            2) Flex 歡迎卡片(3 大功能 + CTA 按鈕)
-
-            LINE reply_message 一次只能回 1 個訊息,所以先回文字,再 push Flex。
+            不再用純文字為主、也不使用 BOT 字眼。Flex 失敗時才 fallback 短文案。
             """
             line_user_id = getattr(event.source, "user_id", None)
-
-            # patch 23: 用「您好」,不用 LINE profile display_name
-            # (使用者指定文案就是「您好」,不要客製化)
-            welcome_text = (
+            welcome_fallback = (
                 "👋 您好，歡迎加入「今天還在嗎」\n\n"
-                "我是您的每日平安小幫手，會在您設定的時間提醒您簽到。只有超過時間仍未簽到，才會通知您指定的守護人。\n\n"
-                "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間。\n\n"
-                "🎁 完成設定即享 7 天免費安心體驗\n\n"
-                "🚨 緊急狀況請直接撥打 119，LINE Bot 訊息可能因網路狀況延遲。"
+                "完成 1 位守護人綁定並設定每日提醒，即可享 7 天免費安心體驗。\n\n"
+                "請開啟：https://alive-checkin.onrender.com/liff/guardian\n\n"
+                "緊急狀況請直接撥打 119。"
             )
-
-            # 主按鈕:QuickReply「開始設定守護人」 + 「查看方案」
             try:
-                from linebot.models import QuickReply, QuickReplyButton, MessageAction
-                quick_reply = QuickReply(items=[
-                    QuickReplyButton(action=MessageAction(label="開始設定守護人", text="開始設定守護人")),
-                    QuickReplyButton(action=MessageAction(label="查看方案", text="查看方案")),
-                ])
-                line_bot_api.reply_message(
-                    event.reply_token,
-                    TextSendMessage(text=welcome_text, quick_reply=quick_reply),
-                )
-                # 第 2 條: Flex 歡迎卡片(push_message 不是 reply_token)
-                if FlexSendMessage is not None and welcome_flex is not None and line_user_id:
-                    line_bot_api.push_message(
-                        line_user_id,
+                if FlexSendMessage is not None and welcome_flex is not None:
+                    line_bot_api.reply_message(
+                        event.reply_token,
                         FlexSendMessage(
-                            alt_text="🎉 歡迎加入「今天還在嗎」",
+                            alt_text="🎉 歡迎加入「今天還在嗎」— 完成設定享 7 天免費體驗",
                             contents=welcome_flex(),
                         ),
+                    )
+                else:
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        TextSendMessage(text=welcome_fallback),
                     )
             except Exception:
                 try:
                     line_bot_api.reply_message(
                         event.reply_token,
-                        TextSendMessage(text=welcome_text),
+                        TextSendMessage(text=welcome_fallback),
                     )
                 except Exception:
-                    pass
+                    # reply_token 可能已用過：改 push
+                    if line_user_id and FlexSendMessage is not None and welcome_flex is not None:
+                        try:
+                            line_bot_api.push_message(
+                                line_user_id,
+                                FlexSendMessage(
+                                    alt_text="🎉 歡迎加入「今天還在嗎」— 完成設定享 7 天免費體驗",
+                                    contents=welcome_flex(),
+                                ),
+                            )
+                        except Exception:
+                            pass
 
         @handler.add(MemberJoinedEvent)
         def handle_member_joined(event):
@@ -2813,8 +2810,8 @@ def create_app(config=None):
 
             # 2026-07-21 patch 11: 守護群相關 4 個 Flex 指令(群組限定)
             if group_id:
-                # 1) 綁定平安守護助理(2026-07-21 patch 14: 新用詞 + 舊「綁定守護群」保留 alias)
-                if stripped in ("綁定平安守護助理", "綁定守護群"):
+                # 1) 綁定守護群(保留「綁定平安守護助理」alias)
+                if stripped in ("綁定守護群", "綁定平安守護助理"):
                     result, code = bind_guardian_group(
                         app.config["DATA_FILE"],
                         {"line_user_id": line_user_id, "group_id": group_id},
@@ -2824,7 +2821,7 @@ def create_app(config=None):
                             line_bot_api.reply_message(
                                 event.reply_token,
                                 FlexSendMessage(
-                                    alt_text="✅ 已完成綁定平安守護助理",
+                                    alt_text="✅ 我已綁定守護群",
                                     contents=guardian_group_bind_confirm_flex(result),
                                 ),
                             )
@@ -2841,11 +2838,12 @@ def create_app(config=None):
                                 ),
                             )
                     else:
-                        # fallback 純文字
+                        # fallback 純文字：成功回覆固定「我已綁定守護群」
                         if code == 200:
                             reply_text = (
-                                "守護群已啟用。之後系統可在這裡發送必要的簽到與緊急預警。\n"
-                                f"目前已綁定 {result.get('guardian_group_count', 1)}/{result.get('guardian_group_limit', 3)} 個群組。"
+                                "我已綁定守護群\n"
+                                f"目前已綁定 {result.get('guardian_group_count', 1)}/"
+                                f"{result.get('guardian_group_limit', 3)} 個群組。"
                             )
                         elif result.get("should_leave"):
                             reply_text = (

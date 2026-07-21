@@ -356,7 +356,7 @@ ALERT_CHANNEL_KEYWORDS = {"簡訊", "全渠道", "全通道", "自動撥號"}  #
 - [ ] 簡訊王 API 文件(從業務索取)
 - [ ] 簡訊王帳號密碼(放 Render env vars)
 - [ ] 藍新金流測試帳號 + merchant_id + HashKey + HashIV
-- [ ] 會計師稅務回覆(確認新價的發票開立方式)
+- [ ] 會計師稅務回覆(不開發票下如何認列營收)
 - [ ] PostgreSQL hosting(Render Postgres / Railway / Supabase)
 
 ---

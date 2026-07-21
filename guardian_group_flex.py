@@ -1,17 +1,18 @@
-"""守護群 Flex Message 構建器(2026-07-21 patch 11)。
+"""守護群 / 歡迎 Flex Message 構建器。
 
-5 個 Flex 用途:
-1. guardian_group_intro_flex()       — Bot 加入群組時的自我介紹
+主要 Flex:
+1. guardian_group_intro_flex()       — 進群自我介紹(一鍵綁定守護群)
 2. guardian_group_status_flex()      — 守護群狀態查詢
-3. guardian_group_bind_confirm_flex  — 綁定完成確認(大綠色按鈕 + 結果)
+3. guardian_group_bind_confirm_flex  — 綁定完成(主標：我已綁定守護群)
 4. guardian_group_user_guide_flex()  — 使用說明(給群成員)
 5. guardian_group_admin_setup_flex() — 管理員設定 6 步驟
+6. welcome_flex()                   — 加好友歡迎(7 天免費體驗 + 綁定守護人)
 
 設計原則:
-- 老人/長者閱讀:字級只用 xxl(20-24px) / lg(16-18px) / md(14px),禁 sm/xs
-- 顏色:綠(#06C755 LINE 綠 / #00B900 深綠 / #4A9D4A 淺綠)
-- 句末無「。」,訊息用「,」分隔(2026-07-20 17:44 蝦董新規則)
-- footer 按鈕 postback 文字訊息,點下去觸發對應 handler
+- 老人/長者閱讀:字級只用 xxl(20-24px) / lg(16-18px) / md(14px),禁 sm/xs 字級
+- 顏色:綠(#06C755 LINE 綠 / #00B900 深綠)
+- 對使用者文案不使用 BOT 字眼
+- footer 小按鈕用 height=sm；主 CTA 用 primary md
 """
 
 from __future__ import annotations
@@ -81,24 +82,47 @@ def _footer_buttons(include: tuple[str, ...] = ("status", "guide", "admin")):
 # ───────────────────────────────────────────────────────────
 
 def guardian_group_intro_flex(owner_info: dict | None = None):
-    """Bot 加入群組時的「守護群 6 步驟教學」Flex。
+    """進群自我介紹 Flex：管理員已就緒，一鍵綁定守護群。
 
-    2026-07-21 patch 12: 從「自我介紹」改成「6 步驟教學」。
-    給新進群的人一進來就看懂:我會做什麼 + 該按哪個按鈕。
-    2026-07-21 patch 13: 加 「📍 今天還在嗎」 品牌主標 + body 開頭 brand 區塊
-    (不然進群人不知道這是哪個服務的 bot)
-    2026-07-21 patch 16: 加 owner 狀態區塊
-      - 未綁定 → 不加
-      - 已綁定 + 使用者是 owner → 「🛡️ 你是這個守護群的管理員」
-      - 已綁定 + 使用者不是 owner → 「👥 這群已由管理員綁定」
+    設計重點:
+    - 短文案：邀進群 = 管理員準備綁定
+    - 主 CTA：「綁定守護群」(message → 觸發既有 keyword handler)
+    - 功能簡介 + footer 小按鈕(報平安 / 守護人 / 會員 / 方案 / 引導)
+    - 不使用 BOT 字眼
 
     owner_info 結構: {
         "bound": bool,
-        "is_owner": bool,      # 使用者是不是 owner
+        "is_owner": bool,
         "owner_id": str | None,
         "bound_at": str | None,
     }
     """
+    already_bound = bool(owner_info and owner_info.get("bound"))
+    primary_bind = {
+        "type": "button",
+        "action": {
+            "type": "message",
+            "label": "綁定守護群",
+            "text": "綁定守護群",
+        },
+        "style": "primary",
+        "color": GREEN_DARK,
+        "height": "md",
+    }
+    # 已綁定則主按鈕改成「我已綁定守護群」視覺提示(仍可再點,handler 會回 already_bound)
+    if already_bound:
+        primary_bind = {
+            "type": "button",
+            "action": {
+                "type": "message",
+                "label": "我已綁定守護群",
+                "text": "綁定守護群",
+            },
+            "style": "primary",
+            "color": GREEN_DARK,
+            "height": "md",
+        }
+
     return {
         "type": "bubble",
         "size": "mega",
@@ -121,7 +145,7 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "🛡️ 平安守護助理 · 守護群 6 步驟教學",
+                    "text": "🛡️ 守護群已就緒",
                     "color": "#FFFFFF",
                     "size": "md",
                     "align": "center",
@@ -137,7 +161,6 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
             "paddingTop": "lg",
             "paddingBottom": "md",
             "contents": [
-                # Brand 區塊:告訴進群人這是哪個服務的 bot
                 {
                     "type": "box",
                     "layout": "vertical",
@@ -150,28 +173,36 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                     "contents": [
                         {
                             "type": "text",
-                            "text": "🤖 我是誰",
+                            "text": "管理員可以一鍵綁定",
                             "size": "lg",
                             "weight": "bold",
                             "color": GREEN_DARK,
                         },
                         {
                             "type": "text",
-                            "text": "「今天還在嗎」這個服務的平安守護助理,專門守護長輩平安,在這群提醒簽到、發 SOS 通知",
+                            "text": "把平安守護助理邀進群,代表管理員已準備好啟用守護。點下方「綁定守護群」即可完成",
                             "size": "md",
                             "color": GRAY,
                             "wrap": True,
                         },
                     ],
                 },
-                # 2026-07-21 patch 16: owner 狀態區塊
                 _owner_status_block(owner_info),
-                _intro_step("1", "升級 799 守護版", "在 LINE 主選單點「方案」,挑月費或年費,完成付款才能開守護群"),
-                _intro_step("2", "建一個 LINE 群", "把你最關心的家人/長輩拉進來,群名可標「守護:OOO」"),
-                _intro_step("3", "把平安守護助理邀進群", "從「平安守護助理」聊天室右上「≡」→「邀請」,選這個新群"),
-                _intro_step("4", "把平安守護助理設為管理員", "必做!點下方「管理員設定」看 6 步驟教學"),
-                _intro_step("5", "在群裡打「綁定平安守護助理」", "會回「✅ 已完成綁定平安守護助理」,此群就會收到逾期未簽到/SOS 通知"),
-                _intro_step("6", "每天在群裡打「簽到」", "沒簽到時會在群裡提醒所有守護人"),
+                {
+                    "type": "text",
+                    "text": "這個群可以做什麼",
+                    "size": "md",
+                    "weight": "bold",
+                    "color": GRAY,
+                    "margin": "sm",
+                },
+                {
+                    "type": "text",
+                    "text": "• 報平安：群裡也能快速簽到\n• 逾期提醒：沒簽到時通知守護人\n• SOS：緊急狀況在群裡同步\n• 建議：綁定後把助理設為群管理員",
+                    "size": "md",
+                    "color": GRAY_LIGHT,
+                    "wrap": True,
+                },
             ],
         },
         "footer": {
@@ -181,22 +212,71 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
             "paddingAll": "md",
             "backgroundColor": "#FAFAFA",
             "contents": [
+                primary_bind,
                 {
-                    "type": "button",
-                    "action": {
-                        "type": "message",
-                        "label": "綁定平安守護助理",
-                        "text": "綁定平安守護助理",
-                    },
-                    "style": "primary",
-                    "color": GREEN_DARK,
-                    "height": "md",
+                    "type": "box",
+                    "layout": "horizontal",
+                    "spacing": "sm",
+                    "contents": [
+                        _uri_button(
+                            "報平安",
+                            "https://alive-checkin.onrender.com/liff/checkin",
+                            style="secondary",
+                            color=GREEN_DARK,
+                            height="sm",
+                        ),
+                        _uri_button(
+                            "守護人",
+                            "https://alive-checkin.onrender.com/liff/guardian",
+                            style="secondary",
+                            color=GREEN_DARK,
+                            height="sm",
+                        ),
+                        _uri_button(
+                            "我的會員",
+                            "https://alive-checkin.onrender.com/liff/member",
+                            style="secondary",
+                            color=GREEN_DARK,
+                            height="sm",
+                        ),
+                    ],
                 },
                 {
                     "type": "box",
                     "layout": "horizontal",
                     "spacing": "sm",
-                    "contents": _footer_buttons(("status", "guide", "admin")),
+                    "contents": [
+                        _uri_button(
+                            "守護群設定",
+                            "https://alive-checkin.onrender.com/liff/guardian-groups",
+                            style="link",
+                            color=GREEN_DARK,
+                            height="sm",
+                        ),
+                        _uri_button(
+                            "查看方案",
+                            "https://alive-checkin.onrender.com/pricing.html",
+                            style="link",
+                            color=GRAY,
+                            height="sm",
+                        ),
+                        _uri_button(
+                            "首次引導",
+                            "https://alive-checkin.onrender.com/liff/onboarding",
+                            style="link",
+                            color=GRAY,
+                            height="sm",
+                        ),
+                    ],
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "spacing": "sm",
+                    "contents": [
+                        _postback_button("守護群狀態", "守護群狀態", style="link", color=GREEN_DARK, height="sm"),
+                        _postback_button("管理員設定", "管理員設定", style="link", color=GRAY, height="sm"),
+                    ],
                 },
             ],
         },
@@ -412,19 +492,16 @@ def guardian_group_status_flex(profile: dict, state: dict):
 # ───────────────────────────────────────────────────────────
 
 def guardian_group_bind_confirm_flex(result: dict):
-    """「綁定平安守護助理」指令完成後的 Flex(綠大按鈕視覺 + 結果)。"""
+    """「綁定守護群」完成後的 Flex。成功主標固定為「我已綁定守護群」。"""
     already = result.get("already_bound")
     count = result.get("guardian_group_count", 1)
     limit = result.get("guardian_group_limit", 1)
 
+    head_text = "我已綁定守護群"
     if already:
-        head_text = "✅ 此群已是你的守護群"
-        body_text = f"目前已綁定 {count}/{limit} 個守護群,無需重複操作"
-        color = GREEN_DARK
+        body_text = f"此群已是你的守護群,目前已綁定 {count}/{limit} 個,無需重複操作"
     else:
-        head_text = "✅ 已完成綁定平安守護助理"
-        body_text = f"目前已綁定 {count}/{limit} 個守護群,逾期未簽到與 SOS 提醒會在此群發送"
-        color = GREEN_DARK
+        body_text = f"綁定成功,目前已綁定 {count}/{limit} 個守護群。逾期未簽到與 SOS 提醒會在此群發送"
 
     return {
         "type": "bubble",
@@ -432,7 +509,7 @@ def guardian_group_bind_confirm_flex(result: dict):
         "header": {
             "type": "box",
             "layout": "vertical",
-            "backgroundColor": color,
+            "backgroundColor": GREEN_DARK,
             "paddingTop": "lg",
             "paddingBottom": "lg",
             "paddingStart": "lg",
@@ -440,11 +517,12 @@ def guardian_group_bind_confirm_flex(result: dict):
             "contents": [
                 {
                     "type": "text",
-                    "text": head_text,
+                    "text": f"✅ {head_text}",
                     "color": "#FFFFFF",
                     "size": "xxl",
                     "weight": "bold",
                     "align": "center",
+                    "wrap": True,
                 },
             ],
         },
@@ -473,7 +551,7 @@ def guardian_group_bind_confirm_flex(result: dict):
                 },
                 {
                     "type": "text",
-                    "text": "接下來可以做:",
+                    "text": "接下來建議:",
                     "size": "md",
                     "color": GRAY_LIGHT,
                     "margin": "md",
@@ -499,7 +577,10 @@ def guardian_group_bind_confirm_flex(result: dict):
                     "type": "box",
                     "layout": "horizontal",
                     "spacing": "sm",
-                    "contents": _footer_buttons(("guide", "admin")),
+                    "contents": [
+                        _postback_button("使用說明", "使用說明", style="link", color=GRAY, height="sm"),
+                        _postback_button("管理員設定", "管理員設定", style="link", color=GRAY, height="sm"),
+                    ],
                 },
             ],
         },
@@ -895,9 +976,10 @@ def _owner_status_block(owner_info):
 
 
 def welcome_flex():
-    """2026-07-21 patch 17: 使用者加 Bot 為好友時的歡迎詞(私訊 context)。
+    """加好友歡迎 Flex：強調 7 天免費體驗 + 立即綁定守護人 1 位。
 
-    3 大功能區塊 + CTA 按鈕。
+    主 CTA 連到守護人 LIFF；次要小按鈕：報平安 / 我的會員 / 查看方案 / 首次引導。
+    不使用 BOT 字眼。
     """
     return {
         "type": "bubble",
@@ -929,147 +1011,71 @@ def welcome_flex():
                 },
                 {
                     "type": "text",
-                    "text": "🛡️ 平安守護助理",
+                    "text": "🎁 完成設定享 7 天免費體驗",
                     "color": "#FFFFFF",
                     "size": "md",
                     "align": "center",
                     "margin": "sm",
+                    "weight": "bold",
+                    "wrap": True,
                 },
             ],
         },
         "body": {
             "type": "box",
             "layout": "vertical",
-            "spacing": "lg",
+            "spacing": "md",
             "paddingTop": "lg",
             "paddingBottom": "md",
             "contents": [
-                # 品牌一句話
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "spacing": "xs",
+                    "backgroundColor": "#FFF8E6",
+                    "cornerRadius": "md",
+                    "paddingAll": "md",
+                    "borderColor": ORANGE,
+                    "borderWidth": "1px",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "7 天免費安心體驗",
+                            "size": "lg",
+                            "weight": "bold",
+                            "color": ORANGE,
+                        },
+                        {
+                            "type": "text",
+                            "text": "先綁定 1 位守護人並設定每日提醒,即可開始免費體驗。超過提醒時間未報平安,才會通知你指定的人",
+                            "size": "md",
+                            "color": GRAY,
+                            "wrap": True,
+                        },
+                    ],
+                },
                 {
                     "type": "text",
-                    "text": "專門守護平安的 LINE 助手,逾期未簽到/SOS自動通知緊急聯絡人",
+                    "text": "你可以怎麼用",
                     "size": "md",
+                    "weight": "bold",
                     "color": GRAY,
+                    "margin": "sm",
+                },
+                {
+                    "type": "text",
+                    "text": "• 報平安：每天快速簽到\n• 守護人：出事時通知信任的人\n• 守護群：家人群一起守護(799)",
+                    "size": "md",
+                    "color": GRAY_LIGHT,
                     "wrap": True,
-                    "align": "center",
-                    "margin": "md",
                 },
-                # 功能 1: 每日簽到
                 {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "md",
-                    "backgroundColor": "#E8F8EE",
-                    "cornerRadius": "md",
-                    "paddingAll": "md",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": "📅",
-                            "size": "xxl",
-                            "flex": 0,
-                        },
-                        {
-                            "type": "box",
-                            "layout": "vertical",
-                            "spacing": "xs",
-                            "flex": 1,
-                            "contents": [
-                                {
-                                    "type": "text",
-                                    "text": "每日簽到",
-                                    "size": "lg",
-                                    "weight": "bold",
-                                    "color": GREEN_DARK,
-                                },
-                                {
-                                    "type": "text",
-                                    "text": "在私訊群推播報平安，3秒完成，讓守護人放心",
-                                    "size": "md",
-                                    "color": GRAY,
-                                    "wrap": True,
-                                },
-                            ],
-                        },
-                    ],
-                },
-                # 功能 2: 守護人
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "md",
-                    "backgroundColor": "#E8F8EE",
-                    "cornerRadius": "md",
-                    "paddingAll": "md",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": "👨‍👩‍👧",
-                            "size": "xxl",
-                            "flex": 0,
-                        },
-                        {
-                            "type": "box",
-                            "layout": "vertical",
-                            "spacing": "xs",
-                            "flex": 1,
-                            "contents": [
-                                {
-                                    "type": "text",
-                                    "text": "守護人",
-                                    "size": "lg",
-                                    "weight": "bold",
-                                    "color": GREEN_DARK,
-                                },
-                                {
-                                    "type": "text",
-                                    "text": "把家人/朋友加為緊急聯絡人,出事時 LINE+SMS簡訊通知",
-                                    "size": "lg",
-                                    "color": GRAY,
-                                    "wrap": True,
-                                },
-                            ],
-                        },
-                    ],
-                },
-                # 功能 3: 守護群
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "md",
-                    "backgroundColor": "#E8F8EE",
-                    "cornerRadius": "md",
-                    "paddingAll": "md",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": "🛡️",
-                            "size": "xxl",
-                            "flex": 0,
-                        },
-                        {
-                            "type": "box",
-                            "layout": "vertical",
-                            "spacing": "xs",
-                            "flex": 1,
-                            "contents": [
-                                {
-                                    "type": "text",
-                                    "text": "守護群(799 訂戶限定)",
-                                    "size": "lg",
-                                    "weight": "bold",
-                                    "color": GREEN_DARK,
-                                },
-                                {
-                                    "type": "text",
-                                    "text": "開一個 LINE 群,把 Bot 邀進去當管理員,逾期未簽到 / SOS 在群裡通知所有守護人",
-                                    "size": "md",
-                                    "color": GRAY,
-                                    "wrap": True,
-                                },
-                            ],
-                        },
-                    ],
+                    "type": "text",
+                    "text": "緊急狀況請直接撥打 119。聊天訊息可能因網路延遲",
+                    "size": "md",
+                    "color": GRAY_LIGHT,
+                    "wrap": True,
+                    "margin": "sm",
                 },
             ],
         },
@@ -1083,9 +1089,9 @@ def welcome_flex():
                 {
                     "type": "button",
                     "action": {
-                        "type": "message",
-                        "label": "查看方案",
-                        "text": "查看方案",
+                        "type": "uri",
+                        "label": "立即綁定守護人 1 位",
+                        "uri": "https://alive-checkin.onrender.com/liff/guardian",
                     },
                     "style": "primary",
                     "color": GREEN_DARK,
@@ -1096,8 +1102,41 @@ def welcome_flex():
                     "layout": "horizontal",
                     "spacing": "sm",
                     "contents": [
-                        _postback_button("報平安", "報平安", style="link", color=GREEN_DARK),
-                        _postback_button("綁定守護人", "綁定守護人", style="link", color=GRAY),
+                        _uri_button(
+                            "報平安",
+                            "https://alive-checkin.onrender.com/liff/checkin",
+                            style="secondary",
+                            color=GREEN_DARK,
+                            height="sm",
+                        ),
+                        _uri_button(
+                            "我的會員",
+                            "https://alive-checkin.onrender.com/liff/member",
+                            style="secondary",
+                            color=GREEN_DARK,
+                            height="sm",
+                        ),
+                    ],
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "spacing": "sm",
+                    "contents": [
+                        _uri_button(
+                            "查看方案",
+                            "https://alive-checkin.onrender.com/pricing.html",
+                            style="link",
+                            color=GRAY,
+                            height="sm",
+                        ),
+                        _uri_button(
+                            "首次引導",
+                            "https://alive-checkin.onrender.com/liff/onboarding",
+                            style="link",
+                            color=GRAY,
+                            height="sm",
+                        ),
                     ],
                 },
             ],

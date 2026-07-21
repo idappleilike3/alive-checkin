@@ -187,7 +187,7 @@ Jika Anda sudah menghubungi mereka, silakan ketuk tombol di bawah.
 
 ⏰ 服務時間:每日 09:00 - 21:00(非此時段留言,次日優先處理)
 
-⚠️ 緊急狀況請直接撥打 119 或各地長照專線,本 Bot 回覆可能有延遲,請勿依賴本服務處理緊急事件。
+⚠️ 緊急狀況請直接撥打 119 或 110,本 Bot 回覆可能有延遲,請勿依賴本服務處理緊急事件。
 ```
 
 ### English
