@@ -22,7 +22,7 @@
     box-shadow: 0 2px 12px rgba(0,0,0,0.06);
   }
   h1 { font-size: 24px; color: #00B900; margin-bottom: 12px; }
-  h2 { font-size: 18px; color: #555; margin: 16px 0 8px; }
+  h2 { font-size: 18px; color: #555; margin: 16px 0 12px; }
   .plan-box {
     background: linear-gradient(135deg, #00B900, #00C853);
     color: #fff;
@@ -32,47 +32,92 @@
   }
   .plan-name { font-size: 24px; font-weight: 700; }
   .plan-detail { font-size: 14px; opacity: 0.9; margin-top: 4px; }
-  .btn-row { display: flex; gap: 8px; margin: 12px 0; }
   .btn {
-    flex: 1;
-    padding: 12px;
+    display: block;
+    width: 100%;
+    padding: 14px;
     border-radius: 10px;
     border: 1px solid #00B900;
     background: #fff;
     color: #00B900;
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
     cursor: pointer;
+    margin: 8px 0;
+    text-align: center;
+    text-decoration: none;
   }
   .btn-primary {
     background: #00B900;
     color: #fff;
   }
-  .group-row {
+  .guardian-row {
     border: 1px solid #E0E0E0;
     border-radius: 10px;
     padding: 12px;
     margin: 8px 0;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    background: #FAFAFA;
   }
-  .info-block {
-    background: #F9FAFB;
-    border-radius: 10px;
+  .guardian-row.primary {
+    border-color: #00B900;
+    background: #F0F9F4;
+  }
+  .guardian-name { font-weight: 700; font-size: 16px; color: #00B900; }
+  .guardian-detail { font-size: 13px; color: #666; margin-top: 4px; }
+  .reminder-options {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin: 12px 0;
+  }
+  .reminder-btn {
     padding: 12px;
+    border: 2px solid #E0E0E0;
+    background: #fff;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    text-align: center;
+  }
+  .reminder-btn.selected {
+    border-color: #00B900;
+    background: #E8F8EE;
+    color: #00B900;
+    font-weight: 700;
+  }
+  .empty {
+    padding: 16px;
+    text-align: center;
+    color: #888;
+    background: #F9FAFB;
+    border-radius: 8px;
+    border: 1px dashed #E0E0E0;
+  }
+  .lock-box {
+    background: linear-gradient(135deg, #FFD54F, #FFA000);
+    color: #fff;
+    border-radius: 12px;
+    padding: 16px;
+    margin: 12px 0;
+  }
+  .status-saved {
+    padding: 12px;
+    background: #E8F8EE;
+    border-radius: 8px;
+    color: #006400;
     margin: 8px 0;
+    display: none;
   }
 </style>
 </head>
 <body>
 <div class="card">
   <h1>⭐ 我的會員</h1>
-  <p>查看訂閱、管理守護群、查看帳務</p>
+  <p>查看訂閱、管理守護人、設定提醒時間</p>
 
-  <div class="plan-box">
-    <div class="plan-name">799 守護版 · 月費</div>
-    <div class="plan-detail">下次扣款:2026-08-21 · 已訂閱 23 天</div>
+  <div class="plan-box" id="planBox">
+    <div class="plan-name" id="planName">載入中...</div>
+    <div class="plan-detail" id="planDetail"></div>
   </div>
 
   <div class="btn-row">
@@ -81,22 +126,150 @@
   </div>
 </div>
 
+<!-- 守護人管理(從首頁搬過來) -->
 <div class="card">
-  <h2>🛡️ 守護群(年費限定)</h2>
-  <p>目前:0/3 群</p>
-  <button class="btn" style="width:100%; margin-top:8px;" onclick="alert('升級年費 799 才能開守護群')">
-    ➕ 建立新守護群(需年費)
-  </button>
-  <p style="font-size:13px; color:#888; margin-top:8px;">守護群是「把 Bot 邀進 LINE 群,逾期未簽到/SOS 時在群裡通知所有守護人」</p>
+  <h2>👨‍👩‍👧 守護人管理</h2>
+  <p>設定家人/朋友,出事時系統會自動通知他們。</p>
+  <div id="guardianList">
+    <div class="empty">載入中...</div>
+  </div>
+  <a href="./guardian.html" class="btn btn-primary">➕ 新增守護人</a>
 </div>
 
+<!-- 每日提醒時間設定 -->
+<div class="card">
+  <h2>⏰ 每日提醒時間</h2>
+  <p>選一個方便的時間,系統會在這時間提醒您簽到。</p>
+  <div class="reminder-options" id="reminderOptions">
+    <div class="reminder-btn" data-time="08:00">上午 8:00</div>
+    <div class="reminder-btn selected" data-time="09:00">上午 9:00</div>
+    <div class="reminder-btn" data-time="12:00">中午 12:00</div>
+    <div class="reminder-btn" data-time="18:00">下午 6:00</div>
+    <div class="reminder-btn" data-time="20:00">晚上 8:00</div>
+    <div class="reminder-btn" data-time="21:00">晚上 9:00</div>
+  </div>
+  <div class="status-saved" id="statusSaved">✅ 已儲存!</div>
+  <button class="btn btn-primary" id="saveBtn" onclick="saveReminder()">儲存設定</button>
+</div>
+
+<!-- 守護群(799 限定) -->
+<div class="card">
+  <h2>🛡️ 守護群</h2>
+  <div class="lock-box">
+    <strong>📋 守護群資格</strong>
+    <p>• 訂閱 799 月費或年費</p>
+    <p>• 月費最多 1 群 / 年費最多 3 群</p>
+    <p>• 每群最多 50 人</p>
+  </div>
+  <a href="./guardian-groups.html" class="btn">查看守護群設定</a>
+</div>
+
+<!-- 帳務紀錄 -->
 <div class="card">
   <h2>💳 帳務紀錄</h2>
-  <div class="info-block">
-    <div>最近一筆:2026-07-21 $799(799 月費)</div>
-    <div>累計 12 個月訂閱</div>
-  </div>
-  <button class="btn" style="width:100%; margin-top:8px;">查看發票/收據</button>
+  <p>查看發票、收據、付款紀錄</p>
+  <button class="btn">查看發票/收據</button>
 </div>
+
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+const LIFF_ID = "2010674803-sLl9j1Sk";
+const API_BASE = "https://alive-checkin.onrender.com";
+
+let state = {
+  lineUserId: null,
+  reminderTime: "09:00",
+  guardians: []
+};
+
+async function init() {
+  try {
+    await liff.init({ liffId: LIFF_ID });
+    if (!liff.isLoggedIn()) { liff.login(); return; }
+
+    state.lineUserId = (await liff.getProfile()).userId;
+
+    // 載入用戶狀態
+    const r1 = await fetch(`${API_BASE}/api/onboarding/state?line_user_id=${state.lineUserId}`);
+    if (r1.ok) {
+      const d = await r1.json();
+      state.reminderTime = d.reminder_time || "09:00";
+      // 顯示方案
+      document.getElementById("planName").textContent = d.plan || "尚未訂閱";
+      document.getElementById("planDetail").textContent = d.plan ? "感謝您支持今天還在嗎" : "升級 799 守護版可開守護群";
+    }
+
+    // 載入守護人清單
+    const r2 = await fetch(`${API_BASE}/api/contacts?line_user_id=${state.lineUserId}`);
+    if (r2.ok) {
+      const d = await r2.json();
+      state.guardians = d.contacts || [];
+      renderGuardians();
+    }
+
+    // 高亮當前提醒時間
+    highlightReminder();
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function renderGuardians() {
+  const list = document.getElementById("guardianList");
+  if (!state.guardians.length) {
+    list.innerHTML = '<div class="empty">尚未綁定守護人,點下方按鈕開始設定</div>';
+    return;
+  }
+  list.innerHTML = state.guardians.map((g, i) => `
+    <div class="guardian-row ${i === 0 ? 'primary' : ''}">
+      <div class="guardian-name">${escape(g.name || '守護人 ' + (i+1))} ${i === 0 ? '⭐ 主要' : ''}</div>
+      <div class="guardian-detail">${escape(g.relationship || '')} · ${escape(g.phone || '')}</div>
+    </div>
+  `).join("");
+}
+
+function highlightReminder() {
+  document.querySelectorAll(".reminder-btn").forEach(b => {
+    b.classList.toggle("selected", b.dataset.time === state.reminderTime);
+  });
+}
+
+document.querySelectorAll(".reminder-btn").forEach(b => {
+  b.addEventListener("click", () => {
+    state.reminderTime = b.dataset.time;
+    highlightReminder();
+  });
+});
+
+async function saveReminder() {
+  const btn = document.getElementById("saveBtn");
+  btn.disabled = true;
+  btn.textContent = "儲存中...";
+  try {
+    const res = await fetch(`${API_BASE}/api/onboarding/reminder`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ line_user_id: state.lineUserId, reminder_time: state.reminderTime })
+    });
+    if (res.ok) {
+      const status = document.getElementById("statusSaved");
+      status.style.display = "block";
+      setTimeout(() => status.style.display = "none", 3000);
+    } else {
+      alert("儲存失敗");
+    }
+  } catch (err) {
+    alert("網路錯誤:" + err.message);
+  }
+  btn.disabled = false;
+  btn.textContent = "儲存設定";
+}
+
+function escape(s) {
+  return String(s || "").replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+init();
+</script>
 </body>
 </html>

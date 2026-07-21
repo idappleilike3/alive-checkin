@@ -2405,6 +2405,48 @@ def create_app(config=None):
     def liff_checkin():
         return send_from_directory(app.static_folder, "liff/checkin.html")
 
+    # 2026-07-21 patch 24: Onboarding 流程 API
+    @app.get("/liff/onboarding")
+    def liff_onboarding():
+        return send_from_directory(app.static_folder, "liff/onboarding.html")
+
+    @app.get("/api/onboarding/state")
+    def onboarding_state_api():
+        """取得使用者 onboarding 狀態(守護人是否綁定 + 提醒時間)。"""
+        line_user_id = request.args.get("line_user_id", "").strip()
+        if not line_user_id:
+            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        state = load_state(app.config["DATA_FILE"])
+        profile = state.get("users", {}).get(line_user_id, {})
+        contacts = profile.get("contacts") or []
+        has_guardian = any((c.get("relationship") and c.get("phone")) for c in contacts)
+        return jsonify({
+            "ok": True,
+            "line_user_id": line_user_id,
+            "has_guardian": has_guardian,
+            "guardian_count": len([c for c in contacts if c.get("relationship") and c.get("phone")]),
+            "reminder_time": profile.get("reminder_time"),
+            "plan": profile.get("plan"),
+        })
+
+    @app.post("/api/onboarding/reminder")
+    def onboarding_reminder_api():
+        """設定使用者每日提醒時間。"""
+        data = request.get_json(silent=True) or {}
+        line_user_id = (data.get("line_user_id") or "").strip()
+        reminder_time = (data.get("reminder_time") or "").strip()
+        if not line_user_id:
+            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        # 驗證 HH:MM 格式
+        import re as _re
+        if not _re.match(r"^([01]\d|2[0-3]):[0-5]\d$", reminder_time):
+            return jsonify({"ok": False, "error": "invalid reminder_time format, use HH:MM"}), 400
+        state = load_state(app.config["DATA_FILE"])
+        profile = state.setdefault("users", {}).setdefault(line_user_id, {})
+        profile["reminder_time"] = reminder_time
+        save_state(app.config["DATA_FILE"], state)
+        return jsonify({"ok": True, "reminder_time": reminder_time})
+
     @app.get("/liff/guardian")
     def liff_guardian():
         return send_from_directory(app.static_folder, "liff/guardian.html")
