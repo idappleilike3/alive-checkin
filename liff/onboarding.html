@@ -312,13 +312,41 @@ function renderStep() {
           <div class="step active"><span class="step-num">2</span>守護人</div>
           <div class="step"><span class="step-num">3</span>提醒時間</div>
         </div>
-        <div class="icon-big">👨‍👩‍👧</div>
-        <h2 style="text-align:center;">綁定你的守護人</h2>
-        <p style="color:#888;margin-bottom:16px;">請先完成至少 1 位家人/朋友的資料。填寫完成後，才會進入提醒時間設定。</p>
-        <a href="./guardian.html" class="btn btn-primary">開始綁定守護人</a>
-        <p style="color:#888;font-size:13px;margin-top:12px;text-align:center;">綁定完成後請回到此頁，系統會自動進入提醒時間設定。</p>
+        <div class="icon-big">📲</div>
+        <h2 style="text-align:center;">先分享邀請給守護人</h2>
+        <p style="color:#888;margin-bottom:16px;line-height:1.6;">步驟 1：一鍵分享邀請連結給家人／朋友。<br>步驟 2：再開啟網頁填寫對方姓名、關係與手機。</p>
+        <button class="btn btn-primary" type="button" id="shareInviteFirstBtn">一鍵分享邀請守護人</button>
+        <a href="https://liff.line.me/${LIFF_ID}?open=onboarding" class="btn btn-secondary" id="fillGuardianFormBtn">下一步：填寫守護人資料</a>
+        <p style="color:#888;font-size:13px;margin-top:12px;text-align:center;" id="shareStepHint">分享完成後，請點「下一步」填寫守護人資料。</p>
       </div>
     `;
+    document.getElementById("shareInviteFirstBtn").addEventListener("click", async () => {
+      const hint = document.getElementById("shareStepHint");
+      try {
+        const bindUrl = `https://liff.line.me/${LIFF_ID}?invite_from=${encodeURIComponent(state.lineUserId || "")}`;
+        const text =
+          `我想邀請你成為「今天還在嗎」的守護人。\n\n` +
+          `【如何綁定】\n` +
+          `1. 點下方連結，用 LINE 開啟\n` +
+          `2. 登入並同意成為守護人\n` +
+          `3. 綁定完成後，若我未準時報平安或發出 SOS，你會收到通知\n\n` +
+          `守護邀請連結：\n${bindUrl}`;
+        if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
+          await liff.shareTargetPicker([{ type: "text", text }]);
+          if (hint) hint.textContent = "✅ 已開啟分享。選好友送出後，請點「下一步」填寫資料。";
+        } else if (navigator.share) {
+          await navigator.share({ title: "今天還在嗎 守護人邀請", text });
+          if (hint) hint.textContent = "✅ 已分享。請點「下一步」填寫守護人資料。";
+        } else if (navigator.clipboard) {
+          await navigator.clipboard.writeText(text);
+          if (hint) hint.textContent = "✅ 邀請文案已複製。請貼到 LINE，再點「下一步」填寫資料。";
+        } else {
+          alert(text);
+        }
+      } catch (_) {
+        if (hint) hint.textContent = "分享已取消，可再按一次，或直接下一步填寫資料。";
+      }
+    });
   } else if (state.currentStep === 3) {
     const count = state.dailyReminders || 1;
     const defaults = state.defaultReminderTimes || defaultTimesForCount(count);

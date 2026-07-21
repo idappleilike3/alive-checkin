@@ -40,7 +40,7 @@
     border: 1px solid #00B900;
     background: #fff;
     color: #00B900;
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 600;
     cursor: pointer;
     margin: 8px 0;
@@ -51,25 +51,38 @@
     background: #00B900;
     color: #fff;
   }
+  .btn-danger {
+    border-color: #D32F2F;
+    color: #D32F2F;
+  }
+  .btn-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
   .guardian-row {
     border: 1px solid #E0E0E0;
     border-radius: 10px;
-    padding: 12px;
-    margin: 8px 0;
+    padding: 14px;
+    margin: 10px 0;
     background: #FAFAFA;
   }
   .guardian-row.primary {
     border-color: #00B900;
     background: #F0F9F4;
   }
-  .guardian-name { font-weight: 700; font-size: 16px; color: #00B900; }
-  .guardian-detail { font-size: 13px; color: #666; margin-top: 4px; }
-  .reminder-slot {
-    margin: 10px 0;
+  .guardian-name { font-weight: 700; font-size: 17px; color: #00B900; }
+  .guardian-detail { font-size: 15px; color: #666; margin-top: 4px; }
+  .guardian-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 10px;
   }
+  .reminder-slot { margin: 10px 0; }
   .reminder-slot label {
     display: block;
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 700;
     margin-bottom: 6px;
   }
@@ -78,7 +91,7 @@
     padding: 12px;
     border: 2px solid #E0E0E0;
     border-radius: 8px;
-    font-size: 16px;
+    font-size: 17px;
   }
   .empty {
     padding: 16px;
@@ -104,6 +117,52 @@
     display: none;
   }
   .hint { color: #666; font-size: 14px; margin-bottom: 8px; }
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    display: grid;
+    place-items: start center;
+    padding: 20px 12px;
+    overflow-y: auto;
+    z-index: 40;
+  }
+  .modal-backdrop[hidden] { display: none; }
+  .modal-card {
+    width: min(100%, 440px);
+    background: #fff;
+    border-radius: 16px;
+    padding: 22px 18px;
+    margin-bottom: 24px;
+  }
+  .form-field {
+    display: grid;
+    gap: 6px;
+    margin: 12px 0;
+  }
+  .form-field > span {
+    font-size: 15px;
+    font-weight: 700;
+  }
+  .form-field input,
+  .form-field select,
+  .form-field textarea {
+    width: 100%;
+    min-height: 48px;
+    padding: 12px 14px;
+    border: 1.5px solid #E0E0E0;
+    border-radius: 10px;
+    font-size: 17px;
+    line-height: 1.4;
+  }
+  .form-field textarea { min-height: 72px; }
+  .check-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin: 12px 0;
+    font-size: 15px;
+  }
 </style>
 </head>
 <body>
@@ -117,19 +176,19 @@
   </div>
 
   <div class="btn-row">
-    <button class="btn btn-primary">續約方案</button>
-    <button class="btn">變更方案</button>
+    <button class="btn btn-primary" type="button" onclick="location.href='./pricing.html'">續約方案</button>
+    <button class="btn" type="button" onclick="location.href='./pricing.html'">變更方案</button>
   </div>
 </div>
 
-<!-- 守護人管理（會員中心設定） -->
+<!-- 守護人管理（會員中心：編輯／刪除在此） -->
 <div class="card">
   <h2>👨‍👩‍👧 守護人管理</h2>
-  <p class="hint">在這裡新增守護人，或一鍵分享邀請連結給家人朋友綁定。</p>
+  <p class="hint">首頁只顯示狀態；編輯與刪除請在這裡操作。新增時會先一鍵分享邀請，再填寫資料。</p>
   <div id="guardianList">
     <div class="empty">載入中...</div>
   </div>
-  <a href="https://liff.line.me/2010674803-rK98c0lo?open=onboarding" class="btn btn-primary">➕ 新增守護人</a>
+  <button class="btn btn-primary" type="button" id="addGuardianBtn">➕ 新增守護人</button>
   <button class="btn" type="button" id="shareInviteBtn">📲 一鍵分享邀請守護人</button>
   <p class="hint" id="shareHint" style="display:none;color:#006400;"></p>
 </div>
@@ -156,6 +215,47 @@
   <a href="./guardian-groups.html" class="btn">查看守護群設定</a>
 </div>
 
+<div class="modal-backdrop" id="editorModal" hidden>
+  <div class="modal-card">
+    <h2 id="editorTitle">編輯守護人</h2>
+    <p class="hint" id="editorError" style="color:#D32F2F;display:none;"></p>
+    <label class="form-field"><span>姓名（必填）</span>
+      <input id="gName" type="text" placeholder="例如：王小明" autocomplete="name">
+    </label>
+    <label class="form-field"><span>關係（必填）</span>
+      <select id="gRelationship">
+        <option value="">請選擇關係</option>
+        <option value="配偶">配偶</option>
+        <option value="父母">父母</option>
+        <option value="子女">子女</option>
+        <option value="兄弟姊妹">兄弟姊妹</option>
+        <option value="親戚">親戚</option>
+        <option value="家人">家人</option>
+        <option value="朋友">朋友</option>
+        <option value="鄰居">鄰居</option>
+        <option value="同事">同事</option>
+        <option value="照護人員">照護人員</option>
+        <option value="其他">其他</option>
+      </select>
+    </label>
+    <label class="form-field"><span>手機</span>
+      <input id="gPhone" type="tel" inputmode="tel" placeholder="例如：0912 345 678" autocomplete="tel">
+    </label>
+    <label class="form-field"><span>EMAIL</span>
+      <input id="gEmail" type="email" inputmode="email" placeholder="例如：name@example.com" autocomplete="email">
+    </label>
+    <label class="check-row">
+      <input type="checkbox" id="gIsPrimary">
+      <span>設為主要聯絡人</span>
+    </label>
+    <p class="hint">姓名與關係必填；手機與 EMAIL 至少填一個。</p>
+    <div class="btn-row">
+      <button class="btn" type="button" id="cancelEditorBtn">取消</button>
+      <button class="btn btn-primary" type="button" id="saveEditorBtn">儲存</button>
+    </div>
+  </div>
+</div>
+
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script>
 const LIFF_ID = "2010674803-rK98c0lo";
@@ -170,7 +270,8 @@ let state = {
   lineUserId: null,
   reminderTimes: ["12:00"],
   dailyReminders: 1,
-  guardians: []
+  guardians: [],
+  editId: null
 };
 
 function defaultTimesForCount(count) {
@@ -223,16 +324,19 @@ async function init() {
         `本方案每日可設定 ${state.dailyReminders} 個提醒時段。未自訂時預設：${(d.default_reminder_times || defaultTimesForCount(state.dailyReminders)).join("、")}`;
     }
 
-    const r2 = await fetch(`${API_BASE}/api/contacts?line_user_id=${state.lineUserId}`);
-    if (r2.ok) {
-      const d = await r2.json();
-      state.guardians = d.contacts || [];
-      renderGuardians();
-    }
-
+    await refreshGuardians();
     renderReminderSlots(state.reminderTimes);
   } catch (err) {
     console.error(err);
+  }
+}
+
+async function refreshGuardians() {
+  const r2 = await fetch(`${API_BASE}/api/contacts?line_user_id=${state.lineUserId}`);
+  if (r2.ok) {
+    const d = await r2.json();
+    state.guardians = d.contacts || [];
+    renderGuardians();
   }
 }
 
@@ -245,12 +349,22 @@ function renderGuardians() {
   list.innerHTML = state.guardians.map((g, i) => {
     const bound = g.binding_status === "accepted" || g.consent_status === "accepted" || g.line_id;
     return `
-    <div class="guardian-row ${i === 0 ? "primary" : ""}">
-      <div class="guardian-name">${escape(g.name || "守護人 " + (i + 1))} ${i === 0 ? "⭐ 主要" : ""}</div>
-      <div class="guardian-detail">${escape(g.relationship || "關係未設定")} · ${escape(g.phone || "未填手機")}</div>
+    <div class="guardian-row ${g.is_primary || i === 0 ? "primary" : ""}">
+      <div class="guardian-name">${escape(g.name || "守護人 " + (i + 1))} ${g.is_primary || i === 0 ? "⭐ 主要" : ""}</div>
+      <div class="guardian-detail">${escape(g.relationship || "關係未設定")} · ${escape(g.phone || g.email || "未填聯絡方式")}</div>
       <div class="guardian-detail">${bound ? "✅ LINE 已綁定" : "⏳ 等待 LINE 綁定"}</div>
+      <div class="guardian-actions">
+        <button class="btn" type="button" data-edit="${escape(g.id)}">編輯</button>
+        <button class="btn btn-danger" type="button" data-delete="${escape(g.id)}">刪除</button>
+      </div>
     </div>`;
   }).join("");
+  list.querySelectorAll("[data-edit]").forEach((btn) => {
+    btn.addEventListener("click", () => openEditor(btn.dataset.edit));
+  });
+  list.querySelectorAll("[data-delete]").forEach((btn) => {
+    btn.addEventListener("click", () => deleteGuardian(btn.dataset.delete));
+  });
 }
 
 function buildInviteText() {
@@ -289,10 +403,113 @@ async function shareGuardianInvite() {
   }
 }
 
+function openEditor(contactId) {
+  const modal = document.getElementById("editorModal");
+  const err = document.getElementById("editorError");
+  err.style.display = "none";
+  state.editId = contactId || null;
+  const g = state.guardians.find((x) => x.id === contactId);
+  document.getElementById("editorTitle").textContent = g ? "編輯守護人" : "新增守護人";
+  document.getElementById("gName").value = g?.name || "";
+  const rel = document.getElementById("gRelationship");
+  const relationship = g?.relationship || "家人";
+  if (relationship && !Array.from(rel.options).some((o) => o.value === relationship)) {
+    const opt = document.createElement("option");
+    opt.value = relationship;
+    opt.textContent = relationship;
+    rel.appendChild(opt);
+  }
+  rel.value = relationship;
+  document.getElementById("gPhone").value = g?.phone || "";
+  document.getElementById("gEmail").value = g?.email || "";
+  document.getElementById("gIsPrimary").checked = Boolean(g?.is_primary || (!g && !state.guardians.length));
+  modal.hidden = false;
+}
+
+function closeEditor() {
+  document.getElementById("editorModal").hidden = true;
+  state.editId = null;
+}
+
+async function saveEditor() {
+  const err = document.getElementById("editorError");
+  const payload = {
+    line_user_id: state.lineUserId,
+    name: document.getElementById("gName").value.trim(),
+    relationship: document.getElementById("gRelationship").value.trim(),
+    phone: document.getElementById("gPhone").value.trim(),
+    email: document.getElementById("gEmail").value.trim(),
+    is_primary: document.getElementById("gIsPrimary").checked
+  };
+  if (!payload.name || !payload.relationship) {
+    err.style.display = "block";
+    err.textContent = "請填寫姓名與關係";
+    return;
+  }
+  if (!payload.phone && !payload.email) {
+    err.style.display = "block";
+    err.textContent = "手機與 EMAIL 至少填一個";
+    return;
+  }
+  const btn = document.getElementById("saveEditorBtn");
+  btn.disabled = true;
+  btn.textContent = "儲存中...";
+  try {
+    const url = state.editId
+      ? `${API_BASE}/api/contacts/${encodeURIComponent(state.editId)}`
+      : `${API_BASE}/api/contacts/add`;
+    const method = state.editId ? "PUT" : "POST";
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) {
+      err.style.display = "block";
+      err.textContent = data.message || data.error || "儲存失敗";
+    } else {
+      state.guardians = data.contacts || state.guardians;
+      renderGuardians();
+      closeEditor();
+    }
+  } catch (e) {
+    err.style.display = "block";
+    err.textContent = "網路錯誤：" + e.message;
+  }
+  btn.disabled = false;
+  btn.textContent = "儲存";
+}
+
+async function deleteGuardian(contactId) {
+  const g = state.guardians.find((x) => x.id === contactId);
+  if (!g || !confirm(`確定要刪除守護人「${g.name || "未命名"}」嗎？`)) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/contacts/${encodeURIComponent(contactId)}?line_user_id=${encodeURIComponent(state.lineUserId)}`, {
+      method: "DELETE"
+    });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) {
+      alert(data.error || "刪除失敗");
+      return;
+    }
+    state.guardians = data.contacts || [];
+    renderGuardians();
+  } catch (e) {
+    alert("刪除失敗：" + e.message);
+  }
+}
+
 document.getElementById("useDefaultsBtn").addEventListener("click", () => {
   renderReminderSlots(defaultTimesForCount(state.dailyReminders));
 });
 document.getElementById("shareInviteBtn").addEventListener("click", shareGuardianInvite);
+document.getElementById("addGuardianBtn").addEventListener("click", async () => {
+  await shareGuardianInvite();
+  openEditor(null);
+});
+document.getElementById("cancelEditorBtn").addEventListener("click", closeEditor);
+document.getElementById("saveEditorBtn").addEventListener("click", saveEditor);
 
 async function saveReminder() {
   const btn = document.getElementById("saveBtn");

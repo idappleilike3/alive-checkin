@@ -572,16 +572,27 @@
     .member-data-section { padding: 12px 0; border-bottom: 1px solid var(--line); }
     .member-data-section:last-child { border-bottom: 0; padding-bottom: 0; }
     .member-data-section h3 { margin-bottom: 8px; font-size: 15px; color: var(--text); }
-    .guardian-details-form { display: grid; gap: 9px; margin-top: 10px; }
+    .guardian-details-form { display: grid; gap: 14px; margin-top: 12px; }
+    .guardian-details-form .form-field {
+      display: grid;
+      gap: 6px;
+    }
+    .guardian-details-form .form-field > span {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+    }
     .guardian-details-form input,
     .guardian-details-form select {
       width: 100%;
-      min-height: 46px;
-      padding: 10px 12px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
+      min-height: 48px;
+      padding: 12px 14px;
+      border: 1.5px solid var(--line);
+      border-radius: 10px;
       color: var(--text);
       background: var(--input);
+      font-size: 17px;
+      line-height: 1.4;
     }
     .guardian-details-status {
       padding: 10px 12px;
@@ -1278,6 +1289,71 @@
     }
     .guardian-modal h2 { margin: 0 0 8px; font-size: 22px; }
     .guardian-modal p { margin: 0 0 12px; color: var(--muted); line-height: 1.6; font-size: 14px; }
+    #guardianEditorModal .guardian-modal {
+      display: grid;
+      gap: 12px;
+      padding: 22px 18px;
+    }
+    #guardianEditorModal .guardian-edit-fields {
+      display: grid;
+      gap: 14px;
+    }
+    #guardianEditorModal .guardian-edit-field {
+      display: grid;
+      gap: 6px;
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    #guardianEditorModal .guardian-edit-field input,
+    #guardianEditorModal .guardian-edit-field select,
+    #guardianEditorModal .guardian-edit-field textarea {
+      width: 100%;
+      min-height: 48px;
+      padding: 12px 14px;
+      border: 1.5px solid var(--line);
+      border-radius: 10px;
+      background: var(--soft);
+      color: var(--text);
+      font-size: 17px;
+      line-height: 1.4;
+      font-weight: 500;
+    }
+    #guardianEditorModal .guardian-edit-field textarea {
+      min-height: 72px;
+      resize: vertical;
+    }
+    #guardianEditorModal .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 4px;
+    }
+    #guardianEditorModal .actions .action-btn {
+      min-height: 48px;
+      font-size: 16px;
+    }
+    .member-guardian-manage-row {
+      display: grid;
+      gap: 8px;
+      padding: 12px 0;
+      border-bottom: 1px dashed var(--line);
+    }
+    .member-guardian-manage-row:last-child { border-bottom: 0; }
+    .member-guardian-manage-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    .member-guardian-manage-meta strong { color: var(--text); text-align: right; }
+    .member-guardian-manage-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
     /* LIFF/iOS: fixed overlay must scroll itself; avoid overflow:hidden + nested-only scroll */
     #onboardingModal {
       z-index: 60;
@@ -1958,8 +2034,8 @@
     </div>
 
     <div id="guardianSection" hidden>
-        <h3>守護人管理</h3>
-        <p class="helper">未簽到或 SOS 發生時，系統會依方案透過 LINE 或簡訊通知以下守護人（依優先順序）。新增守護人請到會員中心設定。</p>
+        <h3>守護人狀態</h3>
+        <p class="helper">未簽到或 SOS 發生時，系統會依方案透過 LINE 或簡訊通知以下守護人（依優先順序）。編輯／刪除請到會員中心。</p>
         <div id="guardianList" class="guardian-list"></div>
         <p class="helper" id="guardianCount"></p>
         <div class="guardian-actions">
@@ -1973,21 +2049,46 @@
         </div>
       </div>
 
-      <!-- 守護人新增 / 編輯 Modal -->
+      <!-- 守護人新增 / 編輯 Modal（會員中心使用） -->
       <div class="modal-backdrop" id="guardianEditorModal" hidden>
         <div class="guardian-modal">
           <h2 id="guardianEditorTitle">新增守護人</h2>
           <p id="guardianEditorError" class="inline-error" hidden></p>
-          <label>姓名(*)<input type="text" id="gName" placeholder="例:王小明"></label>
-          <label>關系(*)<input type="text" id="gRelationship" placeholder="家人 / 朋友 / 同事"></label>
-          <label>手機號碼<input type="tel" id="gPhone" placeholder="0912345678"></label>
-          <label>Email<input type="email" id="gEmail" placeholder="example@email.com"></label>
-          <label>備註<textarea id="gNote" rows="2"></textarea></label>
-          <label class="setting-choice">
-            <input type="checkbox" id="gIsPrimary">
-            <span>設為主要聯絡人(糷見位最前)</span>
-          </label>
-          <p class="helper">(*) 姓名與關系必填；手機號碼與 Email 至少要填一個。</p>
+          <div class="guardian-edit-fields">
+            <label class="guardian-edit-field" for="gName">姓名（必填）
+              <input type="text" id="gName" placeholder="例如：王小明" autocomplete="name">
+            </label>
+            <label class="guardian-edit-field" for="gRelationship">關係（必填）
+              <select id="gRelationship">
+                <option value="">請選擇關係</option>
+                <option value="配偶">配偶</option>
+                <option value="父母">父母</option>
+                <option value="子女">子女</option>
+                <option value="兄弟姊妹">兄弟姊妹</option>
+                <option value="親戚">親戚</option>
+                <option value="家人">家人</option>
+                <option value="朋友">朋友</option>
+                <option value="鄰居">鄰居</option>
+                <option value="同事">同事</option>
+                <option value="照護人員">照護人員</option>
+                <option value="其他">其他</option>
+              </select>
+            </label>
+            <label class="guardian-edit-field" for="gPhone">手機號碼
+              <input type="tel" id="gPhone" inputmode="tel" placeholder="例如：0912 345 678" autocomplete="tel">
+            </label>
+            <label class="guardian-edit-field" for="gEmail">EMAIL
+              <input type="email" id="gEmail" inputmode="email" placeholder="例如：name@example.com" autocomplete="email">
+            </label>
+            <label class="guardian-edit-field" for="gNote">備註（選填）
+              <textarea id="gNote" rows="2" placeholder="例如：平日白天比較好聯絡"></textarea>
+            </label>
+            <label class="setting-choice" for="gIsPrimary">
+              <input type="checkbox" id="gIsPrimary">
+              <span>設為主要聯絡人（顯示在最前）</span>
+            </label>
+          </div>
+          <p class="helper">姓名與關係必填；手機號碼與 Email 至少填一個。</p>
           <div class="actions">
             <button class="action-btn" id="cancelGuardianBtn" type="button">取消</button>
             <button class="action-btn primary" id="saveGuardianBtn" type="button">儲存</button>
@@ -2007,14 +2108,20 @@
         </div>
       </div>
 
-      <!-- C00 Onboarding Modal(首次使用強制新增守護人 → 完成後再設定提醒時間) -->
+      <!-- C00 Onboarding Modal：先一鍵分享邀請 → 再填守護人資料 → 再設定提醒時間 -->
       <div class="modal-backdrop" id="onboardingModal" hidden>
         <div class="guardian-modal onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle">
           <h2 id="onboardingTitle">歡迎使用「今天還在嗎」</h2>
-          <p class="onboarding-intro" id="onboardingIntro">為了在你未準時簽到或需要協助時，能通知你信任的人，請先新增至少 1 位守護人。</p>
-          <p class="onboarding-step" id="onboardingStepLabel">步驟 1／2　新增第一位守護人</p>
+          <p class="onboarding-intro" id="onboardingIntro">請先用一鍵分享，把綁定邀請傳給你信任的人；完成後再填寫對方資料。</p>
+          <p class="onboarding-step" id="onboardingStepLabel">步驟 1／3　一鍵分享邀請守護人</p>
 
-          <div class="onboarding-form" id="onboardingGuardianStep">
+          <div class="onboarding-form" id="onboardingShareStep">
+            <p class="onboarding-note">對方點開邀請連結、用 LINE 同意後，就能成為你的守護人。分享完成後再繼續填寫資料。</p>
+            <button class="onboarding-submit" id="onboardingShareBtn" type="button">一鍵分享邀請守護人</button>
+            <button class="onboarding-default-btn" id="onboardingShareNextBtn" type="button">下一步：填寫守護人資料</button>
+          </div>
+
+          <div class="onboarding-form" id="onboardingGuardianStep" hidden>
             <div class="onboarding-fields">
               <label class="onboarding-field" for="obName">姓名 <span class="onboarding-required">必填</span>
                 <input type="text" id="obName" placeholder="例如：王小明" autocomplete="name" required>
@@ -2042,7 +2149,7 @@
               <p class="onboarding-note">手機號碼只會用於安全守護與緊急聯絡，不會拿來發送廣告。</p>
               <p id="onboardingError" class="inline-error" role="alert" hidden></p>
             </div>
-            <button class="onboarding-submit" id="onboardingSaveBtn" type="button">新增守護人，下一步設定提醒</button>
+            <button class="onboarding-submit" id="onboardingSaveBtn" type="button">儲存守護人，下一步設定提醒</button>
           </div>
 
           <div class="onboarding-form" id="onboardingReminderStep" hidden>
@@ -2062,6 +2169,7 @@
       </div>
       <div class="status-details" id="statusDetails">
         <div class="status-row"><span class="status-label">☀ 今日簽到</span><span class="status-value" id="dailyStatus">--</span></div>
+        <div class="status-row"><span class="status-label">📅 今日農曆</span><span class="status-value" id="homeLunarText">載入中</span></div>
         <div class="status-row"><span class="status-label">⏰ 上次簽到</span><span class="status-value" id="lastDate">--</span></div>
         <div class="status-row"><span class="status-label">♡ 目前狀態</span><span class="status-value" id="statusText">--</span></div>
         <div class="plan-strip" id="planStrip" data-plan-tone="trial">
@@ -2165,17 +2273,28 @@
           <div class="helper">799 方案請至少完成 1 位守護人的姓名、關係與電話。電話只會用於緊急通知，不會拿來做廣告。</div>
           <div class="guardian-details-status" id="guardianDetailsStatus">尚未完成必要資料</div>
           <div class="guardian-details-form">
-            <select id="guardianDetailsContact" aria-label="選擇已綁定守護人"></select>
-            <input id="guardianDetailsName" placeholder="守護人姓名或暱稱" autocomplete="name">
-            <select id="guardianDetailsRelation" aria-label="與守護人的關係">
-              <option value="">請選擇關係</option>
-              <option value="家人">家人</option>
-              <option value="朋友">朋友</option>
-              <option value="同事">同事</option>
-              <option value="鄰居">鄰居</option>
-              <option value="其他">其他</option>
-            </select>
-            <input id="guardianDetailsPhone" type="tel" inputmode="tel" placeholder="守護人聯絡電話" autocomplete="tel">
+            <label class="form-field" for="guardianDetailsContact"><span>選擇守護人</span>
+              <select id="guardianDetailsContact" aria-label="選擇已綁定守護人"></select>
+            </label>
+            <label class="form-field" for="guardianDetailsName"><span>姓名</span>
+              <input id="guardianDetailsName" placeholder="守護人姓名或暱稱" autocomplete="name">
+            </label>
+            <label class="form-field" for="guardianDetailsRelation"><span>關係</span>
+              <select id="guardianDetailsRelation" aria-label="與守護人的關係">
+                <option value="">請選擇關係</option>
+                <option value="家人">家人</option>
+                <option value="朋友">朋友</option>
+                <option value="同事">同事</option>
+                <option value="鄰居">鄰居</option>
+                <option value="其他">其他</option>
+              </select>
+            </label>
+            <label class="form-field" for="guardianDetailsPhone"><span>手機</span>
+              <input id="guardianDetailsPhone" type="tel" inputmode="tel" placeholder="守護人聯絡電話" autocomplete="tel">
+            </label>
+            <label class="form-field" for="guardianDetailsEmail"><span>EMAIL（選填）</span>
+              <input id="guardianDetailsEmail" type="email" inputmode="email" placeholder="name@example.com" autocomplete="email">
+            </label>
           </div>
           <label class="setting-choice" for="guardianDetailsReminderEnabled">
             <input type="checkbox" id="guardianDetailsReminderEnabled" checked>
@@ -3064,13 +3183,32 @@
           : "目前尚未啟用自動續扣。";
 
       $("memberGuardianList").innerHTML = contactData.length
-        ? contactData.map((contact) => `
-          <div class="member-data-row">
-            <span>${escapeHtml(contact.name || "未命名守護人")}｜${escapeHtml(contact.relationship || "關係未設定")}</span>
-            <strong>${contact.line_id || contact.consent_status === "accepted" ? "LINE 已綁定" : "等待 LINE 授權"}</strong>
-          </div>
-        `).join("")
+        ? contactData.map((contact) => {
+          const cid = escapeHtml(contact.id || "");
+          const bound = contact.line_id || contact.line_user_id || contact.consent_status === "accepted" || contact.binding_status === "accepted";
+          return `
+          <div class="member-guardian-manage-row" data-id="${cid}">
+            <div class="member-guardian-manage-meta">
+              <span>${escapeHtml(contact.name || "未命名守護人")}｜${escapeHtml(contact.relationship || "關係未設定")}<br><small>${escapeHtml(contact.phone || contact.email || "尚未留下聯絡方式")}</small></span>
+              <strong class="${bound ? "guardian-bind-ok" : "guardian-bind-pending"}">${bound ? "LINE 已綁定" : "等待 LINE 授權"}</strong>
+            </div>
+            <div class="member-guardian-manage-actions">
+              <button class="action-btn member-edit-guardian" type="button" data-id="${cid}">編輯</button>
+              <button class="action-btn danger-action member-delete-guardian" type="button" data-id="${cid}">刪除</button>
+            </div>
+          </div>`;
+        }).join("")
         : `<div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護人</strong></div>`;
+      const memberList = $("memberGuardianList");
+      if (memberList && memberList.dataset.bound !== "true") {
+        memberList.dataset.bound = "true";
+        memberList.addEventListener("click", (event) => {
+          const editBtn = event.target.closest(".member-edit-guardian");
+          const deleteBtn = event.target.closest(".member-delete-guardian");
+          if (editBtn) openGuardianEditor(editBtn.dataset.id);
+          if (deleteBtn) confirmDeleteGuardian(deleteBtn.dataset.id);
+        });
+      }
 
       const recentHistory = [...historyData].sort().reverse().slice(0, 10);
       $("memberHistoryList").innerHTML = recentHistory.length
@@ -3123,6 +3261,7 @@
       $("guardianDetailsName").value = contact?.name || "";
       $("guardianDetailsRelation").value = contact?.relationship || "";
       $("guardianDetailsPhone").value = contact?.phone || "";
+      if ($("guardianDetailsEmail")) $("guardianDetailsEmail").value = contact?.email || "";
     }
 
     function renderGuardianDetailsEditor() {
@@ -3161,12 +3300,13 @@
       const name = $("guardianDetailsName").value.trim();
       const relationship = $("guardianDetailsRelation").value;
       const phone = $("guardianDetailsPhone").value.trim();
+      const email = $("guardianDetailsEmail") ? $("guardianDetailsEmail").value.trim() : (contactData[index].email || "");
       if (!name || !relationship || !phone) {
         alert("請填寫守護人姓名、關係與聯絡電話。");
         return;
       }
 
-      contactData[index] = { ...contactData[index], name, relationship, phone };
+      contactData[index] = { ...contactData[index], name, relationship, phone, email };
       try {
         const savedContacts = await apiSaveContacts(true);
         contactData = savedContacts.contacts || contactData;
@@ -3839,18 +3979,18 @@
     }
 
     function goGuardianSettings() {
+      if (typeof showTab === "function") showTab("member");
       setMemberCenterExpanded(true);
-      const section = $("guardianSection");
-      if (section) {
-        section.hidden = false;
-        section.scrollIntoView({ behavior: "smooth", block: "start" });
-      } else {
-        document.querySelector('[aria-label="會員個人中心"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
+      document.querySelector('[aria-label="會員個人中心"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+      const list = $("memberGuardianList");
+      if (list) list.scrollIntoView({ behavior: "smooth", block: "center" });
     }
 
-    function openAddGuardianFromMember() {
+    async function openAddGuardianFromMember() {
+      if (typeof showTab === "function") showTab("member");
       setMemberCenterExpanded(true);
+      // 新增流程：先一鍵分享邀請，再開啟填寫表單
+      await shareContactInvite();
       openGuardianEditor(null);
     }
 
@@ -3994,6 +4134,11 @@
       historyData = data.history || [];
       $("dailyStatus").textContent = data.is_today_checked ? "今日已簽到" : "今日未簽到";
       $("lastDate").textContent = formatDate(data.last_check_in);
+      const homeLunar = $("homeLunarText");
+      if (homeLunar) {
+        const lunar = lunarInfo(new Date());
+        homeLunar.textContent = lunar.festival ? `${lunar.fullLabel}（${lunar.festival}）` : lunar.fullLabel;
+      }
 
       // 使用者頭像(用 LINE picture_url)
       const userPic = $("userPicture");
@@ -4348,14 +4493,29 @@
       return `第 ${index + 1} 次提醒`;
     }
 
-    function showOnboardingGuardianStep() {
+    function showOnboardingShareStep() {
+      const shareStep = $("onboardingShareStep");
       const guardianStep = $("onboardingGuardianStep");
       const reminderStep = $("onboardingReminderStep");
-      if (guardianStep) guardianStep.hidden = false;
+      if (shareStep) shareStep.hidden = false;
+      if (guardianStep) guardianStep.hidden = true;
       if (reminderStep) reminderStep.hidden = true;
       $("onboardingTitle").textContent = "歡迎使用「今天還在嗎」";
-      $("onboardingIntro").textContent = "為了在你未準時簽到或需要協助時，能通知你信任的人，請先新增至少 1 位守護人。";
-      $("onboardingStepLabel").textContent = "步驟 1／2　新增第一位守護人";
+      $("onboardingIntro").textContent = "請先用一鍵分享，把綁定邀請傳給你信任的人；對方同意後，你再填寫對方資料並設定提醒。";
+      $("onboardingStepLabel").textContent = "步驟 1／3　一鍵分享邀請守護人";
+    }
+
+    function showOnboardingGuardianStep() {
+      const shareStep = $("onboardingShareStep");
+      const guardianStep = $("onboardingGuardianStep");
+      const reminderStep = $("onboardingReminderStep");
+      if (shareStep) shareStep.hidden = true;
+      if (guardianStep) guardianStep.hidden = false;
+      if (reminderStep) reminderStep.hidden = true;
+      $("onboardingTitle").textContent = "填寫守護人資料";
+      $("onboardingIntro").textContent = "請填寫至少 1 位守護人的姓名、關係與手機，方便緊急時聯絡。";
+      $("onboardingStepLabel").textContent = "步驟 2／3　填寫守護人資料";
+      setTimeout(() => { try { $("obName")?.focus(); } catch (_) {} }, 50);
     }
 
     function renderOnboardingReminderSlots(times) {
@@ -4376,10 +4536,12 @@
     }
 
     function showOnboardingReminderStep() {
+      const shareStep = $("onboardingShareStep");
       const guardianStep = $("onboardingGuardianStep");
       const reminderStep = $("onboardingReminderStep");
       const errorEl = $("onboardingReminderError");
       if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
+      if (shareStep) shareStep.hidden = true;
       if (guardianStep) guardianStep.hidden = true;
       if (reminderStep) reminderStep.hidden = false;
 
@@ -4389,7 +4551,7 @@
 
       $("onboardingTitle").textContent = "私訊預警通知提醒設定";
       $("onboardingIntro").textContent = "守護人已新增。接下來請確認每日簽到提醒時間；不調整也可直接使用預設。";
-      $("onboardingStepLabel").textContent = `步驟 2／2　私訊預警通知提醒設定（本方案 ${count} 次）`;
+      $("onboardingStepLabel").textContent = `步驟 3／3　私訊預警通知提醒設定（本方案 ${count} 次）`;
       $("onboardingReminderHint").textContent =
         count === 1
           ? "預設中午 12:00。可自行更改。"
@@ -4423,15 +4585,16 @@
 
     function renderGuardians(contacts, contactLimit) {
       guardianList = contacts || [];
+      if (Array.isArray(contacts)) contactData = contacts;
       const listEl = $("guardianList");
       const countEl = $("guardianCount");
       const sectionEl = $("guardianSection");
       if (!listEl) return;
 
-      // 顯示守護人區塊
-      if (sectionEl) sectionEl.hidden = false;
+      // 首頁只顯示唯讀狀態；編輯／刪除改在會員中心
+      const onHome = !location.hash || location.hash === "#home";
+      if (sectionEl) sectionEl.hidden = !onHome;
 
-      // 渲染列表：右側對齊編輯／刪除
       if (contacts && contacts.length > 0) {
         listEl.innerHTML = contacts.map((c) => {
           const bound = c.binding_status === "accepted" || c.consent_status === "accepted" || c.line_id || c.line_user_id;
@@ -4448,20 +4611,10 @@
               <small>${escapeHtml(c.phone || c.email || "尚未留下聯絡方式")}</small>
               <small class="${statusClass}">${statusText}</small>
             </div>
-            <div class="guardian-actions-row">
-              <button class="guardian-action-btn edit-guardian" type="button" data-id="${escapeHtml(c.id)}">編輯</button>
-              <button class="guardian-action-btn danger delete-guardian" type="button" data-id="${escapeHtml(c.id)}">刪除</button>
-            </div>
           </div>`;
         }).join("");
-        listEl.querySelectorAll(".edit-guardian").forEach((btn) => {
-          btn.addEventListener("click", () => openGuardianEditor(btn.dataset.id));
-        });
-        listEl.querySelectorAll(".delete-guardian").forEach((btn) => {
-          btn.addEventListener("click", () => confirmDeleteGuardian(btn.dataset.id));
-        });
       } else {
-        listEl.innerHTML = '<p class="empty-state">尚未設定守護人。請到會員中心新增，或用下方一鍵分享邀請好友綁定。</p>';
+        listEl.innerHTML = '<p class="empty-state">尚未設定守護人。請用下方一鍵分享邀請好友綁定，或到會員中心新增資料。</p>';
       }
 
       if (countEl) {
@@ -4475,11 +4628,19 @@
       const titleEl = $("guardianEditorTitle");
       if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
       if (contactId) {
-        const c = guardianList.find(x => x.id === contactId);
+        const c = guardianList.find(x => x.id === contactId) || contactData.find(x => x.id === contactId);
         if (!c) return;
         if (titleEl) titleEl.textContent = "編輯守護人";
         $("gName").value = c.name || "";
-        $("gRelationship").value = c.relationship || "";
+        const relSelect = $("gRelationship");
+        const rel = c.relationship || "";
+        if (relSelect && rel && !Array.from(relSelect.options).some((o) => o.value === rel)) {
+          const opt = document.createElement("option");
+          opt.value = rel;
+          opt.textContent = rel;
+          relSelect.appendChild(opt);
+        }
+        if (relSelect) relSelect.value = rel;
         $("gPhone").value = c.phone || "";
         $("gEmail").value = c.email || "";
         $("gNote").value = c.note || "";
@@ -4530,6 +4691,7 @@
         }
         if (res.status === 200 && res.data && res.data.ok !== false) {
           renderGuardians(res.data.contacts || [], res.data.contact_limit);
+          if (currentStatusData) renderMemberCenter();
           closeGuardianEditor();
         } else {
           const errMsg = (res.data && (res.data.message || res.data.error)) || "儲存失敗";
@@ -4574,6 +4736,7 @@
         const res = await apiDeleteGuardian(id, lineUserId);
         if (res.status === 200 && res.data.ok !== false) {
           renderGuardians(res.data.contacts || [], null);
+          if (currentStatusData) renderMemberCenter();
           closeDeleteGuardian();
         } else {
           alert("刪除失敗: " + ((res.data && res.data.error) || "未知錯誤"));
@@ -4621,7 +4784,7 @@
       $("obRelationship").value = "";
       $("obPhone").value = "";
       $("obEmail").value = "";
-      showOnboardingGuardianStep();
+      showOnboardingShareStep();
       modal.hidden = false;
       // LIFF/iOS keyboard: keep focused fields/buttons reachable by scrolling the fixed overlay
       if (modal.dataset.scrollBound !== "true") {
@@ -4640,13 +4803,12 @@
       }
       // Ensure the modal overlay itself can receive vertical pans (reset any stuck scroll)
       try { modal.scrollTop = 0; } catch (_) {}
-      setTimeout(() => $("obName").focus(), 50);
     }
 
     function closeOnboarding() {
       const modal = $("onboardingModal");
       modal.hidden = true;
-      showOnboardingGuardianStep();
+      showOnboardingShareStep();
     }
 
     async function saveOnboardingGuardian() {
@@ -4750,6 +4912,8 @@
       const cancelBtn = $("cancelGuardianBtn");
       const cancelDelBtn = $("cancelDeleteGuardianBtn");
       const confirmDelBtn = $("confirmDeleteGuardianBtn");
+      const obShareBtn = $("onboardingShareBtn");
+      const obShareNextBtn = $("onboardingShareNextBtn");
       const obSaveBtn = $("onboardingSaveBtn");
       const obReminderSaveBtn = $("onboardingReminderSaveBtn");
       const obUseDefaultsBtn = $("onboardingUseDefaultsBtn");
@@ -4759,6 +4923,13 @@
       if (cancelBtn) cancelBtn.addEventListener("click", closeGuardianEditor);
       if (cancelDelBtn) cancelDelBtn.addEventListener("click", closeDeleteGuardian);
       if (confirmDelBtn) confirmDelBtn.addEventListener("click", executeDeleteGuardian);
+      if (obShareBtn) {
+        obShareBtn.addEventListener("click", async () => {
+          await shareContactInvite();
+          showOnboardingGuardianStep();
+        });
+      }
+      if (obShareNextBtn) obShareNextBtn.addEventListener("click", showOnboardingGuardianStep);
       if (obSaveBtn) obSaveBtn.addEventListener("click", saveOnboardingGuardian);
       if (obReminderSaveBtn) obReminderSaveBtn.addEventListener("click", saveOnboardingReminder);
       if (obUseDefaultsBtn) {
@@ -4808,21 +4979,24 @@
           renderGuardians(contactsRes.data.contacts || [], contactsRes.data.contact_limit);
         }
 
-        // C00 Onboarding 檢查（?open=onboarding 強制走守護人表單→提醒設定）
+        // C00 Onboarding 檢查（?open=onboarding：先分享邀請 → 再填表 → 再提醒）
         const openAction = new URLSearchParams(location.search).get("open") || "";
-        const forceOnboarding = openAction === "onboarding" || openAction === "guardian";
+        const forceOnboarding = openAction === "onboarding" || openAction === "guardian" || openAction === "bind";
         const obDone = await checkOnboarding();
         if (!obDone) {
           await showOnboarding();
         } else if (forceOnboarding) {
-          // 已完成設定：改開守護人頁，避免重複整段 onboarding
-          if (typeof showTab === "function") showTab("guardians");
+          // 已完成設定：仍先走一鍵分享，再進會員中心填／編輯守護人資料
+          await shareContactInvite();
+          if (typeof showTab === "function") showTab("member");
+          setMemberCenterExpanded(true);
+          openGuardianEditor(null);
           await maybeShowGuardianComplete();
         } else {
           await maybeShowGuardianComplete();
         }
         // Deep link：member / guardians / home
-        if (openAction === "member" && typeof showTab === "function") showTab("member");
+        if (openAction === "member" && !forceOnboarding && typeof showTab === "function") showTab("member");
         else if (openAction === "guardians" && !forceOnboarding && typeof showTab === "function") showTab("guardians");
         else if ((openAction === "checkin" || location.hash === "#home") && typeof showTab === "function") {
           showTab("home");
@@ -4838,18 +5012,23 @@
       // 隱藏所有 sections,只顯示當前 tab 的 sections
       const allSections = document.querySelectorAll("main > section");
       allSections.forEach(s => s.hidden = true);
-      // 對應 tab → 顯示哪些 sections(D01 修正:399/799 升級方案 → 會員中心)
+      // 對應 tab → 顯示哪些 sections（還原首頁農曆月曆、好友定位；會員中心可編輯守護人）
       const tabMap = {
-        home: ["簽到狀態"],
-        guardians: ["守護群設定教學", "會員個人中心", "安心守護邀請任務", "緊急聯絡人", "好友地圖"],
+        home: ["簽到狀態", "簽到月曆", "好友地圖"],
+        guardians: ["守護群設定教學", "安心守護邀請任務", "緊急聯絡人"],
         history: ["簽到月曆"],
-        member: ["升級方案"],
+        member: ["會員個人中心", "升級方案", "好友地圖"],
       };
       const showLabels = tabMap[tabName] || ["簽到狀態"];
       allSections.forEach(s => {
         const label = s.getAttribute("aria-label");
         if (showLabels.includes(label)) s.hidden = false;
       });
+      // 首頁唯讀守護人狀態；其他頁隱藏
+      const guardianSection = $("guardianSection");
+      if (guardianSection) guardianSection.hidden = tabName !== "home";
+      // 會員中心預設展開，方便編輯／刪除守護人
+      if (tabName === "member") setMemberCenterExpanded(true);
       // 更新 nav active
       document.querySelectorAll(".nav-item").forEach(n => {
         n.classList.toggle("active", n.dataset.tab === tabName);
@@ -4995,8 +5174,12 @@
         } catch (e) { console.warn(e); }
         modal.hidden = true;
         if (pref === "now") {
-          // 開新增守護人 editor
-          if (typeof openGuardianEditor === "function") openGuardianEditor(null);
+          // 先一鍵分享，再進會員中心填寫／編輯守護人
+          if (typeof showTab === "function") showTab("member");
+          setMemberCenterExpanded(true);
+          Promise.resolve(shareContactInvite()).finally(() => {
+            if (typeof openGuardianEditor === "function") openGuardianEditor(null);
+          });
         }
       };
       now.addEventListener("click", () => sendPreference("now"));

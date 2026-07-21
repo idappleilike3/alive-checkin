@@ -45,7 +45,7 @@ def liff_entry_url(*, open_action: str | None = None, fragment: str = "") -> str
     """永久內嵌 LIFF 入口（https://liff.line.me/<LIFF_ID>）。
 
     不要使用含 code= / state= 的一次性 OAuth callback URL。
-    open_action 會傳到 Endpoint（例如 open=onboarding → 守護人表單→提醒設定）。
+    open_action 會傳到 Endpoint（例如 open=onboarding → 先一鍵分享邀請，再填守護人表單→提醒設定）。
     """
     url = f"https://liff.line.me/{get_liff_id()}"
     if open_action:
@@ -1003,12 +1003,12 @@ def welcome_flex(display_name: str | None = None):
     """加好友歡迎 Flex：Exact 歡迎文案 + 主 CTA「立即綁定守護人」。
 
     display_name：LINE 顯示名稱；缺省時用「您」。
-    主 CTA：永久 liff.line.me 入口（內嵌）→ 守護人表單 → 私訊預警提醒設定。
+    主 CTA：永久 liff.line.me 入口（內嵌）→ 先一鍵分享邀請 → 再填守護人表單 → 私訊預警提醒設定。
     次要僅保留可選「報平安」。不使用 BOT 字眼。
     """
     name = (display_name or "").strip() or "您"
     greeting = f"👋 {name} 您好，歡迎加入「今天還在嗎」"
-    # 永久連結：開 LIFF 內嵌 → onboarding（守護人 → 提醒）。勿硬編碼 OAuth code/state。
+    # 永久連結：開 LIFF 內嵌 → onboarding（分享邀請 → 守護人表單 → 提醒）。勿硬編碼 OAuth code/state。
     bind_uri = liff_entry_url(open_action="onboarding")
     checkin_uri = liff_entry_url(fragment="home")
     return {
