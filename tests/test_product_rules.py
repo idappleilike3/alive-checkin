@@ -191,6 +191,8 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("新增守護人，下一步設定提醒", onboarding)
         self.assertIn('id="onboardingReminderStep"', onboarding)
         self.assertIn("完成設定並進入首頁", onboarding)
+        self.assertIn('id="onboardingCloseBtn"', onboarding)
+        self.assertIn("onboarding-form[hidden]", page)
         self.assertNotIn("欢迎", onboarding)
         self.assertNotIn("关系", onboarding)
         self.assertIn(".onboarding-submit", page)

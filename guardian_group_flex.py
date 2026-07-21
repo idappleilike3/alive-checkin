@@ -1000,17 +1000,16 @@ def _owner_status_block(owner_info):
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友歡迎 Flex：Exact 歡迎文案 + 主 CTA「立即綁定守護人」。
+    """加好友歡迎 Flex：Exact 歡迎文案 + 單一主 CTA「立即綁定守護人」。
 
     display_name：LINE 顯示名稱；缺省時用「您」。
     主 CTA：永久 liff.line.me 入口（內嵌）→ 先一鍵分享邀請 → 再填守護人表單 → 私訊預警提醒設定。
-    次要僅保留可選「報平安」。不使用 BOT 字眼。
+    僅保留一個大按鈕；標題／內文放大方便閱讀。不使用 BOT 字眼。
     """
     name = (display_name or "").strip() or "您"
     greeting = f"👋 {name} 您好，歡迎加入「今天還在嗎」"
     # 永久連結：開 LIFF 內嵌 → onboarding（分享邀請 → 守護人表單 → 提醒）。勿硬編碼 OAuth code/state。
     bind_uri = liff_entry_url(open_action="onboarding")
-    checkin_uri = liff_entry_url(fragment="home")
     return {
         "type": "bubble",
         "size": "mega",
@@ -1018,8 +1017,8 @@ def welcome_flex(display_name: str | None = None):
             "type": "box",
             "layout": "vertical",
             "backgroundColor": GREEN_DARK,
-            "paddingTop": "lg",
-            "paddingBottom": "lg",
+            "paddingTop": "xl",
+            "paddingBottom": "xl",
             "paddingStart": "lg",
             "paddingEnd": "lg",
             "contents": [
@@ -1027,7 +1026,7 @@ def welcome_flex(display_name: str | None = None):
                     "type": "text",
                     "text": greeting,
                     "color": "#FFFFFF",
-                    "size": "lg",
+                    "size": "xxl",
                     "weight": "bold",
                     "align": "center",
                     "wrap": True,
@@ -1037,7 +1036,7 @@ def welcome_flex(display_name: str | None = None):
         "body": {
             "type": "box",
             "layout": "vertical",
-            "spacing": "md",
+            "spacing": "lg",
             "paddingTop": "lg",
             "paddingBottom": "md",
             "contents": [
@@ -1047,14 +1046,14 @@ def welcome_flex(display_name: str | None = None):
                         "我是您的每日平安小助手，會在您設定的時間提醒您報平安，"
                         "只有超過時間仍未報平安，才會通知您指定的守護人"
                     ),
-                    "size": "md",
+                    "size": "lg",
                     "color": GRAY,
                     "wrap": True,
                 },
                 {
                     "type": "text",
                     "text": "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間",
-                    "size": "md",
+                    "size": "lg",
                     "color": GRAY,
                     "wrap": True,
                     "weight": "bold",
@@ -1072,7 +1071,7 @@ def welcome_flex(display_name: str | None = None):
                         {
                             "type": "text",
                             "text": "🎁 完成設定即享 7 天免費安心體驗",
-                            "size": "md",
+                            "size": "lg",
                             "weight": "bold",
                             "color": ORANGE,
                             "wrap": True,
@@ -1082,7 +1081,7 @@ def welcome_flex(display_name: str | None = None):
                 {
                     "type": "text",
                     "text": "🚨 緊急狀況請直接撥打 119，聊天訊息可能因網路延遲",
-                    "size": "md",
+                    "size": "lg",
                     "color": GRAY_LIGHT,
                     "wrap": True,
                 },
@@ -1092,7 +1091,7 @@ def welcome_flex(display_name: str | None = None):
             "type": "box",
             "layout": "vertical",
             "spacing": "sm",
-            "paddingAll": "md",
+            "paddingAll": "lg",
             "backgroundColor": "#FAFAFA",
             "contents": [
                 {
@@ -1106,13 +1105,6 @@ def welcome_flex(display_name: str | None = None):
                     "color": GREEN_DARK,
                     "height": "md",
                 },
-                _uri_button(
-                    "報平安",
-                    checkin_uri,
-                    style="link",
-                    color=GRAY,
-                    height="sm",
-                ),
             ],
         },
     }

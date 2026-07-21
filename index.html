@@ -1335,24 +1335,52 @@
     }
     .member-guardian-manage-row {
       display: grid;
-      gap: 8px;
-      padding: 12px 0;
+      gap: 10px;
+      padding: 14px 0;
       border-bottom: 1px dashed var(--line);
     }
     .member-guardian-manage-row:last-child { border-bottom: 0; }
     .member-guardian-manage-meta {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      align-items: flex-start;
-      font-size: 14px;
+      display: grid;
+      gap: 6px;
+      font-size: 16px;
       color: var(--muted);
+      line-height: 1.5;
     }
-    .member-guardian-manage-meta strong { color: var(--text); text-align: right; }
+    .member-guardian-manage-meta .guardian-manage-name {
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 800;
+    }
+    .member-guardian-manage-meta strong {
+      color: var(--text);
+      font-size: 15px;
+      justify-self: start;
+    }
     .member-guardian-manage-actions {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 8px;
+      gap: 10px;
+    }
+    .member-guardian-manage-actions .action-btn {
+      min-height: 48px;
+      font-size: 16px;
+    }
+    .member-data-actions {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .member-data-actions .action-btn {
+      min-height: 52px;
+      font-size: 17px;
+      font-weight: 800;
+    }
+    .member-data-actions .action-btn.primary {
+      background: #087f57;
+      color: #fff;
+      border-color: #087f57;
     }
     /* LIFF/iOS: fixed overlay must scroll itself; avoid overflow:hidden + nested-only scroll */
     #onboardingModal {
@@ -1407,6 +1435,28 @@
       flex-direction: column;
       gap: 12px;
     }
+    .onboarding-form[hidden] { display: none !important; }
+    .onboarding-modal-header {
+      position: relative;
+      padding-right: 44px;
+    }
+    .onboarding-close-btn {
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      width: 44px;
+      height: 44px;
+      border: 0;
+      border-radius: 12px;
+      background: #eef2f6;
+      color: #334155;
+      font-size: 26px;
+      line-height: 1;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .onboarding-close-btn:hover { background: #e2e8f0; }
+    .onboarding-close-btn[hidden] { display: none !important; }
     .onboarding-fields {
       display: grid;
       grid-template-columns: 1fr;
@@ -2111,7 +2161,10 @@
       <!-- C00 Onboarding Modal：先一鍵分享邀請 → 再填守護人資料 → 再設定提醒時間 -->
       <div class="modal-backdrop" id="onboardingModal" hidden>
         <div class="guardian-modal onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle">
-          <h2 id="onboardingTitle">歡迎使用「今天還在嗎」</h2>
+          <div class="onboarding-modal-header">
+            <h2 id="onboardingTitle">歡迎使用「今天還在嗎」</h2>
+            <button class="onboarding-close-btn" id="onboardingCloseBtn" type="button" aria-label="關閉" hidden>×</button>
+          </div>
           <p class="onboarding-intro" id="onboardingIntro">請先用一鍵分享，把綁定邀請傳給你信任的人；完成後再填寫對方資料。</p>
           <p class="onboarding-step" id="onboardingStepLabel">步驟 1／3　一鍵分享邀請守護人</p>
 
@@ -2134,6 +2187,7 @@
                   <option value="子女">子女</option>
                   <option value="兄弟姊妹">兄弟姊妹</option>
                   <option value="親戚">親戚</option>
+                  <option value="家人">家人</option>
                   <option value="朋友">朋友</option>
                   <option value="鄰居">鄰居</option>
                   <option value="照護人員">照護人員</option>
@@ -2149,7 +2203,7 @@
               <p class="onboarding-note">手機號碼只會用於安全守護與緊急聯絡，不會拿來發送廣告。</p>
               <p id="onboardingError" class="inline-error" role="alert" hidden></p>
             </div>
-            <button class="onboarding-submit" id="onboardingSaveBtn" type="button">儲存守護人，下一步設定提醒</button>
+            <button class="onboarding-submit" id="onboardingSaveBtn" type="button">新增守護人，下一步設定提醒</button>
           </div>
 
           <div class="onboarding-form" id="onboardingReminderStep" hidden>
@@ -2256,14 +2310,13 @@
         </div>
 
         <div class="member-data-section">
-          <h3>守護人綁定狀態</h3>
-          <div class="helper">完成 LINE 綁定後，系統才能在你未準時簽到或發出 SOS 時，依優先順序通知對方。</div>
+          <h3>守護人聯絡人</h3>
+          <div class="helper">依優先順序顯示。完成 LINE 綁定後，系統才能在你未準時簽到或發出 SOS 時通知對方。編輯與刪除請直接在列表操作。</div>
           <div class="member-data-list" id="memberGuardianList">
             <div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護人</strong></div>
           </div>
           <div class="member-data-actions">
-            <button class="action-btn" id="memberAddGuardianBtn" type="button">＋ 新增守護人</button>
-            <button class="action-btn" id="memberGuardianSettingsBtn" type="button">管理守護人列表</button>
+            <button class="action-btn primary" id="memberAddGuardianBtn" type="button">＋ 新增聯絡人</button>
             <button class="action-btn" id="memberShareGuardianBtn" type="button">一鍵分享邀請守護人</button>
           </div>
         </div>
@@ -3183,13 +3236,14 @@
           : "目前尚未啟用自動續扣。";
 
       $("memberGuardianList").innerHTML = contactData.length
-        ? contactData.map((contact) => {
+        ? contactData.map((contact, index) => {
           const cid = escapeHtml(contact.id || "");
           const bound = contact.line_id || contact.line_user_id || contact.consent_status === "accepted" || contact.binding_status === "accepted";
           return `
           <div class="member-guardian-manage-row" data-id="${cid}">
             <div class="member-guardian-manage-meta">
-              <span>${escapeHtml(contact.name || "未命名守護人")}｜${escapeHtml(contact.relationship || "關係未設定")}<br><small>${escapeHtml(contact.phone || contact.email || "尚未留下聯絡方式")}</small></span>
+              <span class="guardian-manage-name">${index + 1}. ${escapeHtml(contact.name || "未命名守護人")}${contact.is_primary ? " ⭐ 主要" : ""}</span>
+              <span>${escapeHtml(contact.relationship || "關係未設定")} · ${escapeHtml(contact.phone || contact.email || "尚未留下聯絡方式")}</span>
               <strong class="${bound ? "guardian-bind-ok" : "guardian-bind-pending"}">${bound ? "LINE 已綁定" : "等待 LINE 授權"}</strong>
             </div>
             <div class="member-guardian-manage-actions">
@@ -4765,6 +4819,17 @@
     }
 
     // C00 Onboarding
+    function currentGuardianContacts() {
+      if (Array.isArray(contactData) && contactData.length) return contactData;
+      if (Array.isArray(guardianList) && guardianList.length) return guardianList;
+      return [];
+    }
+
+    function setOnboardingCloseVisible(canDismiss) {
+      const closeBtn = $("onboardingCloseBtn");
+      if (closeBtn) closeBtn.hidden = !canDismiss;
+    }
+
     async function checkOnboarding() {
       if (!lineUserId) return true;
       try {
@@ -4784,7 +4849,17 @@
       $("obRelationship").value = "";
       $("obPhone").value = "";
       $("obEmail").value = "";
-      showOnboardingShareStep();
+
+      const contacts = currentGuardianContacts();
+      const canDismiss = contacts.length > 0;
+      setOnboardingCloseVisible(canDismiss);
+
+      // 已有 ≥1 位守護人：不要再強制「新增守護人」，直接進提醒步驟（可按 X 關閉）
+      if (contacts.length > 0) {
+        showOnboardingReminderStep();
+      } else {
+        showOnboardingShareStep();
+      }
       modal.hidden = false;
       // LIFF/iOS keyboard: keep focused fields/buttons reachable by scrolling the fixed overlay
       if (modal.dataset.scrollBound !== "true") {
@@ -4808,12 +4883,14 @@
     function closeOnboarding() {
       const modal = $("onboardingModal");
       modal.hidden = true;
+      setOnboardingCloseVisible(false);
       showOnboardingShareStep();
     }
 
     async function saveOnboardingGuardian() {
       const errorEl = $("onboardingError");
       const saveBtn = $("onboardingSaveBtn");
+      if (!saveBtn) return;
       if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
       const payload = {
         line_user_id: lineUserId,
@@ -4840,17 +4917,49 @@
       saveBtn.disabled = true;
       saveBtn.textContent = "正在新增守護人...";
       try {
-        const res = await apiAddGuardian(payload);
+        // 若名額已滿（常見：對方已先 LINE 綁定占了唯一名額），改為更新既有聯絡人，避免卡住無法下一步
+        let contacts = currentGuardianContacts();
+        let contactLimit = currentContactLimit || 1;
+        try {
+          const existing = await apiGetContacts(lineUserId);
+          if (existing.status === 200 && existing.data) {
+            contacts = existing.data.contacts || contacts;
+            contactLimit = existing.data.contact_limit || contactLimit;
+          }
+        } catch (_) {}
+
+        let res;
+        const incomplete = contacts.find((c) => c && c.id && !(String(c.phone || "").trim()));
+        const updateTarget = incomplete || (contacts.length >= contactLimit ? contacts[0] : null);
+        if (updateTarget && updateTarget.id) {
+          res = await apiUpdateGuardian(updateTarget.id, payload);
+        } else {
+          res = await apiAddGuardian(payload);
+          if (
+            res.status === 400 &&
+            res.data &&
+            res.data.error === "contact_limit_exceeded" &&
+            contacts[0] &&
+            contacts[0].id
+          ) {
+            res = await apiUpdateGuardian(contacts[0].id, payload);
+          }
+        }
+
         if (res.status !== 200 || res.data.ok === false) {
           const errMsg = (res.data && (res.data.message || res.data.error)) || "儲存失敗";
           const fields = (res.data && res.data.fields) ? `(${res.data.fields.join(", ")})` : "";
           if (errorEl) {
-            errorEl.textContent = `${errMsg} ${fields}`;
+            errorEl.textContent = `${errMsg} ${fields}`.trim();
             errorEl.hidden = false;
           }
           return;
         }
-        renderGuardians(res.data.contacts || [], res.data.contact_limit);
+        const savedContacts = res.data.contacts || [];
+        renderGuardians(savedContacts, res.data.contact_limit || contactLimit);
+        if (Array.isArray(savedContacts)) contactData = savedContacts;
+        if (currentStatusData) renderMemberCenter();
+        setOnboardingCloseVisible(true);
         // 表單完成後才顯示提醒時間設定(不要一進來就跳)
         showOnboardingReminderStep();
       } catch (error) {
@@ -4917,6 +5026,7 @@
       const obSaveBtn = $("onboardingSaveBtn");
       const obReminderSaveBtn = $("onboardingReminderSaveBtn");
       const obUseDefaultsBtn = $("onboardingUseDefaultsBtn");
+      const obCloseBtn = $("onboardingCloseBtn");
       if (inviteBtn) inviteBtn.addEventListener("click", () => shareContactInvite());
       if (copyBtn) copyBtn.addEventListener("click", copyInviteUrl);
       if (saveBtn) saveBtn.addEventListener("click", saveGuardian);
@@ -4932,6 +5042,7 @@
       if (obShareNextBtn) obShareNextBtn.addEventListener("click", showOnboardingGuardianStep);
       if (obSaveBtn) obSaveBtn.addEventListener("click", saveOnboardingGuardian);
       if (obReminderSaveBtn) obReminderSaveBtn.addEventListener("click", saveOnboardingReminder);
+      if (obCloseBtn) obCloseBtn.addEventListener("click", closeOnboarding);
       if (obUseDefaultsBtn) {
         obUseDefaultsBtn.addEventListener("click", () => {
           const count = planDailyReminderCount(currentStatusData || {});
@@ -4977,16 +5088,23 @@
         const contactsRes = await apiGetContacts(lineUserId);
         if (contactsRes.status === 200) {
           renderGuardians(contactsRes.data.contacts || [], contactsRes.data.contact_limit);
+          contactData = contactsRes.data.contacts || [];
         }
 
-        // C00 Onboarding 檢查（?open=onboarding：先分享邀請 → 再填表 → 再提醒）
+        // C00 Onboarding 檢查（?open=onboarding）
+        // 已綁定 ≥1 位守護人且完成設定：不彈分享、不強制新增，直接進首頁
         const openAction = new URLSearchParams(location.search).get("open") || "";
         const forceOnboarding = openAction === "onboarding" || openAction === "guardian" || openAction === "bind";
+        const hasGuardians = currentGuardianContacts().length > 0;
         const obDone = await checkOnboarding();
-        if (!obDone) {
+        if (obDone && hasGuardians) {
+          // 歡迎 CTA / open=onboarding 再次進入：略過分享與強制表單，直接首頁
+          if (typeof showTab === "function") showTab("home");
+          await maybeShowGuardianComplete();
+        } else if (!obDone) {
           await showOnboarding();
-        } else if (forceOnboarding) {
-          // 已完成設定：仍先走一鍵分享，再進會員中心填／編輯守護人資料
+        } else if (forceOnboarding && !hasGuardians) {
+          // 已完成設定但尚無守護人：才走分享＋新增
           await shareContactInvite();
           if (typeof showTab === "function") showTab("member");
           setMemberCenterExpanded(true);
@@ -4995,10 +5113,14 @@
         } else {
           await maybeShowGuardianComplete();
         }
-        // Deep link：member / guardians / home
-        if (openAction === "member" && !forceOnboarding && typeof showTab === "function") showTab("member");
-        else if (openAction === "guardians" && !forceOnboarding && typeof showTab === "function") showTab("guardians");
-        else if ((openAction === "checkin" || location.hash === "#home") && typeof showTab === "function") {
+        // Deep link：member / guardians / home（已綁定且 open=onboarding 已於上方進首頁）
+        if (obDone && hasGuardians && forceOnboarding) {
+          if (typeof showTab === "function") showTab("home");
+        } else if (openAction === "member" && !forceOnboarding && typeof showTab === "function") {
+          showTab("member");
+        } else if (openAction === "guardians" && !forceOnboarding && typeof showTab === "function") {
+          showTab("guardians");
+        } else if ((openAction === "checkin" || location.hash === "#home") && typeof showTab === "function") {
           showTab("home");
         }
       } catch (error) {
@@ -5238,10 +5360,10 @@
     $("exportMyDataBtn").addEventListener("click", exportMyData);
     $("deleteCheckinHistoryBtn").addEventListener("click", deleteCheckinHistory);
     $("deleteAccountBtn").addEventListener("click", deleteAccountAndData);
-    $("memberGuardianSettingsBtn").addEventListener("click", goGuardianSettings);
     const memberAddGuardianBtn = $("memberAddGuardianBtn");
     if (memberAddGuardianBtn) memberAddGuardianBtn.addEventListener("click", openAddGuardianFromMember);
-    $("memberShareGuardianBtn").addEventListener("click", shareContactInvite);
+    const memberShareGuardianBtn = $("memberShareGuardianBtn");
+    if (memberShareGuardianBtn) memberShareGuardianBtn.addEventListener("click", shareContactInvite);
     $("guardianDetailsContact").addEventListener("change", populateGuardianDetailsForm);
     $("saveGuardianDetailsBtn").addEventListener("click", saveGuardianDetails);
     $("saveBillingPreferencesBtn").addEventListener("click", saveBillingPreferences);
