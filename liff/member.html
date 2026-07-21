@@ -54,6 +54,12 @@
   .btn-danger {
     border-color: #D32F2F;
     color: #D32F2F;
+    background: #fff;
+  }
+  .btn-edit {
+    background: #00B900;
+    border-color: #00B900;
+    color: #fff;
   }
   .btn-row {
     display: grid;
@@ -79,12 +85,17 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 10px;
-    margin-top: 8px;
+    margin-top: 10px;
+    width: 100%;
   }
   .guardian-actions .btn {
     margin: 0;
     min-height: 48px;
+    padding: 12px 14px;
     font-size: 16px;
+    font-weight: 800;
+    border-radius: 12px;
+    box-sizing: border-box;
   }
   .contact-actions {
     display: grid;
@@ -370,7 +381,7 @@ function renderGuardians() {
       <div class="guardian-detail">${escape(g.phone || g.email || "未填聯絡方式")}</div>
       <div class="guardian-detail">${bound ? "✅ LINE 已綁定" : "⏳ 等待 LINE 綁定"}</div>
       <div class="guardian-actions">
-        <button class="btn" type="button" data-edit="${escape(g.id)}">編輯</button>
+        <button class="btn btn-edit" type="button" data-edit="${escape(g.id)}">編輯</button>
         <button class="btn btn-danger" type="button" data-delete="${escape(g.id)}">刪除</button>
       </div>
     </div>`;

@@ -527,8 +527,18 @@
       cursor: not-allowed;
     }
     .check-btn.checked {
-      background: #16a34a;
+      background: var(--checked);
       color: #fff;
+      box-shadow: var(--button-shadow);
+    }
+    /* 可愛風格：簽到按鈕強制粉色（含已簽到），勿被綠色覆蓋 */
+    body.cute .check-btn:not(.danger):not(.warning) {
+      background: var(--button);
+      box-shadow: var(--button-shadow);
+    }
+    body.cute .check-btn.checked:not(.danger):not(.warning) {
+      background: var(--checked);
+      box-shadow: var(--button-shadow);
     }
     .reload-btn {
       margin-top: 10px;
@@ -542,17 +552,24 @@
     .member-profile-row small { display: block; }
     .member-profile-row small { margin-top: 3px; color: var(--muted); line-height: 1.45; }
     .member-upgrade-btn {
-      min-height: 44px;
-      padding: 9px 15px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-height: 52px;
+      padding: 14px 20px;
       border: 0;
-      border-radius: 8px;
+      border-radius: 12px;
       color: #fff;
       background: linear-gradient(135deg, #ff4d2e, #e11d48);
       box-shadow: 0 8px 18px rgba(225, 29, 72, 0.28);
-      font-size: 15px;
+      font-size: 18px;
       font-weight: 900;
+      line-height: 1.2;
+      letter-spacing: 0.02em;
       cursor: pointer;
       white-space: nowrap;
+      box-sizing: border-box;
     }
     .member-upgrade-btn:hover { transform: translateY(-1px); }
     .member-upgrade-btn:focus-visible { outline: 3px solid rgba(255, 77, 46, 0.3); outline-offset: 2px; }
@@ -1335,11 +1352,14 @@
     }
     .member-guardian-manage-row {
       display: grid;
-      gap: 10px;
-      padding: 14px 0;
-      border-bottom: 1px dashed var(--line);
+      gap: 12px;
+      padding: 16px 14px;
+      margin: 10px 0;
+      border: 1.5px solid var(--line);
+      border-radius: 14px;
+      background: var(--soft);
     }
-    .member-guardian-manage-row:last-child { border-bottom: 0; }
+    .member-guardian-manage-row:last-child { margin-bottom: 0; }
     .member-guardian-manage-meta {
       display: grid;
       gap: 6px;
@@ -1361,10 +1381,31 @@
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 10px;
+      width: 100%;
     }
     .member-guardian-manage-actions .action-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       min-height: 48px;
+      width: 100%;
+      margin: 0;
+      padding: 12px 14px;
+      border-radius: 12px;
       font-size: 16px;
+      font-weight: 800;
+      box-sizing: border-box;
+    }
+    .member-guardian-manage-actions .member-edit-guardian {
+      background: #087f57;
+      border-color: #087f57;
+      color: #fff;
+    }
+    .member-guardian-manage-actions .member-delete-guardian,
+    .member-guardian-manage-actions .danger-action {
+      background: #fff;
+      border: 1.5px solid #dc2626;
+      color: #dc2626;
     }
     .member-data-actions {
       display: grid;
@@ -1796,7 +1837,13 @@
       .setting-row { grid-template-columns: 1fr; }
       .plan-strip, .contact-grid { grid-template-columns: 1fr; }
       .member-profile-row { grid-template-columns: 44px minmax(0, 1fr); }
-      .member-upgrade-btn { grid-column: 1 / -1; width: 100%; }
+      .member-upgrade-btn {
+        grid-column: 1 / -1;
+        width: 100%;
+        min-height: 54px;
+        font-size: 18px;
+        padding: 14px 18px;
+      }
     }
   
     /* === D01: 底部導覽列(z-index 30 確保高於 onboarding modal) === */
@@ -3247,8 +3294,8 @@
               <strong class="${bound ? "guardian-bind-ok" : "guardian-bind-pending"}">${bound ? "LINE 已綁定" : "等待 LINE 授權"}</strong>
             </div>
             <div class="member-guardian-manage-actions">
-              <button class="action-btn member-edit-guardian" type="button" data-id="${cid}">編輯</button>
-              <button class="action-btn danger-action member-delete-guardian" type="button" data-id="${cid}">刪除</button>
+              <button class="action-btn member-edit-guardian" type="button" data-id="${cid}" aria-label="編輯守護人">編輯</button>
+              <button class="action-btn danger-action member-delete-guardian" type="button" data-id="${cid}" aria-label="刪除守護人">刪除</button>
             </div>
           </div>`;
         }).join("")
@@ -3259,8 +3306,16 @@
         memberList.addEventListener("click", (event) => {
           const editBtn = event.target.closest(".member-edit-guardian");
           const deleteBtn = event.target.closest(".member-delete-guardian");
-          if (editBtn) openGuardianEditor(editBtn.dataset.id);
-          if (deleteBtn) confirmDeleteGuardian(deleteBtn.dataset.id);
+          if (editBtn) {
+            event.preventDefault();
+            const id = editBtn.getAttribute("data-id") || editBtn.dataset.id;
+            if (id) openGuardianEditor(id);
+          }
+          if (deleteBtn) {
+            event.preventDefault();
+            const id = deleteBtn.getAttribute("data-id") || deleteBtn.dataset.id;
+            if (id) confirmDeleteGuardian(id);
+          }
         });
       }
 
@@ -4674,6 +4729,10 @@
       if (countEl) {
         countEl.textContent = `目前 ${contacts ? contacts.length : 0} / ${contactLimit || "?"} 位`;
       }
+      // 守護人載入後同步刷新會員中心列表（含編輯／刪除）
+      if (typeof renderMemberCenter === "function" && currentStatusData) {
+        renderMemberCenter();
+      }
     }
 
     function openGuardianEditor(contactId) {
@@ -4767,8 +4826,8 @@
     }
 
     function confirmDeleteGuardian(contactId) {
-      const c = guardianList.find(x => x.id === contactId);
-      if (!c) return;
+      const c = guardianList.find(x => x.id === contactId) || contactData.find(x => x.id === contactId);
+      if (!c || !contactId) return;
       const modal = $("deleteGuardianModal");
       const nameEl = $("deleteGuardianName");
       if (nameEl) nameEl.textContent = c.name;
@@ -5084,11 +5143,13 @@
         }
         renderStatus(status);
 
-        // 載入守護人
+        // 載入守護人（renderGuardians 會同步刷新會員中心編輯／刪除）
         const contactsRes = await apiGetContacts(lineUserId);
         if (contactsRes.status === 200) {
-          renderGuardians(contactsRes.data.contacts || [], contactsRes.data.contact_limit);
           contactData = contactsRes.data.contacts || [];
+          renderGuardians(contactData, contactsRes.data.contact_limit);
+        } else if (currentStatusData) {
+          renderMemberCenter();
         }
 
         // C00 Onboarding 檢查（?open=onboarding）
