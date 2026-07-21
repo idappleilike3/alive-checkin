@@ -109,9 +109,81 @@
     color: #888;
   }
   .icon-big {
-    font-size: 56px;
+    font-size: 64px;
     text-align: center;
     margin: 20px 0;
+  }
+  /* 🎁 歡迎詞風格完成設定卡片 */
+  .gift-card {
+    background: linear-gradient(135deg, #00B900, #00C853);
+    color: #fff;
+    border-radius: 20px;
+    padding: 28px 24px;
+    text-align: center;
+    box-shadow: 0 8px 24px rgba(0,185,0,0.3);
+  }
+  .gift-emoji {
+    font-size: 72px;
+    margin-bottom: 8px;
+  }
+  .gift-title {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 12px;
+  }
+  .gift-subtitle {
+    font-size: 14px;
+    opacity: 0.9;
+    margin-bottom: 20px;
+    line-height: 1.5;
+  }
+  .gift-checklist {
+    background: rgba(255,255,255,0.15);
+    border-radius: 12px;
+    padding: 16px;
+    margin: 16px 0;
+    backdrop-filter: blur(10px);
+  }
+  .gift-check {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 6px 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .gift-cta {
+    background: #fff;
+    color: #00B900;
+    padding: 18px;
+    border-radius: 14px;
+    font-size: 18px;
+    font-weight: 700;
+    text-decoration: none;
+    display: block;
+    margin-top: 16px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+  .gift-cta-secondary {
+    background: rgba(255,255,255,0.2);
+    color: #fff;
+    border: 2px solid #fff;
+    padding: 14px;
+    border-radius: 12px;
+    font-size: 15px;
+    text-decoration: none;
+    display: block;
+    margin-top: 8px;
+    font-weight: 600;
+  }
+  .gift-warning {
+    margin-top: 16px;
+    padding: 12px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.5;
   }
 </style>
 </head>
@@ -122,18 +194,7 @@
   </div>
   
   <div id="content" style="display:none;">
-    <div class="card">
-      <h1>📍 今天還在嗎</h1>
-      <div class="subtitle">守護長輩平安的 LINE 助手</div>
-      
-      <div class="step-indicator" id="steps">
-        <div class="step" data-step="1"><span class="step-num">1</span>LINE 登入</div>
-        <div class="step" data-step="2"><span class="step-num">2</span>守護人</div>
-        <div class="step" data-step="3"><span class="step-num">3</span>提醒時間</div>
-      </div>
-      
-      <div id="step-content"></div>
-    </div>
+    <div id="step-content"></div>
   </div>
 </div>
 
@@ -146,14 +207,14 @@ let state = {
   lineUserId: null,
   hasGuardian: false,
   reminderTime: null,
-  currentStep: 1
+  currentStep: 1,
+  selectedTime: "09:00"
 };
 
 async function init() {
   try {
     await liff.init({ liffId: LIFF_ID });
     if (!liff.isLoggedIn()) {
-      // 自動觸發 LINE 登入
       liff.login();
       return;
     }
@@ -161,7 +222,6 @@ async function init() {
     state.loggedIn = true;
     state.lineUserId = liff.getProfile ? (await liff.getProfile()).userId : null;
     
-    // 取得用戶狀態
     if (state.lineUserId) {
       const res = await fetch(`${API_BASE}/api/onboarding/state?line_user_id=${state.lineUserId}`);
       if (res.ok) {
@@ -171,10 +231,9 @@ async function init() {
       }
     }
     
-    // 判斷當前步驟
     if (!state.hasGuardian) state.currentStep = 2;
     else if (!state.reminderTime) state.currentStep = 3;
-    else state.currentStep = 4; // 全部完成
+    else state.currentStep = 4;
     
     document.getElementById("loading").style.display = "none";
     document.getElementById("content").style.display = "block";
@@ -183,67 +242,85 @@ async function init() {
     document.getElementById("loading").innerHTML = `
       <div style="color:#D6322C;">⚠️ LIFF 初始化失敗</div>
       <div style="font-size:13px;margin-top:12px;">${err.message || err}</div>
-      <div style="font-size:12px;color:#888;margin-top:8px;">請確認 LIFF Endpoint URL 已設為 ${API_BASE}</div>
     `;
   }
 }
 
 function renderStep() {
-  // 更新步驟指示器
-  document.querySelectorAll(".step").forEach(el => {
-    const s = parseInt(el.dataset.step);
-    el.classList.remove("active", "done");
-    if (s < state.currentStep) el.classList.add("done");
-    else if (s === state.currentStep) el.classList.add("active");
-  });
-  
   const content = document.getElementById("step-content");
   
   if (state.currentStep === 2) {
-    // Step 2: 守護人綁定
     content.innerHTML = `
-      <div class="icon-big">👨‍👩‍👧</div>
-      <h2 style="text-align:center;">綁定你的守護人</h2>
-      <p style="color:#888;margin-bottom:16px;">新增至少 1 位家人/朋友,逾期未簽到或 SOS 時會通知他們。</p>
-      <a href="./guardian.html" class="btn btn-primary">開始綁定守護人</a>
-      <button class="btn btn-secondary" onclick="skipStep('guardian')">稍後再設定</button>
+      <div class="card">
+        <div class="step-indicator">
+          <div class="step done"><span class="step-num">✓</span>LINE 登入</div>
+          <div class="step active"><span class="step-num">2</span>守護人</div>
+          <div class="step"><span class="step-num">3</span>提醒時間</div>
+        </div>
+        <div class="icon-big">👨‍👩‍👧</div>
+        <h2 style="text-align:center;">綁定你的守護人</h2>
+        <p style="color:#888;margin-bottom:16px;">新增至少 1 位家人/朋友,逾期未簽到或 SOS 時會通知他們。</p>
+        <a href="./guardian.html" class="btn btn-primary">開始綁定守護人</a>
+        <button class="btn btn-secondary" onclick="skipStep('guardian')">稍後再設定</button>
+      </div>
     `;
   } else if (state.currentStep === 3) {
-    // Step 3: 提醒時間
     content.innerHTML = `
-      <div class="icon-big">⏰</div>
-      <h2 style="text-align:center;">設定每日提醒時間</h2>
-      <p style="color:#888;margin-bottom:16px;">選一個方便的時間,系統會在這時間提醒您簽到。</p>
-      <div class="reminder-options">
-        <div class="reminder-btn" onclick="selectReminder(this, '08:00')">上午 8:00</div>
-        <div class="reminder-btn selected" onclick="selectReminder(this, '09:00')">上午 9:00</div>
-        <div class="reminder-btn" onclick="selectReminder(this, '12:00')">中午 12:00</div>
-        <div class="reminder-btn" onclick="selectReminder(this, '18:00')">下午 6:00</div>
-        <div class="reminder-btn" onclick="selectReminder(this, '20:00')">晚上 8:00</div>
-        <div class="reminder-btn" onclick="selectReminder(this, '21:00')">晚上 9:00</div>
+      <div class="card">
+        <div class="step-indicator">
+          <div class="step done"><span class="step-num">✓</span>LINE 登入</div>
+          <div class="step done"><span class="step-num">✓</span>守護人</div>
+          <div class="step active"><span class="step-num">3</span>提醒時間</div>
+        </div>
+        <div class="icon-big">⏰</div>
+        <h2 style="text-align:center;">設定每日提醒時間</h2>
+        <p style="color:#888;margin-bottom:16px;">選一個方便的時間,系統會在這時間提醒您簽到。</p>
+        <div class="reminder-options">
+          <div class="reminder-btn" data-time="08:00">上午 8:00</div>
+          <div class="reminder-btn selected" data-time="09:00">上午 9:00</div>
+          <div class="reminder-btn" data-time="12:00">中午 12:00</div>
+          <div class="reminder-btn" data-time="18:00">下午 6:00</div>
+          <div class="reminder-btn" data-time="20:00">晚上 8:00</div>
+          <div class="reminder-btn" data-time="21:00">晚上 9:00</div>
+        </div>
+        <button class="btn btn-primary" id="saveReminderBtn" onclick="saveReminder()">✓ 完成設定</button>
       </div>
-      <button class="btn btn-primary" id="saveReminderBtn" onclick="saveReminder()">✓ 完成設定</button>
     `;
+    setupReminderButtons();
   } else if (state.currentStep === 4) {
-    // 全部完成
+    // 🎁 歡迎詞風格完成設定卡片
     content.innerHTML = `
-      <div class="icon-big">🎉</div>
-      <h2 style="text-align:center;">設定完成!</h2>
-      <div class="status-box">
-        <div>✅ LINE 登入</div>
-        <div>✅ 守護人已綁定</div>
-        <div>✅ 提醒時間:${state.reminderTime}</div>
+      <div class="gift-card">
+        <div class="gift-emoji">🎉</div>
+        <div class="gift-title">完成設定!</div>
+        <div class="gift-subtitle">您已準備好被「今天還在嗎」守護了</div>
+        
+        <div class="gift-checklist">
+          <div class="gift-check">✅ LINE 登入</div>
+          <div class="gift-check">✅ 守護人已綁定</div>
+          <div class="gift-check">✅ 提醒時間:${state.reminderTime || '已設定'}</div>
+        </div>
+
+        <div class="gift-warning">
+          🎁 完成設定即享 <strong>7 天免費安心體驗</strong><br>
+          🚨 緊急狀況請直接撥打 119
+        </div>
+
+        <a href="./checkin.html" class="gift-cta">開始每日報平安 →</a>
+        <a href="./member.html" class="gift-cta-secondary">我的會員中心</a>
       </div>
-      <a href="./checkin.html" class="btn btn-primary">開始每日報平安</a>
-      <a href="./member.html" class="btn btn-secondary">我的會員中心</a>
     `;
   }
 }
 
-function selectReminder(el, time) {
-  document.querySelectorAll(".reminder-btn").forEach(b => b.classList.remove("selected"));
-  el.classList.add("selected");
-  state.selectedTime = time;
+function setupReminderButtons() {
+  document.querySelectorAll(".reminder-btn").forEach(b => {
+    b.addEventListener("click", () => {
+      state.selectedTime = b.dataset.time;
+      document.querySelectorAll(".reminder-btn").forEach(x => x.classList.remove("selected"));
+      b.classList.add("selected");
+    });
+  });
 }
 
 async function saveReminder() {
