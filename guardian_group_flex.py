@@ -121,7 +121,7 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "🛡️ 平安守護助手 · 守護群 6 步驟教學",
+                    "text": "🛡️ 平安守護助理 · 守護群 6 步驟教學",
                     "color": "#FFFFFF",
                     "size": "md",
                     "align": "center",
@@ -157,7 +157,7 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                         },
                         {
                             "type": "text",
-                            "text": "「今天還在嗎」這個服務的平安守護助手,專門守護長輩平安,在這群提醒簽到、發 SOS 通知",
+                            "text": "「今天還在嗎」這個服務的平安守護助理,專門守護長輩平安,在這群提醒簽到、發 SOS 通知",
                             "size": "md",
                             "color": GRAY,
                             "wrap": True,
@@ -168,9 +168,9 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                 _owner_status_block(owner_info),
                 _intro_step("1", "升級 799 守護版", "在 LINE 主選單點「方案」,挑月費或年費,完成付款才能開守護群"),
                 _intro_step("2", "建一個 LINE 群", "把你最關心的家人/長輩拉進來,群名可標「守護:OOO」"),
-                _intro_step("3", "把平安守護助手邀進群", "從「平安守護助手」聊天室右上「≡」→「邀請」,選這個新群"),
-                _intro_step("4", "把平安守護助手設為管理員", "必做!點下方「管理員設定」看 6 步驟教學"),
-                _intro_step("5", "在群裡打「綁定平安守護助手」", "會回「✅ 已完成綁定平安守護助手」,此群就會收到逾期未簽到/SOS 通知"),
+                _intro_step("3", "把平安守護助理邀進群", "從「平安守護助理」聊天室右上「≡」→「邀請」,選這個新群"),
+                _intro_step("4", "把平安守護助理設為管理員", "必做!點下方「管理員設定」看 6 步驟教學"),
+                _intro_step("5", "在群裡打「綁定平安守護助理」", "會回「✅ 已完成綁定平安守護助理」,此群就會收到逾期未簽到/SOS 通知"),
                 _intro_step("6", "每天在群裡打「簽到」", "沒簽到時會在群裡提醒所有守護人"),
             ],
         },
@@ -185,8 +185,8 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                     "type": "button",
                     "action": {
                         "type": "message",
-                        "label": "綁定平安守護助手",
-                        "text": "綁定平安守護助手",
+                        "label": "綁定平安守護助理",
+                        "text": "綁定平安守護助理",
                     },
                     "style": "primary",
                     "color": GREEN_DARK,
@@ -316,7 +316,7 @@ def guardian_group_status_flex(profile: dict, state: dict):
     if not owned:
         contents.append({
             "type": "text",
-            "text": "尚未綁定任何守護群,請先升級 799 方案,然後邀請「平安守護助手」進群,再點「綁定平安守護助手」",
+            "text": "尚未綁定任何守護群,請先升級 799 方案,然後邀請「平安守護助理」進群,再點「綁定平安守護助理」",
             "size": "md",
             "color": GRAY,
             "wrap": True,
@@ -412,7 +412,7 @@ def guardian_group_status_flex(profile: dict, state: dict):
 # ───────────────────────────────────────────────────────────
 
 def guardian_group_bind_confirm_flex(result: dict):
-    """「綁定平安守護助手」指令完成後的 Flex(綠大按鈕視覺 + 結果)。"""
+    """「綁定平安守護助理」指令完成後的 Flex(綠大按鈕視覺 + 結果)。"""
     already = result.get("already_bound")
     count = result.get("guardian_group_count", 1)
     limit = result.get("guardian_group_limit", 1)
@@ -422,7 +422,7 @@ def guardian_group_bind_confirm_flex(result: dict):
         body_text = f"目前已綁定 {count}/{limit} 個守護群,無需重複操作"
         color = GREEN_DARK
     else:
-        head_text = "✅ 已完成綁定平安守護助手"
+        head_text = "✅ 已完成綁定平安守護助理"
         body_text = f"目前已綁定 {count}/{limit} 個守護群,逾期未簽到與 SOS 提醒會在此群發送"
         color = GREEN_DARK
 
@@ -480,7 +480,7 @@ def guardian_group_bind_confirm_flex(result: dict):
                 },
                 {
                     "type": "text",
-                    "text": "• 把「平安守護助手」設為此群管理員(必做)\n• 邀請長輩/家人加入此群\n• 設定每日簽到時間",
+                    "text": "• 把「平安守護助理」設為此群管理員(必做)\n• 邀請長輩/家人加入此群\n• 設定每日簽到時間",
                     "size": "md",
                     "color": GRAY,
                     "wrap": True,
@@ -591,9 +591,9 @@ def guardian_group_user_guide_flex():
             "contents": [
                 _guide_step("1", "升級 799 守護版", "在 LINE 主選單「方案」挑月費或年費,完成付款才能開守護群"),
                 _guide_step("2", "建一個新的 LINE 群", "把你最關心的家人/長輩全部拉進來,群名可標「守護:OOO」"),
-                _guide_step("3", "把平安守護助手邀進群", "從「平安守護助手」聊天室右上「≡」→「邀請」,選這個新群"),
-                _guide_step("4", "把平安守護助手設為管理員", "這步必做,點下方「管理員設定」看 6 步驟教學"),
-                _guide_step("5", "在群裡打「綁定平安守護助手」", "會回「✅ 已完成綁定平安守護助手」,這樣這個群就會收到逾期未簽到/SOS 通知"),
+                _guide_step("3", "把平安守護助理邀進群", "從「平安守護助理」聊天室右上「≡」→「邀請」,選這個新群"),
+                _guide_step("4", "把平安守護助理設為管理員", "這步必做,點下方「管理員設定」看 6 步驟教學"),
+                _guide_step("5", "在群裡打「綁定平安守護助理」", "會回「✅ 已完成綁定平安守護助理」,這樣這個群就會收到逾期未簽到/SOS 通知"),
                 _guide_step("6", "每天在群裡打「簽到」", "成員簽到會在群裡顯示 ✓,沒簽到時會在群裡提醒"),
             ],
         },
@@ -678,7 +678,7 @@ def guardian_group_admin_setup_flex():
             "contents": [
                 {
                     "type": "text",
-                    "text": "⚙️ 設定「平安守護助手」為管理員",
+                    "text": "⚙️ 設定「平安守護助理」為管理員",
                     "color": "#FFFFFF",
                     "size": "xxl",
                     "weight": "bold",
@@ -686,7 +686,7 @@ def guardian_group_admin_setup_flex():
                 },
                 {
                     "type": "text",
-                    "text": "LINE 規定「平安守護助手」無法自動設自己為管理員,需用戶手動操作",
+                    "text": "LINE 規定「平安守護助理」無法自動設自己為管理員,需用戶手動操作",
                     "color": "#FFFFFF",
                     "size": "md",
                     "align": "center",
@@ -702,8 +702,8 @@ def guardian_group_admin_setup_flex():
             "paddingAll": "lg",
             "contents": [
                 _admin_step("1", "打開群設定", "在群聊畫面右上角點「≡」(三條線)圖示"),
-                _admin_step("2", "進入成員列表", "選「成員」,找到「平安守護助手」"),
-                _admin_step("3", "長按「平安守護助手」名稱", "在「平安守護助手」名稱上長按,跳出選單"),
+                _admin_step("2", "進入成員列表", "選「成員」,找到「平安守護助理」"),
+                _admin_step("3", "長按「平安守護助理」名稱", "在「平安守護助理」名稱上長按,跳出選單"),
                 _admin_step("4", "選「設為管理員」", "從選單中選「設為管理員」"),
                 _admin_step("5", "確認權限", "LINE 會列出可授與的權限,直接按「確定」即可"),
                 _admin_step("6", "完成", "回群裡,打「守護群狀態」可確認是否已生效,看到「✅ 已設為管理員」就成功"),
@@ -822,7 +822,7 @@ def _owner_status_block(owner_info):
                     },
                     {
                         "type": "text",
-                        "text": "只有你能解綁、設定與重新邀請「平安守護助手」,其他成員只能簽到與查看狀態",
+                        "text": "只有你能解綁、設定與重新邀請「平安守護助理」,其他成員只能簽到與查看狀態",
                         "size": "md",
                         "color": GRAY,
                         "wrap": True,
@@ -929,7 +929,7 @@ def welcome_flex():
                 },
                 {
                     "type": "text",
-                    "text": "🛡️ 平安守護助手",
+                    "text": "🛡️ 平安守護助理",
                     "color": "#FFFFFF",
                     "size": "md",
                     "align": "center",
