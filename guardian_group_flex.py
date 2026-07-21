@@ -1007,7 +1007,7 @@ def welcome_flex(display_name: str | None = None):
     僅保留一個大按鈕；標題／內文放大方便閱讀。不使用 BOT 字眼。
     """
     name = (display_name or "").strip() or "您"
-    greeting = f"👋 {name} 您好，歡迎加入「今天還在嗎」"
+    greeting = f"👋 {name} 您好，歡迎加入今天還在嗎"
     # 永久連結：開 LIFF 內嵌 → onboarding（分享邀請 → 守護人表單 → 提醒）。勿硬編碼 OAuth code/state。
     bind_uri = liff_entry_url(open_action="onboarding")
     return {
