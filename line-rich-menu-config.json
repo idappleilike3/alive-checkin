@@ -9,11 +9,11 @@
   "areas": [
     {
       "bounds": { "x": 0, "y": 0, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "報平安", "uri": "https://alive-checkin.onrender.com/liff/checkin" }
+      "action": { "type": "uri", "label": "報平安", "uri": "https://liff.line.me/2010674803-rK98c0lo#home" }
     },
     {
       "bounds": { "x": 833, "y": 0, "width": 834, "height": 843 },
-      "action": { "type": "uri", "label": "守護人", "uri": "https://alive-checkin.onrender.com/liff/guardian" }
+      "action": { "type": "uri", "label": "守護人", "uri": "https://liff.line.me/2010674803-rK98c0lo?open=onboarding" }
     },
     {
       "bounds": { "x": 1667, "y": 0, "width": 833, "height": 843 },
@@ -21,7 +21,7 @@
     },
     {
       "bounds": { "x": 0, "y": 843, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "我的會員", "uri": "https://alive-checkin.onrender.com/liff/member" }
+      "action": { "type": "uri", "label": "我的會員", "uri": "https://liff.line.me/2010674803-rK98c0lo?open=member" }
     },
     {
       "bounds": { "x": 833, "y": 843, "width": 834, "height": 843 },
@@ -29,7 +29,7 @@
     },
     {
       "bounds": { "x": 1667, "y": 843, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "守護群", "uri": "https://alive-checkin.onrender.com/liff/guardian-groups" }
+      "action": { "type": "uri", "label": "守護群", "uri": "https://liff.line.me/2010674803-rK98c0lo?open=guardians" }
     }
   ]
 }

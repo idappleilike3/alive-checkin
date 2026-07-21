@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import secrets
 import sqlite3
 import urllib.parse
@@ -10,9 +11,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 try:
-    from flask import Flask, jsonify, request, send_from_directory
+    from flask import Flask, jsonify, redirect, request, send_from_directory
 except ModuleNotFoundError:
     Flask = None
+    redirect = None
 
 try:
     from linebot import LineBotApi, WebhookHandler
@@ -49,6 +51,8 @@ try:
         guardian_group_user_guide_flex,
         guardian_group_admin_setup_flex,
         welcome_flex,
+        liff_entry_url,
+        get_liff_id,
     )
 except Exception:
     guardian_group_intro_flex = None
@@ -58,6 +62,8 @@ except Exception:
     guardian_group_user_guide_flex = None
     guardian_group_admin_setup_flex = None
     welcome_flex = None
+    liff_entry_url = None
+    get_liff_id = None
 
 # 註:patch 15 的全域白名單機制(GROUP_ADMINS / is_group_admin / deny_if_not_admin)
 # 已於 2026-07-21 移除。「管理員」= 每個守護群的 owner_line_user_id(在 guardian_groups 裡)。
@@ -75,7 +81,8 @@ DEFAULT_PROFILE = {
     "history": [],
     "contact_email": "",
     "grace_hours": 36,
-    "reminder_time": "09:00",
+    "reminder_time": "12:00",
+    "reminder_times": ["12:00"],
     "checkin_mode": "manual",
     "auto_checkin_on_open": False,
     "warning_cancel_minutes": 15,
@@ -84,6 +91,8 @@ DEFAULT_PROFILE = {
     "contacts": [],
     "contact_capacity_reminder_enabled": False,
     "contact_reminder_sent_dates": [],
+    "checkin_reminder_sent_dates": [],
+    "checkin_reminder_sent_slots": {},
     "guardian_details_reminder_enabled": True,
     "guardian_details_reminder_sent_at": "",
     "plan": "trial",
@@ -102,6 +111,14 @@ DEFAULT_PROFILE = {
     "guardian_group_ids": [],
     "calendar_notes": {},
 }
+
+# 依每日提醒次數的預設時段(使用者未自訂時使用)
+DEFAULT_REMINDER_TIMES_BY_COUNT = {
+    1: ["12:00"],
+    2: ["12:00", "18:00"],
+    3: ["12:00", "18:00", "22:00"],
+}
+REMINDER_TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 DEFAULT_STATE = {
     **DEFAULT_PROFILE,
     "users": {},
@@ -163,13 +180,16 @@ def line_status_summary(status):
     contacts = len(status.get("contacts") or [])
     contact_limit = status.get("contact_limit", 1)
     plan = status.get("plan") or "trial"
-    reminder_time = status.get("reminder_time") or "09:00"
+    reminder_times = status.get("reminder_times") or [status.get("reminder_time") or "12:00"]
+    if not isinstance(reminder_times, list):
+        reminder_times = [str(reminder_times)]
+    times_text = "、".join(str(t) for t in reminder_times if t)
     return (
         "你的近期狀態如下：\n"
         f"最後簽到：{last_checkin}\n"
         f"目前方案：{plan}\n"
         f"守護人：{contacts}/{contact_limit} 位\n"
-        f"每日提醒時間：{reminder_time}\n\n"
+        f"每日提醒時間：{times_text or '12:00'}\n\n"
         "若守護人還沒綁定，請點「綁定守護人」，把 LINE 邀請連結傳給身邊重要的人。"
     )
 
@@ -473,6 +493,68 @@ def plan_rules(profile):
     return PLAN_LIMITS.get(plan, PLAN_LIMITS["trial"])
 
 
+def default_reminder_times_for_count(count):
+    """依提醒次數回傳預設時段:1→12:00、2→12/18、3→12/18/22。"""
+    try:
+        count = int(count or 1)
+    except (TypeError, ValueError):
+        count = 1
+    count = max(1, min(3, count))
+    return list(DEFAULT_REMINDER_TIMES_BY_COUNT.get(count, DEFAULT_REMINDER_TIMES_BY_COUNT[1]))
+
+
+def normalize_reminder_times(raw_times, max_count=1):
+    """驗證並正規化 HH:MM 清單,去重後依時間排序,截斷至方案上限。"""
+    try:
+        max_count = max(1, min(3, int(max_count or 1)))
+    except (TypeError, ValueError):
+        max_count = 1
+    if isinstance(raw_times, str):
+        raw_times = [raw_times]
+    if not isinstance(raw_times, (list, tuple)):
+        return []
+    cleaned = []
+    seen = set()
+    for item in raw_times:
+        text = str(item or "").strip()
+        if not REMINDER_TIME_PATTERN.match(text) or text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+    cleaned.sort()
+    return cleaned[:max_count]
+
+
+def reminder_times_for_profile(profile):
+    """取得使用者提醒時段:自訂 reminder_times > 單一 reminder_time > 方案預設。"""
+    max_count = int(plan_rules(profile).get("daily_reminders") or 1)
+    raw = profile.get("reminder_times")
+    if isinstance(raw, (list, tuple)) and raw:
+        normalized = normalize_reminder_times(raw, max_count)
+        if normalized:
+            return normalized
+    single = str(profile.get("reminder_time") or "").strip()
+    if REMINDER_TIME_PATTERN.match(single):
+        return normalize_reminder_times([single], max_count) or default_reminder_times_for_count(max_count)
+    return default_reminder_times_for_count(max_count)
+
+
+def apply_reminder_times_to_profile(profile, times=None, single=None):
+    """寫入 reminder_times,並同步第一個時段到 reminder_time(相容舊欄位)。"""
+    max_count = int(plan_rules(profile).get("daily_reminders") or 1)
+    if times is not None:
+        normalized = normalize_reminder_times(times, max_count)
+    elif single is not None and str(single).strip():
+        normalized = normalize_reminder_times([single], max_count)
+    else:
+        normalized = []
+    if not normalized:
+        normalized = default_reminder_times_for_count(max_count)
+    profile["reminder_times"] = normalized
+    profile["reminder_time"] = normalized[0]
+    return normalized
+
+
 # === D01: 互動狀態(防每日重複相同內容) ===
 def default_interaction_state():
     return {
@@ -612,6 +694,8 @@ def build_status(profile):
         status_text = "狀態正常"
         status_class = "highlight"
 
+    _reminder_times = reminder_times_for_profile(profile) or ["12:00"]
+
     return {
         "ok": True,
         "line_user_id": profile.get("line_user_id"),
@@ -622,7 +706,8 @@ def build_status(profile):
         "history": sorted(set(profile.get("history") or [])),
         "contact_email": profile.get("contact_email", ""),
         "grace_hours": grace_hours,
-        "reminder_time": profile.get("reminder_time", "09:00"),
+        "reminder_time": _reminder_times[0],
+        "reminder_times": _reminder_times,
         "checkin_mode": profile.get("checkin_mode", "manual"),
         "auto_checkin_on_open": bool(profile.get("auto_checkin_on_open", False)),
         "warning_cancel_minutes": warning_cancel_minutes,
@@ -748,7 +833,10 @@ def save_settings_for_profile(data_file, payload):
     profile = get_profile(state, payload.get("line_user_id"))
     profile["contact_email"] = str(payload.get("contact_email", "")).strip()
     profile["grace_hours"] = max(1, min(168, int(payload.get("grace_hours") or 36)))
-    profile["reminder_time"] = str(payload.get("reminder_time") or "09:00")
+    if "reminder_times" in payload:
+        apply_reminder_times_to_profile(profile, times=payload.get("reminder_times"))
+    elif "reminder_time" in payload:
+        apply_reminder_times_to_profile(profile, single=payload.get("reminder_time"))
     checkin_mode = str(payload.get("checkin_mode") or profile.get("checkin_mode") or "manual")
     profile["checkin_mode"] = checkin_mode if checkin_mode in {"manual", "voice", "auto_open"} else "manual"
     profile["auto_checkin_on_open"] = bool(payload.get("auto_checkin_on_open", False))
@@ -1162,7 +1250,24 @@ def bind_emergency_contact(data_file, payload, config=None):
 
     contacts = list(inviter.get("contacts") or [])
     existing = next((contact for contact in contacts if contact.get("line_id") == contact_line_user_id), None)
-    if not existing:
+    already_bound = bool(existing)
+    already_accepted = bool(
+        existing
+        and (
+            existing.get("consent_status") == "accepted"
+            or existing.get("binding_status") == "accepted"
+        )
+    )
+
+    # LIFF 點擊授權即視為守護人本人同意綁定（不需再回「同意」）
+    if existing:
+        existing["name"] = existing.get("name") or contact_display_name or "LINE 聯絡人"
+        existing["line_id"] = contact_line_user_id
+        existing["consent_status"] = "accepted"
+        existing["binding_status"] = "accepted"
+        existing["accepted_at"] = datetime.now().isoformat(timespec="seconds")
+        existing["notify_methods"] = list(dict.fromkeys([*(existing.get("notify_methods") or []), "line"]))
+    else:
         limit = plan_rules(inviter)["contact_limit"]
         if len(contacts) >= limit:
             return {"error": f"contact_limit exceeded: {limit}", "contact_limit": limit}, 400
@@ -1177,9 +1282,9 @@ def bind_emergency_contact(data_file, payload, config=None):
                 "available_time": "",
                 "notify_methods": ["line"],
                 "priority": len(contacts) + 1,
-                "consent_status": "pending",  # 🔴 P0 FIX:改為 pending,待聯絡人本人回覆同意才 accepted
-                "pending_at": datetime.now().isoformat(timespec="seconds"),
-                "consent_request_message": "",  # 待 LINE 推送同意請求時填入
+                "consent_status": "accepted",
+                "binding_status": "accepted",
+                "accepted_at": datetime.now().isoformat(timespec="seconds"),
                 "note": "LINE 一鍵授權綁定",
             }
         )
@@ -1199,42 +1304,51 @@ def bind_emergency_contact(data_file, payload, config=None):
         rewards.append(reward)
 
     sent = 0
-    if config:
+    if config and not already_accepted:
         token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
         sender = config.get("LINE_PUSH_SENDER") or line_push_message
         if token:
-            # 🔴 P0 FIX:現在改為「要求聯絡人回覆同意」訊息,不是「直接綁定成功」測試
-            consent_request = (
-                f"🛡️ 緊急聯絡人同意請求\n\n"
-                f"{inviter.get('display_name') or '使用者'} 想新增您為緊急聯絡人。\n"
-                f"當對方未準時簽到報平安時,系統會通知您。\n\n"
-                f"請回覆「同意」或「拒絕」來完成設定。\n\n"
-                f"依個資法,您有權隨時要求移除。"
-            )
+            inviter_name = inviter.get("display_name") or "使用者"
+            guardian_name = contact_display_name or "守護人"
             inviter_notice = (
-                f"🛡️ 已向 {contact_display_name or '您的緊急聯絡人'} 送出同意請求。\n"
-                f"對方回覆「同意」後才會啟用通知功能。"
+                f"✅ 綁定完成\n\n"
+                f"{guardian_name} 已成為你的守護人。\n"
+                f"之後若你未準時報平安或發出 SOS，系統會通知對方。"
+            )
+            guardian_notice = (
+                f"✅ 綁定完成\n\n"
+                f"你已成為 {inviter_name} 的守護人。\n"
+                f"對方未準時報平安或緊急求助時，你會收到 LINE 通知。"
             )
             messages = [
                 (inviter_id, inviter_notice),
-                (contact_line_user_id, consent_request),
+                (contact_line_user_id, guardian_notice),
             ]
             for line_user_id, message in messages:
                 try:
                     result = sender(token, line_user_id, message)
-                    append_notification_log(state, "binding_consent_request", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
+                    append_notification_log(
+                        state,
+                        "binding_complete",
+                        line_user_id,
+                        "sent",
+                        message,
+                        json.dumps(result, ensure_ascii=False),
+                    )
                     sent += 1
                 except Exception as exc:
-                    append_notification_log(state, "binding_consent_request", line_user_id, "failed", message, str(exc))
+                    append_notification_log(state, "binding_complete", line_user_id, "failed", message, str(exc))
 
     save_state(data_file, state)
     return {
         "bound": True,
-        "already_bound": bool(existing),
+        "already_bound": already_bound,
+        "binding_complete": not already_accepted,
         "contact": next((contact for contact in contacts if contact.get("line_id") == contact_line_user_id), None),
         "reward": reward,
         "consent_request_sent": sent,
         "test_messages_sent": sent,  # 向下相容
+        "inviter_notified": sent > 0,
     }, 200
 
 
@@ -2297,9 +2411,9 @@ def cleanup_expired_data(config):
 
 def reminder_time_due(reminder_time, now):
     try:
-        hour, minute = [int(part) for part in str(reminder_time or "09:00").split(":", 1)]
+        hour, minute = [int(part) for part in str(reminder_time or "12:00").split(":", 1)]
     except ValueError:
-        hour, minute = 9, 0
+        hour, minute = 12, 0
     return (now.hour, now.minute) >= (hour, minute)
 
 
@@ -2325,21 +2439,41 @@ def send_checkin_reminders(config):
             continue
         if today in (user.get("history") or []):
             continue
-        sent_dates = set(user.get("checkin_reminder_sent_dates") or [])
-        if today in sent_dates:
-            continue
-        if not reminder_time_due(user.get("reminder_time", "09:00"), now):
+
+        times = reminder_times_for_profile(user)
+        sent_slots = dict(user.get("checkin_reminder_sent_slots") or {})
+        sent_today = set(sent_slots.get(today) or [])
+
+        # 相容舊版:當天已用單一日期標記送過 → 視為本輪已提醒
+        legacy_dates = set(user.get("checkin_reminder_sent_dates") or [])
+        if today in legacy_dates and not sent_today:
             continue
 
+        due_unsent = [t for t in times if reminder_time_due(t, now) and t not in sent_today]
+        if not due_unsent:
+            continue
+
+        # 補跑時只推一次(取最晚已到點的時段),並把所有已到點未送時段標為已處理
+        target_time = due_unsent[-1]
         link_text = f"\n打開簽到：{public_url}/" if public_url else ""
-        message = f"今天還在嗎 ✨\n到你設定的簽到時間囉，點一下完成今日平安簽到。{link_text}"
+        message = (
+            f"今天還在嗎 ✨\n"
+            f"到你設定的簽到時間（{target_time}）囉，點一下完成今日平安簽到。{link_text}"
+        )
         try:
             result = sender(token, line_user_id, message)
-            sent_dates.add(today)
-            user["checkin_reminder_sent_dates"] = sorted(sent_dates)[-30:]
+            sent_today.update(due_unsent)
+            sent_slots[today] = sorted(sent_today)
+            # 只保留近 30 天的 slot 紀錄
+            keep_dates = sorted(sent_slots.keys())[-30:]
+            user["checkin_reminder_sent_slots"] = {d: sent_slots[d] for d in keep_dates}
+            # 舊欄位：當日所有時段都處理完才標記，避免挡住後續時段
+            if set(times).issubset(sent_today):
+                legacy_dates.add(today)
+                user["checkin_reminder_sent_dates"] = sorted(legacy_dates)[-30:]
             append_notification_log(state, "checkin", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
             sent += 1
-            results.append({"line_user_id": line_user_id, "result": result})
+            results.append({"line_user_id": line_user_id, "reminder_time": target_time, "result": result})
         except Exception as exc:
             append_notification_log(state, "checkin", line_user_id, "failed", message, str(exc))
             skipped += 1
@@ -2413,15 +2547,34 @@ def create_app(config=None):
     def privacy():
         return send_from_directory(app.static_folder, "privacy.html")
 
-    # 2026-07-21 patch 23: 圖文選單按鈕對應的真實 LIFF 頁面
+    def _liff_embed_redirect(open_action=None, fragment=""):
+        """舊 /liff/* HTTPS 連結改導永久內嵌入口，避免外開瀏覽器。"""
+        if liff_entry_url is not None:
+            target = liff_entry_url(open_action=open_action, fragment=fragment)
+        else:
+            lid = (
+                app.config.get("LIFF_ID")
+                or os.environ.get("LIFF_ID")
+                or "2010674803-rK98c0lo"
+            ).strip()
+            target = f"https://liff.line.me/{lid}"
+            if open_action:
+                target += f"?open={open_action}"
+            if fragment:
+                target += f"#{fragment.lstrip('#')}"
+        if redirect is not None:
+            return redirect(target, code=302)
+        return jsonify({"redirect": target}), 302
+
+    # 圖文選單 / 舊連結：導向 liff.line.me 內嵌（單一 Endpoint = index.html）
     @app.get("/liff/checkin")
     def liff_checkin():
-        return send_from_directory(app.static_folder, "liff/checkin.html")
+        return _liff_embed_redirect(fragment="home")
 
     # 2026-07-21 patch 24: Onboarding 流程 API
     @app.get("/liff/onboarding")
     def liff_onboarding():
-        return send_from_directory(app.static_folder, "liff/onboarding.html")
+        return _liff_embed_redirect(open_action="onboarding")
 
     @app.get("/api/onboarding/state")
     def onboarding_state_api():
@@ -2433,44 +2586,64 @@ def create_app(config=None):
         profile = state.get("users", {}).get(line_user_id, {})
         contacts = profile.get("contacts") or []
         has_guardian = any((c.get("relationship") and c.get("phone")) for c in contacts)
+        times = reminder_times_for_profile(profile) if profile else default_reminder_times_for_count(1)
+        daily_reminders = int(plan_rules(profile).get("daily_reminders") or 1) if profile else 1
         return jsonify({
             "ok": True,
             "line_user_id": line_user_id,
             "has_guardian": has_guardian,
             "guardian_count": len([c for c in contacts if c.get("relationship") and c.get("phone")]),
-            "reminder_time": profile.get("reminder_time"),
+            "reminder_time": times[0] if times else None,
+            "reminder_times": times,
+            "daily_reminders": daily_reminders,
+            "default_reminder_times": default_reminder_times_for_count(daily_reminders),
             "plan": profile.get("plan"),
+            "is_onboarding_completed": bool(profile.get("is_onboarding_completed", False)),
         })
 
     @app.post("/api/onboarding/reminder")
     def onboarding_reminder_api():
-        """設定使用者每日提醒時間。"""
+        """設定使用者每日提醒時間(支援單一或多時段)。"""
         data = request.get_json(silent=True) or {}
         line_user_id = (data.get("line_user_id") or "").strip()
-        reminder_time = (data.get("reminder_time") or "").strip()
         if not line_user_id:
             return jsonify({"ok": False, "error": "missing line_user_id"}), 400
-        # 驗證 HH:MM 格式
-        import re as _re
-        if not _re.match(r"^([01]\d|2[0-3]):[0-5]\d$", reminder_time):
-            return jsonify({"ok": False, "error": "invalid reminder_time format, use HH:MM"}), 400
         state = load_state(app.config["DATA_FILE"])
-        profile = state.setdefault("users", {}).setdefault(line_user_id, {})
-        profile["reminder_time"] = reminder_time
+        profile = get_profile(state, line_user_id)
+        max_count = int(plan_rules(profile).get("daily_reminders") or 1)
+        if "reminder_times" in data:
+            raw = data.get("reminder_times")
+            if not isinstance(raw, list) or not raw:
+                return jsonify({"ok": False, "error": "reminder_times must be a non-empty list"}), 400
+            normalized = normalize_reminder_times(raw, max_count)
+            if not normalized:
+                return jsonify({"ok": False, "error": "invalid reminder_times format, use HH:MM"}), 400
+            times = apply_reminder_times_to_profile(profile, times=normalized)
+        else:
+            reminder_time = (data.get("reminder_time") or "").strip()
+            if not REMINDER_TIME_PATTERN.match(reminder_time):
+                return jsonify({"ok": False, "error": "invalid reminder_time format, use HH:MM"}), 400
+            times = apply_reminder_times_to_profile(profile, single=reminder_time)
         save_state(app.config["DATA_FILE"], state)
-        return jsonify({"ok": True, "reminder_time": reminder_time})
+        return jsonify({
+            "ok": True,
+            "reminder_time": times[0],
+            "reminder_times": times,
+            "daily_reminders": max_count,
+        })
 
     @app.get("/liff/guardian")
     def liff_guardian():
-        return send_from_directory(app.static_folder, "liff/guardian.html")
+        # 永久入口應是 liff.line.me；此路徑保留相容，導向內嵌 onboarding（守護人→提醒）
+        return _liff_embed_redirect(open_action="onboarding")
 
     @app.get("/liff/member")
     def liff_member():
-        return send_from_directory(app.static_folder, "liff/member.html")
+        return _liff_embed_redirect(open_action="member")
 
     @app.get("/liff/guardian-groups")
     def liff_guardian_groups():
-        return send_from_directory(app.static_folder, "liff/guardian-groups.html")
+        return _liff_embed_redirect(open_action="guardians")
 
     @app.get("/api/config")
     def config_api():
@@ -2694,24 +2867,37 @@ def create_app(config=None):
 
         @handler.add(FollowEvent)
         def handle_follow(event):
-            """加好友歡迎：優先回 Flex(強調 7 天免費體驗 + 立即綁定守護人 1 位)。
+            """加好友歡迎：優先回 Flex(Exact 歡迎文案 + 立即綁定守護人)。
 
-            不再用純文字為主、也不使用 BOT 字眼。Flex 失敗時才 fallback 短文案。
+            不再用純文字為主、對使用者文案不出現機器人字眼。Flex 失敗時才 fallback 短文案。
             """
             line_user_id = getattr(event.source, "user_id", None)
+            display_name = None
+            if line_user_id:
+                try:
+                    profile = line_bot_api.get_profile(line_user_id)
+                    display_name = getattr(profile, "display_name", None) or None
+                except Exception:
+                    display_name = None
+            name = (display_name or "").strip() or "您"
             welcome_fallback = (
-                "👋 您好，歡迎加入「今天還在嗎」\n\n"
-                "完成 1 位守護人綁定並設定每日提醒，即可享 7 天免費安心體驗。\n\n"
-                "請開啟：https://alive-checkin.onrender.com/liff/guardian\n\n"
-                "緊急狀況請直接撥打 119。"
+                f"👋 {name} 您好，歡迎加入「今天還在嗎」\n\n"
+                "我是您的每日平安小助手，會在您設定的時間提醒您報平安，"
+                "只有超過時間仍未報平安，才會通知您指定的守護人\n\n"
+                "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間\n\n"
+                "🎁 完成設定即享 7 天免費安心體驗\n\n"
+                "🚨 緊急狀況請直接撥打 119，聊天訊息可能因網路延遲\n\n"
+                f"請開啟：{(liff_entry_url(open_action='onboarding') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo?open=onboarding')}"
             )
+            alt_text = f"👋 {name} 您好，歡迎加入「今天還在嗎」— 完成設定即享 7 天免費安心體驗"
+            flex_contents = welcome_flex(display_name) if welcome_flex is not None else None
             try:
-                if FlexSendMessage is not None and welcome_flex is not None:
+                if FlexSendMessage is not None and flex_contents is not None:
                     line_bot_api.reply_message(
                         event.reply_token,
                         FlexSendMessage(
-                            alt_text="🎉 歡迎加入「今天還在嗎」— 完成設定享 7 天免費體驗",
-                            contents=welcome_flex(),
+                            alt_text=alt_text,
+                            contents=flex_contents,
                         ),
                     )
                 else:
@@ -2727,13 +2913,13 @@ def create_app(config=None):
                     )
                 except Exception:
                     # reply_token 可能已用過：改 push
-                    if line_user_id and FlexSendMessage is not None and welcome_flex is not None:
+                    if line_user_id and FlexSendMessage is not None and flex_contents is not None:
                         try:
                             line_bot_api.push_message(
                                 line_user_id,
                                 FlexSendMessage(
-                                    alt_text="🎉 歡迎加入「今天還在嗎」— 完成設定享 7 天免費體驗",
-                                    contents=welcome_flex(),
+                                    alt_text=alt_text,
+                                    contents=flex_contents,
                                 ),
                             )
                         except Exception:
@@ -3033,13 +3219,20 @@ def create_app(config=None):
             (c.get("name") or "").strip() and (c.get("relationship") or "").strip()
             for c in contacts
         )
+        times = reminder_times_for_profile(profile)
         return jsonify({
             "ok": True,
             "line_user_id": line_user_id,
             "is_onboarding_completed": bool(profile.get("is_onboarding_completed", False)),
             "has_guardian": has_guardian,
             "guardian_count": len(contacts),
-            "reminder_time": profile.get("reminder_time") or "09:00",
+            "reminder_time": times[0] if times else "12:00",
+            "reminder_times": times,
+            "daily_reminders": int(plan_rules(profile).get("daily_reminders") or 1),
+            "default_reminder_times": default_reminder_times_for_count(
+                plan_rules(profile).get("daily_reminders") or 1
+            ),
+            "plan": profile.get("plan", "trial"),
             "display_name": profile.get("display_name", ""),
         })
 
@@ -3182,21 +3375,34 @@ def create_app(config=None):
                 "message": "必須先新增至少 1 位守護人"
             }), 400
         profile["is_onboarding_completed"] = True
-        # 順便儲存提醒時間(若使用者有更新)
-        if payload.get("reminder_time"):
-            profile["reminder_time"] = str(payload["reminder_time"])
+        # 儲存提醒時段(多時段優先;未提供則套用方案預設)
+        if "reminder_times" in payload or payload.get("reminder_time"):
+            apply_reminder_times_to_profile(
+                profile,
+                times=payload.get("reminder_times"),
+                single=payload.get("reminder_time"),
+            )
+        else:
+            apply_reminder_times_to_profile(profile)
         # 初始化互動狀態,標記完成步驟
         istate = get_or_create_interaction_state(profile)
         istate["onboarding_completed"] = True
         if "add_first_guardian" not in istate["completed_steps"]:
             istate["completed_steps"].append("add_first_guardian")
-        if payload.get("reminder_time") and "set_reminder_time" not in istate["completed_steps"]:
+        if "set_reminder_time" not in istate["completed_steps"]:
             istate["completed_steps"].append("set_reminder_time")
         if not istate.get("pending_steps"):
             istate["pending_steps"] = ["explore_app", "read_help", "add_more_guardians_if_paid"]
         istate["last_interaction_at"] = datetime.now().isoformat(timespec="seconds")
         save_state(app.config["DATA_FILE"], state)
-        return jsonify({"ok": True, "is_onboarding_completed": True, "interaction_state": istate}), 200
+        times = reminder_times_for_profile(profile)
+        return jsonify({
+            "ok": True,
+            "is_onboarding_completed": True,
+            "reminder_time": times[0],
+            "reminder_times": times,
+            "interaction_state": istate,
+        }), 200
 
     @app.post("/api/emergency-contact/bind")
     def emergency_contact_bind_api():

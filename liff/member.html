@@ -64,26 +64,21 @@
   }
   .guardian-name { font-weight: 700; font-size: 16px; color: #00B900; }
   .guardian-detail { font-size: 13px; color: #666; margin-top: 4px; }
-  .reminder-options {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-    margin: 12px 0;
+  .reminder-slot {
+    margin: 10px 0;
   }
-  .reminder-btn {
+  .reminder-slot label {
+    display: block;
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .reminder-slot input[type="time"] {
+    width: 100%;
     padding: 12px;
     border: 2px solid #E0E0E0;
-    background: #fff;
     border-radius: 8px;
-    cursor: pointer;
-    font-size: 14px;
-    text-align: center;
-  }
-  .reminder-btn.selected {
-    border-color: #00B900;
-    background: #E8F8EE;
-    color: #00B900;
-    font-weight: 700;
+    font-size: 16px;
   }
   .empty {
     padding: 16px;
@@ -108,6 +103,7 @@
     margin: 8px 0;
     display: none;
   }
+  .hint { color: #666; font-size: 14px; margin-bottom: 8px; }
 </style>
 </head>
 <body>
@@ -126,28 +122,24 @@
   </div>
 </div>
 
-<!-- 守護人管理(從首頁搬過來) -->
+<!-- 守護人管理（會員中心設定） -->
 <div class="card">
   <h2>👨‍👩‍👧 守護人管理</h2>
-  <p>設定家人/朋友,出事時系統會自動通知他們。</p>
+  <p class="hint">在這裡新增守護人，或一鍵分享邀請連結給家人朋友綁定。</p>
   <div id="guardianList">
     <div class="empty">載入中...</div>
   </div>
-  <a href="./guardian.html" class="btn btn-primary">➕ 新增守護人</a>
+  <a href="https://liff.line.me/2010674803-rK98c0lo?open=onboarding" class="btn btn-primary">➕ 新增守護人</a>
+  <button class="btn" type="button" id="shareInviteBtn">📲 一鍵分享邀請守護人</button>
+  <p class="hint" id="shareHint" style="display:none;color:#006400;"></p>
 </div>
 
 <!-- 每日提醒時間設定 -->
 <div class="card">
   <h2>⏰ 每日提醒時間</h2>
-  <p>選一個方便的時間,系統會在這時間提醒您簽到。</p>
-  <div class="reminder-options" id="reminderOptions">
-    <div class="reminder-btn" data-time="08:00">上午 8:00</div>
-    <div class="reminder-btn selected" data-time="09:00">上午 9:00</div>
-    <div class="reminder-btn" data-time="12:00">中午 12:00</div>
-    <div class="reminder-btn" data-time="18:00">下午 6:00</div>
-    <div class="reminder-btn" data-time="20:00">晚上 8:00</div>
-    <div class="reminder-btn" data-time="21:00">晚上 9:00</div>
-  </div>
+  <p class="hint" id="reminderHint">依方案設定每日提醒次數與時段。</p>
+  <div id="reminderSlots"></div>
+  <button class="btn" type="button" id="useDefaultsBtn">使用方案預設時間</button>
   <div class="status-saved" id="statusSaved">✅ 已儲存!</div>
   <button class="btn btn-primary" id="saveBtn" onclick="saveReminder()">儲存設定</button>
 </div>
@@ -166,14 +158,48 @@
 
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script>
-const LIFF_ID = "2010674803-sLl9j1Sk";
+const LIFF_ID = "2010674803-rK98c0lo";
 const API_BASE = "https://alive-checkin.onrender.com";
+const DEFAULT_REMINDER_TIMES_BY_COUNT = {
+  1: ["12:00"],
+  2: ["12:00", "18:00"],
+  3: ["12:00", "18:00", "22:00"],
+};
 
 let state = {
   lineUserId: null,
-  reminderTime: "09:00",
+  reminderTimes: ["12:00"],
+  dailyReminders: 1,
   guardians: []
 };
+
+function defaultTimesForCount(count) {
+  const n = Math.max(1, Math.min(3, Number(count) || 1));
+  return (DEFAULT_REMINDER_TIMES_BY_COUNT[n] || DEFAULT_REMINDER_TIMES_BY_COUNT[1]).slice();
+}
+
+function renderReminderSlots(times) {
+  const host = document.getElementById("reminderSlots");
+  const count = Math.max(1, Math.min(3, state.dailyReminders || times.length || 1));
+  const values = (times && times.length ? times : defaultTimesForCount(count)).slice(0, count);
+  while (values.length < count) values.push(defaultTimesForCount(count)[values.length] || "12:00");
+  host.innerHTML = values.map((time, index) => `
+    <div class="reminder-slot">
+      <label for="memberReminder${index}">第 ${index + 1} 次提醒</label>
+      <input type="time" id="memberReminder${index}" value="${escape(time)}" />
+    </div>
+  `).join("");
+}
+
+function readReminderTimes() {
+  const count = state.dailyReminders || 1;
+  const times = [];
+  for (let i = 0; i < count; i++) {
+    const el = document.getElementById(`memberReminder${i}`);
+    if (el && el.value) times.push(el.value);
+  }
+  return times;
+}
 
 async function init() {
   try {
@@ -182,17 +208,21 @@ async function init() {
 
     state.lineUserId = (await liff.getProfile()).userId;
 
-    // 載入用戶狀態
     const r1 = await fetch(`${API_BASE}/api/onboarding/state?line_user_id=${state.lineUserId}`);
     if (r1.ok) {
       const d = await r1.json();
-      state.reminderTime = d.reminder_time || "09:00";
-      // 顯示方案
+      state.dailyReminders = Number(d.daily_reminders) || 1;
+      state.reminderTimes = (d.reminder_times && d.reminder_times.length)
+        ? d.reminder_times
+        : (d.default_reminder_times || defaultTimesForCount(state.dailyReminders));
       document.getElementById("planName").textContent = d.plan || "尚未訂閱";
-      document.getElementById("planDetail").textContent = d.plan ? "感謝您支持今天還在嗎" : "升級 799 守護版可開守護群";
+      document.getElementById("planDetail").textContent = d.plan
+        ? `每日提醒 ${state.dailyReminders} 次`
+        : "升級 799 守護版可開守護群";
+      document.getElementById("reminderHint").textContent =
+        `本方案每日可設定 ${state.dailyReminders} 個提醒時段。未自訂時預設：${(d.default_reminder_times || defaultTimesForCount(state.dailyReminders)).join("、")}`;
     }
 
-    // 載入守護人清單
     const r2 = await fetch(`${API_BASE}/api/contacts?line_user_id=${state.lineUserId}`);
     if (r2.ok) {
       const d = await r2.json();
@@ -200,8 +230,7 @@ async function init() {
       renderGuardians();
     }
 
-    // 高亮當前提醒時間
-    highlightReminder();
+    renderReminderSlots(state.reminderTimes);
   } catch (err) {
     console.error(err);
   }
@@ -210,41 +239,82 @@ async function init() {
 function renderGuardians() {
   const list = document.getElementById("guardianList");
   if (!state.guardians.length) {
-    list.innerHTML = '<div class="empty">尚未綁定守護人,點下方按鈕開始設定</div>';
+    list.innerHTML = '<div class="empty">尚未綁定守護人，請新增或分享邀請連結</div>';
     return;
   }
-  list.innerHTML = state.guardians.map((g, i) => `
-    <div class="guardian-row ${i === 0 ? 'primary' : ''}">
-      <div class="guardian-name">${escape(g.name || '守護人 ' + (i+1))} ${i === 0 ? '⭐ 主要' : ''}</div>
-      <div class="guardian-detail">${escape(g.relationship || '')} · ${escape(g.phone || '')}</div>
-    </div>
-  `).join("");
+  list.innerHTML = state.guardians.map((g, i) => {
+    const bound = g.binding_status === "accepted" || g.consent_status === "accepted" || g.line_id;
+    return `
+    <div class="guardian-row ${i === 0 ? "primary" : ""}">
+      <div class="guardian-name">${escape(g.name || "守護人 " + (i + 1))} ${i === 0 ? "⭐ 主要" : ""}</div>
+      <div class="guardian-detail">${escape(g.relationship || "關係未設定")} · ${escape(g.phone || "未填手機")}</div>
+      <div class="guardian-detail">${bound ? "✅ LINE 已綁定" : "⏳ 等待 LINE 綁定"}</div>
+    </div>`;
+  }).join("");
 }
 
-function highlightReminder() {
-  document.querySelectorAll(".reminder-btn").forEach(b => {
-    b.classList.toggle("selected", b.dataset.time === state.reminderTime);
-  });
+function buildInviteText() {
+  const bindUrl = `https://liff.line.me/${LIFF_ID}?invite_from=${encodeURIComponent(state.lineUserId || "")}`;
+  return (
+    `我想邀請你成為「今天還在嗎」的守護人。\n\n` +
+    `【如何綁定】\n` +
+    `1. 點下方連結，用 LINE 開啟\n` +
+    `2. 登入並同意成為守護人\n` +
+    `3. 綁定完成後，若我未準時報平安或發出 SOS，你會收到通知\n\n` +
+    `守護邀請連結：\n${bindUrl}`
+  );
 }
 
-document.querySelectorAll(".reminder-btn").forEach(b => {
-  b.addEventListener("click", () => {
-    state.reminderTime = b.dataset.time;
-    highlightReminder();
-  });
+async function shareGuardianInvite() {
+  if (!state.lineUserId) {
+    alert("請先完成 LINE 登入");
+    return;
+  }
+  const text = buildInviteText();
+  const hint = document.getElementById("shareHint");
+  try {
+    if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
+      await liff.shareTargetPicker([{ type: "text", text }]);
+      if (hint) { hint.style.display = "block"; hint.textContent = "✅ 已開啟分享，選好友送出即可"; }
+    } else if (navigator.share) {
+      await navigator.share({ title: "今天還在嗎 守護人邀請", text });
+    } else if (navigator.clipboard) {
+      await navigator.clipboard.writeText(text);
+      alert("邀請文案已複製，可貼到 LINE 傳給對方");
+    } else {
+      alert(text);
+    }
+  } catch (err) {
+    if (hint) { hint.style.display = "block"; hint.textContent = "分享已取消，可再按一次"; }
+  }
+}
+
+document.getElementById("useDefaultsBtn").addEventListener("click", () => {
+  renderReminderSlots(defaultTimesForCount(state.dailyReminders));
 });
+document.getElementById("shareInviteBtn").addEventListener("click", shareGuardianInvite);
 
 async function saveReminder() {
   const btn = document.getElementById("saveBtn");
+  let times = readReminderTimes();
+  if (times.length < state.dailyReminders) {
+    times = defaultTimesForCount(state.dailyReminders);
+  }
   btn.disabled = true;
   btn.textContent = "儲存中...";
   try {
     const res = await fetch(`${API_BASE}/api/onboarding/reminder`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ line_user_id: state.lineUserId, reminder_time: state.reminderTime })
+      body: JSON.stringify({
+        line_user_id: state.lineUserId,
+        reminder_times: times,
+        reminder_time: times[0]
+      })
     });
     if (res.ok) {
+      const data = await res.json();
+      state.reminderTimes = data.reminder_times || times;
       const status = document.getElementById("statusSaved");
       status.style.display = "block";
       setTimeout(() => status.style.display = "none", 3000);

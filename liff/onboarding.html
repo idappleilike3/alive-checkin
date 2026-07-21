@@ -82,26 +82,22 @@
     background: #FFF4E5;
     border-color: #E08E00;
   }
-  .reminder-options {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-    margin: 16px 0;
+  .reminder-slot {
+    margin: 12px 0;
   }
-  .reminder-btn {
+  .reminder-slot label {
+    display: block;
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    color: #444;
+  }
+  .reminder-slot input[type="time"] {
+    width: 100%;
     padding: 12px;
     border: 2px solid #E0E0E0;
-    background: #fff;
     border-radius: 8px;
-    cursor: pointer;
-    font-size: 14px;
-    text-align: center;
-  }
-  .reminder-btn.selected {
-    border-color: #00B900;
-    background: #E8F8EE;
-    color: #00B900;
-    font-weight: 700;
+    font-size: 18px;
   }
   .loading {
     text-align: center;
@@ -113,7 +109,6 @@
     text-align: center;
     margin: 20px 0;
   }
-  /* 🎁 歡迎詞風格完成設定卡片 */
   .gift-card {
     background: linear-gradient(135deg, #00B900, #00C853);
     color: #fff;
@@ -199,21 +194,44 @@
 </div>
 
 <script>
-const LIFF_ID = "2010674803-sLl9j1Sk";
+const LIFF_ID = "2010674803-rK98c0lo"; // fallback；優先改從 /api/config 讀取
 const API_BASE = "https://alive-checkin.onrender.com";
+const DEFAULT_REMINDER_TIMES_BY_COUNT = {
+  1: ["12:00"],
+  2: ["12:00", "18:00"],
+  3: ["12:00", "18:00", "22:00"],
+};
 
 let state = {
   loggedIn: false,
   lineUserId: null,
   hasGuardian: false,
-  reminderTime: null,
+  reminderTimes: null,
+  dailyReminders: 1,
+  defaultReminderTimes: ["12:00"],
   currentStep: 1,
-  selectedTime: "09:00"
 };
+
+function defaultTimesForCount(count) {
+  const n = Math.max(1, Math.min(3, Number(count) || 1));
+  return (DEFAULT_REMINDER_TIMES_BY_COUNT[n] || DEFAULT_REMINDER_TIMES_BY_COUNT[1]).slice();
+}
+
+async function resolveLiffId() {
+  try {
+    const res = await fetch(`${API_BASE}/api/config`);
+    if (res.ok) {
+      const cfg = await res.json();
+      if (cfg.liff_id) return cfg.liff_id;
+    }
+  } catch (_) {}
+  return LIFF_ID;
+}
 
 async function init() {
   try {
-    await liff.init({ liffId: LIFF_ID });
+    const liffId = await resolveLiffId();
+    await liff.init({ liffId });
     if (!liff.isLoggedIn()) {
       liff.login();
       return;
@@ -227,12 +245,20 @@ async function init() {
       if (res.ok) {
         const data = await res.json();
         state.hasGuardian = data.has_guardian;
-        state.reminderTime = data.reminder_time;
+        state.dailyReminders = Number(data.daily_reminders) || 1;
+        state.defaultReminderTimes = data.default_reminder_times || defaultTimesForCount(state.dailyReminders);
+        // 只有後端已存自訂時段才算「已設定」；預設值不算完成
+        const stored = Array.isArray(data.reminder_times) ? data.reminder_times : null;
+        const hasCustom = Boolean(data.reminder_time) && (
+          Array.isArray(stored) ? stored.length > 0 : true
+        ) && data.is_onboarding_completed;
+        state.reminderTimes = hasCustom ? (stored || [data.reminder_time]) : null;
       }
     }
     
+    // 不要一進來就跳提醒：先完成守護人表單，再進提醒時間
     if (!state.hasGuardian) state.currentStep = 2;
-    else if (!state.reminderTime) state.currentStep = 3;
+    else if (!state.reminderTimes) state.currentStep = 3;
     else state.currentStep = 4;
     
     document.getElementById("loading").style.display = "none";
@@ -244,6 +270,24 @@ async function init() {
       <div style="font-size:13px;margin-top:12px;">${err.message || err}</div>
     `;
   }
+}
+
+function renderReminderSlots(times) {
+  return times.map((time, index) => `
+    <div class="reminder-slot">
+      <label for="reminderSlot${index}">第 ${index + 1} 次提醒</label>
+      <input type="time" id="reminderSlot${index}" value="${time}" />
+    </div>
+  `).join("");
+}
+
+function readReminderSlots(count) {
+  const times = [];
+  for (let i = 0; i < count; i++) {
+    const el = document.getElementById(`reminderSlot${i}`);
+    if (el && el.value) times.push(el.value);
+  }
+  return times;
 }
 
 function renderStep() {
@@ -259,12 +303,14 @@ function renderStep() {
         </div>
         <div class="icon-big">👨‍👩‍👧</div>
         <h2 style="text-align:center;">綁定你的守護人</h2>
-        <p style="color:#888;margin-bottom:16px;">新增至少 1 位家人/朋友,逾期未簽到或 SOS 時會通知他們。</p>
+        <p style="color:#888;margin-bottom:16px;">請先完成至少 1 位家人/朋友的資料。填寫完成後，才會進入提醒時間設定。</p>
         <a href="./guardian.html" class="btn btn-primary">開始綁定守護人</a>
-        <button class="btn btn-secondary" onclick="skipStep('guardian')">稍後再設定</button>
+        <p style="color:#888;font-size:13px;margin-top:12px;text-align:center;">綁定完成後請回到此頁，系統會自動進入提醒時間設定。</p>
       </div>
     `;
   } else if (state.currentStep === 3) {
+    const count = state.dailyReminders || 1;
+    const defaults = state.defaultReminderTimes || defaultTimesForCount(count);
     content.innerHTML = `
       <div class="card">
         <div class="step-indicator">
@@ -273,22 +319,22 @@ function renderStep() {
           <div class="step active"><span class="step-num">3</span>提醒時間</div>
         </div>
         <div class="icon-big">⏰</div>
-        <h2 style="text-align:center;">設定每日提醒時間</h2>
-        <p style="color:#888;margin-bottom:16px;">選一個方便的時間,系統會在這時間提醒您簽到。</p>
-        <div class="reminder-options">
-          <div class="reminder-btn" data-time="08:00">上午 8:00</div>
-          <div class="reminder-btn selected" data-time="09:00">上午 9:00</div>
-          <div class="reminder-btn" data-time="12:00">中午 12:00</div>
-          <div class="reminder-btn" data-time="18:00">下午 6:00</div>
-          <div class="reminder-btn" data-time="20:00">晚上 8:00</div>
-          <div class="reminder-btn" data-time="21:00">晚上 9:00</div>
-        </div>
+        <h2 style="text-align:center;">私訊預警通知提醒設定</h2>
+        <p style="color:#888;margin-bottom:16px;">你的方案每日可提醒 ${count} 次。不更改則使用預設時段。</p>
+        ${renderReminderSlots(defaults.slice(0, count))}
+        <button class="btn btn-secondary" type="button" id="useDefaultsBtn">使用方案預設時間</button>
         <button class="btn btn-primary" id="saveReminderBtn" onclick="saveReminder()">✓ 完成設定</button>
       </div>
     `;
-    setupReminderButtons();
+    document.getElementById("useDefaultsBtn").addEventListener("click", () => {
+      const times = defaultTimesForCount(count);
+      times.forEach((t, i) => {
+        const el = document.getElementById(`reminderSlot${i}`);
+        if (el) el.value = t;
+      });
+    });
   } else if (state.currentStep === 4) {
-    // 🎁 歡迎詞風格完成設定卡片
+    const timesText = (state.reminderTimes || []).join("、") || "已設定";
     content.innerHTML = `
       <div class="gift-card">
         <div class="gift-emoji">🎉</div>
@@ -298,7 +344,7 @@ function renderStep() {
         <div class="gift-checklist">
           <div class="gift-check">✅ LINE 登入</div>
           <div class="gift-check">✅ 守護人已綁定</div>
-          <div class="gift-check">✅ 提醒時間:${state.reminderTime || '已設定'}</div>
+          <div class="gift-check">✅ 提醒時間:${timesText}</div>
         </div>
 
         <div class="gift-warning">
@@ -313,18 +359,12 @@ function renderStep() {
   }
 }
 
-function setupReminderButtons() {
-  document.querySelectorAll(".reminder-btn").forEach(b => {
-    b.addEventListener("click", () => {
-      state.selectedTime = b.dataset.time;
-      document.querySelectorAll(".reminder-btn").forEach(x => x.classList.remove("selected"));
-      b.classList.add("selected");
-    });
-  });
-}
-
 async function saveReminder() {
-  const time = state.selectedTime || state.reminderTime || "09:00";
+  const count = state.dailyReminders || 1;
+  let times = readReminderSlots(count);
+  if (times.length < count) {
+    times = defaultTimesForCount(count);
+  }
   const btn = document.getElementById("saveReminderBtn");
   btn.disabled = true;
   btn.textContent = "儲存中...";
@@ -335,11 +375,13 @@ async function saveReminder() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         line_user_id: state.lineUserId,
-        reminder_time: time
+        reminder_times: times,
+        reminder_time: times[0]
       })
     });
     if (res.ok) {
-      state.reminderTime = time;
+      const data = await res.json();
+      state.reminderTimes = data.reminder_times || times;
       state.currentStep = 4;
       renderStep();
     } else {
@@ -351,13 +393,6 @@ async function saveReminder() {
     alert("網路錯誤:" + err.message);
     btn.disabled = false;
     btn.textContent = "✓ 完成設定";
-  }
-}
-
-function skipStep(step) {
-  if (step === "guardian") {
-    state.currentStep = 3;
-    renderStep();
   }
 }
 

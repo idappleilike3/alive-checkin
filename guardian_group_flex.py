@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+import os
+
 
 # ───────────────────────────────────────────────────────────
 # 共用元件
@@ -29,6 +31,28 @@ GRAY = "#555555"
 GRAY_LIGHT = "#888888"
 RED_WARN = "#D6322C"
 ORANGE = "#E08E00"
+
+# 與 render.yaml / 正式 /api/config 一致。禁止把帶 code=&state= 的 OAuth callback 當永久連結。
+DEFAULT_LIFF_ID = "2010674803-rK98c0lo"
+PUBLIC_BASE = "https://alive-checkin.onrender.com"
+
+
+def get_liff_id() -> str:
+    return (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).strip() or DEFAULT_LIFF_ID
+
+
+def liff_entry_url(*, open_action: str | None = None, fragment: str = "") -> str:
+    """永久內嵌 LIFF 入口（https://liff.line.me/<LIFF_ID>）。
+
+    不要使用含 code= / state= 的一次性 OAuth callback URL。
+    open_action 會傳到 Endpoint（例如 open=onboarding → 守護人表單→提醒設定）。
+    """
+    url = f"https://liff.line.me/{get_liff_id()}"
+    if open_action:
+        url += f"?open={open_action}"
+    if fragment:
+        url += f"#{fragment.lstrip('#')}"
+    return url
 
 
 def _postback_button(label: str, text: str, style: str = "link", color: str | None = None, height: str = "md"):
@@ -220,21 +244,21 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                     "contents": [
                         _uri_button(
                             "報平安",
-                            "https://alive-checkin.onrender.com/liff/checkin",
+                            liff_entry_url(fragment="home"),
                             style="secondary",
                             color=GREEN_DARK,
                             height="sm",
                         ),
                         _uri_button(
                             "守護人",
-                            "https://alive-checkin.onrender.com/liff/guardian",
+                            liff_entry_url(open_action="onboarding"),
                             style="secondary",
                             color=GREEN_DARK,
                             height="sm",
                         ),
                         _uri_button(
                             "我的會員",
-                            "https://alive-checkin.onrender.com/liff/member",
+                            liff_entry_url(open_action="member"),
                             style="secondary",
                             color=GREEN_DARK,
                             height="sm",
@@ -248,21 +272,21 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                     "contents": [
                         _uri_button(
                             "守護群設定",
-                            "https://alive-checkin.onrender.com/liff/guardian-groups",
+                            liff_entry_url(open_action="guardians"),
                             style="link",
                             color=GREEN_DARK,
                             height="sm",
                         ),
                         _uri_button(
                             "查看方案",
-                            "https://alive-checkin.onrender.com/pricing.html",
+                            f"{PUBLIC_BASE}/pricing.html",
                             style="link",
                             color=GRAY,
                             height="sm",
                         ),
                         _uri_button(
                             "首次引導",
-                            "https://alive-checkin.onrender.com/liff/onboarding",
+                            liff_entry_url(open_action="onboarding"),
                             style="link",
                             color=GRAY,
                             height="sm",
@@ -975,12 +999,18 @@ def _owner_status_block(owner_info):
     }
 
 
-def welcome_flex():
-    """加好友歡迎 Flex：強調 7 天免費體驗 + 立即綁定守護人 1 位。
+def welcome_flex(display_name: str | None = None):
+    """加好友歡迎 Flex：Exact 歡迎文案 + 主 CTA「立即綁定守護人」。
 
-    主 CTA 連到守護人 LIFF；次要小按鈕：報平安 / 我的會員 / 查看方案 / 首次引導。
-    不使用 BOT 字眼。
+    display_name：LINE 顯示名稱；缺省時用「您」。
+    主 CTA：永久 liff.line.me 入口（內嵌）→ 守護人表單 → 私訊預警提醒設定。
+    次要僅保留可選「報平安」。不使用 BOT 字眼。
     """
+    name = (display_name or "").strip() or "您"
+    greeting = f"👋 {name} 您好，歡迎加入「今天還在嗎」"
+    # 永久連結：開 LIFF 內嵌 → onboarding（守護人 → 提醒）。勿硬編碼 OAuth code/state。
+    bind_uri = liff_entry_url(open_action="onboarding")
+    checkin_uri = liff_entry_url(fragment="home")
     return {
         "type": "bubble",
         "size": "mega",
@@ -995,28 +1025,11 @@ def welcome_flex():
             "contents": [
                 {
                     "type": "text",
-                    "text": "🎉 歡迎加入",
+                    "text": greeting,
                     "color": "#FFFFFF",
                     "size": "lg",
-                    "align": "center",
-                },
-                {
-                    "type": "text",
-                    "text": "📍 今天還在嗎",
-                    "color": "#FFFFFF",
-                    "size": "xxl",
                     "weight": "bold",
                     "align": "center",
-                    "margin": "sm",
-                },
-                {
-                    "type": "text",
-                    "text": "🎁 完成設定享 7 天免費體驗",
-                    "color": "#FFFFFF",
-                    "size": "md",
-                    "align": "center",
-                    "margin": "sm",
-                    "weight": "bold",
                     "wrap": True,
                 },
             ],
@@ -1029,6 +1042,24 @@ def welcome_flex():
             "paddingBottom": "md",
             "contents": [
                 {
+                    "type": "text",
+                    "text": (
+                        "我是您的每日平安小助手，會在您設定的時間提醒您報平安，"
+                        "只有超過時間仍未報平安，才會通知您指定的守護人"
+                    ),
+                    "size": "md",
+                    "color": GRAY,
+                    "wrap": True,
+                },
+                {
+                    "type": "text",
+                    "text": "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間",
+                    "size": "md",
+                    "color": GRAY,
+                    "wrap": True,
+                    "weight": "bold",
+                },
+                {
                     "type": "box",
                     "layout": "vertical",
                     "spacing": "xs",
@@ -1040,42 +1071,20 @@ def welcome_flex():
                     "contents": [
                         {
                             "type": "text",
-                            "text": "7 天免費安心體驗",
-                            "size": "lg",
+                            "text": "🎁 完成設定即享 7 天免費安心體驗",
+                            "size": "md",
                             "weight": "bold",
                             "color": ORANGE,
-                        },
-                        {
-                            "type": "text",
-                            "text": "先綁定 1 位守護人並設定每日提醒,即可開始免費體驗。超過提醒時間未報平安,才會通知你指定的人",
-                            "size": "md",
-                            "color": GRAY,
                             "wrap": True,
                         },
                     ],
                 },
                 {
                     "type": "text",
-                    "text": "你可以怎麼用",
-                    "size": "md",
-                    "weight": "bold",
-                    "color": GRAY,
-                    "margin": "sm",
-                },
-                {
-                    "type": "text",
-                    "text": "• 報平安：每天快速簽到\n• 守護人：出事時通知信任的人\n• 守護群：家人群一起守護(799)",
+                    "text": "🚨 緊急狀況請直接撥打 119，聊天訊息可能因網路延遲",
                     "size": "md",
                     "color": GRAY_LIGHT,
                     "wrap": True,
-                },
-                {
-                    "type": "text",
-                    "text": "緊急狀況請直接撥打 119。聊天訊息可能因網路延遲",
-                    "size": "md",
-                    "color": GRAY_LIGHT,
-                    "wrap": True,
-                    "margin": "sm",
                 },
             ],
         },
@@ -1090,55 +1099,20 @@ def welcome_flex():
                     "type": "button",
                     "action": {
                         "type": "uri",
-                        "label": "立即綁定守護人 1 位",
-                        "uri": "https://alive-checkin.onrender.com/liff/guardian",
+                        "label": "立即綁定守護人",
+                        "uri": bind_uri,
                     },
                     "style": "primary",
                     "color": GREEN_DARK,
                     "height": "md",
                 },
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "sm",
-                    "contents": [
-                        _uri_button(
-                            "報平安",
-                            "https://alive-checkin.onrender.com/liff/checkin",
-                            style="secondary",
-                            color=GREEN_DARK,
-                            height="sm",
-                        ),
-                        _uri_button(
-                            "我的會員",
-                            "https://alive-checkin.onrender.com/liff/member",
-                            style="secondary",
-                            color=GREEN_DARK,
-                            height="sm",
-                        ),
-                    ],
-                },
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "sm",
-                    "contents": [
-                        _uri_button(
-                            "查看方案",
-                            "https://alive-checkin.onrender.com/pricing.html",
-                            style="link",
-                            color=GRAY,
-                            height="sm",
-                        ),
-                        _uri_button(
-                            "首次引導",
-                            "https://alive-checkin.onrender.com/liff/onboarding",
-                            style="link",
-                            color=GRAY,
-                            height="sm",
-                        ),
-                    ],
-                },
+                _uri_button(
+                    "報平安",
+                    checkin_uri,
+                    style="link",
+                    color=GRAY,
+                    height="sm",
+                ),
             ],
         },
     }

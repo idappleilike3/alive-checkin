@@ -190,6 +190,11 @@
       font-weight: 850;
       border: 1px solid var(--line);
     }
+    .alive-pill.is-overdue {
+      background: #dc2626;
+      color: #fff;
+      border-color: #b91c1c;
+    }
     .status-row {
       display: flex;
       justify-content: space-between;
@@ -201,6 +206,17 @@
     .status-row:last-child { border-bottom: 0; }
     .status-label { color: var(--muted); }
     .status-value { font-weight: 750; color: var(--text); text-align: right; }
+    .countdown-block {
+      margin: 4px 0 10px;
+      border-radius: 14px;
+      padding: 10px 12px 12px;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+    .countdown-block.is-overdue {
+      background: #dc2626;
+      color: #fff;
+      box-shadow: 0 10px 24px rgba(220, 38, 38, 0.28);
+    }
     .countdown {
       min-height: 52px;
       display: grid;
@@ -210,7 +226,9 @@
       letter-spacing: 0;
       color: var(--accent);
     }
+    .countdown-block.is-overdue .countdown { color: #fff; }
     .countdown-label { font-size: 13px; color: var(--muted); text-align: center; }
+    .countdown-block.is-overdue .countdown-label { color: rgba(255, 255, 255, 0.92); }
     .check-btn {
       width: 184px;
       height: 184px;
@@ -497,6 +515,10 @@
       margin: 12px 0;
       font-size: 14px;
       line-height: 1.45;
+    }
+    .inline-error.inline-success {
+      background: #dcfce7;
+      color: #166534;
     }
     .inline-error[hidden] { display: none; }
     .check-btn:disabled,
@@ -821,6 +843,89 @@
       font-weight: 900;
     }
     .contact-icon-btn:disabled { opacity: 0.35; cursor: default; }
+    .guardian-list {
+      display: grid;
+      gap: 10px;
+      margin: 12px 0;
+    }
+    .guardian-item {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--soft);
+    }
+    .guardian-info {
+      min-width: 0;
+      flex: 1;
+      display: grid;
+      gap: 3px;
+    }
+    .guardian-info-top {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+    }
+    .guardian-info strong {
+      font-size: 15px;
+      color: var(--text);
+    }
+    .guardian-info small {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .guardian-info .badge.primary {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 8px;
+      background: #dcfce7;
+      color: #166534;
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .guardian-bind-ok { color: #166534 !important; font-weight: 700; }
+    .guardian-bind-pending { color: #b45309 !important; font-weight: 700; }
+    .guardian-actions-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .guardian-action-btn {
+      min-width: 64px;
+      min-height: 34px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--input);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 750;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .guardian-action-btn.danger {
+      border-color: #fecaca;
+      background: #fef2f2;
+      color: #b91c1c;
+    }
+    .guardian-actions {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .guardian-actions .action-btn.primary {
+      background: var(--button);
+      color: #fff;
+      border-color: transparent;
+    }
     .map-panel {
       min-height: 180px;
       border-radius: 16px;
@@ -1280,6 +1385,43 @@
       outline-offset: 3px;
     }
     .onboarding-submit:disabled { opacity: 0.65; }
+    .onboarding-reminder-slot {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .onboarding-reminder-slot label {
+      font-size: 16px;
+      font-weight: 700;
+      color: #17324d;
+    }
+    .onboarding-reminder-slot input[type="time"] {
+      min-height: 52px;
+      border: 2px solid #9fd9bd;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 20px;
+      color: #17324d;
+      background: #f7fffb;
+    }
+    .onboarding-reminder-hint {
+      margin: 0 0 12px;
+      color: #52677d;
+      font-size: 15px;
+      line-height: 1.55;
+    }
+    .onboarding-default-btn {
+      width: 100%;
+      min-height: 48px;
+      margin-bottom: 8px;
+      border: 2px solid #9fd9bd;
+      border-radius: 12px;
+      background: #fff;
+      color: #087f57;
+      font-size: 16px;
+      font-weight: 800;
+    }
     @media (max-width: 420px) {
       #onboardingModal { padding: 10px; align-items: start; }
       .onboarding-modal { padding: 22px 18px; max-height: calc(100dvh - 20px); }
@@ -1802,17 +1944,18 @@
       <p id="inlineError" class="inline-error" hidden></p>
     </div>
 
-    <div class="countdown" id="countdownDisplay">--:--:--</div>
-    <div class="countdown-label">下一次安心確認倒數</div>
+    <div class="countdown-block" id="countdownBlock">
+      <div class="countdown" id="countdownDisplay">--:--:--</div>
+      <div class="countdown-label" id="countdownLabel">下一次安心確認倒數</div>
+    </div>
 
     <div id="guardianSection" hidden>
         <h3>守護人管理</h3>
-        <p class="helper">未簽到或 SOS 發生時，系統會依方案透過 LINE 或簡訊通知以下守護人（依優先順序）</p>
-        <div id="guardianList"></div>
+        <p class="helper">未簽到或 SOS 發生時，系統會依方案透過 LINE 或簡訊通知以下守護人（依優先順序）。新增守護人請到會員中心設定。</p>
+        <div id="guardianList" class="guardian-list"></div>
         <p class="helper" id="guardianCount"></p>
         <div class="guardian-actions">
-          <button class="action-btn" id="addGuardianBtn" type="button">+ 新增守護人</button>
-          <button class="action-btn" id="inviteGuardianBtn" type="button">生成邀請連結</button>
+          <button class="action-btn primary" id="inviteGuardianBtn" type="button">一鍵分享邀請守護人</button>
         </div>
         <div id="inviteArea" hidden>
           <p>邀請連結:</p>
@@ -1856,13 +1999,14 @@
         </div>
       </div>
 
-      <!-- C00 Onboarding Modal(首次使用強制新增守護人) -->
+      <!-- C00 Onboarding Modal(首次使用強制新增守護人 → 完成後再設定提醒時間) -->
       <div class="modal-backdrop" id="onboardingModal" hidden>
         <div class="guardian-modal onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle">
           <h2 id="onboardingTitle">歡迎使用「今天還在嗎」</h2>
-          <p class="onboarding-intro">為了在你未準時簽到或需要協助時，能通知你信任的人，請先新增至少 1 位守護人。</p>
-          <p class="onboarding-step">步驟 1／2　新增第一位守護人</p>
-          <div class="onboarding-form">
+          <p class="onboarding-intro" id="onboardingIntro">為了在你未準時簽到或需要協助時，能通知你信任的人，請先新增至少 1 位守護人。</p>
+          <p class="onboarding-step" id="onboardingStepLabel">步驟 1／2　新增第一位守護人</p>
+
+          <div class="onboarding-form" id="onboardingGuardianStep">
             <div class="onboarding-fields">
               <label class="onboarding-field" for="obName">姓名 <span class="onboarding-required">必填</span>
                 <input type="text" id="obName" placeholder="例如：王小明" autocomplete="name" required>
@@ -1890,7 +2034,15 @@
               <p class="onboarding-note">手機號碼只會用於安全守護與緊急聯絡，不會拿來發送廣告。</p>
               <p id="onboardingError" class="inline-error" role="alert" hidden></p>
             </div>
-            <button class="onboarding-submit" id="onboardingSaveBtn" type="button">新增守護人並進入首頁</button>
+            <button class="onboarding-submit" id="onboardingSaveBtn" type="button">新增守護人，下一步設定提醒</button>
+          </div>
+
+          <div class="onboarding-form" id="onboardingReminderStep" hidden>
+            <p class="onboarding-reminder-hint" id="onboardingReminderHint">依你的方案可設定每日提醒時間。不改動的話會使用預設時段。</p>
+            <div id="onboardingReminderSlots"></div>
+            <button class="onboarding-default-btn" id="onboardingUseDefaultsBtn" type="button">使用方案預設時間</button>
+            <p id="onboardingReminderError" class="inline-error" role="alert" hidden></p>
+            <button class="onboarding-submit" id="onboardingReminderSaveBtn" type="button">完成設定並進入首頁</button>
           </div>
         </div>
       </div>
@@ -1994,8 +2146,9 @@
             <div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護人</strong></div>
           </div>
           <div class="member-data-actions">
-            <button class="action-btn" id="memberGuardianSettingsBtn" type="button">設定守護人</button>
-            <button class="action-btn" id="memberShareGuardianBtn" type="button">馬上分享守護人</button>
+            <button class="action-btn" id="memberAddGuardianBtn" type="button">＋ 新增守護人</button>
+            <button class="action-btn" id="memberGuardianSettingsBtn" type="button">管理守護人列表</button>
+            <button class="action-btn" id="memberShareGuardianBtn" type="button">一鍵分享邀請守護人</button>
           </div>
         </div>
 
@@ -2332,7 +2485,8 @@
       history: [],
       contact_email: "",
       grace_hours: 36,
-      reminder_time: "09:00",
+      reminder_time: "12:00",
+      reminder_times: ["12:00"],
       contact_capacity_reminder_enabled: false,
       billing_cycle: "trial",
       payment_status: "trial",
@@ -2672,11 +2826,20 @@
     }
 
     function buildContactInvite(nickname = "") {
+      const liffId = window.__LIFF_ID__ || "2010674803-rK98c0lo";
       const bindUrl = lineUserId
-        ? `${location.origin}${location.pathname}?invite_from=${encodeURIComponent(lineUserId)}`
-        : `${location.origin}${location.pathname}`;
+        ? `https://liff.line.me/${liffId}?invite_from=${encodeURIComponent(lineUserId)}`
+        : `https://liff.line.me/${liffId}`;
       const nameText = nickname ? `嗨 ${nickname}，` : "";
-      const text = `${nameText}我正在使用「今天還在嗎」平安簽到服務，想邀請你成為我的守護人。\n\n你無須註冊，也不用下載 APP。只要點連結用 LINE 同意綁定，未來如果我遇到緊急狀況，你就能收到 LINE 警報與位置通知。\n\n守護邀請連結：\n${bindUrl}`;
+      const text = (
+        `${nameText}我想邀請你成為「今天還在嗎」的守護人。\n\n` +
+        `【如何綁定】\n` +
+        `1. 點下方連結，用 LINE 開啟\n` +
+        `2. 登入並同意成為守護人\n` +
+        `3. 綁定完成後，若我未準時報平安或發出 SOS，你會收到 LINE 通知\n\n` +
+        `你不需要另外註冊 App。點連結完成授權即可。\n\n` +
+        `守護邀請連結：\n${bindUrl}`
+      );
       return { bindUrl, text };
     }
 
@@ -3003,7 +3166,8 @@
         const savedStatus = await apiSaveSettings({
           contact_email: status.contact_email || "",
           grace_hours: status.grace_hours || 36,
-          reminder_time: status.reminder_time || "09:00",
+          reminder_time: status.reminder_time || "12:00",
+          reminder_times: status.reminder_times || [status.reminder_time || "12:00"],
           contact_capacity_reminder_enabled: Boolean(status.contact_capacity_reminder_enabled),
           guardian_details_reminder_enabled: $("guardianDetailsReminderEnabled").checked
         });
@@ -3193,7 +3357,7 @@
       const bindResult = await apiBindEmergencyContact(inviteFrom);
       if (bindResult?.bound) {
         closeInviteAcceptPrompt();
-        alert("綁定完成！你已成為對方的守護人，緊急時可收到 LINE 警報與位置通知。");
+        alert("綁定完成！你已成為對方的守護人。對方也會收到「綁定完成」通知。");
       }
     }
 
@@ -3415,6 +3579,7 @@
         if (!configRes.ok) return false;
         const config = await configRes.json();
         if (!config.liff_id) return false;
+        window.__LIFF_ID__ = config.liff_id;
         await liff.init({ liffId: config.liff_id, withLoginOnExternalBrowser: true });
         if (!liff.isLoggedIn()) return false;
         const profile = await liff.getProfile();
@@ -3435,7 +3600,7 @@
           const bindResult = await apiBindEmergencyContact(inviteFrom);
           if (bindResult?.bound) {
             closeInviteAcceptPrompt();
-            alert("綁定完成！你已成為對方的緊急聯絡人，系統也已送出測試提醒。");
+            alert("綁定完成！你已成為對方的緊急聯絡人。對方也會收到「綁定完成」通知。");
           }
         } else if (!inviteFrom) {
           maybeShowGuardianPrompt();
@@ -3666,7 +3831,19 @@
     }
 
     function goGuardianSettings() {
-      document.querySelector('[aria-label="緊急聯絡人"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setMemberCenterExpanded(true);
+      const section = $("guardianSection");
+      if (section) {
+        section.hidden = false;
+        section.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        document.querySelector('[aria-label="會員個人中心"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+
+    function openAddGuardianFromMember() {
+      setMemberCenterExpanded(true);
+      openGuardianEditor(null);
     }
 
     async function saveBillingPreferences() {
@@ -3842,37 +4019,45 @@
         $("streakText").textContent = calculateStreak(historyData) + " 天";
       }
 
-      // 簽到按鈕狀態(防重複送出)
-      const checkBtn = $("checkBtn");
-      if (checkBtn) {
-        checkBtn.disabled = Boolean(data.is_today_checked);
-        checkBtn.setAttribute("aria-busy", "false");
-        checkBtn.classList.toggle("checked", Boolean(data.is_today_checked));
-        checkBtn.dataset.state = data.is_today_checked ? "checked" : "pending";
-      }
+      // 簽到按鈕狀態(防重複送出) — 務必同步還原按鈕文案，避免卡在「簽到處理中」
+      syncCheckBtn(data);
 
       // 成功 render 清掉錯誤訊息
       const errBox = $("inlineError");
-      if (errBox) { errBox.hidden = true; errBox.textContent = ""; }
+      if (errBox && !errBox.classList.contains("inline-success")) {
+        errBox.hidden = true;
+        errBox.textContent = "";
+        errBox.classList.remove("inline-success");
+      }
 
       $("statusText").innerHTML = `<span class="${data.status_class || "gray"}">${data.status_text || "--"}</span>`;
-      $("alivePill").textContent = data.is_overdue
-        ? "需要確認"
+      const alivePill = $("alivePill");
+      alivePill.textContent = data.is_overdue
+        ? "逾期待簽到"
         : data.is_today_checked
           ? "今日平安"
           : "待簽到";
+      alivePill.classList.toggle("is-overdue", Boolean(data.is_overdue));
 
       const countdown = $("countdownDisplay");
+      const countdownBlock = $("countdownBlock");
+      const countdownLabel = $("countdownLabel");
+      const setOverdueUi = (on) => {
+        if (countdownBlock) countdownBlock.classList.toggle("is-overdue", on);
+        if (countdown) countdown.style.color = "";
+      };
       if (data.is_overdue) {
         countdown.textContent = "已逾期";
-        countdown.style.color = "#dc2626";
+        if (countdownLabel) countdownLabel.textContent = "逾期／待簽到逾時，請立即報平安";
+        setOverdueUi(true);
         hideWarningPrompt();
       } else if (data.is_prealert) {
         const rem = data.cancel_remaining_ms || 15 * 60 * 1000;
         const m = Math.floor(rem / 60000);
         const s = Math.floor((rem % 60000) / 1000);
         countdown.textContent = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-        countdown.style.color = "#dc2626";
+        if (countdownLabel) countdownLabel.textContent = "即將逾期，請盡快簽到";
+        setOverdueUi(true);
         showWarningPrompt(rem);
       } else if (data.last_check_in) {
         const rem = data.remaining_ms || 0;
@@ -3880,18 +4065,22 @@
         const m = Math.floor((rem % 3600000) / 60000);
         const s = Math.floor((rem % 60000) / 1000);
         countdown.textContent = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-        countdown.style.color = "";
+        if (countdownLabel) countdownLabel.textContent = "下一次安心確認倒數";
+        setOverdueUi(false);
         hideWarningPrompt();
       } else {
         countdown.textContent = "--:--:--";
-        countdown.style.color = "";
+        if (countdownLabel) countdownLabel.textContent = "下一次安心確認倒數";
+        setOverdueUi(false);
         hideWarningPrompt();
       }
 
       const checkBtnEl = $("checkBtn");
-      checkBtnEl.classList.remove("danger", "warning");
-      if (data.is_overdue) checkBtnEl.classList.add("danger");
-      else if (data.status_class === "warning") checkBtnEl.classList.add("warning");
+      if (checkBtnEl) {
+        checkBtnEl.classList.remove("danger", "warning");
+        if (data.is_overdue) checkBtnEl.classList.add("danger");
+        else if (data.status_class === "warning") checkBtnEl.classList.add("warning");
+      }
 
       const planView = planPresentation(data.plan, data.trial_days_left);
       $("planStateLabel").textContent = data.plan === "trial"
@@ -3916,11 +4105,46 @@
       renderStatus(await apiGetStatus());
     }
 
+    const CHECK_BTN_IDLE_HTML = '我已平安<span class="sub">點一下簽到 ♡</span>';
+    const CHECK_BTN_DONE_HTML = '今日已簽到<span class="sub">謝謝你報平安 ♡</span>';
+    const CHECK_BTN_LOADING_HTML = '簽到中…<span class="sub">請稍候</span>';
+
+    function syncCheckBtn(data) {
+      const checkBtn = $("checkBtn");
+      if (!checkBtn) return;
+      const checked = Boolean(data && data.is_today_checked);
+      checkBtn.disabled = checked;
+      checkBtn.setAttribute("aria-busy", "false");
+      checkBtn.classList.toggle("checked", checked);
+      checkBtn.dataset.state = checked ? "checked" : "pending";
+      checkBtn.innerHTML = checked ? CHECK_BTN_DONE_HTML : CHECK_BTN_IDLE_HTML;
+      checkBtn.classList.remove("danger", "warning");
+      if (data && data.is_overdue) checkBtn.classList.add("danger");
+      else if (data && data.status_class === "warning") checkBtn.classList.add("warning");
+    }
+
     function showInlineError(message) {
       const errBox = $("inlineError");
       if (!errBox) { alert(message); return; }
+      errBox.classList.remove("inline-success");
       errBox.textContent = message;
       errBox.hidden = false;
+    }
+
+    function showInlineSuccess(message) {
+      const errBox = $("inlineError");
+      if (!errBox) { alert(message); return; }
+      errBox.classList.add("inline-success");
+      errBox.textContent = message;
+      errBox.hidden = false;
+      clearTimeout(showInlineSuccess._timer);
+      showInlineSuccess._timer = setTimeout(() => {
+        if (errBox.classList.contains("inline-success")) {
+          errBox.hidden = true;
+          errBox.textContent = "";
+          errBox.classList.remove("inline-success");
+        }
+      }, 3500);
     }
 
     function showLineLoginRequired() {
@@ -3929,14 +4153,18 @@
       const errBox = $("inlineError");
       const query = location.search || "";
       const hash = location.hash || "";
-      const liffEntry = `https://liff.line.me/2010674803-sLl9j1Sk${query}${hash}`;
+      // 用 /api/config 的 LIFF_ID；fallback 與正式環境一致（勿硬編碼 OAuth code/state）
+      const liffId = (window.__LIFF_ID__ || "2010674803-rK98c0lo");
+      const liffEntry = `https://liff.line.me/${liffId}${query}${hash}`;
       if (checkBtn) {
         checkBtn.disabled = true;
         checkBtn.setAttribute("aria-busy", "false");
         checkBtn.dataset.state = "login-required";
+        checkBtn.innerHTML = CHECK_BTN_IDLE_HTML;
       }
       if (dailyEl) dailyEl.textContent = "請先完成 LINE 登入";
       if (errBox) {
+        errBox.classList.remove("inline-success");
         errBox.innerHTML = `請從 LINE 開啟並完成會員登入後再簽到<br><a href="${liffEntry}">用 LINE 開啟並登入</a>`;
         errBox.hidden = false;
       }
@@ -3944,12 +4172,18 @@
 
     function hideInlineError() {
       const errBox = $("inlineError");
-      if (errBox) { errBox.hidden = true; errBox.textContent = ""; }
+      if (errBox) {
+        errBox.hidden = true;
+        errBox.textContent = "";
+        errBox.classList.remove("inline-success");
+      }
     }
 
     async function doCheckin() {
       const checkBtn = $("checkBtn");
       if (!checkBtn) return;
+      // 防連點：僅在真正送出中阻擋（勿用初始 aria-busy，否則首次點擊會被吃掉）
+      if (checkBtn.dataset.state === "loading") return;
       if (!useLocalMode && !lineUserId) {
         showLineLoginRequired();
         return;
@@ -3957,30 +4191,36 @@
 
       // 防重複送出:今日已簽到時不送 API
       if (currentStatusData && currentStatusData.is_today_checked) {
-        showInlineError("今日已簽到，不需要再送出。");
+        syncCheckBtn(currentStatusData);
+        showInlineSuccess("今日已簽到，不需要再送出。");
         return;
       }
 
-      // loading 狀態
-      const originalText = checkBtn.innerHTML;
       checkBtn.disabled = true;
       checkBtn.dataset.state = "loading";
-      checkBtn.innerHTML = '<span class="status-row"><span class="status-label">簽到處理中…</span></span>';
+      checkBtn.setAttribute("aria-busy", "true");
+      checkBtn.innerHTML = CHECK_BTN_LOADING_HTML;
       hideInlineError();
 
       try {
         const result = await apiCheckin();
         if (result && result.ok === false) {
-          showInlineError("簽到失敗: " + (result.error || "未知錯誤"));
-          checkBtn.disabled = false;
-          checkBtn.innerHTML = originalText;
+          showInlineError("簽到失敗：" + (result.error || "未知錯誤"));
+          syncCheckBtn(currentStatusData || { is_today_checked: false });
           return;
         }
         renderStatus(result);
+        showInlineSuccess("報平安成功！守護人不會被打擾。");
       } catch (error) {
-        showInlineError("簽到失敗:" + (error.message || "請確認後端是否正常"));
-        checkBtn.disabled = false;
-        checkBtn.innerHTML = originalText;
+        showInlineError("簽到失敗：" + (error.message || "請確認後端是否正常"));
+        syncCheckBtn(currentStatusData || { is_today_checked: false });
+      } finally {
+        // 無論成功/失敗/例外，都清掉 busy；若仍卡在 loading 就強制恢復
+        if (checkBtn.dataset.state === "loading") {
+          syncCheckBtn(currentStatusData || { is_today_checked: false });
+        } else {
+          checkBtn.setAttribute("aria-busy", "false");
+        }
       }
     }
 
@@ -4057,14 +4297,97 @@
       return { status: res.status, data };
     }
 
-    async function apiCompleteOnboarding(lineUserId, reminderTime) {
+    async function apiCompleteOnboarding(lineUserId, reminderTimes) {
+      const payload = { line_user_id: lineUserId };
+      if (Array.isArray(reminderTimes) && reminderTimes.length) {
+        payload.reminder_times = reminderTimes;
+        payload.reminder_time = reminderTimes[0];
+      } else if (typeof reminderTimes === "string" && reminderTimes) {
+        payload.reminder_time = reminderTimes;
+        payload.reminder_times = [reminderTimes];
+      }
       const res = await fetch(`/api/onboarding/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ line_user_id: lineUserId, reminder_time: reminderTime })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       return { status: res.status, data };
+    }
+
+    const DEFAULT_REMINDER_TIMES_BY_COUNT = {
+      1: ["12:00"],
+      2: ["12:00", "18:00"],
+      3: ["12:00", "18:00", "22:00"],
+    };
+
+    function defaultReminderTimesForCount(count) {
+      const n = Math.max(1, Math.min(3, Number(count) || 1));
+      return (DEFAULT_REMINDER_TIMES_BY_COUNT[n] || DEFAULT_REMINDER_TIMES_BY_COUNT[1]).slice();
+    }
+
+    function planDailyReminderCount(status) {
+      const fromStatus = Number(status && status.daily_reminders);
+      if (fromStatus >= 1 && fromStatus <= 3) return fromStatus;
+      const plan = (status && status.plan) || "trial";
+      if (plan === "paid_799" || plan === "paid_799_year" || plan === "paid_399_year") return 3;
+      if (plan === "paid_399" || plan === "paid_199_year") return 2;
+      return 1;
+    }
+
+    function reminderSlotLabel(index, total) {
+      if (total <= 1) return "每日提醒時間";
+      return `第 ${index + 1} 次提醒`;
+    }
+
+    function showOnboardingGuardianStep() {
+      const guardianStep = $("onboardingGuardianStep");
+      const reminderStep = $("onboardingReminderStep");
+      if (guardianStep) guardianStep.hidden = false;
+      if (reminderStep) reminderStep.hidden = true;
+      $("onboardingTitle").textContent = "歡迎使用「今天還在嗎」";
+      $("onboardingIntro").textContent = "為了在你未準時簽到或需要協助時，能通知你信任的人，請先新增至少 1 位守護人。";
+      $("onboardingStepLabel").textContent = "步驟 1／2　新增第一位守護人";
+    }
+
+    function renderOnboardingReminderSlots(times) {
+      const host = $("onboardingReminderSlots");
+      if (!host) return;
+      const count = Math.max(1, Math.min(3, times.length || 1));
+      host.innerHTML = times.slice(0, count).map((time, index) => `
+        <div class="onboarding-reminder-slot">
+          <label for="obReminder${index}">${reminderSlotLabel(index, count)}</label>
+          <input type="time" id="obReminder${index}" value="${escapeHtml(time)}" required>
+        </div>
+      `).join("");
+    }
+
+    function readOnboardingReminderTimes() {
+      const inputs = Array.from(document.querySelectorAll("#onboardingReminderSlots input[type='time']"));
+      return inputs.map((el) => (el.value || "").trim()).filter(Boolean);
+    }
+
+    function showOnboardingReminderStep() {
+      const guardianStep = $("onboardingGuardianStep");
+      const reminderStep = $("onboardingReminderStep");
+      const errorEl = $("onboardingReminderError");
+      if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
+      if (guardianStep) guardianStep.hidden = true;
+      if (reminderStep) reminderStep.hidden = false;
+
+      const count = planDailyReminderCount(currentStatusData || {});
+      const defaults = defaultReminderTimesForCount(count);
+      renderOnboardingReminderSlots(defaults);
+
+      $("onboardingTitle").textContent = "私訊預警通知提醒設定";
+      $("onboardingIntro").textContent = "守護人已新增。接下來請確認每日簽到提醒時間；不調整也可直接使用預設。";
+      $("onboardingStepLabel").textContent = `步驟 2／2　私訊預警通知提醒設定（本方案 ${count} 次）`;
+      $("onboardingReminderHint").textContent =
+        count === 1
+          ? "預設中午 12:00。可自行更改。"
+          : count === 2
+            ? "預設中午 12:00、晚上 18:00。可自行更改。"
+            : "預設 12:00、18:00、晚上 22:00。可自行更改。";
     }
 
     async function apiCreateFriendInvite(lineUserId) {
@@ -4087,36 +4410,41 @@
       // 顯示守護人區塊
       if (sectionEl) sectionEl.hidden = false;
 
-      // 渲染列表
+      // 渲染列表：右側對齊編輯／刪除
       if (contacts && contacts.length > 0) {
-        listEl.innerHTML = contacts.map((c, i) => `
+        listEl.innerHTML = contacts.map((c) => {
+          const bound = c.binding_status === "accepted" || c.consent_status === "accepted" || c.line_id || c.line_user_id;
+          const statusClass = bound ? "guardian-bind-ok" : "guardian-bind-pending";
+          const statusText = bound ? "LINE 已綁定" : "等待 LINE 綁定";
+          return `
           <div class="guardian-item" data-id="${escapeHtml(c.id)}">
             <div class="guardian-info">
-              <strong>${escapeHtml(c.name)}</strong>
-              ${c.is_primary ? '<span class="badge primary">主要</span>' : ''}
-              <small>${escapeHtml(c.relationship || '')}</small>
-              <small>${escapeHtml(c.phone || c.email || '')}</small>
-              <small>狀態: ${c.binding_status === 'accepted' ? '已綁定 LINE' : c.line_user_id ? '已綁定' : '未綁定'}</small>
+              <div class="guardian-info-top">
+                <strong>${escapeHtml(c.name || "未命名")}</strong>
+                ${c.is_primary ? '<span class="badge primary">主要</span>' : ""}
+              </div>
+              <small>${escapeHtml(c.relationship || "關係未設定")}</small>
+              <small>${escapeHtml(c.phone || c.email || "尚未留下聯絡方式")}</small>
+              <small class="${statusClass}">${statusText}</small>
             </div>
             <div class="guardian-actions-row">
-              <button class="contact-icon-btn edit-guardian" data-id="${escapeHtml(c.id)}">編輯</button>
-              <button class="contact-icon-btn delete-guardian danger" data-id="${escapeHtml(c.id)}">刪除</button>
+              <button class="guardian-action-btn edit-guardian" type="button" data-id="${escapeHtml(c.id)}">編輯</button>
+              <button class="guardian-action-btn danger delete-guardian" type="button" data-id="${escapeHtml(c.id)}">刪除</button>
             </div>
-          </div>
-        `).join("");
-        // bind events
-        listEl.querySelectorAll(".edit-guardian").forEach(btn => {
+          </div>`;
+        }).join("");
+        listEl.querySelectorAll(".edit-guardian").forEach((btn) => {
           btn.addEventListener("click", () => openGuardianEditor(btn.dataset.id));
         });
-        listEl.querySelectorAll(".delete-guardian").forEach(btn => {
+        listEl.querySelectorAll(".delete-guardian").forEach((btn) => {
           btn.addEventListener("click", () => confirmDeleteGuardian(btn.dataset.id));
         });
       } else {
-        listEl.innerHTML = '<p class="empty-state">尚未設定守護人,發生未簽到或 SOS 時將無人收到通知。</p>';
+        listEl.innerHTML = '<p class="empty-state">尚未設定守護人。請到會員中心新增，或用下方一鍵分享邀請好友綁定。</p>';
       }
 
       if (countEl) {
-        countEl.textContent = `目前 ${contacts ? contacts.length : 0} / ${contactLimit || '?'} 位`;
+        countEl.textContent = `目前 ${contacts ? contacts.length : 0} / ${contactLimit || "?"} 位`;
       }
     }
 
@@ -4235,33 +4563,16 @@
     }
 
     async function generateInvite() {
-      const inviteArea = $("inviteArea");
-      const inviteUrlBox = $("inviteUrlBox");
-      const inviteMeta = $("inviteMeta");
-      if (!lineUserId) {
-        alert("請先設定守護人或登入");
-        return;
-      }
-      try {
-        const res = await apiCreateFriendInvite(lineUserId);
-        if (res.status === 200 && res.data.invite_code) {
-          inviteUrlBox.value = res.data.invite_url;
-          const exp = res.data.expires_at ? new Date(res.data.expires_at).toLocaleString("zh-TW") : "7 天";
-          inviteMeta.textContent = `代碼: ${res.data.invite_code} | 狀態: ${res.data.status} | 有效至: ${exp}`;
-          inviteArea.hidden = false;
-        } else {
-          alert("邀請產生失敗: " + ((res.data && res.data.error) || "未知錯誤"));
-        }
-      } catch (error) {
-        alert("邀請產生失敗: " + error.message);
-      }
+      // 一鍵分享：優先 LIFF shareTargetPicker，失敗再退回 Web Share / 複製
+      await shareContactInvite();
     }
 
     async function copyInviteUrl() {
       const inviteUrlBox = $("inviteUrlBox");
+      if (!inviteUrlBox) return;
       try {
         await navigator.clipboard.writeText(inviteUrlBox.value);
-        alert("邀請連結已複製到剪貼簿");
+        showInlineSuccess("邀請連結已複製到剪貼簿");
       } catch (e) {
         inviteUrlBox.select();
         document.execCommand("copy");
@@ -4289,6 +4600,7 @@
       $("obRelationship").value = "";
       $("obPhone").value = "";
       $("obEmail").value = "";
+      showOnboardingGuardianStep();
       modal.hidden = false;
       setTimeout(() => $("obName").focus(), 50);
     }
@@ -4296,6 +4608,7 @@
     function closeOnboarding() {
       const modal = $("onboardingModal");
       modal.hidden = true;
+      showOnboardingGuardianStep();
     }
 
     async function saveOnboardingGuardian() {
@@ -4337,14 +4650,46 @@
           }
           return;
         }
-        // 完成首次設定
-        const ob = await apiCompleteOnboarding(lineUserId, "09:00");
+        renderGuardians(res.data.contacts || [], res.data.contact_limit);
+        // 表單完成後才顯示提醒時間設定(不要一進來就跳)
+        showOnboardingReminderStep();
+      } catch (error) {
+        if (errorEl) {
+          errorEl.textContent = "儲存失敗：" + error.message;
+          errorEl.hidden = false;
+        }
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "新增守護人，下一步設定提醒";
+      }
+    }
+
+    async function saveOnboardingReminder() {
+      const errorEl = $("onboardingReminderError");
+      const saveBtn = $("onboardingReminderSaveBtn");
+      if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
+      const times = readOnboardingReminderTimes();
+      const expected = planDailyReminderCount(currentStatusData || {});
+      if (times.length < expected) {
+        if (errorEl) {
+          errorEl.textContent = `請設定完整 ${expected} 個提醒時間`;
+          errorEl.hidden = false;
+        }
+        return;
+      }
+      saveBtn.disabled = true;
+      saveBtn.textContent = "儲存中...";
+      try {
+        const ob = await apiCompleteOnboarding(lineUserId, times);
         if (ob.status === 200 && ob.data.ok) {
-          renderGuardians(res.data.contacts || [], res.data.contact_limit);
+          if (currentStatusData) {
+            currentStatusData.reminder_times = ob.data.reminder_times || times;
+            currentStatusData.reminder_time = (ob.data.reminder_times || times)[0];
+          }
           closeOnboarding();
         } else {
           if (errorEl) {
-            errorEl.textContent = "守護人已儲存，但首次設定尚未完成，請重新整理頁面後再試一次";
+            errorEl.textContent = (ob.data && (ob.data.message || ob.data.error)) || "儲存失敗，請稍後再試";
             errorEl.hidden = false;
           }
         }
@@ -4355,13 +4700,12 @@
         }
       } finally {
         saveBtn.disabled = false;
-        saveBtn.textContent = "新增守護人並進入首頁";
+        saveBtn.textContent = "完成設定並進入首頁";
       }
     }
 
     // bind C02 events
     function bindGuardianEvents() {
-      const addBtn = $("addGuardianBtn");
       const inviteBtn = $("inviteGuardianBtn");
       const copyBtn = $("copyInviteBtn");
       const saveBtn = $("saveGuardianBtn");
@@ -4369,14 +4713,22 @@
       const cancelDelBtn = $("cancelDeleteGuardianBtn");
       const confirmDelBtn = $("confirmDeleteGuardianBtn");
       const obSaveBtn = $("onboardingSaveBtn");
-      if (addBtn) addBtn.addEventListener("click", () => openGuardianEditor(null));
-      if (inviteBtn) inviteBtn.addEventListener("click", generateInvite);
+      const obReminderSaveBtn = $("onboardingReminderSaveBtn");
+      const obUseDefaultsBtn = $("onboardingUseDefaultsBtn");
+      if (inviteBtn) inviteBtn.addEventListener("click", () => shareContactInvite());
       if (copyBtn) copyBtn.addEventListener("click", copyInviteUrl);
       if (saveBtn) saveBtn.addEventListener("click", saveGuardian);
       if (cancelBtn) cancelBtn.addEventListener("click", closeGuardianEditor);
       if (cancelDelBtn) cancelDelBtn.addEventListener("click", closeDeleteGuardian);
       if (confirmDelBtn) confirmDelBtn.addEventListener("click", executeDeleteGuardian);
       if (obSaveBtn) obSaveBtn.addEventListener("click", saveOnboardingGuardian);
+      if (obReminderSaveBtn) obReminderSaveBtn.addEventListener("click", saveOnboardingReminder);
+      if (obUseDefaultsBtn) {
+        obUseDefaultsBtn.addEventListener("click", () => {
+          const count = planDailyReminderCount(currentStatusData || {});
+          renderOnboardingReminderSlots(defaultReminderTimesForCount(count));
+        });
+      }
     }
 
     // 整合到 initApp:載入守護人 + onboarding 檢查
@@ -4418,13 +4770,24 @@
           renderGuardians(contactsRes.data.contacts || [], contactsRes.data.contact_limit);
         }
 
-        // C00 Onboarding 檢查
+        // C00 Onboarding 檢查（?open=onboarding 強制走守護人表單→提醒設定）
+        const openAction = new URLSearchParams(location.search).get("open") || "";
+        const forceOnboarding = openAction === "onboarding" || openAction === "guardian";
         const obDone = await checkOnboarding();
         if (!obDone) {
           await showOnboarding();
-        } else {
-          // Onboarding 已完成 → 檢查是否該顯示守護群完成度提示
+        } else if (forceOnboarding) {
+          // 已完成設定：改開守護人頁，避免重複整段 onboarding
+          if (typeof showTab === "function") showTab("guardians");
           await maybeShowGuardianComplete();
+        } else {
+          await maybeShowGuardianComplete();
+        }
+        // Deep link：member / guardians / home
+        if (openAction === "member" && typeof showTab === "function") showTab("member");
+        else if (openAction === "guardians" && !forceOnboarding && typeof showTab === "function") showTab("guardians");
+        else if ((openAction === "checkin" || location.hash === "#home") && typeof showTab === "function") {
+          showTab("home");
         }
       } catch (error) {
         showInlineError("載入狀態失敗:" + (error.message || "請確認服務是否正常"));
@@ -4655,6 +5018,8 @@
     $("deleteCheckinHistoryBtn").addEventListener("click", deleteCheckinHistory);
     $("deleteAccountBtn").addEventListener("click", deleteAccountAndData);
     $("memberGuardianSettingsBtn").addEventListener("click", goGuardianSettings);
+    const memberAddGuardianBtn = $("memberAddGuardianBtn");
+    if (memberAddGuardianBtn) memberAddGuardianBtn.addEventListener("click", openAddGuardianFromMember);
     $("memberShareGuardianBtn").addEventListener("click", shareContactInvite);
     $("guardianDetailsContact").addEventListener("change", populateGuardianDetailsForm);
     $("saveGuardianDetailsBtn").addEventListener("click", saveGuardianDetails);
