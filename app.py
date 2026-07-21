@@ -585,6 +585,69 @@ def get_or_create_interaction_state(profile):
     return profile["interaction_state"]
 
 
+def contact_is_bound_guardian(contact):
+    """對方是否已透過 LINE 綁定／同意成為守護人。"""
+    if not isinstance(contact, dict):
+        return False
+    return bool(
+        contact.get("line_user_id")
+        or contact.get("line_id")
+        or contact.get("binding_status") == "accepted"
+        or contact.get("consent_status") == "accepted"
+    )
+
+
+def contact_has_guardian_profile(contact):
+    """是否已填寫守護人基本資料（姓名＋關係）。"""
+    if not isinstance(contact, dict):
+        return False
+    return bool((contact.get("name") or "").strip() and (contact.get("relationship") or "").strip())
+
+
+def profile_has_guardian(profile):
+    """使用者是否已有至少 1 位守護人（資料或 LINE 綁定）。"""
+    contacts = (profile or {}).get("contacts") or []
+    return any(contact_has_guardian_profile(c) or contact_is_bound_guardian(c) for c in contacts)
+
+
+def profile_setup_completed(profile):
+    """首次設定是否已完成：以伺服器 durable flag／守護人為準（不用只靠 localStorage）。"""
+    if not profile:
+        return False
+    if profile.get("is_onboarding_completed"):
+        return True
+    istate = profile.get("interaction_state") or {}
+    if isinstance(istate, dict) and istate.get("onboarding_completed"):
+        return True
+    return profile_has_guardian(profile)
+
+
+def ensure_onboarding_completed_flag(profile):
+    """若已有守護人但旗標未寫入，補上 durable flag（回傳是否有變更）。"""
+    if not profile:
+        return False
+    if profile.get("is_onboarding_completed") and (
+        isinstance(profile.get("interaction_state"), dict)
+        and profile["interaction_state"].get("onboarding_completed")
+    ):
+        return False
+    if not profile_has_guardian(profile) and not profile.get("is_onboarding_completed"):
+        return False
+    changed = False
+    if profile_has_guardian(profile) or profile.get("is_onboarding_completed"):
+        if not profile.get("is_onboarding_completed"):
+            profile["is_onboarding_completed"] = True
+            changed = True
+        istate = get_or_create_interaction_state(profile)
+        if not istate.get("onboarding_completed"):
+            istate["onboarding_completed"] = True
+            changed = True
+        if "add_first_guardian" not in (istate.get("completed_steps") or []):
+            istate.setdefault("completed_steps", []).append("add_first_guardian")
+            changed = True
+    return changed
+
+
 def should_show_guardian_prompt(profile, contact_count):
     """判斷是否該彈守護人完成度提示卡。
 
@@ -2585,20 +2648,24 @@ def create_app(config=None):
         state = load_state(app.config["DATA_FILE"])
         profile = state.get("users", {}).get(line_user_id, {})
         contacts = profile.get("contacts") or []
-        has_guardian = any((c.get("relationship") and c.get("phone")) for c in contacts)
+        if profile and ensure_onboarding_completed_flag(profile):
+            save_state(app.config["DATA_FILE"], state)
+        has_guardian = profile_has_guardian(profile)
+        setup_done = profile_setup_completed(profile)
         times = reminder_times_for_profile(profile) if profile else default_reminder_times_for_count(1)
         daily_reminders = int(plan_rules(profile).get("daily_reminders") or 1) if profile else 1
         return jsonify({
             "ok": True,
             "line_user_id": line_user_id,
             "has_guardian": has_guardian,
-            "guardian_count": len([c for c in contacts if c.get("relationship") and c.get("phone")]),
+            "guardian_count": len(contacts),
             "reminder_time": times[0] if times else None,
             "reminder_times": times,
             "daily_reminders": daily_reminders,
             "default_reminder_times": default_reminder_times_for_count(daily_reminders),
             "plan": profile.get("plan"),
-            "is_onboarding_completed": bool(profile.get("is_onboarding_completed", False)),
+            "is_onboarding_completed": setup_done,
+            "setup_completed": setup_done,
         })
 
     @app.post("/api/onboarding/reminder")
@@ -3214,16 +3281,17 @@ def create_app(config=None):
         profile = state.get("users", {}).get(line_user_id)
         if not profile:
             return jsonify({"ok": False, "error": "user not registered"}), 404
+        if ensure_onboarding_completed_flag(profile):
+            save_state(app.config["DATA_FILE"], state)
         contacts = profile.get("contacts") or []
-        has_guardian = any(
-            (c.get("name") or "").strip() and (c.get("relationship") or "").strip()
-            for c in contacts
-        )
+        has_guardian = profile_has_guardian(profile)
+        setup_done = profile_setup_completed(profile)
         times = reminder_times_for_profile(profile)
         return jsonify({
             "ok": True,
             "line_user_id": line_user_id,
-            "is_onboarding_completed": bool(profile.get("is_onboarding_completed", False)),
+            "is_onboarding_completed": setup_done,
+            "setup_completed": setup_done,
             "has_guardian": has_guardian,
             "guardian_count": len(contacts),
             "reminder_time": times[0] if times else "12:00",
@@ -3364,10 +3432,7 @@ def create_app(config=None):
         if not profile:
             return jsonify({"ok": False, "error": "user not registered"}), 404
         contacts = profile.get("contacts") or []
-        has_guardian = any(
-            (c.get("name") or "").strip() and (c.get("relationship") or "").strip()
-            for c in contacts
-        )
+        has_guardian = profile_has_guardian(profile)
         if not has_guardian:
             return jsonify({
                 "ok": False,
@@ -3399,6 +3464,7 @@ def create_app(config=None):
         return jsonify({
             "ok": True,
             "is_onboarding_completed": True,
+            "setup_completed": True,
             "reminder_time": times[0],
             "reminder_times": times,
             "interaction_state": istate,

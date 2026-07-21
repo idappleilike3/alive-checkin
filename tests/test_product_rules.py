@@ -162,14 +162,25 @@ class ProductRulesTests(unittest.TestCase):
         ]
         self.assertIn("apiGetContacts(lineUserId)", refresh_contacts)
 
-    def test_liff_initialization_uses_only_one_automatic_login_flow(self):
+    def test_liff_initialization_requires_line_login_before_member_use(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         init_line = page[
-            page.index("async function initLine()") : page.index("function lunarInfo")
+            page.index("async function initLine()") : page.index("const LUNAR_DAY_NAMES")
         ]
 
         self.assertIn("withLoginOnExternalBrowser: true", init_line)
-        self.assertNotIn("liff.login()", init_line)
+        self.assertIn("if (!liff.isLoggedIn())", init_line)
+        self.assertIn("liff.login(", init_line)
+        self.assertIn("requireLineMembership", page)
+        # Returning users must not auto-share on page load
+        self.assertIn("clearShareFirstLocalFlags", page)
+        self.assertIn("setupDone", page)
+        init_app = page[page.rindex("async function initApp()") : page.index("// ===== D01")]
+        gate_start = init_app.index("if (setupDone) {")
+        gate_end = init_app.index("} else {", gate_start)
+        gate = init_app[gate_start:gate_end]
+        self.assertNotIn("shareContactInvite", gate)
+        self.assertIn('showTab("home")', gate)
 
     def test_onboarding_guardian_form_is_senior_friendly_and_traditional_chinese(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

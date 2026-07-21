@@ -84,15 +84,22 @@ with open("index.html", encoding="utf-8") as f:
 assert "私訊預警通知提醒設定" in index_src
 assert 'openAction === "onboarding"' in index_src or 'open === "onboarding"' in index_src
 assert "onboardingCloseBtn" in index_src
-assert "obDone && hasGuardians" in index_src
+assert "setupDone" in index_src
+assert "clearShareFirstLocalFlags" in index_src
 assert "contact_limit_exceeded" in index_src
 assert 'showTab("home")' in index_src
+assert "requireLineMembership" in index_src
+# page-load path must not auto-open share picker for returning users
+init_app = index_src[index_src.rindex("async function initApp()") : index_src.index("// ===== D01")]
+assert "await shareContactInvite();" not in init_app
+gate = init_app[init_app.index("if (setupDone) {") : init_app.index("} else {", init_app.index("if (setupDone) {"))]
+assert "shareContactInvite" not in gate
+assert "clearShareFirstLocalFlags" in gate
 
 print("welcome CTA:", w["footer"]["contents"][0]["action"]["label"])
 print("welcome CTA uri:", w["footer"]["contents"][0]["action"]["uri"])
-print("welcome greeting:", w["header"]["contents"][0]["text"])
 print("welcome title size:", w["header"]["contents"][0]["size"])
 print("welcome footer buttons:", len(w["footer"]["contents"]))
-print("intro primary:", intro["footer"]["contents"][0]["action"])
-print("bind confirm head:", conf["header"]["contents"][0]["text"])
+print("intro primary label:", intro["footer"]["contents"][0]["action"]["label"])
+print("bind confirm ok")
 print("ALL OK")

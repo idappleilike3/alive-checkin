@@ -3479,6 +3479,7 @@
     }
 
     async function shareContactInvite() {
+      if (!requireLineMembership("請先完成 LINE 登入綁定，才能邀請守護人。")) return;
       const nickname = $("inviteNickname") ? $("inviteNickname").value.trim() : "";
       const { bindUrl, text } = buildContactInvite(nickname);
       try {
@@ -3536,10 +3537,9 @@
       const plan = planMap[planChoice];
       const notice = $("paymentOrderNotice");
       if (!plan) return;
-      if (!lineUserId) {
+      if (!requireLineMembership("請先用 LINE 開啟並完成一鍵登入，再選擇付款方案。")) {
         notice.hidden = false;
         notice.textContent = "請先用 LINE 開啟並完成一鍵登入，再選擇付款方案。";
-        if (window.liff && !liff.isLoggedIn()) liff.login();
         return;
       }
 
@@ -3838,7 +3838,15 @@
         if (!config.liff_id) return false;
         window.__LIFF_ID__ = config.liff_id;
         await liff.init({ liffId: config.liff_id, withLoginOnExternalBrowser: true });
-        if (!liff.isLoggedIn()) return false;
+        if (!liff.isLoggedIn()) {
+          // 必須先 LINE 登入／綁定身分，才能使用會員功能
+          try {
+            liff.login({ redirectUri: location.href.split("#")[0] + (location.hash || "") });
+          } catch (_) {
+            liff.login();
+          }
+          return false;
+        }
         const profile = await liff.getProfile();
         lineUserId = profile.userId || "";
         lineDisplayName = profile.displayName || "";
@@ -4096,10 +4104,10 @@
     }
 
     async function openAddGuardianFromMember() {
+      if (!requireLineMembership("新增守護人前，請先完成 LINE 登入綁定。")) return;
       if (typeof showTab === "function") showTab("member");
       setMemberCenterExpanded(true);
-      // 新增流程：先一鍵分享邀請，再開啟填寫表單
-      await shareContactInvite();
+      // 已註冊會員：直接填寫資料；一鍵分享改由「一鍵分享邀請守護人」按鈕手動觸發
       openGuardianEditor(null);
     }
 
@@ -4486,35 +4494,6 @@
       }
     }
 
-    async function initApp() {
-      const dailyEl = $("dailyStatus");
-      if (dailyEl) dailyEl.textContent = "讀取中...";
-
-      if (!lineUserId) {
-        if (dailyEl) dailyEl.textContent = "請從 LINE 開啟此服務";
-        return;
-      }
-      try {
-        await fetch("/api/line/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            line_user_id: lineUserId,
-            display_name: lineDisplayName || ("User " + lineUserId.slice(-4)),
-            picture_url: ""
-          })
-        });
-        const status = await apiGetStatus();
-        if (status && status.ok === false) {
-          showInlineError("載入狀態失敗: " + (status.error || "未知錯誤"));
-          return;
-        }
-        renderStatus(status);
-      } catch (error) {
-        showInlineError("載入狀態失敗:" + (error.message || "請確認服務是否正常"));
-      }
-    }
-
     // ===== C00 Onboarding + C02 Guardian Management =====
 
     let guardianList = []; // local cache for edit/delete
@@ -4878,6 +4857,20 @@
     }
 
     // C00 Onboarding
+    const SHARE_FIRST_FLAG_KEYS = [
+      "alive_share_first",
+      "share_first",
+      "force_share_invite",
+      "onboarding_share_pending",
+      "guardian_share_first",
+    ];
+
+    function clearShareFirstLocalFlags() {
+      try {
+        SHARE_FIRST_FLAG_KEYS.forEach((key) => localStorage.removeItem(key));
+      } catch (_) {}
+    }
+
     function currentGuardianContacts() {
       if (Array.isArray(contactData) && contactData.length) return contactData;
       if (Array.isArray(guardianList) && guardianList.length) return guardianList;
@@ -4889,15 +4882,52 @@
       if (closeBtn) closeBtn.hidden = !canDismiss;
     }
 
-    async function checkOnboarding() {
-      if (!lineUserId) return true;
+    function requireLineMembership(message) {
+      if (useLocalMode) return true;
+      if (lineUserId) return true;
+      showLineLoginRequired();
+      if (message) showInlineError(message);
+      if (window.liff && !liff.isLoggedIn()) {
+        try {
+          liff.login({ redirectUri: location.href.split("#")[0] + (location.hash || "") });
+        } catch (_) {
+          try { liff.login(); } catch (__) {}
+        }
+      }
+      return false;
+    }
+
+    async function fetchOnboardingState() {
+      if (!lineUserId) {
+        return { done: false, hasGuardian: false, ok: false };
+      }
       try {
         const res = await apiGetOnboarding(lineUserId);
-        if (res.status !== 200) return true;
-        return res.data.is_onboarding_completed === true;
+        if (res.status !== 200 || !res.data) {
+          return { done: false, hasGuardian: currentGuardianContacts().length > 0, ok: false };
+        }
+        const hasGuardian = res.data.has_guardian === true || currentGuardianContacts().length > 0;
+        const done = (
+          res.data.setup_completed === true
+          || res.data.is_onboarding_completed === true
+          || hasGuardian
+        );
+        return {
+          done,
+          hasGuardian,
+          ok: true,
+          data: res.data,
+        };
       } catch (e) {
-        return true; // API 失敗不擋
+        return { done: false, hasGuardian: currentGuardianContacts().length > 0, ok: false };
       }
+    }
+
+    async function checkOnboarding() {
+      const state = await fetchOnboardingState();
+      // API 失敗時不擋首頁
+      if (!state.ok) return true;
+      return state.done === true;
     }
 
     async function showOnboarding() {
@@ -5050,6 +5080,7 @@
       try {
         const ob = await apiCompleteOnboarding(lineUserId, times);
         if (ob.status === 200 && ob.data.ok) {
+          clearShareFirstLocalFlags();
           if (currentStatusData) {
             currentStatusData.reminder_times = ob.data.reminder_times || times;
             currentStatusData.reminder_time = (ob.data.reminder_times || times)[0];
@@ -5152,30 +5183,23 @@
           renderMemberCenter();
         }
 
-        // C00 Onboarding 檢查（?open=onboarding）
-        // 已綁定 ≥1 位守護人且完成設定：不彈分享、不強制新增，直接進首頁
+        // C00 Onboarding 檢查（?open=onboarding / 歡迎 CTA）
+        // 規則：一鍵分享只在「第一次設定」強制；已註冊／已有守護人／伺服器 setup_completed → 直接首頁，絕不自動彈分享
         const openAction = new URLSearchParams(location.search).get("open") || "";
         const forceOnboarding = openAction === "onboarding" || openAction === "guardian" || openAction === "bind";
-        const hasGuardians = currentGuardianContacts().length > 0;
-        const obDone = await checkOnboarding();
-        if (obDone && hasGuardians) {
-          // 歡迎 CTA / open=onboarding 再次進入：略過分享與強制表單，直接首頁
+        const onboardingState = await fetchOnboardingState();
+        const hasGuardians = onboardingState.hasGuardian || currentGuardianContacts().length > 0;
+        const setupDone = onboardingState.done || hasGuardians;
+        if (setupDone) {
+          clearShareFirstLocalFlags();
           if (typeof showTab === "function") showTab("home");
           await maybeShowGuardianComplete();
-        } else if (!obDone) {
-          await showOnboarding();
-        } else if (forceOnboarding && !hasGuardians) {
-          // 已完成設定但尚無守護人：才走分享＋新增
-          await shareContactInvite();
-          if (typeof showTab === "function") showTab("member");
-          setMemberCenterExpanded(true);
-          openGuardianEditor(null);
-          await maybeShowGuardianComplete();
         } else {
-          await maybeShowGuardianComplete();
+          // 首次使用者：顯示分享→填寫→提醒流程（不在 page load 自動叫起 shareTargetPicker）
+          await showOnboarding();
         }
-        // Deep link：member / guardians / home（已綁定且 open=onboarding 已於上方進首頁）
-        if (obDone && hasGuardians && forceOnboarding) {
+        // Deep link：已完成首次設定時，open=onboarding 也進首頁；其餘依參數切頁
+        if (setupDone && forceOnboarding) {
           if (typeof showTab === "function") showTab("home");
         } else if (openAction === "member" && !forceOnboarding && typeof showTab === "function") {
           showTab("member");
@@ -5357,12 +5381,10 @@
         } catch (e) { console.warn(e); }
         modal.hidden = true;
         if (pref === "now") {
-          // 先一鍵分享，再進會員中心填寫／編輯守護人
+          // 已註冊後的補滿名額：直接進表單，不再強制一鍵分享
           if (typeof showTab === "function") showTab("member");
           setMemberCenterExpanded(true);
-          Promise.resolve(shareContactInvite()).finally(() => {
-            if (typeof openGuardianEditor === "function") openGuardianEditor(null);
-          });
+          if (typeof openGuardianEditor === "function") openGuardianEditor(null);
         }
       };
       now.addEventListener("click", () => sendPreference("now"));

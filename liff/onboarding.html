@@ -217,6 +217,7 @@ let state = {
   loggedIn: false,
   lineUserId: null,
   hasGuardian: false,
+  setupCompleted: false,
   reminderTimes: null,
   dailyReminders: 1,
   defaultReminderTimes: ["12:00"],
@@ -242,7 +243,7 @@ async function resolveLiffId() {
 async function init() {
   try {
     const liffId = await resolveLiffId();
-    await liff.init({ liffId });
+    await liff.init({ liffId, withLoginOnExternalBrowser: true });
     if (!liff.isLoggedIn()) {
       liff.login();
       return;
@@ -255,7 +256,8 @@ async function init() {
       const res = await fetch(`${API_BASE}/api/onboarding/state?line_user_id=${state.lineUserId}`);
       if (res.ok) {
         const data = await res.json();
-        state.hasGuardian = data.has_guardian;
+        state.hasGuardian = data.has_guardian === true;
+        state.setupCompleted = data.setup_completed === true || data.is_onboarding_completed === true || state.hasGuardian;
         state.dailyReminders = Number(data.daily_reminders) || 1;
         state.defaultReminderTimes = data.default_reminder_times || defaultTimesForCount(state.dailyReminders);
         // 只有後端已存自訂時段才算「已設定」；預設值不算完成
@@ -265,6 +267,16 @@ async function init() {
         ) && data.is_onboarding_completed;
         state.reminderTimes = hasCustom ? (stored || [data.reminder_time]) : null;
       }
+    }
+
+    // 已註冊／已完成首次設定：不要再進一鍵分享，直接回主 LIFF 首頁
+    if (state.setupCompleted || (state.hasGuardian && state.reminderTimes)) {
+      try {
+        ["alive_share_first", "share_first", "force_share_invite", "onboarding_share_pending", "guardian_share_first"]
+          .forEach((k) => localStorage.removeItem(k));
+      } catch (_) {}
+      location.replace(`https://liff.line.me/${liffId}#home`);
+      return;
     }
     
     // 不要一進來就跳提醒：先完成守護人表單，再進提醒時間
