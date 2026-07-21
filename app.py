@@ -2350,10 +2350,23 @@ def send_checkin_reminders(config):
 
 
 def app_config(config):
+    token = (
+        config.get("LINE_CHANNEL_ACCESS_TOKEN")
+        or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+        or os.environ.get("CHANNEL_ACCESS_TOKEN")
+        or ""
+    ).strip()
+    secret = (
+        config.get("LINE_CHANNEL_SECRET")
+        or os.environ.get("LINE_CHANNEL_SECRET")
+        or os.environ.get("CHANNEL_SECRET")
+        or ""
+    ).strip()
     return {
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
-        "line_enabled": bool(config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")),
+        # Both token and secret are required for LINE webhook / messaging.
+        "line_enabled": bool(token and secret),
     }
 
 
