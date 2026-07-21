@@ -9,11 +9,11 @@
   "areas": [
     {
       "bounds": { "x": 0, "y": 0, "width": 833, "height": 843 },
-      "action": { "type": "message", "label": "報平安", "text": "報平安" }
+      "action": { "type": "uri", "label": "報平安", "uri": "https://liff.line.me/2010674803-sLl9j1Sk/liff/checkin" }
     },
     {
       "bounds": { "x": 833, "y": 0, "width": 834, "height": 843 },
-      "action": { "type": "uri", "label": "守護人", "uri": "https://liff.line.me/2010674803-sLl9j1Sk?page=guardian" }
+      "action": { "type": "uri", "label": "守護人", "uri": "https://liff.line.me/2010674803-sLl9j1Sk/liff/guardian" }
     },
     {
       "bounds": { "x": 1667, "y": 0, "width": 833, "height": 843 },
@@ -21,15 +21,15 @@
     },
     {
       "bounds": { "x": 0, "y": 843, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "我的會員", "uri": "https://liff.line.me/2010674803-sLl9j1Sk?page=member" }
+      "action": { "type": "uri", "label": "我的會員", "uri": "https://liff.line.me/2010674803-sLl9j1Sk/liff/member" }
     },
     {
       "bounds": { "x": 833, "y": 843, "width": 834, "height": 843 },
-      "action": { "type": "uri", "label": "查看方案", "uri": "https://liff.line.me/2010674803-sLl9j1Sk?page=plans" }
+      "action": { "type": "uri", "label": "查看方案", "uri": "https://liff.line.me/2010674803-sLl9j1Sk/pricing.html" }
     },
     {
       "bounds": { "x": 1667, "y": 843, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "守護群", "uri": "https://liff.line.me/2010674803-sLl9j1Sk?page=guardian-groups" }
+      "action": { "type": "uri", "label": "守護群", "uri": "https://liff.line.me/2010674803-sLl9j1Sk/liff/guardian-groups" }
     }
   ]
 }

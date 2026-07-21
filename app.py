@@ -2400,6 +2400,23 @@ def create_app(config=None):
     def privacy():
         return send_from_directory(app.static_folder, "privacy.html")
 
+    # 2026-07-21 patch 23: 圖文選單按鈕對應的真實 LIFF 頁面
+    @app.get("/liff/checkin")
+    def liff_checkin():
+        return send_from_directory(app.static_folder, "liff/checkin.html")
+
+    @app.get("/liff/guardian")
+    def liff_guardian():
+        return send_from_directory(app.static_folder, "liff/guardian.html")
+
+    @app.get("/liff/member")
+    def liff_member():
+        return send_from_directory(app.static_folder, "liff/member.html")
+
+    @app.get("/liff/guardian-groups")
+    def liff_guardian_groups():
+        return send_from_directory(app.static_folder, "liff/guardian-groups.html")
+
     @app.get("/api/config")
     def config_api():
         return jsonify(app_config(app.config))
@@ -2618,38 +2635,30 @@ def create_app(config=None):
 
         @handler.add(FollowEvent)
         def handle_follow(event):
-            """2026-07-21 patch 19+22: 加好友時推送 2 條訊息。
+            """2026-07-21 patch 19+23: 加好友時推送 2 條訊息。
 
-            1) 純文字歡迎訊息(使用者指定的正式文案 + 「開始體驗設定守護人」主按鈕)
+            1) 純文字歡迎訊息(使用者指定的正式文案 + 「開始設定守護人」主按鈕)
             2) Flex 歡迎卡片(3 大功能 + CTA 按鈕)
 
             LINE reply_message 一次只能回 1 個訊息,所以先回文字,再 push Flex。
             """
             line_user_id = getattr(event.source, "user_id", None)
-            # 試試拿使用者顯示名稱(若 LINE API 成功)
-            display_name = None
-            if line_user_id and token:
-                try:
-                    profile = line_bot_api.get_profile(line_user_id)
-                    display_name = profile.display_name
-                except Exception:
-                    display_name = None
 
-            greeting = "您好" if not display_name else f"{display_name} 您好"
+            # patch 23: 用「您好」,不用 LINE profile display_name
+            # (使用者指定文案就是「您好」,不要客製化)
             welcome_text = (
-                f"👋 {greeting}，歡迎加入「今天還在嗎」\n\n"
-                "我是您的每日平安守護助手，會在您設定的時間提醒您簽到\n"
-                "只有超過時間仍未簽到，才會通知您指定的守護人\n\n"
-                "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間\n\n"
+                "👋 您好，歡迎加入「今天還在嗎」\n\n"
+                "我是您的每日平安小幫手，會在您設定的時間提醒您簽到。只有超過時間仍未簽到，才會通知您指定的守護人。\n\n"
+                "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間。\n\n"
                 "🎁 完成設定即享 7 天免費安心體驗\n\n"
                 "🚨 緊急狀況請直接撥打 119，LINE Bot 訊息可能因網路狀況延遲。"
             )
 
-            # 主按鈕:在文字訊息加 QuickReply + 在 Flex 也加一個綁定守護人按鈕
+            # 主按鈕:QuickReply「開始設定守護人」 + 「查看方案」
             try:
                 from linebot.models import QuickReply, QuickReplyButton, MessageAction
                 quick_reply = QuickReply(items=[
-                    QuickReplyButton(action=MessageAction(label="開始體驗設定守護人", text="開始體驗設定守護人")),
+                    QuickReplyButton(action=MessageAction(label="開始設定守護人", text="開始設定守護人")),
                     QuickReplyButton(action=MessageAction(label="查看方案", text="查看方案")),
                 ])
                 line_bot_api.reply_message(

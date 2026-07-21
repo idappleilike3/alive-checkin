@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>我的會員 - 今天還在嗎</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif;
+    background: #F5F5F5;
+    color: #333;
+    padding: 20px;
+    line-height: 1.6;
+  }
+  .card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 480px;
+    margin: 0 auto 16px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  }
+  h1 { font-size: 24px; color: #00B900; margin-bottom: 12px; }
+  h2 { font-size: 18px; color: #555; margin: 16px 0 8px; }
+  .plan-box {
+    background: linear-gradient(135deg, #00B900, #00C853);
+    color: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    margin: 12px 0;
+  }
+  .plan-name { font-size: 24px; font-weight: 700; }
+  .plan-detail { font-size: 14px; opacity: 0.9; margin-top: 4px; }
+  .btn-row { display: flex; gap: 8px; margin: 12px 0; }
+  .btn {
+    flex: 1;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px solid #00B900;
+    background: #fff;
+    color: #00B900;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-primary {
+    background: #00B900;
+    color: #fff;
+  }
+  .group-row {
+    border: 1px solid #E0E0E0;
+    border-radius: 10px;
+    padding: 12px;
+    margin: 8px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .info-block {
+    background: #F9FAFB;
+    border-radius: 10px;
+    padding: 12px;
+    margin: 8px 0;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>⭐ 我的會員</h1>
+  <p>查看訂閱、管理守護群、查看帳務</p>
+
+  <div class="plan-box">
+    <div class="plan-name">799 守護版 · 月費</div>
+    <div class="plan-detail">下次扣款:2026-08-21 · 已訂閱 23 天</div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-primary">續約方案</button>
+    <button class="btn">變更方案</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>🛡️ 守護群(年費限定)</h2>
+  <p>目前:0/3 群</p>
+  <button class="btn" style="width:100%; margin-top:8px;" onclick="alert('升級年費 799 才能開守護群')">
+    ➕ 建立新守護群(需年費)
+  </button>
+  <p style="font-size:13px; color:#888; margin-top:8px;">守護群是「把 Bot 邀進 LINE 群,逾期未簽到/SOS 時在群裡通知所有守護人」</p>
+</div>
+
+<div class="card">
+  <h2>💳 帳務紀錄</h2>
+  <div class="info-block">
+    <div>最近一筆:2026-07-21 $799(799 月費)</div>
+    <div>累計 12 個月訂閱</div>
+  </div>
+  <button class="btn" style="width:100%; margin-top:8px;">查看發票/收據</button>
+</div>
+</body>
+</html>

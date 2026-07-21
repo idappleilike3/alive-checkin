@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>每日報平安 - 今天還在嗎</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif;
+    background: #F5F5F5;
+    color: #333;
+    padding: 20px;
+    line-height: 1.6;
+  }
+  .card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 480px;
+    margin: 0 auto 16px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  }
+  h1 { font-size: 24px; color: #00B900; margin-bottom: 12px; }
+  h2 { font-size: 18px; color: #555; margin: 16px 0 8px; }
+  .btn-primary {
+    display: block;
+    width: 100%;
+    padding: 16px;
+    background: #00B900;
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    font-size: 18px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 16px;
+  }
+  .mood-btn {
+    width: 60px;
+    height: 60px;
+    border: 2px solid #E0E0E0;
+    background: #fff;
+    border-radius: 50%;
+    font-size: 30px;
+    cursor: pointer;
+    margin: 4px;
+  }
+  .mood-btn.selected {
+    border-color: #00B900;
+    background: #E8F8EE;
+  }
+  .mood-row {
+    display: flex;
+    justify-content: center;
+    margin: 16px 0;
+  }
+  .status { padding: 12px; background: #E8F8EE; border-radius: 8px; color: #006400; margin: 12px 0; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>📅 每日報平安</h1>
+  <p>選一個心情 emoji,按「完成簽到」就完成了!</p>
+
+  <div class="mood-row">
+    <button class="mood-btn">😊</button>
+    <button class="mood-btn">😐</button>
+    <button class="mood-btn">😟</button>
+    <button class="mood-btn">🤒</button>
+    <button class="mood-btn">😰</button>
+  </div>
+
+  <div id="status" class="status" style="display:none;">
+    ✅ 已簽到!守護人收到你的平安回報
+  </div>
+
+  <button class="btn-primary" onclick="document.getElementById('status').style.display='block'">
+    完成簽到
+  </button>
+</div>
+
+<div class="card">
+  <h2>💡 怎麼用最快</h2>
+  <p>回到 LINE 主選單,直接按「報平安」按鈕,3 秒完成。</p>
+  <p>逾期未簽到才會通知守護人,不會騷擾他們。</p>
+</div>
+
+<div class="card">
+  <h2>📊 連續簽到</h2>
+  <p>目前:7 天連續 ✓</p>
+  <p>最長紀錄:23 天</p>
+</div>
+</body>
+</html>
