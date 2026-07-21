@@ -2475,12 +2475,10 @@ def create_app(config=None):
         handler = WebhookHandler(secret)
 
         def _sos_handle(line_bot_api, line_user_id, command):
-            """2026-07-21 patch 20: SOS 確認流程。
+            """2026-07-21 patch 21: SOS 3 次連按流程(快速發送版)。
 
             command:
-              - 'SOS' / 'sos'         : 開始 SOS(顯示 stage 1)
-              - 'SOS 確認 2'         : 進到 stage 2
-              - 'SOS 確認 3'         : 進到 stage 3 + 10 分鐘倒計時
+              - 'SOS' / 'sos'         : 按一次 SOS(累計 tap_count)
               - 'SOS 取消'           : 取消 pending SOS
             """
             state = load_state(app.config["DATA_FILE"])
@@ -2501,61 +2499,16 @@ def create_app(config=None):
             # === Plan 檢查 ===
             rules = plan_rules(profile) if profile else {}
             sos_enabled = bool(rules.get("sos_enabled", False))
-            contacts = (profile or {}).get("contacts") or []
-            guardian_group_ids = (profile or {}).get("guardian_group_ids") or []
-            all_groups = state.get("guardian_groups", {})
-            owned_groups = [gid for gid in guardian_group_ids
-                            if all_groups.get(gid, {}).get("owner_line_user_id") == line_user_id]
-            # inline plan label (避免從 guardian_group_flex 拉 _plan_label)
             _plan_map = {"paid_799": "799 月費", "paid_799_year": "799 年費"}
             plan_label = _plan_map.get((profile or {}).get("plan", ""), (profile or {}).get("plan") or "尚未訂閱")
 
             if not sos_enabled:
-                # 升級提示(不入 SOS flow)
                 reply(None, (
-                    f"🛡️ SOS 求救 是 799 方案限定功能\\n\\n"
-                    f"你目前的方案:{plan_label or '尚未訂閱'}\\n\\n"
-                    f"升級 799 守護版(月費/年費)才能使用 SOS 求救\\n"
+                    f"🛡️ SOS 求救 是 799 方案限定功能\n\n"
+                    f"你目前的方案:{plan_label or '尚未訂閱'}\n\n"
+                    f"升級 799 守護版(月費/年費)才能使用 SOS 求救\n"
                     f"在主選單點「查看方案」了解详情"
-                ).replace('\\n', chr(10)))
-                return
-
-            # === 處理 command ===
-            if command in ("SOS", "sos"):
-                # 起新 SOS:清理舊 pending,清暫存
-                pending = state.setdefault("sos_pending", {})
-                # 如果舊的還是 confirmed,提示先取消
-                existing = pending.get(line_user_id)
-                if existing and existing.get("stage") == "confirmed":
-                    reply(sos_flow.sos_reminder_flex(sos_flow.SOS_REMINDER_AT_MIN),
-                          "SOS 預約中,還剩幾分鐘")
-                    return
-                # 開始 stage 1
-                reply(sos_flow.sos_stage_1_flex(), "🚨 SOS 求救 (1/3)")
-                return
-
-            if command == "SOS 確認 2":
-                reply(sos_flow.sos_stage_2_flex(), "🚨 SOS 求救 (2/3)")
-                return
-
-            if command == "SOS 確認 3":
-                # 存進 state,開始 10 分鐘倒計時
-                entry = sos_flow.sos_create_pending(
-                    state,
-                    line_user_id,
-                    contacts_snapshot=contacts,
-                    guardian_groups_snapshot=owned_groups,
-                    plan_label=plan_label,
-                )
-                save_state(app.config["DATA_FILE"], state)
-                reply(
-                    sos_flow.sos_stage_3_flex(
-                        plan_label=plan_label,
-                        contacts_count=len(contacts),
-                        guardian_groups_count=len(owned_groups),
-                    ),
-                    "🚨 SOS 預備發送 (3/3) — 10 分鐘後自動發送",
-                )
+                ))
                 return
 
             if command == "SOS 取消":
@@ -2565,6 +2518,41 @@ def create_app(config=None):
                 else:
                     reply(None, "沒有待取消的 SOS")
                 return
+
+            # command == 'SOS' / 'sos':記錄一次點選
+            result = sos_flow.sos_tap(state, line_user_id)
+            entry = result.get("entry", {})
+            action = result.get("action")
+            tap_count = entry.get("tap_count", 1)
+
+            if action == "sent":
+                # 已送過的,顯示 sent Flex(並有取消按鈕)
+                reply(sos_flow.sos_sent_flex(), "🚨 SOS 已發送")
+                save_state(app.config["DATA_FILE"], state)
+                return
+
+            # 第 3 次按 → 立刻發送
+            if tap_count >= 3:
+                # 實際呼叫 trigger_sos
+                try:
+                    res, code = trigger_sos(
+                        app.config["DATA_FILE"],
+                        {"line_user_id": line_user_id, "via": "3tap"},
+                        app.config,
+                    )
+                    event_id = res.get("event_id") if isinstance(res, dict) else None
+                    sos_flow.sos_mark_sent(state, line_user_id, event_id)
+                    reply(sos_flow.sos_sent_flex(), "🚨 SOS 已發送")
+                except Exception as exc:
+                    # 發送失敗也要讓用戶知道
+                    sos_flow.sos_cancel_pending(state, line_user_id)
+                    reply(None, f"⚠️ SOS 發送失敗:{str(exc)[:200]}")
+                save_state(app.config["DATA_FILE"], state)
+                return
+
+            # 第 1 / 2 次按 → 顯示警告卡
+            reply(sos_flow.sos_warning_flex(tap_count), f"🚨 SOS 求救 ({tap_count}/3)")
+            save_state(app.config["DATA_FILE"], state)
 
         @handler.add(JoinEvent)
         def handle_group_join(event):
@@ -3295,64 +3283,21 @@ def create_app(config=None):
 
     @app.post("/api/sos/check-scheduled")
     def sos_check_scheduled_api():
-        """2026-07-21 patch 20: Cron 端點 — 掃描過期 SOS + 發提醒 + 清理。
+        """2026-07-21 patch 21: Cron 端點 — 清理過期 SOS 紀錄。
 
-        Cron 每分鐘打一次:
-        1. 找出已過 expires_at 的 SOS → 呼叫 trigger_sos 實際發送
-        2. 找出已過 5 分鐘未提醒的 SOS → push 提醒 Flex
-        3. 清掉 1 小時以前的 sent/cancelled 紀錄
+        3-tap 流程會立即發送,所以這個 cron 只負責:
+        1. 清掉 1 小時以前的 sent/cancelled 紀錄(避免 state 膨脵)
+        未來可加:在 sent_at 後 5 分鐘提醒「可以取消了」等
         """
-        from sos_flow import (
-            sos_get_expirable, sos_get_remindable,
-            sos_mark_sent, sos_purge_old,
-            sos_reminder_flex, sos_sent_flex, SOS_REMINDER_AT_MIN,
-        )
-        from datetime import datetime, timedelta
-        import json as _json
+        from sos_flow import sos_purge_old
+        from datetime import datetime
 
         state = load_state(app.config["DATA_FILE"])
         now = datetime.now()
-        log = []
-
-        # 1. 過期 → 實際發送
-        for uid, entry in sos_get_expirable(state, now):
-            try:
-                result, code = trigger_sos(
-                    app.config["DATA_FILE"],
-                    {"line_user_id": uid, "via": "scheduled"},
-                    app.config,
-                )
-                event_id = result.get("event_id") if isinstance(result, dict) else None
-                sos_mark_sent(state, uid, event_id)
-                log.append({"user_id": uid[:6] + "...", "action": "sent", "code": code, "event_id": event_id})
-            except Exception as exc:
-                log.append({"user_id": uid[:6] + "...", "action": "send_error", "error": str(exc)})
-
-        # 2. 未提醒 → push 提醒 Flex
-        token = app.config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-        if token:
-            line_bot_api = LineBotApi(token)
-            for uid, entry in sos_get_remindable(state, now):
-                try:
-                    line_bot_api.push_message(
-                        uid,
-                        FlexSendMessage(
-                            alt_text="⏰ SOS 即將送出",
-                            contents=sos_reminder_flex(SOS_REMINDER_AT_MIN),
-                        ),
-                    )
-                    entry["reminded_at"] = now.isoformat(timespec="seconds")
-                    log.append({"user_id": uid[:6] + "...", "action": "reminded"})
-                except Exception as exc:
-                    log.append({"user_id": uid[:6] + "...", "action": "remind_error", "error": str(exc)})
-
-        # 3. 清掉逾時紀錄
         removed = sos_purge_old(state, keep_minutes=60)
-
         save_state(app.config["DATA_FILE"], state)
         return jsonify({
             "checked_at": now.isoformat(timespec="seconds"),
-            "log": log,
             "purged": len(removed),
         })
 
