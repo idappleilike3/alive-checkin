@@ -2521,6 +2521,27 @@ def create_app(config=None):
         status["ok"] = True
         return jsonify(status)
 
+    @app.get("/api/debug/env")
+    def debug_env():
+        """2026-07-22 debug endpoint:回報 LINE env 實際值(遮罩顯示前 4 字 + 長度,不洩漏秘密)。"""
+        def mask(v):
+            if not v:
+                return None
+            return f"{str(v)[:4]}***len={len(v)}"
+        return jsonify({
+            "process_pid": os.getpid(),
+            "LINE_CHANNEL_ACCESS_TOKEN": {
+                "in_app_config": mask(app.config.get("LINE_CHANNEL_ACCESS_TOKEN")),
+                "in_os_env": mask(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")),
+                "legacy_CHANNEL_ACCESS_TOKEN_in_env": mask(os.environ.get("CHANNEL_ACCESS_TOKEN")),
+            },
+            "LINE_CHANNEL_SECRET": {
+                "in_app_config": mask(app.config.get("LINE_CHANNEL_SECRET")),
+                "in_os_env": mask(os.environ.get("LINE_CHANNEL_SECRET")),
+                "legacy_CHANNEL_SECRET_in_env": mask(os.environ.get("CHANNEL_SECRET")),
+            },
+        })
+
     @app.post("/callback")
     def line_callback():
         if LineBotApi is None or WebhookHandler is None:
