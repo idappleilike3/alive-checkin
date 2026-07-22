@@ -2850,7 +2850,7 @@
         <p id="sosModalMessage">可通知家人，並附上可分享的位置。</p>
         <button class="sos-hold-button" id="sosHoldButton" type="button" disabled>
           <span class="sos-hold-progress" id="sosHoldProgress"></span>
-          <span class="sos-hold-label" id="sosHoldLabel">長按 3 秒通知家人</span>
+          <span class="sos-hold-label" id="sosHoldLabel">連續按 3 次通知家人</span>
         </button>
         <p class="sos-feedback" id="sosFeedback" aria-live="polite"></p>
         <a class="sos-upgrade-link" id="sosUpgradeLink" href="./liff/pricing.html">查看守護方案</a>
@@ -3309,7 +3309,7 @@
 
         <div class="member-data-section sos-section" id="sosSection" hidden>
           <h3>SOS 緊急求助</h3>
-          <div class="helper">有效的 799 守護版會員，可長按 3 秒通知核心守護人。</div>
+          <div class="helper">有效的 799 守護版會員，可連續按 3 次通知核心守護人。</div>
           <button class="sos-btn" id="sosBtn" type="button">開啟 SOS 緊急求助</button>
         </div>
 
@@ -3792,13 +3792,26 @@
       return Boolean(params.invite_from || params.friend_invite);
     }
 
-    function buildCleanLoginRedirectUri() {
+    function buildCleanLoginRedirectUri(extraParams = {}) {
       // Endpoint 必須是 LINE Console 允許的 origin；query 只保留業務參數
-      const params = readSafeDeepLinkParams();
+      const params = { ...readSafeDeepLinkParams(), ...(extraParams || {}) };
       const endpoint = `${location.origin}${location.pathname || "/"}`;
       const qs = new URLSearchParams(params).toString();
       // LINE Login redirectUri 不帶 fragment，避免邀請連結登入時被 LINE 判定 400。
       return qs ? `${endpoint}?${qs}` : endpoint;
+    }
+
+    function startLineLogin(extraParams = {}) {
+      if (!window.liff || typeof liff.login !== "function") {
+        showLineLoginRequired(extraParams);
+        return false;
+      }
+      try {
+        liff.login({ redirectUri: buildCleanLoginRedirectUri(extraParams) });
+      } catch (_) {
+        liff.login();
+      }
+      return true;
     }
 
     function setTheme(theme) {
@@ -4807,17 +4820,13 @@
     async function acceptGuardianInviteFromPrompt() {
       const inviteFrom = getAppParam("invite_from");
       if (!inviteFrom) return closeInviteAcceptPrompt();
-      if (!lineUserId && window.liff && !liff.isLoggedIn() && liff.isInClient && liff.isInClient()) {
-        try {
-          liff.login({ redirectUri: buildCleanLoginRedirectUri() });
-        } catch (_) {
-          liff.login();
-        }
+      if (!lineUserId && window.liff && !liff.isLoggedIn()) {
+        startLineLogin({ invite_from: inviteFrom });
         return;
       }
       if (!lineUserId) {
-        showLineLoginRequired();
-        alert("請加入會員後再開啟邀請連結完成綁定。");
+        showLineLoginRequired({ invite_from: inviteFrom });
+        alert("請先用 LINE 登入，系統會自動帶回這份守護邀請。");
         return;
       }
       const bindResult = await apiBindEmergencyContact(inviteFrom);
@@ -5168,14 +5177,10 @@
         appConfig = config || {};
         if (!config.liff_id) return false;
         window.__LIFF_ID__ = config.liff_id;
-        await liff.init({ liffId: config.liff_id, withLoginOnExternalBrowser: false });
+        await liff.init({ liffId: config.liff_id, withLoginOnExternalBrowser: true });
         if (!liff.isLoggedIn()) {
           if (liff.isInClient && liff.isInClient()) {
-            try {
-              liff.login({ redirectUri: buildCleanLoginRedirectUri() });
-            } catch (_) {
-              liff.login();
-            }
+            startLineLogin();
           }
           return false;
         }
@@ -5610,7 +5615,7 @@
         ? "可以通知家人需要幫忙"
         : "目前可先打電話求助；通知家人需守護方案";
       modalMessage.textContent = enabled
-        ? "長按 3 秒後，會通知家人，並附上可分享的位置。"
+        ? "連續按 3 次後，會通知家人，並附上可分享的位置。"
         : "請先打電話求助。升級守護方案後，也可一鍵通知家人。";
       upgradeLink.hidden = enabled;
     }
@@ -5660,7 +5665,7 @@
         } else {
           feedback.textContent = "SOS 暫時無法送出，請直接撥打 119、110，並聯絡親友";
         }
-        label.textContent = "長按 3 秒發出 SOS";
+        label.textContent = "連續按 3 次發出 SOS";
       } finally {
         button.disabled = !hasActiveSosAccess();
       }
@@ -6689,6 +6694,9 @@
           showTab("home");
         } else if (openAction === "guardians" && !forceOnboarding && typeof showTab === "function") {
           showTab("guardians");
+        } else if (openAction === "invite") {
+          if (typeof showTab === "function") showTab("home");
+          setTimeout(() => shareContactInvite(), 350);
         } else if (openAction === "sos") {
           if (typeof showTab === "function") showTab("home");
           openSosModal();
@@ -6928,54 +6936,44 @@
       const holdLabel = $("sosHoldLabel");
       if (!fab || !modal || !cancelBtn || !holdButton || fab.dataset.bound === "true") return;
       fab.dataset.bound = "true";
-      let holdTimer = null;
-      let holdCompleted = false;
+      let sosTapCount = 0;
+      let sosTapTimer = null;
 
-      const resetHold = () => {
-        if (holdTimer) clearTimeout(holdTimer);
-        holdTimer = null;
+      const resetSosTap = () => {
+        if (sosTapTimer) clearTimeout(sosTapTimer);
+        sosTapTimer = null;
+        sosTapCount = 0;
         holdProgress.style.transition = "none";
         holdProgress.style.width = "0";
-        if (!holdCompleted) holdLabel.textContent = "長按 3 秒發出 SOS";
+        holdLabel.textContent = "連續按 3 次發出 SOS";
       };
-      const startHold = (event) => {
-        if (holdButton.disabled || holdTimer) return;
+      const handleSosTap = async (event) => {
+        if (holdButton.disabled) return;
         event.preventDefault();
-        holdCompleted = false;
-        $("sosFeedback").textContent = "持續按住，放開就會取消";
-        holdLabel.textContent = "請持續按住";
-        holdProgress.style.transition = "none";
-        holdProgress.style.width = "0";
-        requestAnimationFrame(() => {
-          holdProgress.style.transition = `width ${SOS_HOLD_DURATION_MS}ms linear`;
-          holdProgress.style.width = "100%";
-        });
-        holdTimer = setTimeout(async () => {
-          holdTimer = null;
-          holdCompleted = true;
+        sosTapCount += 1;
+        holdProgress.style.transition = "width 160ms ease";
+        holdProgress.style.width = `${Math.min(100, sosTapCount * 34)}%`;
+        holdLabel.textContent = `已按 ${sosTapCount}/3 次`;
+        $("sosFeedback").textContent = sosTapCount < 3 ? "再按一次，確認才會送出" : "已確認，正在送出 SOS";
+        if (sosTapTimer) clearTimeout(sosTapTimer);
+        sosTapTimer = setTimeout(resetSosTap, 2400);
+        if (sosTapCount >= 3) {
+          if (sosTapTimer) clearTimeout(sosTapTimer);
+          sosTapTimer = null;
           await sendSosAlert();
-        }, SOS_HOLD_DURATION_MS);
-      };
-      const cancelHold = () => {
-        if (!holdCompleted) $("sosFeedback").textContent = "已取消，沒有送出通知";
-        resetHold();
+          setTimeout(resetSosTap, 1200);
+        }
       };
 
       fab.addEventListener("click", openSosModal);
-      cancelBtn.addEventListener("click", () => { resetHold(); modal.hidden = true; });
+      cancelBtn.addEventListener("click", () => { resetSosTap(); modal.hidden = true; });
       modal.addEventListener("click", (event) => {
-        if (event.target === modal) { resetHold(); modal.hidden = true; }
+        if (event.target === modal) { resetSosTap(); modal.hidden = true; }
       });
-      holdButton.addEventListener("pointerdown", startHold);
-      holdButton.addEventListener("pointerup", cancelHold);
-      holdButton.addEventListener("pointercancel", cancelHold);
+      holdButton.addEventListener("click", handleSosTap);
       holdButton.addEventListener("keydown", (event) => {
-        if (event.key === " " || event.key === "Enter") startHold(event);
-      });
-      holdButton.addEventListener("keyup", (event) => {
-        if (event.key === " " || event.key === "Enter") cancelHold();
-      });
-    }
+        if (event.key === " " || event.key === "Enter") handleSosTap(event);
+      });    }
 
     // 守護群完成度提示卡
     async function maybeShowGuardianComplete() {

@@ -77,7 +77,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("進入「平安紀錄」會直接展開月曆", help_page)
         self.assertIn('id="sos"', help_page)
         self.assertIn('("一鍵邀請", "heart", "邀請守護人")', rich_menu_script)
-        self.assertIn('("SOS 求救", "sos", "長按 3 秒求助")', rich_menu_script)
+        self.assertIn('("連按 SOS", "sos", "連續按 3 次")', rich_menu_script)
         self.assertIn("typeof liff.scanCodeV2 === \"function\"", page)
         self.assertIn("iPhone 與 Android 都比較穩定", page)
 
@@ -140,7 +140,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('guardians: ["守護群設定教學"', page)
         self.assertNotIn("守護群限有效的 799 年費會員建立", backend)
 
-    def test_sos_entry_only_appears_for_active_799_and_requires_long_press(self):
+    def test_sos_entry_only_appears_for_active_799_and_requires_triple_tap(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
 
         self.assertIn('id="sosFab" type="button" aria-label="SOS 緊急求助" hidden', page)
@@ -148,7 +148,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('href="tel:110"', page)
         self.assertIn('id="sosHoldButton"', page)
         self.assertIn("SOS_HOLD_DURATION_MS = 3000", page)
-        self.assertIn("長按 3 秒", page)
+        self.assertIn("連續按 3 次", page)
         self.assertIn("本服務不是報警或救援系統", page)
         self.assertIn('id="mvpSosBtn"', page)
         self.assertIn("openSosModal", page)
@@ -188,7 +188,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("?page=sos", standalone)
         self.assertNotIn("startCountdown()", standalone)
         self.assertNotIn("秒後自動發出", standalone)
-        self.assertIn("長按 3 秒", help_page)
+        self.assertIn("連續按 3 次", help_page)
         self.assertIn("有效的 799 守護版會員", help_page)
         self.assertNotIn("所有會員都能使用 119／110 快捷入口", help_page)
 
@@ -216,9 +216,9 @@ class ProductRulesTests(unittest.TestCase):
             page.index("async function initLine()") : page.index("const LUNAR_DAY_NAMES")
         ]
 
-        self.assertIn("withLoginOnExternalBrowser: false", init_line)
+        self.assertIn("withLoginOnExternalBrowser: true", init_line)
         self.assertIn("if (!liff.isLoggedIn())", init_line)
-        self.assertIn("liff.login(", init_line)
+        self.assertIn("startLineLogin();", init_line)
         self.assertIn("liff.isInClient && liff.isInClient()", init_line)
         self.assertNotIn("location.replace(joinUrl)", page)
         self.assertIn("requireLineMembership", page)
@@ -235,7 +235,7 @@ class ProductRulesTests(unittest.TestCase):
     def test_liff_login_redirect_removes_fragment_to_prevent_line_400(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         redirect_fn = page[
-            page.index("function buildCleanLoginRedirectUri()") : page.index("function setTheme")
+            page.index("function buildCleanLoginRedirectUri(extraParams = {})") : page.index("function setTheme")
         ]
 
         self.assertIn("LINE Login redirectUri 不帶 fragment", redirect_fn)
@@ -252,7 +252,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('String(key) === "liff.state"', page)
         self.assertIn('"invite_from", "friend_invite", "open"', page)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=checkin", rich_menu)
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=onboarding", rich_menu)
+        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=invite", rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=sos", rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=help", rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=pricing", rich_menu)
@@ -270,7 +270,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('"label": "問與答"', flex)
         self.assertNotIn('"label": "回到首頁"', flex)
         self.assertNotIn('f"{PUBLIC_BASE}/help.html#sos"', flex)
-        self.assertNotIn("求助(長按看教學)", flex)
+        self.assertNotIn("求助(連按看教學)", flex)
 
     def test_public_liff_actions_redirect_to_standalone_pages(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

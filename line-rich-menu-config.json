@@ -13,11 +13,11 @@
     },
     {
       "bounds": { "x": 833, "y": 0, "width": 834, "height": 843 },
-      "action": { "type": "uri", "label": "守護人", "uri": "https://liff.line.me/2010674803-rK98c0lo/?open=onboarding" }
+      "action": { "type": "uri", "label": "守護人", "uri": "https://liff.line.me/2010674803-rK98c0lo/?open=invite" }
     },
     {
       "bounds": { "x": 1667, "y": 0, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "SOS 求救", "uri": "https://liff.line.me/2010674803-rK98c0lo/?open=sos" }
+      "action": { "type": "uri", "label": "連按SOS", "uri": "https://liff.line.me/2010674803-rK98c0lo/?open=sos" }
     },
     {
       "bounds": { "x": 0, "y": 843, "width": 833, "height": 843 },
