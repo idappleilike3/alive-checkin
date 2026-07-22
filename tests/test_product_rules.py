@@ -21,11 +21,11 @@ class ProductRulesTests(unittest.TestCase):
 
         expected = {
             "paid_199": (4, 1, 0, 0),
-            "paid_199_year": (6, 2, 3, 0),
-            "paid_399": (15, 2, 5, 0),
-            "paid_399_year": (25, 3, 7, 0),
-            "paid_799": (25, 3, 14, 1),
-            "paid_799_year": (50, 3, 30, 3),
+            "paid_199_year": (6, 2, 0, 0),
+            "paid_399": (15, 2, 0, 0),
+            "paid_399_year": (25, 3, 0, 0),
+            "paid_799": (25, 3, 0, 1),
+            "paid_799_year": (50, 3, 0, 3),
         }
         for plan, values in expected.items():
             contact_limit, reminders, trajectory_days, group_limit = values
@@ -57,8 +57,10 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn('id="reloadBtn"', page)
         self.assertNotIn('id="statusToggleBtn"', page)
         self.assertIn('<div class="status-details" id="statusDetails">', page)
+        self.assertIn('id="mvpHome"', page)
+        self.assertIn('class="check-wrap"', page)
         self.assertLess(
-            page.index('<div class="check-wrap">'),
+            page.index('id="mvpHome"'),
             page.index('id="countdownDisplay"'),
         )
         self.assertLess(
@@ -118,18 +120,33 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("SOS_HOLD_DURATION_MS = 3000", page)
         self.assertIn("長按 3 秒", page)
         self.assertIn("本服務不是報警或救援系統", page)
-        self.assertIn('fab.hidden = !enabled;', page)
+        self.assertIn('id="mvpSosBtn"', page)
+        self.assertIn("openSosModal", page)
         self.assertIn('sosSection.hidden = !enabled;', page)
         self.assertNotIn('id="sosConfirmSend"', page)
 
     def test_sos_plan_access_matches_public_benefits(self):
         plans = load_plan_limits()
 
-        for plan in ("free", "trial", "paid_199", "paid_199_year", "paid_399", "paid_399_year"):
+        # MVP：緊急求助通知家人開放各方案；過期付費會員仍由後端擋下
+        for plan in plans:
             with self.subTest(plan=plan):
-                self.assertFalse(plans[plan]["sos_enabled"])
-        self.assertTrue(plans["paid_799"]["sos_enabled"])
-        self.assertTrue(plans["paid_799_year"]["sos_enabled"])
+                self.assertTrue(plans[plan]["sos_enabled"])
+                self.assertEqual(plans[plan]["trajectory_days"], 0)
+                self.assertFalse(plans[plan]["realtime_tracking"])
+
+    def test_mvp_home_has_exactly_four_primary_actions(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn("每日平安", page)
+        self.assertIn("一鍵報平安，守護每一次回家", page)
+        self.assertIn("❤️ 歡迎使用今天還好嗎", page)
+        self.assertIn('id="mvpSafeBtn"', page)
+        self.assertIn('id="mvpGuardBtn"', page)
+        self.assertIn('id="mvpCallBtn"', page)
+        self.assertIn('id="mvpSosBtn"', page)
+        self.assertIn("今天已完成平安回報", page)
+        self.assertNotIn("軌跡回放", page)
+        self.assertNotIn("不是 24 小時軌跡", page)
 
     def test_every_sos_entry_uses_the_same_safe_flow(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

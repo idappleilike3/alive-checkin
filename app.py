@@ -142,14 +142,14 @@ DEFAULT_STATE = {
 }
 
 PLAN_LIMITS = {
-    "free": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": False, "guardian_group_limit": 0},
-    "trial": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": False, "guardian_group_limit": 0},
-    "paid_199": {"contact_limit": 4, "friend_location_limit": 4, "daily_reminders": 1, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": False, "guardian_group_limit": 0},
-    "paid_199_year": {"contact_limit": 6, "friend_location_limit": 6, "daily_reminders": 2, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 3, "offline_sync_days": 0, "sos_enabled": False, "guardian_group_limit": 0},
-    "paid_399": {"contact_limit": 15, "friend_location_limit": 15, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 3, "realtime_tracking": True, "trajectory_days": 5, "offline_sync_days": 1, "sos_enabled": False, "guardian_group_limit": 0},
-    "paid_399_year": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 3, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 3, "realtime_tracking": True, "trajectory_days": 7, "offline_sync_days": 1, "sos_enabled": False, "guardian_group_limit": 0, "realtime_trial_days": 30},
-    "paid_799": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 3, "realtime_tracking": True, "trajectory_days": 14, "offline_sync_days": 7, "sos_enabled": True, "guardian_group_limit": 1},
-    "paid_799_year": {"contact_limit": 50, "friend_location_limit": 50, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 5, "realtime_tracking": True, "trajectory_days": 30, "offline_sync_days": 7, "sos_enabled": True, "guardian_group_limit": 3},
+    "free": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
+    "trial": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
+    "paid_199": {"contact_limit": 4, "friend_location_limit": 4, "daily_reminders": 1, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
+    "paid_199_year": {"contact_limit": 6, "friend_location_limit": 6, "daily_reminders": 2, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
+    "paid_399": {"contact_limit": 15, "friend_location_limit": 15, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
+    "paid_399_year": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 3, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0, "realtime_trial_days": 30},
+    "paid_799": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 1},
+    "paid_799_year": {"contact_limit": 50, "friend_location_limit": 50, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 5, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 3},
 }
 
 PAYMENT_PRODUCTS = {
@@ -813,7 +813,11 @@ def build_status(profile):
         "offline_sync_days": int(plan_rules(profile).get("offline_sync_days", 0)),
         "sos_enabled": bool(
             plan_rules(profile).get("sos_enabled", False)
-            and paid_membership_is_active(profile)
+            and (
+                (profile.get("plan") or "trial") in ("free", "trial")
+                or paid_membership_is_active(profile)
+                or trial_active(profile)
+            )
         ),
         "dedicated_support": bool(plan_rules(profile).get("dedicated_support", False)),
         "realtime_trial_days": int(plan_rules(profile).get("realtime_trial_days", 0)),
@@ -2009,7 +2013,8 @@ def trigger_sos(data_file, payload, config=None):
     rules = plan_rules(profile)
     if not rules.get("sos_enabled"):
         return {"error": "sos is not available for this plan"}, 403
-    if not paid_membership_is_active(profile):
+    plan_name = profile.get("plan") or "trial"
+    if plan_name not in ("free", "trial") and not paid_membership_is_active(profile) and not trial_active(profile):
         return {"error": "sos membership is not active"}, 403
 
     # === P0 FIX:3 層防護 ===
@@ -2548,7 +2553,7 @@ def send_due_reminders(config):
         location_link = ""
         if profile.get("attach_location_on_alert") and location.get("latitude") and location.get("longitude"):
             location_link = f"\n最後位置：https://www.google.com/maps?q={location['latitude']},{location['longitude']}"
-        message = f"該回來簽到囉 ♡\n點一下「我已平安」，讓重要的人放心。{location_link}"
+        message = f"❤️ 今天一切都好嗎？\n點一下「我平安」，讓家人放心。{location_link}"
         try:
             result = sender(token, user["line_user_id"], message)
             append_notification_log(state, "overdue", user["line_user_id"], "sent", message, json.dumps(result, ensure_ascii=False))
@@ -2560,7 +2565,7 @@ def send_due_reminders(config):
             results.append({"line_user_id": user["line_user_id"], "error": str(exc)})
 
         contact_message = (
-            f"【失聯預警】{profile.get('display_name') or '使用者'} 已超過平安簽到時間，請協助確認安全。"
+            f"【需要幫忙】{profile.get('display_name') or '家人'} 超過時間尚未回報平安，請協助確認是否一切都好。"
             f"{location_link}"
         )
         rules = plan_rules(profile)
@@ -2805,14 +2810,16 @@ def send_checkin_reminders(config):
 
         # 補跑時只推一次(取最晚已到點的時段),並把所有已到點未送時段標為已處理
         target_time = due_unsent[-1]
-        # 2026-07-22 老人家友善推播 Flex:帶日期+時間+報平安/求助按鈕
+        # 每日平安推播：❤️ 今天一切都好嗎？＋我平安 / 安全守護 / 緊急求助
         from datetime import datetime as _dt
         weekday_zh = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"][now.weekday()]
-        checkin_uri = f"{public_url}/liff/checkin" if public_url else (liff_entry_url(open_action="checkin") if liff_entry_url else "https://alive-checkin.onrender.com/liff/checkin")
-        help_uri = f"{public_url}/help" if public_url else "https://alive-checkin.onrender.com/help"
+        home_uri = f"{public_url}/" if public_url else (liff_entry_url(fragment="home") if liff_entry_url else "https://alive-checkin.onrender.com/")
+        checkin_uri = f"{public_url}/?open=checkin" if public_url else (liff_entry_url(open_action="checkin") if liff_entry_url else "https://alive-checkin.onrender.com/?open=checkin")
+        guard_uri = f"{public_url}/?open=guard" if public_url else (liff_entry_url(open_action="guard") if liff_entry_url else "https://alive-checkin.onrender.com/?open=guard")
+        sos_uri = f"{public_url}/?open=sos" if public_url else (liff_entry_url(open_action="sos") if liff_entry_url else "https://alive-checkin.onrender.com/?open=sos")
         message = {
             "type": "flex",
-            "altText": f"{today} {weekday_zh} {target_time} 平安簽到提醒",
+            "altText": f"❤️ 今天一切都好嗎？ {today} {target_time}",
             "contents": {
                 "type": "bubble",
                 "size": "mega",
@@ -2826,8 +2833,8 @@ def send_checkin_reminders(config):
                     "paddingStart": "lg",
                     "paddingEnd": "lg",
                     "contents": [
-                        {"type": "text", "text": f"📅 {today} {weekday_zh}", "color": "#FFFFFF", "size": "lg", "weight": "bold", "wrap": True},
-                        {"type": "text", "text": f"⏰ 簽到時間 {target_time}", "color": "#FFFFFF", "size": "xxl", "weight": "bold", "wrap": True},
+                        {"type": "text", "text": "每日平安", "color": "#FFFFFF", "size": "lg", "weight": "bold", "wrap": True},
+                        {"type": "text", "text": f"📅 {today} {weekday_zh} {target_time}", "color": "#FFFFFF", "size": "xl", "weight": "bold", "wrap": True},
                     ],
                 },
                 "body": {
@@ -2836,9 +2843,8 @@ def send_checkin_reminders(config):
                     "spacing": "md",
                     "paddingAll": "lg",
                     "contents": [
-                        {"type": "text", "text": "今天還在嗎 ✨", "size": "xl", "weight": "bold", "color": "#555555", "wrap": True},
-                        {"type": "text", "text": "點下面按鈕,完成今日平安簽到", "size": "lg", "color": "#555555", "wrap": True},
-                        {"type": "text", "text": "逾時會通知你的家人", "size": "md", "color": "#888888", "wrap": True},
+                        {"type": "text", "text": "❤️ 今天一切都好嗎？", "size": "xl", "weight": "bold", "color": "#1a1a1a", "wrap": True},
+                        {"type": "text", "text": "點下面按鈕回報平安，或需要幫忙時求助", "size": "lg", "color": "#555555", "wrap": True},
                     ],
                 },
                 "footer": {
@@ -2848,8 +2854,9 @@ def send_checkin_reminders(config):
                     "paddingAll": "lg",
                     "backgroundColor": "#FAFAFA",
                     "contents": [
-                        {"type": "button", "action": {"type": "uri", "label": "✅ 報個平安", "uri": checkin_uri}, "style": "primary", "color": "#00B900", "height": "md"},
-                        {"type": "button", "action": {"type": "uri", "label": "❓ 求助(長按看教學)", "uri": help_uri}, "style": "link", "color": "#888888", "height": "sm"},
+                        {"type": "button", "action": {"type": "uri", "label": "✅ 我平安", "uri": checkin_uri}, "style": "primary", "color": "#16A34A", "height": "md"},
+                        {"type": "button", "action": {"type": "uri", "label": "🛡️ 安全守護", "uri": guard_uri}, "style": "primary", "color": "#2563EB", "height": "md"},
+                        {"type": "button", "action": {"type": "uri", "label": "🆘 緊急求助", "uri": sos_uri}, "style": "primary", "color": "#DC2626", "height": "md"},
                     ],
                 },
             },

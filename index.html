@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>今天還在嗎</title>
+  <title>每日平安</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -11,7 +11,7 @@
       display: grid;
       place-items: start center;
       padding: 18px;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Noto Sans TC", sans-serif;
+      font-family: "Noto Sans TC", "Microsoft JhengHei", "PingFang TC", sans-serif;
       transition: background 0.35s ease, color 0.35s ease;
       overflow-x: hidden;
     }
@@ -2100,20 +2100,223 @@
       line-height: 1.6;
     }
 
+    /* ===== 每日平安 MVP 首頁：四大超大按鈕 ===== */
+    .mvp-home {
+      position: relative;
+      z-index: 2;
+      margin-bottom: 12px;
+      text-align: center;
+    }
+    .mvp-brand {
+      margin: 4px 0 6px;
+      font-size: clamp(34px, 9vw, 44px);
+      font-weight: 950;
+      letter-spacing: 0.04em;
+      color: #0f3d2e;
+      line-height: 1.15;
+    }
+    .mvp-slogan {
+      margin: 0 0 14px;
+      font-size: clamp(16px, 4.2vw, 18px);
+      font-weight: 750;
+      color: #2f6b55;
+      line-height: 1.45;
+    }
+    .mvp-welcome {
+      margin: 0 0 6px;
+      font-size: clamp(22px, 5.8vw, 28px);
+      font-weight: 950;
+      color: #1a1a1a;
+      line-height: 1.35;
+    }
+    .mvp-welcome-sub {
+      margin: 0 0 18px;
+      font-size: clamp(17px, 4.5vw, 20px);
+      font-weight: 700;
+      color: #444;
+    }
+    .mvp-grid {
+      display: grid;
+      gap: 14px;
+    }
+    .mvp-btn {
+      display: grid;
+      grid-template-columns: 56px 1fr;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      min-height: 92px;
+      padding: 16px 18px;
+      border: 0;
+      border-radius: 18px;
+      text-align: left;
+      cursor: pointer;
+      color: #fff;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+      transition: transform 0.12s ease, filter 0.12s ease;
+    }
+    .mvp-btn:active { transform: scale(0.98); filter: brightness(0.96); }
+    .mvp-btn-icon { font-size: 36px; line-height: 1; text-align: center; }
+    .mvp-btn-title { font-size: clamp(24px, 6.2vw, 30px); font-weight: 950; line-height: 1.2; }
+    .mvp-btn-desc { margin-top: 4px; font-size: clamp(15px, 3.8vw, 17px); font-weight: 700; opacity: 0.95; }
+    .mvp-btn.safe { background: linear-gradient(180deg, #22c55e 0%, #15803d 100%); }
+    .mvp-btn.guard { background: linear-gradient(180deg, #3b82f6 0%, #1d4ed8 100%); }
+    .mvp-btn.call { background: linear-gradient(180deg, #facc15 0%, #ca8a04 100%); color: #1a1a1a; }
+    .mvp-btn.sos { background: linear-gradient(180deg, #ef4444 0%, #b91c1c 100%); }
+    .mvp-btn.done { background: linear-gradient(180deg, #86efac 0%, #16a34a 100%); }
+    .mvp-checkin-banner {
+      margin: 14px 0 0;
+      padding: 16px 14px;
+      border-radius: 14px;
+      background: #ecfdf5;
+      border: 2px solid #16a34a;
+      color: #14532d;
+      font-size: 20px;
+      font-weight: 900;
+    }
+    .mvp-panel {
+      position: relative;
+      z-index: 2;
+      margin: 8px 0 16px;
+      padding: 18px 16px;
+      border-radius: 18px;
+      background: #fff;
+      border: 2px solid #e5e7eb;
+      text-align: left;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+    }
+    .mvp-panel h2 {
+      margin: 0 0 8px;
+      font-size: 26px;
+      font-weight: 950;
+      color: #111;
+    }
+    .mvp-panel .mvp-panel-lead {
+      margin: 0 0 14px;
+      font-size: 17px;
+      font-weight: 700;
+      color: #444;
+      line-height: 1.5;
+    }
+    .mvp-back {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 12px;
+      padding: 10px 14px;
+      border: 0;
+      border-radius: 999px;
+      background: #f3f4f6;
+      color: #111;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .mvp-guard-status {
+      margin: 0 0 14px;
+      padding: 16px;
+      border-radius: 14px;
+      background: #f3f4f6;
+      font-size: 20px;
+      font-weight: 900;
+      color: #374151;
+      line-height: 1.45;
+    }
+    .mvp-guard-status[data-active="true"] {
+      background: #ecfdf5;
+      color: #14532d;
+      border: 2px solid #22c55e;
+    }
+    .mvp-panel-actions {
+      display: grid;
+      gap: 12px;
+    }
+    .mvp-action {
+      min-height: 64px;
+      border: 0;
+      border-radius: 14px;
+      font-size: 20px;
+      font-weight: 900;
+      cursor: pointer;
+      color: #fff;
+    }
+    .mvp-action.start { background: #2563eb; }
+    .mvp-action.stop { background: #6b7280; }
+    .mvp-action.primary { background: #16a34a; }
+    .mvp-contact-list { display: grid; gap: 10px; margin-top: 8px; }
+    .mvp-contact-btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 68px;
+      padding: 14px 16px;
+      border: 2px solid #e5e7eb;
+      border-radius: 14px;
+      background: #fffbeb;
+      color: #111;
+      text-decoration: none;
+      font-size: 20px;
+      font-weight: 900;
+    }
+    .mvp-contact-btn small { display: block; margin-top: 4px; font-size: 15px; font-weight: 700; color: #555; }
+    .mvp-form-grid { display: grid; gap: 12px; }
+    .mvp-form-grid label {
+      display: grid;
+      gap: 6px;
+      font-size: 16px;
+      font-weight: 800;
+      color: #222;
+    }
+    .mvp-form-grid input,
+    .mvp-form-grid select {
+      min-height: 52px;
+      padding: 10px 12px;
+      border: 2px solid #d1d5db;
+      border-radius: 12px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .mvp-sos-dials {
+      display: grid;
+      gap: 10px;
+      margin: 12px 0 16px;
+    }
+    .mvp-sos-dials a {
+      display: grid;
+      place-items: center;
+      min-height: 64px;
+      border-radius: 14px;
+      text-decoration: none;
+      font-size: 22px;
+      font-weight: 950;
+      color: #fff;
+    }
+    .mvp-sos-dials a.family { background: #ca8a04; color: #111; }
+    .mvp-sos-dials a.police { background: #1d4ed8; }
+    .mvp-sos-dials a.fire { background: #dc2626; }
+    .check-wrap.mvp-hidden-check { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    body.mvp-focus-home .theme-switcher,
+    body.mvp-focus-home .countdown-block,
+    body.mvp-focus-home #guardianSection,
+    body.mvp-focus-home .note,
+    body.mvp-focus-home #modeNote { display: none !important; }
+    body.mvp-focus-home .bottom-nav { opacity: 0.92; }
+
 </style>
 </head>
-<body class="classic">
+<body class="classic mvp-focus-home">
   <main class="app">
 
     <!-- D01: 底部導覽列(放這裡確保在 script 之前就 parse) -->
     <nav class="bottom-nav" id="bottomNav" aria-label="主導覽">
       <a href="#home" class="nav-item active" data-tab="home"><span class="nav-icon">🏠</span><span class="nav-label">首頁</span></a>
       <a href="#guardians" class="nav-item" data-tab="guardians"><span class="nav-icon">👥</span><span class="nav-label">守護群教學</span></a>
-      <a href="#history" class="nav-item" data-tab="history"><span class="nav-icon">📅</span><span class="nav-label">簽到紀錄</span></a>
+      <a href="#history" class="nav-item" data-tab="history"><span class="nav-icon">📅</span><span class="nav-label">平安紀錄</span></a>
       <a href="#member" class="nav-item" data-tab="member"><span class="nav-icon">👤</span><span class="nav-label">會員中心</span></a>
     </nav>
 
-    <!-- D01: SOS 浮動按鈕 -->
+    <!-- D01: SOS 浮動按鈕（MVP 首頁已有緊急求助，FAB 僅作備援） -->
     <button class="sos-fab" id="sosFab" type="button" aria-label="SOS 緊急求助" hidden>
       <span class="sos-fab-text">SOS</span>
     </button>
@@ -2121,8 +2324,8 @@
     <!-- D01: 守護群完成度提示卡 -->
     <div class="modal-backdrop" id="guardianCompleteModal" hidden>
       <div class="guardian-modal guardian-prompt-card">
-        <h3 id="guardianPromptTitle">守護群尚未填滿</h3>
-        <p id="guardianPromptBody">你的守護群目前為 <strong id="guardianPromptCount">1/3</strong> 位。多設定一位守護人,緊急時就多一層保障。</p>
+        <h3 id="guardianPromptTitle">家人聯絡人尚未填滿</h3>
+        <p id="guardianPromptBody">你目前為 <strong id="guardianPromptCount">1/3</strong> 位。多設定一位家人，需要幫忙時就多一層保障。</p>
         <div class="actions" style="flex-direction: column; gap: 10px;">
           <button class="action-btn primary" id="guardianPromptNow" type="button">現在設定</button>
           <button class="action-btn" id="guardianPromptTomorrow" type="button">明天提醒我</button>
@@ -2131,66 +2334,136 @@
       </div>
     </div>
 
-    <!-- SOS 緊急入口：電話求助開放所有人，守護通知限有效 799 會員 -->
+    <!-- 緊急求助：電話人人可用；通知家人依方案 -->
     <div class="modal-backdrop" id="sosConfirmModal" hidden>
       <div class="guardian-modal sos-confirm-card" role="dialog" aria-modal="true" aria-labelledby="sosModalTitle">
-        <h2 id="sosModalTitle">SOS 緊急求助</h2>
-        <p>若有立即危險，請先打電話求助，不要只等待系統通知。</p>
-        <div class="sos-emergency-links">
-          <a class="sos-call-link" href="tel:119">撥打 119</a>
-          <a class="sos-call-link" href="tel:110">撥打 110</a>
+        <h2 id="sosModalTitle">🆘 緊急求助</h2>
+        <p>需要幫忙時，可先打電話，也可通知家人。</p>
+        <div class="mvp-sos-dials" id="sosDialLinks">
+          <a class="family" id="sosDialPrimary" href="tel:">📞 第一聯絡人</a>
+          <a class="police" href="tel:110">撥打 110</a>
+          <a class="fire" href="tel:119">撥打 119</a>
         </div>
-        <div class="sos-plan-status" id="sosPlanStatus">正在確認你的方案</div>
-        <p id="sosModalMessage">799 守護版可通知核心守護人，並附上可取得的位置。</p>
+        <div class="sos-plan-status" id="sosPlanStatus">正在確認通知家人狀態</div>
+        <p id="sosModalMessage">可通知家人，並附上可分享的位置。</p>
         <button class="sos-hold-button" id="sosHoldButton" type="button" disabled>
           <span class="sos-hold-progress" id="sosHoldProgress"></span>
-          <span class="sos-hold-label" id="sosHoldLabel">長按 3 秒發出 SOS</span>
+          <span class="sos-hold-label" id="sosHoldLabel">長按 3 秒通知家人</span>
         </button>
         <p class="sos-feedback" id="sosFeedback" aria-live="polite"></p>
-        <a class="sos-upgrade-link" id="sosUpgradeLink" href="./liff/pricing.html">查看 799 守護版</a>
-        <p class="sos-disclaimer">本服務不是報警或救援系統，也不保證訊息一定即時送達。</p>
+        <a class="sos-upgrade-link" id="sosUpgradeLink" href="./liff/pricing.html">查看守護方案</a>
+      <p class="sos-disclaimer">本服務不是報警或救援系統，若有立即危險請先打電話求助。</p>
         <div class="actions">
           <button class="action-btn" id="sosConfirmCancel" type="button">關閉</button>
         </div>
       </div>
     </div>
-    <div class="theme-switcher" aria-label="主題切換">
+    <div class="theme-switcher" aria-label="主題切換" hidden>
       <button class="theme-btn active" data-theme="classic" type="button">經典</button>
       <button class="theme-btn" data-theme="neon" type="button">霓虹</button>
       <button class="theme-btn" data-theme="cute" type="button">可愛</button>
     </div>
 
-    <header class="hero">
-      <div class="pet-badge">♡ 今日平安小站</div>
-      <h1>今天還在嗎 ✨</h1>
-      <div class="subtitle colorful-subtitle" role="note" aria-label="平安守護說明">
-        <p class="safety-headline"><span class="subtitle-safe">不是監控</span>，是讓重要的人知道你平安</p>
-        <p class="safety-copy">
-          <span class="subtitle-quiet">你主動簽到時，不會打擾任何人</span>
-        </p>
+    <section class="mvp-home" id="mvpHome" aria-label="每日平安首頁">
+      <div class="mvp-brand">每日平安</div>
+      <p class="mvp-slogan">一鍵報平安，守護每一次回家</p>
+      <h1 class="mvp-welcome">❤️ 歡迎使用今天還好嗎</h1>
+      <p class="mvp-welcome-sub">請選擇您需要的服務</p>
+      <div class="mvp-grid" role="group" aria-label="主要服務">
+        <button class="mvp-btn safe" id="mvpSafeBtn" type="button">
+          <span class="mvp-btn-icon">✅</span>
+          <span>
+            <span class="mvp-btn-title">我平安</span>
+            <span class="mvp-btn-desc">回報今天平安</span>
+          </span>
+        </button>
+        <button class="mvp-btn guard" id="mvpGuardBtn" type="button">
+          <span class="mvp-btn-icon">🛡️</span>
+          <span>
+            <span class="mvp-btn-title">安全守護</span>
+            <span class="mvp-btn-desc">分享位置更安心</span>
+          </span>
+        </button>
+        <button class="mvp-btn call" id="mvpCallBtn" type="button">
+          <span class="mvp-btn-icon">📞</span>
+          <span>
+            <span class="mvp-btn-title">聯絡家人</span>
+            <span class="mvp-btn-desc">快速撥打電話</span>
+          </span>
+        </button>
+        <button class="mvp-btn sos" id="mvpSosBtn" type="button">
+          <span class="mvp-btn-icon">🆘</span>
+          <span>
+            <span class="mvp-btn-title">緊急求助</span>
+            <span class="mvp-btn-desc">需要幫助點這裡</span>
+          </span>
+        </button>
       </div>
-    </header>
-
-    <div class="check-wrap">
-      <button class="check-btn" id="checkBtn" type="button" disabled aria-busy="true">
-        我已平安
-        <span class="sub">點一下簽到 ♡</span>
-      </button>
+      <div class="mvp-checkin-banner" id="mvpCheckinBanner" hidden>✅ 今天已完成平安回報</div>
       <p id="inlineError" class="inline-error" hidden></p>
+    </section>
+
+    <section class="mvp-panel" id="mvpGuardPanel" aria-label="安全守護面板" hidden>
+      <button class="mvp-back" id="mvpGuardBack" type="button">← 回首頁</button>
+      <h2>🛡️ 安全守護</h2>
+      <p class="mvp-panel-lead">預設守護 1 小時。會分享位置給指定家人，時間到會自動停止，也可提前結束。</p>
+      <div class="mvp-guard-status" id="mvpGuardStatus" data-active="false">目前未開啟安全守護</div>
+      <div class="mvp-panel-actions">
+        <button class="mvp-action start" id="mvpGuardStartBtn" type="button">開始安全守護（1 小時）</button>
+        <button class="mvp-action stop" id="mvpGuardStopBtn" type="button">提前結束</button>
+      </div>
+    </section>
+
+    <section class="mvp-panel" id="mvpCallPanel" aria-label="聯絡家人面板" hidden>
+      <button class="mvp-back" id="mvpCallBack" type="button">← 回首頁</button>
+      <h2>📞 聯絡家人</h2>
+      <p class="mvp-panel-lead" id="mvpCallLead">請選擇聯絡人，點一下會開啟撥號畫面（不會自動撥出）。</p>
+      <div class="mvp-contact-list" id="mvpContactList"></div>
+      <div class="mvp-form-grid" id="mvpContactForm" hidden>
+        <label>姓名
+          <input type="text" id="mvpContactName" placeholder="例如：小美" autocomplete="name">
+        </label>
+        <label>關係
+          <select id="mvpContactRelation">
+            <option value="">請選擇</option>
+            <option value="女兒">女兒</option>
+            <option value="兒子">兒子</option>
+            <option value="孫女">孫女</option>
+            <option value="孫子">孫子</option>
+            <option value="哥哥">哥哥</option>
+            <option value="姊姊">姊姊</option>
+            <option value="弟弟">弟弟</option>
+            <option value="妹妹">妹妹</option>
+            <option value="其他">其他</option>
+          </select>
+        </label>
+        <label>電話
+          <input type="tel" id="mvpContactPhone" inputmode="tel" placeholder="例如：0912345678" autocomplete="tel">
+        </label>
+        <button class="mvp-action primary" id="mvpContactSaveBtn" type="button">儲存聯絡人</button>
+      </div>
+    </section>
+
+    <!-- 相容舊流程：隱藏圓形簽到鈕，實際由「我平安」觸發 -->
+    <div class="check-wrap" hidden aria-hidden="true">
+      <button class="check-btn" id="checkBtn" type="button" disabled aria-busy="true">
+        我平安
+        <span class="sub">點一下回報</span>
+      </button>
     </div>
 
-    <div class="countdown-block" id="countdownBlock">
+    <div class="countdown-block" id="countdownBlock" hidden>
       <div class="countdown" id="countdownDisplay">--:--:--</div>
       <div class="countdown-label" id="countdownLabel">下一次安心確認倒數</div>
     </div>
 
     <div id="guardianSection" hidden>
-        <h3>守護人狀態</h3>
-        <p class="helper">未簽到或 SOS 發生時，系統會依方案透過 LINE 通知以下守護人（依優先順序）。編輯／刪除請到會員中心。</p>
+        <h3>家人狀態</h3>
+        <p class="helper">未回報平安或緊急求助時，系統會依方案透過 LINE 通知以下家人（依優先順序）。編輯／刪除請到會員中心。</p>
         <div id="guardianList" class="guardian-list"></div>
         <p class="helper" id="guardianCount"></p>
         <div class="guardian-actions">
-          <button class="action-btn primary" id="inviteGuardianBtn" type="button">一鍵分享邀請守護人</button>
+          <button class="action-btn primary" id="inviteGuardianBtn" type="button">一鍵分享邀請家人</button>
         </div>
         <div id="inviteArea" hidden>
           <p>邀請連結:</p>
@@ -2203,7 +2476,7 @@
       <!-- 守護人新增 / 編輯 Modal（會員中心使用） -->
       <div class="modal-backdrop" id="guardianEditorModal" hidden>
         <div class="guardian-modal">
-          <h2 id="guardianEditorTitle">新增守護人</h2>
+          <h2 id="guardianEditorTitle">新增聯絡人</h2>
           <p id="guardianEditorError" class="inline-error" hidden></p>
           <div class="guardian-edit-fields">
             <label class="guardian-edit-field" for="gName">姓名（必填）
@@ -2212,16 +2485,14 @@
             <label class="guardian-edit-field" for="gRelationship">關係（必填）
               <select id="gRelationship">
                 <option value="">請選擇關係</option>
-                <option value="配偶">配偶</option>
-                <option value="父母">父母</option>
-                <option value="子女">子女</option>
-                <option value="兄弟姊妹">兄弟姊妹</option>
-                <option value="親戚">親戚</option>
-                <option value="家人">家人</option>
-                <option value="朋友">朋友</option>
-                <option value="鄰居">鄰居</option>
-                <option value="同事">同事</option>
-                <option value="照護人員">照護人員</option>
+                <option value="女兒">女兒</option>
+                <option value="兒子">兒子</option>
+                <option value="孫女">孫女</option>
+                <option value="孫子">孫子</option>
+                <option value="哥哥">哥哥</option>
+                <option value="姊姊">姊姊</option>
+                <option value="弟弟">弟弟</option>
+                <option value="妹妹">妹妹</option>
                 <option value="其他">其他</option>
               </select>
             </label>
@@ -2283,15 +2554,14 @@
               <label class="onboarding-field" for="obRelationship">關係 <span class="onboarding-required">必選</span>
                 <select id="obRelationship" required>
                   <option value="">請選擇關係</option>
-                  <option value="配偶">配偶</option>
-                  <option value="父母">父母</option>
-                  <option value="子女">子女</option>
-                  <option value="兄弟姊妹">兄弟姊妹</option>
-                  <option value="親戚">親戚</option>
-                  <option value="家人">家人</option>
-                  <option value="朋友">朋友</option>
-                  <option value="鄰居">鄰居</option>
-                  <option value="照護人員">照護人員</option>
+                  <option value="女兒">女兒</option>
+                  <option value="兒子">兒子</option>
+                  <option value="孫女">孫女</option>
+                  <option value="孫子">孫子</option>
+                  <option value="哥哥">哥哥</option>
+                  <option value="姊姊">姊姊</option>
+                  <option value="弟弟">弟弟</option>
+                  <option value="妹妹">妹妹</option>
                   <option value="其他">其他</option>
                 </select>
               </label>
@@ -2641,10 +2911,10 @@
 
     <section class="settings" aria-label="好友地圖">
       <div class="settings-title">♡ 安全守護與好友地圖</div>
-      <div class="helper">在指定時段分享平安狀態與單次定位；可隨時停止。不是 24 小時軌跡回放。</div>
+      <div class="helper">在指定時段分享平安狀態與位置；可隨時停止。預設 1 小時，時間到會自動結束。</div>
       <div class="safety-guard-card" id="safetyGuardCard">
         <div class="settings-title">開啟安全守護</div>
-        <p class="helper">選擇時段後定位一次；好友／守護人可依權限查看。需要更新時再按「更新目前位置」。</p>
+        <p class="helper">開始後會分享位置給指定家人。需要更新時再按「更新目前位置」。</p>
         <div class="safety-guard-status" id="safetyGuardStatus" data-active="false">目前未開啟安全守護</div>
         <div class="safety-guard-duration" role="radiogroup" aria-label="安全守護時段">
           <label><input type="radio" name="safetyGuardDuration" value="1" checked> 1 小時</label>
@@ -2664,7 +2934,7 @@
         <button class="price-btn" id="shareFriendInviteBtn" type="button">分享給 LINE 好友</button>
       </div>
       <div class="helper">
-        我們需要開啟定位功能才能在您或家人遇到緊急狀況時，精準傳遞位置給守護人。您的定位資料僅用於安全守護，不會用於廣告或商業用途。
+        分享位置後，家人才能在需要時更快找到您。位置僅用於安全守護與緊急通知，不會拿去廣告。
         <button class="privacy-trigger" id="openPrivacyExplainBtn" type="button">🔒 查看我們如何保護您的位置資料</button>
       </div>
       <div class="friend-invite-row">
@@ -3877,26 +4147,48 @@
       return checked ? checked.value : "1";
     }
 
+    function remainingGuardText(guard) {
+      if (!guard || !guard.active) return "";
+      if (guard.until_stop) return "直到手動停止";
+      if (!guard.expires_at) return "";
+      const end = new Date(guard.expires_at).getTime();
+      if (!Number.isFinite(end)) return "";
+      const ms = end - Date.now();
+      if (ms <= 0) return "即將結束";
+      const mins = Math.ceil(ms / 60000);
+      if (mins >= 60) {
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        return m ? `剩餘約 ${h} 小時 ${m} 分` : `剩餘約 ${h} 小時`;
+      }
+      return `剩餘約 ${mins} 分`;
+    }
+
     function formatSafetyGuardStatus(guard) {
       if (!guard || !guard.active) return "目前未開啟安全守護";
       const city = guard.city ? `・${guard.city}` : "";
-      const status = guard.safety_status || "平安狀態分享中";
-      const until = guard.until_stop
-        ? "直到手動停止"
-        : (guard.expires_at ? `至 ${formatMapTime(guard.expires_at)}` : "");
-      const updated = guard.updated_at ? `｜位置更新 ${formatMapTime(guard.updated_at)}` : "";
-      return `安全守護進行中：${status}${city}｜${until}${updated}`;
+      const remain = remainingGuardText(guard);
+      return `🟢 安全守護中${city}${remain ? `｜${remain}` : ""}`;
     }
 
     function renderSafetyGuardUi(guard) {
       const active = Boolean(guard && guard.active);
       const statusEl = $("safetyGuardStatus");
       const actionsEl = $("safetyGuardActions");
+      const mvpStatus = $("mvpGuardStatus");
+      const mvpStart = $("mvpGuardStartBtn");
+      const mvpStop = $("mvpGuardStopBtn");
       if (statusEl) {
         statusEl.dataset.active = active ? "true" : "false";
         statusEl.textContent = formatSafetyGuardStatus(guard);
       }
       if (actionsEl) actionsEl.dataset.active = active ? "true" : "false";
+      if (mvpStatus) {
+        mvpStatus.dataset.active = active ? "true" : "false";
+        mvpStatus.textContent = formatSafetyGuardStatus(guard);
+      }
+      if (mvpStart) mvpStart.hidden = active;
+      if (mvpStop) mvpStop.hidden = !active;
       if (active && guard) {
         if (guard.until_stop) {
           const radio = document.querySelector('input[name="safetyGuardDuration"][value="until_stop"]');
@@ -4046,12 +4338,12 @@
               renderSafetyGuardUi(data.safety_guard || { active: true, city, until_stop: duration === "until_stop" });
               await refreshFriendLocations();
               const untilText = duration === "until_stop" ? "直到你手動停止" : `${duration} 小時後自動結束`;
-              alert(`已開啟安全守護（${city}）。${untilText}。這是單次定位，不是軌跡回放。`);
+              alert(`已開啟安全守護（${city}）。${untilText}。`);
             } catch (error) {
               alert(error.message || "開啟安全守護失敗。");
             }
           },
-          () => alert("沒有取得定位權限，所以無法開啟安全守護。"),
+          () => alert("需要您同意分享位置，才能開啟安全守護。"),
           { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
         );
       } catch (error) {
@@ -4075,7 +4367,7 @@
               alert(error.message || "更新位置失敗。");
             }
           },
-          () => alert("沒有取得定位權限，所以無法更新位置。"),
+          () => alert("需要您同意分享位置，才能更新位置。"),
           { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
         );
       } catch (error) {
@@ -4417,6 +4709,16 @@
       return Boolean(currentStatusData && currentStatusData.sos_enabled);
     }
 
+    function primaryContactPhone() {
+      const contacts = (currentStatusData && currentStatusData.contacts) || [];
+      const sorted = [...contacts].sort((a, b) => Number(a.priority || 9999) - Number(b.priority || 9999));
+      for (const c of sorted) {
+        const phone = String(c.phone || c.mobile || "").replace(/[^\d+]/g, "");
+        if (phone) return { phone, name: c.name || c.relationship || "第一聯絡人" };
+      }
+      return null;
+    }
+
     function renderSosAccess() {
       const enabled = hasActiveSosAccess();
       const fab = $("sosFab");
@@ -4425,25 +4727,38 @@
       const planStatus = $("sosPlanStatus");
       const modalMessage = $("sosModalMessage");
       const upgradeLink = $("sosUpgradeLink");
-      if (fab) fab.hidden = !enabled;
+      const primaryLink = $("sosDialPrimary");
+      const primary = primaryContactPhone();
+      if (fab) fab.hidden = true; // MVP 首頁已有緊急求助大按鈕
       if (sosSection) sosSection.hidden = !enabled;
+      if (primaryLink) {
+        if (primary) {
+          primaryLink.href = `tel:${primary.phone}`;
+          primaryLink.textContent = `📞 第一聯絡人（${primary.name}）`;
+          primaryLink.style.display = "";
+        } else {
+          primaryLink.removeAttribute("href");
+          primaryLink.textContent = "📞 請先設定第一聯絡人";
+          primaryLink.onclick = (e) => {
+            e.preventDefault();
+            $("sosConfirmModal").hidden = true;
+            openMvpCallPanel();
+          };
+        }
+      }
       if (!holdButton || !planStatus || !modalMessage || !upgradeLink) return;
 
       holdButton.disabled = !enabled;
       planStatus.textContent = enabled
-        ? "你的 799 守護版已啟用 SOS 守護通知"
-        : "目前方案可使用緊急電話，尚未開通守護人通知";
+        ? "可以通知家人需要幫忙"
+        : "目前可先打電話求助；通知家人需守護方案";
       modalMessage.textContent = enabled
-        ? "長按 3 秒後，系統會通知核心守護人，並附上可取得的位置。"
-        : "升級有效的 799 守護版後，才能透過系統通知核心守護人。";
+        ? "長按 3 秒後，會通知家人，並附上可分享的位置。"
+        : "請先打電話求助。升級守護方案後，也可一鍵通知家人。";
       upgradeLink.hidden = enabled;
     }
 
     function openSosModal() {
-      if (!hasActiveSosAccess()) {
-        window.location.href = "liff/pricing.html";
-        return;
-      }
       $("sosConfirmModal").hidden = false;
       $("sosFeedback").textContent = "";
       renderSosAccess();
@@ -4647,22 +4962,32 @@
       renderStatus(await apiGetStatus());
     }
 
-    const CHECK_BTN_IDLE_HTML = '我已平安<span class="sub">點一下簽到 ♡</span>';
-    const CHECK_BTN_DONE_HTML = '今日已簽到<span class="sub">謝謝你報平安 ♡</span>';
-    const CHECK_BTN_LOADING_HTML = '簽到中…<span class="sub">請稍候</span>';
+    const CHECK_BTN_IDLE_HTML = '我平安<span class="sub">回報今天平安</span>';
+    const CHECK_BTN_DONE_HTML = '今日已平安<span class="sub">✅ 今天已完成平安回報</span>';
+    const CHECK_BTN_LOADING_HTML = '回報中…<span class="sub">請稍候</span>';
 
     function syncCheckBtn(data) {
       const checkBtn = $("checkBtn");
-      if (!checkBtn) return;
+      const mvpSafe = $("mvpSafeBtn");
+      const banner = $("mvpCheckinBanner");
       const checked = Boolean(data && data.is_today_checked);
-      checkBtn.disabled = checked;
-      checkBtn.setAttribute("aria-busy", "false");
-      checkBtn.classList.toggle("checked", checked);
-      checkBtn.dataset.state = checked ? "checked" : "pending";
-      checkBtn.innerHTML = checked ? CHECK_BTN_DONE_HTML : CHECK_BTN_IDLE_HTML;
-      checkBtn.classList.remove("danger", "warning");
-      if (data && data.is_overdue) checkBtn.classList.add("danger");
-      else if (data && data.status_class === "warning") checkBtn.classList.add("warning");
+      if (checkBtn) {
+        checkBtn.disabled = checked;
+        checkBtn.setAttribute("aria-busy", "false");
+        checkBtn.classList.toggle("checked", checked);
+        checkBtn.dataset.state = checked ? "checked" : "pending";
+        checkBtn.innerHTML = checked ? CHECK_BTN_DONE_HTML : CHECK_BTN_IDLE_HTML;
+        checkBtn.classList.remove("danger", "warning");
+        if (data && data.is_overdue) checkBtn.classList.add("danger");
+        else if (data && data.status_class === "warning") checkBtn.classList.add("warning");
+      }
+      if (mvpSafe) {
+        mvpSafe.classList.toggle("done", checked);
+        mvpSafe.querySelector(".mvp-btn-title").textContent = checked ? "今天已平安" : "我平安";
+        mvpSafe.querySelector(".mvp-btn-desc").textContent = checked ? "今天已完成平安回報" : "回報今天平安";
+      }
+      if (banner) banner.hidden = !checked;
+      if (data && data.safety_guard) renderSafetyGuardUi(data.safety_guard);
     }
 
     function showInlineError(message) {
@@ -4735,7 +5060,7 @@
       // 防重複送出:今日已簽到時不送 API
       if (currentStatusData && currentStatusData.is_today_checked) {
         syncCheckBtn(currentStatusData);
-        showInlineSuccess("今日已簽到，不需要再送出。");
+        showInlineSuccess("✅ 今天已完成平安回報");
         return;
       }
 
@@ -4753,9 +5078,11 @@
           return;
         }
         renderStatus(result);
-        showInlineSuccess("報平安成功！守護人不會被打擾。");
+        showInlineSuccess("✅ 今天已完成平安回報");
+        const banner = $("mvpCheckinBanner");
+        if (banner) banner.hidden = false;
       } catch (error) {
-        showInlineError("簽到失敗：" + (error.message || "請確認後端是否正常"));
+        showInlineError("回報失敗：" + (error.message || "請稍後再試"));
         syncCheckBtn(currentStatusData || { is_today_checked: false });
       } finally {
         // 無論成功/失敗/例外，都清掉 busy；若仍卡在 loading 就強制恢復
@@ -5419,6 +5746,7 @@
       // 導覽與基本操作不依賴 LINE 身分，本機預覽也能正常切換。
       bindTabEvents();
       bindSosFab();
+      bindMvpHome();
       bindGuardianCompletePrompt();
       bindGuardianEvents();
 
@@ -5485,8 +5813,18 @@
           showTab("member");
         } else if (openAction === "guardians" && !forceOnboarding && typeof showTab === "function") {
           showTab("guardians");
+        } else if (openAction === "sos") {
+          if (typeof showTab === "function") showTab("home");
+          openSosModal();
+        } else if (openAction === "guard" || openAction === "safety") {
+          openMvpGuardPanel();
+        } else if (openAction === "call" || openAction === "family") {
+          openMvpCallPanel();
         } else if ((openAction === "checkin" || location.hash === "#home") && typeof showTab === "function") {
           showTab("home");
+          if (openAction === "checkin") {
+            // 從提醒進來：直接回到首頁四大按鈕，由使用者按「我平安」
+          }
         }
       } catch (error) {
         showInlineError("載入狀態失敗:" + (error.message || "請確認服務是否正常"));
@@ -5499,21 +5837,28 @@
       // 隱藏所有 sections,只顯示當前 tab 的 sections
       const allSections = document.querySelectorAll("main > section");
       allSections.forEach(s => s.hidden = true);
-      // 對應 tab → 顯示哪些 sections（還原首頁農曆月曆、好友定位；會員中心可編輯守護人）
+      const mvpHome = $("mvpHome");
+      const mvpGuardPanel = $("mvpGuardPanel");
+      const mvpCallPanel = $("mvpCallPanel");
+      if (mvpGuardPanel) mvpGuardPanel.hidden = true;
+      if (mvpCallPanel) mvpCallPanel.hidden = true;
+      document.body.classList.toggle("mvp-focus-home", tabName === "home");
+      // 對應 tab → 顯示哪些 sections（首頁只顯示四大按鈕；其餘進會員／紀錄）
       const tabMap = {
-        home: ["簽到狀態", "簽到月曆", "好友地圖"],
+        home: [],
         guardians: ["守護群設定教學", "安心守護邀請任務", "緊急聯絡人"],
-        history: ["簽到月曆"],
-        member: ["會員個人中心", "升級方案", "好友地圖"],
+        history: ["簽到月曆", "簽到狀態"],
+        member: ["會員個人中心", "升級方案"],
       };
-      const showLabels = tabMap[tabName] || ["簽到狀態"];
+      const showLabels = tabMap[tabName] || [];
       allSections.forEach(s => {
         const label = s.getAttribute("aria-label");
         if (showLabels.includes(label)) s.hidden = false;
       });
-      // 首頁唯讀守護人狀態；其他頁隱藏
+      if (mvpHome) mvpHome.hidden = tabName !== "home";
+      // 首頁不顯示舊守護人區塊
       const guardianSection = $("guardianSection");
-      if (guardianSection) guardianSection.hidden = tabName !== "home";
+      if (guardianSection) guardianSection.hidden = true;
       // 會員中心預設展開，方便編輯／刪除守護人
       if (tabName === "member") setMemberCenterExpanded(true);
       // 更新 nav active
@@ -5524,6 +5869,146 @@
       if (location.hash !== "#" + tabName) {
         history.replaceState(null, "", "#" + tabName);
       }
+    }
+
+    function showMvpHomeOnly() {
+      showTab("home");
+      const mvpHome = $("mvpHome");
+      const mvpGuardPanel = $("mvpGuardPanel");
+      const mvpCallPanel = $("mvpCallPanel");
+      if (mvpHome) mvpHome.hidden = false;
+      if (mvpGuardPanel) mvpGuardPanel.hidden = true;
+      if (mvpCallPanel) mvpCallPanel.hidden = true;
+    }
+
+    function openMvpGuardPanel() {
+      showTab("home");
+      const mvpHome = $("mvpHome");
+      const mvpGuardPanel = $("mvpGuardPanel");
+      const mvpCallPanel = $("mvpCallPanel");
+      if (mvpHome) mvpHome.hidden = true;
+      if (mvpCallPanel) mvpCallPanel.hidden = true;
+      if (mvpGuardPanel) mvpGuardPanel.hidden = false;
+      const radio = document.querySelector('input[name="safetyGuardDuration"][value="1"]');
+      if (radio) radio.checked = true;
+      renderSafetyGuardUi((currentStatusData && currentStatusData.safety_guard) || { active: false });
+      window.scrollTo(0, 0);
+    }
+
+    function relationEmoji(relation) {
+      const map = {
+        "女兒": "👩", "兒子": "👨", "孫女": "👧", "孫子": "👦",
+        "哥哥": "👨", "姊姊": "👩", "弟弟": "👦", "妹妹": "👧",
+        "配偶": "👵", "其他": "👤"
+      };
+      return map[relation] || "👤";
+    }
+
+    async function openMvpCallPanel() {
+      showTab("home");
+      const mvpHome = $("mvpHome");
+      const mvpGuardPanel = $("mvpGuardPanel");
+      const mvpCallPanel = $("mvpCallPanel");
+      if (mvpHome) mvpHome.hidden = true;
+      if (mvpGuardPanel) mvpGuardPanel.hidden = true;
+      if (mvpCallPanel) mvpCallPanel.hidden = false;
+      window.scrollTo(0, 0);
+      await renderMvpContactList();
+    }
+
+    async function renderMvpContactList() {
+      const listEl = $("mvpContactList");
+      const formEl = $("mvpContactForm");
+      const lead = $("mvpCallLead");
+      if (!listEl) return;
+      let contacts = (currentStatusData && currentStatusData.contacts) || [];
+        try {
+        if (lineUserId) {
+          const res = await apiGetContacts(lineUserId);
+          contacts = (res && res.data && res.data.contacts) || contacts;
+          if (currentStatusData) currentStatusData.contacts = contacts;
+        }
+      } catch (_) { /* keep cached */ }
+      const withPhone = (contacts || []).filter((c) => String(c.phone || c.mobile || "").trim());
+      if (!withPhone.length) {
+        listEl.innerHTML = "";
+        if (formEl) formEl.hidden = false;
+        if (lead) lead.textContent = "第一次使用請先設定緊急聯絡人（姓名、電話、關係）。";
+        return;
+      }
+      if (formEl) formEl.hidden = true;
+      if (lead) lead.textContent = "請選擇聯絡人，點一下會開啟撥號畫面（不會自動撥出）。";
+      listEl.innerHTML = withPhone.map((c) => {
+        const phone = String(c.phone || c.mobile || "").replace(/[^\d+]/g, "");
+        const name = c.name || "聯絡人";
+        const rel = c.relationship || "";
+        return `<a class="mvp-contact-btn" href="tel:${phone}"><span>${relationEmoji(rel)} ${rel || name}<small>${name}　${phone}</small></span><span>撥打</span></a>`;
+      }).join("") + `<button class="mvp-action primary" id="mvpAddAnotherContactBtn" type="button">＋ 新增聯絡人</button>`;
+      const addBtn = $("mvpAddAnotherContactBtn");
+      if (addBtn) addBtn.addEventListener("click", () => {
+        if (formEl) formEl.hidden = false;
+        if (lead) lead.textContent = "新增緊急聯絡人";
+      });
+    }
+
+    async function saveMvpContact() {
+      const name = ($("mvpContactName")?.value || "").trim();
+      const relationship = ($("mvpContactRelation")?.value || "").trim();
+      const phone = ($("mvpContactPhone")?.value || "").trim();
+      if (!name || !relationship || !phone) {
+        alert("請填寫姓名、關係與電話。");
+        return;
+      }
+      try {
+        if (!lineUserId && !useLocalMode) {
+          showLineLoginRequired();
+          return;
+        }
+        const addRes = await apiAddGuardian({
+          line_user_id: lineUserId,
+          name,
+          relationship,
+          phone,
+          is_primary: !((currentStatusData && currentStatusData.contacts) || []).length,
+          notify_methods: ["line"],
+        });
+        if (addRes.status !== 200 || (addRes.data && addRes.data.ok === false)) {
+          throw new Error((addRes.data && (addRes.data.message || addRes.data.error)) || "儲存失敗");
+        }
+        await refreshStatus();
+        $("mvpContactName").value = "";
+        $("mvpContactRelation").value = "";
+        $("mvpContactPhone").value = "";
+        await renderMvpContactList();
+        alert("已儲存聯絡人。");
+      } catch (error) {
+        alert(error.message || "儲存失敗，請稍後再試。");
+      }
+    }
+
+    function bindMvpHome() {
+      const safeBtn = $("mvpSafeBtn");
+      const guardBtn = $("mvpGuardBtn");
+      const callBtn = $("mvpCallBtn");
+      const sosBtn = $("mvpSosBtn");
+      const guardBack = $("mvpGuardBack");
+      const callBack = $("mvpCallBack");
+      const guardStart = $("mvpGuardStartBtn");
+      const guardStop = $("mvpGuardStopBtn");
+      const saveContact = $("mvpContactSaveBtn");
+      if (safeBtn) safeBtn.addEventListener("click", () => doCheckin());
+      if (guardBtn) guardBtn.addEventListener("click", openMvpGuardPanel);
+      if (callBtn) callBtn.addEventListener("click", openMvpCallPanel);
+      if (sosBtn) sosBtn.addEventListener("click", openSosModal);
+      if (guardBack) guardBack.addEventListener("click", showMvpHomeOnly);
+      if (callBack) callBack.addEventListener("click", showMvpHomeOnly);
+      if (guardStart) guardStart.addEventListener("click", () => {
+        const radio = document.querySelector('input[name="safetyGuardDuration"][value="1"]');
+        if (radio) radio.checked = true;
+        shareMyLocation();
+      });
+      if (guardStop) guardStop.addEventListener("click", stopLocationSharing);
+      if (saveContact) saveContact.addEventListener("click", saveMvpContact);
     }
 
     function bindTabEvents() {
