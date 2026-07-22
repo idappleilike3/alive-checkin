@@ -211,7 +211,7 @@ def line_plan_message():
         "399 安心版：月費 15 位、年費 25 位，LINE 通知核心守護人；年費含即時定位體驗。\n"
         "799 守護版：月費 NT$799，25 位緊急聯絡人、一鍵 SOS、守護群；逾時以 LINE 通知核心守護人。\n\n"
         "年費方案都有明確折扣；799 月費可建立 1 個守護群，年費可建立 3 個守護群。\n"
-        "簡訊預警與軌跡回放尚未開放，售價權益以線上實際功能為準。"
+        "安全守護可在指定時段分享平安狀態與單次定位；簡訊預警稍後開放，售價權益以線上實際功能為準。"
     )
 
 
@@ -828,6 +828,7 @@ def build_status(profile):
         "alert_at": alert_at.isoformat(timespec="seconds") if alert_at else None,
         "status_text": status_text,
         "status_class": status_class,
+        "safety_guard": safety_guard_snapshot(profile),
     }
 
 
@@ -1815,7 +1816,77 @@ def accept_friend_invite(data_file, payload):
     }, 200
 
 
+def _parse_safety_guard_duration(payload):
+    """Parse duration for 安全守護: 1h / 3h / 6h / until_stop. Returns (hours|None, until_stop)."""
+    raw = payload.get("duration")
+    if raw is None or raw == "":
+        raw = payload.get("share_hours")
+    text = str(raw or "").strip().lower().replace(" ", "")
+    if text in ("until_stop", "until-stop", "untilstop", "stop", "manual"):
+        return None, True
+    try:
+        hours = int(float(text.replace("h", "").replace("hr", "").replace("小時", "") or 0))
+    except (TypeError, ValueError):
+        hours = 0
+    if hours in (1, 3, 6):
+        return hours, False
+    # Legacy callers may still send 24; clamp to allowed windows (no continuous trail).
+    if hours > 0:
+        if hours <= 1:
+            return 1, False
+        if hours <= 3:
+            return 3, False
+        return 6, False
+    return 1, False
+
+
+def _location_session_active(location, now=None):
+    """True when 安全守護 session is active (sharing + not expired)."""
+    location = location or {}
+    if not location.get("sharing") and not location.get("active"):
+        return False
+    now = now or datetime.now()
+    if location.get("until_stop"):
+        return True
+    expires_at = parse_datetime(location.get("expires_at"))
+    return bool(expires_at and expires_at >= now)
+
+
+def safety_guard_snapshot(profile, now=None):
+    """Public snapshot of the user's 安全守護 session (single-shot location, not a trail)."""
+    now = now or datetime.now()
+    location = profile.get("location") or {}
+    active = _location_session_active(location, now)
+    today = now.date().isoformat()
+    last_check_in = profile.get("last_check_in")
+    is_today_checked = bool(last_check_in and str(last_check_in)[:10] == today)
+    if is_today_checked:
+        safety_status = "今日已簽到・狀態正常"
+    elif last_check_in:
+        safety_status = "今日尚未簽到"
+    else:
+        safety_status = "尚無簽到紀錄"
+    return {
+        "active": active,
+        "sharing": active,
+        "started_at": location.get("started_at") or "",
+        "expires_at": location.get("expires_at") or "",
+        "ended_at": location.get("ended_at") or "",
+        "until_stop": bool(location.get("until_stop")),
+        "duration_hours": location.get("duration_hours"),
+        "latitude": location.get("latitude") if active else None,
+        "longitude": location.get("longitude") if active else None,
+        "city": location.get("city", "") if active else "",
+        "updated_at": location.get("updated_at") or "",
+        "mode": "safety_guard",
+        "safety_status": safety_status,
+        "is_today_checked": is_today_checked,
+        "last_check_in": last_check_in,
+    }
+
+
 def update_location(data_file, payload):
+    """Start or refresh 安全守護: one location snapshot within a timed session (not continuous track)."""
     line_user_id = str(payload.get("line_user_id") or "").strip()
     if not line_user_id:
         return {"error": "missing line_user_id"}, 400
@@ -1827,34 +1898,96 @@ def update_location(data_file, payload):
     if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
         return {"error": "invalid location"}, 400
 
-    share_hours = max(1, min(24, int(payload.get("share_hours") or 24)))
     now = datetime.now()
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
+    existing = dict(profile.get("location") or {})
+    refresh_only = bool(payload.get("refresh_only"))
+    city = str(payload.get("city") or "").strip()
+
+    if refresh_only:
+        # Update last known coords; keep an active session as-is, do not invent a new share window.
+        if _location_session_active(existing, now):
+            existing.update(
+                {
+                    "latitude": round(latitude, 6),
+                    "longitude": round(longitude, 6),
+                    "city": city or existing.get("city", ""),
+                    "updated_at": now.isoformat(timespec="seconds"),
+                    "active": True,
+                    "sharing": True,
+                    "mode": "safety_guard",
+                }
+            )
+            profile["location"] = existing
+        else:
+            profile["location"] = {
+                **existing,
+                "latitude": round(latitude, 6),
+                "longitude": round(longitude, 6),
+                "city": city or existing.get("city", ""),
+                "updated_at": now.isoformat(timespec="seconds"),
+                "sharing": False,
+                "active": False,
+                "mode": "safety_guard",
+            }
+        save_state(data_file, state)
+        return {
+            "ok": True,
+            "location": profile["location"],
+            "safety_guard": safety_guard_snapshot(profile, now),
+        }, 200
+
+    duration_hours, until_stop = _parse_safety_guard_duration(payload)
+    started_at = (
+        existing.get("started_at")
+        if _location_session_active(existing, now)
+        else now.isoformat(timespec="seconds")
+    )
+    if until_stop:
+        expires_at = ""
+    else:
+        expires_at = (now + timedelta(hours=duration_hours)).isoformat(timespec="seconds")
+
     profile["location"] = {
         "latitude": round(latitude, 6),
         "longitude": round(longitude, 6),
-        "city": str(payload.get("city") or "").strip(),
+        "city": city,
         "updated_at": now.isoformat(timespec="seconds"),
-        "expires_at": (now + timedelta(hours=share_hours)).isoformat(timespec="seconds"),
+        "started_at": started_at,
+        "expires_at": expires_at,
+        "ended_at": "",
+        "until_stop": until_stop,
+        "duration_hours": duration_hours,
         "sharing": True,
+        "active": True,
+        "mode": "safety_guard",
     }
     save_state(data_file, state)
-    return {"ok": True, "location": profile["location"]}, 200
+    return {
+        "ok": True,
+        "location": profile["location"],
+        "safety_guard": safety_guard_snapshot(profile, now),
+    }, 200
 
 
 def stop_location_sharing(data_file, payload):
+    """Stop 安全守護 immediately."""
     line_user_id = str(payload.get("line_user_id") or "").strip()
     if not line_user_id:
         return {"error": "missing line_user_id"}, 400
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
-    location = profile.get("location") or {}
+    now = datetime.now()
+    location = dict(profile.get("location") or {})
     location["sharing"] = False
-    location["expires_at"] = datetime.now().isoformat(timespec="seconds")
+    location["active"] = False
+    location["ended_at"] = now.isoformat(timespec="seconds")
+    location["expires_at"] = now.isoformat(timespec="seconds")
+    location["until_stop"] = False
     profile["location"] = location
     save_state(data_file, state)
-    return {"ok": True}, 200
+    return {"ok": True, "safety_guard": safety_guard_snapshot(profile, now)}, 200
 
 
 def trigger_sos(data_file, payload, config=None):
@@ -2028,9 +2161,9 @@ def friend_locations(data_file, line_user_id):
         if not friend:
             continue
         location = friend.get("location") or {}
-        expires_at = parse_datetime(location.get("expires_at"))
-        if not location.get("sharing") or not expires_at or expires_at < now:
+        if not _location_session_active(location, now):
             continue
+        snap = safety_guard_snapshot(friend, now)
         friends.append(
             {
                 "line_user_id": friend_id,
@@ -2040,6 +2173,11 @@ def friend_locations(data_file, line_user_id):
                 "city": location.get("city", ""),
                 "updated_at": location.get("updated_at"),
                 "expires_at": location.get("expires_at"),
+                "started_at": location.get("started_at"),
+                "until_stop": bool(location.get("until_stop")),
+                "safety_status": snap.get("safety_status"),
+                "is_today_checked": snap.get("is_today_checked"),
+                "mode": "safety_guard",
             }
         )
     return {"friends": friends}
@@ -2582,9 +2720,19 @@ def cleanup_expired_data(config):
 
     for profile in state.get("users", {}).values():
         location = profile.get("location") or {}
+        if not location:
+            continue
+        # Keep until_stop sessions until the user stops; expire timed sessions by clock.
+        if location.get("until_stop") and (location.get("sharing") or location.get("active")):
+            continue
         expires_at = parse_datetime(location.get("expires_at"))
         if expires_at and expires_at < now:
-            profile["location"] = {}
+            profile["location"] = {
+                **location,
+                "sharing": False,
+                "active": False,
+                "ended_at": location.get("ended_at") or now.isoformat(timespec="seconds"),
+            }
             expired_locations_removed += 1
 
     invites_before = len(state.get("friend_invites", {}))
@@ -3891,6 +4039,15 @@ def create_app(config=None):
     def friends_locations_api():
         return jsonify(friend_locations(app.config["DATA_FILE"], request.args.get("line_user_id")))
 
+    @app.get("/api/location/status")
+    def location_status_api():
+        line_user_id = str(request.args.get("line_user_id") or "").strip()
+        if not line_user_id:
+            return jsonify({"error": "missing line_user_id"}), 400
+        state = load_state(app.config["DATA_FILE"])
+        profile = get_profile(state, line_user_id)
+        return jsonify({"ok": True, "safety_guard": safety_guard_snapshot(profile)})
+
     @app.post("/api/location/update")
     def location_update_api():
         data, code = update_location(app.config["DATA_FILE"], request.get_json(silent=True) or {})
@@ -4207,6 +4364,12 @@ class MiniClient:
             return MiniResponse(get_calendar_notes(self.app.config["DATA_FILE"], params.get("line_user_id")))
         if route == "/api/friends/locations":
             return MiniResponse(friend_locations(self.app.config["DATA_FILE"], params.get("line_user_id")))
+        if route == "/api/location/status":
+            line_user_id = params.get("line_user_id")
+            if not line_user_id:
+                return MiniResponse({"error": "missing line_user_id"}, 400)
+            profile = get_profile(load_state(self.app.config["DATA_FILE"]), line_user_id)
+            return MiniResponse({"ok": True, "safety_guard": safety_guard_snapshot(profile)})
         return MiniResponse({"error": "not found"}, 404)
 
     def post(self, path, data=None, content_type=None):
@@ -4402,6 +4565,14 @@ class MiniApp:
                     return handler.send_json(get_calendar_notes(data_file, params.get("line_user_id")))
                 if route == "/api/friends/locations":
                     return handler.send_json(friend_locations(data_file, params.get("line_user_id")))
+                if route == "/api/location/status":
+                    line_user_id = params.get("line_user_id")
+                    if not line_user_id:
+                        return handler.send_json({"error": "missing line_user_id"}, 400)
+                    return handler.send_json({
+                        "ok": True,
+                        "safety_guard": safety_guard_snapshot(get_profile(load_state(data_file), line_user_id)),
+                    })
                 if route == "/api/cron/contact-reminders":
                     if not cron_allowed(config, params.get("secret", "")):
                         return handler.send_json({"error": "unauthorized"}, 401)

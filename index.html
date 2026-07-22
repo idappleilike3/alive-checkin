@@ -1038,6 +1038,60 @@
     }
     .share-location-btn { border: 0; color: #fff; background: #079455; }
     .stop-location-btn { border: 2px solid #64748b; color: #334155; background: #fff; }
+    .refresh-location-btn { border: 2px solid #0f766e; color: #0f766e; background: #fff; }
+    .safety-guard-card {
+      margin: 12px 0 4px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--input) 88%, #ecfdf5 12%);
+    }
+    .safety-guard-card .settings-title { margin: 0 0 6px; }
+    .safety-guard-duration {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+      margin: 10px 0;
+    }
+    .safety-guard-duration label {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      min-height: 40px;
+      padding: 6px 4px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--input);
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .safety-guard-duration input { accent-color: #079455; }
+    .safety-guard-status {
+      margin: 0 0 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: color-mix(in srgb, #ecfdf5 70%, var(--input));
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .safety-guard-status[data-active="false"] {
+      background: color-mix(in srgb, var(--input) 92%, #e2e8f0);
+    }
+    .friend-location-actions.safety-guard-actions {
+      grid-template-columns: 1fr;
+    }
+    .friend-location-actions.safety-guard-actions[data-active="true"] {
+      grid-template-columns: 1fr 1fr;
+    }
+    .friend-location-actions.safety-guard-actions[data-active="true"] .share-location-btn {
+      display: none;
+    }
+    .friend-location-actions.safety-guard-actions[data-active="false"] .stop-location-btn,
+    .friend-location-actions.safety-guard-actions[data-active="false"] .refresh-location-btn {
+      display: none;
+    }
     .qr-video {
       width: 100%;
       min-height: 240px;
@@ -2453,7 +2507,7 @@
 
         <div class="member-data-section">
           <h3>付費會員進階紀錄</h3>
-          <div class="member-advanced-note" id="memberAdvancedNote">升級守護方案後，可依方案使用較長的歷史保存、進階篩選、定位軌跡與回放功能。</div>
+          <div class="member-advanced-note" id="memberAdvancedNote">升級守護方案後，可依方案使用較長的歷史保存、進階篩選與安全守護定位。</div>
         </div>
 
         <div class="member-data-section">
@@ -2475,11 +2529,11 @@
         <article class="price-card plan-card tier-199 billing-month" data-plan-tier="199" data-billing-cycle="month">
           <div class="price-head"><strong>199 平安版</strong><span class="plan-cycle-badge">月費方案</span></div>
           <div class="plan-price">NT$199 <small>／月</small></div>
-          <div class="plan-card-note">適合日常平安簽到與基本位置分享。</div>
+          <div class="plan-card-note">適合日常平安簽到與安全守護定位。</div>
           <ul>
             <li>4 位緊急聯絡人、4 位好友定位</li>
             <li>每日簽到提醒 1 次</li>
-            <li>24 小時快照定位</li>
+            <li>安全守護（單次定位）</li>
             <li>LINE 通知 2 位核心守護人</li>
           </ul>
           <button class="price-btn" type="button" data-plan="199-month">選擇 199 月費</button>
@@ -2492,7 +2546,7 @@
           <ul>
             <li>6 位緊急聯絡人、6 位好友定位</li>
             <li>每日簽到提醒 2 次</li>
-            <li>24 小時快照定位</li>
+            <li>安全守護（單次定位）</li>
             <li>LINE 通知 2 位核心守護人</li>
           </ul>
           <button class="price-btn" type="button" data-plan="199-year">選擇 199 年費</button>
@@ -2500,11 +2554,11 @@
         <article class="price-card plan-card tier-399 billing-month" data-plan-tier="399" data-billing-cycle="month">
           <div class="price-head"><strong>399 安心版</strong><span class="plan-cycle-badge">月費方案</span></div>
           <div class="plan-price">NT$399 <small>／月</small></div>
-          <div class="plan-card-note">適合日常出行，需要即時查看位置。</div>
+          <div class="plan-card-note">適合日常出行，需要在時段內分享平安與位置。</div>
           <ul>
             <li>15 位緊急聯絡人、15 位好友定位</li>
             <li>每日簽到提醒 2 次</li>
-            <li>即時定位（方案開放時）</li>
+            <li>安全守護定位</li>
             <li>LINE 通知 2 位核心守護人</li>
           </ul>
           <button class="price-btn" type="button" data-plan="399-month">選擇 399 月費</button>
@@ -2517,7 +2571,7 @@
           <ul>
             <li>25 位緊急聯絡人、25 位好友定位</li>
             <li>每日簽到提醒 3 次</li>
-            <li>即時定位體驗（方案開放時）</li>
+            <li>安全守護定位</li>
             <li>LINE 通知 3 位核心守護人</li>
           </ul>
           <button class="price-btn" type="button" data-plan="399-year">選擇 399 年費</button>
@@ -2586,10 +2640,26 @@
     </section>
 
     <section class="settings" aria-label="好友地圖">
-      <div class="settings-title">♡ 好友地圖</div>
-      <div class="helper">雙方同意加好友後，可查看彼此位置（保留 24 小時），隨時停止分享</div>
+      <div class="settings-title">♡ 安全守護與好友地圖</div>
+      <div class="helper">在指定時段分享平安狀態與單次定位；可隨時停止。不是 24 小時軌跡回放。</div>
+      <div class="safety-guard-card" id="safetyGuardCard">
+        <div class="settings-title">開啟安全守護</div>
+        <p class="helper">選擇時段後定位一次；好友／守護人可依權限查看。需要更新時再按「更新目前位置」。</p>
+        <div class="safety-guard-status" id="safetyGuardStatus" data-active="false">目前未開啟安全守護</div>
+        <div class="safety-guard-duration" role="radiogroup" aria-label="安全守護時段">
+          <label><input type="radio" name="safetyGuardDuration" value="1" checked> 1 小時</label>
+          <label><input type="radio" name="safetyGuardDuration" value="3"> 3 小時</label>
+          <label><input type="radio" name="safetyGuardDuration" value="6"> 6 小時</label>
+          <label><input type="radio" name="safetyGuardDuration" value="until_stop"> 直到停止</label>
+        </div>
+        <div class="friend-location-actions safety-guard-actions" id="safetyGuardActions" data-active="false">
+          <button class="share-location-btn" id="shareLocationBtn" type="button">開啟安全守護</button>
+          <button class="refresh-location-btn" id="refreshLocationBtn" type="button">更新目前位置</button>
+          <button class="stop-location-btn" id="stopLocationBtn" type="button">停止安全守護</button>
+        </div>
+      </div>
       <div class="contact-card contact-primary">
-        <div class="price-head"><strong>邀請好友一起分享位置</strong><span>推薦</span></div>
+        <div class="price-head"><strong>邀請好友一起看平安狀態</strong><span>推薦</span></div>
         <div class="helper">按下後會直接開啟 LINE 好友清單，不用複製邀請碼。</div>
         <button class="price-btn" id="shareFriendInviteBtn" type="button">分享給 LINE 好友</button>
       </div>
@@ -2605,11 +2675,7 @@
         <button class="action-btn" id="acceptInviteBtn" type="button">加入好友</button>
       </div>
       <div class="map-panel" id="friendMap">
-        <div class="helper">還沒有好友位置。邀請朋友加入後，這裡會顯示大家的位置連結。</div>
-      </div>
-      <div class="friend-location-actions">
-        <button class="share-location-btn" id="shareLocationBtn" type="button">分享我的位置</button>
-        <button class="stop-location-btn" id="stopLocationBtn" type="button">停止分享</button>
+        <div class="helper">還沒有好友位置。邀請朋友加入後，這裡會顯示大家的平安狀態與位置連結。</div>
       </div>
     </section>
 
@@ -3195,18 +3261,37 @@
       return data;
     }
 
-    async function apiUpdateLocation(position, city) {
-      if (useLocalMode) throw new Error("好友地圖需要連上後端和 LINE 會員。");
+    async function apiUpdateLocation(positionOrLat, maybeLngOrCity, maybeCity, options = {}) {
+      if (useLocalMode) throw new Error("安全守護需要連上後端和 LINE 會員。");
+      let latitude;
+      let longitude;
+      let city;
+      let opts = options;
+      if (positionOrLat && typeof positionOrLat === "object" && positionOrLat.coords) {
+        latitude = positionOrLat.coords.latitude;
+        longitude = positionOrLat.coords.longitude;
+        city = maybeLngOrCity;
+        opts = maybeCity && typeof maybeCity === "object" ? maybeCity : options;
+      } else {
+        latitude = positionOrLat;
+        longitude = maybeLngOrCity;
+        city = maybeCity;
+      }
+      const body = {
+        line_user_id: lineUserId,
+        latitude,
+        longitude,
+        city: city || "",
+      };
+      if (opts.refreshOnly) {
+        body.refresh_only = true;
+      } else {
+        body.duration = opts.duration || selectedSafetyGuardDuration();
+      }
       const res = await fetch("/api/location/update", {
         method: "POST",
         headers: await authHeaders(),
-        body: JSON.stringify({
-          line_user_id: lineUserId,
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          city,
-          share_hours: 24
-        })
+        body: JSON.stringify(body)
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "location failed");
@@ -3214,7 +3299,7 @@
     }
 
     async function apiStopLocation() {
-      if (useLocalMode) throw new Error("好友地圖需要連上後端和 LINE 會員。");
+      if (useLocalMode) throw new Error("安全守護需要連上後端和 LINE 會員。");
       const res = await fetch("/api/location/stop", {
         method: "POST",
         headers: await authHeaders(),
@@ -3314,10 +3399,10 @@
 
     function memberPlanBenefits(plan) {
       return {
-        paid_199: { cycle: "199 平安版｜月費方案", contacts: 4, locations: 4, detail: "每日提醒 1 次、24 小時快照定位、LINE 通知 2 位核心守護人。" },
-        paid_199_year: { cycle: "199 平安版｜年費方案", contacts: 6, locations: 6, detail: "每日提醒 2 次、24 小時快照定位、LINE 通知 2 位核心守護人。" },
-        paid_399: { cycle: "399 安心版｜月費方案", contacts: 15, locations: 15, detail: "每日提醒 2 次、即時定位（開放時）、LINE 通知 2 位核心守護人。" },
-        paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、即時定位體驗（開放時）、LINE 通知 3 位核心守護人。" },
+        paid_199: { cycle: "199 平安版｜月費方案", contacts: 4, locations: 4, detail: "每日提醒 1 次、安全守護單次定位、LINE 通知 2 位核心守護人。" },
+        paid_199_year: { cycle: "199 平安版｜年費方案", contacts: 6, locations: 6, detail: "每日提醒 2 次、安全守護單次定位、LINE 通知 2 位核心守護人。" },
+        paid_399: { cycle: "399 安心版｜月費方案", contacts: 15, locations: 15, detail: "每日提醒 2 次、安全守護定位、LINE 通知 2 位核心守護人。" },
+        paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、安全守護定位、LINE 通知 3 位核心守護人。" },
         paid_799: { cycle: "799 守護版｜月費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、一鍵 SOS、LINE 通知 3 位核心守護人、1 個守護群。" },
         paid_799_year: { cycle: "799 守護版｜年費方案", contacts: 50, locations: 50, detail: "每日提醒 3 次、一鍵 SOS、LINE 通知 5 位核心守護人、3 個守護群。" },
         free: { cycle: "基本守護｜免費方案", contacts: 1, locations: 1, detail: "基本簽到與 LINE 提醒。" },
@@ -3429,8 +3514,8 @@
         `).join("")
         : `<div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護群</strong></div>`;
       $("memberAdvancedNote").textContent = isPaid
-        ? `${planLabel(status.plan)}已具備進階紀錄資格；可用範圍會依方案開放歷史篩選、資料匯出與定位軌跡回放。`
-        : "升級守護方案後，可依方案使用較長的歷史保存、進階篩選、定位軌跡與回放功能。";
+        ? `${planLabel(status.plan)}已具備進階紀錄資格；可用範圍會依方案開放歷史篩選、資料匯出與安全守護定位。`
+        : "升級守護方案後，可依方案使用較長的歷史保存、進階篩選與安全守護定位。";
       renderGuardianDetailsEditor();
     }
 
@@ -3767,20 +3852,64 @@
         $("friendMap").innerHTML = (data.friends || []).length
           ? data.friends.map((friend) => {
             const mapUrl = `https://www.google.com/maps?q=${friend.latitude},${friend.longitude}`;
+            const safety = friend.safety_status || (friend.is_today_checked ? "今日已簽到" : "平安狀態分享中");
+            const until = friend.until_stop
+              ? "直到手動停止"
+              : (friend.expires_at ? `至 ${formatMapTime(friend.expires_at)}` : "");
             return `
               <div class="friend-pin">
                 <div>
                   <strong>${friend.display_name || "LINE 好友"}</strong>
-                  <small>${friend.city || "未填縣市"}｜更新 ${formatMapTime(friend.updated_at)}</small>
+                  <small>${safety}｜${friend.city || "未填縣市"}｜更新 ${formatMapTime(friend.updated_at)}${until ? `｜${until}` : ""}</small>
                 </div>
                 <a href="${mapUrl}" target="_blank" rel="noopener">開地圖</a>
               </div>
             `;
           }).join("")
-          : `<div class="helper">還沒有好友位置。邀請朋友加入後，這裡會顯示大家的地圖連結。</div>`;
+          : `<div class="helper">還沒有好友開啟安全守護。邀請朋友加入後，這裡會顯示大家的平安狀態與地圖連結。</div>`;
       } catch (error) {
         $("friendMap").innerHTML = `<div class="helper">好友位置暫時讀取失敗，稍後再試。</div>`;
       }
+    }
+
+    function selectedSafetyGuardDuration() {
+      const checked = document.querySelector('input[name="safetyGuardDuration"]:checked');
+      return checked ? checked.value : "1";
+    }
+
+    function formatSafetyGuardStatus(guard) {
+      if (!guard || !guard.active) return "目前未開啟安全守護";
+      const city = guard.city ? `・${guard.city}` : "";
+      const status = guard.safety_status || "平安狀態分享中";
+      const until = guard.until_stop
+        ? "直到手動停止"
+        : (guard.expires_at ? `至 ${formatMapTime(guard.expires_at)}` : "");
+      const updated = guard.updated_at ? `｜位置更新 ${formatMapTime(guard.updated_at)}` : "";
+      return `安全守護進行中：${status}${city}｜${until}${updated}`;
+    }
+
+    function renderSafetyGuardUi(guard) {
+      const active = Boolean(guard && guard.active);
+      const statusEl = $("safetyGuardStatus");
+      const actionsEl = $("safetyGuardActions");
+      if (statusEl) {
+        statusEl.dataset.active = active ? "true" : "false";
+        statusEl.textContent = formatSafetyGuardStatus(guard);
+      }
+      if (actionsEl) actionsEl.dataset.active = active ? "true" : "false";
+      if (active && guard) {
+        if (guard.until_stop) {
+          const radio = document.querySelector('input[name="safetyGuardDuration"][value="until_stop"]');
+          if (radio) radio.checked = true;
+        } else if (guard.duration_hours) {
+          const radio = document.querySelector(`input[name="safetyGuardDuration"][value="${guard.duration_hours}"]`);
+          if (radio) radio.checked = true;
+        }
+      }
+    }
+
+    function readSafetyGuardFromStatus(status) {
+      return (status && status.safety_guard) || { active: false };
     }
 
     async function shareFriendInvite() {
@@ -3795,7 +3924,7 @@
             ? data.invite_url
             : buildLiffPermanentUrl({ friend_invite: inviteCode })
         );
-        const text = `我正在使用「今天還在嗎」好友地圖，想邀請你互相分享 24 小時位置快照。\n\n請用 LINE 開啟下方連結並登入，邀請碼會自動帶入：\n${inviteUrl}`;
+        const text = `我正在使用「今天還在嗎」安全守護，想邀請你互相查看平安狀態與單次定位（可隨時停止）。\n\n請用 LINE 開啟下方連結並登入，邀請碼會自動帶入：\n${inviteUrl}`;
         if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
           await liff.shareTargetPicker([{ type: "text", text }]);
         } else if (navigator.share) {
@@ -3908,33 +4037,61 @@
       try {
         if (!lineUserId) throw new Error("請先從 LINE 裡開啟，完成會員綁定。");
         if (!navigator.geolocation) throw new Error("這台裝置不支援定位。");
+        const duration = selectedSafetyGuardDuration();
         navigator.geolocation.getCurrentPosition(
           async (position) => {
             try {
               const city = inferTaiwanCounty(position.coords.latitude, position.coords.longitude);
-              await apiUpdateLocation(position, city);
+              const data = await apiUpdateLocation(position, city, { duration });
+              renderSafetyGuardUi(data.safety_guard || { active: true, city, until_stop: duration === "until_stop" });
               await refreshFriendLocations();
-              alert(`已分享 ${city} 的位置，24 小時後會自動失效。`);
+              const untilText = duration === "until_stop" ? "直到你手動停止" : `${duration} 小時後自動結束`;
+              alert(`已開啟安全守護（${city}）。${untilText}。這是單次定位，不是軌跡回放。`);
             } catch (error) {
-              alert(error.message || "位置分享失敗。");
+              alert(error.message || "開啟安全守護失敗。");
             }
           },
-          () => alert("沒有取得定位權限，所以無法分享位置。"),
+          () => alert("沒有取得定位權限，所以無法開啟安全守護。"),
           { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
         );
       } catch (error) {
-        alert(error.message || "位置分享失敗。");
+        alert(error.message || "開啟安全守護失敗。");
+      }
+    }
+
+    async function refreshSafetyGuardLocation() {
+      try {
+        if (!lineUserId) throw new Error("請先從 LINE 裡開啟，完成會員綁定。");
+        if (!navigator.geolocation) throw new Error("這台裝置不支援定位。");
+        navigator.geolocation.getCurrentPosition(
+          async (position) => {
+            try {
+              const city = inferTaiwanCounty(position.coords.latitude, position.coords.longitude);
+              const data = await apiUpdateLocation(position, city, { refreshOnly: true });
+              renderSafetyGuardUi(data.safety_guard);
+              await refreshFriendLocations();
+              alert(`已更新目前位置（${city}）。`);
+            } catch (error) {
+              alert(error.message || "更新位置失敗。");
+            }
+          },
+          () => alert("沒有取得定位權限，所以無法更新位置。"),
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+      } catch (error) {
+        alert(error.message || "更新位置失敗。");
       }
     }
 
     async function stopLocationSharing() {
       try {
         if (!lineUserId) throw new Error("請先從 LINE 裡開啟，完成會員綁定。");
-        await apiStopLocation();
+        const data = await apiStopLocation();
+        renderSafetyGuardUi(data.safety_guard || { active: false });
         await refreshFriendLocations();
-        alert("已停止分享位置。");
+        alert("已停止安全守護。");
       } catch (error) {
-        alert(error.message || "停止分享失敗。");
+        alert(error.message || "停止安全守護失敗。");
       }
     }
 
@@ -4244,7 +4401,8 @@
             await apiUpdateLocation(
               position.coords.latitude,
               position.coords.longitude,
-              inferTaiwanCounty(position.coords.latitude, position.coords.longitude)
+              inferTaiwanCounty(position.coords.latitude, position.coords.longitude),
+              { refreshOnly: true }
             );
             resolve(true);
           } catch (error) {
@@ -4414,6 +4572,7 @@
       }
 
       $("statusText").innerHTML = `<span class="${data.status_class || "gray"}">${data.status_text || "--"}</span>`;
+      renderSafetyGuardUi(readSafetyGuardFromStatus(data));
       const alivePill = $("alivePill");
       alivePill.textContent = data.is_overdue
         ? "逾期待簽到"
@@ -5550,6 +5709,7 @@
     $("scanQrBtn").addEventListener("click", startQrScanner);
     $("closeQrScannerBtn").addEventListener("click", stopQrScanner);
     $("shareLocationBtn").addEventListener("click", shareMyLocation);
+    $("refreshLocationBtn").addEventListener("click", refreshSafetyGuardLocation);
     $("stopLocationBtn").addEventListener("click", stopLocationSharing);
     $("memberUpgradeBtn").addEventListener("click", openUpgradePlans);
     document.querySelectorAll(".price-btn[data-plan]").forEach((button) => {
