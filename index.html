@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>今天還在嗎</title>
+  <title>每日平安</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -1360,10 +1360,35 @@
     }
     .guardian-modal h2 { margin: 0 0 8px; font-size: 22px; }
     .guardian-modal p { margin: 0 0 12px; color: var(--muted); line-height: 1.6; font-size: 14px; }
+    .relationship-other {
+      width: 100%;
+      min-height: 48px;
+      margin-top: 8px;
+      padding: 12px 14px;
+      border: 1.5px solid var(--line);
+      border-radius: 10px;
+      background: var(--soft);
+      color: var(--text);
+      font-size: 17px;
+      line-height: 1.4;
+      font-weight: 650;
+    }
+    #guardianEditorModal,
+    #deleteGuardianModal,
+    #guardianCompleteModal,
+    #sosConfirmModal {
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      align-content: start;
+      place-items: start center;
+      padding-bottom: max(18px, env(safe-area-inset-bottom, 0px));
+    }
     #guardianEditorModal .guardian-modal {
       display: grid;
       gap: 12px;
       padding: 22px 18px;
+      margin: 0 auto 24px;
+      max-height: none;
     }
     #guardianEditorModal .guardian-edit-fields {
       display: grid;
@@ -1477,6 +1502,41 @@
       color: #fff;
       border-color: #087f57;
     }
+    .guardian-group-card {
+      display: grid;
+      gap: 12px;
+      align-items: start;
+    }
+    .guardian-group-card small {
+      display: block;
+      margin-top: 4px;
+      color: #475569;
+      font-size: 14px;
+      font-weight: 650;
+    }
+    .guardian-group-preferences {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      border-radius: 12px;
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+    }
+    .guardian-group-preferences label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #0f172a;
+      font-size: 16px;
+      font-weight: 800;
+      line-height: 1.45;
+    }
+    .guardian-group-preferences input {
+      width: 22px;
+      height: 22px;
+      accent-color: #16a34a;
+      flex: 0 0 auto;
+    }
     /* LIFF/iOS: fixed overlay must scroll itself; avoid overflow:hidden + nested-only scroll */
     #onboardingModal {
       z-index: 60;
@@ -1524,6 +1584,25 @@
       color: #176342;
       font-size: 18px;
       font-weight: 850;
+    }
+    .onboarding-submit,
+    .onboarding-default-btn {
+      min-height: 58px;
+      border-radius: 16px;
+      font-size: 20px;
+      font-weight: 950;
+      letter-spacing: 0;
+    }
+    .onboarding-submit {
+      border: 0;
+      background: linear-gradient(180deg, #22c55e 0%, #0f8f55 100%);
+      color: #fff;
+      box-shadow: 0 12px 24px rgba(16, 185, 129, 0.28);
+    }
+    .onboarding-default-btn {
+      border: 2px solid #10b981;
+      background: #effdf5;
+      color: #075f3a;
     }
     .onboarding-form {
       display: flex;
@@ -2135,6 +2214,33 @@
       font-weight: 700;
       color: #444;
     }
+    .mvp-hero-img {
+      display: block;
+      width: 100%;
+      max-height: 190px;
+      object-fit: cover;
+      object-position: center;
+      border-radius: 18px;
+      margin: 0 0 14px;
+      border: 1px solid #d7f3e5;
+      box-shadow: 0 14px 30px rgba(15, 23, 42, 0.12);
+    }
+    .mvp-home .countdown-block {
+      margin: 0 0 14px;
+      border: 2px solid #8ee0b8;
+      background: #f0fdf4;
+      color: #0f5132;
+    }
+    .mvp-home .countdown {
+      color: #0f5132;
+      font-size: clamp(30px, 8vw, 42px);
+      font-weight: 950;
+    }
+    .mvp-home .countdown-label {
+      color: #0b5f3d;
+      font-size: 17px;
+      font-weight: 850;
+    }
     .mvp-grid {
       display: grid;
       gap: 14px;
@@ -2164,6 +2270,42 @@
     .mvp-btn.call { background: linear-gradient(180deg, #facc15 0%, #ca8a04 100%); color: #1a1a1a; }
     .mvp-btn.sos { background: linear-gradient(180deg, #ef4444 0%, #b91c1c 100%); }
     .mvp-btn.done { background: linear-gradient(180deg, #86efac 0%, #16a34a 100%); }
+    .mvp-reward-card {
+      display: grid;
+      gap: 12px;
+      margin-top: 14px;
+      padding: 16px;
+      border-radius: 18px;
+      border: 2px solid #fde68a;
+      background: linear-gradient(180deg, #fffbeb 0%, #fff7ed 100%);
+      text-align: left;
+      box-shadow: 0 12px 24px rgba(180, 83, 9, 0.12);
+    }
+    .mvp-reward-card strong {
+      display: block;
+      color: #92400e;
+      font-size: 22px;
+      font-weight: 950;
+      line-height: 1.25;
+    }
+    .mvp-reward-card span {
+      display: block;
+      margin-top: 6px;
+      color: #7c2d12;
+      font-size: 17px;
+      font-weight: 750;
+      line-height: 1.45;
+    }
+    .mvp-reward-btn {
+      min-height: 54px;
+      border-radius: 999px;
+      border: 0;
+      background: linear-gradient(180deg, #22c55e 0%, #15803d 100%);
+      color: #fff;
+      font-size: 19px;
+      font-weight: 950;
+      box-shadow: 0 10px 22px rgba(21, 128, 61, 0.22);
+    }
     .mvp-checkin-banner {
       margin: 14px 0 0;
       padding: 16px 14px;
@@ -2328,7 +2470,7 @@
         <p id="guardianPromptBody">你目前為 <strong id="guardianPromptCount">1/3</strong> 位。多設定一位家人，需要幫忙時就多一層保障。</p>
         <div class="actions" style="flex-direction: column; gap: 10px;">
           <button class="action-btn primary" id="guardianPromptNow" type="button">現在設定</button>
-          <button class="action-btn" id="guardianPromptTomorrow" type="button">明天提醒我</button>
+          <button class="action-btn" id="guardianPromptTomorrow" type="button">下次再提醒</button>
           <button class="action-btn" id="guardianPromptDismiss" type="button">暫時不要提醒</button>
         </div>
       </div>
@@ -2366,9 +2508,14 @@
 
     <section class="mvp-home" id="mvpHome" aria-label="每日平安首頁">
       <div class="mvp-brand">每日平安</div>
-      <p class="mvp-slogan">一鍵報平安，守護每一次回家</p>
-      <h1 class="mvp-welcome">❤️ 歡迎使用今天還好嗎</h1>
-      <p class="mvp-welcome-sub">請選擇您需要的服務</p>
+      <p class="mvp-slogan">每天 10 秒，報個平安</p>
+      <h1 class="mvp-welcome">平常不打擾，有事才通知守護人</h1>
+      <p class="mvp-welcome-sub">不是監控，是讓重要的人知道你平安</p>
+      <img class="mvp-hero-img" src="assets/daily-peace-hero.png" alt="每日平安，一鍵報平安，守護每一次回家">
+      <div class="countdown-block" id="countdownBlock" hidden>
+        <div class="countdown" id="countdownDisplay">--:--:--</div>
+        <div class="countdown-label" id="countdownLabel">下一次安心確認倒數</div>
+      </div>
       <div class="mvp-grid" role="group" aria-label="主要服務">
         <button class="mvp-btn safe" id="mvpSafeBtn" type="button">
           <span class="mvp-btn-icon">✅</span>
@@ -2399,6 +2546,13 @@
           </span>
         </button>
       </div>
+      <div class="mvp-reward-card" aria-label="綁定守護人獎勵">
+        <div>
+          <strong>完成綁定一位，二選一獎勵</strong>
+          <span>免費延長 7 天，或多 1 位守護人名額 30 天</span>
+        </div>
+        <button class="mvp-reward-btn share-contact-invite-btn" type="button">一鍵邀請守護人</button>
+      </div>
       <div class="mvp-checkin-banner" id="mvpCheckinBanner" hidden>✅ 今天已完成平安回報</div>
       <p id="inlineError" class="inline-error" hidden></p>
     </section>
@@ -2426,16 +2580,31 @@
         <label>關係
           <select id="mvpContactRelation">
             <option value="">請選擇</option>
-            <option value="女兒">女兒</option>
-            <option value="兒子">兒子</option>
-            <option value="孫女">孫女</option>
-            <option value="孫子">孫子</option>
+            <option value="爺爺">爺爺</option>
+            <option value="奶奶">奶奶</option>
+            <option value="阿公">阿公</option>
+            <option value="阿嬤">阿嬤</option>
+            <option value="爸爸">爸爸</option>
+            <option value="媽媽">媽媽</option>
+            <option value="老公">老公</option>
+            <option value="老婆">老婆</option>
             <option value="哥哥">哥哥</option>
             <option value="姊姊">姊姊</option>
             <option value="弟弟">弟弟</option>
             <option value="妹妹">妹妹</option>
+            <option value="兒子">兒子</option>
+            <option value="女兒">女兒</option>
+            <option value="媳婦">媳婦</option>
+            <option value="女婿">女婿</option>
+            <option value="孫子">孫子</option>
+            <option value="孫女">孫女</option>
+            <option value="家人">家人</option>
+            <option value="朋友">朋友</option>
+            <option value="同事">同事</option>
+            <option value="鄰居">鄰居</option>
             <option value="其他">其他</option>
           </select>
+          <input type="text" id="mvpContactRelationOther" class="relationship-other" placeholder="請輸入關係" hidden>
         </label>
         <label>電話
           <input type="tel" id="mvpContactPhone" inputmode="tel" placeholder="例如：0912345678" autocomplete="tel">
@@ -2450,11 +2619,6 @@
         我平安
         <span class="sub">點一下回報</span>
       </button>
-    </div>
-
-    <div class="countdown-block" id="countdownBlock" hidden>
-      <div class="countdown" id="countdownDisplay">--:--:--</div>
-      <div class="countdown-label" id="countdownLabel">下一次安心確認倒數</div>
     </div>
 
     <div id="guardianSection" hidden>
@@ -2485,16 +2649,31 @@
             <label class="guardian-edit-field" for="gRelationship">關係（必填）
               <select id="gRelationship">
                 <option value="">請選擇關係</option>
-                <option value="女兒">女兒</option>
-                <option value="兒子">兒子</option>
-                <option value="孫女">孫女</option>
-                <option value="孫子">孫子</option>
+                <option value="爺爺">爺爺</option>
+                <option value="奶奶">奶奶</option>
+                <option value="阿公">阿公</option>
+                <option value="阿嬤">阿嬤</option>
+                <option value="爸爸">爸爸</option>
+                <option value="媽媽">媽媽</option>
+                <option value="老公">老公</option>
+                <option value="老婆">老婆</option>
                 <option value="哥哥">哥哥</option>
                 <option value="姊姊">姊姊</option>
                 <option value="弟弟">弟弟</option>
                 <option value="妹妹">妹妹</option>
+                <option value="兒子">兒子</option>
+                <option value="女兒">女兒</option>
+                <option value="媳婦">媳婦</option>
+                <option value="女婿">女婿</option>
+                <option value="孫子">孫子</option>
+                <option value="孫女">孫女</option>
+                <option value="家人">家人</option>
+                <option value="朋友">朋友</option>
+                <option value="同事">同事</option>
+                <option value="鄰居">鄰居</option>
                 <option value="其他">其他</option>
               </select>
+              <input type="text" id="gRelationshipOther" class="relationship-other" placeholder="請輸入關係" hidden>
             </label>
             <label class="guardian-edit-field" for="gPhone">手機號碼
               <input type="tel" id="gPhone" inputmode="tel" placeholder="例如：0912 345 678" autocomplete="tel">
@@ -2534,7 +2713,7 @@
       <div class="modal-backdrop" id="onboardingModal" hidden>
         <div class="guardian-modal onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle">
           <div class="onboarding-modal-header">
-            <h2 id="onboardingTitle">歡迎使用「今天還在嗎」</h2>
+            <h2 id="onboardingTitle">歡迎使用「每日平安」</h2>
             <button class="onboarding-close-btn" id="onboardingCloseBtn" type="button" aria-label="關閉" hidden>×</button>
           </div>
           <p class="onboarding-intro" id="onboardingIntro">請先用一鍵分享，把綁定邀請傳給你信任的人；完成後再填寫對方資料。</p>
@@ -2554,16 +2733,31 @@
               <label class="onboarding-field" for="obRelationship">關係 <span class="onboarding-required">必選</span>
                 <select id="obRelationship" required>
                   <option value="">請選擇關係</option>
-                  <option value="女兒">女兒</option>
-                  <option value="兒子">兒子</option>
-                  <option value="孫女">孫女</option>
-                  <option value="孫子">孫子</option>
+                  <option value="爺爺">爺爺</option>
+                  <option value="奶奶">奶奶</option>
+                  <option value="阿公">阿公</option>
+                  <option value="阿嬤">阿嬤</option>
+                  <option value="爸爸">爸爸</option>
+                  <option value="媽媽">媽媽</option>
+                  <option value="老公">老公</option>
+                  <option value="老婆">老婆</option>
                   <option value="哥哥">哥哥</option>
                   <option value="姊姊">姊姊</option>
                   <option value="弟弟">弟弟</option>
                   <option value="妹妹">妹妹</option>
+                  <option value="兒子">兒子</option>
+                  <option value="女兒">女兒</option>
+                  <option value="媳婦">媳婦</option>
+                  <option value="女婿">女婿</option>
+                  <option value="孫子">孫子</option>
+                  <option value="孫女">孫女</option>
+                  <option value="家人">家人</option>
+                  <option value="朋友">朋友</option>
+                  <option value="同事">同事</option>
+                  <option value="鄰居">鄰居</option>
                   <option value="其他">其他</option>
                 </select>
+                <input type="text" id="obRelationshipOther" class="relationship-other" placeholder="請輸入關係" hidden>
               </label>
               <label class="onboarding-field" for="obPhone">手機號碼 <span class="onboarding-required">必填</span>
                 <input type="tel" id="obPhone" inputmode="tel" placeholder="例如：0912 345 678" autocomplete="tel" required>
@@ -2636,7 +2830,7 @@
         </article>
         <article class="guardian-group-step">
           <span class="guardian-group-step-number">2</span>
-          <div><strong>邀請官方帳號</strong><p>在群組成員設定中，邀請「今天還在嗎」官方帳號加入。找不到時，請先加入官方帳號好友。</p></div>
+          <div><strong>邀請官方帳號</strong><p>在群組成員設定中，邀請「每日平安」官方帳號加入。找不到時，請先加入官方帳號好友。</p></div>
         </article>
         <article class="guardian-group-step">
           <span class="guardian-group-step-number">3</span>
@@ -2706,12 +2900,31 @@
             <label class="form-field" for="guardianDetailsRelation"><span>關係</span>
               <select id="guardianDetailsRelation" aria-label="與守護人的關係">
                 <option value="">請選擇關係</option>
+                <option value="爺爺">爺爺</option>
+                <option value="奶奶">奶奶</option>
+                <option value="阿公">阿公</option>
+                <option value="阿嬤">阿嬤</option>
+                <option value="爸爸">爸爸</option>
+                <option value="媽媽">媽媽</option>
+                <option value="老公">老公</option>
+                <option value="老婆">老婆</option>
+                <option value="哥哥">哥哥</option>
+                <option value="姊姊">姊姊</option>
+                <option value="弟弟">弟弟</option>
+                <option value="妹妹">妹妹</option>
+                <option value="兒子">兒子</option>
+                <option value="女兒">女兒</option>
+                <option value="媳婦">媳婦</option>
+                <option value="女婿">女婿</option>
+                <option value="孫子">孫子</option>
+                <option value="孫女">孫女</option>
                 <option value="家人">家人</option>
                 <option value="朋友">朋友</option>
                 <option value="同事">同事</option>
                 <option value="鄰居">鄰居</option>
                 <option value="其他">其他</option>
               </select>
+              <input id="guardianDetailsRelationshipOther" class="relationship-other" placeholder="請輸入關係" hidden>
             </label>
             <label class="form-field" for="guardianDetailsPhone"><span>手機</span>
               <input id="guardianDetailsPhone" type="tel" inputmode="tel" placeholder="守護人聯絡電話" autocomplete="tel">
@@ -3064,7 +3277,7 @@
     (function applyDevUserIdFromUrl() {
       try {
         const host = location.hostname;
-        const urlParams = new URLSearchParams(location.search);
+        const urlParams = readAppParams();
         const forceDevMode = urlParams.get("dev_mode") === "1" || urlParams.get("dev") === "1";
         const isLocal = host === "localhost" || host === "127.0.0.1" || host === "::1";
         if (!isLocal && !forceDevMode) return;
@@ -3096,21 +3309,43 @@
       return String(window.__LIFF_ID__ || DEFAULT_LIFF_ID).trim() || DEFAULT_LIFF_ID;
     }
 
+    function readAppParams() {
+      const params = new URLSearchParams();
+      try {
+        new URLSearchParams(location.search).forEach((value, key) => {
+          if (!OAUTH_PARAM_KEYS.has(String(key))) params.set(key, value);
+        });
+        const rawHash = String(location.hash || "").replace(/^#/, "");
+        if (rawHash && rawHash.includes("=")) {
+          new URLSearchParams(rawHash).forEach((value, key) => {
+            if (!OAUTH_PARAM_KEYS.has(String(key))) params.set(key, value);
+          });
+        }
+      } catch (_) {}
+      return params;
+    }
+
+    function getAppParam(key) {
+      return String(readAppParams().get(key) || "").trim();
+    }
+
     /** 建立永久 LIFF 連結；絕不帶入 code=/state= 等 OAuth 殘留參數。 */
     function buildLiffPermanentUrl(params = {}, hash = "") {
       const url = new URL(`https://liff.line.me/${getLiffId()}`);
+      const fragmentParams = new URLSearchParams();
       Object.entries(params || {}).forEach(([key, value]) => {
         if (value == null || value === "") return;
         if (OAUTH_PARAM_KEYS.has(String(key))) return;
-        url.searchParams.set(String(key), String(value));
+        fragmentParams.set(String(key), String(value));
       });
       const fragment = String(hash || "").replace(/^#/, "");
-      if (fragment) url.hash = fragment;
+      const nextFragment = fragmentParams.toString() || fragment;
+      if (nextFragment) url.hash = nextFragment;
       return url.toString();
     }
 
     function readSafeDeepLinkParams() {
-      const src = new URLSearchParams(location.search);
+      const src = readAppParams();
       const out = {};
       ["invite_from", "friend_invite", "open"].forEach((key) => {
         const value = String(src.get(key) || "").trim();
@@ -3385,6 +3620,17 @@
       return data;
     }
 
+    async function apiSaveGuardianGroupPreferences(groupId, preferences) {
+      const res = await fetch("/api/guardian-groups/preferences", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ line_user_id: lineUserId, group_id: groupId, ...preferences })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "guardian group preferences failed");
+      return data;
+    }
+
     async function apiGetContacts() {
       if (useLocalMode) {
         return { contacts: loadLocalState().contacts || [], contact_limit: 1 };
@@ -3481,7 +3727,7 @@
         : buildLiffPermanentUrl({ open: "onboarding" });
       const nameText = nickname ? `嗨 ${nickname}，` : "";
       const text = (
-        `${nameText}我想邀請你成為「今天還在嗎」的守護人。\n\n` +
+        `${nameText}我想邀請你成為「每日平安」的守護人。\n\n` +
         `【如何綁定】\n` +
         `1. 點下方連結，用 LINE 開啟\n` +
         `2. 登入並同意成為守護人\n` +
@@ -3633,6 +3879,58 @@
       })[character]);
     }
 
+    const RELATIONSHIP_SELECTS = [
+      ["mvpContactRelation", "mvpContactRelationOther"],
+      ["gRelationship", "gRelationshipOther"],
+      ["obRelationship", "obRelationshipOther"],
+      ["guardianDetailsRelation", "guardianDetailsRelationshipOther"],
+    ];
+
+    function bindRelationshipOther(selectId, inputId) {
+      const select = $(selectId);
+      const input = $(inputId);
+      if (!select || !input || select.dataset.otherBound === "true") return;
+      select.dataset.otherBound = "true";
+      const sync = () => {
+        const show = select.value === "其他";
+        input.hidden = !show;
+        if (!show) input.value = "";
+      };
+      select.addEventListener("change", sync);
+      sync();
+    }
+
+    function bindRelationshipFields() {
+      RELATIONSHIP_SELECTS.forEach(([selectId, inputId]) => bindRelationshipOther(selectId, inputId));
+    }
+
+    function readRelationship(selectId, inputId) {
+      const selected = ($(selectId)?.value || "").trim();
+      if (selected !== "其他") return selected;
+      return ($(inputId)?.value || "").trim();
+    }
+
+    function setRelationshipValue(selectId, inputId, value) {
+      const select = $(selectId);
+      const input = $(inputId);
+      const relation = String(value || "").trim();
+      if (!select) return;
+      const hasOption = Array.from(select.options).some((option) => option.value === relation);
+      if (relation && !hasOption) {
+        select.value = "其他";
+        if (input) {
+          input.hidden = false;
+          input.value = relation;
+        }
+        return;
+      }
+      select.value = relation;
+      if (input) {
+        input.hidden = relation !== "其他";
+        if (relation !== "其他") input.value = "";
+      }
+    }
+
     function renderContacts() {
       $("contactList").innerHTML = contactData.length
         ? contactData.map((contact, index) => `
@@ -3775,14 +4073,24 @@
       $("sosSection").hidden = false;
       renderSosAccess();
       const guardianGroupIds = status.guardian_group_ids || [];
+      const guardianGroups = status.guardian_groups || [];
+      const groupById = Object.fromEntries(guardianGroups.map((group) => [group.group_id, group]));
       $("guardianGroupsSection").hidden = !(status.guardian_group_limit > 0);
       $("guardianGroupsList").innerHTML = guardianGroupIds.length
-        ? guardianGroupIds.map((groupId, index) => `
-          <div class="member-data-row">
-            <span>守護群 ${index + 1}</span>
+        ? guardianGroupIds.map((groupId, index) => {
+          const group = groupById[groupId] || { group_id: groupId, preferences: {} };
+          const prefs = group.preferences || {};
+          return `
+          <div class="member-data-row guardian-group-card">
+            <span><strong>守護群 ${index + 1}</strong><small>${escapeHtml(group.member_count_at_bind || "LINE 群組")} 位成員紀錄</small></span>
+            <div class="guardian-group-preferences">
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_group_on_overdue" ${prefs.notify_group_on_overdue !== false ? "checked" : ""}> 群內逾期提醒</label>
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_admin_only" ${prefs.notify_admin_only !== false ? "checked" : ""}> 詳細名單僅管理員可看</label>
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_private_guardians" ${prefs.notify_private_guardians !== false ? "checked" : ""}> 同步私訊核心守護人</label>
+            </div>
             <button class="action-btn guardian-group-unbind" type="button" data-group-id="${escapeHtml(groupId)}">解除綁定</button>
           </div>
-        `).join("")
+        `; }).join("")
         : `<div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護群</strong></div>`;
       $("memberAdvancedNote").textContent = isPaid
         ? `${planLabel(status.plan)}已具備進階紀錄資格；可用範圍會依方案開放歷史篩選、資料匯出與安全守護定位。`
@@ -3809,7 +4117,7 @@
       const index = Number(select.value);
       const contact = Number.isInteger(index) ? contactData[index] : null;
       $("guardianDetailsName").value = contact?.name || "";
-      $("guardianDetailsRelation").value = contact?.relationship || "";
+      setRelationshipValue("guardianDetailsRelation", "guardianDetailsRelationshipOther", contact?.relationship || "");
       $("guardianDetailsPhone").value = contact?.phone || "";
       if ($("guardianDetailsEmail")) $("guardianDetailsEmail").value = contact?.email || "";
     }
@@ -3848,7 +4156,7 @@
         return;
       }
       const name = $("guardianDetailsName").value.trim();
-      const relationship = $("guardianDetailsRelation").value;
+      const relationship = readRelationship("guardianDetailsRelation", "guardianDetailsRelationshipOther");
       const phone = $("guardianDetailsPhone").value.trim();
       const email = $("guardianDetailsEmail") ? $("guardianDetailsEmail").value.trim() : (contactData[index].email || "");
       if (!name || !relationship || !phone) {
@@ -3938,7 +4246,7 @@
             }
           ]);
         } else if (navigator.share) {
-          await navigator.share({ title: "今天還在嗎 守護人邀請", text, url: bindUrl });
+          await navigator.share({ title: "每日平安 守護人邀請", text, url: bindUrl });
         } else if (navigator.clipboard) {
           await navigator.clipboard.writeText(text);
           alert("邀請文案已複製，可以貼到 LINE 傳給聯絡人。");
@@ -4015,7 +4323,7 @@
     }
 
     function openRequestedPage() {
-      const page = new URLSearchParams(location.search).get("page");
+      const page = getAppParam("page");
       if (!page) return;
       if (page === "guardian") {
         goGuardianInvite();
@@ -4045,7 +4353,7 @@
     }
 
     function maybeShowInviteAcceptPrompt() {
-      const inviteFrom = new URLSearchParams(location.search).get("invite_from");
+      const inviteFrom = getAppParam("invite_from");
       if (!inviteFrom || inviteFrom === lineUserId) return;
       $("inviteAcceptPrompt").hidden = false;
     }
@@ -4055,9 +4363,9 @@
     }
 
     async function acceptGuardianInviteFromPrompt() {
-      const inviteFrom = new URLSearchParams(location.search).get("invite_from");
+      const inviteFrom = getAppParam("invite_from");
       if (!inviteFrom) return closeInviteAcceptPrompt();
-      if (!lineUserId && window.liff && !liff.isLoggedIn()) {
+      if (!lineUserId && window.liff && !liff.isLoggedIn() && liff.isInClient && liff.isInClient()) {
         try {
           liff.login({ redirectUri: buildCleanLoginRedirectUri() });
         } catch (_) {
@@ -4217,11 +4525,11 @@
             ? data.invite_url
             : buildLiffPermanentUrl({ friend_invite: inviteCode })
         );
-        const text = `我正在使用「今天還在嗎」安全守護，想邀請你互相查看平安狀態與單次定位（可隨時停止）。\n\n請用 LINE 開啟下方連結並登入，邀請碼會自動帶入：\n${inviteUrl}`;
+        const text = `我正在使用「每日平安」安全守護，想邀請你互相查看平安狀態與單次定位（可隨時停止）。\n\n請用 LINE 開啟下方連結並登入，邀請碼會自動帶入：\n${inviteUrl}`;
         if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
           await liff.shareTargetPicker([{ type: "text", text }]);
         } else if (navigator.share) {
-          await navigator.share({ title: "今天還在嗎 好友地圖邀請", text, url: inviteUrl });
+          await navigator.share({ title: "每日平安 好友地圖邀請", text, url: inviteUrl });
         } else if (navigator.clipboard) {
           await navigator.clipboard.writeText(text);
           alert("好友地圖邀請已複製，可以貼到 LINE 傳給朋友。");
@@ -4234,7 +4542,7 @@
     }
 
     function maybePrefillFriendInvite() {
-      const inviteCode = new URLSearchParams(location.search).get("friend_invite");
+      const inviteCode = getAppParam("friend_invite");
       if (!inviteCode) return;
       pendingFriendInviteCode = inviteCode.toUpperCase();
       $("friendInviteStatus").textContent = "已收到 LINE 好友邀請，可以加入好友";
@@ -4422,7 +4730,7 @@
             picture_url: profile.pictureUrl || ""
           })
         });
-        const inviteFrom = new URLSearchParams(location.search).get("invite_from");
+        const inviteFrom = getAppParam("invite_from");
         if (inviteFrom && inviteFrom !== lineUserId) {
           // 受邀者已是會員：直接綁定，不強制再分享
           const bindResult = await apiBindEmergencyContact(inviteFrom);
@@ -4533,9 +4841,9 @@
       const end = `${endDate.getFullYear()}${String(endDate.getMonth() + 1).padStart(2, "0")}${String(endDate.getDate()).padStart(2, "0")}`;
       const params = new URLSearchParams({
         action: "TEMPLATE",
-        text: content || "今天還在嗎｜平安記事",
+        text: content || "每日平安｜平安記事",
         dates: `${start}/${end}`,
-        details: content ? `平安記事：${content}` : "由「今天還在嗎」加入的平安記事"
+        details: content ? `平安記事：${content}` : "由「每日平安」加入的平安記事"
       });
       return `https://calendar.google.com/calendar/render?${params.toString()}`;
     }
@@ -4611,7 +4919,7 @@
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
-        link.download = `今天還在嗎_我的完整資料_${getToday()}.json`;
+        link.download = `每日平安_我的完整資料_${getToday()}.json`;
         document.body.appendChild(link);
         link.click();
         link.remove();
@@ -4781,7 +5089,7 @@
       }
       if (!lineUserId) {
         feedback.textContent = "請先從 LINE 開啟並登入，才能通知守護人。";
-        if (window.liff && !liff.isLoggedIn()) liff.login();
+        showLineLoginRequired();
         return;
       }
 
@@ -5035,7 +5343,7 @@
         errBox.innerHTML = (
           `請用 LINE 內建瀏覽器開啟，系統才會自動帶入你的 LINE 會員身分。<br>` +
           `第一次使用會先請你分享並設定至少 1 位守護人。<br>` +
-          `<a class="member-upgrade-btn" style="display:inline-grid;place-items:center;margin-top:10px;text-decoration:none;" href="${liffEntry}">用 LINE 開啟今天還在嗎</a>`
+          `<a class="member-upgrade-btn" style="display:inline-grid;place-items:center;margin-top:10px;text-decoration:none;" href="${liffEntry}">用 LINE 開啟每日平安</a>`
         );
         errBox.hidden = false;
       }
@@ -5196,7 +5504,7 @@
       if (shareStep) shareStep.hidden = false;
       if (guardianStep) guardianStep.hidden = true;
       if (reminderStep) reminderStep.hidden = true;
-      $("onboardingTitle").textContent = "歡迎使用「今天還在嗎」";
+      $("onboardingTitle").textContent = "歡迎使用「每日平安」";
       $("onboardingIntro").textContent = "請先用一鍵分享，把綁定邀請傳給你信任的人；對方同意後，你再填寫對方資料並設定提醒。";
       $("onboardingStepLabel").textContent = "步驟 1／3　一鍵分享邀請守護人";
     }
@@ -5324,15 +5632,7 @@
         if (!c) return;
         if (titleEl) titleEl.textContent = "編輯守護人";
         $("gName").value = c.name || "";
-        const relSelect = $("gRelationship");
-        const rel = c.relationship || "";
-        if (relSelect && rel && !Array.from(relSelect.options).some((o) => o.value === rel)) {
-          const opt = document.createElement("option");
-          opt.value = rel;
-          opt.textContent = rel;
-          relSelect.appendChild(opt);
-        }
-        if (relSelect) relSelect.value = rel;
+        setRelationshipValue("gRelationship", "gRelationshipOther", c.relationship || "");
         $("gPhone").value = c.phone || "";
         $("gEmail").value = c.email || "";
         $("gNote").value = c.note || "";
@@ -5341,7 +5641,7 @@
       } else {
         if (titleEl) titleEl.textContent = "新增守護人";
         $("gName").value = "";
-        $("gRelationship").value = "家人";
+        setRelationshipValue("gRelationship", "gRelationshipOther", "家人");
         $("gPhone").value = "";
         $("gEmail").value = "";
         $("gNote").value = "";
@@ -5364,7 +5664,7 @@
       const payload = {
         line_user_id: lineUserId,
         name: $("gName").value.trim(),
-        relationship: $("gRelationship").value.trim(),
+        relationship: readRelationship("gRelationship", "gRelationshipOther"),
         phone: $("gPhone").value.trim(),
         email: $("gEmail").value.trim(),
         note: $("gNote").value.trim(),
@@ -5487,13 +5787,6 @@
       if (lineUserId) return true;
       showLineLoginRequired();
       if (message) showInlineError(message || "請加入會員；請對方分享好友登記一位守護人");
-      if (window.liff && !liff.isLoggedIn()) {
-        try {
-          liff.login({ redirectUri: buildCleanLoginRedirectUri() });
-        } catch (_) {
-          try { liff.login(); } catch (__) {}
-        }
-      }
       return false;
     }
 
@@ -5535,7 +5828,7 @@
       const errorEl = $("onboardingError");
       if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
       $("obName").value = "";
-      $("obRelationship").value = "";
+      setRelationshipValue("obRelationship", "obRelationshipOther", "");
       $("obPhone").value = "";
       $("obEmail").value = "";
 
@@ -5584,7 +5877,7 @@
       const payload = {
         line_user_id: lineUserId,
         name: $("obName").value.trim(),
-        relationship: $("obRelationship").value.trim(),
+        relationship: readRelationship("obRelationship", "obRelationshipOther"),
         phone: $("obPhone").value.trim(),
         email: $("obEmail").value.trim(),
         is_primary: true,
@@ -5784,10 +6077,10 @@
           renderMemberCenter();
         }
 
-        // C00 Onboarding 檢查（?open=onboarding / 歡迎 CTA）
+        // C00 Onboarding 檢查（#open=onboarding / 歡迎 CTA）
         // 規則：一鍵分享只在「第一次設定」強制；已註冊／已有守護人／伺服器 setup_completed → 直接首頁，絕不自動彈分享
         // 受邀者（invite_from / friend_invite）：登入後綁定／加入好友，不要再被逼分享
-        const openAction = new URLSearchParams(location.search).get("open") || "";
+        const openAction = getAppParam("open") || "";
         const forceOnboarding = openAction === "onboarding" || openAction === "guardian" || openAction === "bind";
         const inviteeMode = isInviteeDeepLink();
         const onboardingState = await fetchOnboardingState();
@@ -5796,7 +6089,7 @@
         if (inviteeMode) {
           clearShareFirstLocalFlags();
           if (typeof showTab === "function") {
-            showTab(new URLSearchParams(location.search).get("friend_invite") ? "member" : "home");
+            showTab(getAppParam("friend_invite") ? "member" : "home");
           }
           maybeShowInviteAcceptPrompt();
           maybePrefillFriendInvite();
@@ -5956,7 +6249,7 @@
 
     async function saveMvpContact() {
       const name = ($("mvpContactName")?.value || "").trim();
-      const relationship = ($("mvpContactRelation")?.value || "").trim();
+      const relationship = readRelationship("mvpContactRelation", "mvpContactRelationOther");
       const phone = ($("mvpContactPhone")?.value || "").trim();
       if (!name || !relationship || !phone) {
         alert("請填寫姓名、關係與電話。");
@@ -5980,7 +6273,7 @@
         }
         await refreshStatus();
         $("mvpContactName").value = "";
-        $("mvpContactRelation").value = "";
+        setRelationshipValue("mvpContactRelation", "mvpContactRelationOther", "");
         $("mvpContactPhone").value = "";
         await renderMvpContactList();
         alert("已儲存聯絡人。");
@@ -6192,6 +6485,7 @@
     $("confirmWarningBtn").addEventListener("click", hideWarningPrompt);
     $("openPrivacyExplainBtn").addEventListener("click", openPrivacyExplain);
     $("closePrivacyExplainBtn").addEventListener("click", closePrivacyExplain);
+    bindRelationshipFields();
     $("shareFriendInviteBtn").addEventListener("click", shareFriendInvite);
     $("acceptInviteBtn").addEventListener("click", acceptFriendInvite);
     $("scanQrBtn").addEventListener("click", startQrScanner);
@@ -6224,6 +6518,20 @@
       const button = event.target.closest(".guardian-group-unbind");
       if (button) unbindGuardianGroup(button.dataset.groupId);
     });
+    $("guardianGroupsList").addEventListener("change", async (event) => {
+      const checkbox = event.target.closest(".guardian-group-pref");
+      if (!checkbox) return;
+      try {
+        await apiSaveGuardianGroupPreferences(checkbox.dataset.groupId, {
+          [checkbox.dataset.prefKey]: checkbox.checked
+        });
+        showInlineSuccess("守護群設定已更新");
+        await refreshStatus();
+      } catch (error) {
+        checkbox.checked = !checkbox.checked;
+        alert("守護群設定暫時無法儲存，請稍後再試。");
+      }
+    });
     $("calendarGrid").addEventListener("click", (event) => {
       const dayButton = event.target.closest(".day-cell[data-date]");
       if (dayButton) openCalendarNote(dayButton.dataset.date);
@@ -6251,16 +6559,7 @@
         const lineReady = lineUserId ? true : await initLine();
         if (!useLocalMode && (!lineReady || !lineUserId)) {
           showLineLoginRequired();
-          // 未登入：導向永久 LIFF 加入會員（保留 invite / 地圖邀請參數）
-          const joinUrl = buildLiffPermanentUrl(readSafeDeepLinkParams(), location.hash || "");
-          if (!window.liff || !liff.isInClient || !liff.isInClient()) {
-            // 外部瀏覽器：提示後導向 liff.line.me
-            if (!location.href.startsWith("https://liff.line.me/")) {
-              setTimeout(() => {
-                try { location.replace(joinUrl); } catch (_) {}
-              }, 600);
-            }
-          }
+          // 外部瀏覽器不自動導轉，避免 LINE OAuth 反覆登入循環；讓使用者按「用 LINE 開啟」。
           return;
         }
 

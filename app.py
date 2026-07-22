@@ -736,7 +736,7 @@ def compute_streak_days(history, today):
     return streak
 
 
-def build_status(profile):
+def build_status(profile, state=None):
     profile = {**DEFAULT_PROFILE, **profile}
     now = datetime.now()
     last = parse_last_checkin(profile.get("last_check_in"))
@@ -768,6 +768,13 @@ def build_status(profile):
         status_class = "highlight"
 
     _reminder_times = reminder_times_for_profile(profile) or ["12:00"]
+    guardian_groups = []
+    if state is not None:
+        groups = state.get("guardian_groups", {}) or {}
+        for group_id in profile.get("guardian_group_ids", []) or []:
+            group = groups.get(group_id)
+            if group and group.get("owner_line_user_id") == profile.get("line_user_id"):
+                guardian_groups.append(group)
 
     return {
         "ok": True,
@@ -824,6 +831,7 @@ def build_status(profile):
         "core_guardian_alert_limit": plan_rules(profile).get("core_guardian_alert_limit", 1),
         "guardian_group_limit": plan_rules(profile).get("guardian_group_limit", 0),
         "guardian_group_ids": profile.get("guardian_group_ids", []),
+        "guardian_groups": guardian_groups,
         "is_today_checked": is_today_checked,
         "is_prealert": prealert,
         "is_overdue": overdue,
@@ -1664,6 +1672,12 @@ def bind_guardian_group(data_file, payload):
         "created_at": now,
         "member_count_at_bind": member_count_at_bind,
         "member_ids_at_bind": member_ids_at_bind,
+        "preferences": {
+            "notify_private_guardians": True,
+            "notify_group_on_overdue": True,
+            "notify_admin_only": True,
+            "daily_admin_summary": True,
+        },
     }
     group_ids.append(group_id)
     profile["guardian_group_ids"] = group_ids
@@ -1676,6 +1690,67 @@ def bind_guardian_group(data_file, payload):
         "guardian_group_limit": group_limit,
         "should_leave": False,
     }, 200
+
+
+def update_guardian_group_preferences(data_file, payload):
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    group_id = str(payload.get("group_id") or "").strip()
+    if not line_user_id or not group_id:
+        return {"error": "missing line_user_id or group_id"}, 400
+
+    state = load_state(data_file)
+    group = state.get("guardian_groups", {}).get(group_id)
+    if not group:
+        return {"error": "guardian group not found"}, 404
+    if group.get("owner_line_user_id") != line_user_id:
+        return {"error": "not guardian group owner"}, 403
+
+    preferences = group.setdefault("preferences", {})
+    for key in ("notify_private_guardians", "notify_group_on_overdue", "notify_admin_only", "daily_admin_summary"):
+        if key in payload:
+            preferences[key] = bool(payload.get(key))
+    save_state(data_file, state)
+    return {"ok": True, "group_id": group_id, "preferences": preferences}, 200
+
+
+def guardian_group_daily_status_text(data_file, line_user_id, group_id):
+    if not line_user_id or not group_id:
+        return "目前無法確認你的身分，請稍後再試。", 400
+
+    state = load_state(data_file)
+    group = state.get("guardian_groups", {}).get(group_id)
+    if not group or group.get("status") != "active":
+        return "此群尚未完成守護群綁定。請由有效的 799 會員在群裡輸入「綁定守護群」。", 404
+    prefs = group.get("preferences") or {}
+    if prefs.get("notify_admin_only", True) and group.get("owner_line_user_id") != line_user_id:
+        return "為了保護成員隱私，今日平安名單只有守護群管理員可以查看。", 403
+
+    users = state.get("users", {}) or {}
+    member_ids = [group.get("owner_line_user_id")]
+    for uid in group.get("member_ids_at_bind") or []:
+        if uid not in member_ids and uid in users:
+            member_ids.append(uid)
+    today = datetime.now().strftime("%Y-%m-%d")
+    checked = []
+    unchecked = []
+    for uid in member_ids:
+        profile = users.get(uid) or {}
+        name = profile.get("display_name") or profile.get("name") or "LINE 成員"
+        history = profile.get("history") or []
+        is_checked = today in history or any(str(item.get("date", "")) == today for item in history if isinstance(item, dict))
+        (checked if is_checked else unchecked).append(name)
+
+    lines = [
+        "📊 今日平安狀態",
+        f"已報平安：{', '.join(checked) if checked else '尚無'}",
+        f"尚未報平安：{', '.join(unchecked) if unchecked else '目前都已完成'}",
+        "",
+        "群組隱私設定：",
+        f"群內逾期提醒：{'開啟' if prefs.get('notify_group_on_overdue', True) else '關閉'}",
+        f"詳細名單：{'僅管理員可看' if prefs.get('notify_admin_only', True) else '群內可看'}",
+        f"核心守護人私訊：{'開啟' if prefs.get('notify_private_guardians', True) else '關閉'}",
+    ]
+    return "\n".join(lines), 200
 
 
 def guardian_group_join_outcome(data_file, line_user_id, group_id):
@@ -1695,7 +1770,7 @@ def guardian_group_join_outcome(data_file, line_user_id, group_id):
     outcome = dict(result)
     if status == 200:
         outcome["reply_text"] = (
-            "我已綁定守護群\n"
+            "我已完成守護群設定\n"
             f"目前已綁定 {result.get('guardian_group_count', 1)}/"
             f"{result.get('guardian_group_limit', 1)} 個守護群。"
         )
@@ -2124,6 +2199,7 @@ def trigger_sos(data_file, payload, config=None):
             group_id for group_id in (profile.get("guardian_group_ids") or [])
             if groups.get(group_id, {}).get("owner_line_user_id") == line_user_id
             and groups.get(group_id, {}).get("status") == "active"
+            and (groups.get(group_id, {}).get("preferences") or {}).get("notify_group_on_overdue", True)
         ][: int(rules.get("guardian_group_limit") or 0)]
     for group_id in active_group_ids:
         try:
@@ -2606,6 +2682,7 @@ def send_due_reminders(config):
                 group_id for group_id in (profile.get("guardian_group_ids") or [])
                 if groups.get(group_id, {}).get("owner_line_user_id") == user["line_user_id"]
                 and groups.get(group_id, {}).get("status") == "active"
+                and (groups.get(group_id, {}).get("preferences") or {}).get("notify_group_on_overdue", True)
             ][:group_limit]
             group_message = (
                 f"【失聯預警】{profile.get('display_name') or '成員'} 已超過平安簽到時間，"
@@ -2814,9 +2891,9 @@ def send_checkin_reminders(config):
         from datetime import datetime as _dt
         weekday_zh = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"][now.weekday()]
         home_uri = f"{public_url}/" if public_url else (liff_entry_url(fragment="home") if liff_entry_url else "https://alive-checkin.onrender.com/")
-        checkin_uri = f"{public_url}/?open=checkin" if public_url else (liff_entry_url(open_action="checkin") if liff_entry_url else "https://alive-checkin.onrender.com/?open=checkin")
-        guard_uri = f"{public_url}/?open=guard" if public_url else (liff_entry_url(open_action="guard") if liff_entry_url else "https://alive-checkin.onrender.com/?open=guard")
-        sos_uri = f"{public_url}/?open=sos" if public_url else (liff_entry_url(open_action="sos") if liff_entry_url else "https://alive-checkin.onrender.com/?open=sos")
+        checkin_uri = f"{public_url}/#open=checkin" if public_url else (liff_entry_url(open_action="checkin") if liff_entry_url else "https://alive-checkin.onrender.com/#open=checkin")
+        guard_uri = f"{public_url}/#open=guard" if public_url else (liff_entry_url(open_action="guard") if liff_entry_url else "https://alive-checkin.onrender.com/#open=guard")
+        sos_uri = f"{public_url}/#open=sos" if public_url else (liff_entry_url(open_action="sos") if liff_entry_url else "https://alive-checkin.onrender.com/#open=sos")
         message = {
             "type": "flex",
             "altText": f"❤️ 今天一切都好嗎？ {today} {target_time}",
@@ -3001,8 +3078,8 @@ def create_app(config=None):
             ).strip()
             target = f"https://liff.line.me/{lid}"
             if open_action:
-                target += f"?open={open_action}"
-            if fragment:
+                target += f"#open={open_action}"
+            elif fragment:
                 target += f"#{fragment.lstrip('#')}"
         if redirect is not None:
             return redirect(target, code=302)
@@ -3133,7 +3210,7 @@ def create_app(config=None):
         profile = state.get("users", {}).get(line_user_id)
         if not profile:
             return jsonify({"ok": False, "error": "user not registered", "line_user_id": line_user_id}), 404
-        return jsonify(build_status(profile))
+        return jsonify(build_status(profile, state))
 
     @app.post("/api/line/register")
     def line_register():
@@ -3335,13 +3412,13 @@ def create_app(config=None):
             welcome_fallback = (
                 "🚨 緊急狀況，直接撥 119\n\n"
                 f"👋 {name} 您好\n"
-                "歡迎加入今天還在嗎\n"
+                "歡迎加入每日平安\n"
                 "我是您的平安小管家\n\n"
                 "每天一個問候一句話報平安\n"
                 "逾時通知緊急連絡人\n\n"
-                f"請開啟：{(liff_entry_url(open_action='onboarding') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo?open=onboarding')}"
+                f"請開啟：{(liff_entry_url(open_action='onboarding') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo#open=onboarding')}"
             )
-            alt_text = f"👋 {name} 您好，歡迎加入今天還在嗎 — 立即免費試用 7 天"
+            alt_text = f"👋 {name} 您好，歡迎加入每日平安 — 立即免費試用 7 天"
             flex_contents = welcome_flex(display_name) if welcome_flex is not None else None
             try:
                 if FlexSendMessage is not None and flex_contents is not None:
@@ -3433,7 +3510,7 @@ def create_app(config=None):
                 minutes = int((uptime_sec % 3600) // 60)
                 status_text = (
                     f"🤖 我是「平安守護助理」\\n"
-                    f"屬於「今天還在嗎」這個服務\\n\\n"
+                    f"屬於「每日平安」這個服務\\n\\n"
                     f"✅ 目前啟用中(已連續 {hours} 小時 {minutes} 分)\\n"
                     f"👥 已註冊人數:{len(state.get('users', {}))}\\n"
                     f"🛡️ 守護群:{active_groups} 群有效綁定\\n\\n"
@@ -3459,7 +3536,7 @@ def create_app(config=None):
                             line_bot_api.reply_message(
                                 event.reply_token,
                                 FlexSendMessage(
-                                    alt_text="✅ 我已綁定守護群",
+                                    alt_text="✅ 我已完成守護群設定",
                                     contents=guardian_group_bind_confirm_flex(result),
                                 ),
                             )
@@ -3476,10 +3553,10 @@ def create_app(config=None):
                                 ),
                             )
                     else:
-                        # fallback 純文字：成功回覆固定「我已綁定守護群」
+                        # fallback 純文字：成功回覆固定「我已完成守護群設定」
                         if code == 200:
                             reply_text = (
-                                "我已綁定守護群\n"
+                                "我已完成守護群設定\n"
                                 f"目前已綁定 {result.get('guardian_group_count', 1)}/"
                                 f"{result.get('guardian_group_limit', 3)} 個群組。"
                             )
@@ -3514,6 +3591,14 @@ def create_app(config=None):
                             event.reply_token,
                             TextSendMessage(text=f"目前已綁定 {owned_count} 個守護群"),
                         )
+                    return
+
+                # 2-1) 今日平安名單：只有群組建立者/管理員可看詳細資料
+                if stripped in ("今日狀態", "今日平安狀態", "誰沒報平安", "未報平安", "誰還沒簽到"):
+                    reply_text, _status = guardian_group_daily_status_text(
+                        app.config["DATA_FILE"], line_user_id, group_id
+                    )
+                    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                     return
 
                 # 3) 使用說明 / 使用者說明
@@ -3919,6 +4004,11 @@ def create_app(config=None):
     @app.post("/api/guardian-groups/unbind")
     def guardian_groups_unbind_api():
         data, code = unbind_guardian_group(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        return jsonify(data), code
+
+    @app.post("/api/guardian-groups/preferences")
+    def guardian_groups_preferences_api():
+        data, code = update_guardian_group_preferences(app.config["DATA_FILE"], request.get_json(silent=True) or {})
         return jsonify(data), code
 
     # ===== 2026-07-20 蝦董 added: 測試頁 endpoints =====

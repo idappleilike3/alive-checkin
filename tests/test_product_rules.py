@@ -138,8 +138,9 @@ class ProductRulesTests(unittest.TestCase):
     def test_mvp_home_has_exactly_four_primary_actions(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("每日平安", page)
-        self.assertIn("一鍵報平安，守護每一次回家", page)
-        self.assertIn("❤️ 歡迎使用今天還好嗎", page)
+        self.assertIn("每天 10 秒，報個平安", page)
+        self.assertIn("平常不打擾，有事才通知守護人", page)
+        self.assertIn("完成綁定一位，二選一獎勵", page)
         self.assertIn('id="mvpSafeBtn"', page)
         self.assertIn('id="mvpGuardBtn"', page)
         self.assertIn('id="mvpCallBtn"', page)
@@ -189,6 +190,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("if (!liff.isLoggedIn())", init_line)
         self.assertIn("liff.login(", init_line)
         self.assertIn("liff.isInClient && liff.isInClient()", init_line)
+        self.assertNotIn("location.replace(joinUrl)", page)
         self.assertIn("requireLineMembership", page)
         # Returning users must not auto-share on page load
         self.assertIn("clearShareFirstLocalFlags", page)
@@ -209,10 +211,15 @@ class ProductRulesTests(unittest.TestCase):
         ]
 
         self.assertIn('class="guardian-modal onboarding-modal"', onboarding)
-        self.assertIn("歡迎使用「今天還在嗎」", onboarding)
+        self.assertIn("歡迎使用「每日平安」", onboarding)
         self.assertIn('for="obName">姓名', onboarding)
         self.assertIn('id="obRelationship"', onboarding)
         self.assertIn('<select id="obRelationship"', onboarding)
+        self.assertIn('<option value="爸爸">爸爸</option>', onboarding)
+        self.assertIn('<option value="媽媽">媽媽</option>', onboarding)
+        self.assertIn('<option value="阿公">阿公</option>', onboarding)
+        self.assertIn('<option value="阿嬤">阿嬤</option>', onboarding)
+        self.assertIn('id="obRelationshipOther"', onboarding)
         self.assertIn('for="obPhone">手機號碼', onboarding)
         self.assertIn('id="obPhone"', onboarding)
         self.assertIn("required", onboarding)

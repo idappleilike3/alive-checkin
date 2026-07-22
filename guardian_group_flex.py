@@ -61,8 +61,8 @@ def liff_entry_url(*, open_action: str | None = None, fragment: str = "", **quer
             continue
         params[key_s] = str(value)
     if params:
-        url += "?" + urlencode(params)
-    if fragment:
+        url += "#" + urlencode(params)
+    elif fragment:
         url += f"#{fragment.lstrip('#')}"
     return url
 
@@ -151,7 +151,7 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
             "type": "button",
             "action": {
                 "type": "message",
-                "label": "我已綁定守護群",
+                "label": "我已完成守護群設定",
                 "text": "綁定守護群",
             },
             "style": "primary",
@@ -173,7 +173,7 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
             "contents": [
                 {
                     "type": "text",
-                    "text": "📍 今天還在嗎",
+                    "text": "❤️ 每日平安",
                     "color": "#FFFFFF",
                     "size": "xxl",
                     "weight": "bold",
@@ -181,7 +181,7 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "🛡️ 守護群已就緒",
+                    "text": "歡迎加入守護群",
                     "color": "#FFFFFF",
                     "size": "md",
                     "align": "center",
@@ -209,14 +209,14 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                     "contents": [
                         {
                             "type": "text",
-                            "text": "管理員可以一鍵綁定",
+                            "text": "這裡用來互相關心",
                             "size": "lg",
                             "weight": "bold",
                             "color": GREEN_DARK,
                         },
                         {
                             "type": "text",
-                            "text": "把平安守護助理邀進群,代表管理員已準備好啟用守護。點下方「綁定守護群」即可完成",
+                            "text": "收到家人的平安訊息；只有逾期未簽到或主動求助時，才會在群裡提醒",
                             "size": "md",
                             "color": GRAY,
                             "wrap": True,
@@ -226,7 +226,7 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                 _owner_status_block(owner_info),
                 {
                     "type": "text",
-                    "text": "這個群可以做什麼",
+                    "text": "管理員請按下方按鈕，完成守護群設定",
                     "size": "md",
                     "weight": "bold",
                     "color": GRAY,
@@ -234,7 +234,7 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "• 報平安：群裡也能快速簽到\n• 逾期提醒：沒簽到時通知守護人\n• SOS：緊急狀況在群裡同步\n• 建議：綁定後把助理設為群管理員",
+                    "text": "完成後會顯示「我已完成守護群設定」。群內狀態明細預設只有管理員可以查看，保護家人隱私",
                     "size": "md",
                     "color": GRAY_LIGHT,
                     "wrap": True,
@@ -262,56 +262,19 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                             height="sm",
                         ),
                         _uri_button(
-                            "守護人",
-                            liff_entry_url(open_action="onboarding"),
-                            style="secondary",
-                            color=GREEN_DARK,
-                            height="sm",
-                        ),
-                        _uri_button(
-                            "我的會員",
+                            "聯絡家人",
                             liff_entry_url(open_action="member"),
                             style="secondary",
                             color=GREEN_DARK,
                             height="sm",
                         ),
-                    ],
-                },
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "sm",
-                    "contents": [
                         _uri_button(
-                            "守護群設定",
-                            liff_entry_url(open_action="guardians"),
-                            style="link",
+                            "需要幫忙",
+                            liff_entry_url(open_action="sos"),
+                            style="secondary",
                             color=GREEN_DARK,
                             height="sm",
                         ),
-                        _uri_button(
-                            "查看方案",
-                            f"{PUBLIC_BASE}/pricing.html",
-                            style="link",
-                            color=GRAY,
-                            height="sm",
-                        ),
-                        _uri_button(
-                            "首次引導",
-                            liff_entry_url(open_action="onboarding"),
-                            style="link",
-                            color=GRAY,
-                            height="sm",
-                        ),
-                    ],
-                },
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "sm",
-                    "contents": [
-                        _postback_button("守護群狀態", "守護群狀態", style="link", color=GREEN_DARK, height="sm"),
-                        _postback_button("管理員設定", "管理員設定", style="link", color=GRAY, height="sm"),
                     ],
                 },
             ],
@@ -528,12 +491,12 @@ def guardian_group_status_flex(profile: dict, state: dict):
 # ───────────────────────────────────────────────────────────
 
 def guardian_group_bind_confirm_flex(result: dict):
-    """「綁定守護群」完成後的 Flex。成功主標固定為「我已綁定守護群」。"""
+    """「綁定守護群」完成後的 Flex。成功主標固定為「我已完成守護群設定」。"""
     already = result.get("already_bound")
     count = result.get("guardian_group_count", 1)
     limit = result.get("guardian_group_limit", 1)
 
-    head_text = "我已綁定守護群"
+    head_text = "我已完成守護群設定"
     if already:
         body_text = f"此群已是你的守護群,目前已綁定 {count}/{limit} 個,無需重複操作"
     else:
@@ -1021,6 +984,7 @@ def welcome_flex(display_name: str | None = None):
     name = (display_name or "").strip() or "您"
     # 永久連結：開 LIFF 內嵌 → onboarding（分享邀請 → 守護人表單 → 提醒）。勿硬編碼 OAuth code/state。
     bind_uri = liff_entry_url(open_action="onboarding")
+    hero_uri = f"{(os.environ.get('APP_PUBLIC_URL') or PUBLIC_BASE).rstrip('/')}/assets/daily-peace-hero.png"
     return {
         "type": "bubble",
         "size": "mega",
@@ -1052,6 +1016,13 @@ def welcome_flex(display_name: str | None = None):
             "paddingBottom": "md",
             "contents": [
                 {
+                    "type": "image",
+                    "url": hero_uri,
+                    "size": "full",
+                    "aspectMode": "cover",
+                    "aspectRatio": "20:9",
+                },
+                {
                     "type": "box",
                     "layout": "vertical",
                     "spacing": "sm",
@@ -1069,7 +1040,7 @@ def welcome_flex(display_name: str | None = None):
                         },
                         {
                             "type": "text",
-                            "text": "歡迎加入今天還在嗎",
+                            "text": "歡迎加入每日平安",
                             "color": "#FFFFFF",
                             "size": "xxl",
                             "weight": "bold",
@@ -1090,7 +1061,7 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "每天一個問候,讓你的家人放心",
+                    "text": "每天 10 秒，報個平安",
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
@@ -1098,7 +1069,7 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "每天問候一句,報個平安",
+                    "text": "平常不打擾，有事才通知守護人",
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
@@ -1106,7 +1077,7 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "逾時會通知你的家人",
+                    "text": "🎁 新手禮包：加入即享 7 天免費體驗。先綁定 1 位守護人，緊急時才通知得到對方",
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
@@ -1125,7 +1096,7 @@ def welcome_flex(display_name: str | None = None):
                     "type": "button",
                     "action": {
                         "type": "uri",
-                        "label": "立即免費試用 7 天",
+                        "label": "一鍵邀請守護人",
                         "uri": bind_uri,
                     },
                     "style": "primary",
