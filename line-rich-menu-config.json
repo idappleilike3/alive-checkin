@@ -21,7 +21,7 @@
     },
     {
       "bounds": { "x": 0, "y": 843, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "我的會員", "uri": "https://liff.line.me/2010674803-rK98c0lo#open=member" }
+      "action": { "type": "uri", "label": "使用教學", "uri": "https://alive-checkin.onrender.com/help.html" }
     },
     {
       "bounds": { "x": 833, "y": 843, "width": 834, "height": 843 },
@@ -29,7 +29,7 @@
     },
     {
       "bounds": { "x": 1667, "y": 843, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "守護群", "uri": "https://liff.line.me/2010674803-rK98c0lo#open=guardians" }
+      "action": { "type": "uri", "label": "安全守護", "uri": "https://liff.line.me/2010674803-rK98c0lo#open=guard" }
     }
   ]
 }

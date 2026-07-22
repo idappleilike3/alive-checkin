@@ -244,8 +244,8 @@ def line_auto_reply_text(text, status=None):
             "守護群功能說明：\n"
             "守護群適合家人、親友或社區關懷小組一起接收平安狀態。\n"
             "有效的 799 月費會員可建立 1 群，年費會員最多可建立 3 群。\n"
-            "請把「平安守護助理」加入群組後，由方案本人輸入「綁定平安守護助理」。若資格不符，「平安守護助理」會說明原因並退出群組。\n"
-            "「平安守護助理」只處理簽到、預警與守護指令，不會把一般聊天內容存進會員資料。"
+            "請把「每日平安」官方帳號加入群組後，由方案本人輸入「點我綁定守護群」。若資格不符，「每日平安」會說明原因並退出群組。\n"
+            "「每日平安」只處理簽到、預警與守護指令，不會把一般聊天內容存進會員資料。"
         )
     if any(keyword in text for keyword in ALERT_CHANNEL_KEYWORDS):
         return (
@@ -1656,8 +1656,8 @@ def bind_guardian_group(data_file, payload):
                     "limit": GROUP_MEMBER_LIMIT,
                     "should_leave": True,
                     "reply_text": (
-                        f"此群目前有 {mc} 位成員(不含「平安守護助理」)。\n"
-                        f"守護群上限 {GROUP_MEMBER_LIMIT} 人,請把群縮到 {GROUP_MEMBER_LIMIT} 人內再重新邀請「平安守護助理」。"
+                        f"此群目前有 {mc} 位成員(不含「每日平安」)。\n"
+                        f"守護群上限 {GROUP_MEMBER_LIMIT} 人,請把群縮到 {GROUP_MEMBER_LIMIT} 人內再重新邀請「每日平安」。"
                     ),
                 }, 413
             member_count_at_bind = mc
@@ -1720,7 +1720,7 @@ def guardian_group_daily_status_text(data_file, line_user_id, group_id):
     state = load_state(data_file)
     group = state.get("guardian_groups", {}).get(group_id)
     if not group or group.get("status") != "active":
-        return "此群尚未完成守護群綁定。請由有效的 799 會員在群裡輸入「綁定守護群」。", 404
+        return "此群尚未完成守護群綁定。請由有效的 799 會員在群裡輸入「點我綁定守護群」。", 404
     prefs = group.get("preferences") or {}
     if prefs.get("notify_admin_only", True) and group.get("owner_line_user_id") != line_user_id:
         return "為了保護成員隱私，今日平安名單只有守護群管理員可以查看。", 403
@@ -3178,7 +3178,7 @@ def create_app(config=None):
 
         Returns:
             - service: alive-checkin
-            - bot_name: 平安守護助理
+            - bot_name: 每日平安
             - uptime_seconds: 進程啟動後秒數
             - users_total: 註冊人數
             - guardian_groups_total: 守護群綁定總數
@@ -3193,7 +3193,7 @@ def create_app(config=None):
         uptime = (now - proc_start).total_seconds() if proc_start else None
         return jsonify({
             "service": "alive-checkin",
-            "bot_name": "平安守護助理",
+            "bot_name": "每日平安",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -3476,8 +3476,8 @@ def create_app(config=None):
                     msg_lines.append(f"已請出 {len(result['kicked'])} 位新成員。")
                 if result.get("bot_not_admin_count"):
                     msg_lines.append(
-                        f"⚠️ 「平安守護助理」不是此群管理員,另有 {result['bot_not_admin_count']} 位無法請出。"
-                        "請把「平安守護助理」設為管理員後再試,或管理員手動退出超額成員。"
+                        f"⚠️ 「每日平安」不是此群管理員,另有 {result['bot_not_admin_count']} 位無法請出。"
+                        "請把「每日平安」設為管理員後再試,或管理員手動退出超額成員。"
                     )
                 if result.get("failed") and not result.get("bot_not_admin_count"):
                     msg_lines.append(f"請出失敗:{len(result['failed'])} 位。")
@@ -3509,7 +3509,7 @@ def create_app(config=None):
                 hours = int(uptime_sec // 3600)
                 minutes = int((uptime_sec % 3600) // 60)
                 status_text = (
-                    f"🤖 我是「平安守護助理」\\n"
+                    f"🤖 我是「每日平安」\\n"
                     f"屬於「每日平安」這個服務\\n\\n"
                     f"✅ 目前啟用中(已連續 {hours} 小時 {minutes} 分)\\n"
                     f"👥 已註冊人數:{len(state.get('users', {}))}\\n"
@@ -3525,8 +3525,8 @@ def create_app(config=None):
 
             # 2026-07-21 patch 11: 守護群相關 4 個 Flex 指令(群組限定)
             if group_id:
-                # 1) 綁定守護群(保留「綁定平安守護助理」alias)
-                if stripped in ("綁定守護群", "綁定平安守護助理"):
+                # 1) 綁定守護群(保留舊指令 alias)
+                if stripped in ("點我綁定守護群", "綁定守護群", "綁定平安守護助理"):
                     result, code = bind_guardian_group(
                         app.config["DATA_FILE"],
                         {"line_user_id": line_user_id, "group_id": group_id},
@@ -3563,7 +3563,7 @@ def create_app(config=None):
                         elif result.get("should_leave"):
                             reply_text = (
                                 "這個群組目前無法啟用守護功能。守護群限有效的 799 月費或年費會員建立；月費最多 1 群，年費最多 3 群。\n"
-                                "請先完成升級，再重新邀請「平安守護助理」；我現在會退出群組。"
+                                "請先完成升級，再重新邀請「每日平安」；我現在會退出群組。"
                             )
                         else:
                             reply_text = "這個群組已綁定其他會員，請由原建立者管理守護設定。"
@@ -3614,7 +3614,7 @@ def create_app(config=None):
                     else:
                         line_bot_api.reply_message(
                             event.reply_token,
-                            TextSendMessage(text="使用說明:1.升級 799 → 2.建群 → 3.邀「平安守護助理」 → 4.設管理員 → 5.打「綁定平安守護助理」"),
+                            TextSendMessage(text="使用說明:1.升級 799 → 2.建群 → 3.邀「每日平安」 → 4.設管理員 → 5.輸入「點我綁定守護群」"),
                         )
                     return
 
@@ -3624,14 +3624,14 @@ def create_app(config=None):
                         line_bot_api.reply_message(
                             event.reply_token,
                             FlexSendMessage(
-                                alt_text="⚙️ 設定「平安守護助理」為管理員 6 步驟",
+                                alt_text="⚙️ 設定「每日平安」為管理員 6 步驟",
                                 contents=guardian_group_admin_setup_flex(),
                             ),
                         )
                     else:
                         line_bot_api.reply_message(
                             event.reply_token,
-                            TextSendMessage(text="管理員設定 6 步驟:1.群右上「≡」→ 2.選成員 → 3.長按「平安守護助理」 → 4.設為管理員 → 5.確定 → 6.完成"),
+                            TextSendMessage(text="管理員設定 6 步驟:1.群右上「≡」→ 2.選成員 → 3.長按「每日平安」 → 4.設為管理員 → 5.確定 → 6.完成"),
                         )
                     return
 

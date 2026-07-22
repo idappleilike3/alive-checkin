@@ -802,8 +802,41 @@
       margin-bottom: 10px;
     }
     .contact-primary {
-      background: linear-gradient(135deg, rgba(236, 253, 245, 0.92), rgba(255,255,255,0.72));
-      border-color: #86efac;
+      background: linear-gradient(135deg, #0f766e 0%, #115e59 100%);
+      border-color: #0f766e;
+      color: #fff;
+      box-shadow: 0 12px 28px rgba(15, 118, 110, 0.22);
+    }
+    .contact-primary .price-head strong,
+    .contact-primary .helper {
+      color: #fff;
+    }
+    .contact-primary .price-head span {
+      background: #facc15;
+      color: #713f12;
+      border-color: #fde68a;
+    }
+    .contact-primary .price-btn {
+      background: #facc15;
+      color: #422006;
+      border-color: transparent;
+      box-shadow: 0 10px 22px rgba(250, 204, 21, 0.22);
+    }
+    .settings[aria-label="緊急聯絡人"] .settings-title,
+    .settings[aria-label="緊急聯絡人"] .price-head strong {
+      font-size: 24px;
+      font-weight: 950;
+      color: #102a1f;
+    }
+    .settings[aria-label="緊急聯絡人"] .helper {
+      font-size: 17px;
+      font-weight: 800;
+      line-height: 1.7;
+      color: #344054;
+    }
+    .settings[aria-label="緊急聯絡人"] .contact-primary .price-head strong,
+    .settings[aria-label="緊急聯絡人"] .contact-primary .helper {
+      color: #fff;
     }
     .manual-contact-title {
       display: flex;
@@ -2108,16 +2141,20 @@
     .guardian-group-guide {
       text-align: left;
     }
+    .guardian-group-guide .settings-title {
+      font-size: 24px;
+      color: #0f3d2e;
+    }
     .guardian-group-guide-intro {
-      margin: 10px 0 14px;
-      padding: 12px 14px;
-      border-left: 5px solid #06c755;
-      border-radius: 8px;
-      background: #ecfdf3;
+      margin: 12px 0 16px;
+      padding: 16px;
+      border: 2px solid #22c55e;
+      border-radius: 14px;
+      background: linear-gradient(180deg, #ecfdf5 0%, #f0fdf4 100%);
       color: #14532d;
-      font-size: 16px;
-      font-weight: 750;
-      line-height: 1.65;
+      font-size: 18px;
+      font-weight: 850;
+      line-height: 1.7;
     }
     .guardian-group-steps {
       display: grid;
@@ -2128,11 +2165,11 @@
       grid-template-columns: 48px minmax(0, 1fr);
       gap: 12px;
       align-items: center;
-      padding: 13px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--input);
-      box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
+      padding: 16px;
+      border: 2px solid #d1fae5;
+      border-radius: 14px;
+      background: #ffffff;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
     }
     .guardian-group-step-number {
       width: 48px;
@@ -2147,24 +2184,25 @@
     }
     .guardian-group-step strong {
       display: block;
-      margin-bottom: 3px;
-      color: var(--text);
-      font-size: 17px;
+      margin-bottom: 5px;
+      color: #102a1f;
+      font-size: 20px;
     }
     .guardian-group-step p {
-      color: var(--muted);
-      font-size: 15px;
-      font-weight: 650;
-      line-height: 1.55;
+      color: #344054;
+      font-size: 17px;
+      font-weight: 750;
+      line-height: 1.65;
     }
     .guardian-group-command {
       display: inline-block;
       margin-top: 5px;
-      padding: 5px 9px;
+      padding: 8px 12px;
       border: 2px solid #06c755;
-      border-radius: 6px;
-      background: #fff;
+      border-radius: 10px;
+      background: #ecfdf5;
       color: #075e32;
+      font-size: 18px;
       font-weight: 900;
     }
     .guardian-group-plan-note {
@@ -2174,9 +2212,35 @@
       background: #fff7ed;
       border: 1px solid #fdba74;
       color: #7c2d12;
-      font-size: 15px;
+      font-size: 17px;
       font-weight: 750;
       line-height: 1.6;
+    }
+    .guardian-group-link-row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .guardian-group-link-row a,
+    .guardian-group-link-row button {
+      display: grid;
+      place-items: center;
+      min-height: 56px;
+      border-radius: 999px;
+      border: 0;
+      text-decoration: none;
+      font-size: 18px;
+      font-weight: 950;
+      cursor: pointer;
+    }
+    .guardian-group-line-btn {
+      background: #06c755;
+      color: #fff;
+    }
+    .guardian-group-help-btn {
+      background: #0f172a;
+      color: #fff;
     }
 
     /* ===== 每日平安 MVP 首頁：四大超大按鈕 ===== */
@@ -2565,11 +2629,19 @@
     <section class="mvp-panel" id="mvpGuardPanel" aria-label="安全守護面板" hidden>
       <button class="mvp-back" id="mvpGuardBack" type="button">← 回首頁</button>
       <h2>🛡️ 安全守護</h2>
-      <p class="mvp-panel-lead">預設守護 1 小時。會分享位置給指定家人，時間到會自動停止，也可提前結束。</p>
+      <p class="mvp-panel-lead">適合外出、夜歸、看診或短時間需要家人知道位置時使用。預設 1 小時，時間到會自動停止，也可提前結束。</p>
       <div class="mvp-guard-status" id="mvpGuardStatus" data-active="false">目前未開啟安全守護</div>
       <div class="mvp-panel-actions">
         <button class="mvp-action start" id="mvpGuardStartBtn" type="button">開始安全守護（1 小時）</button>
         <button class="mvp-action stop" id="mvpGuardStopBtn" type="button">提前結束</button>
+      </div>
+      <div class="contact-card contact-primary" style="margin-top:14px;">
+        <div class="price-head"><strong>邀請家人一起守護</strong><span>推薦</span></div>
+        <div class="helper">安全守護需要先有守護人，家人才看得到你分享的位置與平安狀態。</div>
+        <button class="price-btn share-contact-invite-btn" type="button">一鍵邀請守護人</button>
+      </div>
+      <div class="guardian-group-link-row">
+        <button class="guardian-group-help-btn" type="button" onclick="showTab('guardians')">查看守護群教學</button>
       </div>
     </section>
 
@@ -2819,11 +2891,11 @@
 
     <section class="settings guardian-group-guide" aria-label="守護群設定教學">
       <div class="settings-title">LINE 守護群設定</div>
-      <div class="guardian-group-guide-intro">不用填群組代碼。照著下面四個步驟操作，Bot 會自動辨識並綁定你的 LINE 群組。</div>
+      <div class="guardian-group-guide-intro">不用填群組代碼。請先在 LINE 建立家人群組，再把「每日平安」官方帳號邀進群。完成後由管理員點選或輸入綁定指令即可啟用。</div>
       <div class="guardian-group-steps">
         <article class="guardian-group-step">
           <span class="guardian-group-step-number">1</span>
-          <div><strong>建立 LINE 群組</strong><p>在 LINE 建立新群組，先把想一起守護的家人或親友加入。</p></div>
+          <div><strong>建立 LINE 群組</strong><p>先把想一起守護的家人或親友加入，群名可以取「每日平安守護」。</p></div>
         </article>
         <article class="guardian-group-step">
           <span class="guardian-group-step-number">2</span>
@@ -2831,12 +2903,15 @@
         </article>
         <article class="guardian-group-step">
           <span class="guardian-group-step-number">3</span>
-          <div><strong>輸入「綁定守護群」</strong><p>請由購買方案的本人在群組輸入：</p><span class="guardian-group-command">綁定守護群</span></div>
+          <div><strong>輸入「綁定守護群」</strong><p>請由購買方案的本人在群組輸入或點選：</p><span class="guardian-group-command">點我綁定守護群</span></div>
         </article>
         <article class="guardian-group-step">
           <span class="guardian-group-step-number">4</span>
-          <div><strong>看到啟用成功訊息</strong><p>Bot 回覆「守護群已啟用」就完成了，之後可在會員中心查看或解除綁定。</p></div>
+          <div><strong>看到啟用成功訊息</strong><p>每日平安回覆「我已完成守護群設定」就完成了，之後可在會員中心查看或解除綁定。</p></div>
         </article>
+      </div>
+      <div class="guardian-group-link-row">
+        <a class="guardian-group-line-btn" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener">先加入每日平安官方帳號</a>
       </div>
       <div class="guardian-group-plan-note">守護群限有效方案使用：799 月費最多 1 群，799 年費最多 3 群。每個 LINE 群組同一時間只能加入一個官方帳號。</div>
     </section>
@@ -2847,10 +2922,6 @@
         <span aria-hidden="true">⌄</span>
       </button>
       <div class="member-center-details" id="memberCenterDetails" hidden>
-        <div class="member-data-section" style="background: #f1f5f9; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;">
-          <h3>📖 快速連結</h3>
-          <a href="help.html" class="action-btn" style="display: block; text-align: center; text-decoration: none; margin-top: 8px;">📖 使用教學</a>
-        </div>
         <div class="member-profile-row">
           <img class="member-avatar-img" id="userPicture" src="" alt="" hidden>
           <div class="member-avatar" id="memberAvatar">我</div>
@@ -2879,7 +2950,6 @@
           </div>
           <div class="member-data-actions">
             <button class="action-btn primary" id="memberAddGuardianBtn" type="button">＋ 新增聯絡人</button>
-            <button class="action-btn" id="memberShareGuardianBtn" type="button">一鍵分享邀請守護人</button>
           </div>
         </div>
 
@@ -2945,7 +3015,7 @@
 
         <div class="member-data-section" id="guardianGroupsSection" hidden>
           <h3>我的守護群</h3>
-          <div class="helper">799 月費會員最多可綁定 1 個 LINE 群組，年費會員最多 3 個。把官方帳號加入群組後，在群組輸入「綁定守護群」即可啟用。</div>
+          <div class="helper">799 月費會員最多可綁定 1 個 LINE 群組，年費會員最多 3 個。把官方帳號加入群組後，在群組輸入「點我綁定守護群」即可啟用。</div>
           <div class="member-data-list" id="guardianGroupsList">
             <div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護群</strong></div>
           </div>
@@ -3087,7 +3157,7 @@
       <div class="helper" style="margin-top:10px;">年費比逐月付款更省。藍新金流設定完成後可線上付款自動開通；尚未設定時訂單會進入待確認，由後台人工開通。</div>
     </section>
 
-    <section class="settings" aria-label="安心守護邀請任務">
+    <section class="settings" aria-label="安心守護邀請任務" hidden>
       <div class="settings-title">🎁 安心守護邀請任務</div>
       <div class="helper">邀請 1 位你信任的人完成 LINE 綁定，萬一你沒有準時簽到，系統才能第一時間通知對方。</div>
       <div class="helper">分享邀請給聯絡人後，對方只要用 LINE 同意綁定，就能成為你的守護人。</div>
@@ -4267,7 +4337,8 @@
 
     function goGuardianInvite() {
       closeGuardianPrompt();
-      document.querySelector('[aria-label="安心守護邀請任務"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+      showTab("home");
+      document.querySelector(".mvp-reward-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
 
     function openUpgradePlans() {
@@ -6147,7 +6218,7 @@
       // 對應 tab → 顯示哪些 sections（首頁只顯示四大按鈕；其餘進會員／紀錄）
       const tabMap = {
         home: [],
-        guardians: ["守護群設定教學", "安心守護邀請任務", "緊急聯絡人"],
+        guardians: ["守護群設定教學", "緊急聯絡人"],
         history: ["簽到月曆", "簽到狀態"],
         member: ["會員個人中心", "升級方案"],
       };
