@@ -447,6 +447,9 @@
               <th>今日</th>
               <th>上次簽到</th>
               <th>方案</th>
+              <th>付款</th>
+              <th>方案到期</th>
+              <th>試用剩餘</th>
               <th>聯絡人</th>
               <th>守護群</th>
               <th>寬限</th>
@@ -454,7 +457,7 @@
             </tr>
           </thead>
           <tbody id="usersBody">
-            <tr><td colspan="10">尚未載入資料</td></tr>
+            <tr><td colspan="13">尚未載入資料</td></tr>
           </tbody>
         </table>
       </div>
@@ -557,6 +560,31 @@
       }[plan] || "試用";
     }
 
+    function paymentLabel(status) {
+      return {
+        trial: "試用中",
+        free: "免費",
+        active: "已付款",
+        pending: "待付款",
+        expired: "已到期",
+        failed: "付款失敗",
+        cancelled: "已取消"
+      }[status] || (status || "未付費");
+    }
+
+    function expiryText(user) {
+      if (user.paid_until) return formatDate(user.paid_until);
+      if (user.plan === "trial") return "7 天試用";
+      if (user.plan === "free") return "免費方案";
+      return "尚未設定";
+    }
+
+    function trialText(user) {
+      if (user.plan !== "trial") return "-";
+      const days = Number(user.trial_days_left || 0);
+      return days > 0 ? `${days} 天` : "已結束";
+    }
+
     function logKindLabel(kind) {
       return {
         overdue: "逾期提醒",
@@ -643,13 +671,16 @@
                 ).join("")}
               </select>
             </td>
+            <td><span class="badge ${user.payment_status === "active" ? "ok" : user.payment_status === "expired" ? "bad" : "warn"}">${paymentLabel(user.payment_status)}</span></td>
+            <td>${expiryText(user)}</td>
+            <td>${trialText(user)}</td>
             <td>${(user.contacts || []).length}/${user.contact_limit || 1}</td>
             <td>${(user.guardian_group_ids || []).length}/${user.guardian_group_limit || 0}</td>
             <td>${user.grace_hours} 小時</td>
             <td>${user.reminder_time}</td>
           </tr>
         `).join("")
-        : `<tr><td colspan="10">還沒有 LINE 使用者進來簽到。</td></tr>`;
+        : `<tr><td colspan="13">還沒有 LINE 使用者進來簽到。</td></tr>`;
       $("ordersBody").innerHTML = (data.orders || []).length
         ? data.orders.map((order) => `
           <tr>
