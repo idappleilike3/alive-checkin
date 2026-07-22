@@ -3752,6 +3752,17 @@
       return url.toString();
     }
 
+    function buildPublicAppUrl(params = {}, path = "/") {
+      const base = String(appConfig.public_url || "https://alive-checkin.onrender.com/").replace(/\/+$/, "");
+      const url = new URL(path || "/", `${base}/`);
+      Object.entries(params || {}).forEach(([key, value]) => {
+        if (value == null || value === "") return;
+        if (OAUTH_PARAM_KEYS.has(String(key))) return;
+        url.searchParams.set(String(key), String(value));
+      });
+      return url.toString();
+    }
+
     function readSafeDeepLinkParams() {
       const src = readAppParams();
       const out = {};
@@ -4139,6 +4150,9 @@
       const bindUrl = lineUserId
         ? buildLiffPermanentUrl({ invite_from: lineUserId })
         : buildLiffPermanentUrl({ open: "onboarding" });
+      const fallbackUrl = lineUserId
+        ? buildPublicAppUrl({ invite_from: lineUserId })
+        : buildPublicAppUrl({ open: "onboarding" });
       const nameText = nickname ? `嗨 ${nickname}，` : "";
       const text = (
         `${nameText}我想邀請你成為「每日平安」的守護人。\n\n` +
@@ -4147,9 +4161,10 @@
         `2. 登入並同意成為守護人\n` +
         `3. 綁定完成後，若我未準時報平安或發出 SOS，你會收到 LINE 通知\n\n` +
         `你不需要另外註冊 App。點連結完成授權即可。\n\n` +
-        `守護邀請連結：\n${bindUrl}`
+        `守護邀請連結（LINE 內嵌）：\n${bindUrl}\n\n` +
+        `如果 Android 打不開，請改點備用連結：\n${fallbackUrl}`
       );
-      return { bindUrl, text };
+      return { bindUrl, fallbackUrl, text };
     }
 
     async function apiBindEmergencyContact(inviterLineUserId) {

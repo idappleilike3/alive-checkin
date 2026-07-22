@@ -211,8 +211,14 @@ def line_liff_url(open_action):
     return f"https://liff.line.me/{liff_id}/?open={open_action}"
 
 
+def public_page_url(path=""):
+    public_url = (os.environ.get("APP_PUBLIC_URL") or "https://alive-checkin.onrender.com/").strip().rstrip("/")
+    path = str(path or "").lstrip("/")
+    return f"{public_url}/{path}" if path else f"{public_url}/"
+
+
 def line_plan_message():
-    pricing_url = line_liff_url("pricing")
+    pricing_url = public_page_url("pricing")
     return (
         "可以，升級方案請點這裡：\n"
         f"{pricing_url}\n\n"

@@ -294,8 +294,18 @@ class ProductRulesTests(unittest.TestCase):
         backend = (ROOT / "app.py").read_text(encoding="utf-8")
 
         self.assertIn("可以，升級方案請點這裡", backend)
-        self.assertIn('line_liff_url("pricing")', backend)
+        self.assertIn('public_page_url("pricing")', backend)
+        self.assertIn("https://alive-checkin.onrender.com/", backend)
         self.assertNotIn("file:///C:/Users/WIN11", backend)
+
+    def test_guardian_invite_has_android_public_fallback(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("function buildPublicAppUrl", page)
+        self.assertIn("守護邀請連結（LINE 內嵌）", page)
+        self.assertIn("如果 Android 打不開，請改點備用連結", page)
+        self.assertIn("fallbackUrl", page)
+        self.assertIn('buildPublicAppUrl({ invite_from: lineUserId })', page)
 
     def test_onboarding_guardian_form_is_senior_friendly_and_traditional_chinese(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
