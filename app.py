@@ -490,6 +490,16 @@ def save_calendar_note(data_file, payload):
     line_user_id = (payload.get("line_user_id") or "").strip()
     note_date = (payload.get("date") or "").strip()
     content = str(payload.get("content") or "").strip()
+    birthday_name = str(payload.get("birthday_name") or "").strip()
+    birthday_relationship = str(payload.get("birthday_relationship") or "").strip()
+    birthday_date = str(payload.get("birthday_date") or note_date).strip()
+    birthday_yearly = bool(payload.get("birthday_yearly", True))
+    try:
+        birthday_remind_days = int(payload.get("birthday_remind_days", 1))
+    except (TypeError, ValueError):
+        birthday_remind_days = 1
+    if birthday_remind_days not in (0, 1, 3, 7):
+        birthday_remind_days = 1
     if not line_user_id:
         return {"ok": False, "error": "missing line_user_id"}, 400
     try:
@@ -500,17 +510,62 @@ def save_calendar_note(data_file, payload):
         return {"ok": False, "error": "invalid date"}, 400
     if len(content) > 500:
         return {"ok": False, "error": "note too long"}, 400
+    if birthday_name:
+        try:
+            parsed_birthday = datetime.strptime(birthday_date, "%Y-%m-%d")
+        except ValueError:
+            return {"ok": False, "error": "invalid birthday date"}, 400
+        if parsed_birthday.strftime("%Y-%m-%d") != birthday_date:
+            return {"ok": False, "error": "invalid birthday date"}, 400
 
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
     notes = dict(profile.get("calendar_notes") or {})
-    if content:
-        notes[note_date] = content
+    if content or birthday_name:
+        if birthday_name:
+            notes[note_date] = {
+                "content": content,
+                "birthday_name": birthday_name,
+                "birthday_relationship": birthday_relationship,
+                "birthday_date": birthday_date,
+                "birthday_yearly": birthday_yearly,
+                "birthday_remind_days": birthday_remind_days,
+            }
+        else:
+            notes[note_date] = content
     else:
         notes.pop(note_date, None)
     profile["calendar_notes"] = notes
     save_state(data_file, state)
     return {"ok": True, "notes": notes}, 200
+
+
+def calendar_note_content(note):
+    if isinstance(note, dict):
+        return str(note.get("content") or "").strip()
+    return str(note or "").strip()
+
+
+def calendar_note_birthday(note):
+    if not isinstance(note, dict) or not str(note.get("birthday_name") or "").strip():
+        return None
+    return {
+        "birthday_name": str(note.get("birthday_name") or "").strip(),
+        "birthday_relationship": str(note.get("birthday_relationship") or "").strip(),
+        "birthday_date": str(note.get("birthday_date") or "").strip(),
+        "birthday_yearly": bool(note.get("birthday_yearly", True)),
+        "birthday_remind_days": int(note.get("birthday_remind_days") or 1),
+    }
+
+
+def birthday_occurs_on(birthday, target_date):
+    try:
+        source = datetime.strptime(birthday.get("birthday_date", ""), "%Y-%m-%d").date()
+    except ValueError:
+        return False
+    if birthday.get("birthday_yearly", True):
+        return source.month == target_date.month and source.day == target_date.day
+    return source == target_date
 
 
 def plan_rules(profile):
@@ -2976,6 +3031,63 @@ def send_checkin_reminders(config):
     return {"sent": sent, "skipped": skipped, "results": results}, 200
 
 
+def send_birthday_reminders(config):
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not token:
+        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
+
+    data_file = config["DATA_FILE"]
+    state = load_state(data_file)
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    now = current_app_time(config)
+    today_date = now.date()
+    today_key = today_date.strftime("%Y-%m-%d")
+    sent = 0
+    skipped = 0
+    results = []
+
+    for user in state.get("users", {}).values():
+        line_user_id = user.get("line_user_id")
+        if not line_user_id:
+            skipped += 1
+            continue
+        notes = user.get("calendar_notes") or {}
+        if not isinstance(notes, dict):
+            continue
+        sent_keys = set(user.get("birthday_reminder_sent_keys") or [])
+        for note_date, note in notes.items():
+            birthday = calendar_note_birthday(note)
+            if not birthday:
+                continue
+            try:
+                remind_days = int(birthday.get("birthday_remind_days") or 1)
+            except (TypeError, ValueError):
+                remind_days = 1
+            target_date = today_date + timedelta(days=remind_days)
+            if not birthday_occurs_on(birthday, target_date):
+                continue
+            sent_key = f"{today_key}:{note_date}:{remind_days}"
+            if sent_key in sent_keys:
+                continue
+            who = birthday.get("birthday_relationship") or birthday.get("birthday_name") or "家人"
+            when_text = "今天" if remind_days == 0 else ("明天" if remind_days == 1 else f"{remind_days} 天後")
+            message = f"{when_text}是{who}生日，記得跟他說聲生日快樂。也可以順手確認他今天平安。"
+            try:
+                result = sender(token, line_user_id, message)
+                sent_keys.add(sent_key)
+                user["birthday_reminder_sent_keys"] = sorted(sent_keys)[-80:]
+                append_notification_log(state, "birthday", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
+                sent += 1
+                results.append({"line_user_id": line_user_id, "birthday": who, "remind_days": remind_days})
+            except Exception as exc:
+                append_notification_log(state, "birthday", line_user_id, "failed", message, str(exc))
+                skipped += 1
+                results.append({"line_user_id": line_user_id, "birthday": who, "error": str(exc)})
+
+    save_state(data_file, state)
+    return {"sent": sent, "skipped": skipped, "results": results}, 200
+
+
 def app_config(config):
     token = (
         config.get("LINE_CHANNEL_ACCESS_TOKEN")
@@ -4373,6 +4485,14 @@ def create_app(config=None):
         data, code = send_renewal_reminders(app.config)
         return jsonify(data), code
 
+    @app.post("/api/admin/send-birthday-reminders")
+    def send_birthday_reminders_api():
+        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
+        if not admin_allowed(app.config, password):
+            return jsonify({"error": "unauthorized"}), 401
+        data, code = send_birthday_reminders(app.config)
+        return jsonify(data), code
+
     @app.post("/api/admin/payments/confirm")
     def admin_payment_confirm_api():
         password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
@@ -4411,6 +4531,14 @@ def create_app(config=None):
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = send_renewal_reminders(app.config)
+        return jsonify(data), code
+
+    @app.route("/api/cron/birthday-reminders", methods=["GET", "POST"])
+    def cron_birthday_reminders_api():
+        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        if not cron_allowed(app.config, secret):
+            return jsonify({"error": "unauthorized"}), 401
+        data, code = send_birthday_reminders(app.config)
         return jsonify(data), code
 
     @app.route("/api/cron/membership-expiry", methods=["GET", "POST"])

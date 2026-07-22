@@ -283,6 +283,7 @@
         <button id="contactRemindBtn" class="info" type="button">提醒填聯絡人</button>
         <button id="remindBtn" class="secondary" type="button">推播逾期提醒</button>
         <button id="renewalRemindBtn" class="secondary" type="button">推播續費提醒</button>
+        <button id="birthdayRemindBtn" class="info" type="button">推播生日提醒</button>
         <button id="createBackupBtn" class="info" type="button">立即備份</button>
       </div>
 
@@ -590,6 +591,7 @@
         overdue: "逾期提醒",
         missing_contact: "補填聯絡人",
         checkin: "簽到提醒",
+        birthday: "生日提醒",
         support_reply: "客服回覆"
       }[kind] || "推播";
     }
@@ -817,10 +819,21 @@
       await refresh();
     }
 
+    async function sendBirthdayReminders() {
+      if (!confirm("要推播今天符合條件的家人生日提醒嗎？")) return;
+      const res = await fetch(`/api/admin/send-birthday-reminders?password=${apiPassword()}`, { method: "POST" });
+      const data = await res.json();
+      $("message").textContent = res.ok
+        ? `已送出 ${data.sent} 則生日提醒。`
+        : data.error || "生日提醒失敗，請檢查 LINE 設定。";
+      await refresh();
+    }
+
     $("refreshBtn").addEventListener("click", refresh);
     $("contactRemindBtn").addEventListener("click", sendContactReminders);
     $("remindBtn").addEventListener("click", sendReminders);
     $("renewalRemindBtn").addEventListener("click", sendRenewalReminders);
+    $("birthdayRemindBtn").addEventListener("click", sendBirthdayReminders);
     $("createBackupBtn").addEventListener("click", createBackup);
     refresh();
   </script>

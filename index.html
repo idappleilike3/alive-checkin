@@ -392,7 +392,11 @@
       white-space: nowrap;
     }
     .day-cell.festival { background: #fff1f2; border-color: #fb7185; }
+    .day-cell.festival .day-number { color: #dc2626; font-weight: 950; }
     .day-cell.festival .lunar-mini { color: #dc2626; font-weight: 950; }
+    .day-cell.birthday { background: #fff0f7; border-color: #ec4899; }
+    .day-cell.birthday .day-number,
+    .day-cell.birthday .lunar-mini { color: #be185d; font-weight: 950; }
     .day-cell.has-note::after {
       content: "";
       position: absolute;
@@ -411,7 +415,65 @@
       box-shadow: 0 7px 14px rgba(18, 168, 111, 0.28);
     }
     .day-cell.checked .lunar-mini { color: #eafff4; }
+    .day-cell.checked.festival .day-number,
+    .day-cell.checked.festival .lunar-mini,
+    .day-cell.checked.birthday .day-number,
+    .day-cell.checked.birthday .lunar-mini { color: #ffffff; }
     .day-cell:focus-visible { outline: 3px solid rgba(18, 168, 111, 0.28); outline-offset: 1px; }
+    .today-reminder-card {
+      display: grid;
+      gap: 6px;
+      margin: 0 0 12px;
+      padding: 12px 14px;
+      border: 2px solid #fdba74;
+      border-radius: 16px;
+      background: #fff7ed;
+      color: #7c2d12;
+      font-weight: 900;
+      line-height: 1.55;
+    }
+    .today-reminder-card strong { color: #9a3412; font-size: 18px; }
+    .today-reminder-card span { color: #7c2d12; font-size: 16px; }
+    .birthday-fields {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+      padding: 12px;
+      border: 2px solid #f9a8d4;
+      border-radius: 14px;
+      background: #fff7fb;
+    }
+    .birthday-fields legend {
+      padding: 0 6px;
+      color: #be185d;
+      font-size: 17px;
+      font-weight: 950;
+    }
+    .birthday-fields label {
+      display: grid;
+      gap: 5px;
+      color: #5b1535;
+      font-size: 15px;
+      font-weight: 850;
+    }
+    .birthday-fields input,
+    .birthday-fields select {
+      width: 100%;
+      min-height: 44px;
+      padding: 10px 12px;
+      border: 1.5px solid #f9a8d4;
+      border-radius: 10px;
+      background: #ffffff;
+      color: #5b1535;
+      font-size: 16px;
+      font-weight: 750;
+    }
+    .birthday-fields .checkbox-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .birthday-fields .checkbox-line input { width: 20px; min-height: 20px; }
     .calendar-note-modal { text-align: left; }
     .calendar-note-date {
       margin: 5px 0 12px;
@@ -2385,6 +2447,28 @@
     body.neon .calendar-note-preview {
       color: #dbeafe;
     }
+    body.neon .day-cell.festival .day-number,
+    body.neon .day-cell.festival .lunar-mini {
+      color: #ff4d6d;
+      text-shadow: 0 0 10px rgba(255, 77, 109, 0.42);
+    }
+    body.neon .day-cell.birthday .day-number,
+    body.neon .day-cell.birthday .lunar-mini {
+      color: #f9a8d4;
+      text-shadow: 0 0 10px rgba(249, 168, 212, 0.44);
+    }
+    body.neon .today-reminder-card,
+    body.neon .birthday-fields {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(103, 232, 249, 0.45);
+      color: #f8fafc;
+    }
+    body.neon .today-reminder-card strong,
+    body.neon .today-reminder-card span,
+    body.neon .birthday-fields legend,
+    body.neon .birthday-fields label {
+      color: #ffffff;
+    }
     body.neon input,
     body.neon select,
     body.neon textarea {
@@ -3077,6 +3161,10 @@
         </button>
       </div>
       <div id="calendarDetails" hidden>
+        <div class="today-reminder-card" id="todayReminderCard">
+          <strong id="todayReminderTitle">今天：農曆載入中</strong>
+          <span id="todayReminderText">正在整理今天的平安提醒</span>
+        </div>
         <div class="calendar-nav">
           <button id="prevMonth" type="button" aria-label="上一個月">&#8249;</button>
           <span id="monthTitle">--</span>
@@ -3497,6 +3585,46 @@
       <label for="calendarNoteInput">今天想記下什麼？</label>
       <textarea id="calendarNoteInput" maxlength="500" placeholder="例如：回診、領藥、和家人吃飯"></textarea>
       <div class="helper" style="margin-top:6px;">記事會保存在你的會員資料中，最多 500 字。</div>
+      <fieldset class="birthday-fields">
+        <legend>家人生日提醒</legend>
+        <label for="birthdayNameInput">家人姓名
+          <input id="birthdayNameInput" maxlength="40" placeholder="例如：爸爸、媽媽、小明">
+        </label>
+        <label for="birthdayRelationInput">關係
+          <select id="birthdayRelationInput">
+            <option value="">不設定</option>
+            <option value="爸爸">爸爸</option>
+            <option value="媽媽">媽媽</option>
+            <option value="爺爺">爺爺</option>
+            <option value="奶奶">奶奶</option>
+            <option value="阿公">阿公</option>
+            <option value="阿嬤">阿嬤</option>
+            <option value="老公">老公</option>
+            <option value="老婆">老婆</option>
+            <option value="兒子">兒子</option>
+            <option value="女兒">女兒</option>
+            <option value="媳婦">媳婦</option>
+            <option value="女婿">女婿</option>
+            <option value="家人">家人</option>
+            <option value="朋友">朋友</option>
+          </select>
+        </label>
+        <label for="birthdayDateInput">生日日期
+          <input id="birthdayDateInput" type="date">
+        </label>
+        <label for="birthdayRemindDaysInput">提前提醒
+          <select id="birthdayRemindDaysInput">
+            <option value="0">當天提醒</option>
+            <option value="1">前 1 天提醒</option>
+            <option value="3">前 3 天提醒</option>
+            <option value="7">前 7 天提醒</option>
+          </select>
+        </label>
+        <label class="checkbox-line" for="birthdayYearlyInput">
+          <input id="birthdayYearlyInput" type="checkbox" checked>
+          <span>每年提醒</span>
+        </label>
+      </fieldset>
       <a class="google-calendar-link" id="googleCalendarLink" href="#" target="_blank" rel="noopener">加入 Google 日曆</a>
       <div class="actions">
         <button class="action-btn" id="deleteCalendarNoteBtn" type="button">清除記事</button>
@@ -3745,12 +3873,18 @@
       return data;
     }
 
-    async function apiSaveCalendarNote(date, content) {
+    async function apiSaveCalendarNote(date, content, birthday = {}) {
       if (useLocalMode) {
         const state = loadLocalState();
         const notes = { ...(state.calendar_notes || {}) };
         const cleanContent = String(content || "").trim();
-        if (cleanContent) notes[date] = cleanContent;
+        const birthdayPayload = normalizeBirthdayPayload(birthday);
+        if (cleanContent || birthdayPayload.birthday_name) {
+          notes[date] = {
+            content: cleanContent,
+            ...birthdayPayload
+          };
+        }
         else delete notes[date];
         state.calendar_notes = notes;
         saveLocalState(state);
@@ -3759,7 +3893,7 @@
       const res = await fetch("/api/calendar-notes", {
         method: "POST",
         headers: await authHeaders(),
-        body: JSON.stringify({ line_user_id: lineUserId, date, content })
+        body: JSON.stringify({ line_user_id: lineUserId, date, content, ...normalizeBirthdayPayload(birthday) })
       });
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error || "calendar note save failed");
@@ -5075,10 +5209,75 @@
       return lunar.festival;
     }
 
+    function noteContent(note) {
+      if (!note) return "";
+      if (typeof note === "string") return note;
+      return String(note.content || "");
+    }
+
+    function normalizeBirthdayPayload(raw = {}) {
+      const birthdayName = String(raw.birthday_name || "").trim();
+      const relationship = String(raw.birthday_relationship || "").trim();
+      const birthdayDate = String(raw.birthday_date || "").trim();
+      const remindDays = Number(raw.birthday_remind_days ?? 1);
+      return {
+        birthday_name: birthdayName,
+        birthday_relationship: relationship,
+        birthday_date: birthdayDate,
+        birthday_yearly: raw.birthday_yearly !== false,
+        birthday_remind_days: [0, 1, 3, 7].includes(remindDays) ? remindDays : 1
+      };
+    }
+
+    function noteBirthday(note) {
+      if (!note || typeof note === "string" || !note.birthday_name) return null;
+      return normalizeBirthdayPayload(note);
+    }
+
+    function birthdayMatchesDate(birthday, dateText) {
+      if (!birthday || !birthday.birthday_date) return false;
+      const birthdayDate = new Date(`${birthday.birthday_date}T12:00:00`);
+      const targetDate = new Date(`${dateText}T12:00:00`);
+      if (Number.isNaN(birthdayDate.getTime()) || Number.isNaN(targetDate.getTime())) return false;
+      if (birthday.birthday_yearly !== false) {
+        return birthdayDate.getMonth() === targetDate.getMonth() && birthdayDate.getDate() === targetDate.getDate();
+      }
+      return birthday.birthday_date === dateText;
+    }
+
+    function birthdayForDate(dateText) {
+      for (const note of Object.values(calendarNotes || {})) {
+        const birthday = noteBirthday(note);
+        if (birthdayMatchesDate(birthday, dateText)) return birthday;
+      }
+      return null;
+    }
+
+    function updateTodayReminder() {
+      const today = getToday();
+      const now = new Date(`${today}T12:00:00`);
+      const lunar = lunarInfo(now);
+      const festival = festivalForDate(now, lunar);
+      const birthday = birthdayForDate(today);
+      const title = $("todayReminderTitle");
+      const text = $("todayReminderText");
+      if (!title || !text) return;
+      title.textContent = `今天：農曆${lunar.fullLabel}`;
+      if (birthday) {
+        const who = birthday.birthday_relationship || birthday.birthday_name;
+        text.textContent = `今天是${who}生日，記得傳訊息關心一下`;
+      } else if (festival) {
+        text.textContent = `今天是${festival}，記得報個平安，也可以跟家人問聲好`;
+      } else {
+        text.textContent = "今天沒有特別節日，記得報個平安";
+      }
+    }
+
     function renderCalendar(year, month, history) {
       $("monthTitle").textContent = `${year}年 ${month + 1}月`;
       const lunarDateText = $("lunarDateText");
       if (lunarDateText) lunarDateText.textContent = `今日農曆 ${lunarInfo(new Date()).fullLabel}`;
+      updateTodayReminder();
       const monthPrefix = `${year}-${String(month + 1).padStart(2, "0")}-`;
       const monthCheckins = (history || []).filter((date) => date.startsWith(monthPrefix)).length;
       $("monthCheckinSummary").textContent = `本月已簽到 ${monthCheckins} 天`;
@@ -5095,14 +5294,18 @@
         const date = new Date(year, month, day, 12);
         const lunar = lunarInfo(date);
         const festival = festivalForDate(date, lunar);
+        const birthday = birthdayForDate(ds);
         const classes = ["day-cell"];
         if ((history || []).includes(ds)) classes.push("checked");
         if (ds === today) classes.push("today");
         if (festival) classes.push("festival");
+        if (birthday) classes.push("birthday");
         if (calendarNotes[ds]) classes.push("has-note");
-        const miniLabel = festival || lunar.dayLabel;
-        const noteLabel = calendarNotes[ds] ? `，記事：${calendarNotes[ds]}` : "";
-        html += `<button type="button" class="${classes.join(" ")}" data-date="${ds}" aria-label="${month + 1}月${day}日，農曆${escapeHtml(lunar.fullLabel)}${festival ? `，${escapeHtml(festival)}` : ""}${escapeHtml(noteLabel)}"><span class="day-number">${day}</span><span class="lunar-mini">${escapeHtml(miniLabel)}</span></button>`;
+        const miniLabel = birthday ? `${birthday.birthday_relationship || birthday.birthday_name}生日` : (festival || lunar.dayLabel);
+        const content = noteContent(calendarNotes[ds]);
+        const noteLabel = content ? `，記事：${content}` : "";
+        const birthdayLabel = birthday ? `，${birthday.birthday_name}生日` : "";
+        html += `<button type="button" class="${classes.join(" ")}" data-date="${ds}" aria-label="${month + 1}月${day}日，農曆${escapeHtml(lunar.fullLabel)}${festival ? `，${escapeHtml(festival)}` : ""}${escapeHtml(birthdayLabel)}${escapeHtml(noteLabel)}"><span class="day-number">${day}</span><span class="lunar-mini">${escapeHtml(miniLabel)}</span></button>`;
       }
       $("calendarGrid").innerHTML = html;
     }
@@ -5126,11 +5329,18 @@
       const date = new Date(`${dateText}T12:00:00`);
       const lunar = lunarInfo(date);
       const festival = festivalForDate(date, lunar);
-      const content = calendarNotes[dateText] || "";
+      const note = calendarNotes[dateText] || "";
+      const content = noteContent(note);
+      const birthday = noteBirthday(note) || { birthday_name: "", birthday_relationship: "", birthday_date: dateText, birthday_yearly: true, birthday_remind_days: 1 };
       $("calendarNoteTitle").textContent = `${date.getMonth() + 1}月${date.getDate()}日記事`;
       $("calendarNoteDateText").textContent = `農曆 ${lunar.fullLabel}${festival ? `｜${festival}` : ""}`;
       $("calendarNoteInput").value = content;
-      $("deleteCalendarNoteBtn").disabled = !content;
+      $("birthdayNameInput").value = birthday.birthday_name || "";
+      $("birthdayRelationInput").value = birthday.birthday_relationship || "";
+      $("birthdayDateInput").value = birthday.birthday_date || dateText;
+      $("birthdayYearlyInput").checked = birthday.birthday_yearly !== false;
+      $("birthdayRemindDaysInput").value = String(birthday.birthday_remind_days ?? 1);
+      $("deleteCalendarNoteBtn").disabled = !content && !birthday.birthday_name;
       $("googleCalendarLink").href = googleCalendarUrl(dateText, content);
       $("calendarNoteModal").hidden = false;
       window.setTimeout(() => $("calendarNoteInput").focus(), 100);
@@ -5145,10 +5355,17 @@
       if (!selectedCalendarDate) return;
       const saveButton = $("saveCalendarNoteBtn");
       const content = contentOverride === undefined ? $("calendarNoteInput").value : contentOverride;
+      const birthday = contentOverride === "" ? {} : {
+        birthday_name: $("birthdayNameInput").value,
+        birthday_relationship: $("birthdayRelationInput").value,
+        birthday_date: $("birthdayDateInput").value,
+        birthday_yearly: $("birthdayYearlyInput").checked,
+        birthday_remind_days: Number($("birthdayRemindDaysInput").value || 1)
+      };
       saveButton.disabled = true;
       saveButton.textContent = "儲存中";
       try {
-        const result = await apiSaveCalendarNote(selectedCalendarDate, content);
+        const result = await apiSaveCalendarNote(selectedCalendarDate, content, birthday);
         calendarNotes = result.notes || {};
         renderCalendar(currentYear, currentMonth, historyData);
         closeCalendarNote();

@@ -1,8 +1,9 @@
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
-from app import get_calendar_notes, save_calendar_note
+from app import get_calendar_notes, save_calendar_note, send_birthday_reminders
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,6 +64,43 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertEqual(size_code, 400)
         self.assertEqual(oversized["error"], "note too long")
 
+    def test_birthday_note_can_be_saved_and_reminded(self):
+        created, code = save_calendar_note(
+            self.data_file,
+            {
+                "line_user_id": "U-calendar",
+                "date": "2026-08-08",
+                "content": "記得打電話",
+                "birthday_name": "爸爸",
+                "birthday_relationship": "爸爸",
+                "birthday_date": "2026-08-08",
+                "birthday_yearly": True,
+                "birthday_remind_days": 1,
+            },
+        )
+
+        self.assertEqual(code, 200)
+        self.assertEqual(created["notes"]["2026-08-08"]["birthday_name"], "爸爸")
+
+        sent_messages = []
+
+        def fake_sender(token, line_user_id, message):
+            sent_messages.append((line_user_id, message))
+            return {"ok": True}
+
+        result, code = send_birthday_reminders(
+            {
+                "DATA_FILE": self.data_file,
+                "LINE_CHANNEL_ACCESS_TOKEN": "token",
+                "LINE_PUSH_SENDER": fake_sender,
+                "CRON_NOW": datetime(2026, 8, 7, 9, 0),
+            }
+        )
+
+        self.assertEqual(code, 200)
+        self.assertEqual(result["sent"], 1)
+        self.assertIn("明天是爸爸生日", sent_messages[0][1])
+
     def test_calendar_ui_contains_lunar_festivals_notes_and_google_entry(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
 
@@ -72,6 +110,10 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertIn("lunar-mini", page)
         self.assertIn("TAIWAN_FESTIVALS", page)
         self.assertIn("LUNAR_FESTIVALS", page)
+        self.assertIn('id="todayReminderCard"', page)
+        self.assertIn('id="birthdayNameInput"', page)
+        self.assertIn("birthday-reminders", (ROOT / "app.py").read_text(encoding="utf-8"))
+        self.assertIn("body.neon .day-cell.festival .day-number", page)
 
 
 if __name__ == "__main__":
