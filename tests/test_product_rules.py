@@ -51,15 +51,35 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn(".check-btn.danger {", page)
         self.assertIn("color: #fff !important;", page)
 
-    def test_guardian_invite_card_uses_accessible_pink_style(self):
+    def test_guardian_invite_card_uses_theme_readable_style(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
 
         self.assertIn('♡ 緊急聯絡人', page)
-        self.assertIn("background: linear-gradient(135deg, #fff1f7", page)
-        self.assertIn("border: 2px solid #f472b6", page)
-        self.assertIn("color: #be185d", page)
+        self.assertIn("background: linear-gradient(135deg, #ecfdf5", page)
+        self.assertIn("border: 2px solid #22c55e", page)
+        self.assertIn("body.neon .settings[aria-label=\"緊急聯絡人\"] .contact-primary", page)
+        self.assertIn("background: linear-gradient(135deg, #67e8f9 0%, #38bdf8 100%)", page)
         self.assertIn("font-size: 20px", page)
         self.assertIn("一鍵邀請守護人", page)
+
+    def test_warm_mobile_ui_and_calendar_expand_rules(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        help_page = (ROOT / "help.html").read_text(encoding="utf-8")
+        rich_menu_script = (ROOT / "scripts" / "generate_rich_menu_image.py").read_text(encoding="utf-8")
+
+        self.assertIn("body.neon .mvp-brand", page)
+        self.assertIn("body.neon .mvp-welcome-sub", page)
+        self.assertIn("color: #d1d5db", page)
+        self.assertIn(".day-cell.festival .lunar-mini { color: #dc2626", page)
+        self.assertIn('if (tabName === "history") setCalendarExpanded(true);', page)
+        self.assertIn("每日平安圖文教學", help_page)
+        self.assertIn("對方需要加入「每日平安」官方帳號", help_page)
+        self.assertIn("進入「平安紀錄」會直接展開月曆", help_page)
+        self.assertIn('id="sos"', help_page)
+        self.assertIn('("一鍵邀請", "heart", "邀請守護人")', rich_menu_script)
+        self.assertIn('("SOS 求救", "sos", "長按 3 秒求助")', rich_menu_script)
+        self.assertIn("typeof liff.scanCodeV2 === \"function\"", page)
+        self.assertIn("iPhone 與 Android 都比較穩定", page)
 
     def test_today_status_stays_open_with_checkin_at_top(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

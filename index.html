@@ -309,8 +309,8 @@
     }
     .calendar-toggle strong,
     .calendar-toggle small { display: block; }
-    .calendar-toggle strong { font-size: 17px; }
-    .calendar-toggle small { margin-top: 3px; color: var(--muted); font-size: 14px; font-weight: 750; }
+    .calendar-toggle strong { font-size: 20px; color: #7c2d12; font-weight: 950; }
+    .calendar-toggle small { margin-top: 4px; color: #9a3412; font-size: 15px; font-weight: 850; }
     .lunar-date {
       color: #087f5b !important;
       font-size: 15px !important;
@@ -323,7 +323,7 @@
       transition: transform 0.18s ease;
     }
     .calendar-toggle[aria-expanded="true"] .calendar-chevron { transform: rotate(180deg); }
-    #calendarDetails { padding-top: 10px; border-top: 1px solid var(--line); }
+    #calendarDetails { padding-top: 12px; border-top: 2px solid #fed7aa; }
     #calendarDetails[hidden] { display: none; }
     .calendar-nav {
       display: flex;
@@ -347,9 +347,11 @@
       width: 36px;
       height: 36px;
       border-radius: 50%;
-      border: 1px solid var(--line);
-      background: transparent;
-      color: inherit;
+      border: 2px solid #f9a8d4;
+      background: #fff;
+      color: #be185d;
+      font-size: 18px;
+      font-weight: 950;
       cursor: pointer;
     }
     .calendar-grid {
@@ -365,16 +367,16 @@
       border-radius: 8px;
       font-size: 13px;
     }
-    .day-name { height: 28px; aspect-ratio: auto; color: var(--muted); font-weight: 800; }
+    .day-name { height: 28px; aspect-ratio: auto; color: #9a3412; font-weight: 900; }
     .day-cell {
       position: relative;
       align-content: center;
       gap: 1px;
       border: 1px solid transparent;
       padding: 3px 1px;
-      color: var(--text);
-      background: transparent;
-      font-weight: 800;
+      color: #1f2937;
+      background: rgba(255, 255, 255, 0.68);
+      font-weight: 950;
       cursor: pointer;
     }
     .day-cell.blank { cursor: default; }
@@ -382,15 +384,15 @@
     .lunar-mini {
       max-width: 100%;
       overflow: hidden;
-      color: var(--muted);
+      color: #6b7280;
       font-size: 10px;
       font-weight: 750;
       line-height: 1.15;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .day-cell.festival { background: #fff7e6; border-color: #f2c879; }
-    .day-cell.festival .lunar-mini { color: #9a4e0b; font-weight: 900; }
+    .day-cell.festival { background: #fff1f2; border-color: #fb7185; }
+    .day-cell.festival .lunar-mini { color: #dc2626; font-weight: 950; }
     .day-cell.has-note::after {
       content: "";
       position: absolute;
@@ -402,7 +404,7 @@
       background: #e5484d;
       box-shadow: 0 0 0 2px var(--panel);
     }
-    .day-cell.today { outline: 2px solid var(--today); outline-offset: -2px; }
+    .day-cell.today { outline: 3px solid #f472b6; outline-offset: -2px; background: #fff7ed; }
     .day-cell.checked {
       background: #12a86f;
       color: #fff;
@@ -477,27 +479,30 @@
       gap: 12px;
       border: 0;
       background: transparent;
-      color: var(--text);
+      color: #5b1535;
       cursor: pointer;
       text-align: left;
-      font-weight: 900;
+      font-size: 24px;
+      font-weight: 950;
     }
-    .member-center-toggle span { color: var(--accent); font-size: 22px; }
+    .member-center-toggle span { color: #db2777; font-size: 28px; }
     .member-center-toggle[aria-expanded="true"] span { transform: rotate(180deg); }
-    .member-center-details { padding-top: 12px; border-top: 1px solid var(--line); }
+    .member-center-details { padding-top: 14px; border-top: 2px solid #f9a8d4; }
     .member-center-details[hidden] { display: none; }
     .member-profile-row {
       display: grid;
-      grid-template-columns: 44px minmax(0, 1fr) auto;
-      gap: 10px;
+      grid-template-columns: 54px minmax(0, 1fr) auto;
+      gap: 12px;
       align-items: center;
-      padding-bottom: 12px;
-      border-bottom: 1px solid var(--line);
+      padding: 14px;
+      border: 1px solid #fbcfe8;
+      border-radius: 18px;
+      background: linear-gradient(135deg, #fff7ed 0%, #fff1f7 100%);
     }
     .member-avatar,
     .member-avatar-img {
-      width: 44px;
-      height: 44px;
+      width: 54px;
+      height: 54px;
       display: grid;
       place-items: center;
       border-radius: 50%;
@@ -546,11 +551,13 @@
     }
     .helper {
       color: var(--muted);
-      font-size: 13px;
+      font-size: 15px;
+      line-height: 1.65;
     }
     .member-profile-row strong,
     .member-profile-row small { display: block; }
-    .member-profile-row small { margin-top: 3px; color: var(--muted); line-height: 1.45; }
+    .member-profile-row strong { color: #5b1535; font-size: 20px; }
+    .member-profile-row small { margin-top: 3px; color: #8a3f5f; font-size: 15px; line-height: 1.45; }
     .member-upgrade-btn {
       display: inline-flex;
       align-items: center;
@@ -586,9 +593,15 @@
       text-align: left;
     }
     .payment-order-notice[hidden] { display: none; }
-    .member-data-section { padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .member-data-section {
+      margin-top: 14px;
+      padding: 16px;
+      border: 1px solid #f9a8d4;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.72);
+    }
     .member-data-section:last-child { border-bottom: 0; padding-bottom: 0; }
-    .member-data-section h3 { margin-bottom: 8px; font-size: 15px; color: var(--text); }
+    .member-data-section h3 { margin-bottom: 8px; font-size: 21px; color: #5b1535; font-weight: 950; }
     .guardian-details-form { display: grid; gap: 14px; margin-top: 12px; }
     .guardian-details-form .form-field {
       display: grid;
@@ -627,12 +640,13 @@
       justify-content: space-between;
       gap: 10px;
       padding: 8px 0;
-      color: var(--muted);
-      font-size: 13px;
+      color: #8a3f5f;
+      font-size: 16px;
+      font-weight: 800;
       line-height: 1.5;
     }
-    .member-data-row + .member-data-row { border-top: 1px dashed var(--line); }
-    .member-data-row strong { color: var(--text); text-align: right; }
+    .member-data-row + .member-data-row { border-top: 1px dashed #f9a8d4; }
+    .member-data-row strong { color: #5b1535; text-align: right; font-size: 16px; }
     .member-advanced-note {
       padding: 10px;
       border-left: 4px solid var(--accent);
@@ -802,36 +816,45 @@
       margin-bottom: 10px;
     }
     .contact-primary {
-      background: linear-gradient(135deg, #fff1f7 0%, #ffe4ef 52%, #ffd6e8 100%);
-      border: 2px solid #f472b6;
-      color: #831843;
-      box-shadow: 0 14px 30px rgba(236, 72, 153, 0.2);
+      background: linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 56%, #ffffff 100%);
+      border: 2px solid #22c55e;
+      color: #14532d;
+      box-shadow: 0 14px 30px rgba(34, 197, 94, 0.18);
     }
     .contact-primary .price-head strong,
     .contact-primary .helper {
-      color: #831843;
+      color: #14532d;
       font-weight: 950;
     }
+    .contact-primary .price-head strong { font-size: 23px; }
+    .contact-primary .helper {
+      margin-top: 10px;
+      padding: 11px 12px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.86);
+      font-size: 17px;
+      line-height: 1.7;
+    }
     .contact-primary .price-head span {
-      background: #f9a8d4;
-      color: #831843;
-      border-color: #f472b6;
+      background: #dcfce7;
+      color: #166534;
+      border-color: #86efac;
       font-weight: 950;
     }
     .contact-primary .price-btn {
       min-height: 58px;
-      background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
+      background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
       color: #fff;
       border-color: transparent;
       font-size: 20px;
       font-weight: 950;
-      box-shadow: 0 12px 24px rgba(219, 39, 119, 0.26);
+      box-shadow: 0 12px 24px rgba(34, 197, 94, 0.26);
     }
     .settings[aria-label="緊急聯絡人"] .settings-title,
     .settings[aria-label="緊急聯絡人"] .price-head strong {
       font-size: 24px;
       font-weight: 950;
-      color: #be185d;
+      color: #15803d;
     }
     .settings[aria-label="緊急聯絡人"] .helper {
       font-size: 17px;
@@ -841,7 +864,7 @@
     }
     .settings[aria-label="緊急聯絡人"] .contact-primary .price-head strong,
     .settings[aria-label="緊急聯絡人"] .contact-primary .helper {
-      color: #831843;
+      color: #14532d;
     }
     .manual-contact-title {
       display: flex;
@@ -2147,19 +2170,20 @@
       text-align: left;
     }
     .guardian-group-guide .settings-title {
-      font-size: 24px;
-      color: #0f3d2e;
+      font-size: 26px;
+      color: #5b1535;
+      font-weight: 950;
     }
     .guardian-group-guide-intro {
       margin: 12px 0 16px;
       padding: 16px;
-      border: 2px solid #22c55e;
+      border: 2px solid #f9a8d4;
       border-radius: 14px;
-      background: linear-gradient(180deg, #ecfdf5 0%, #f0fdf4 100%);
-      color: #14532d;
+      background: linear-gradient(180deg, #fff7ed 0%, #fff1f7 100%);
+      color: #5b1535;
       font-size: 18px;
-      font-weight: 850;
-      line-height: 1.7;
+      font-weight: 950;
+      line-height: 1.75;
     }
     .guardian-group-steps {
       display: grid;
@@ -2282,6 +2306,82 @@
       font-size: clamp(17px, 4.5vw, 20px);
       font-weight: 700;
       color: #444;
+    }
+    body.neon .mvp-brand,
+    body.neon .mvp-welcome {
+      color: #fff;
+      text-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+    }
+    body.neon .mvp-slogan {
+      color: #d1fae5;
+      font-size: clamp(18px, 4.8vw, 22px);
+      font-weight: 950;
+    }
+    body.neon .mvp-welcome-sub {
+      color: #d1d5db;
+      font-size: clamp(18px, 4.8vw, 21px);
+      font-weight: 900;
+    }
+    .calendar-box,
+    .settings[aria-label="會員個人中心"] {
+      background: linear-gradient(180deg, #fff7ed 0%, #fff1f7 100%);
+      border: 2px solid #f9a8d4;
+      color: #5b1535;
+    }
+    body.neon .calendar-box,
+    body.neon .settings[aria-label="會員個人中心"],
+    body.neon .settings[aria-label="緊急聯絡人"] {
+      background: #121a27;
+      border-color: #67e8f9;
+      color: #bae6fd;
+    }
+    body.neon .calendar-box .calendar-month,
+    body.neon .calendar-box .day-cell,
+    body.neon .settings[aria-label="會員個人中心"] .member-data-row,
+    body.neon .settings[aria-label="會員個人中心"] .helper {
+      color: #5b1535;
+    }
+    body.neon .check-btn:not(.danger):not(.warning),
+    body.neon .check-btn.checked:not(.danger):not(.warning) {
+      background: radial-gradient(circle at 35% 30%, #ffffff 0%, #ecfeff 48%, #67e8f9 100%);
+      color: #0f172a;
+      box-shadow: 0 0 0 10px rgba(255,255,255,0.08), 0 0 44px rgba(103,232,249,0.38);
+    }
+    body.neon .check-btn:not(.danger):not(.warning) .sub,
+    body.neon .check-btn.checked:not(.danger):not(.warning) .sub {
+      color: #164e63;
+    }
+    body.neon .settings[aria-label="緊急聯絡人"] .settings-title,
+    body.neon .settings[aria-label="緊急聯絡人"] .price-head strong,
+    body.neon .settings[aria-label="緊急聯絡人"] .helper {
+      color: #bae6fd;
+    }
+    body.neon .settings[aria-label="緊急聯絡人"] .contact-card {
+      background: #182638;
+      border-color: #4dbbd1;
+    }
+    body.neon .settings[aria-label="緊急聯絡人"] .contact-primary {
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.96) 0%, rgba(12, 74, 110, 0.88) 100%);
+      border-color: #67e8f9;
+      color: #bae6fd;
+      box-shadow: 0 0 32px rgba(103, 232, 249, 0.2);
+    }
+    body.neon .settings[aria-label="緊急聯絡人"] .contact-primary .helper {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(186, 230, 253, 0.28);
+      color: #bae6fd;
+    }
+    body.neon .settings[aria-label="緊急聯絡人"] .contact-primary .price-head span {
+      background: rgba(103, 232, 249, 0.16);
+      color: #e0f2fe;
+      border-color: #67e8f9;
+    }
+    body.neon .settings[aria-label="緊急聯絡人"] .contact-primary .price-btn,
+    body.neon .settings[aria-label="緊急聯絡人"] .scan-qr-btn {
+      background: linear-gradient(135deg, #67e8f9 0%, #38bdf8 100%);
+      color: #082f49;
+      border-color: transparent;
+      box-shadow: 0 12px 26px rgba(56, 189, 248, 0.28);
     }
     .mvp-hero-img {
       display: block;
@@ -3294,7 +3394,7 @@
   <div class="modal-backdrop" id="qrScannerPrompt" hidden>
     <div class="guardian-modal">
       <h2>掃描好友邀請碼</h2>
-      <p>請把好友的 QR Code 放進畫面中，掃描成功後會自動帶入邀請碼。</p>
+      <p>請把好友的 QR Code 放進畫面中。iPhone 或 Android 若無法開啟掃描，請改用「一鍵 LINE 分享」邀請。</p>
       <video class="qr-video" id="qrVideo" playsinline muted></video>
       <div class="actions">
         <button class="action-btn" id="closeQrScannerBtn" type="button">關閉相機</button>
@@ -4678,8 +4778,23 @@
     }
 
     async function startQrScanner() {
+      if (window.liff && liff.isInClient && liff.isInClient() && typeof liff.scanCodeV2 === "function") {
+        try {
+          const result = await liff.scanCodeV2();
+          const rawValue = result?.value || result?.rawValue || result?.text || "";
+          const code = extractFriendInviteCode(rawValue);
+          if (!code) throw new Error("沒有讀到有效的每日平安邀請碼。");
+          pendingFriendInviteCode = code;
+          $("friendInviteStatus").textContent = "已讀取好友邀請，可以加入好友";
+          alert("已讀取好友邀請碼，確認後按「加入好友」。");
+          return;
+        } catch (error) {
+          alert((error && error.message) || "LINE 掃描沒有完成，請再試一次，或請好友用一鍵 LINE 分享邀請你。");
+          return;
+        }
+      }
       if (!("BarcodeDetector" in window) || !navigator.mediaDevices?.getUserMedia) {
-        alert("這台裝置暫時不支援直接掃描，請好友改用 LINE 分享邀請連結給你。");
+        alert("這台裝置暫時不支援直接掃描 QR Code。請好友按「一鍵 LINE 分享」傳邀請給你，iPhone 與 Android 都比較穩定。");
         return;
       }
       try {
@@ -6256,6 +6371,7 @@
       if (guardianSection) guardianSection.hidden = true;
       // 會員中心預設展開，方便編輯／刪除守護人
       if (tabName === "member") setMemberCenterExpanded(true);
+      if (tabName === "history") setCalendarExpanded(true);
       // 更新 nav active
       document.querySelectorAll(".nav-item").forEach(n => {
         n.classList.toggle("active", n.dataset.tab === tabName);

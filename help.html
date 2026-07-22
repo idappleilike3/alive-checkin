@@ -8,47 +8,66 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       min-height: 100vh;
-      background: #fff7ed;
-      color: #102a1f;
+      background:
+        radial-gradient(circle at top left, rgba(255, 236, 213, 0.9), transparent 34%),
+        linear-gradient(180deg, #fff7ed 0%, #fff1f7 48%, #eefdf8 100%);
+      color: #5b1535;
       font-family: "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
       line-height: 1.7;
     }
     .page {
-      width: min(100%, 720px);
+      width: min(100%, 760px);
       margin: 0 auto;
       padding: 20px 16px 96px;
     }
     .hero {
-      padding: 24px 18px;
-      border-radius: 22px;
-      background: linear-gradient(180deg, #ecfdf5 0%, #ffffff 100%);
-      border: 2px solid #86efac;
-      box-shadow: 0 18px 36px rgba(15, 118, 110, 0.14);
+      overflow: hidden;
+      position: relative;
+      padding: 28px 18px;
+      border-radius: 24px;
+      background: linear-gradient(135deg, #ffe4ef 0%, #fff7ed 58%, #ecfdf5 100%);
+      border: 2px solid #f9a8d4;
+      box-shadow: 0 18px 38px rgba(219, 39, 119, 0.16);
       text-align: center;
     }
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -34px;
+      bottom: -44px;
+      width: 150px;
+      height: 150px;
+      border-radius: 50%;
+      background: rgba(20, 184, 166, 0.18);
+    }
     .hero h1 {
-      font-size: clamp(30px, 8vw, 42px);
+      position: relative;
+      z-index: 1;
+      font-size: clamp(34px, 9vw, 46px);
       font-weight: 950;
-      color: #064e3b;
-      line-height: 1.25;
+      color: #be185d;
+      line-height: 1.2;
     }
     .hero p {
+      position: relative;
+      z-index: 1;
       margin-top: 10px;
-      font-size: clamp(18px, 4.8vw, 22px);
-      font-weight: 850;
-      color: #0f766e;
+      font-size: clamp(20px, 5.2vw, 24px);
+      font-weight: 950;
+      color: #7c2d12;
     }
     .back {
       display: grid;
       place-items: center;
-      min-height: 54px;
+      min-height: 58px;
       margin: 16px 0;
       border-radius: 999px;
-      background: #0f766e;
+      background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
       color: #fff;
       text-decoration: none;
-      font-size: 19px;
+      font-size: 21px;
       font-weight: 950;
+      box-shadow: 0 12px 24px rgba(219, 39, 119, 0.22);
     }
     .guide-grid {
       display: grid;
@@ -57,38 +76,39 @@
     }
     .guide-card {
       padding: 18px;
-      border-radius: 18px;
-      background: #fff;
-      border: 2px solid #d1fae5;
-      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.9);
+      border: 2px solid #f9a8d4;
+      box-shadow: 0 12px 28px rgba(91, 21, 53, 0.09);
     }
     .guide-card h2 {
       display: flex;
       align-items: center;
       gap: 10px;
       margin-bottom: 10px;
-      font-size: clamp(24px, 6vw, 30px);
+      font-size: clamp(25px, 6.2vw, 32px);
       font-weight: 950;
-      color: #102a1f;
+      color: #5b1535;
       line-height: 1.25;
     }
     .num {
-      width: 44px;
-      height: 44px;
+      width: 48px;
+      height: 48px;
       display: inline-grid;
       place-items: center;
       flex: 0 0 auto;
       border-radius: 50%;
-      background: #06c755;
+      background: linear-gradient(135deg, #ec4899, #14b8a6);
       color: #fff;
-      font-size: 24px;
+      font-size: 25px;
       font-weight: 950;
+      box-shadow: 0 8px 18px rgba(20, 184, 166, 0.18);
     }
     .guide-card p,
     .guide-card li {
-      font-size: clamp(18px, 4.7vw, 21px);
-      font-weight: 800;
-      color: #334155;
+      font-size: clamp(19px, 5vw, 22px);
+      font-weight: 850;
+      color: #3f1d2d;
     }
     .guide-card ul,
     .guide-card ol {
@@ -98,17 +118,22 @@
     .note {
       margin-top: 12px;
       padding: 14px;
-      border-radius: 14px;
-      background: #fffbeb;
-      border: 2px solid #facc15;
-      color: #713f12;
-      font-size: clamp(17px, 4.5vw, 20px);
-      font-weight: 850;
+      border-radius: 16px;
+      background: #fff7ed;
+      border: 2px solid #fdba74;
+      color: #7c2d12;
+      font-size: clamp(18px, 4.7vw, 21px);
+      font-weight: 900;
     }
     .danger {
-      background: #fef2f2;
-      border-color: #f87171;
-      color: #7f1d1d;
+      background: #fff1f2;
+      border-color: #fb7185;
+      color: #991b1b;
+    }
+    .soft {
+      background: #ecfdf5;
+      border-color: #5eead4;
+      color: #115e59;
     }
     .cta-row {
       display: grid;
@@ -118,62 +143,79 @@
     .cta {
       display: grid;
       place-items: center;
-      min-height: 58px;
+      min-height: 60px;
       border-radius: 999px;
       text-decoration: none;
-      font-size: 20px;
+      font-size: 21px;
       font-weight: 950;
     }
     .cta.line { background: #06c755; color: #fff; }
-    .cta.dark { background: #0f172a; color: #fff; }
+    .cta.dark { background: #5b1535; color: #fff; }
+    .mini-title {
+      display: inline-block;
+      margin-bottom: 8px;
+      padding: 5px 12px;
+      border-radius: 999px;
+      background: #ffe4ef;
+      color: #be185d;
+      font-size: 18px;
+      font-weight: 950;
+    }
   </style>
 </head>
 <body>
   <main class="page">
     <section class="hero">
-      <h1>每日平安使用教學</h1>
-      <p>每天 10 秒，報個平安。平常不打擾，有事才通知守護人。</p>
+      <h1>每日平安圖文教學</h1>
+      <p>每天 10 秒，報個平安</p>
     </section>
 
-    <a class="back" href="index.html">回到首頁</a>
+    <a class="back" href="index.html">回到每日平安首頁</a>
 
     <section class="guide-grid" aria-label="使用教學圖文步驟">
       <article class="guide-card">
-        <h2><span class="num">1</span>先綁定一位守護人</h2>
-        <p>第一次使用請先邀請一位信任的人，完成 LINE 綁定後，系統才知道緊急時要通知誰。</p>
-        <div class="note">對方需要加入「每日平安」官方帳號，並點開邀請連結同意綁定，才算完成。</div>
+        <h2><span class="num">1</span>第一次先綁定守護人</h2>
+        <p>請先邀請一位信任的家人或朋友。完成後，系統才知道緊急時要通知誰。</p>
+        <div class="note">對方需要加入「每日平安」官方帳號，點開你的邀請連結並同意綁定，才算完成。</div>
       </article>
 
       <article class="guide-card">
-        <h2><span class="num">2</span>每天點「我平安」</h2>
-        <p>首頁大圓鈕點一下就完成今日平安回報。你主動簽到時，不會打擾任何守護人。</p>
+        <h2><span class="num">2</span>一鍵邀請守護人</h2>
+        <p>按下首頁的「一鍵邀請守護人」，會直接開啟 LINE 分享，不用複製邀請碼。</p>
+        <div class="note soft">守護人無須另外註冊帳號，只要同意綁定，就能在緊急時收到 LINE 通知。</div>
       </article>
 
       <article class="guide-card">
-        <h2><span class="num">3</span>逾期才通知守護人</h2>
+        <h2><span class="num">3</span>每天點我平安</h2>
+        <p>首頁大按鈕點一下，就完成今天的平安回報。你主動簽到時，不會打擾任何人。</p>
+      </article>
+
+      <article class="guide-card">
+        <h2><span class="num">4</span>逾期才通知守護人</h2>
         <p>如果超過時間沒有簽到，系統會先提醒你。仍未回應時，才依方案通知指定守護人。</p>
         <div class="note danger">有立即危險請直接撥打 119 或 110。本服務是提醒與通知工具，不取代報警或救護。</div>
       </article>
 
       <article class="guide-card">
-        <h2><span class="num">4</span>安全守護怎麼用</h2>
+        <h2><span class="num">5</span>安全守護怎麼用</h2>
         <p>外出、看診、夜歸時，可開啟安全守護。位置只在指定時段分享給守護人，時間到會自動停止。</p>
       </article>
 
-      <article class="guide-card">
-        <h2><span class="num">5</span>SOS 緊急求助</h2>
-        <p>真的需要幫忙時，請在首頁點 SOS。有效的 799 守護版會員長按 3 秒才會送出通知，避免誤觸。</p>
-        <div class="note danger">有立即危險請直接撥打 119 或 110，SOS 是通知守護人的輔助功能。</div>
+      <article class="guide-card" id="sos">
+        <h2><span class="num">6</span>SOS 長按 3 秒</h2>
+        <p>SOS 是緊急求助入口。有效的 799 守護版會員長按 3 秒才會送出通知，避免誤觸。</p>
+        <div class="note danger">如果已經有危險，請先打 119 或 110，再使用 SOS 通知守護人。</div>
       </article>
 
       <article class="guide-card">
-        <h2><span class="num">6</span>守護群設定</h2>
+        <h2><span class="num">7</span>LINE 守護群設定</h2>
         <ol>
           <li>在 LINE 建立家人群組</li>
           <li>把「每日平安」官方帳號邀進群</li>
-          <li>由有效 799 會員輸入「點我綁定守護群」</li>
+          <li>由管理員點「點我綁定守護群」</li>
           <li>看到「我已完成守護群設定」就成功</li>
         </ol>
+        <div class="note">守護群只接收群內提醒；核心緊急通知仍以你設定的守護人為主。</div>
         <div class="cta-row">
           <a class="cta line" href="https://line.me/R/ti/p/%40042kwqib">加入每日平安官方帳號</a>
           <a class="cta dark" href="index.html#guardians">查看守護群教學</a>
@@ -181,8 +223,9 @@
       </article>
 
       <article class="guide-card">
-        <h2><span class="num">7</span>月曆與平安紀錄</h2>
-        <p>進入「平安紀錄」可以展開或收合月曆。綠色代表已簽到，紅點代表有記事，點日期可以新增記事。</p>
+        <h2><span class="num">8</span>平安紀錄月曆</h2>
+        <p>進入「平安紀錄」會直接展開月曆，也可以自己收合。重要節日會用紅字標示，點日期可新增記事。</p>
+        <div class="note soft">之後若要串接 Google 日曆，可以把記事同步到自己的行事曆。</div>
       </article>
     </section>
   </main>
