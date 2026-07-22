@@ -69,6 +69,32 @@
       font-weight: 950;
       box-shadow: 0 12px 24px rgba(219, 39, 119, 0.22);
     }
+    .quick-actions,
+    .bottom-actions {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin: 16px 0;
+    }
+    .bottom-actions {
+      grid-template-columns: repeat(2, 1fr);
+      margin-top: 18px;
+    }
+    .nav-btn {
+      display: grid;
+      place-items: center;
+      min-height: 58px;
+      padding: 10px;
+      border-radius: 18px;
+      text-decoration: none;
+      text-align: center;
+      font-size: clamp(18px, 4.8vw, 21px);
+      font-weight: 950;
+      border: 2px solid transparent;
+    }
+    .nav-btn.home { background: #ecfdf5; color: #065f46; border-color: #34d399; }
+    .nav-btn.upgrade { background: linear-gradient(135deg, #ef4444 0%, #e11d48 100%); color: #fff; box-shadow: 0 12px 26px rgba(225, 29, 72, 0.22); }
+    .nav-btn.faq { background: #fff7ed; color: #9a3412; border-color: #fb923c; }
     .guide-grid {
       display: grid;
       gap: 14px;
@@ -161,6 +187,10 @@
       font-size: 18px;
       font-weight: 950;
     }
+    @media (max-width: 520px) {
+      .quick-actions { grid-template-columns: 1fr; }
+      .bottom-actions { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -171,6 +201,11 @@
     </section>
 
     <a class="back" href="index.html">回到每日平安首頁</a>
+    <nav class="quick-actions" aria-label="教學快速操作">
+      <a class="nav-btn home" href="https://liff.line.me/2010674803-rK98c0lo/?open=home">回到首頁</a>
+      <a class="nav-btn upgrade" href="https://liff.line.me/2010674803-rK98c0lo/?open=pricing">立即升級守護</a>
+      <a class="nav-btn faq" href="https://liff.line.me/2010674803-rK98c0lo/?open=faq">問與答</a>
+    </nav>
 
     <section class="guide-grid" aria-label="使用教學圖文步驟">
       <article class="guide-card">
@@ -228,6 +263,10 @@
         <div class="note soft">之後若要串接 Google 日曆，可以把記事同步到自己的行事曆。</div>
       </article>
     </section>
+    <nav class="bottom-actions" aria-label="教學頁底部操作">
+      <a class="nav-btn upgrade" href="https://liff.line.me/2010674803-rK98c0lo/?open=pricing">立即升級守護</a>
+      <a class="nav-btn home" href="https://liff.line.me/2010674803-rK98c0lo/?open=home">回到首頁</a>
+    </nav>
   </main>
 </body>
 </html>

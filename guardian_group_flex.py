@@ -979,11 +979,15 @@ def welcome_flex(display_name: str | None = None):
 
     display_name：LINE 顯示名稱；缺省時用「您」。
     主 CTA：永久 liff.line.me 入口（內嵌）→ 先一鍵分享邀請 → 再填守護人表單 → 私訊預警提醒設定。
-    僅保留一個大按鈕；標題／內文放大方便閱讀。不使用 BOT 字眼。
+    主按鈕加上教學／方案／問答入口；標題／內文放大方便閱讀。不使用 BOT 字眼。
     """
     name = (display_name or "").strip() or "您"
     # 永久連結：開 LIFF 內嵌 → onboarding（分享邀請 → 守護人表單 → 提醒）。勿硬編碼 OAuth code/state。
     bind_uri = liff_entry_url(open_action="onboarding")
+    home_uri = liff_entry_url(open_action="home")
+    pricing_uri = liff_entry_url(open_action="pricing")
+    faq_uri = liff_entry_url(open_action="faq")
+    sos_help_uri = liff_entry_url(open_action="help", section="sos")
     hero_uri = f"{(os.environ.get('APP_PUBLIC_URL') or PUBLIC_BASE).rstrip('/')}/assets/daily-peace-hero.png"
     return {
         "type": "bubble",
@@ -1108,7 +1112,40 @@ def welcome_flex(display_name: str | None = None):
                     "action": {
                         "type": "uri",
                         "label": "SOS 長按教學",
-                        "uri": f"{PUBLIC_BASE}/help.html#sos",
+                        "uri": sos_help_uri,
+                    },
+                    "style": "link",
+                    "color": GRAY,
+                    "height": "sm",
+                },
+                {
+                    "type": "button",
+                    "action": {
+                        "type": "uri",
+                        "label": "立即升級守護",
+                        "uri": pricing_uri,
+                    },
+                    "style": "link",
+                    "color": RED_WARN,
+                    "height": "sm",
+                },
+                {
+                    "type": "button",
+                    "action": {
+                        "type": "uri",
+                        "label": "問與答",
+                        "uri": faq_uri,
+                    },
+                    "style": "link",
+                    "color": GREEN_DARK,
+                    "height": "sm",
+                },
+                {
+                    "type": "button",
+                    "action": {
+                        "type": "uri",
+                        "label": "回到首頁",
+                        "uri": home_uri,
                     },
                     "style": "link",
                     "color": GRAY,

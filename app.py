@@ -204,14 +204,23 @@ def line_status_summary(status):
     )
 
 
+def line_liff_url(open_action):
+    if liff_entry_url is not None:
+        return liff_entry_url(open_action=open_action)
+    liff_id = (os.environ.get("LIFF_ID") or "2010674803-rK98c0lo").strip()
+    return f"https://liff.line.me/{liff_id}/?open={open_action}"
+
+
 def line_plan_message():
+    pricing_url = line_liff_url("pricing")
     return (
         "目前方案重點整理：\n"
         "199 平安版：月費 4 位、年費 6 位，LINE 通知核心守護人。\n"
         "399 安心版：月費 15 位、年費 25 位，LINE 通知核心守護人；年費含即時定位體驗。\n"
         "799 守護版：月費 NT$799，25 位緊急聯絡人、一鍵 SOS、守護群；逾時以 LINE 通知核心守護人。\n\n"
         "年費方案都有明確折扣；799 月費可建立 1 個守護群，年費可建立 3 個守護群。\n"
-        "安全守護可在指定時段分享平安狀態與單次定位；簡訊預警稍後開放，售價權益以線上實際功能為準。"
+        "安全守護可在指定時段分享平安狀態與單次定位；簡訊預警稍後開放，售價權益以線上實際功能為準。\n\n"
+        f"查看完整方案：{pricing_url}"
     )
 
 
@@ -261,6 +270,8 @@ def line_auto_reply_text(text, status=None):
             "目前可先使用手機瀏覽器或 LINE 內建的文字縮放功能。"
         )
     if any(keyword in text for keyword in FAQ_KEYWORDS):
+        faq_url = line_liff_url("faq")
+        pricing_url = line_liff_url("pricing")
         return (
             "常見問題：\n"
             "Q：守護人一定要註冊嗎？\n"
@@ -268,11 +279,15 @@ def line_auto_reply_text(text, status=None):
             "Q：定位會一直被追蹤嗎？\n"
             "A：預設是 24 小時快照分享；即時追蹤需使用者自行開啟。\n\n"
             "Q：真的緊急怎麼辦？\n"
-            "A：若有立即危險，請優先撥打 119。"
+            "A：若有立即危險，請優先撥打 119。\n\n"
+            f"完整問與答：{faq_url}\n"
+            f"查看方案：{pricing_url}"
         )
     if any(keyword in text for keyword in SUPPORT_KEYWORDS):
+        faq_url = line_liff_url("faq")
         return (
             "客服在這裡。你可以直接回覆你的問題，我們會協助你設定簽到、守護人與方案。\n\n"
+            f"也可以先看問與答：{faq_url}\n\n"
             "提醒：若是立即危險或醫療緊急狀況，請先撥打 119。"
         )
     return (
@@ -3066,6 +3081,18 @@ def create_app(config=None):
     def privacy():
         return send_from_directory(app.static_folder, "privacy.html")
 
+    @app.get("/faq")
+    def faq():
+        return send_from_directory(app.static_folder, "faq.html")
+
+    @app.get("/help")
+    def help_page():
+        return send_from_directory(app.static_folder, "help.html")
+
+    @app.get("/pricing")
+    def pricing_page():
+        return send_from_directory(app.static_folder, "pricing.html")
+
     def _liff_embed_redirect(open_action=None, fragment=""):
         """舊 /liff/* HTTPS 連結改導永久內嵌入口，避免外開瀏覽器。"""
         if liff_entry_url is not None:
@@ -3078,7 +3105,7 @@ def create_app(config=None):
             ).strip()
             target = f"https://liff.line.me/{lid}"
             if open_action:
-                target += f"#open={open_action}"
+                target += f"/?open={open_action}"
             elif fragment:
                 target += f"#{fragment.lstrip('#')}"
         if redirect is not None:

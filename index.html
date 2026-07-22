@@ -2339,7 +2339,44 @@
     body.neon .calendar-box .day-cell,
     body.neon .settings[aria-label="會員個人中心"] .member-data-row,
     body.neon .settings[aria-label="會員個人中心"] .helper {
-      color: #5b1535;
+      color: #f8fafc;
+    }
+    body.neon .settings-title,
+    body.neon .member-data-section h3,
+    body.neon .member-data-row strong,
+    body.neon .calendar-box strong,
+    body.neon .history-note,
+    body.neon .member-profile-row strong {
+      color: #ffffff;
+    }
+    body.neon .member-data-section,
+    body.neon .guardian-details-form,
+    body.neon .member-data-row,
+    body.neon .member-advanced-note,
+    body.neon .setting-choice,
+    body.neon .calendar-day-note {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(103, 232, 249, 0.45);
+      color: #f8fafc;
+    }
+    body.neon .member-data-row span,
+    body.neon .member-profile-row small,
+    body.neon .guardian-details-status,
+    body.neon .calendar-lunar,
+    body.neon .calendar-note-preview {
+      color: #dbeafe;
+    }
+    body.neon input,
+    body.neon select,
+    body.neon textarea {
+      background: #020617;
+      border-color: #67e8f9;
+      color: #ffffff;
+    }
+    body.neon input::placeholder,
+    body.neon textarea::placeholder {
+      color: #bfdbfe;
+      opacity: 1;
     }
     body.neon .check-btn:not(.danger):not(.warning),
     body.neon .check-btn.checked:not(.danger):not(.warning) {
@@ -2382,6 +2419,37 @@
       color: #082f49;
       border-color: transparent;
       box-shadow: 0 12px 26px rgba(56, 189, 248, 0.28);
+    }
+    body.cute .calendar-box,
+    body.cute .settings[aria-label="會員個人中心"],
+    body.cute .settings[aria-label="緊急聯絡人"] {
+      background: #fff8fb;
+      border-color: #f8a8c6;
+      color: #5b1535;
+    }
+    body.cute .member-data-section,
+    body.cute .member-data-row,
+    body.cute .member-advanced-note,
+    body.cute .setting-choice {
+      background: #ffffff;
+      border-color: #f8b4d0;
+      color: #5b1535;
+    }
+    body.cute .settings[aria-label="緊急聯絡人"] .contact-primary {
+      background: linear-gradient(135deg, #ffe4ef 0%, #fff7ed 100%);
+      border-color: #ec4899;
+      color: #5b1535;
+    }
+    body.cute .settings[aria-label="緊急聯絡人"] .contact-primary .helper {
+      background: #fff;
+      border-color: #f9a8d4;
+      color: #7f1d45;
+    }
+    body.cute .settings[aria-label="緊急聯絡人"] .contact-primary .price-btn,
+    body.cute .settings[aria-label="緊急聯絡人"] .scan-qr-btn {
+      background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
+      color: #ffffff;
+      border-color: transparent;
     }
     .mvp-hero-img {
       display: block;
@@ -3158,11 +3226,6 @@
           <div class="member-data-list" id="memberHistoryList">
             <div class="member-data-row"><span>簽到紀錄</span><strong>目前沒有紀錄</strong></div>
           </div>
-        </div>
-
-        <div class="member-data-section">
-          <h3>付費會員進階紀錄</h3>
-          <div class="member-advanced-note" id="memberAdvancedNote">升級守護方案後，可依方案使用較長的歷史保存、進階篩選與安全守護定位。</div>
         </div>
 
         <div class="member-data-section">
@@ -6284,6 +6347,19 @@
         // 規則：一鍵分享只在「第一次設定」強制；已註冊／已有守護人／伺服器 setup_completed → 直接首頁，絕不自動彈分享
         // 受邀者（invite_from / friend_invite）：登入後綁定／加入好友，不要再被逼分享
         const openAction = getAppParam("open") || "";
+        const sectionAction = getAppParam("section") || "";
+        const publicOpenPages = {
+          help: "help.html",
+          pricing: "liff/pricing.html",
+          faq: "faq.html",
+          terms: "terms.html",
+          privacy: "privacy.html"
+        };
+        if (publicOpenPages[openAction]) {
+          const target = publicOpenPages[openAction] + (sectionAction ? "#" + encodeURIComponent(sectionAction) : "");
+          location.replace(target);
+          return;
+        }
         const forceOnboarding = openAction === "onboarding" || openAction === "guardian" || openAction === "bind";
         const inviteeMode = isInviteeDeepLink();
         const onboardingState = await fetchOnboardingState();
@@ -6314,6 +6390,8 @@
           if (typeof showTab === "function") showTab("home");
         } else if (openAction === "member" && !forceOnboarding && typeof showTab === "function") {
           showTab("member");
+        } else if (openAction === "home" && !forceOnboarding && typeof showTab === "function") {
+          showTab("home");
         } else if (openAction === "guardians" && !forceOnboarding && typeof showTab === "function") {
           showTab("guardians");
         } else if (openAction === "sos") {

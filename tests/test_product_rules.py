@@ -250,15 +250,42 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("url.searchParams.set", page)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=checkin", rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=onboarding", rich_menu)
+        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=sos", rich_menu)
+        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=help", rich_menu)
+        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=pricing", rich_menu)
         self.assertIn('url += "/?" + urlencode(params)', flex)
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo#open=", rich_menu)
+        self.assertNotIn("https://alive-checkin.onrender.com/help.html", rich_menu)
+        self.assertNotIn('"type": "message", "label": "SOS 求救"', rich_menu)
 
     def test_welcome_help_button_opens_sos_tutorial_directly(self):
         flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
 
         self.assertIn('"label": "SOS 長按教學"', flex)
-        self.assertIn('f"{PUBLIC_BASE}/help.html#sos"', flex)
+        self.assertIn('sos_help_uri = liff_entry_url(open_action="help", section="sos")', flex)
+        self.assertIn('"label": "立即升級守護"', flex)
+        self.assertIn('"label": "問與答"', flex)
+        self.assertIn('"label": "回到首頁"', flex)
+        self.assertNotIn('f"{PUBLIC_BASE}/help.html#sos"', flex)
         self.assertNotIn("求助(長按看教學)", flex)
+
+    def test_public_liff_actions_redirect_to_standalone_pages(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        backend = (ROOT / "app.py").read_text(encoding="utf-8")
+        help_page = (ROOT / "help.html").read_text(encoding="utf-8")
+        faq_page = (ROOT / "faq.html").read_text(encoding="utf-8")
+
+        self.assertIn("const publicOpenPages = {", page)
+        self.assertIn('help: "help.html"', page)
+        self.assertIn('pricing: "liff/pricing.html"', page)
+        self.assertIn('faq: "faq.html"', page)
+        self.assertIn('@app.get("/faq")', backend)
+        self.assertIn('@app.get("/help")', backend)
+        self.assertIn('@app.get("/pricing")', backend)
+        self.assertIn("立即升級守護", help_page)
+        self.assertIn("問與答", help_page)
+        self.assertIn("每日平安問與答", faq_page)
+        self.assertIn("家人要怎麼先體驗 799 守護版", faq_page)
 
     def test_onboarding_guardian_form_is_senior_friendly_and_traditional_chinese(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
