@@ -2132,7 +2132,7 @@
 
     <div id="guardianSection" hidden>
         <h3>守護人狀態</h3>
-        <p class="helper">未簽到或 SOS 發生時，系統會依方案透過 LINE 或簡訊通知以下守護人（依優先順序）。編輯／刪除請到會員中心。</p>
+        <p class="helper">未簽到或 SOS 發生時，系統會依方案透過 LINE 通知以下守護人（依優先順序）。編輯／刪除請到會員中心。</p>
         <div id="guardianList" class="guardian-list"></div>
         <p class="helper" id="guardianCount"></p>
         <div class="guardian-actions">
@@ -2492,7 +2492,7 @@
           <ul>
             <li>6 位緊急聯絡人、6 位好友定位</li>
             <li>每日簽到提醒 2 次</li>
-            <li>24 小時快照定位、軌跡回放 3 天</li>
+            <li>24 小時快照定位</li>
             <li>LINE 通知 2 位核心守護人</li>
           </ul>
           <button class="price-btn" type="button" data-plan="199-year">選擇 199 年費</button>
@@ -2504,9 +2504,8 @@
           <ul>
             <li>15 位緊急聯絡人、15 位好友定位</li>
             <li>每日簽到提醒 2 次</li>
-            <li>即時追蹤、軌跡回放 5 天</li>
-            <li>離線同步 24 小時</li>
-            <li>LINE 通知 2 位核心守護人，不含簡訊</li>
+            <li>即時定位（方案開放時）</li>
+            <li>LINE 通知 2 位核心守護人</li>
           </ul>
           <button class="price-btn" type="button" data-plan="399-month">選擇 399 月費</button>
         </article>
@@ -2518,23 +2517,19 @@
           <ul>
             <li>25 位緊急聯絡人、25 位好友定位</li>
             <li>每日簽到提醒 3 次</li>
-            <li>即時追蹤、軌跡回放 7 天</li>
-            <li>離線同步 24 小時</li>
-            <li>30 天即時追蹤體驗</li>
-            <li>LINE 通知 3 位核心守護人，不含簡訊</li>
+            <li>即時定位體驗（方案開放時）</li>
+            <li>LINE 通知 3 位核心守護人</li>
           </ul>
           <button class="price-btn" type="button" data-plan="399-year">選擇 399 年費</button>
         </article>
         <article class="price-card plan-card tier-799 billing-month premium-month-card" data-plan-tier="799" data-billing-cycle="month">
           <div class="price-head"><strong>799 守護版</strong><span class="plan-cycle-badge">月費方案</span></div>
           <div class="plan-price">NT$799 <small>／月</small></div>
-          <div class="plan-card-note">適合家庭守護與需要雙管道警報的會員。</div>
+          <div class="plan-card-note">適合家庭守護與需要守護群警報的會員。</div>
           <ul>
             <li>25 位緊急聯絡人、25 位好友定位</li>
             <li>每日簽到提醒 3 次</li>
-            <li>即時追蹤、軌跡回放 14 天</li>
-            <li>完整離線同步 7 天、一鍵 SOS</li>
-            <li>LINE＋簡訊通知 3 位核心守護人</li>
+            <li>一鍵 SOS、LINE 通知 3 位核心守護人</li>
             <li>最多建立 1 個守護群</li>
           </ul>
           <button class="price-btn" type="button" data-plan="799-month">選擇 799 月費</button>
@@ -2547,17 +2542,15 @@
           <ul>
             <li>50 位緊急聯絡人、50 位好友定位</li>
             <li>每日簽到提醒 3 次</li>
-            <li>即時追蹤、軌跡回放 30 天</li>
-            <li>完整離線同步 7 天、一鍵 SOS</li>
-            <li>LINE＋簡訊通知 5 位核心守護人</li>
+            <li>一鍵 SOS、LINE 通知 5 位核心守護人</li>
             <li>最多建立 3 個守護群</li>
           </ul>
           <button class="price-btn" type="button" data-plan="799-year">選擇 799 年費</button>
-          <div class="annual-proof">適合需要 30 天軌跡回放與多人家庭守護的會員。</div>
+          <div class="annual-proof">適合需要多人家庭守護與守護群通知的會員。</div>
         </article>
       </div>
       <div class="payment-order-notice" id="paymentOrderNotice" role="status" aria-live="polite" hidden></div>
-      <div class="helper" style="margin-top:10px;">年費比逐月付款更省，實際優惠金額已標示於各方案。MVP 階段付款後由後台開通方案。</div>
+      <div class="helper" style="margin-top:10px;">年費比逐月付款更省。藍新金流設定完成後可線上付款自動開通；尚未設定時訂單會進入待確認，由後台人工開通。</div>
     </section>
 
     <section class="settings" aria-label="安心守護邀請任務">
@@ -2870,12 +2863,40 @@
       };
     }
 
+    async function getLineIdToken() {
+      try {
+        if (window.liff && typeof liff.isLoggedIn === "function" && liff.isLoggedIn() && typeof liff.getIDToken === "function") {
+          return liff.getIDToken() || "";
+        }
+      } catch (_) {}
+      return "";
+    }
+
+    async function authHeaders(extra = {}) {
+      const headers = { "Content-Type": "application/json", ...extra };
+      const token = await getLineIdToken();
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+        headers["X-Line-Id-Token"] = token;
+      }
+      return headers;
+    }
+
+    async function withAuthQuery(url) {
+      const token = await getLineIdToken();
+      if (!token) return url;
+      const sep = String(url).includes("?") ? "&" : "?";
+      return `${url}${sep}id_token=${encodeURIComponent(token)}`;
+    }
+
     async function apiGetStatus() {
       if (useLocalMode) return buildLocalStatus(loadLocalState());
       if (!lineUserId) {
         throw new Error("需要 LINE 登入,或在 URL 加 ?line_user_id=XXX 進入 dev 模式");
       }
-      const res = await fetch(`/api/status?line_user_id=${encodeURIComponent(lineUserId)}`);
+      const res = await fetch(await withAuthQuery(`/api/status?line_user_id=${encodeURIComponent(lineUserId)}`), {
+        headers: await authHeaders()
+      });
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         throw new Error(`API ${res.status}: ${text.slice(0, 80)}`);
@@ -2905,7 +2926,7 @@
       }
       const res = await fetch("/api/calendar-notes", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({ line_user_id: lineUserId, date, content })
       });
       const data = await res.json();
@@ -2927,7 +2948,7 @@
       }
       const res = await fetch("/api/checkin", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({ line_user_id: lineUserId })
       });
       if (!res.ok) {
@@ -2945,7 +2966,7 @@
       }
       const res = await fetch("/api/settings", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({ ...payload, line_user_id: lineUserId })
       });
       if (!res.ok) throw new Error("settings failed");
@@ -2963,7 +2984,7 @@
       }
       const res = await fetch("/api/billing/preferences", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({ line_user_id: lineUserId, auto_renew_requested: requested })
       });
       const data = await res.json();
@@ -2974,18 +2995,36 @@
     async function apiCreatePaymentOrder(plan) {
       const res = await fetch("/api/payments/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({ line_user_id: lineUserId, plan })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "payment order failed");
-      return data.order;
+      return data;
+    }
+
+    function submitNewebpayCheckout(checkout) {
+      if (!checkout || checkout.mode !== "newebpay" || !checkout.mpg_url || !checkout.form) return false;
+      const form = document.createElement("form");
+      form.method = "POST";
+      form.action = checkout.mpg_url;
+      form.acceptCharset = "UTF-8";
+      Object.entries(checkout.form).forEach(([key, value]) => {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = key;
+        input.value = value;
+        form.appendChild(input);
+      });
+      document.body.appendChild(form);
+      form.submit();
+      return true;
     }
 
     async function apiTriggerSos() {
       const res = await fetch("/api/sos", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({ line_user_id: lineUserId })
       });
       const data = await res.json();
@@ -3001,7 +3040,7 @@
     async function apiUnbindGuardianGroup(groupId) {
       const res = await fetch("/api/guardian-groups/unbind", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({ line_user_id: lineUserId, group_id: groupId })
       });
       const data = await res.json();
@@ -3014,7 +3053,9 @@
         return { contacts: loadLocalState().contacts || [], contact_limit: 1 };
       }
       const query = lineUserId ? `?line_user_id=${encodeURIComponent(lineUserId)}` : "";
-      const res = await fetch(`/api/contacts${query}`);
+      const res = await fetch(await withAuthQuery(`/api/contacts${query}`), {
+        headers: await authHeaders()
+      });
       if (!res.ok) throw new Error("contacts failed");
       return await res.json();
     }
@@ -3028,7 +3069,7 @@
       }
       const res = await fetch("/api/contacts", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({
           line_user_id: lineUserId,
           contacts: contactData,
@@ -3051,7 +3092,7 @@
       }
       const res = await fetch("/api/account/history/delete", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({ line_user_id: lineUserId, record_type: "checkins" })
       });
       const data = await res.json();
@@ -3074,7 +3115,7 @@
       }
       const res = await fetch("/api/account/export", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({ line_user_id: lineUserId })
       });
       const data = await res.json();
@@ -3089,7 +3130,7 @@
       }
       const res = await fetch("/api/account/delete", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({ line_user_id: lineUserId })
       });
       const data = await res.json();
@@ -3118,7 +3159,7 @@
       if (useLocalMode || !lineUserId || !inviterLineUserId || inviterLineUserId === lineUserId) return null;
       const res = await fetch("/api/emergency-contact/bind", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({
           inviter_line_user_id: inviterLineUserId,
           contact_line_user_id: lineUserId,
@@ -3134,7 +3175,7 @@
       if (useLocalMode) throw new Error("好友地圖需要連上後端和 LINE 會員。");
       const res = await fetch("/api/friends/invite", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({ line_user_id: lineUserId })
       });
       const data = await res.json();
@@ -3146,7 +3187,7 @@
       if (useLocalMode) throw new Error("好友地圖需要連上後端和 LINE 會員。");
       const res = await fetch("/api/friends/accept", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({ line_user_id: lineUserId, invite_code: inviteCode })
       });
       const data = await res.json();
@@ -3158,7 +3199,7 @@
       if (useLocalMode) throw new Error("好友地圖需要連上後端和 LINE 會員。");
       const res = await fetch("/api/location/update", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({
           line_user_id: lineUserId,
           latitude: position.coords.latitude,
@@ -3176,7 +3217,7 @@
       if (useLocalMode) throw new Error("好友地圖需要連上後端和 LINE 會員。");
       const res = await fetch("/api/location/stop", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({ line_user_id: lineUserId })
       });
       const data = await res.json();
@@ -3274,11 +3315,11 @@
     function memberPlanBenefits(plan) {
       return {
         paid_199: { cycle: "199 平安版｜月費方案", contacts: 4, locations: 4, detail: "每日提醒 1 次、24 小時快照定位、LINE 通知 2 位核心守護人。" },
-        paid_199_year: { cycle: "199 平安版｜年費方案", contacts: 6, locations: 6, detail: "每日提醒 2 次、24 小時快照定位、軌跡回放 3 天、LINE 通知 2 位核心守護人。" },
-        paid_399: { cycle: "399 安心版｜月費方案", contacts: 15, locations: 15, detail: "每日提醒 2 次、即時追蹤、軌跡回放 5 天、離線同步 24 小時、LINE 通知 2 位核心守護人。" },
-        paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、即時追蹤、軌跡回放 7 天、離線同步 24 小時、30 天即時追蹤體驗、LINE 通知 3 位核心守護人。" },
-        paid_799: { cycle: "799 守護版｜月費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、軌跡回放 14 天、完整離線同步 7 天、一鍵 SOS、LINE＋簡訊通知 3 位核心守護人、1 個守護群。" },
-        paid_799_year: { cycle: "799 守護版｜年費方案", contacts: 50, locations: 50, detail: "每日提醒 3 次、軌跡回放 30 天、完整離線同步 7 天、一鍵 SOS、LINE＋簡訊通知 5 位核心守護人、3 個守護群。" },
+        paid_199_year: { cycle: "199 平安版｜年費方案", contacts: 6, locations: 6, detail: "每日提醒 2 次、24 小時快照定位、LINE 通知 2 位核心守護人。" },
+        paid_399: { cycle: "399 安心版｜月費方案", contacts: 15, locations: 15, detail: "每日提醒 2 次、即時定位（開放時）、LINE 通知 2 位核心守護人。" },
+        paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、即時定位體驗（開放時）、LINE 通知 3 位核心守護人。" },
+        paid_799: { cycle: "799 守護版｜月費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、一鍵 SOS、LINE 通知 3 位核心守護人、1 個守護群。" },
+        paid_799_year: { cycle: "799 守護版｜年費方案", contacts: 50, locations: 50, detail: "每日提醒 3 次、一鍵 SOS、LINE 通知 5 位核心守護人、3 個守護群。" },
         free: { cycle: "基本守護｜免費方案", contacts: 1, locations: 1, detail: "基本簽到與 LINE 提醒。" },
         trial: { cycle: "安心體驗｜7 天試用", contacts: 1, locations: 1, detail: "試用期間可使用基本簽到與 LINE 提醒。" }
       }[plan] || { cycle: "尚未選擇方案", contacts: 1, locations: 1, detail: "請先選擇適合你的守護方案。" };
@@ -3597,9 +3638,16 @@
       button.disabled = true;
       button.textContent = "建立訂單中…";
       try {
-        const order = await apiCreatePaymentOrder(plan);
+        const result = await apiCreatePaymentOrder(plan);
+        const order = result.order || result;
+        const checkout = result.checkout || {};
+        if (submitNewebpayCheckout(checkout)) {
+          notice.hidden = false;
+          notice.textContent = `訂單 ${order.order_id} 已建立，正在前往藍新付款…`;
+          return;
+        }
         notice.hidden = false;
-        notice.textContent = `訂單 ${order.order_id} 已建立，金額 NT$${Number(order.amount).toLocaleString("zh-TW")}。藍新商店審核與金鑰設定完成後，這裡會直接前往安全付款頁。現在不會扣款。`;
+        notice.textContent = `訂單 ${order.order_id} 已建立，金額 NT$${Number(order.amount).toLocaleString("zh-TW")}。${checkout.message || "藍新金鑰尚未設定，目前不會扣款；後台可人工確認開通。"}`;
         notice.scrollIntoView({ behavior: "smooth", block: "center" });
       } catch (error) {
         notice.hidden = false;
@@ -3915,7 +3963,7 @@
         if (!lineUserId) return false;
         await fetch("/api/line/register", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: await authHeaders(),
           body: JSON.stringify({
             line_user_id: lineUserId,
             display_name: lineDisplayName,
@@ -4567,7 +4615,7 @@
     async function apiAddGuardian(payload) {
       const res = await fetch("/api/contacts/add", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify(payload)
       });
       const data = await res.json();
@@ -4577,7 +4625,7 @@
     async function apiUpdateGuardian(contactId, payload) {
       const res = await fetch(`/api/contacts/${encodeURIComponent(contactId)}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify(payload)
       });
       const data = await res.json();
@@ -4585,21 +4633,26 @@
     }
 
     async function apiDeleteGuardian(contactId, lineUserId) {
-      const res = await fetch(`/api/contacts/${encodeURIComponent(contactId)}?line_user_id=${encodeURIComponent(lineUserId)}`, {
-        method: "DELETE"
+      const res = await fetch(await withAuthQuery(`/api/contacts/${encodeURIComponent(contactId)}?line_user_id=${encodeURIComponent(lineUserId)}`), {
+        method: "DELETE",
+        headers: await authHeaders()
       });
       const data = await res.json();
       return { status: res.status, data };
     }
 
     async function apiGetContacts(lineUserId) {
-      const res = await fetch(`/api/contacts?line_user_id=${encodeURIComponent(lineUserId)}`);
+      const res = await fetch(await withAuthQuery(`/api/contacts?line_user_id=${encodeURIComponent(lineUserId)}`), {
+        headers: await authHeaders()
+      });
       const data = await res.json();
       return { status: res.status, data };
     }
 
     async function apiGetOnboarding(lineUserId) {
-      const res = await fetch(`/api/onboarding?line_user_id=${encodeURIComponent(lineUserId)}`);
+      const res = await fetch(await withAuthQuery(`/api/onboarding?line_user_id=${encodeURIComponent(lineUserId)}`), {
+        headers: await authHeaders()
+      });
       const data = await res.json();
       return { status: res.status, data };
     }
@@ -4615,7 +4668,7 @@
       }
       const res = await fetch(`/api/onboarding/complete`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify(payload)
       });
       const data = await res.json();
@@ -5218,7 +5271,7 @@
       try {
         await fetch("/api/line/register", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: await authHeaders(),
           body: JSON.stringify({
             line_user_id: lineUserId,
             display_name: lineDisplayName || ("User " + lineUserId.slice(-4)),
@@ -5443,7 +5496,7 @@
         try {
           await fetch("/api/guardian-reminder/dismiss", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: await authHeaders(),
             body: JSON.stringify({ line_user_id: lineUserId, preference: pref })
           });
         } catch (e) { console.warn(e); }

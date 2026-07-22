@@ -75,6 +75,16 @@ try:
 except Exception:
     sos_flow = None
 
+try:
+    from line_auth import resolve_line_user_id
+except Exception:  # pragma: no cover
+    resolve_line_user_id = None
+
+try:
+    import newebpay
+except Exception:  # pragma: no cover
+    newebpay = None
+
 
 DEFAULT_PROFILE = {
     "last_check_in": None,
@@ -148,8 +158,8 @@ PAYMENT_PRODUCTS = {
     "paid_199_year": {"amount": 1680, "billing_cycle": "yearly", "duration_days": 365, "display_name": "199 平安版(年)", "tagline": "每天提醒自己簽到,讓自己安心"},
     "paid_399": {"amount": 399, "billing_cycle": "monthly", "duration_days": 30, "display_name": "399 安心版(月)", "tagline": "讓家人隨時知道你在哪,即時追蹤定位"},
     "paid_399_year": {"amount": 3680, "billing_cycle": "yearly", "duration_days": 365, "display_name": "399 安心版(年)", "tagline": "讓家人隨時知道你在哪,即時追蹤定位"},
-    "paid_799": {"amount": 799, "billing_cycle": "monthly", "duration_days": 30, "display_name": "799 守護版(月)", "tagline": "全家守護網絡 + LINE+簡訊預警 + SOS 緊急求救"},
-    "paid_799_year": {"amount": 7200, "billing_cycle": "yearly", "duration_days": 365, "display_name": "799 守護版(年)", "tagline": "全家 50 人守護網絡 + LINE+簡訊預警 + SOS 緊急求救 + 守護群"},
+    "paid_799": {"amount": 799, "billing_cycle": "monthly", "duration_days": 30, "display_name": "799 守護版(月)", "tagline": "全家守護網絡 + LINE 預警 + SOS 緊急求救"},
+    "paid_799_year": {"amount": 7200, "billing_cycle": "yearly", "duration_days": 365, "display_name": "799 守護版(年)", "tagline": "全家 50 人守護網絡 + LINE 預警 + SOS 緊急求救 + 守護群"},
 }
 
 RICH_MENU_COMMANDS = [
@@ -197,10 +207,11 @@ def line_status_summary(status):
 def line_plan_message():
     return (
         "目前方案重點整理：\n"
-        "199 平安版：月費 4 位、年費 6 位，LINE 通知 3 位核心守護人。\n"
-        "399 安心版：月費 15 位、年費 25 位，LINE 通知 3 位核心守護人；年費含 30 天即時追蹤體驗。\n"
-        "799 守護版：月費 NT$799，25 位緊急聯絡人、軌跡回放 14 天、離線同步 7 天、LINE + 簡訊。\n\n"
-        "年費方案都有明確折扣；799 月費可建立 1 個守護群，年費可建立 3 個守護群。"
+        "199 平安版：月費 4 位、年費 6 位，LINE 通知核心守護人。\n"
+        "399 安心版：月費 15 位、年費 25 位，LINE 通知核心守護人；年費含即時定位體驗。\n"
+        "799 守護版：月費 NT$799，25 位緊急聯絡人、一鍵 SOS、守護群；逾時以 LINE 通知核心守護人。\n\n"
+        "年費方案都有明確折扣；799 月費可建立 1 個守護群，年費可建立 3 個守護群。\n"
+        "簡訊預警與軌跡回放尚未開放，售價權益以線上實際功能為準。"
     )
 
 
@@ -225,9 +236,8 @@ def line_auto_reply_text(text, status=None):
         return line_plan_message()
     if any(keyword in text for keyword in INVOICE_KEYWORDS):
         return (
-            "電子發票／收據說明：\n"
-            "付款完成後，電子發票或付款證明會以你結帳時留下的 Email 為主。\n"
-            "MVP 測試階段若使用藍新或綠界付款連結，後台會先人工核對付款狀態，再幫你開通方案。"
+            "目前尚未提供線上電子發票／收據查詢。\n"
+            "若需要付款證明，請透過客服留言，我們會人工協助核對訂單。"
         )
     if any(keyword in text for keyword in GROUP_KEYWORDS):
         return (
@@ -241,8 +251,8 @@ def line_auto_reply_text(text, status=None):
         return (
             "緊急通知方式說明：\n"
             "199／399 以 LINE 通知為主。\n"
-            "799 月費可用 LINE + 簡訊通知 3 位核心守護人，年費可通知 5 位。\n"
-            "簡訊會產生成本，正式上線前會設定每位使用者的發送上限，避免誤報造成費用增加。"
+            "799 月費可用 LINE 通知 3 位核心守護人，年費可通知 5 位。\n"
+            "簡訊預警尚未開放；目前以 LINE 與守護群通知為主。"
         )
     if any(keyword in text for keyword in LARGE_TEXT_KEYWORDS):
         return (
@@ -960,7 +970,17 @@ def create_payment_order(data_file, payload, config=None):
     }
     state.setdefault("orders", []).append(order)
     save_state(data_file, state)
-    return {"order": order}, 201
+    checkout = None
+    if newebpay is not None:
+        checkout = newebpay.build_checkout(order, config or {})
+    else:
+        checkout = {
+            "mode": "manual",
+            "mpg_url": None,
+            "form": None,
+            "message": "藍新模組未載入；訂單已建立，請後台人工確認。",
+        }
+    return {"order": order, "checkout": checkout}, 201
 
 
 def confirm_payment_order(data_file, payload, config=None):
@@ -1000,6 +1020,40 @@ def confirm_payment_order(data_file, payload, config=None):
         profile["auto_renew_status"] = "active" if profile["auto_renew_enabled"] else "off"
     save_state(data_file, state)
     return {"order": order, "member": build_status(profile), "already_confirmed": False}, 200
+
+
+def apply_expired_plan_downgrades(config):
+    """Downgrade paid members whose paid_until has passed."""
+    data_file = config["DATA_FILE"]
+    state = load_state(data_file)
+    now = current_app_time(config)
+    downgraded = []
+    for profile in state.get("users", {}).values():
+        plan = str(profile.get("plan") or "")
+        if not plan.startswith("paid_"):
+            continue
+        paid_until = parse_datetime(profile.get("paid_until"))
+        if paid_until and paid_until >= now:
+            continue
+        # unpaid/expired: force free plan
+        if profile.get("payment_status") == "active" or paid_until:
+            profile["plan"] = "free"
+            profile["payment_status"] = "expired"
+            profile["billing_cycle"] = ""
+            profile["auto_renew_enabled"] = False
+            profile["auto_renew_status"] = "off"
+            profile["next_billing_date"] = ""
+            downgraded.append(profile.get("line_user_id"))
+            append_notification_log(
+                state,
+                "plan_expired",
+                profile.get("line_user_id"),
+                "downgraded",
+                f"plan expired -> free (was {plan})",
+            )
+    if downgraded:
+        save_state(data_file, state)
+    return {"downgraded": len(downgraded), "line_user_ids": downgraded}, 200
 
 
 def send_renewal_reminders(config):
@@ -1437,7 +1491,7 @@ def get_group_member_count(token, group_id):
         return None
     url = f"https://api.line.me/v2/bot/group/{group_id}/members/count"
     try:
-        req = urllib.request.Request(url, headers={"Authorization": "***" + token})
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
         with urllib.request.urlopen(req, timeout=5) as r:
             body = json.loads(r.read().decode("utf-8"))
             return int(body.get("count", 0))
@@ -1451,7 +1505,7 @@ def get_group_member_ids(token, group_id, max_count=200):
         return None
     url = f"https://api.line.me/v2/bot/group/{group_id}/members/ids?limit={max_count}"
     try:
-        req = urllib.request.Request(url, headers={"Authorization": "***" + token})
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
         with urllib.request.urlopen(req, timeout=8) as r:
             body = json.loads(r.read().decode("utf-8"))
             return list(body.get("memberIds") or [])
@@ -1465,7 +1519,7 @@ def kick_group_member(token, group_id, user_id):
         return None
     url = f"https://api.line.me/v2/bot/group/{group_id}/member/{user_id}/leave"
     try:
-        req = urllib.request.Request(url, method="POST", headers={"Authorization": "***" + token})
+        req = urllib.request.Request(url, method="POST", headers={"Authorization": f"Bearer {token}"})
         with urllib.request.urlopen(req, timeout=5) as r:
             return r.status
     except urllib.error.HTTPError as exc:
@@ -2169,8 +2223,12 @@ def admin_allowed(config, password):
 
 
 def cron_allowed(config, secret):
-    expected = config.get("CRON_SECRET") or os.environ.get("CRON_SECRET", "")
-    return not expected or secret == expected
+    expected = (config.get("CRON_SECRET") or os.environ.get("CRON_SECRET", "") or "").strip()
+    provided = str(secret or "").strip()
+    # Empty CRON_SECRET must never authorize — fail closed.
+    if not expected:
+        return False
+    return secrets.compare_digest(expected, provided)
 
 
 def admin_summary(data_file):
@@ -2303,13 +2361,17 @@ def line_push_message(token, line_user_id, message):
 
 def append_notification_log(state, kind, line_user_id, status, message, detail=None):
     logs = state.setdefault("notification_logs", [])
+    if isinstance(message, dict):
+        message_text = str(message.get("altText") or message.get("type") or message)[:120]
+    else:
+        message_text = str(message or "")[:120]
     logs.append(
         {
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "kind": kind,
             "line_user_id": line_user_id,
             "status": status,
-            "message": message[:120],
+            "message": message_text,
             "detail": detail or "",
         }
     )
@@ -2330,13 +2392,20 @@ def send_due_reminders(config):
     summary = admin_summary(config["DATA_FILE"])
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
     state = load_state(config["DATA_FILE"])
+    now = current_app_time(config)
+    today = now.strftime("%Y-%m-%d")
     sent = 0
     skipped = 0
     results = []
     for user in summary["users"]:
         if not user["is_overdue"]:
             continue
-        profile = state.get("users", {}).get(user["line_user_id"], user)
+        profile = state.get("users", {}).get(user["line_user_id"])
+        if not profile:
+            continue
+        if profile.get("last_overdue_alert_date") == today:
+            skipped += 1
+            continue
         location = profile.get("location") or {}
         location_link = ""
         if profile.get("attach_location_on_alert") and location.get("latitude") and location.get("longitude"):
@@ -2344,34 +2413,89 @@ def send_due_reminders(config):
         message = f"該回來簽到囉 ♡\n點一下「我已平安」，讓重要的人放心。{location_link}"
         try:
             result = sender(token, user["line_user_id"], message)
-            log_notification(config["DATA_FILE"], "overdue", user["line_user_id"], "sent", message, json.dumps(result, ensure_ascii=False))
+            append_notification_log(state, "overdue", user["line_user_id"], "sent", message, json.dumps(result, ensure_ascii=False))
             sent += 1
             results.append({"line_user_id": user["line_user_id"], "result": result})
         except Exception as exc:
-            log_notification(config["DATA_FILE"], "overdue", user["line_user_id"], "failed", message, str(exc))
+            append_notification_log(state, "overdue", user["line_user_id"], "failed", message, str(exc))
             skipped += 1
             results.append({"line_user_id": user["line_user_id"], "error": str(exc)})
 
         contact_message = (
-            f"{profile.get('display_name') or '使用者'} 已超過平安簽到時間，請協助確認。"
+            f"【失聯預警】{profile.get('display_name') or '使用者'} 已超過平安簽到時間，請協助確認安全。"
             f"{location_link}"
         )
-        for contact in (profile.get("contacts") or [])[: plan_rules(profile)["contact_limit"]]:
-            methods = contact.get("notify_methods") or ["line"]
-            if "line" in methods and contact.get("line_id"):
-                try:
-                    result = sender(token, contact["line_id"], contact_message)
-                    log_notification(config["DATA_FILE"], "contact_alert", contact["line_id"], "sent", contact_message, json.dumps(result, ensure_ascii=False))
-                    sent += 1
-                    results.append({"line_user_id": contact["line_id"], "result": result})
-                except Exception as exc:
-                    log_notification(config["DATA_FILE"], "contact_alert", contact["line_id"], "failed", contact_message, str(exc))
-                    skipped += 1
-                    results.append({"line_user_id": contact["line_id"], "error": str(exc)})
-            for method in methods:
+        rules = plan_rules(profile)
+        alert_limit = int(rules.get("core_guardian_alert_limit") or 1)
+        contacts = sorted(profile.get("contacts") or [], key=lambda item: int(item.get("priority") or 9999))
+        line_contacts = [
+            contact for contact in contacts
+            if (contact.get("line_id") or contact.get("line_user_id"))
+            and "line" in (contact.get("notify_methods") or ["line"])
+        ][:alert_limit]
+        for contact in line_contacts:
+            target = contact.get("line_id") or contact.get("line_user_id")
+            try:
+                result = sender(token, target, contact_message)
+                append_notification_log(state, "contact_alert", target, "sent", contact_message, json.dumps(result, ensure_ascii=False))
+                sent += 1
+                results.append({"line_user_id": target, "result": result})
+            except Exception as exc:
+                append_notification_log(state, "contact_alert", target, "failed", contact_message, str(exc))
+                skipped += 1
+                results.append({"line_user_id": target, "error": str(exc)})
+            for method in (contact.get("notify_methods") or ["line"]):
                 if method in {"sms", "phone"}:
                     detail = contact.get("phone") or "missing phone"
-                    log_notification(config["DATA_FILE"], f"{method}_contact_alert", user["line_user_id"], "pending", contact_message, detail)
+                    append_notification_log(
+                        state,
+                        f"{method}_contact_alert",
+                        user["line_user_id"],
+                        "skipped_not_live",
+                        contact_message,
+                        detail,
+                    )
+
+        group_limit = int(rules.get("guardian_group_limit") or 0)
+        if group_limit > 0:
+            groups = state.get("guardian_groups", {})
+            active_group_ids = [
+                group_id for group_id in (profile.get("guardian_group_ids") or [])
+                if groups.get(group_id, {}).get("owner_line_user_id") == user["line_user_id"]
+                and groups.get(group_id, {}).get("status") == "active"
+            ][:group_limit]
+            group_message = (
+                f"【失聯預警】{profile.get('display_name') or '成員'} 已超過平安簽到時間，"
+                f"請群內協助確認。{location_link}"
+            )
+            for group_id in active_group_ids:
+                try:
+                    result = sender(token, group_id, group_message)
+                    append_notification_log(
+                        state,
+                        "overdue_guardian_group",
+                        group_id,
+                        "sent",
+                        group_message,
+                        json.dumps(result, ensure_ascii=False),
+                    )
+                    sent += 1
+                    results.append({"group_id": group_id, "result": result})
+                except Exception as exc:
+                    append_notification_log(
+                        state,
+                        "overdue_guardian_group",
+                        group_id,
+                        "failed",
+                        group_message,
+                        str(exc),
+                    )
+                    skipped += 1
+                    results.append({"group_id": group_id, "error": str(exc)})
+
+        profile["last_overdue_alert_date"] = today
+
+    save_state(config["DATA_FILE"], state)
     return {"sent": sent, "skipped": skipped, "results": results}, 200
 
 
@@ -2449,6 +2573,7 @@ def send_missing_contact_reminders(config):
 
 def cleanup_expired_data(config):
     data_file = config["DATA_FILE"]
+    downgrade_result, _ = apply_expired_plan_downgrades(config)
     state = load_state(data_file)
     now = current_app_time(config)
     invite_cutoff = now - timedelta(days=7)
@@ -2482,6 +2607,7 @@ def cleanup_expired_data(config):
         "expired_invites_removed": invites_before - len(state["friend_invites"]),
         "old_notification_logs_removed": logs_before - len(state["notification_logs"]),
         "orders_removed": 0,
+        "plans_downgraded": downgrade_result.get("downgraded", 0),
     }, 200
 
 
@@ -2621,6 +2747,17 @@ def app_config(config):
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
+        "require_liff_auth": str(
+            config.get("REQUIRE_LIFF_AUTH")
+            if config.get("REQUIRE_LIFF_AUTH") is not None
+            else os.environ.get("REQUIRE_LIFF_AUTH", "0")
+        ).strip().lower()
+        in {"1", "true", "yes", "on"},
+        "newebpay_ready": bool(newebpay and newebpay.newebpay_configured(config)),
+        "sms_live": bool(
+            (config.get("SMSKING_USERNAME") or os.environ.get("SMSKING_USERNAME") or "").strip()
+            and (config.get("SMSKING_PASSWORD") or os.environ.get("SMSKING_PASSWORD") or "").strip()
+        ),
     }
 
 
@@ -2635,13 +2772,43 @@ def create_app(config=None):
         ADMIN_PASSWORD=os.environ.get("ADMIN_PASSWORD", ""),
         LINE_CHANNEL_ACCESS_TOKEN=os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
         LINE_CHANNEL_SECRET=os.environ.get("LINE_CHANNEL_SECRET", ""),
+        LINE_LOGIN_CHANNEL_ID=os.environ.get("LINE_LOGIN_CHANNEL_ID", ""),
         LIFF_ID=os.environ.get("LIFF_ID", ""),
         APP_PUBLIC_URL=os.environ.get("APP_PUBLIC_URL", ""),
         APP_TIMEZONE=os.environ.get("APP_TIMEZONE", "Asia/Taipei"),
         CRON_SECRET=os.environ.get("CRON_SECRET", ""),
+        REQUIRE_LIFF_AUTH=os.environ.get("REQUIRE_LIFF_AUTH", "0"),
+        NEWEBPAY_MERCHANT_ID=os.environ.get("NEWEBPAY_MERCHANT_ID", ""),
+        NEWEBPAY_HASH_KEY=os.environ.get("NEWEBPAY_HASH_KEY", ""),
+        NEWEBPAY_HASH_IV=os.environ.get("NEWEBPAY_HASH_IV", ""),
+        NEWEBPAY_STAGE=os.environ.get("NEWEBPAY_STAGE", "sandbox"),
+        NEWEBPAY_MPG_URL=os.environ.get("NEWEBPAY_MPG_URL", ""),
+        SMSKING_USERNAME=os.environ.get("SMSKING_USERNAME", ""),
+        SMSKING_PASSWORD=os.environ.get("SMSKING_PASSWORD", ""),
     )
     if config:
         app.config.update(config)
+
+    def _authenticated_line_user(payload=None, *, use_args=False):
+        """Resolve LINE user from verified id_token when required."""
+        payload = payload if payload is not None else (request.get_json(silent=True) or {})
+        args = request.args if use_args else {}
+        if resolve_line_user_id is None:
+            claimed = str(
+                (payload or {}).get("line_user_id")
+                or (args.get("line_user_id") if use_args else "")
+                or ""
+            ).strip()
+            if not claimed:
+                return None, ({"ok": False, "error": "missing line_user_id"}, 400)
+            return claimed, None
+        headers = {key: value for key, value in request.headers.items()}
+        return resolve_line_user_id(
+            headers=headers,
+            payload=payload or {},
+            args=args,
+            config=app.config,
+        )
 
     @app.get("/")
     def index():
@@ -2815,15 +2982,21 @@ def create_app(config=None):
 
     @app.post("/api/line/register")
     def line_register():
-        data, code = register_line_user(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = register_line_user(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
     @app.post("/api/checkin")
     def checkin():
         payload = request.get_json(silent=True) or {}
-        line_user_id = (payload.get("line_user_id") or "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
         state = load_state(app.config["DATA_FILE"])
         if line_user_id not in state.get("users", {}):
             return jsonify({"ok": False, "error": "user not registered", "line_user_id": line_user_id}), 404
@@ -3253,29 +3426,80 @@ def create_app(config=None):
 
     @app.post("/api/warning/cancel")
     def warning_cancel_api():
-        return jsonify(cancel_warning(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config))
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        return jsonify(cancel_warning(app.config["DATA_FILE"], payload, app.config))
 
     @app.post("/api/settings")
     def settings():
-        return jsonify(save_settings_for_profile(app.config["DATA_FILE"], request.get_json(silent=True) or {}))
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        return jsonify(save_settings_for_profile(app.config["DATA_FILE"], payload))
 
     @app.post("/api/billing/preferences")
     def billing_preferences_api():
-        data, code = save_billing_preferences(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = save_billing_preferences(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
     @app.post("/api/payments/orders")
     def payment_orders_api():
-        data, code = create_payment_order(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = create_payment_order(app.config["DATA_FILE"], payload, app.config)
         return jsonify(data), code
+
+    @app.post("/webhook/newebpay")
+    def newebpay_webhook():
+        """藍新 NotifyURL — 驗簽後自動開通方案。"""
+        form = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
+        if newebpay is None:
+            return jsonify({"error": "newebpay module missing"}), 503
+        parsed, error = newebpay.parse_notify_payload(form, app.config)
+        if error:
+            return jsonify({"error": error}), 400
+        if not newebpay.notify_success(parsed):
+            return jsonify({"ok": True, "ignored": True, "status": parsed.get("status")}), 200
+        data, code = confirm_payment_order(
+            app.config["DATA_FILE"],
+            {
+                "order_id": parsed.get("order_id"),
+                "transaction_id": parsed.get("transaction_id"),
+            },
+            app.config,
+        )
+        if code >= 400:
+            return jsonify(data), code
+        return jsonify({"ok": True, "order_id": parsed.get("order_id")}), 200
 
     @app.get("/api/contacts")
     def contacts_get():
-        return jsonify(get_contacts(app.config["DATA_FILE"], request.args.get("line_user_id")))
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
+        return jsonify(get_contacts(app.config["DATA_FILE"], line_user_id))
 
     @app.post("/api/contacts")
     def contacts_post():
-        data, code = save_contacts(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = save_contacts(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
     @app.get("/api/calendar-notes")
@@ -3291,9 +3515,9 @@ def create_app(config=None):
     def contacts_add():
         """新增單一守護人聯絡人。"""
         payload = request.get_json(silent=True) or {}
-        line_user_id = (payload.get("line_user_id") or "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
         data, code = add_single_contact(app.config["DATA_FILE"], line_user_id, payload)
         if code == 200:
             response = {"ok": True, "contact": data["contact"], "contacts": data["contacts"], "contact_limit": data["contact_limit"]}
@@ -3305,9 +3529,9 @@ def create_app(config=None):
     def contacts_update(contact_id):
         """更新單一守護人聯絡人。"""
         payload = request.get_json(silent=True) or {}
-        line_user_id = (payload.get("line_user_id") or "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
         data, code = update_single_contact(app.config["DATA_FILE"], line_user_id, contact_id, payload)
         if code == 200:
             response = {"ok": True, "contact": data["contact"], "contacts": data["contacts"]}
@@ -3318,9 +3542,9 @@ def create_app(config=None):
     @app.delete("/api/contacts/<contact_id>")
     def contacts_delete(contact_id):
         """刪除單一守護人聯絡人。"""
-        line_user_id = (request.args.get("line_user_id") or "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
         data, code = delete_single_contact(app.config["DATA_FILE"], line_user_id, contact_id)
         if code == 200:
             response = {"ok": True, "deleted": True, "contact_id": data["contact_id"], "contacts": data["contacts"]}
@@ -3679,7 +3903,12 @@ def create_app(config=None):
 
     @app.post("/api/sos")
     def sos_api():
-        data, code = trigger_sos(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = trigger_sos(app.config["DATA_FILE"], payload, app.config)
         return jsonify(data), code
 
     @app.get("/api/bot/guardian-groups")
@@ -3766,17 +3995,32 @@ def create_app(config=None):
 
     @app.post("/api/account/delete")
     def account_delete_api():
-        data, code = delete_account(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = delete_account(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
     @app.post("/api/account/export")
     def account_export_api():
-        data, code = export_account_data(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = export_account_data(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
     @app.post("/api/account/history/delete")
     def account_history_delete_api():
-        data, code = delete_personal_history(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = delete_personal_history(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
     @app.get("/api/admin/summary")
@@ -3872,12 +4116,28 @@ def create_app(config=None):
         data, code = send_checkin_reminders(app.config)
         return jsonify(data), code
 
+    @app.route("/api/cron/overdue-alerts", methods=["GET", "POST"])
+    def cron_overdue_alerts_api():
+        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        if not cron_allowed(app.config, secret):
+            return jsonify({"error": "unauthorized"}), 401
+        data, code = send_due_reminders(app.config)
+        return jsonify(data), code
+
     @app.route("/api/cron/renewal-reminders", methods=["GET", "POST"])
     def cron_renewal_reminders_api():
         secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = send_renewal_reminders(app.config)
+        return jsonify(data), code
+
+    @app.route("/api/cron/membership-expiry", methods=["GET", "POST"])
+    def cron_membership_expiry_api():
+        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        if not cron_allowed(app.config, secret):
+            return jsonify({"error": "unauthorized"}), 401
+        data, code = apply_expired_plan_downgrades(app.config)
         return jsonify(data), code
 
     @app.route("/api/cron/data-cleanup", methods=["GET", "POST"])

@@ -15,16 +15,31 @@ services:
         value: https://alive-checkin.onrender.com/
       - key: APP_TIMEZONE
         value: Asia/Taipei
+      # SQLite path (auto-migrates state.json → state.db). For true persistence,
+      # upgrade plan and attach a disk mounted at /var/data, then set:
+      # DATA_FILE=/var/data/state.json
       - key: DATA_FILE
         value: data/state.json
+      - key: REQUIRE_LIFF_AUTH
+        value: "1"
       - key: ADMIN_PASSWORD
         sync: false
       - key: LINE_CHANNEL_ACCESS_TOKEN
         sync: false
       - key: LINE_CHANNEL_SECRET
         sync: false
+      - key: LINE_LOGIN_CHANNEL_ID
+        sync: false
       - key: CRON_SECRET
         sync: false
+      - key: NEWEBPAY_MERCHANT_ID
+        sync: false
+      - key: NEWEBPAY_HASH_KEY
+        sync: false
+      - key: NEWEBPAY_HASH_IV
+        sync: false
+      - key: NEWEBPAY_STAGE
+        value: sandbox
   - type: cron
     name: alive-checkin-contact-reminders
     env: python
@@ -42,6 +57,39 @@ services:
     schedule: "*/15 * * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python cron_ping.py /api/cron/checkin-reminders
+    envVars:
+      - key: APP_PUBLIC_URL
+        value: https://alive-checkin.onrender.com/
+      - key: CRON_SECRET
+        sync: false
+  - type: cron
+    name: alive-checkin-overdue-alerts
+    env: python
+    schedule: "*/15 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python cron_ping.py /api/cron/overdue-alerts
+    envVars:
+      - key: APP_PUBLIC_URL
+        value: https://alive-checkin.onrender.com/
+      - key: CRON_SECRET
+        sync: false
+  - type: cron
+    name: alive-checkin-renewal-reminders
+    env: python
+    schedule: "0 2 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python cron_ping.py /api/cron/renewal-reminders
+    envVars:
+      - key: APP_PUBLIC_URL
+        value: https://alive-checkin.onrender.com/
+      - key: CRON_SECRET
+        sync: false
+  - type: cron
+    name: alive-checkin-membership-expiry
+    env: python
+    schedule: "15 2 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python cron_ping.py /api/cron/membership-expiry
     envVars:
       - key: APP_PUBLIC_URL
         value: https://alive-checkin.onrender.com/

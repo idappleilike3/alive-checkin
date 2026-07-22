@@ -70,7 +70,9 @@ class ReminderTimesTests(unittest.TestCase):
             self.assertEqual(code, 200)
             self.assertEqual(result["sent"], 1)
             self.assertEqual(len(sent_messages), 1)
-            self.assertIn("12:00", sent_messages[0][1])
+            first_msg = sent_messages[0][1]
+            first_text = first_msg.get("altText", first_msg) if isinstance(first_msg, dict) else first_msg
+            self.assertIn("12:00", first_text)
 
             reloaded = alive_app.load_state(data_file)
             slots = reloaded["users"]["U1"]["checkin_reminder_sent_slots"]["2026-07-22"]
@@ -83,7 +85,9 @@ class ReminderTimesTests(unittest.TestCase):
             self.assertEqual(code2, 200)
             self.assertEqual(result2["sent"], 1)
             self.assertEqual(len(sent_messages), 2)
-            self.assertIn("18:00", sent_messages[1][1])
+            second_msg = sent_messages[1][1]
+            second_text = second_msg.get("altText", second_msg) if isinstance(second_msg, dict) else second_msg
+            self.assertIn("18:00", second_text)
 
             reloaded2 = alive_app.load_state(data_file)
             slots2 = reloaded2["users"]["U1"]["checkin_reminder_sent_slots"]["2026-07-22"]
