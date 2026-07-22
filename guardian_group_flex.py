@@ -61,7 +61,7 @@ def liff_entry_url(*, open_action: str | None = None, fragment: str = "", **quer
             continue
         params[key_s] = str(value)
     if params:
-        url += "#" + urlencode(params)
+        url += "/?" + urlencode(params)
     elif fragment:
         url += f"#{fragment.lstrip('#')}"
     return url
@@ -1107,8 +1107,8 @@ def welcome_flex(display_name: str | None = None):
                     "type": "button",
                     "action": {
                         "type": "uri",
-                        "label": "❓ 求助(長按看教學)",
-                        "uri": liff_entry_url(open_action="help") if liff_entry_url else "https://alive-checkin.onrender.com/help",
+                        "label": "SOS 長按教學",
+                        "uri": f"{PUBLIC_BASE}/help.html#sos",
                     },
                     "style": "link",
                     "color": GRAY,

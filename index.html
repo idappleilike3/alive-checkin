@@ -802,31 +802,36 @@
       margin-bottom: 10px;
     }
     .contact-primary {
-      background: linear-gradient(135deg, #0f766e 0%, #115e59 100%);
-      border-color: #0f766e;
-      color: #fff;
-      box-shadow: 0 12px 28px rgba(15, 118, 110, 0.22);
+      background: linear-gradient(135deg, #fff1f7 0%, #ffe4ef 52%, #ffd6e8 100%);
+      border: 2px solid #f472b6;
+      color: #831843;
+      box-shadow: 0 14px 30px rgba(236, 72, 153, 0.2);
     }
     .contact-primary .price-head strong,
     .contact-primary .helper {
-      color: #fff;
+      color: #831843;
+      font-weight: 950;
     }
     .contact-primary .price-head span {
-      background: #facc15;
-      color: #713f12;
-      border-color: #fde68a;
+      background: #f9a8d4;
+      color: #831843;
+      border-color: #f472b6;
+      font-weight: 950;
     }
     .contact-primary .price-btn {
-      background: #facc15;
-      color: #422006;
+      min-height: 58px;
+      background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
+      color: #fff;
       border-color: transparent;
-      box-shadow: 0 10px 22px rgba(250, 204, 21, 0.22);
+      font-size: 20px;
+      font-weight: 950;
+      box-shadow: 0 12px 24px rgba(219, 39, 119, 0.26);
     }
     .settings[aria-label="緊急聯絡人"] .settings-title,
     .settings[aria-label="緊急聯絡人"] .price-head strong {
       font-size: 24px;
       font-weight: 950;
-      color: #102a1f;
+      color: #be185d;
     }
     .settings[aria-label="緊急聯絡人"] .helper {
       font-size: 17px;
@@ -836,7 +841,7 @@
     }
     .settings[aria-label="緊急聯絡人"] .contact-primary .price-head strong,
     .settings[aria-label="緊急聯絡人"] .contact-primary .helper {
-      color: #fff;
+      color: #831843;
     }
     .manual-contact-title {
       display: flex;
@@ -3401,15 +3406,13 @@
     /** 建立永久 LIFF 連結；絕不帶入 code=/state= 等 OAuth 殘留參數。 */
     function buildLiffPermanentUrl(params = {}, hash = "") {
       const url = new URL(`https://liff.line.me/${getLiffId()}`);
-      const fragmentParams = new URLSearchParams();
       Object.entries(params || {}).forEach(([key, value]) => {
         if (value == null || value === "") return;
         if (OAUTH_PARAM_KEYS.has(String(key))) return;
-        fragmentParams.set(String(key), String(value));
+        url.searchParams.set(String(key), String(value));
       });
       const fragment = String(hash || "").replace(/^#/, "");
-      const nextFragment = fragmentParams.toString() || fragment;
-      if (nextFragment) url.hash = nextFragment;
+      if (!url.search && fragment) url.hash = fragment;
       return url.toString();
     }
 
@@ -3433,8 +3436,8 @@
       const params = readSafeDeepLinkParams();
       const endpoint = `${location.origin}${location.pathname || "/"}`;
       const qs = new URLSearchParams(params).toString();
-      const hash = (location.hash || "").replace(/^#/, "");
-      return qs ? `${endpoint}?${qs}${hash ? `#${hash}` : ""}` : `${endpoint}${hash ? `#${hash}` : ""}`;
+      // LINE Login redirectUri 不帶 fragment，避免邀請連結登入時被 LINE 判定 400。
+      return qs ? `${endpoint}?${qs}` : endpoint;
     }
 
     function setTheme(theme) {

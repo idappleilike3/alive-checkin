@@ -1840,7 +1840,7 @@ def create_friend_invite(data_file, payload):
             str(os.environ.get("LIFF_ID") or "").strip()
             or "2010674803-rK98c0lo"
         )
-        invite_url = f"https://liff.line.me/{lid}?friend_invite={code}"
+        invite_url = f"https://liff.line.me/{lid}/?friend_invite={code}"
     return {
         "invite_code": code,
         "invite_url": invite_url,

@@ -51,6 +51,16 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn(".check-btn.danger {", page)
         self.assertIn("color: #fff !important;", page)
 
+    def test_guardian_invite_card_uses_accessible_pink_style(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('♡ 緊急聯絡人', page)
+        self.assertIn("background: linear-gradient(135deg, #fff1f7", page)
+        self.assertIn("border: 2px solid #f472b6", page)
+        self.assertIn("color: #be185d", page)
+        self.assertIn("font-size: 20px", page)
+        self.assertIn("一鍵邀請守護人", page)
+
     def test_today_status_stays_open_with_checkin_at_top(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
 
@@ -201,6 +211,34 @@ class ProductRulesTests(unittest.TestCase):
         gate = init_app[gate_start:gate_end]
         self.assertNotIn("shareContactInvite", gate)
         self.assertIn('showTab("home")', gate)
+
+    def test_liff_login_redirect_removes_fragment_to_prevent_line_400(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        redirect_fn = page[
+            page.index("function buildCleanLoginRedirectUri()") : page.index("function setTheme")
+        ]
+
+        self.assertIn("LINE Login redirectUri 不帶 fragment", redirect_fn)
+        self.assertIn("return qs ? `${endpoint}?${qs}` : endpoint;", redirect_fn)
+        self.assertNotIn("location.hash", redirect_fn)
+
+    def test_liff_links_use_query_params_for_android_compatibility(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        rich_menu = (ROOT / "line-rich-menu-config.json").read_text(encoding="utf-8")
+        flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
+
+        self.assertIn("url.searchParams.set", page)
+        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=checkin", rich_menu)
+        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=onboarding", rich_menu)
+        self.assertIn('url += "/?" + urlencode(params)', flex)
+        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo#open=", rich_menu)
+
+    def test_welcome_help_button_opens_sos_tutorial_directly(self):
+        flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
+
+        self.assertIn('"label": "SOS 長按教學"', flex)
+        self.assertIn('f"{PUBLIC_BASE}/help.html#sos"', flex)
+        self.assertNotIn("求助(長按看教學)", flex)
 
     def test_onboarding_guardian_form_is_senior_friendly_and_traditional_chinese(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
