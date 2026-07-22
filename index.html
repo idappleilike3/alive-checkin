@@ -1501,7 +1501,8 @@
     #guardianEditorModal,
     #deleteGuardianModal,
     #guardianCompleteModal,
-    #sosConfirmModal {
+    #sosConfirmModal,
+    #calendarNoteModal {
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
       align-content: start;
@@ -1514,6 +1515,19 @@
       padding: 22px 18px;
       margin: 0 auto 24px;
       max-height: none;
+    }
+    #calendarNoteModal {
+      z-index: 65;
+      overscroll-behavior: contain;
+      touch-action: pan-y;
+    }
+    #calendarNoteModal .guardian-modal {
+      width: min(100%, 520px);
+      display: grid;
+      gap: 12px;
+      margin: 0 auto 24px;
+      max-height: none;
+      padding: 22px 18px;
     }
     #guardianEditorModal .guardian-edit-fields {
       display: grid;
@@ -4952,7 +4966,12 @@
             ? data.invite_url
             : buildLiffPermanentUrl({ friend_invite: inviteCode })
         );
-        const text = `我正在使用「每日平安」安全守護，想邀請你互相查看平安狀態與單次定位（可隨時停止）。\n\n請用 LINE 開啟下方連結並登入，邀請碼會自動帶入：\n${inviteUrl}`;
+        const fallbackUrl = buildPublicAppUrl({ friend_invite: inviteCode });
+        const text = (
+          `我正在使用「每日平安」安全守護，想邀請你互相查看平安狀態與單次定位（可隨時停止）。\n\n` +
+          `請用 LINE 開啟下方連結並登入，邀請碼會自動帶入：\n${inviteUrl}\n\n` +
+          `如果 Android 打不開，請改點備用連結：\n${fallbackUrl}`
+        );
         if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
           await liff.shareTargetPicker([{ type: "text", text }]);
         } else if (navigator.share) {
@@ -5404,6 +5423,7 @@
         calendarNotes = result.notes || {};
         renderCalendar(currentYear, currentMonth, historyData);
         closeCalendarNote();
+        showInlineSuccess(contentOverride === "" ? "已清除記事" : "記事已儲存");
       } catch (error) {
         alert("記事暫時無法儲存，請稍後再試");
       } finally {

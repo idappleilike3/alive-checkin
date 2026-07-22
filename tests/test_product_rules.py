@@ -307,6 +307,25 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("fallbackUrl", page)
         self.assertIn('buildPublicAppUrl({ invite_from: lineUserId })', page)
 
+    def test_friend_location_invite_has_android_public_fallback(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        friend_invite_block = page[
+            page.index("async function shareFriendInvite")
+            : page.index("function maybePrefillFriendInvite")
+        ]
+
+        self.assertIn("buildPublicAppUrl({ friend_invite: inviteCode })", friend_invite_block)
+        self.assertIn("如果 Android 打不開，請改點備用連結", friend_invite_block)
+        self.assertIn("navigator.share", friend_invite_block)
+
+    def test_calendar_note_modal_scrolls_on_mobile_and_confirms_save(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("#calendarNoteModal {", page)
+        self.assertIn("touch-action: pan-y", page)
+        self.assertIn("#calendarNoteModal .guardian-modal", page)
+        self.assertIn('showInlineSuccess(contentOverride === "" ? "已清除記事" : "記事已儲存")', page)
+
     def test_onboarding_guardian_form_is_senior_friendly_and_traditional_chinese(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         onboarding = page[
