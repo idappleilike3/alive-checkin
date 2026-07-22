@@ -2511,7 +2511,12 @@
       <p class="mvp-slogan">每天 10 秒，報個平安</p>
       <h1 class="mvp-welcome">平常不打擾，有事才通知守護人</h1>
       <p class="mvp-welcome-sub">不是監控，是讓重要的人知道你平安</p>
-      <img class="mvp-hero-img" src="assets/daily-peace-hero.png" alt="每日平安，一鍵報平安，守護每一次回家">
+      <div class="check-wrap">
+        <button class="check-btn" id="checkBtn" type="button" disabled aria-busy="true">
+          我平安
+          <span class="sub">點一下回報</span>
+        </button>
+      </div>
       <div class="countdown-block" id="countdownBlock" hidden>
         <div class="countdown" id="countdownDisplay">--:--:--</div>
         <div class="countdown-label" id="countdownLabel">下一次安心確認倒數</div>
@@ -2612,14 +2617,6 @@
         <button class="mvp-action primary" id="mvpContactSaveBtn" type="button">儲存聯絡人</button>
       </div>
     </section>
-
-    <!-- 相容舊流程：隱藏圓形簽到鈕，實際由「我平安」觸發 -->
-    <div class="check-wrap" hidden aria-hidden="true">
-      <button class="check-btn" id="checkBtn" type="button" disabled aria-busy="true">
-        我平安
-        <span class="sub">點一下回報</span>
-      </button>
-    </div>
 
     <div id="guardianSection" hidden>
         <h3>家人狀態</h3>
@@ -5799,7 +5796,11 @@
         if (res.status !== 200 || !res.data) {
           return { done: false, hasGuardian: currentGuardianContacts().length > 0, ok: false };
         }
-        const hasGuardian = res.data.has_guardian === true || currentGuardianContacts().length > 0;
+        const hasGuardian = (
+          res.data.has_guardian === true
+          || Number(res.data.guardian_count || 0) > 0
+          || currentGuardianContacts().length > 0
+        );
         const done = (
           res.data.setup_completed === true
           || res.data.is_onboarding_completed === true
@@ -6084,7 +6085,11 @@
         const forceOnboarding = openAction === "onboarding" || openAction === "guardian" || openAction === "bind";
         const inviteeMode = isInviteeDeepLink();
         const onboardingState = await fetchOnboardingState();
-        const hasGuardians = onboardingState.hasGuardian || currentGuardianContacts().length > 0;
+        const hasGuardians = (
+          onboardingState.hasGuardian
+          || Number(onboardingState.data?.guardian_count || 0) > 0
+          || currentGuardianContacts().length > 0
+        );
         const setupDone = onboardingState.done || hasGuardians;
         if (inviteeMode) {
           clearShareFirstLocalFlags();
