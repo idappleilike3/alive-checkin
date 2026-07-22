@@ -4164,9 +4164,6 @@
       const bindUrl = lineUserId
         ? buildLiffPermanentUrl({ invite_from: lineUserId })
         : buildLiffPermanentUrl({ open: "onboarding" });
-      const fallbackUrl = lineUserId
-        ? buildPublicAppUrl({ invite_from: lineUserId })
-        : buildPublicAppUrl({ open: "onboarding" });
       const nameText = nickname ? `嗨 ${nickname}，` : "";
       const text = (
         `${nameText}我想邀請你成為「每日平安」的守護人。\n\n` +
@@ -4175,10 +4172,9 @@
         `2. 登入並同意成為守護人\n` +
         `3. 綁定完成後，若我未準時報平安或發出 SOS，你會收到 LINE 通知\n\n` +
         `你不需要另外註冊 App。點連結完成授權即可。\n\n` +
-        `守護邀請連結（LINE 內嵌）：\n${bindUrl}\n\n` +
-        `如果 Android 打不開，請改點備用連結：\n${fallbackUrl}`
+        `守護邀請連結（請用 LINE 開啟）：\n${bindUrl}`
       );
-      return { bindUrl, fallbackUrl, text };
+      return { bindUrl, text };
     }
 
     async function apiBindEmergencyContact(inviterLineUserId) {
@@ -4676,7 +4672,7 @@
       const inviteMeta = $("inviteMeta");
       if (inviteUrlBox) inviteUrlBox.value = bindUrl;
       if (inviteArea) inviteArea.hidden = false;
-      if (inviteMeta) inviteMeta.textContent = "此為永久 LIFF 連結（不含 code/state），請用 LINE 開啟。";
+      if (inviteMeta) inviteMeta.textContent = "此為永久 LIFF 內嵌連結（不含 code/state）。Android 與 iPhone 都請用 LINE 開啟。";
       try {
         if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
           await liff.shareTargetPicker([
@@ -4694,7 +4690,12 @@
           alert(text);
         }
       } catch (error) {
-        alert("邀請已取消，想分享時可以再按一次。");
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(text);
+          alert("LINE 分享視窗沒有開啟，邀請文案已複製。請直接貼到 LINE 傳給守護人。");
+        } else {
+          alert("LINE 分享視窗沒有開啟，請複製畫面上的 LIFF 連結傳給守護人。");
+        }
       }
     }
 

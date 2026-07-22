@@ -113,6 +113,29 @@ def _footer_buttons(include: tuple[str, ...] = ("status", "guide", "admin")):
     return btns
 
 
+def _group_quick_actions():
+    """守護群固定 4 顆大按鈕，採 2x2 排版避免 LINE 手機版文字被切掉。"""
+    rows = [
+        [
+            _uri_button("我平安", liff_entry_url(open_action="checkin"), style="secondary", color=GREEN_DARK, height="md"),
+            _postback_button("聯絡家人", "聯絡家人", style="secondary", color=GREEN_DARK, height="md"),
+        ],
+        [
+            _postback_button("需要幫忙", "需要幫忙", style="secondary", color=RED_WARN, height="md"),
+            _postback_button("守護群狀態", "守護群狀態", style="secondary", color=GREEN_DARK, height="md"),
+        ],
+    ]
+    return [
+        {
+            "type": "box",
+            "layout": "horizontal",
+            "spacing": "sm",
+            "contents": row,
+        }
+        for row in rows
+    ]
+
+
 # ───────────────────────────────────────────────────────────
 # 1. 自我介紹(Intro)
 # ───────────────────────────────────────────────────────────
@@ -145,14 +168,13 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
         "color": GREEN_DARK,
         "height": "md",
     }
-    # 已綁定則主按鈕改成「我已綁定守護群」視覺提示(仍可再點,handler 會回 already_bound)
     if already_bound:
         primary_bind = {
             "type": "button",
             "action": {
                 "type": "message",
                 "label": "我已完成守護群設定",
-                "text": "點我綁定守護群",
+                "text": "守護群狀態",
             },
             "style": "primary",
             "color": GREEN_DARK,
@@ -216,8 +238,8 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                         },
                         {
                             "type": "text",
-                            "text": "收到家人的平安訊息；只有逾期未簽到或主動求助時，才會在群裡提醒",
-                            "size": "md",
+                            "text": "收到家人的平安訊息。在這提醒報平安、發需要幫忙通知、逾期未報平安或主動求助時，才會在群裡提醒",
+                            "size": "lg",
                             "color": GRAY,
                             "wrap": True,
                         },
@@ -226,8 +248,8 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                 _owner_status_block(owner_info),
                 {
                     "type": "text",
-                    "text": "管理員請按下方按鈕，完成守護群設定",
-                    "size": "md",
+                    "text": "管理員第一次進群，請先完成守護群設定",
+                    "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
                     "margin": "sm",
@@ -235,7 +257,7 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
                 {
                     "type": "text",
                     "text": "完成後會顯示「我已完成守護群設定」。群內狀態明細預設只有管理員可以查看，保護家人隱私",
-                    "size": "md",
+                    "size": "lg",
                     "color": GRAY_LIGHT,
                     "wrap": True,
                 },
@@ -247,37 +269,7 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
             "spacing": "sm",
             "paddingAll": "md",
             "backgroundColor": "#FAFAFA",
-            "contents": [
-                primary_bind,
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "sm",
-                    "contents": [
-                        _uri_button(
-                            "報平安",
-                            liff_entry_url(fragment="home"),
-                            style="secondary",
-                            color=GREEN_DARK,
-                            height="sm",
-                        ),
-                        _uri_button(
-                            "聯絡家人",
-                            liff_entry_url(open_action="member"),
-                            style="secondary",
-                            color=GREEN_DARK,
-                            height="sm",
-                        ),
-                        _uri_button(
-                            "需要幫忙",
-                            liff_entry_url(open_action="sos"),
-                            style="secondary",
-                            color=GREEN_DARK,
-                            height="sm",
-                        ),
-                    ],
-                },
-            ],
+            "contents": [primary_bind, *_group_quick_actions()],
         },
     }
 
@@ -984,7 +976,6 @@ def welcome_flex(display_name: str | None = None):
     name = (display_name or "").strip() or "您"
     # 永久連結：開 LIFF 內嵌 → onboarding（分享邀請 → 守護人表單 → 提醒）。勿硬編碼 OAuth code/state。
     bind_uri = liff_entry_url(open_action="onboarding")
-    home_uri = liff_entry_url(open_action="home")
     pricing_uri = liff_entry_url(open_action="pricing")
     faq_uri = liff_entry_url(open_action="faq")
     sos_help_uri = liff_entry_url(open_action="help", section="sos")
@@ -1111,12 +1102,12 @@ def welcome_flex(display_name: str | None = None):
                     "type": "button",
                     "action": {
                         "type": "uri",
-                        "label": "SOS 長按教學",
+                        "label": "SOS 與緊急聯絡教學",
                         "uri": sos_help_uri,
                     },
                     "style": "link",
                     "color": GRAY,
-                    "height": "sm",
+                    "height": "md",
                 },
                 {
                     "type": "button",
@@ -1127,7 +1118,7 @@ def welcome_flex(display_name: str | None = None):
                     },
                     "style": "link",
                     "color": RED_WARN,
-                    "height": "sm",
+                    "height": "md",
                 },
                 {
                     "type": "button",
@@ -1138,18 +1129,7 @@ def welcome_flex(display_name: str | None = None):
                     },
                     "style": "link",
                     "color": GREEN_DARK,
-                    "height": "sm",
-                },
-                {
-                    "type": "button",
-                    "action": {
-                        "type": "uri",
-                        "label": "回到首頁",
-                        "uri": home_uri,
-                    },
-                    "style": "link",
-                    "color": GRAY,
-                    "height": "sm",
+                    "height": "md",
                 },
             ],
         },

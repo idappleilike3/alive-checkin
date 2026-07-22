@@ -82,8 +82,8 @@ def main():
     bg = Image.new("RGB", (WIDTH, HEIGHT), "#fff7e8")
     draw = ImageDraw.Draw(bg)
 
-    title_font = font(112, bold=True)
-    subtitle_font = font(58, bold=True)
+    title_font = font(132, bold=True)
+    subtitle_font = font(72, bold=True)
 
     x_positions = [0, CELL_W[0], CELL_W[0] + CELL_W[1]]
     # 2026-07-21 patch 22: 6 格重排,加入 SOS(紅色突出)+ 我的會員 + 守護群
@@ -106,9 +106,9 @@ def main():
         draw.ellipse((x + 62, y + 54, x + 280, y + 172), fill="#fff8ea")
         draw.ellipse((x + w - 260, y + CELL_H - 170, x + w - 62, y + CELL_H - 56), fill="#ffffff")
         draw.rounded_rectangle((x + 52, y + 52, x + w - 52, y + CELL_H - 52), radius=58, outline=line, width=5)
-        draw_icon(draw, x + w / 2, y + 210, icon, line)
-        centered_text(draw, (x, y + 370, x + w, y + 500), label, title_font, text_color)
-        centered_text(draw, (x + 34, y + 540, x + w - 34, y + 660), desc, subtitle_font, desc_color)
+        draw_icon(draw, x + w / 2, y + 205, icon, line)
+        centered_text(draw, (x, y + 360, x + w, y + 515), label, title_font, text_color)
+        centered_text(draw, (x + 28, y + 545, x + w - 28, y + 690), desc, subtitle_font, desc_color)
 
     draw.line((833, 0, 833, HEIGHT), fill="#ead6b8", width=7)
     draw.line((1667, 0, 1667, HEIGHT), fill="#ead6b8", width=7)

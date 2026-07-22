@@ -264,11 +264,11 @@ class ProductRulesTests(unittest.TestCase):
     def test_welcome_help_button_opens_sos_tutorial_directly(self):
         flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
 
-        self.assertIn('"label": "SOS 長按教學"', flex)
+        self.assertIn('"label": "SOS 與緊急聯絡教學"', flex)
         self.assertIn('sos_help_uri = liff_entry_url(open_action="help", section="sos")', flex)
         self.assertIn('"label": "立即升級守護"', flex)
         self.assertIn('"label": "問與答"', flex)
-        self.assertIn('"label": "回到首頁"', flex)
+        self.assertNotIn('"label": "回到首頁"', flex)
         self.assertNotIn('f"{PUBLIC_BASE}/help.html#sos"', flex)
         self.assertNotIn("求助(長按看教學)", flex)
 
@@ -298,14 +298,30 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("https://alive-checkin.onrender.com/", backend)
         self.assertNotIn("file:///C:/Users/WIN11", backend)
 
-    def test_guardian_invite_has_android_public_fallback(self):
+    def test_guardian_invite_uses_liff_only_to_avoid_android_external_browser(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
+        invite_block = page[
+            page.index("function buildContactInvite")
+            : page.index("async function apiBindEmergencyContact")
+        ]
 
         self.assertIn("function buildPublicAppUrl", page)
-        self.assertIn("守護邀請連結（LINE 內嵌）", page)
-        self.assertIn("如果 Android 打不開，請改點備用連結", page)
-        self.assertIn("fallbackUrl", page)
-        self.assertIn('buildPublicAppUrl({ invite_from: lineUserId })', page)
+        self.assertIn("守護邀請連結（請用 LINE 開啟）", invite_block)
+        self.assertIn("buildLiffPermanentUrl({ invite_from: lineUserId })", invite_block)
+        self.assertNotIn("如果 Android 打不開，請改點備用連結", invite_block)
+        self.assertNotIn("buildPublicAppUrl({ invite_from: lineUserId })", invite_block)
+
+    def test_guardian_group_intro_has_large_four_button_actions(self):
+        flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
+
+        self.assertIn("def _group_quick_actions", flex)
+        self.assertIn('text": "收到家人的平安訊息。在這提醒報平安、發需要幫忙通知、逾期未報平安或主動求助時，才會在群裡提醒"', flex)
+        self.assertIn('_uri_button("我平安", liff_entry_url(open_action="checkin")', flex)
+        self.assertIn('_postback_button("聯絡家人"', flex)
+        self.assertIn('_postback_button("需要幫忙"', flex)
+        self.assertIn('_postback_button("守護群狀態"', flex)
+        self.assertIn('"label": "我已完成守護群設定"', flex)
+        self.assertIn('"text": "守護群狀態"', flex)
 
     def test_friend_location_invite_has_android_public_fallback(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
