@@ -3692,24 +3692,44 @@
     const $ = (id) => document.getElementById(id);
     const DEFAULT_LIFF_ID = "2010674803-rK98c0lo";
     const OAUTH_PARAM_KEYS = new Set([
-      "code", "state", "liffClientId", "liffRedirectUri", "friendship_status_changed"
+      "code", "state", "liff.state", "liffClientId", "liffRedirectUri", "friendship_status_changed"
     ]);
 
     function getLiffId() {
       return String(window.__LIFF_ID__ || DEFAULT_LIFF_ID).trim() || DEFAULT_LIFF_ID;
     }
 
+    function mergeSafeParams(params, rawParams) {
+      rawParams.forEach((value, key) => {
+        const keyName = String(key);
+        if (!OAUTH_PARAM_KEYS.has(keyName)) params.set(keyName, value);
+      });
+    }
+
+    function parseLiffStateParams(params, value) {
+      let raw = String(value || "").trim();
+      if (!raw) return;
+      try { raw = decodeURIComponent(raw); } catch (_) {}
+      raw = raw.replace(/^#/, "");
+      if (raw.startsWith("/")) {
+        const queryIndex = raw.indexOf("?");
+        raw = queryIndex >= 0 ? raw.slice(queryIndex + 1) : "";
+      }
+      raw = raw.replace(/^\?/, "");
+      if (!raw || !raw.includes("=")) return;
+      mergeSafeParams(params, new URLSearchParams(raw));
+    }
+
     function readAppParams() {
       const params = new URLSearchParams();
       try {
         new URLSearchParams(location.search).forEach((value, key) => {
-          if (!OAUTH_PARAM_KEYS.has(String(key))) params.set(key, value);
+          if (String(key) === "liff.state") parseLiffStateParams(params, value);
+          else if (!OAUTH_PARAM_KEYS.has(String(key))) params.set(key, value);
         });
         const rawHash = String(location.hash || "").replace(/^#/, "");
         if (rawHash && rawHash.includes("=")) {
-          new URLSearchParams(rawHash).forEach((value, key) => {
-            if (!OAUTH_PARAM_KEYS.has(String(key))) params.set(key, value);
-          });
+          mergeSafeParams(params, new URLSearchParams(rawHash));
         }
       } catch (_) {}
       return params;

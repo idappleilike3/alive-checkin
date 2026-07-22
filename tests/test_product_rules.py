@@ -248,6 +248,9 @@ class ProductRulesTests(unittest.TestCase):
         flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
 
         self.assertIn("url.searchParams.set", page)
+        self.assertIn("parseLiffStateParams", page)
+        self.assertIn('String(key) === "liff.state"', page)
+        self.assertIn('"invite_from", "friend_invite", "open"', page)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=checkin", rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=onboarding", rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=sos", rich_menu)
@@ -286,6 +289,13 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("問與答", help_page)
         self.assertIn("每日平安問與答", faq_page)
         self.assertIn("家人要怎麼先體驗 799 守護版", faq_page)
+
+    def test_line_upgrade_reply_uses_online_liff_link_not_local_file(self):
+        backend = (ROOT / "app.py").read_text(encoding="utf-8")
+
+        self.assertIn("可以，升級方案請點這裡", backend)
+        self.assertIn('line_liff_url("pricing")', backend)
+        self.assertNotIn("file:///C:/Users/WIN11", backend)
 
     def test_onboarding_guardian_form_is_senior_friendly_and_traditional_chinese(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
