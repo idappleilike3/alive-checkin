@@ -1389,14 +1389,16 @@
     }
     .plan-toggle {
       width: 100%;
-      min-height: 42px;
+      min-height: 56px;
       border-radius: 999px;
-      border: 1px solid var(--line);
-      background: var(--input);
-      color: var(--text);
+      border: 2px solid #38bdf8;
+      background: linear-gradient(135deg, #0f172a 0%, #075985 56%, #0891b2 100%);
+      color: #ffffff;
       cursor: pointer;
-      font-weight: 850;
+      font-size: 18px;
+      font-weight: 950;
       margin-bottom: 10px;
+      box-shadow: 0 14px 28px rgba(8, 145, 178, 0.24);
     }
     .modal-backdrop {
       position: fixed;
@@ -2342,12 +2344,29 @@
       color: #f8fafc;
     }
     body.neon .settings-title,
+    body.neon .member-center-toggle,
     body.neon .member-data-section h3,
     body.neon .member-data-row strong,
     body.neon .calendar-box strong,
     body.neon .history-note,
     body.neon .member-profile-row strong {
       color: #ffffff;
+    }
+    body.neon .member-center-toggle span { color: #67e8f9; }
+    body.neon .member-profile-row {
+      background: linear-gradient(135deg, #020617 0%, #0f172a 54%, #082f49 100%);
+      border-color: #67e8f9;
+      box-shadow: 0 16px 32px rgba(8, 47, 73, 0.36);
+    }
+    body.neon .member-upgrade-btn {
+      background: linear-gradient(135deg, #1d4ed8 0%, #0369a1 50%, #0891b2 100%);
+      box-shadow: 0 12px 28px rgba(14, 165, 233, 0.3);
+    }
+    body.neon .plan-toggle {
+      background: linear-gradient(135deg, #020617 0%, #0f172a 54%, #0891b2 100%);
+      border-color: #67e8f9;
+      color: #ffffff;
+      box-shadow: 0 0 0 2px rgba(103,232,249,0.16), 0 14px 32px rgba(8,145,178,0.34);
     }
     body.neon .member-data-section,
     body.neon .guardian-details-form,
@@ -2450,6 +2469,12 @@
       background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
       color: #ffffff;
       border-color: transparent;
+    }
+    body.cute .plan-toggle {
+      background: linear-gradient(135deg, #be185d 0%, #db2777 54%, #ec4899 100%);
+      border-color: #f9a8d4;
+      color: #ffffff;
+      box-shadow: 0 14px 28px rgba(219, 39, 119, 0.22);
     }
     .mvp-hero-img {
       display: block;
@@ -4210,7 +4235,7 @@
         paid_799: { cycle: "799 守護版｜月費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、一鍵 SOS、LINE 通知 3 位核心守護人、1 個守護群。" },
         paid_799_year: { cycle: "799 守護版｜年費方案", contacts: 50, locations: 50, detail: "每日提醒 3 次、一鍵 SOS、LINE 通知 5 位核心守護人、3 個守護群。" },
         free: { cycle: "基本守護｜免費方案", contacts: 1, locations: 1, detail: "基本簽到與 LINE 提醒。" },
-        trial: { cycle: "安心體驗｜7 天試用", contacts: 1, locations: 1, detail: "試用期間可使用基本簽到與 LINE 提醒。" }
+        trial: { cycle: "安心體驗", contacts: 1, locations: 1, detail: "試用期間可使用基本簽到與 LINE 提醒。" }
       }[plan] || { cycle: "尚未選擇方案", contacts: 1, locations: 1, detail: "請先選擇適合你的守護方案。" };
     }
 
@@ -4224,7 +4249,7 @@
       $("memberExpiryText").textContent = status.paid_until
         ? `使用期限 ${status.paid_until}`
         : memberPlan === "trial"
-          ? `安心體驗剩餘 ${status.trial_days_left ?? 7} 天`
+          ? "尚未升級"
           : "尚未設定到期日";
       const boundCount = contactData.filter((contact) => contact.line_id || contact.consent_status === "accepted").length;
       $("memberLineAccount").textContent = lineUserId || status.line_user_id ? "LINE 已綁定" : "尚未綁定 LINE";
@@ -4243,7 +4268,7 @@
         failed: "付款未完成",
         expired: "方案已到期"
       }[status.payment_status] || "尚未付費";
-      $("memberBillingExpiry").textContent = status.paid_until || (memberPlan === "trial" ? `體驗剩餘 ${status.trial_days_left ?? 7} 天` : "尚未設定");
+      $("memberBillingExpiry").textContent = status.paid_until || (memberPlan === "trial" ? "試用中" : "尚未設定");
       const benefits = memberPlanBenefits(memberPlan);
       $("memberPlanCycle").textContent = benefits.cycle;
       $("memberPlanBenefits").textContent = `${benefits.contacts} 位`;
@@ -4327,9 +4352,6 @@
           </div>
         `; }).join("")
         : `<div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護群</strong></div>`;
-      $("memberAdvancedNote").textContent = isPaid
-        ? `${planLabel(status.plan)}已具備進階紀錄資格；可用範圍會依方案開放歷史篩選、資料匯出與安全守護定位。`
-        : "升級守護方案後，可依方案使用較長的歷史保存、進階篩選與安全守護定位。";
       renderGuardianDetailsEditor();
     }
 
