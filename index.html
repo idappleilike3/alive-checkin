@@ -3365,6 +3365,8 @@
     let calendarNotes = {};
     let selectedCalendarDate = "";
     let appConfig = {};
+    let appBootstrapPromise = null;
+    let appBootstrapComplete = false;
 
     const $ = (id) => document.getElementById(id);
     const DEFAULT_LIFF_ID = "2010674803-rK98c0lo";
@@ -5393,12 +5395,13 @@
       }, 3500);
     }
 
-    function showLineLoginRequired() {
+    function showLineLoginRequired(nextParams = null) {
       const checkBtn = $("checkBtn");
       const dailyEl = $("dailyStatus");
       const errBox = $("inlineError");
       // 永久 LIFF 入口；只保留業務 deep link，絕不帶 code/state
-      const liffEntry = buildLiffPermanentUrl(readSafeDeepLinkParams(), location.hash || "");
+      const safeParams = { ...readSafeDeepLinkParams(), ...(nextParams || {}) };
+      const liffEntry = buildLiffPermanentUrl(safeParams, location.hash || "");
       if (checkBtn) {
         checkBtn.disabled = true;
         checkBtn.setAttribute("aria-busy", "false");
@@ -5431,8 +5434,18 @@
       if (!checkBtn) return;
       // 防連點：僅在真正送出中阻擋（勿用初始 aria-busy，否則首次點擊會被吃掉）
       if (checkBtn.dataset.state === "loading") return;
+      if (!useLocalMode && !lineUserId && appBootstrapPromise && !appBootstrapComplete) {
+        checkBtn.disabled = true;
+        checkBtn.dataset.state = "loading";
+        checkBtn.setAttribute("aria-busy", "true");
+        checkBtn.innerHTML = CHECK_BTN_LOADING_HTML;
+        hideInlineError();
+        try {
+          await appBootstrapPromise;
+        } catch (_) {}
+      }
       if (!useLocalMode && !lineUserId) {
-        showLineLoginRequired();
+        showLineLoginRequired({ open: "checkin" });
         return;
       }
 
@@ -6195,7 +6208,14 @@
         } else if ((openAction === "checkin" || location.hash === "#home") && typeof showTab === "function") {
           showTab("home");
           if (openAction === "checkin") {
-            // 從提醒進來：直接回到首頁四大按鈕，由使用者按「我平安」
+            setTimeout(() => {
+              if (currentStatusData && currentStatusData.is_today_checked) {
+                syncCheckBtn(currentStatusData);
+                showInlineSuccess("✅ 今天已完成平安回報");
+                return;
+              }
+              doCheckin().catch((error) => showInlineError("回報失敗：" + (error.message || "請稍後再試")));
+            }, 250);
           }
         }
       } catch (error) {
@@ -6631,6 +6651,7 @@
     maybeShowInviteAcceptPrompt();
 
     async function bootstrapApp() {
+      appBootstrapComplete = false;
       try {
         const lineReady = lineUserId ? true : await initLine();
         if (!useLocalMode && (!lineReady || !lineUserId)) {
@@ -6650,10 +6671,12 @@
       } catch (error) {
         console.warn("頁面初始化失敗", error);
         showLineLoginRequired();
+      } finally {
+        appBootstrapComplete = true;
       }
     }
 
-    bootstrapApp();
+    appBootstrapPromise = bootstrapApp();
     setInterval(() => {
       if (lineUserId) refreshStatus().catch((error) => console.warn("狀態更新失敗", error));
     }, 5000);

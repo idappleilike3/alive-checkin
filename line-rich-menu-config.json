@@ -9,7 +9,7 @@
   "areas": [
     {
       "bounds": { "x": 0, "y": 0, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "報平安", "uri": "https://liff.line.me/2010674803-rK98c0lo#home" }
+      "action": { "type": "uri", "label": "報平安", "uri": "https://liff.line.me/2010674803-rK98c0lo#open=checkin" }
     },
     {
       "bounds": { "x": 833, "y": 0, "width": 834, "height": 843 },
