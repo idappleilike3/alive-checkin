@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlencode
 
 
 # ───────────────────────────────────────────────────────────
@@ -41,15 +42,26 @@ def get_liff_id() -> str:
     return (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).strip() or DEFAULT_LIFF_ID
 
 
-def liff_entry_url(*, open_action: str | None = None, fragment: str = "") -> str:
+def liff_entry_url(*, open_action: str | None = None, fragment: str = "", **query) -> str:
     """永久內嵌 LIFF 入口（https://liff.line.me/<LIFF_ID>）。
 
     不要使用含 code= / state= 的一次性 OAuth callback URL。
     open_action 會傳到 Endpoint（例如 open=onboarding → 先一鍵分享邀請，再填守護人表單→提醒設定）。
+    其餘 query（如 invite_from / friend_invite）會附加在同一條永久連結上。
     """
     url = f"https://liff.line.me/{get_liff_id()}"
+    params = {}
     if open_action:
-        url += f"?open={open_action}"
+        params["open"] = open_action
+    for key, value in (query or {}).items():
+        if value is None or value == "":
+            continue
+        key_s = str(key)
+        if key_s in {"code", "state", "liffClientId", "liffRedirectUri"}:
+            continue
+        params[key_s] = str(value)
+    if params:
+        url += "?" + urlencode(params)
     if fragment:
         url += f"#{fragment.lstrip('#')}"
     return url

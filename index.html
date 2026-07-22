@@ -2757,6 +2757,51 @@
     let selectedCalendarDate = "";
 
     const $ = (id) => document.getElementById(id);
+    const DEFAULT_LIFF_ID = "2010674803-rK98c0lo";
+    const OAUTH_PARAM_KEYS = new Set([
+      "code", "state", "liffClientId", "liffRedirectUri", "friendship_status_changed"
+    ]);
+
+    function getLiffId() {
+      return String(window.__LIFF_ID__ || DEFAULT_LIFF_ID).trim() || DEFAULT_LIFF_ID;
+    }
+
+    /** 建立永久 LIFF 連結；絕不帶入 code=/state= 等 OAuth 殘留參數。 */
+    function buildLiffPermanentUrl(params = {}, hash = "") {
+      const url = new URL(`https://liff.line.me/${getLiffId()}`);
+      Object.entries(params || {}).forEach(([key, value]) => {
+        if (value == null || value === "") return;
+        if (OAUTH_PARAM_KEYS.has(String(key))) return;
+        url.searchParams.set(String(key), String(value));
+      });
+      const fragment = String(hash || "").replace(/^#/, "");
+      if (fragment) url.hash = fragment;
+      return url.toString();
+    }
+
+    function readSafeDeepLinkParams() {
+      const src = new URLSearchParams(location.search);
+      const out = {};
+      ["invite_from", "friend_invite", "open"].forEach((key) => {
+        const value = String(src.get(key) || "").trim();
+        if (value) out[key] = value;
+      });
+      return out;
+    }
+
+    function isInviteeDeepLink() {
+      const params = readSafeDeepLinkParams();
+      return Boolean(params.invite_from || params.friend_invite);
+    }
+
+    function buildCleanLoginRedirectUri() {
+      // Endpoint 必須是 LINE Console 允許的 origin；query 只保留業務參數
+      const params = readSafeDeepLinkParams();
+      const endpoint = `${location.origin}${location.pathname || "/"}`;
+      const qs = new URLSearchParams(params).toString();
+      const hash = (location.hash || "").replace(/^#/, "");
+      return qs ? `${endpoint}?${qs}${hash ? `#${hash}` : ""}` : `${endpoint}${hash ? `#${hash}` : ""}`;
+    }
 
     function setTheme(theme) {
       document.body.className = theme;
@@ -3053,10 +3098,9 @@
     }
 
     function buildContactInvite(nickname = "") {
-      const liffId = window.__LIFF_ID__ || "2010674803-rK98c0lo";
       const bindUrl = lineUserId
-        ? `https://liff.line.me/${liffId}?invite_from=${encodeURIComponent(lineUserId)}`
-        : `https://liff.line.me/${liffId}`;
+        ? buildLiffPermanentUrl({ invite_from: lineUserId })
+        : buildLiffPermanentUrl({ open: "onboarding" });
       const nameText = nickname ? `嗨 ${nickname}，` : "";
       const text = (
         `${nameText}我想邀請你成為「今天還在嗎」的守護人。\n\n` +
@@ -3482,6 +3526,12 @@
       if (!requireLineMembership("請先完成 LINE 登入綁定，才能邀請守護人。")) return;
       const nickname = $("inviteNickname") ? $("inviteNickname").value.trim() : "";
       const { bindUrl, text } = buildContactInvite(nickname);
+      const inviteUrlBox = $("inviteUrlBox");
+      const inviteArea = $("inviteArea");
+      const inviteMeta = $("inviteMeta");
+      if (inviteUrlBox) inviteUrlBox.value = bindUrl;
+      if (inviteArea) inviteArea.hidden = false;
+      if (inviteMeta) inviteMeta.textContent = "此為永久 LIFF 連結（不含 code/state），請用 LINE 開啟。";
       try {
         if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
           await liff.shareTargetPicker([
@@ -3604,11 +3654,16 @@
       const inviteFrom = new URLSearchParams(location.search).get("invite_from");
       if (!inviteFrom) return closeInviteAcceptPrompt();
       if (!lineUserId && window.liff && !liff.isLoggedIn()) {
-        liff.login();
+        try {
+          liff.login({ redirectUri: buildCleanLoginRedirectUri() });
+        } catch (_) {
+          liff.login();
+        }
         return;
       }
       if (!lineUserId) {
-        alert("請先在 LINE 內開啟連結，完成官方授權後即可綁定。");
+        showLineLoginRequired();
+        alert("請加入會員後再開啟邀請連結完成綁定。");
         return;
       }
       const bindResult = await apiBindEmergencyContact(inviteFrom);
@@ -3682,10 +3737,17 @@
 
     async function shareFriendInvite() {
       try {
-        if (!lineUserId) throw new Error("請先在 LINE 裡開啟，完成會員綁定。");
+        if (!requireLineMembership("請先完成 LINE 登入綁定，才能分享好友地圖。")) return;
         const data = await apiCreateFriendInvite();
-        const inviteUrl = `${location.origin}${location.pathname}?friend_invite=${encodeURIComponent(data.invite_code)}`;
-        const text = `我正在使用「今天還在嗎」好友地圖，想邀請你互相分享 24 小時位置快照。\n\n點開連結後用 LINE 登入，邀請碼會自動帶入：\n${inviteUrl}`;
+        const inviteCode = String(data.invite_code || "").trim().toUpperCase();
+        if (!inviteCode) throw new Error("無法產生好友邀請碼，請稍後再試。");
+        // 必須用永久 liff.line.me，勿用 onrender 裸網址（邀約對象會遇到 LIFF 4000）
+        const inviteUrl = (
+          String(data.invite_url || "").includes("liff.line.me/")
+            ? data.invite_url
+            : buildLiffPermanentUrl({ friend_invite: inviteCode })
+        );
+        const text = `我正在使用「今天還在嗎」好友地圖，想邀請你互相分享 24 小時位置快照。\n\n請用 LINE 開啟下方連結並登入，邀請碼會自動帶入：\n${inviteUrl}`;
         if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
           await liff.shareTargetPicker([{ type: "text", text }]);
         } else if (navigator.share) {
@@ -3839,9 +3901,9 @@
         window.__LIFF_ID__ = config.liff_id;
         await liff.init({ liffId: config.liff_id, withLoginOnExternalBrowser: true });
         if (!liff.isLoggedIn()) {
-          // 必須先 LINE 登入／綁定身分，才能使用會員功能
+          // 未登入一律走加入會員；redirect 僅保留 invite/friend_invite/open
           try {
-            liff.login({ redirectUri: location.href.split("#")[0] + (location.hash || "") });
+            liff.login({ redirectUri: buildCleanLoginRedirectUri() });
           } catch (_) {
             liff.login();
           }
@@ -3862,12 +3924,15 @@
         });
         const inviteFrom = new URLSearchParams(location.search).get("invite_from");
         if (inviteFrom && inviteFrom !== lineUserId) {
+          // 受邀者已是會員：直接綁定，不強制再分享
           const bindResult = await apiBindEmergencyContact(inviteFrom);
           if (bindResult?.bound) {
             closeInviteAcceptPrompt();
             alert("綁定完成！你已成為對方的緊急聯絡人。對方也會收到「綁定完成」通知。");
+          } else {
+            maybeShowInviteAcceptPrompt();
           }
-        } else if (!inviteFrom) {
+        } else if (!inviteFrom && !isInviteeDeepLink()) {
           maybeShowGuardianPrompt();
         }
         return true;
@@ -4421,21 +4486,22 @@
       const checkBtn = $("checkBtn");
       const dailyEl = $("dailyStatus");
       const errBox = $("inlineError");
-      const query = location.search || "";
-      const hash = location.hash || "";
-      // 用 /api/config 的 LIFF_ID；fallback 與正式環境一致（勿硬編碼 OAuth code/state）
-      const liffId = (window.__LIFF_ID__ || "2010674803-rK98c0lo");
-      const liffEntry = `https://liff.line.me/${liffId}${query}${hash}`;
+      // 永久 LIFF 入口；只保留業務 deep link，絕不帶 code/state
+      const liffEntry = buildLiffPermanentUrl(readSafeDeepLinkParams(), location.hash || "");
       if (checkBtn) {
         checkBtn.disabled = true;
         checkBtn.setAttribute("aria-busy", "false");
         checkBtn.dataset.state = "login-required";
         checkBtn.innerHTML = CHECK_BTN_IDLE_HTML;
       }
-      if (dailyEl) dailyEl.textContent = "請先完成 LINE 登入";
+      if (dailyEl) dailyEl.textContent = "請先加入會員";
       if (errBox) {
         errBox.classList.remove("inline-success");
-        errBox.innerHTML = `請從 LINE 開啟並完成會員登入後再簽到<br><a href="${liffEntry}">用 LINE 開啟並登入</a>`;
+        errBox.innerHTML = (
+          `請加入會員<br>` +
+          `請對方分享好友登記一位守護人<br>` +
+          `<a href="${liffEntry}">用 LINE 開啟並登入</a>`
+        );
         errBox.hidden = false;
       }
     }
@@ -4661,15 +4727,7 @@
       }
     }
 
-    async function apiCreateFriendInvite(lineUserId) {
-      const res = await fetch("/api/friends/invite", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ line_user_id: lineUserId, public_url: location.origin })
-      });
-      const data = await res.json();
-      return { status: res.status, data };
-    }
+    // （已移除第二個 apiCreateFriendInvite；統一使用上方版本，避免 hoisting 覆寫導致好友地圖分享壞掉）
 
     function renderGuardians(contacts, contactLimit) {
       guardianList = contacts || [];
@@ -4886,10 +4944,10 @@
       if (useLocalMode) return true;
       if (lineUserId) return true;
       showLineLoginRequired();
-      if (message) showInlineError(message);
+      if (message) showInlineError(message || "請加入會員；請對方分享好友登記一位守護人");
       if (window.liff && !liff.isLoggedIn()) {
         try {
-          liff.login({ redirectUri: location.href.split("#")[0] + (location.hash || "") });
+          liff.login({ redirectUri: buildCleanLoginRedirectUri() });
         } catch (_) {
           try { liff.login(); } catch (__) {}
         }
@@ -5185,12 +5243,22 @@
 
         // C00 Onboarding 檢查（?open=onboarding / 歡迎 CTA）
         // 規則：一鍵分享只在「第一次設定」強制；已註冊／已有守護人／伺服器 setup_completed → 直接首頁，絕不自動彈分享
+        // 受邀者（invite_from / friend_invite）：登入後綁定／加入好友，不要再被逼分享
         const openAction = new URLSearchParams(location.search).get("open") || "";
         const forceOnboarding = openAction === "onboarding" || openAction === "guardian" || openAction === "bind";
+        const inviteeMode = isInviteeDeepLink();
         const onboardingState = await fetchOnboardingState();
         const hasGuardians = onboardingState.hasGuardian || currentGuardianContacts().length > 0;
         const setupDone = onboardingState.done || hasGuardians;
-        if (setupDone) {
+        if (inviteeMode) {
+          clearShareFirstLocalFlags();
+          if (typeof showTab === "function") {
+            showTab(new URLSearchParams(location.search).get("friend_invite") ? "member" : "home");
+          }
+          maybeShowInviteAcceptPrompt();
+          maybePrefillFriendInvite();
+          await maybeShowGuardianComplete();
+        } else if (setupDone) {
           clearShareFirstLocalFlags();
           if (typeof showTab === "function") showTab("home");
           await maybeShowGuardianComplete();
@@ -5482,6 +5550,16 @@
         const lineReady = lineUserId ? true : await initLine();
         if (!useLocalMode && (!lineReady || !lineUserId)) {
           showLineLoginRequired();
+          // 未登入：導向永久 LIFF 加入會員（保留 invite / 地圖邀請參數）
+          const joinUrl = buildLiffPermanentUrl(readSafeDeepLinkParams(), location.hash || "");
+          if (!window.liff || !liff.isInClient || !liff.isInClient()) {
+            // 外部瀏覽器：提示後導向 liff.line.me
+            if (!location.href.startsWith("https://liff.line.me/")) {
+              setTimeout(() => {
+                try { location.replace(joinUrl); } catch (_) {}
+              }, 600);
+            }
+          }
           return;
         }
 

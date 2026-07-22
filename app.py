@@ -1698,12 +1698,15 @@ def create_friend_invite(data_file, payload):
         "status": "pending",
     }
     save_state(data_file, state)
-    public_url = (
-        payload.get("public_url")
-        or os.environ.get("APP_PUBLIC_URL", "")
-        or "https://liff.line.me"
-    ).rstrip("/")
-    invite_url = f"{public_url}/?friend_invite={code}"
+    # 邀約對象必須走永久 LIFF 入口；勿回傳 onrender 裸網址或含 OAuth code/state 的連結（會觸發 LIFF 4000）
+    if liff_entry_url is not None:
+        invite_url = liff_entry_url(friend_invite=code)
+    else:
+        lid = (
+            str(os.environ.get("LIFF_ID") or "").strip()
+            or "2010674803-rK98c0lo"
+        )
+        invite_url = f"https://liff.line.me/{lid}?friend_invite={code}"
     return {
         "invite_code": code,
         "invite_url": invite_url,
