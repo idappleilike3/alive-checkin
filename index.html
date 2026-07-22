@@ -3084,6 +3084,7 @@
     let accountDeleted = false;
     let calendarNotes = {};
     let selectedCalendarDate = "";
+    let appConfig = {};
 
     const $ = (id) => document.getElementById(id);
     const DEFAULT_LIFF_ID = "2010674803-rK98c0lo";
@@ -4394,15 +4395,17 @@
         const configRes = await fetch("/api/config");
         if (!configRes.ok) return false;
         const config = await configRes.json();
+        appConfig = config || {};
         if (!config.liff_id) return false;
         window.__LIFF_ID__ = config.liff_id;
-        await liff.init({ liffId: config.liff_id, withLoginOnExternalBrowser: true });
+        await liff.init({ liffId: config.liff_id, withLoginOnExternalBrowser: false });
         if (!liff.isLoggedIn()) {
-          // 未登入一律走加入會員；redirect 僅保留 invite/friend_invite/open
-          try {
-            liff.login({ redirectUri: buildCleanLoginRedirectUri() });
-          } catch (_) {
-            liff.login();
+          if (liff.isInClient && liff.isInClient()) {
+            try {
+              liff.login({ redirectUri: buildCleanLoginRedirectUri() });
+            } catch (_) {
+              liff.login();
+            }
           }
           return false;
         }
@@ -5026,13 +5029,13 @@
         checkBtn.dataset.state = "login-required";
         checkBtn.innerHTML = CHECK_BTN_IDLE_HTML;
       }
-      if (dailyEl) dailyEl.textContent = "請先加入會員";
+      if (dailyEl) dailyEl.textContent = "請用 LINE 開啟";
       if (errBox) {
         errBox.classList.remove("inline-success");
         errBox.innerHTML = (
-          `請加入會員<br>` +
-          `請對方分享好友登記一位守護人<br>` +
-          `<a href="${liffEntry}">用 LINE 開啟並登入</a>`
+          `請用 LINE 內建瀏覽器開啟，系統才會自動帶入你的 LINE 會員身分。<br>` +
+          `第一次使用會先請你分享並設定至少 1 位守護人。<br>` +
+          `<a class="member-upgrade-btn" style="display:inline-grid;place-items:center;margin-top:10px;text-decoration:none;" href="${liffEntry}">用 LINE 開啟今天還在嗎</a>`
         );
         errBox.hidden = false;
       }
@@ -5176,8 +5179,8 @@
       const fromStatus = Number(status && status.daily_reminders);
       if (fromStatus >= 1 && fromStatus <= 3) return fromStatus;
       const plan = (status && status.plan) || "trial";
-      if (plan === "paid_799" || plan === "paid_799_year" || plan === "paid_399_year") return 3;
-      if (plan === "paid_399" || plan === "paid_199_year") return 2;
+      if (plan === "paid_799" || plan === "paid_799_year") return 3;
+      if (plan === "paid_399" || plan === "paid_399_year" || plan === "paid_199" || plan === "paid_199_year") return 2;
       return 1;
     }
 

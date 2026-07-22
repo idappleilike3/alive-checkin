@@ -20,10 +20,10 @@ class ProductRulesTests(unittest.TestCase):
         plans = load_plan_limits()
 
         expected = {
-            "paid_199": (4, 1, 0, 0),
+            "paid_199": (4, 2, 0, 0),
             "paid_199_year": (6, 2, 0, 0),
             "paid_399": (15, 2, 0, 0),
-            "paid_399_year": (25, 3, 0, 0),
+            "paid_399_year": (25, 2, 0, 0),
             "paid_799": (25, 3, 0, 1),
             "paid_799_year": (50, 3, 0, 3),
         }
@@ -185,9 +185,10 @@ class ProductRulesTests(unittest.TestCase):
             page.index("async function initLine()") : page.index("const LUNAR_DAY_NAMES")
         ]
 
-        self.assertIn("withLoginOnExternalBrowser: true", init_line)
+        self.assertIn("withLoginOnExternalBrowser: false", init_line)
         self.assertIn("if (!liff.isLoggedIn())", init_line)
         self.assertIn("liff.login(", init_line)
+        self.assertIn("liff.isInClient && liff.isInClient()", init_line)
         self.assertIn("requireLineMembership", page)
         # Returning users must not auto-share on page load
         self.assertIn("clearShareFirstLocalFlags", page)
@@ -218,6 +219,8 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('for="obEmail">電子信箱（選填）', onboarding)
         self.assertIn("新增守護人，下一步設定提醒", onboarding)
         self.assertIn('id="onboardingReminderStep"', onboarding)
+        self.assertIn('id="onboardingReminderSlots"', onboarding)
+        self.assertIn("使用方案預設時間", onboarding)
         self.assertIn("完成設定並進入首頁", onboarding)
         self.assertIn('id="onboardingCloseBtn"', onboarding)
         self.assertIn("onboarding-form[hidden]", page)

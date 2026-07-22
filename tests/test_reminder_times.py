@@ -19,10 +19,10 @@ class ReminderTimesTests(unittest.TestCase):
 
     def test_plan_limits_drive_reminder_count(self):
         self.assertEqual(alive_app.plan_rules({"plan": "trial"})["daily_reminders"], 1)
-        self.assertEqual(alive_app.plan_rules({"plan": "paid_199"})["daily_reminders"], 1)
+        self.assertEqual(alive_app.plan_rules({"plan": "paid_199"})["daily_reminders"], 2)
         self.assertEqual(alive_app.plan_rules({"plan": "paid_199_year"})["daily_reminders"], 2)
         self.assertEqual(alive_app.plan_rules({"plan": "paid_399"})["daily_reminders"], 2)
-        self.assertEqual(alive_app.plan_rules({"plan": "paid_399_year"})["daily_reminders"], 3)
+        self.assertEqual(alive_app.plan_rules({"plan": "paid_399_year"})["daily_reminders"], 2)
         self.assertEqual(alive_app.plan_rules({"plan": "paid_799"})["daily_reminders"], 3)
         self.assertEqual(alive_app.plan_rules({"plan": "paid_799_year"})["daily_reminders"], 3)
 

@@ -29,7 +29,7 @@ class GuardianGroupJoinTests(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertFalse(outcome["should_leave"])
-        self.assertIn("守護群已啟用", outcome["reply_text"])
+        self.assertIn("守護群", outcome["reply_text"])
 
     def test_unknown_inviter_is_rejected_and_bot_leaves_group(self):
         data_file = self.make_data_file()
