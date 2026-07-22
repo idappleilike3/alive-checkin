@@ -3844,6 +3844,7 @@ def create_app(config=None):
         return jsonify(data), code
 
     @app.post("/webhook/newebpay")
+    @app.post("/api/payment/newebpay/notify")
     def newebpay_webhook():
         """藍新 NotifyURL — 驗簽後自動開通方案。"""
         form = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
@@ -3865,6 +3866,10 @@ def create_app(config=None):
         if code >= 400:
             return jsonify(data), code
         return jsonify({"ok": True, "order_id": parsed.get("order_id")}), 200
+
+    @app.get("/payment-success")
+    def payment_success_page():
+        return send_from_directory(app.static_folder, "index.html")
 
     @app.get("/api/contacts")
     def contacts_get():

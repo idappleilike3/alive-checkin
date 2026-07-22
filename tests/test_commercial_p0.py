@@ -148,6 +148,16 @@ class NewebpayScaffoldTests(unittest.TestCase):
         self.assertEqual(checkout["mode"], "manual")
         self.assertIsNone(checkout["form"])
 
+    def test_newebpay_urls_match_merchant_console_fields(self):
+        source = Path(newebpay.__file__).read_text(encoding="utf-8")
+        app_source = Path(alive_app.__file__).read_text(encoding="utf-8")
+
+        self.assertIn("/api/payment/newebpay/notify", source)
+        self.assertIn("/payment-success", source)
+        self.assertIn("/pricing", source)
+        self.assertIn('@app.post("/api/payment/newebpay/notify")', app_source)
+        self.assertIn('@app.get("/payment-success")', app_source)
+
 
 class BearerHeaderTests(unittest.TestCase):
     def test_group_api_uses_bearer_prefix(self):

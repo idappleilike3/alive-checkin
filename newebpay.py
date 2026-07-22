@@ -112,9 +112,9 @@ def build_checkout(order: dict, config: Optional[dict] = None) -> dict:
         "MerchantOrderNo": order.get("order_id"),
         "Amt": int(order.get("amount") or 0),
         "ItemDesc": str(order.get("plan") or "alive-checkin")[:50],
-        "NotifyURL": f"{public_url}/webhook/newebpay" if public_url else "",
-        "ReturnURL": f"{public_url}/?page=member&payment=return" if public_url else "",
-        "ClientBackURL": f"{public_url}/?page=plans" if public_url else "",
+        "NotifyURL": f"{public_url}/api/payment/newebpay/notify" if public_url else "",
+        "ReturnURL": f"{public_url}/payment-success" if public_url else "",
+        "ClientBackURL": f"{public_url}/pricing" if public_url else "",
         "Email": "",
         "LoginType": 0,
     }
