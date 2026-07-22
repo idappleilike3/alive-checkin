@@ -2271,8 +2271,18 @@ def read_admin_backup(data_file, backup_id):
 
 
 def line_push_message(token, line_user_id, message):
+    """推訊息給單一 LINE 用戶。
+
+    message 可以是:
+    - str: 純文字訊息
+    - dict 且帶 "type" key: 直接作為 LINE message object (例如 flex)
+    """
+    if isinstance(message, dict) and message.get("type"):
+        msg_obj = message
+    else:
+        msg_obj = {"type": "text", "text": str(message)}
     body = json.dumps(
-        {"to": line_user_id, "messages": [{"type": "text", "text": message}]},
+        {"to": line_user_id, "messages": [msg_obj]},
         ensure_ascii=False,
     ).encode("utf-8")
     req = urllib.request.Request(
@@ -2518,11 +2528,55 @@ def send_checkin_reminders(config):
 
         # 補跑時只推一次(取最晚已到點的時段),並把所有已到點未送時段標為已處理
         target_time = due_unsent[-1]
-        link_text = f"\n打開簽到：{public_url}/" if public_url else ""
-        message = (
-            f"今天還在嗎 ✨\n"
-            f"到你設定的簽到時間（{target_time}）囉，點一下完成今日平安簽到。{link_text}"
-        )
+        # 2026-07-22 老人家友善推播 Flex:帶日期+時間+報平安/求助按鈕
+        from datetime import datetime as _dt
+        weekday_zh = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"][now.weekday()]
+        checkin_uri = f"{public_url}/liff/checkin" if public_url else (liff_entry_url(open_action="checkin") if liff_entry_url else "https://alive-checkin.onrender.com/liff/checkin")
+        help_uri = f"{public_url}/help" if public_url else "https://alive-checkin.onrender.com/help"
+        message = {
+            "type": "flex",
+            "altText": f"{today} {weekday_zh} {target_time} 平安簽到提醒",
+            "contents": {
+                "type": "bubble",
+                "size": "mega",
+                "header": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "spacing": "xs",
+                    "backgroundColor": "#00B900",
+                    "paddingTop": "lg",
+                    "paddingBottom": "lg",
+                    "paddingStart": "lg",
+                    "paddingEnd": "lg",
+                    "contents": [
+                        {"type": "text", "text": f"📅 {today} {weekday_zh}", "color": "#FFFFFF", "size": "lg", "weight": "bold", "wrap": True},
+                        {"type": "text", "text": f"⏰ 簽到時間 {target_time}", "color": "#FFFFFF", "size": "xxl", "weight": "bold", "wrap": True},
+                    ],
+                },
+                "body": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "spacing": "md",
+                    "paddingAll": "lg",
+                    "contents": [
+                        {"type": "text", "text": "今天還在嗎 ✨", "size": "xl", "weight": "bold", "color": "#555555", "wrap": True},
+                        {"type": "text", "text": "點下面按鈕,完成今日平安簽到", "size": "lg", "color": "#555555", "wrap": True},
+                        {"type": "text", "text": "逾時會通知你的家人", "size": "md", "color": "#888888", "wrap": True},
+                    ],
+                },
+                "footer": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "spacing": "sm",
+                    "paddingAll": "lg",
+                    "backgroundColor": "#FAFAFA",
+                    "contents": [
+                        {"type": "button", "action": {"type": "uri", "label": "✅ 報個平安", "uri": checkin_uri}, "style": "primary", "color": "#00B900", "height": "md"},
+                        {"type": "button", "action": {"type": "uri", "label": "❓ 求助(長按看教學)", "uri": help_uri}, "style": "link", "color": "#888888", "height": "sm"},
+                    ],
+                },
+            },
+        }
         try:
             result = sender(token, line_user_id, message)
             sent_today.update(due_unsent)

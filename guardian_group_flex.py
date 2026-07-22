@@ -1078,7 +1078,7 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "每天一個問候一句話報平安",
+                    "text": "每天一個問候,讓你的家人放心",
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
@@ -1086,7 +1086,15 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "逾時通知緊急連絡人",
+                    "text": "每天問候一句,報個平安",
+                    "size": "lg",
+                    "weight": "bold",
+                    "color": GRAY,
+                    "wrap": True,
+                },
+                {
+                    "type": "text",
+                    "text": "逾時會通知你的家人",
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
@@ -1111,6 +1119,17 @@ def welcome_flex(display_name: str | None = None):
                     "style": "primary",
                     "color": GREEN_DARK,
                     "height": "md",
+                },
+                {
+                    "type": "button",
+                    "action": {
+                        "type": "uri",
+                        "label": "❓ 求助(長按看教學)",
+                        "uri": liff_entry_url(open_action="help") if liff_entry_url else "https://alive-checkin.onrender.com/help",
+                    },
+                    "style": "link",
+                    "color": GRAY,
+                    "height": "sm",
                 },
             ],
         },
