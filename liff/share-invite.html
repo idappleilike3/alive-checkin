@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="alive-deploy" content="W250723q">
-  <title>一鍵分享守護人</title>
+  <meta name="alive-deploy" content="W250723v">
+  <title>分享給好友</title>
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -13,133 +13,98 @@
       min-height: 100dvh;
       font-family: "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
       color: #123c2c;
-      background: linear-gradient(180deg, #e8f8ee, #ffffff);
+      background: linear-gradient(180deg, #dcfce7 0%, #f0fdf4 45%, #ffffff 100%);
       display: grid;
-      place-items: center;
-      padding: 24px 18px max(28px, env(safe-area-inset-bottom));
-      pointer-events: auto;
+      place-items: stretch;
+      padding: max(16px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
     }
-    .card {
-      width: min(100%, 440px);
-      padding: 28px 22px;
-      border-radius: 22px;
-      background: #fff;
-      border: 2px solid #86efac;
-      box-shadow: 0 16px 36px rgba(16, 85, 55, 0.16);
-      text-align: center;
-      position: relative;
-      z-index: 2;
-      pointer-events: auto;
+    .screen {
+      width: min(100%, 480px);
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 18px;
+      min-height: calc(100dvh - 36px);
     }
     h1 {
-      font-size: clamp(26px, 7vw, 34px);
+      font-size: clamp(28px, 8vw, 36px);
       font-weight: 950;
       color: #067647;
       line-height: 1.25;
-      margin-bottom: 10px;
+      text-align: center;
     }
-    p {
-      font-size: clamp(17px, 4.6vw, 20px);
+    .hint {
+      text-align: center;
+      font-size: clamp(17px, 4.8vw, 20px);
       font-weight: 800;
-      line-height: 1.55;
-      color: #14532d;
-    }
-    .status {
-      margin: 14px 0 18px;
-      min-height: 28px;
-      font-size: 16px;
-      font-weight: 800;
+      line-height: 1.5;
       color: #166534;
     }
-    .btn {
+    .status {
+      min-height: 24px;
+      text-align: center;
+      font-size: 16px;
+      font-weight: 800;
+      color: #15803d;
+    }
+    .share-btn {
       display: grid;
       place-items: center;
       width: 100%;
-      min-height: 68px;
+      min-height: min(46vh, 280px);
       border: 0;
-      border-radius: 16px;
-      background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
+      border-radius: 28px;
+      background: linear-gradient(180deg, #22c55e 0%, #15803d 100%);
       color: #fff;
-      font-size: clamp(20px, 5.2vw, 24px);
+      font-size: clamp(28px, 8vw, 40px);
       font-weight: 950;
+      letter-spacing: 0.02em;
       cursor: pointer;
       -webkit-tap-highlight-color: rgba(0,0,0,0.08);
       touch-action: manipulation;
-      pointer-events: auto;
-      position: relative;
-      z-index: 5;
-      box-shadow: 0 12px 24px rgba(22, 163, 74, 0.28);
+      box-shadow: 0 18px 40px rgba(21, 128, 61, 0.35);
     }
-    .btn:disabled { opacity: 0.7; }
-    .btn.secondary {
-      margin-top: 12px;
-      background: #ecfdf5;
-      color: #065f46;
-      border: 2px solid #34d399;
-      box-shadow: none;
-      min-height: 56px;
-      font-size: 18px;
-    }
-    .fallback { margin-top: 16px; text-align: left; }
-    textarea {
-      width: 100%;
-      min-height: 120px;
+    .share-btn:disabled { opacity: 0.65; }
+    .share-btn .sub {
+      display: block;
       margin-top: 10px;
-      padding: 12px;
-      border: 1.5px solid #86efac;
-      border-radius: 12px;
-      font-size: 14px;
-      line-height: 1.45;
-      word-break: break-all;
-      resize: none;
-      pointer-events: auto;
-    }
-    .home-link {
-      display: inline-block;
-      margin-top: 18px;
-      color: #067647;
-      font-size: 16px;
-      font-weight: 850;
-      text-decoration: none;
-      pointer-events: auto;
+      font-size: clamp(16px, 4.2vw, 18px);
+      font-weight: 800;
+      opacity: 0.92;
     }
     .err {
-      margin-top: 12px;
-      padding: 10px;
-      border-radius: 10px;
+      display: none;
+      padding: 12px 14px;
+      border-radius: 12px;
       background: #fef2f2;
       color: #991b1b;
-      font-size: 14px;
+      font-size: 15px;
       font-weight: 700;
+      text-align: center;
       word-break: break-word;
-      display: none;
     }
   </style>
 </head>
 <body>
-  <main class="card">
-    <h1>一鍵分享守護人</h1>
-    <p id="lead">請點下方大按鈕，分享給 LINE 好友</p>
+  <main class="screen">
+    <h1>分享給好友</h1>
+    <p class="hint" id="lead">點一下大按鈕，直接選 LINE 好友介紹</p>
     <div class="status" id="status">正在準備…</div>
-    <button class="btn" id="shareBtn" type="button">一鍵分享守護人</button>
-    <div class="fallback" id="fallback">
-      <p>若分享視窗沒跳出，請複製下方邀請訊息，貼到 LINE 給家人：</p>
-      <textarea id="inviteBox" readonly></textarea>
-      <button class="btn secondary" id="copyBtn" type="button">複製邀請訊息</button>
-    </div>
+    <button class="share-btn" id="shareBtn" type="button" disabled>
+      分享給好友
+      <span class="sub">開啟 LINE 好友選擇</span>
+    </button>
     <div class="err" id="errBox"></div>
-    <a class="home-link" href="https://liff.line.me/2010674803-rK98c0lo/?open=home">回到首頁繼續設定</a>
   </main>
 
   <script>
-    // W250723q：專用分享頁（不經 SPA home）
-    // init → login（必要時安全 redirectUri）→ 顯示大按鈕；shareTargetPicker 只在 click
+    // W250723v：整頁只做分享給好友（不經首頁、也不提供貼上文字備援）
+    // shareTargetPicker 只在使用者 click 時呼叫
     const LIFF_ID = "2010674803-rK98c0lo";
 
     const statusEl = document.getElementById("status");
     const shareBtn = document.getElementById("shareBtn");
-    const inviteBox = document.getElementById("inviteBox");
-    const copyBtn = document.getElementById("copyBtn");
     const leadEl = document.getElementById("lead");
     const errBox = document.getElementById("errBox");
 
@@ -152,9 +117,9 @@
     function showError(error) {
       const msg = (error && error.message) ? String(error.message) : String(error || "未知錯誤");
       errBox.style.display = "block";
-      errBox.textContent = "發生錯誤：" + msg;
+      errBox.textContent = "暫時無法分享：" + msg;
       try {
-        alert("發生錯誤：" + msg);
+        alert("暫時無法分享：" + msg);
       } catch (_) {}
     }
 
@@ -174,8 +139,6 @@
       );
     }
 
-    // Android 400 常見原因：redirect_uri 帶 #、或殘留 code/state 等 OAuth 雜訊
-    // 若必須帶 redirectUri：只用 origin + pathname + search（無 hash）
     function buildSafeRedirectUri() {
       const params = new URLSearchParams(window.location.search || "");
       ["code", "state", "liffClientId", "liffRedirectUri", "liff.state"].forEach(function (key) {
@@ -187,43 +150,11 @@
 
     function setReadyUi(message) {
       inviteText = buildInviteText(myUserId);
-      inviteBox.value = inviteText;
-      statusEl.textContent = message || "準備完成，請點下方按鈕分享";
+      statusEl.textContent = message || "準備好了，請點大按鈕";
       shareBtn.disabled = false;
       ready = true;
     }
 
-    async function copyInviteBestEffort() {
-      const text = inviteText || inviteBox.value || buildInviteText(myUserId);
-      inviteBox.value = text;
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(text);
-          return true;
-        }
-      } catch (_) {}
-      try {
-        inviteBox.focus();
-        inviteBox.select();
-        return document.execCommand("copy");
-      } catch (_) {
-        return false;
-      }
-    }
-
-    async function fallbackCopy(reason) {
-      const ok = await copyInviteBestEffort();
-      statusEl.textContent = ok
-        ? ("已複製邀請訊息。請貼到 LINE 給家人。" + (reason ? ("（" + reason + "）") : ""))
-        : "請手動複製上方邀請訊息，貼到 LINE 給家人";
-      if (ok) {
-        try {
-          alert("已複製邀請訊息，請貼到 LINE 給家人");
-        } catch (_) {}
-      }
-    }
-
-    // 規則：shareTargetPicker 只能綁在使用者 click，禁止 page load / init 後自動呼叫
     async function onShareClick(event) {
       if (event) {
         event.preventDefault();
@@ -231,68 +162,53 @@
       }
       if (sharing) return;
       if (shareBlocked) {
-        statusEl.textContent = "此頁是分享頁；綁定請回首頁";
+        statusEl.textContent = "這是邀請連結，請回官方帳號首頁完成綁定";
         return;
       }
       if (!ready) {
-        statusEl.textContent = "尚未準備好，請稍候再試";
+        statusEl.textContent = "還沒準備好，請稍候再點";
         return;
       }
       sharing = true;
       shareBtn.disabled = true;
-      statusEl.textContent = "正在開啟 LINE 分享…";
+      statusEl.textContent = "正在開啟 LINE 好友選擇…";
+      errBox.style.display = "none";
       try {
-        if (!inviteText) {
-          inviteText = buildInviteText(myUserId);
-          inviteBox.value = inviteText;
-        }
+        if (!inviteText) inviteText = buildInviteText(myUserId);
 
         if (!window.liff || typeof liff.shareTargetPicker !== "function") {
-          await fallbackCopy("此環境無分享視窗");
+          statusEl.textContent = "請在 LINE App 內開啟再分享";
           return;
         }
         if (typeof liff.isInClient === "function" && !liff.isInClient()) {
-          await fallbackCopy("請在 LINE App 內開啟");
+          statusEl.textContent = "請在 LINE App 內開啟再分享";
           return;
         }
 
-        // 不先用 isApiAvailable 硬擋：部分機型會誤報 false，改直接 try／catch
-        try {
-          if (typeof liff.isApiAvailable === "function" && !liff.isApiAvailable("shareTargetPicker")) {
-            statusEl.textContent = "分享模組未開啟，改用複製連結…";
-          }
-        } catch (_) {}
-
         const result = await liff.shareTargetPicker([{ type: "text", text: inviteText }]);
         if (result) {
-          statusEl.textContent = "已開啟 LINE 分享給好友";
+          statusEl.textContent = "已開啟分享，請選好友送出";
         } else {
-          statusEl.textContent = "已取消分享。可再按上方按鈕，或複製邀請訊息。";
+          statusEl.textContent = "已取消，可再點大按鈕重試";
         }
       } catch (error) {
         showError(error);
-        await fallbackCopy("分享失敗");
+        statusEl.textContent = "分享沒成功，請再點大按鈕試試";
       } finally {
         sharing = false;
-        shareBtn.disabled = false;
+        shareBtn.disabled = shareBlocked ? true : false;
       }
     }
 
     async function initializeLiff() {
-      // 先放備援邀請文，避免 init 卡住時畫面空白、按鈕像死掉
       inviteText = buildInviteText("");
-      inviteBox.value = inviteText;
-
       try {
-        if (!window.liff) {
-          throw new Error("LIFF SDK 未載入");
-        }
+        if (!window.liff) throw new Error("LIFF SDK 未載入");
 
         await liff.init({ liffId: LIFF_ID });
 
         if (!liff.isLoggedIn()) {
           statusEl.textContent = "前往 LINE 登入…";
-          // 優先無參數；子路徑頁為避免登入後掉回 Endpoint 根路徑／Android 400，改用安全 redirectUri
           try {
             liff.login({ redirectUri: buildSafeRedirectUri() });
           } catch (loginErr) {
@@ -300,13 +216,12 @@
               liff.login();
             } catch (loginErr2) {
               showError(loginErr2 || loginErr);
-              setReadyUi("登入失敗，請改用下方複製邀請訊息");
+              statusEl.textContent = "登入失敗，請關閉後再從圖文選單進入";
             }
           }
           return;
         }
 
-        // 留在本頁，不做任何自動導頁（含 invite_from）
         const urlParams = new URLSearchParams(window.location.search);
         const inviteFrom = urlParams.get("invite_from");
 
@@ -319,50 +234,32 @@
         }
 
         if (inviteFrom && myUserId && inviteFrom !== myUserId) {
-          // 受邀者誤開此頁：仍留在本頁，只提示（不自動跳首頁）
           shareBlocked = true;
-          leadEl.textContent = "偵測到邀請連結。請點下方「回到首頁」完成綁定。";
-          statusEl.textContent = "此頁是分享頁；綁定請回首頁";
-          inviteText = buildInviteText("");
-          inviteBox.value = inviteText;
+          leadEl.textContent = "這是別人的邀請連結，請回官方帳號首頁完成綁定";
+          statusEl.textContent = "此頁只給邀請人分享用";
           shareBtn.disabled = true;
           ready = false;
           return;
         }
 
-        setReadyUi("準備完成，請點「一鍵分享守護人」");
+        setReadyUi("準備好了，請點「分享給好友」");
       } catch (error) {
         showError(error);
-        inviteText = buildInviteText("");
-        inviteBox.value = inviteText;
-        statusEl.textContent = "載入失敗，請改用下方複製邀請訊息";
+        statusEl.textContent = "載入失敗，請關閉後再從圖文選單進入";
         shareBtn.disabled = false;
         ready = true;
       }
     }
 
     shareBtn.addEventListener("click", onShareClick);
-    copyBtn.addEventListener("click", async function () {
-      try {
-        const ok = await copyInviteBestEffort();
-        statusEl.textContent = ok
-          ? "已複製邀請訊息，請貼到 LINE 給家人"
-          : "請手動複製上方文字";
-      } catch (error) {
-        showError(error);
-        statusEl.textContent = "請手動複製上方文字";
-      }
-    });
 
-    // 若 LIFF 卡住超過 8 秒，仍開放複製／再試分享，避免 iOS 死按鈕
     setTimeout(function () {
       if (ready || shareBlocked) return;
       inviteText = inviteText || buildInviteText(myUserId);
-      inviteBox.value = inviteText;
       shareBtn.disabled = false;
       ready = true;
-      if (statusEl.textContent.indexOf("準備完成") === -1 && statusEl.textContent.indexOf("前往 LINE") === -1) {
-        statusEl.textContent = "可先複製邀請訊息，或再點上方按鈕分享";
+      if (statusEl.textContent.indexOf("準備好") === -1 && statusEl.textContent.indexOf("前往 LINE") === -1) {
+        statusEl.textContent = "可再點大按鈕試試分享";
       }
     }, 8000);
 

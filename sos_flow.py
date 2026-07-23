@@ -42,14 +42,12 @@ SOS_POST_SEND_CANCEL_MIN = 10
 # ────────────────────────────────────────────────────────────
 
 def sos_emergency_flex(family_tel: str | None = None, family_label: str | None = None, liff_sos_uri: str | None = None):
-    """需要幫忙入口卡：先撥打 110/119／家人，再連按通知家人。
+    """長者友善入口卡：一個大紅按鈕「聯絡家人連按3次」。
 
-    人人可看、不依 799。通知家人走 message「通知家人」進入 3 連按。
+    119／110 只當說明文字與小型連結，不跟主按鈕搶注意力。
+    family_tel／family_label／liff_sos_uri 保留相容參數，入口卡不再並列多個大按鈕。
     """
-    dial_family_label = (family_label or "第一聯絡人")[:16]
-    family_uri = f"tel:{family_tel}" if family_tel else (liff_sos_uri or "https://liff.line.me/2010674803-rK98c0lo/?open=call")
-    family_btn_label = f"📞 打給{dial_family_label}" if family_tel else "📞 聯絡家人"
-    panel_uri = liff_sos_uri or "https://liff.line.me/2010674803-rK98c0lo/?open=sos"
+    _ = (family_tel, family_label, liff_sos_uri)  # 相容舊呼叫端
 
     return {
         "type": "bubble",
@@ -58,8 +56,8 @@ def sos_emergency_flex(family_tel: str | None = None, family_label: str | None =
             "type": "box",
             "layout": "vertical",
             "backgroundColor": RED,
-            "paddingTop": "lg",
-            "paddingBottom": "lg",
+            "paddingTop": "xl",
+            "paddingBottom": "xl",
             "paddingStart": "lg",
             "paddingEnd": "lg",
             "contents": [
@@ -73,11 +71,11 @@ def sos_emergency_flex(family_tel: str | None = None, family_label: str | None =
                 },
                 {
                     "type": "text",
-                    "text": "先打電話，必要時再通知家人",
+                    "text": "連按 3 次，通知家人",
                     "color": "#FFFFFF",
-                    "size": "md",
+                    "size": "lg",
                     "align": "center",
-                    "margin": "sm",
+                    "margin": "md",
                     "wrap": True,
                 },
             ],
@@ -90,17 +88,108 @@ def sos_emergency_flex(family_tel: str | None = None, family_label: str | None =
             "contents": [
                 {
                     "type": "text",
-                    "text": "有立即危險請先撥打 119 或 110。本服務不是報警系統。",
+                    "text": "有立即危險請先撥打 119 或 110（本服務不是報警系統）",
                     "size": "md",
                     "color": GRAY,
                     "wrap": True,
+                    "align": "center",
                 },
                 {
                     "type": "text",
-                    "text": "若要通知家人，請點下方「通知家人」並連按 3 次確認。",
+                    "text": "請只按下方這一個大按鈕，連按 3 次就會通知家人",
                     "size": "md",
                     "color": GRAY,
                     "wrap": True,
+                    "align": "center",
+                },
+            ],
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "paddingAll": "lg",
+            "backgroundColor": "#FAFAFA",
+            "contents": [
+                {
+                    "type": "button",
+                    "action": {
+                        "type": "message",
+                        "label": "聯絡家人連按3次",
+                        "text": "聯絡家人連按3次",
+                    },
+                    "style": "primary",
+                    "color": RED,
+                    "height": "md",
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "spacing": "md",
+                    "justifyContent": "center",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "撥打 119",
+                            "size": "sm",
+                            "color": RED,
+                            "align": "center",
+                            "action": {"type": "uri", "label": "撥打 119", "uri": "tel:119"},
+                        },
+                        {
+                            "type": "text",
+                            "text": "撥打 110",
+                            "size": "sm",
+                            "color": GRAY,
+                            "align": "center",
+                            "action": {"type": "uri", "label": "撥打 110", "uri": "tel:110"},
+                        },
+                    ],
+                },
+            ],
+        },
+    }
+
+
+def sos_no_guardians_flex(invite_uri: str | None = None):
+    """第三次連按後發現尚未綁定守護人：口語說明 + 一鍵邀請。"""
+    uri = invite_uri or "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html"
+    return {
+        "type": "bubble",
+        "size": "kilo",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": ORANGE,
+            "paddingTop": "lg",
+            "paddingBottom": "lg",
+            "paddingStart": "lg",
+            "paddingEnd": "lg",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "還沒綁定守護人喔",
+                    "color": "#FFFFFF",
+                    "size": "xl",
+                    "weight": "bold",
+                    "align": "center",
+                    "wrap": True,
+                },
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "paddingAll": "lg",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "先去邀請家人加入再試；有危險請先打 119 或 110",
+                    "size": "md",
+                    "color": GRAY,
+                    "wrap": True,
+                    "align": "center",
                 },
             ],
         },
@@ -109,45 +198,19 @@ def sos_emergency_flex(family_tel: str | None = None, family_label: str | None =
             "layout": "vertical",
             "spacing": "sm",
             "paddingAll": "md",
-            "backgroundColor": "#FAFAFA",
             "contents": [
                 {
                     "type": "button",
-                    "action": {"type": "uri", "label": "撥打 119", "uri": "tel:119"},
+                    "action": {"type": "uri", "label": "邀請家人加入", "uri": uri},
                     "style": "primary",
-                    "color": RED,
-                    "height": "md",
-                },
-                {
-                    "type": "button",
-                    "action": {"type": "uri", "label": "撥打 110", "uri": "tel:110"},
-                    "style": "primary",
-                    "color": ORANGE,
-                    "height": "md",
-                },
-                {
-                    "type": "button",
-                    "action": {"type": "uri", "label": family_btn_label[:20], "uri": family_uri},
-                    "style": "secondary",
                     "color": GREEN_DARK,
                     "height": "md",
                 },
                 {
                     "type": "button",
-                    "action": {
-                        "type": "message",
-                        "label": "通知家人連按3次",
-                        "text": "通知家人",
-                    },
-                    "style": "primary",
-                    "color": RED,
-                    "height": "md",
-                },
-                {
-                    "type": "button",
-                    "action": {"type": "uri", "label": "開啟完整求助頁", "uri": panel_uri},
+                    "action": {"type": "uri", "label": "撥打 119", "uri": "tel:119"},
                     "style": "link",
-                    "color": GRAY,
+                    "color": RED,
                     "height": "sm",
                 },
             ],
@@ -234,7 +297,7 @@ def sos_warning_flex(tap_count: int, window_sec: int = SOS_TAP_WINDOW_SEC):
                     "action": {
                         "type": "message",
                         "label": f"再按一次 ({tap_count}/3 → {tap_count + 1 if tap_count < 3 else '發送'})",
-                        "text": "通知家人",
+                        "text": "聯絡家人連按3次",
                     },
                     "style": "primary",
                     "color": bg,

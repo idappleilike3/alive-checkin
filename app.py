@@ -2211,6 +2211,25 @@ def stop_location_sharing(data_file, payload):
     return {"ok": True, "safety_guard": safety_guard_snapshot(profile, now)}, 200
 
 
+def sos_user_facing_error(err) -> str:
+    """把 SOS API 內部英文錯誤轉成聊天室可讀中文（不露出技術字串、不用句號）。"""
+    text = str(err or "").strip()
+    lower = text.lower()
+    if "no bound line guardians" in lower:
+        return "還沒綁定守護人喔 先去邀請家人加入再試；有危險請先打 119 或 110"
+    if "cooldown" in lower:
+        return "剛剛已送過需要幫忙，請稍候再試；有危險請先打 119 或 110"
+    if "daily sos limit" in lower or "daily limit" in lower:
+        return "今天需要幫忙通知已達上限，請明天再試；有危險請先打 119 或 110"
+    if "not available" in lower or "not active" in lower:
+        return "目前暫時無法用系統通知家人；有危險請先打 119 或 110，並直接聯絡親友"
+    if "member not found" in lower:
+        return "還認不到你的會員資料，請先完成設定；有危險請先打 119 或 110"
+    if "line_channel_access_token" in lower or "missing line_user_id" in lower:
+        return "系統暫時無法送出通知，請稍後再試；有危險請先打 119 或 110"
+    return "暫時通知不到家人，有危險請先打 119 或 110，並直接聯絡親友"
+
+
 def trigger_sos(data_file, payload, config=None):
     """
     🔴 P0 FIX v0.5:加 3 層防護
@@ -2294,7 +2313,19 @@ def trigger_sos(data_file, payload, config=None):
         contact for contact in contacts
         if contact.get("line_id") and "line" in (contact.get("notify_methods") or ["line"])
     ][:limit]
-    if not line_contacts:
+
+    active_group_ids = []
+    if rules.get("guardian_group_limit"):
+        groups = state.get("guardian_groups", {})
+        active_group_ids = [
+            group_id for group_id in (profile.get("guardian_group_ids") or [])
+            if groups.get(group_id, {}).get("owner_line_user_id") == line_user_id
+            and groups.get(group_id, {}).get("status") == "active"
+            and (groups.get(group_id, {}).get("preferences") or {}).get("notify_group_on_overdue", True)
+        ][: int(rules.get("guardian_group_limit") or 0)]
+
+    # 個人守護人或守護群任一可送；兩者都沒有才拒絕（方案本身不會自動綁定對象）
+    if not line_contacts and not active_group_ids:
         return {"error": "no bound LINE guardians", "sent": 0}, 400
 
     location = profile.get("location") or {}
@@ -2332,15 +2363,6 @@ def trigger_sos(data_file, payload, config=None):
             failed += 1
             results.append({"line_user_id": target, "status": "failed"})
 
-    active_group_ids = []
-    if rules.get("guardian_group_limit"):
-        groups = state.get("guardian_groups", {})
-        active_group_ids = [
-            group_id for group_id in (profile.get("guardian_group_ids") or [])
-            if groups.get(group_id, {}).get("owner_line_user_id") == line_user_id
-            and groups.get(group_id, {}).get("status") == "active"
-            and (groups.get(group_id, {}).get("preferences") or {}).get("notify_group_on_overdue", True)
-        ][: int(rules.get("guardian_group_limit") or 0)]
     for group_id in active_group_ids:
         try:
             result = sender(token, group_id, message)
@@ -3320,7 +3342,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723t",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723v",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3611,7 +3633,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723t",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723v",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -3710,7 +3732,13 @@ def create_app(config=None):
                     app.logger.exception("sos push_message failed: %s", exc)
 
             entry_commands = ("需要幫忙", "SOS", "sos", "緊急求助")
-            notify_commands = ("通知家人", "需要幫忙確認", "SOS 確認 2", "SOS 確認 3")
+            notify_commands = (
+                "通知家人",
+                "聯絡家人連按3次",
+                "需要幫忙確認",
+                "SOS 確認 2",
+                "SOS 確認 3",
+            )
             cancel_commands = ("SOS 取消", "取消需要幫忙")
 
             if command in cancel_commands:
@@ -3754,7 +3782,7 @@ def create_app(config=None):
                         family_label=family_label,
                         liff_sos_uri=liff_sos,
                     ),
-                    "🆘 需要幫忙 — 先打電話，必要時通知家人",
+                    "🆘 需要幫忙 — 連按 3 次通知家人",
                 )
                 return
 
@@ -3800,7 +3828,18 @@ def create_app(config=None):
                         sos_flow.sos_cancel_pending(state, line_user_id)
                         err = (res or {}).get("error") if isinstance(res, dict) else "send failed"
                         app.logger.error("trigger_sos failed code=%s err=%s", code, err)
-                        reply(None, f"⚠️ 需要幫忙通知發送失敗：{str(err)[:160]}")
+                        if "no bound line guardians" in str(err).lower():
+                            invite_uri = (
+                                share_invite_liff_url()
+                                if share_invite_liff_url
+                                else "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html"
+                            )
+                            reply(
+                                sos_flow.sos_no_guardians_flex(invite_uri),
+                                sos_user_facing_error(err),
+                            )
+                        else:
+                            reply(None, sos_user_facing_error(err))
                     else:
                         event_id = res.get("event_id") if isinstance(res, dict) else None
                         sos_flow.sos_mark_sent(state, line_user_id, event_id)
@@ -3808,7 +3847,7 @@ def create_app(config=None):
                 except Exception as exc:
                     app.logger.exception("trigger_sos exception")
                     sos_flow.sos_cancel_pending(state, line_user_id)
-                    reply(None, f"⚠️ 需要幫忙通知發送失敗:{str(exc)[:200]}")
+                    reply(None, sos_user_facing_error(exc))
                 save_state(app.config["DATA_FILE"], state)
                 return
 
@@ -4062,6 +4101,7 @@ def create_app(config=None):
                 "sos",
                 "緊急求助",
                 "通知家人",
+                "聯絡家人連按3次",
                 "需要幫忙確認",
                 "SOS 確認 2",
                 "SOS 確認 3",

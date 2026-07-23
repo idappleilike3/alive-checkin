@@ -148,8 +148,8 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('href="tel:110"', page)
         self.assertIn('id="sosHoldButton"', page)
         self.assertIn("SOS_HOLD_DURATION_MS = 3000", page)
-        self.assertIn("連續按 3 次", page)
-        self.assertIn("本服務不是報警或救援系統", page)
+        self.assertIn("聯絡家人連按3次", page)
+        self.assertIn("本服務不是報警系統", page)
         self.assertIn('id="mvpSosBtn"', page)
         self.assertIn("openSosModal", page)
         self.assertIn('sosSection.hidden = !enabled;', page)
@@ -250,13 +250,20 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("liff.login({ redirectUri: buildSafeRedirectUri() })", page)
         self.assertNotIn("window.location.href", page)
         self.assertNotIn("redirectUri: window.location.href", page)
-        self.assertIn('alert("發生錯誤："', page)
+        self.assertIn('alert("暫時無法分享："', page)
         self.assertIn('shareBtn.addEventListener("click", onShareClick)', page)
         self.assertIn("liff.shareTargetPicker", page)
         # 禁止 init 後自動分享／自動導頁
         self.assertNotIn("await shareNow()", page)
         self.assertNotIn("location.replace(", page)
         self.assertNotIn("location.href =", page)
+        # 產品路徑：不要複製連結備援
+        self.assertNotIn("複製邀請訊息", page)
+        self.assertNotIn("複製連結", page)
+        self.assertNotIn("clipboard", page)
+        self.assertNotIn("inviteBox", page)
+        self.assertNotIn("copyBtn", page)
+        self.assertNotIn("?open=home", page)
         # 邀請網址必須走正確 LIFF ID
         self.assertIn("https://liff.line.me/\" + LIFF_ID + \"/?invite_from=", page)
         self.assertIn('const LIFF_ID = "2010674803-rK98c0lo"', page)
@@ -274,8 +281,11 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=checkin", rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html", rich_menu)
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=share-invite", rich_menu)
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=sos", rich_menu)
+        # 「需要幫忙」必須是 LINE message，觸發 Bot 緊急求助 Flex（不可 uri 連網頁）
+        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=sos", rich_menu)
+        self.assertIn('"type": "message"', rich_menu)
         self.assertIn('"label": "需要幫忙"', rich_menu)
+        self.assertIn('"text": "需要幫忙"', rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=help", rich_menu)
         # 查看方案必須直連方案頁，不可再走 open=pricing 首頁轉跳
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=pricing", rich_menu)
@@ -284,7 +294,6 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo#open=", rich_menu)
         self.assertNotIn("https://alive-checkin.onrender.com/help.html", rich_menu)
         self.assertNotIn('"type": "message", "label": "SOS 求救"', rich_menu)
-        self.assertNotIn('"type": "message", "label": "需要幫忙"', rich_menu)
         self.assertNotIn('"label": "連按SOS"', rich_menu)
 
     def test_welcome_help_button_opens_help_and_faq(self):

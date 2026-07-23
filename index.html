@@ -2832,6 +2832,21 @@
     .mvp-sos-dials a.family { background: #ca8a04; color: #111; }
     .mvp-sos-dials a.police { background: #1d4ed8; }
     .mvp-sos-dials a.fire { background: #dc2626; }
+    .mvp-sos-dials.sos-dial-links {
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin: 10px 0 4px;
+    }
+    .mvp-sos-dials.sos-dial-links a {
+      min-height: 36px;
+      border-radius: 0;
+      background: transparent !important;
+      color: #6b7280 !important;
+      font-size: 15px;
+      font-weight: 700;
+      text-decoration: underline;
+    }
+    .mvp-sos-dials.sos-dial-links a.fire { color: #b91c1c !important; }
     .check-wrap.mvp-hidden-check { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
     body.mvp-focus-home .theme-switcher,
     body.mvp-focus-home .countdown-block,
@@ -2871,25 +2886,25 @@
       </div>
     </div>
 
-    <!-- 緊急求助：電話人人可用；通知家人依方案 -->
+    <!-- 緊急求助：一個大按鈕連按 3 次；119／110 為小型文字連結 -->
     <div class="modal-backdrop" id="sosConfirmModal" hidden>
       <div class="guardian-modal sos-confirm-card" role="dialog" aria-modal="true" aria-labelledby="sosModalTitle">
-        <h2 id="sosModalTitle">🆘 緊急求助</h2>
-        <p>需要幫忙時，可先打電話，也可通知家人。</p>
-        <div class="mvp-sos-dials" id="sosDialLinks">
-          <a class="family" id="sosDialPrimary" href="tel:">📞 第一聯絡人</a>
-          <a class="police" href="tel:110">撥打 110</a>
-          <a class="fire" href="tel:119">撥打 119</a>
-        </div>
+        <h2 id="sosModalTitle">🆘 需要幫忙</h2>
+        <p>請只按下方這一個大按鈕，連按 3 次就會通知家人</p>
+        <p class="sos-disclaimer">有立即危險請先撥打 119 或 110（本服務不是報警系統）</p>
         <div class="sos-plan-status" id="sosPlanStatus">正在確認通知家人狀態</div>
-        <p id="sosModalMessage">可通知家人，並附上可分享的位置。</p>
+        <p id="sosModalMessage">連按 3 次後，會通知家人，並附上可分享的位置</p>
         <button class="sos-hold-button" id="sosHoldButton" type="button" disabled>
           <span class="sos-hold-progress" id="sosHoldProgress"></span>
-          <span class="sos-hold-label" id="sosHoldLabel">連續按 3 次通知家人</span>
+          <span class="sos-hold-label" id="sosHoldLabel">聯絡家人連按3次</span>
         </button>
+        <div class="mvp-sos-dials sos-dial-links" id="sosDialLinks">
+          <a class="fire" href="tel:119">撥打 119</a>
+          <a class="police" href="tel:110">撥打 110</a>
+          <a class="family" id="sosDialPrimary" href="tel:" hidden>第一聯絡人</a>
+        </div>
         <p class="sos-feedback" id="sosFeedback" aria-live="polite"></p>
         <a class="sos-upgrade-link" id="sosUpgradeLink" href="https://alive-checkin.onrender.com/liff/pricing.html">查看守護方案</a>
-      <p class="sos-disclaimer">本服務不是報警或救援系統，若有立即危險請先打電話求助。</p>
         <div class="actions">
           <button class="action-btn" id="sosConfirmCancel" type="button">關閉</button>
         </div>
@@ -5903,15 +5918,15 @@
       } catch (error) {
         const message = String(error.message || "");
         if (message.includes("no bound LINE guardians")) {
-          feedback.textContent = "尚未綁定可接收 LINE 的守護人，請先完成至少 1 位綁定";
+          feedback.textContent = "還沒綁定守護人喔 先去邀請家人加入再試；有危險請先打 119 或 110";
         } else if (message.includes("not active") || message.includes("not available")) {
-          feedback.textContent = "方案目前無法使用守護通知，請確認付款狀態或查看 799 方案";
+          feedback.textContent = "目前暫時無法用系統通知家人；有危險請先打 119 或 110，並直接聯絡親友";
         } else if (error.status === 429) {
-          feedback.textContent = "為避免誤觸，SOS 暫時進入冷卻時間，若有危險請直接撥打 119 或 110";
+          feedback.textContent = "剛剛已送過需要幫忙，請稍候再試；有危險請先打 119 或 110";
         } else {
-          feedback.textContent = "SOS 暫時無法送出，請直接撥打 119、110，並聯絡親友";
+          feedback.textContent = "暫時通知不到家人，有危險請先打 119 或 110，並直接聯絡親友";
         }
-        label.textContent = "連續按 3 次發出 SOS";
+        label.textContent = "聯絡家人連按3次";
       } finally {
         button.disabled = !hasActiveSosAccess();
       }
