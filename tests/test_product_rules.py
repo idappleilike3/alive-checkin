@@ -245,8 +245,11 @@ class ProductRulesTests(unittest.TestCase):
     def test_share_invite_page_is_stable_click_only(self):
         page = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
         self.assertIn('await liff.init({ liffId: LIFF_ID })', page)
-        self.assertIn("liff.login();", page)
-        self.assertNotIn("liff.login({ redirectUri:", page)
+        # 子路徑頁可用安全 redirectUri（origin+pathname+search，無 #）；禁止 window.location.href
+        self.assertIn("buildSafeRedirectUri", page)
+        self.assertIn("liff.login({ redirectUri: buildSafeRedirectUri() })", page)
+        self.assertNotIn("window.location.href", page)
+        self.assertNotIn("redirectUri: window.location.href", page)
         self.assertIn('alert("發生錯誤："', page)
         self.assertIn('shareBtn.addEventListener("click", onShareClick)', page)
         self.assertIn("liff.shareTargetPicker", page)
@@ -254,6 +257,9 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("await shareNow()", page)
         self.assertNotIn("location.replace(", page)
         self.assertNotIn("location.href =", page)
+        # 邀請網址必須走正確 LIFF ID
+        self.assertIn("https://liff.line.me/\" + LIFF_ID + \"/?invite_from=", page)
+        self.assertIn('const LIFF_ID = "2010674803-rK98c0lo"', page)
 
     def test_liff_links_use_query_params_for_android_compatibility(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

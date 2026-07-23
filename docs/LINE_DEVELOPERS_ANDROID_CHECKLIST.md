@@ -19,7 +19,12 @@
 4. **LINE Login Channel**  
    LIFF 所屬 Channel 須已發佈／可用；Scopes 至少包含 `profile` / `openid`
 
-5. **分享連結型態**  
+5. **shareTargetPicker（一鍵分享必開）**  
+   LINE Developers → 該 LIFF → **開啟「分享目標選擇器 / shareTargetPicker」**  
+   - 未開：按鈕仍可按，但只會走「複製邀請訊息」備援  
+   - 一鍵邀請 URI：`https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html`
+
+6. **分享連結型態**  
    - 正確：`https://line.me/R/app/{LIFF_ID}/?invite_from=...` 或 `https://liff.line.me/{LIFF_ID}/?...`  
    - 或短連結落地頁：`https://alive-checkin.onrender.com/invite?from=...`  
    - 錯誤：直接貼裸的 `onrender.com/?invite_from=...` 且期待在 Chrome 完成登入
@@ -32,7 +37,15 @@
 | LIFF 登入 | 有 LINE 內建 context，較穩 | 外開時沒有 LINE context → 易「無法顯示網頁」／LIFF 4000 |
 | 內網 | 無關 | 無關（外網也失敗就不是內網） |
 
-## 重測步驟
+## 重測步驟（一鍵分享）
+
+1. 用 **Android** 與 **iPhone** 各測一次，務必在 **LINE App 內**開啟  
+2. 點歡迎詞或圖文選單「一鍵邀請」→ 應進專用頁（大綠鈕「一鍵分享守護人」），**不要**先看到首頁再跳  
+3. 點大按鈕 → 應跳出 LINE 選好友分享；若沒跳出，應出現複製提示／錯誤 `alert`  
+4. 對方收到的連結應為：`https://liff.line.me/2010674803-rK98c0lo/?invite_from=...`  
+5. 對照 `/api/config` 的 `deploy_version`（內部戳，歡迎 Flex 不會顯示黃底版本）
+
+## 舊版邀請登入重測
 
 1. 用 **Android** 手機、**外網（4G/5G）** 測試  
 2. 收到邀請後，若開在 Chrome：應看到「請用 LINE 開啟」大按鈕  
