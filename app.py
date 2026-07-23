@@ -3158,7 +3158,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723g",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723h",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3406,7 +3406,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723g",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723h",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -3611,30 +3611,42 @@ def create_app(config=None):
             reply(sos_flow.sos_warning_flex(tap_count), f"🚨 需要幫忙 ({tap_count}/3)")
             save_state(app.config["DATA_FILE"], state)
 
-        def _send_welcome(line_bot_api, reply_token=None, line_user_id=None, display_name=None):
-            """Follow / 關鍵字共用：送 welcome_flex，失敗寫 log 並 fallback。"""
+        def _send_welcome(line_bot_api, reply_token=None, line_user_id=None, display_name=None, trigger=None):
+            """Follow / 關鍵字共用：送 welcome_flex，失敗寫 log 並 push fallback。"""
             name = (display_name or "").strip() or "您"
+            welcome_version = "W250723h"
+            app.logger.info(
+                "welcome_flex start version=%s trigger=%s user=%s has_reply=%s",
+                welcome_version,
+                trigger or "unknown",
+                (line_user_id or "")[:8],
+                bool(reply_token),
+            )
             welcome_fallback = (
-                f"{name} 您好\n"
-                "歡迎加入每日平安\n"
+                f"❤️ 每日平安\n"
+                f"{name} 您好，歡迎加入每日平安\n"
                 "我是您的平安小管家\n\n"
                 "每天10秒報平安\n"
                 "平常不打擾有事才通知家人\n"
                 "7天體驗先邀請1位守護人\n\n"
                 f"一鍵邀請守護人：{(liff_entry_url(open_action='onboarding/invite') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo/?open=onboarding/invite')}\n"
-                "歡迎卡 W250723g"
+                f"版本 {welcome_version}（傳「開始」可重拿）"
             )
-            alt_text = f"{name} 您好，歡迎加入每日平安 — 我是您的平安小管家（W250723g）"
+            alt_text = f"❤️ 每日平安｜{name} 您好，歡迎加入（{welcome_version}）"
             flex_contents = welcome_flex(display_name) if welcome_flex is not None else None
+            if flex_contents is None:
+                app.logger.error("welcome_flex contents is None — check import")
             try:
                 if FlexSendMessage is not None and flex_contents is not None and reply_token:
                     line_bot_api.reply_message(
                         reply_token,
                         FlexSendMessage(alt_text=alt_text, contents=flex_contents),
                     )
+                    app.logger.info("welcome_flex reply ok version=%s", welcome_version)
                     return
                 if reply_token:
                     line_bot_api.reply_message(reply_token, TextSendMessage(text=welcome_fallback))
+                    app.logger.warning("welcome text reply fallback version=%s", welcome_version)
                     return
             except Exception as exc:
                 app.logger.exception("welcome reply failed: %s", exc)
@@ -3644,12 +3656,14 @@ def create_app(config=None):
                         line_user_id,
                         FlexSendMessage(alt_text=alt_text, contents=flex_contents),
                     )
+                    app.logger.info("welcome_flex push ok version=%s", welcome_version)
                     return
                 except Exception as exc:
                     app.logger.exception("welcome push flex failed: %s", exc)
             if line_user_id:
                 try:
                     line_bot_api.push_message(line_user_id, TextSendMessage(text=welcome_fallback))
+                    app.logger.warning("welcome text push fallback version=%s", welcome_version)
                 except Exception as exc:
                     app.logger.exception("welcome push text failed: %s", exc)
 
@@ -3760,11 +3774,13 @@ def create_app(config=None):
                     display_name = getattr(profile, "display_name", None) or None
                 except Exception:
                     display_name = None
+            app.logger.info("FollowEvent welcome trigger user=%s", (line_user_id or "")[:8])
             _send_welcome(
                 line_bot_api,
                 reply_token=event.reply_token,
                 line_user_id=line_user_id,
                 display_name=display_name,
+                trigger="follow",
             )
 
         @handler.add(MemberJoinedEvent)
@@ -3807,8 +3823,15 @@ def create_app(config=None):
             group_id = getattr(event.source, "group_id", None)
             stripped = text.strip()
 
-            # 歡迎詞關鍵字（已是好友也可重拿歡迎卡）
-            if stripped in ("開始", "歡迎", "說明", "歡迎詞"):
+            # 歡迎詞關鍵字（已是好友也可重拿歡迎卡；不需取消好友）
+            # 純關鍵字或「開始！」等標點也可觸發，避免 OA 打招呼舊訊造成誤會
+            welcome_keys = ("開始", "歡迎", "說明", "歡迎詞")
+            if stripped in welcome_keys or stripped.rstrip("！!。.~～ ") in welcome_keys:
+                app.logger.info(
+                    "welcome keyword hit text=%r user=%s",
+                    stripped[:20],
+                    (line_user_id or "")[:8],
+                )
                 display_name = None
                 if line_user_id:
                     try:
@@ -3821,6 +3844,7 @@ def create_app(config=None):
                     reply_token=event.reply_token,
                     line_user_id=line_user_id,
                     display_name=display_name,
+                    trigger=f"keyword:{stripped[:20]}",
                 )
                 return
 

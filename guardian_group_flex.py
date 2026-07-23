@@ -979,17 +979,18 @@ def _owner_status_block(owner_info):
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友歡迎 Flex（W250723g）：每日平安文案 + 三顆永久 LIFF 按鈕。
+    """加好友歡迎 Flex（W250723h）：每日平安文案 + 三顆永久 LIFF 按鈕。
 
     僅按鈕：一鍵邀請守護人 / 需要幫忙時怎麼做 / 常見問題。
     不含求救或升級按鈕。主 CTA → open=onboarding/invite（進 LIFF 後手動一鍵分享）。
+    footer 放大版本戳，方便對照是否為 Webhook Bot 新卡（非 OA 打招呼舊訊）。
     """
     name = (display_name or "").strip() or "您"
     bind_uri = liff_entry_url(open_action="onboarding/invite")
     help_uri = liff_entry_url(open_action="help")
     faq_uri = liff_entry_url(open_action="faq")
     hero_uri = f"{(os.environ.get('APP_PUBLIC_URL') or PUBLIC_BASE).rstrip('/')}/assets/daily-peace-hero.png"
-    welcome_version = "W250723g"
+    welcome_version = "W250723h"
     return {
         "type": "bubble",
         "size": "mega",
@@ -1017,17 +1018,17 @@ def welcome_flex(display_name: str | None = None):
                     "contents": [
                         {
                             "type": "text",
-                            "text": f"{name} 您好",
+                            "text": "❤️ 每日平安",
                             "color": "#FFFFFF",
-                            "size": "xl",
+                            "size": "xxl",
+                            "weight": "bold",
                             "wrap": True,
                         },
                         {
                             "type": "text",
-                            "text": "歡迎加入每日平安",
+                            "text": f"{name} 您好，歡迎加入每日平安",
                             "color": "#FFFFFF",
-                            "size": "xxl",
-                            "weight": "bold",
+                            "size": "xl",
                             "wrap": True,
                         },
                         {
@@ -1067,14 +1068,6 @@ def welcome_flex(display_name: str | None = None):
                     "color": GRAY,
                     "wrap": True,
                 },
-                {
-                    "type": "text",
-                    "text": f"歡迎卡 {welcome_version}",
-                    "size": "xs",
-                    "color": GRAY_LIGHT,
-                    "align": "end",
-                    "wrap": True,
-                },
             ],
         },
         "footer": {
@@ -1084,6 +1077,33 @@ def welcome_flex(display_name: str | None = None):
             "paddingAll": "lg",
             "backgroundColor": "#FAFAFA",
             "contents": [
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "spacing": "xs",
+                    "backgroundColor": "#FFF3CD",
+                    "cornerRadius": "md",
+                    "paddingAll": "md",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": f"版本 {welcome_version}",
+                            "size": "lg",
+                            "weight": "bold",
+                            "color": "#856404",
+                            "align": "center",
+                            "wrap": True,
+                        },
+                        {
+                            "type": "text",
+                            "text": "傳「開始」可重拿此卡",
+                            "size": "md",
+                            "color": "#856404",
+                            "align": "center",
+                            "wrap": True,
+                        },
+                    ],
+                },
                 {
                     "type": "button",
                     "action": {
