@@ -153,10 +153,13 @@ class NewebpayScaffoldTests(unittest.TestCase):
         app_source = Path(alive_app.__file__).read_text(encoding="utf-8")
 
         self.assertIn("/api/payment/newebpay/notify", source)
+        self.assertIn("/webhook/newebpay", app_source)
         self.assertIn("/payment-success", source)
         self.assertIn("/pricing", source)
         self.assertIn('@app.post("/api/payment/newebpay/notify")', app_source)
-        self.assertIn('@app.get("/payment-success")', app_source)
+        self.assertIn('@app.post("/webhook/newebpay")', app_source)
+        self.assertIn('methods=["GET", "POST"]', app_source)
+        self.assertIn("/payment-success", app_source)
 
 
 class BearerHeaderTests(unittest.TestCase):

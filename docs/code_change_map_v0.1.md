@@ -257,7 +257,9 @@ ALERT_CHANNEL_KEYWORDS = {"簡訊", "全渠道", "全通道", "自動撥號"}  #
 | `POST` | `/api/phone-addon/toggle` | 電話加購 on/off | #5b |
 | `GET` | `/api/admin/sms-quota` | 後台查 SMS 配額 | #2 |
 | `POST` | `/api/cron/trial-conversion` | 試用期轉化提醒 cron | #4 |
-| `POST` | `/webhook/newebpay` | 藍新付款 webhook | #6 |
+| `POST` | `/webhook/newebpay` | 藍新付款 NotifyURL（與 `/api/payment/newebpay/notify` 等效） | #6 |
+| `POST` | `/api/payment/newebpay/notify` | 藍新付款 NotifyURL（checkout 預設） | #6 |
+| `GET`/`POST` | `/payment-success` | 藍新 ReturnURL（付款完成頁） | #6 |
 
 ---
 

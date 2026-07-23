@@ -11,9 +11,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 try:
-    from flask import Flask, jsonify, redirect, request, send_from_directory
+    from flask import Flask, Response, jsonify, redirect, request, send_from_directory
 except ModuleNotFoundError:
     Flask = None
+    Response = None
     redirect = None
 
 try:
@@ -3158,7 +3159,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723i",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723j",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3446,7 +3447,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723i",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723j",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -3658,7 +3659,7 @@ def create_app(config=None):
         def _send_welcome(line_bot_api, reply_token=None, line_user_id=None, display_name=None, trigger=None):
             """Follow / 關鍵字共用：送 welcome_flex，失敗寫 log 並 push fallback。"""
             name = (display_name or "").strip() or "您"
-            welcome_version = "W250723i"
+            welcome_version = "W250723j"
             app.logger.info(
                 "welcome_flex start version=%s trigger=%s user=%s has_reply=%s",
                 welcome_version,
@@ -4115,7 +4116,13 @@ def create_app(config=None):
     @app.post("/webhook/newebpay")
     @app.post("/api/payment/newebpay/notify")
     def newebpay_webhook():
-        """藍新 NotifyURL — 驗簽後自動開通方案。"""
+        """藍新 NotifyURL — 驗簽後自動開通方案（冪等 confirm）。
+
+        兩個路徑等效，擇一填入商店後台即可：
+        - /api/payment/newebpay/notify（checkout 預設）
+        - /webhook/newebpay
+        成功時回傳純文字 SUCCESS（藍新偏好）。
+        """
         form = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
         if newebpay is None:
             return jsonify({"error": "newebpay module missing"}), 503
@@ -4123,7 +4130,7 @@ def create_app(config=None):
         if error:
             return jsonify({"error": error}), 400
         if not newebpay.notify_success(parsed):
-            return jsonify({"ok": True, "ignored": True, "status": parsed.get("status")}), 200
+            return Response("SUCCESS", mimetype="text/plain"), 200
         data, code = confirm_payment_order(
             app.config["DATA_FILE"],
             {
@@ -4134,10 +4141,11 @@ def create_app(config=None):
         )
         if code >= 400:
             return jsonify(data), code
-        return jsonify({"ok": True, "order_id": parsed.get("order_id")}), 200
+        return Response("SUCCESS", mimetype="text/plain"), 200
 
-    @app.get("/payment-success")
+    @app.route("/payment-success", methods=["GET", "POST"])
     def payment_success_page():
+        # 藍新 ReturnURL 常以 POST 帶回付款結果；與 GET 同樣回傳 SPA。
         return send_from_directory(app.static_folder, "index.html")
 
     @app.get("/api/contacts")

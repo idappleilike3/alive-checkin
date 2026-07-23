@@ -3,6 +3,13 @@
 When NEWEBPAY_MERCHANT_ID / HASH_KEY / HASH_IV are set, checkout payloads are
 built for MPG. Otherwise the API returns a pending_manual order for admin
 confirm. Notify webhook verifies TradeInfo when keys exist.
+
+NotifyURL（擇一，兩者等效）:
+  - {APP_PUBLIC_URL}/api/payment/newebpay/notify  （checkout 預設）
+  - {APP_PUBLIC_URL}/webhook/newebpay
+
+ReturnURL:
+  - {APP_PUBLIC_URL}/payment-success  （接受 GET/POST）
 """
 
 from __future__ import annotations
@@ -113,6 +120,7 @@ def build_checkout(order: dict, config: Optional[dict] = None) -> dict:
         "Amt": int(order.get("amount") or 0),
         "ItemDesc": str(order.get("plan") or "alive-checkin")[:50],
         "NotifyURL": f"{public_url}/api/payment/newebpay/notify" if public_url else "",
+        # NotifyURL 亦可填 /webhook/newebpay（與上列路徑等效，見 app.py）
         "ReturnURL": f"{public_url}/payment-success" if public_url else "",
         "ClientBackURL": f"{public_url}/pricing" if public_url else "",
         "Email": "",
