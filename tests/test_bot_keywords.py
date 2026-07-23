@@ -77,6 +77,49 @@ class BotKeywordHandlerTests(unittest.TestCase):
             "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html",
         )
 
+    def test_welcome_flex_omits_placeholder_name(self):
+        from guardian_group_flex import welcome_greeting_text
+
+        self.assertEqual(
+            welcome_greeting_text("阿美"),
+            "👋 阿美 您好，歡迎加入「每日平安」",
+        )
+        self.assertEqual(
+            welcome_greeting_text(None),
+            "👋 您好，歡迎加入「每日平安」",
+        )
+        self.assertEqual(
+            welcome_greeting_text("您"),
+            "👋 您好，歡迎加入「每日平安」",
+        )
+        self.assertNotIn("您 您好", welcome_flex(None)["header"]["contents"][1]["text"])
+        self.assertIn("阿美", welcome_flex("阿美")["header"]["contents"][1]["text"])
+
+    def test_resolve_welcome_display_name_prefers_hint_and_profile(self):
+        import app as app_mod
+
+        class FakeProfile:
+            display_name = "真實暱稱"
+
+        class FakeApi:
+            def get_profile(self, _uid):
+                return FakeProfile()
+
+        self.assertEqual(
+            app_mod.resolve_welcome_display_name(hint="小華"),
+            "小華",
+        )
+        self.assertEqual(
+            app_mod.resolve_welcome_display_name(
+                line_bot_api=FakeApi(),
+                line_user_id="U" + ("a" * 32),
+            ),
+            "真實暱稱",
+        )
+        self.assertIsNone(
+            app_mod.resolve_welcome_display_name(hint="LINE 使用者")
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

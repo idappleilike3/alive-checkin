@@ -53,6 +53,7 @@ try:
         guardian_group_user_guide_flex,
         guardian_group_admin_setup_flex,
         welcome_flex,
+        welcome_greeting_text,
         liff_entry_url,
         get_liff_id,
         share_invite_liff_url,
@@ -65,6 +66,7 @@ except Exception:
     guardian_group_user_guide_flex = None
     guardian_group_admin_setup_flex = None
     welcome_flex = None
+    welcome_greeting_text = None
     liff_entry_url = None
     get_liff_id = None
     share_invite_liff_url = None
@@ -990,6 +992,82 @@ def register_line_user(data_file, payload):
     user["picture_url"] = str(payload.get("picture_url") or user.get("picture_url") or "")
     save_state(data_file, state)
     return build_status(user), 200
+
+
+_WELCOME_NAME_PLACEHOLDERS = frozenset(
+    {"", "您", "LINE 使用者", "LINE 會員", "LINE 聯絡人", "使用者"}
+)
+
+
+def extract_line_display_name(profile_obj) -> str | None:
+    """從 line-bot-sdk Profile / dict 取出可用的 displayName。"""
+    if profile_obj is None:
+        return None
+    candidates = []
+    for attr in ("display_name", "displayName"):
+        val = getattr(profile_obj, attr, None)
+        if val:
+            candidates.append(str(val).strip())
+    if isinstance(profile_obj, dict):
+        for key in ("displayName", "display_name"):
+            if profile_obj.get(key):
+                candidates.append(str(profile_obj.get(key)).strip())
+    elif hasattr(profile_obj, "as_json_dict"):
+        try:
+            data = profile_obj.as_json_dict() or {}
+            for key in ("displayName", "display_name"):
+                if data.get(key):
+                    candidates.append(str(data.get(key)).strip())
+        except Exception:
+            pass
+    for name in candidates:
+        if name and name not in _WELCOME_NAME_PLACEHOLDERS:
+            return name
+    return None
+
+
+def resolve_welcome_display_name(
+    line_bot_api=None,
+    data_file=None,
+    line_user_id=None,
+    hint=None,
+    logger=None,
+) -> str | None:
+    """Follow /「開始」共用：優先 LINE profile，其次 hint / 本地 users，失敗回 None。"""
+    hint_clean = (hint or "").strip()
+    if hint_clean and hint_clean not in _WELCOME_NAME_PLACEHOLDERS:
+        return hint_clean
+
+    uid = (line_user_id or "").strip()
+    if uid and line_bot_api is not None:
+        try:
+            profile = line_bot_api.get_profile(uid)
+            name = extract_line_display_name(profile)
+            if name:
+                return name
+            if logger:
+                logger.warning(
+                    "welcome profile missing displayName user=%s",
+                    uid[:8],
+                )
+        except Exception as exc:
+            if logger:
+                logger.warning(
+                    "welcome get_profile failed user=%s err=%s",
+                    uid[:8],
+                    exc,
+                )
+
+    if uid and data_file:
+        try:
+            stored = (get_profile(load_state(data_file), uid) or {}).get("display_name") or ""
+            stored = str(stored).strip()
+            if stored and stored not in _WELCOME_NAME_PLACEHOLDERS:
+                return stored
+        except Exception as exc:
+            if logger:
+                logger.warning("welcome stored name lookup failed user=%s err=%s", uid[:8], exc)
+    return None
 
 
 def record_checkin(data_file, payload=None):
@@ -3475,7 +3553,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723ab",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723ac",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3772,7 +3850,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723ab",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723ac",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -3843,8 +3921,18 @@ def create_app(config=None):
     def line_callback():
         if LineBotApi is None or WebhookHandler is None:
             return jsonify({"error": "line-bot-sdk is not installed"}), 503
-        token = app.config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("CHANNEL_ACCESS_TOKEN", "")
-        secret = app.config.get("LINE_CHANNEL_SECRET") or os.environ.get("CHANNEL_SECRET", "")
+        token = (
+            app.config.get("LINE_CHANNEL_ACCESS_TOKEN")
+            or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+            or os.environ.get("CHANNEL_ACCESS_TOKEN")
+            or ""
+        ).strip()
+        secret = (
+            app.config.get("LINE_CHANNEL_SECRET")
+            or os.environ.get("LINE_CHANNEL_SECRET")
+            or os.environ.get("CHANNEL_SECRET")
+            or ""
+        ).strip()
         if not token or not secret:
             return jsonify({"error": "LINE credentials are not configured"}), 503
 
@@ -4015,11 +4103,25 @@ def create_app(config=None):
 
         def _send_welcome(line_bot_api, reply_token=None, line_user_id=None, display_name=None, trigger=None):
             """Follow / 關鍵字共用：送 welcome_flex，失敗寫 log 並 push fallback。"""
-            name = (display_name or "").strip() or "您"
+            # 每次發送前再取一次真實暱稱（避免 Follow 當下 profile 失敗變成空白／「您」）
+            resolved = resolve_welcome_display_name(
+                line_bot_api=line_bot_api,
+                data_file=app.config["DATA_FILE"],
+                line_user_id=line_user_id,
+                hint=display_name,
+                logger=app.logger,
+            )
+            if welcome_greeting_text is not None:
+                greeting = welcome_greeting_text(resolved)
+            elif resolved:
+                greeting = f"👋 {resolved} 您好，歡迎加入「每日平安」"
+            else:
+                greeting = "👋 您好，歡迎加入「每日平安」"
             app.logger.info(
-                "welcome_flex start trigger=%s user=%s has_reply=%s",
+                "welcome_flex start trigger=%s user=%s name=%r has_reply=%s",
                 trigger or "unknown",
                 (line_user_id or "")[:8],
+                resolved or "",
                 bool(reply_token),
             )
             setup_uri = (
@@ -4033,7 +4135,7 @@ def create_app(config=None):
                 else "https://alive-checkin.onrender.com/liff/pricing.html"
             )
             welcome_fallback = (
-                f"👋 {name} 您好，歡迎加入「每日平安」\n\n"
+                f"{greeting}\n\n"
                 "每天 10 秒，報個平安\n"
                 "平常不打擾，有事才通知守護人\n\n"
                 "開始使用前兩個步驟：\n"
@@ -4045,8 +4147,12 @@ def create_app(config=None):
                 f"查看方案：{pricing_uri}\n"
                 "傳「開始」可重拿歡迎卡"
             )
-            alt_text = f"每日平安｜{name} 您好，歡迎加入"
-            flex_contents = welcome_flex(display_name) if welcome_flex is not None else None
+            alt_text = (
+                f"每日平安｜{resolved} 您好，歡迎加入"
+                if resolved
+                else "每日平安｜您好，歡迎加入"
+            )
+            flex_contents = welcome_flex(resolved) if welcome_flex is not None else None
             if flex_contents is None:
                 app.logger.error("welcome_flex contents is None — check import")
             try:
@@ -4055,7 +4161,7 @@ def create_app(config=None):
                         reply_token,
                         FlexSendMessage(alt_text=alt_text, contents=flex_contents),
                     )
-                    app.logger.info("welcome_flex reply ok")
+                    app.logger.info("welcome_flex reply ok name=%r", resolved or "")
                     return
                 if reply_token:
                     line_bot_api.reply_message(reply_token, TextSendMessage(text=welcome_fallback))
@@ -4069,10 +4175,16 @@ def create_app(config=None):
                         line_user_id,
                         FlexSendMessage(alt_text=alt_text, contents=flex_contents),
                     )
-                    app.logger.info("welcome_flex push ok")
+                    app.logger.info("welcome_flex push ok name=%r", resolved or "")
                     return
                 except Exception as exc:
                     app.logger.exception("welcome push flex failed: %s", exc)
+                    try:
+                        # Capture exact LINE error body when available
+                        err_body = getattr(exc, "error", None) or getattr(exc, "response", None)
+                        app.logger.error("welcome push flex LINE detail: %s", err_body)
+                    except Exception:
+                        pass
             if line_user_id:
                 try:
                     line_bot_api.push_message(line_user_id, TextSendMessage(text=welcome_fallback))
@@ -4178,15 +4290,15 @@ def create_app(config=None):
 
         @handler.add(FollowEvent)
         def handle_follow(event):
-            """加好友歡迎：優先回 Flex(Exact 歡迎文案 + 立即綁定守護人)。"""
+            """加好友歡迎：優先回 Flex(真實暱稱問候 + 立即開始設定)。"""
             line_user_id = getattr(event.source, "user_id", None)
-            display_name = None
+            display_name = resolve_welcome_display_name(
+                line_bot_api=line_bot_api,
+                data_file=app.config["DATA_FILE"],
+                line_user_id=line_user_id,
+                logger=app.logger,
+            )
             if line_user_id:
-                try:
-                    profile = line_bot_api.get_profile(line_user_id)
-                    display_name = getattr(profile, "display_name", None) or None
-                except Exception:
-                    display_name = None
                 # Follow 當下就寫入 users，之後開 LIFF 不會因缺 row 而 404
                 try:
                     register_line_user(
@@ -4198,7 +4310,11 @@ def create_app(config=None):
                     )
                 except Exception as exc:
                     app.logger.exception("FollowEvent register failed: %s", exc)
-            app.logger.info("FollowEvent welcome trigger user=%s", (line_user_id or "")[:8])
+            app.logger.info(
+                "FollowEvent welcome trigger user=%s name=%r",
+                (line_user_id or "")[:8],
+                display_name or "",
+            )
             _send_welcome(
                 line_bot_api,
                 reply_token=event.reply_token,
@@ -4256,13 +4372,13 @@ def create_app(config=None):
                     stripped[:20],
                     (line_user_id or "")[:8],
                 )
-                display_name = None
+                display_name = resolve_welcome_display_name(
+                    line_bot_api=line_bot_api,
+                    data_file=app.config["DATA_FILE"],
+                    line_user_id=line_user_id,
+                    logger=app.logger,
+                )
                 if line_user_id:
-                    try:
-                        profile = line_bot_api.get_profile(line_user_id)
-                        display_name = getattr(profile, "display_name", None) or None
-                    except Exception:
-                        display_name = None
                     try:
                         register_line_user(
                             app.config["DATA_FILE"],
@@ -4456,12 +4572,25 @@ def create_app(config=None):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
         signature = request.headers.get("X-Line-Signature", "")
-        body = request.get_data(as_text=True)
+        # Use raw bytes then decode so HMAC matches LINE's signed body exactly
+        body_bytes = request.get_data(cache=True, as_text=False) or b""
+        try:
+            body = body_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            app.logger.error("callback body not utf-8 len=%s", len(body_bytes))
+            return jsonify({"error": "invalid body encoding"}), 400
         try:
             handler.handle(body, signature)
         except InvalidSignatureError:
+            app.logger.error(
+                "invalid LINE signature body_len=%s sig_len=%s secret_len=%s",
+                len(body_bytes),
+                len(signature or ""),
+                len(secret or ""),
+            )
             return jsonify({"error": "invalid signature"}), 400
         except LineBotApiError as exc:
+            app.logger.exception("callback LineBotApiError: %s", exc)
             return jsonify({"error": "line api error", "detail": str(exc)}), 502
         return jsonify({"ok": True})
 
@@ -5262,6 +5391,82 @@ def create_app(config=None):
                 data.get("http"),
             )
         return jsonify(data), code
+
+    @app.post("/api/admin/push-welcome")
+    def admin_push_welcome_api():
+        """管理員補推歡迎 Flex（需已加好友）。body: {line_user_id, display_name?}"""
+        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
+        if not admin_allowed(app.config, password):
+            return jsonify({"error": "unauthorized"}), 401
+        if LineBotApi is None or FlexSendMessage is None or welcome_flex is None:
+            return jsonify({"ok": False, "error": "line sdk or welcome_flex unavailable"}), 503
+        payload = request.get_json(silent=True) or {}
+        line_user_id = str(payload.get("line_user_id") or "").strip()
+        if not line_user_id:
+            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        token = (
+            app.config.get("LINE_CHANNEL_ACCESS_TOKEN")
+            or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+            or ""
+        ).strip()
+        if not token:
+            return jsonify({"ok": False, "error": "LINE_CHANNEL_ACCESS_TOKEN not set"}), 503
+        line_bot_api = LineBotApi(token)
+        hint = str(payload.get("display_name") or "").strip() or None
+        resolved = resolve_welcome_display_name(
+            line_bot_api=line_bot_api,
+            data_file=app.config["DATA_FILE"],
+            line_user_id=line_user_id,
+            hint=hint,
+            logger=app.logger,
+        )
+        try:
+            register_line_user(
+                app.config["DATA_FILE"],
+                {"line_user_id": line_user_id, "display_name": resolved or "LINE 使用者"},
+            )
+        except Exception as exc:
+            app.logger.warning("admin push-welcome register failed: %s", exc)
+        contents = welcome_flex(resolved)
+        greeting = (
+            welcome_greeting_text(resolved)
+            if welcome_greeting_text is not None
+            else (f"👋 {resolved} 您好，歡迎加入「每日平安」" if resolved else "👋 您好，歡迎加入「每日平安」")
+        )
+        alt_text = (
+            f"每日平安｜{resolved} 您好，歡迎加入"
+            if resolved
+            else "每日平安｜您好，歡迎加入"
+        )
+        try:
+            line_bot_api.push_message(
+                line_user_id,
+                FlexSendMessage(alt_text=alt_text, contents=contents),
+            )
+            app.logger.info(
+                "admin push-welcome ok user=%s name=%r",
+                line_user_id[:8],
+                resolved or "",
+            )
+            return jsonify(
+                {
+                    "ok": True,
+                    "line_user_id": line_user_id,
+                    "display_name": resolved,
+                    "greeting": greeting,
+                }
+            )
+        except LineBotApiError as exc:
+            detail = str(exc)
+            try:
+                detail = getattr(exc, "error", None) or detail
+            except Exception:
+                pass
+            app.logger.exception("admin push-welcome LINE error: %s", detail)
+            return jsonify({"ok": False, "error": "line_api_error", "detail": str(detail)}), 502
+        except Exception as exc:
+            app.logger.exception("admin push-welcome failed: %s", exc)
+            return jsonify({"ok": False, "error": str(exc)}), 500
 
     @app.post("/api/admin/user-plan")
     def admin_user_plan_api():

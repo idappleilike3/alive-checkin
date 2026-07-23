@@ -999,13 +999,26 @@ def _owner_status_block(owner_info):
     }
 
 
+_WELCOME_PLACEHOLDER_NAMES = frozenset(
+    {"", "您", "LINE 使用者", "LINE 會員", "LINE 聯絡人", "使用者"}
+)
+
+
+def welcome_greeting_text(display_name: str | None = None) -> str:
+    """歡迎標題：有真實暱稱就寫名；否則不寫「您」，避免看起來像沒寫誰。"""
+    name = (display_name or "").strip()
+    if name and name not in _WELCOME_PLACEHOLDER_NAMES:
+        return f"👋 {name} 您好，歡迎加入「每日平安」"
+    return "👋 您好，歡迎加入「每日平安」"
+
+
 def welcome_flex(display_name: str | None = None):
     """加好友歡迎 Flex（粉白風格）：真實暱稱問候 + 兩顆 CTA。
 
     -「立即開始設定」→ LIFF onboarding（綁守護人＋提醒時間）
     -「查看方案」→ 方案頁直連
     """
-    name = (display_name or "").strip() or "您"
+    greeting = welcome_greeting_text(display_name)
     setup_uri = liff_entry_url(open_action="onboarding")
     pricing_uri = pricing_direct_url()
     base = (os.environ.get("APP_PUBLIC_URL") or PUBLIC_BASE).rstrip("/")
@@ -1036,7 +1049,7 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": f"👋 {name} 您好，歡迎加入「每日平安」",
+                    "text": greeting,
                     "weight": "bold",
                     "size": "lg",
                     "color": text_dark,
