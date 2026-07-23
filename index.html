@@ -3767,6 +3767,36 @@
       return url.toString();
     }
 
+    /** Android 較穩：line.me/R/app 會強制喚起 LINE App，減少外開 Chrome 造成 LIFF 4000。 */
+    function buildLineAppOpenUrl(params = {}) {
+      const url = new URL(`https://line.me/R/app/${getLiffId()}/`);
+      Object.entries(params || {}).forEach(([key, value]) => {
+        if (value == null || value === "") return;
+        if (OAUTH_PARAM_KEYS.has(String(key))) return;
+        url.searchParams.set(String(key), String(value));
+      });
+      if (![...url.searchParams.keys()].length) url.searchParams.set("open", "onboarding");
+      return url.toString();
+    }
+
+    function isLikelyAndroid() {
+      return /Android/i.test(navigator.userAgent || "");
+    }
+
+    /** 分享用單一乾淨連結（不分分享者裝置）：優先 line.me/R/app 強制進 LINE，利於 Android 受邀者。 */
+    function buildShareInviteUrl(params = {}) {
+      return buildLineAppOpenUrl(params);
+    }
+
+    /** 外部瀏覽器邀請落地頁（貼上網址／Chrome 開啟時用）。 */
+    function buildInviteLandingUrl(params = {}) {
+      const q = {};
+      if (params.invite_from) q.from = params.invite_from;
+      if (params.friend_invite) q.friend_invite = params.friend_invite;
+      if (params.open) q.open = params.open;
+      return buildPublicAppUrl(q, "/invite");
+    }
+
     function buildPublicAppUrl(params = {}, path = "/") {
       const base = String(appConfig.public_url || "https://alive-checkin.onrender.com/").replace(/\/+$/, "");
       const url = new URL(path || "/", `${base}/`);
@@ -4186,20 +4216,19 @@
 
     function buildContactInvite(nickname = "") {
       const safeId = sanitizeInviteUserId(lineUserId);
-      const bindUrl = safeId
-        ? buildLiffPermanentUrl({ invite_from: safeId })
-        : buildLiffPermanentUrl({ open: "onboarding" });
-      // 短連結只做 302 → liff.line.me，避免 Android 外開瀏覽器直接吃 SPA 造成「無法顯示網頁」
+      const shareParams = safeId
+        ? { invite_from: safeId }
+        : { open: "onboarding" };
+      // 單一乾淨 URL：Android 用 line.me/R/app 強制進 LINE，避免雙連結被截斷
+      const bindUrl = buildShareInviteUrl(shareParams);
       const fallbackUrl = safeId
         ? buildShortInviteFallbackUrl(safeId)
         : buildPublicAppUrl({}, "/invite");
       const nameText = nickname ? `嗨 ${nickname}，` : "";
       const text = (
         `${nameText}我想邀請你成為「每日平安」的守護人。\n` +
-        `請用 LINE 開啟下方連結完成綁定。\n\n` +
-        `${bindUrl}\n\n` +
-        `備用短連結：\n` +
-        `${fallbackUrl}`
+        `請用 LINE 點開下面連結\n\n` +
+        `${bindUrl}`
       );
       return { bindUrl, fallbackUrl, text };
     }
@@ -4699,7 +4728,7 @@
       const inviteMeta = $("inviteMeta");
       if (inviteUrlBox) inviteUrlBox.value = bindUrl;
       if (inviteArea) inviteArea.hidden = false;
-      if (inviteMeta) inviteMeta.textContent = "永久 LIFF 連結。Android 請用 LINE 開啟；備用短連結會自動轉進 LINE。";
+      if (inviteMeta) inviteMeta.textContent = "請用 LINE 點開上方連結。若在 Chrome 開啟，請改開邀請引導頁。";
       try {
         if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
           await liff.shareTargetPicker([
@@ -4985,19 +5014,12 @@
         const data = await apiCreateFriendInvite();
         const inviteCode = String(data.invite_code || "").trim().toUpperCase();
         if (!inviteCode) throw new Error("無法產生好友邀請碼，請稍後再試。");
-        // 必須用永久 liff.line.me，勿用 onrender 裸網址（邀約對象會遇到 LIFF 4000）
-        const inviteUrl = (
-          String(data.invite_url || "").includes("liff.line.me/")
-            ? data.invite_url
-            : buildLiffPermanentUrl({ friend_invite: inviteCode })
-        );
-        const fallbackUrl = buildPublicAppUrl({ friend_invite: inviteCode }, "/invite");
+        // 必須用永久 LINE App / LIFF 入口；單一乾淨 URL，避免 Android 截斷雙連結
+        const inviteUrl = buildShareInviteUrl({ friend_invite: inviteCode });
         const text = (
           `我正在使用「每日平安」安全守護，想邀請你互相查看平安狀態與單次定位（可隨時停止）。\n` +
-          `請用 LINE 開啟下方連結：\n\n` +
-          `${inviteUrl}\n\n` +
-          `備用短連結：\n` +
-          `${fallbackUrl}`
+          `請用 LINE 點開下面連結\n\n` +
+          `${inviteUrl}`
         );
         if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
           await liff.shareTargetPicker([{ type: "text", text }]);
@@ -5195,10 +5217,14 @@
         if (!config.liff_id) return false;
         window.__LIFF_ID__ = config.liff_id;
         await liff.init({ liffId: config.liff_id, withLoginOnExternalBrowser: true });
+        const inClient = Boolean(liff.isInClient && liff.isInClient());
+        if (!inClient) {
+          // 外部瀏覽器（Android Custom Tabs／貼上連結常見）：引導用 LINE 開啟，勿在 Chrome 硬登
+          showLineLoginRequired(readSafeDeepLinkParams());
+          return false;
+        }
         if (!liff.isLoggedIn()) {
-          if (liff.isInClient && liff.isInClient()) {
-            startLineLogin();
-          }
+          startLineLogin();
           return false;
         }
         const profile = await liff.getProfile();
@@ -5229,7 +5255,12 @@
         }
         return true;
       } catch (error) {
+        const code = String(error?.code || error?.message || error || "");
         console.warn("LINE 初始化未完成，改用一般模式。", error);
+        // LIFF 400 / 4000：Endpoint 不符或未在 LINE 內開啟 → 引導用 LINE 開啟
+        if (/4000|400\b|INVALID|UNAUTHORIZED|FORBIDDEN|INIT/i.test(code) || isInviteeDeepLink()) {
+          showLineLoginRequired(readSafeDeepLinkParams());
+        }
         return false;
       }
     }
@@ -5897,9 +5928,12 @@
       const checkBtn = $("checkBtn");
       const dailyEl = $("dailyStatus");
       const errBox = $("inlineError");
-      // 永久 LIFF 入口；只保留業務 deep link，絕不帶 code/state
+      // 永久 LINE App / LIFF 入口；只保留業務 deep link，絕不帶 code/state
       const safeParams = { ...readSafeDeepLinkParams(), ...(nextParams || {}) };
-      const liffEntry = buildLiffPermanentUrl(safeParams, location.hash || "");
+      const lineAppEntry = buildLineAppOpenUrl(safeParams);
+      const liffEntry = buildLiffPermanentUrl(safeParams, "");
+      const landingEntry = buildInviteLandingUrl(safeParams);
+      const primaryEntry = isLikelyAndroid() ? lineAppEntry : liffEntry;
       if (checkBtn) {
         checkBtn.disabled = true;
         checkBtn.setAttribute("aria-busy", "false");
@@ -5910,9 +5944,14 @@
       if (errBox) {
         errBox.classList.remove("inline-success");
         errBox.innerHTML = (
-          `請用 LINE 內建瀏覽器開啟，系統才會自動帶入你的 LINE 會員身分。<br>` +
-          `第一次使用會先請你分享並設定至少 1 位守護人。<br>` +
-          `<a class="member-upgrade-btn" style="display:inline-grid;place-items:center;margin-top:10px;text-decoration:none;" href="${liffEntry}">用 LINE 開啟每日平安</a>`
+          `<strong style="display:block;margin-bottom:8px;">請用 LINE 開啟此頁</strong>` +
+          `Android 常會在外部瀏覽器打開，導致登入失敗／頁面錯誤。<br>` +
+          `請點下方按鈕，改在 LINE App 內開啟。<br>` +
+          `<a class="member-upgrade-btn" style="display:inline-grid;place-items:center;margin-top:12px;text-decoration:none;min-width:220px;" href="${primaryEntry}">請用 LINE 開啟</a>` +
+          `<div style="margin-top:10px;font-size:0.9rem;opacity:0.85;">` +
+          `<a href="${liffEntry}" style="color:inherit;margin-right:12px;">備用 LIFF 連結</a>` +
+          `<a href="${landingEntry}" style="color:inherit;">開啟邀請引導頁</a>` +
+          `</div>`
         );
         errBox.hidden = false;
       }

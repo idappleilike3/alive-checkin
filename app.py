@@ -238,6 +238,40 @@ def permanent_liff_invite_url(*, invite_from="", friend_invite="", open_action=N
     return f"https://liff.line.me/{lid}"
 
 
+def line_app_invite_url(*, invite_from="", friend_invite="", open_action=None):
+    """Force-open-in-LINE URL (https://line.me/R/app/...) — more reliable on Android Chrome."""
+    lid = (os.environ.get("LIFF_ID") or "2010674803-rK98c0lo").strip() or "2010674803-rK98c0lo"
+    params = {}
+    invite_from = str(invite_from or "").strip()
+    friend_invite = str(friend_invite or "").strip()
+    if invite_from:
+        params["invite_from"] = invite_from
+    if friend_invite:
+        params["friend_invite"] = friend_invite
+    if open_action:
+        params["open"] = str(open_action).strip()
+    if not params:
+        params["open"] = "onboarding"
+    return f"https://line.me/R/app/{lid}/?{urllib.parse.urlencode(params)}"
+
+
+def public_invite_landing_url(*, invite_from="", friend_invite="", open_action=None):
+    """Public /invite landing — shows「用 LINE 開啟」when opened outside LINE."""
+    params = {}
+    invite_from = str(invite_from or "").strip()
+    friend_invite = str(friend_invite or "").strip()
+    if invite_from:
+        params["from"] = invite_from
+    if friend_invite:
+        params["friend_invite"] = friend_invite
+    if open_action:
+        params["open"] = str(open_action).strip()
+    base = public_page_url("invite")
+    if not params:
+        return base
+    return f"{base}?{urllib.parse.urlencode(params)}"
+
+
 def line_plan_message():
     pricing_url = public_page_url("pricing")
     return (
@@ -1925,15 +1959,8 @@ def create_friend_invite(data_file, payload):
         "status": "pending",
     }
     save_state(data_file, state)
-    # 邀約對象必須走永久 LIFF 入口；勿回傳 onrender 裸網址或含 OAuth code/state 的連結（會觸發 LIFF 4000）
-    if liff_entry_url is not None:
-        invite_url = liff_entry_url(friend_invite=code)
-    else:
-        lid = (
-            str(os.environ.get("LIFF_ID") or "").strip()
-            or "2010674803-rK98c0lo"
-        )
-        invite_url = f"https://liff.line.me/{lid}/?friend_invite={code}"
+    # 邀約對象必須走可強制進 LINE 的入口；勿回傳 onrender 裸網址或含 OAuth code/state 的連結（會觸發 LIFF 4000）
+    invite_url = line_app_invite_url(friend_invite=code)
     return {
         "invite_code": code,
         "invite_url": invite_url,
@@ -3191,10 +3218,11 @@ def create_app(config=None):
             config=app.config,
         )
 
-    def _redirect_to_permanent_liff():
-        """Bare onrender invite links → 302 liff.line.me (Android WebView / external browser).
+    def _redirect_invite_to_landing():
+        """Bare onrender invite links → /invite landing (not blind LIFF 302).
 
-        Keep serving the SPA when LINE LIFF loads the Endpoint with liff.state.
+        External browsers (common on Android) get a「用 LINE 開啟」page instead of
+        a blank LIFF 4000 error. Keep serving the SPA when LIFF loads Endpoint + liff.state.
         """
         if request.args.get("liff.state") is not None:
             return None
@@ -3208,7 +3236,7 @@ def create_app(config=None):
         open_action = (request.args.get("open") or "").strip() or None
         if not invite_from and not friend_invite:
             return None
-        target = permanent_liff_invite_url(
+        target = public_invite_landing_url(
             invite_from=invite_from,
             friend_invite=friend_invite,
             open_action=open_action,
@@ -3219,31 +3247,15 @@ def create_app(config=None):
 
     @app.get("/")
     def index():
-        bounced = _redirect_to_permanent_liff()
+        bounced = _redirect_invite_to_landing()
         if bounced is not None:
             return bounced
         return send_from_directory(app.static_folder, "index.html")
 
     @app.get("/invite")
     def invite_short_link():
-        """Short public invite path that always 302s into permanent LIFF."""
-        invite_from = (
-            request.args.get("from")
-            or request.args.get("invite_from")
-            or request.args.get("invite")
-            or ""
-        ).strip()
-        friend_invite = (request.args.get("friend_invite") or "").strip()
-        if not invite_from and not friend_invite:
-            target = permanent_liff_invite_url(open_action="onboarding")
-        else:
-            target = permanent_liff_invite_url(
-                invite_from=invite_from,
-                friend_invite=friend_invite,
-            )
-        if redirect is not None:
-            return redirect(target, code=302)
-        return jsonify({"redirect": target}), 302
+        """Invite landing: outside LINE shows「用 LINE 開啟」; inside LINE auto-opens LIFF."""
+        return send_from_directory(app.static_folder, "invite.html")
 
     @app.get("/health")
     def health():

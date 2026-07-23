@@ -307,23 +307,29 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("https://alive-checkin.onrender.com/", backend)
         self.assertNotIn("file:///C:/Users/WIN11", backend)
 
-    def test_guardian_invite_uses_liff_plus_short_302_fallback(self):
+    def test_guardian_invite_uses_single_line_app_url_plus_invite_landing(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         backend = (ROOT / "app.py").read_text(encoding="utf-8")
+        landing = (ROOT / "invite.html").read_text(encoding="utf-8")
         invite_block = page[
             page.index("function buildContactInvite")
             : page.index("async function apiBindEmergencyContact")
         ]
 
         self.assertIn("function buildPublicAppUrl", page)
-        self.assertIn("buildLiffPermanentUrl({ invite_from: safeId })", invite_block)
-        self.assertIn("buildShortInviteFallbackUrl(safeId)", invite_block)
-        self.assertIn("備用短連結：", invite_block)
+        self.assertIn("function buildLineAppOpenUrl", page)
+        self.assertIn("function buildShareInviteUrl", page)
+        self.assertIn("buildShareInviteUrl(shareParams)", invite_block)
+        self.assertIn("請用 LINE 點開下面連結", invite_block)
+        self.assertNotIn("備用短連結：", invite_block)
         self.assertIn('buildPublicAppUrl({ from: safeId }, "/invite")', page)
         self.assertIn('@app.get("/invite")', backend)
-        self.assertIn("permanent_liff_invite_url", backend)
-        self.assertIn("_redirect_to_permanent_liff", backend)
-        self.assertNotIn("如果 Android 打不開，請改點備用連結", invite_block)
+        self.assertIn('send_from_directory(app.static_folder, "invite.html")', backend)
+        self.assertIn("public_invite_landing_url", backend)
+        self.assertIn("_redirect_invite_to_landing", backend)
+        self.assertIn("請用 LINE 開啟", landing)
+        self.assertIn("line.me/R/app/", landing)
+        self.assertIn("liff.line.me/", landing)
 
     def test_guardian_group_intro_has_large_four_button_actions(self):
         flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
@@ -337,15 +343,16 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('"label": "我已完成守護群設定"', flex)
         self.assertIn('"text": "守護群狀態"', flex)
 
-    def test_friend_location_invite_has_android_public_fallback(self):
+    def test_friend_location_invite_uses_single_share_url(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         friend_invite_block = page[
             page.index("async function shareFriendInvite")
             : page.index("function maybePrefillFriendInvite")
         ]
 
-        self.assertIn('buildPublicAppUrl({ friend_invite: inviteCode }, "/invite")', friend_invite_block)
-        self.assertIn("備用短連結：", friend_invite_block)
+        self.assertIn("buildShareInviteUrl({ friend_invite: inviteCode })", friend_invite_block)
+        self.assertIn("請用 LINE 點開下面連結", friend_invite_block)
+        self.assertNotIn("備用短連結：", friend_invite_block)
         self.assertIn("navigator.share", friend_invite_block)
         self.assertNotIn("url: inviteUrl", friend_invite_block)
 

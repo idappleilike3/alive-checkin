@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <title>每日平安｜請用 LINE 開啟</title>
+  <style>
+    :root {
+      --line: #06c755;
+      --line-dark: #05a848;
+      --ink: #1a1a1a;
+      --muted: #5c5c5c;
+      --bg: #f3f7f4;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+      background:
+        radial-gradient(120% 80% at 50% -10%, #d9f5e4 0%, transparent 55%),
+        linear-gradient(180deg, #eef8f1 0%, var(--bg) 40%, #e8eee9 100%);
+      color: var(--ink);
+    }
+    .wrap {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 28px 20px 40px;
+    }
+    .card {
+      width: min(420px, 100%);
+      text-align: center;
+    }
+    .brand {
+      font-size: clamp(1.75rem, 6vw, 2.15rem);
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      margin: 0 0 10px;
+      color: #0b5c2e;
+    }
+    .lead {
+      margin: 0 0 8px;
+      font-size: 1.15rem;
+      font-weight: 700;
+      line-height: 1.45;
+    }
+    .hint {
+      margin: 0 0 28px;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.55;
+    }
+    .open-btn {
+      display: block;
+      width: 100%;
+      padding: 18px 20px;
+      border: 0;
+      border-radius: 14px;
+      background: var(--line);
+      color: #fff;
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      text-decoration: none;
+      box-shadow: 0 10px 24px rgba(6, 199, 85, 0.28);
+    }
+    .open-btn:active { background: var(--line-dark); transform: scale(0.99); }
+    .steps {
+      margin: 24px 0 0;
+      padding: 16px 18px;
+      text-align: left;
+      background: rgba(255,255,255,0.72);
+      border-radius: 12px;
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.65;
+    }
+    .steps strong { color: var(--ink); }
+    .status {
+      margin-top: 16px;
+      min-height: 1.4em;
+      font-size: 0.88rem;
+      color: var(--muted);
+    }
+    .copy {
+      margin-top: 14px;
+      background: transparent;
+      border: 1px solid #c9d9ce;
+      border-radius: 10px;
+      padding: 10px 14px;
+      color: #2d5a3d;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .alt-link-wrap { margin: 14px 0 0; }
+    .alt-link {
+      color: #2d5a3d;
+      font-size: 0.92rem;
+      font-weight: 600;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="card">
+      <p class="brand">每日平安</p>
+      <h1 class="lead">請用 LINE 開啟此邀請</h1>
+      <p class="hint">
+        Android 常會在 Chrome 等外部瀏覽器打開連結，導致登入失敗。<br>
+        請點下方大按鈕，改在 LINE App 內開啟。
+      </p>
+      <a class="open-btn" id="openInLine" href="#">請用 LINE 開啟</a>
+      <p class="alt-link-wrap">
+        <a class="alt-link" id="openLiffAlt" href="#">改用另一個 LINE 連結</a>
+      </p>
+      <button class="copy" id="copyLink" type="button">複製 LINE 連結</button>
+      <p class="status" id="status" aria-live="polite"></p>
+      <div class="steps">
+        <strong>若按鈕沒反應：</strong><br>
+        1. 先開啟手機上的 LINE<br>
+        2. 回到這裡再點一次「請用 LINE 開啟」<br>
+        3. 或把複製的連結貼到 LINE 聊天室後點開
+      </div>
+    </div>
+  </main>
+  <script>
+    (function () {
+      var DEFAULT_LIFF_ID = "2010674803-rK98c0lo";
+      var params = new URLSearchParams(location.search);
+      var inviteFrom = (params.get("from") || params.get("invite_from") || params.get("invite") || "").trim();
+      var friendInvite = (params.get("friend_invite") || "").trim();
+      var openAction = (params.get("open") || "").trim();
+      var statusEl = document.getElementById("status");
+      var openBtn = document.getElementById("openInLine");
+      var altBtn = document.getElementById("openLiffAlt");
+      var copyBtn = document.getElementById("copyLink");
+
+      function getLiffId() {
+        return window.__INVITE_LIFF_ID__ || DEFAULT_LIFF_ID;
+      }
+
+      function buildQuery() {
+        var q = new URLSearchParams();
+        if (inviteFrom) q.set("invite_from", inviteFrom);
+        if (friendInvite) q.set("friend_invite", friendInvite);
+        if (openAction) q.set("open", openAction);
+        if (!inviteFrom && !friendInvite && !openAction) q.set("open", "onboarding");
+        return q.toString();
+      }
+
+      // 兩種官方入口都要可用：liff.line.me 與 line.me/R/app
+      function buildLiffUrl() {
+        var qs = buildQuery();
+        return "https://liff.line.me/" + getLiffId() + "/?" + qs;
+      }
+
+      function buildLineAppUrl() {
+        var qs = buildQuery();
+        return "https://line.me/R/app/" + getLiffId() + "/?" + qs;
+      }
+
+      function isLineInAppBrowser() {
+        return /Line\//i.test(navigator.userAgent || "");
+      }
+
+      function isAndroid() {
+        return /Android/i.test(navigator.userAgent || "");
+      }
+
+      var liffUrl = buildLiffUrl();
+      var lineAppUrl = buildLineAppUrl();
+      // Android：優先 line.me/R/app 強制喚起 LINE；其餘用 liff.line.me
+      var primaryUrl = isAndroid() ? lineAppUrl : liffUrl;
+      var secondaryUrl = isAndroid() ? liffUrl : lineAppUrl;
+      openBtn.href = primaryUrl;
+      if (altBtn) altBtn.href = secondaryUrl;
+
+      function setStatus(text) {
+        if (statusEl) statusEl.textContent = text || "";
+      }
+
+      function refreshUrls() {
+        liffUrl = buildLiffUrl();
+        lineAppUrl = buildLineAppUrl();
+        primaryUrl = isAndroid() ? lineAppUrl : liffUrl;
+        secondaryUrl = isAndroid() ? liffUrl : lineAppUrl;
+        openBtn.href = primaryUrl;
+        if (altBtn) altBtn.href = secondaryUrl;
+      }
+
+      function openLine(url) {
+        var target = url || primaryUrl;
+        setStatus("正在喚起 LINE…");
+        location.href = target;
+        setTimeout(function () {
+          if (document.visibilityState === "visible") {
+            setStatus("若沒有自動開啟，請再點一次按鈕，或改用另一個 LINE 連結。");
+          }
+        }, 1800);
+      }
+
+      openBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        openLine(primaryUrl);
+      });
+
+      if (altBtn) {
+        altBtn.addEventListener("click", function (e) {
+          e.preventDefault();
+          openLine(secondaryUrl);
+        });
+      }
+
+      copyBtn.addEventListener("click", async function () {
+        var text = "請用 LINE 點開下面連結\n\n" + primaryUrl;
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            var ta = document.createElement("textarea");
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            document.body.removeChild(ta);
+          }
+          setStatus("已複製。請貼到 LINE 聊天室後點開。");
+        } catch (_) {
+          setStatus(primaryUrl);
+        }
+      });
+
+      fetch("/api/config")
+        .then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (cfg) {
+          if (cfg && cfg.liff_id) {
+            window.__INVITE_LIFF_ID__ = String(cfg.liff_id).trim();
+            refreshUrls();
+          }
+        })
+        .catch(function () {})
+        .finally(function () {
+          // 已在 LINE 內建瀏覽器：直接進 LIFF，不要停在落地頁
+          if (isLineInAppBrowser()) {
+            setStatus("偵測到 LINE，正在開啟…");
+            location.replace(buildLiffUrl());
+            return;
+          }
+          // 外部瀏覽器：自動嘗試一次喚起（失敗則留下大按鈕）
+          setTimeout(function () { openLine(primaryUrl); }, 350);
+        });
+    })();
+  </script>
+</body>
+</html>

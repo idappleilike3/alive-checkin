@@ -336,14 +336,15 @@ function renderStep() {
       const hint = document.getElementById("shareStepHint");
       try {
         const safeId = String(state.lineUserId || "").replace(/[^a-zA-Z0-9_-]/g, "");
-        const bindUrl = `https://liff.line.me/${LIFF_ID}/?invite_from=${encodeURIComponent(safeId)}`;
-        const fallbackUrl = `https://alive-checkin.onrender.com/invite?from=${encodeURIComponent(safeId)}`;
+        // 單一乾淨 URL：line.me/R/app 強制進 LINE，利於 Android 受邀者
+        const base = `https://line.me/R/app/${LIFF_ID}/`;
+        const bindUrl = safeId
+          ? `${base}?invite_from=${encodeURIComponent(safeId)}`
+          : `${base}?open=onboarding`;
         const text =
           `我想邀請你成為「每日平安」的守護人。\n` +
-          `請用 LINE 開啟下方連結完成綁定。\n\n` +
-          `${bindUrl}\n\n` +
-          `備用短連結：\n` +
-          `${fallbackUrl}`;
+          `請用 LINE 點開下面連結\n\n` +
+          `${bindUrl}`;
         if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
           await liff.shareTargetPicker([{ type: "text", text }]);
           if (hint) hint.textContent = "✅ 已開啟分享。選好友送出後，請點「下一步」填寫資料。";
