@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="alive-deploy" content="W250723af">
+  <meta name="alive-deploy" content="W250723ah">
   <title>分享給好友</title>
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
@@ -49,7 +49,7 @@
       color: #15803d;
     }
     .share-btn {
-      display: none;
+      display: grid;
       place-items: center;
       width: 100%;
       min-height: min(46vh, 280px);
@@ -65,8 +65,7 @@
       touch-action: manipulation;
       box-shadow: 0 18px 40px rgba(21, 128, 61, 0.35);
     }
-    .share-btn.visible { display: grid; }
-    .share-btn:disabled { opacity: 0.65; }
+    .share-btn:disabled { opacity: 0.65; cursor: not-allowed; }
     .share-btn .sub {
       display: block;
       margin-top: 10px;
@@ -90,8 +89,8 @@
 <body>
   <main class="screen">
     <h1>分享給好友</h1>
-    <p class="hint" id="lead">正在開啟 LINE 好友選擇…</p>
-    <div class="status" id="status">請稍候</div>
+    <p class="hint" id="lead">請點下面大按鈕，開啟 LINE 好友選擇</p>
+    <div class="status" id="status">載入中…</div>
     <button class="share-btn" id="shareBtn" type="button" disabled>
       分享給好友
       <span class="sub">開啟 LINE 好友選擇</span>
@@ -100,8 +99,9 @@
   </main>
 
   <script>
-    // W250723af：圖文選單／歡迎卡點進來後，登入完成立刻 auto shareTargetPicker（best-effort）
-    // 自動成功 → closeWindow；失敗／取消 → 只留一顆大按鈕重試（不提供連結複製）
+    // W250723ah：根因修復 — 禁止載入後 auto shareTargetPicker
+    // （iOS 無手勢呼叫會卡住／殘留遮罩；Android 登入後自動開 picker 易白屏打不開）
+    // 流程：init → login（必要時安全 redirectUri）→ 顯示一顆大按鈕 → 僅 click 才分享
     const LIFF_ID = "2010674803-rK98c0lo";
 
     const statusEl = document.getElementById("status");
@@ -114,12 +114,14 @@
     let ready = false;
     let sharing = false;
     let shareBlocked = false;
-    let autoTried = false;
 
     function showError(error) {
       const msg = (error && error.message) ? String(error.message) : String(error || "未知錯誤");
       errBox.style.display = "block";
       errBox.textContent = "暫時無法分享：" + msg;
+      try {
+        alert("暫時無法分享：" + msg);
+      } catch (_) {}
     }
 
     function sanitizeUserId(raw) {
@@ -145,14 +147,14 @@
         params.delete(key);
       });
       const query = params.toString();
+      // LINE Login redirectUri：origin + pathname + search，禁止帶 #
       return window.location.origin + window.location.pathname + (query ? ("?" + query) : "");
     }
 
-    function showRetryUi(message) {
+    function enableShareUi(message) {
       inviteText = buildInviteText(myUserId);
-      leadEl.textContent = "自動分享沒開成功，請再點一次";
-      statusEl.textContent = message || "請點大按鈕重試";
-      shareBtn.classList.add("visible");
+      leadEl.textContent = "請點下面大按鈕，開啟 LINE 好友選擇";
+      statusEl.textContent = message || "準備好了，請點大按鈕";
       shareBtn.disabled = false;
       ready = true;
     }
@@ -165,10 +167,8 @@
       } catch (_) {}
     }
 
-    async function openSharePicker(options) {
-      const opts = options || {};
-      const isAuto = !!opts.auto;
-      if (sharing || shareBlocked) return { ok: false, reason: "blocked" };
+    async function openSharePicker() {
+      if (sharing || shareBlocked || !ready) return { ok: false, reason: "blocked" };
       if (!inviteText) inviteText = buildInviteText(myUserId);
 
       if (!window.liff || typeof liff.shareTargetPicker !== "function") {
@@ -177,30 +177,32 @@
       if (typeof liff.isInClient === "function" && !liff.isInClient()) {
         return { ok: false, reason: "not_in_client" };
       }
+      try {
+        if (typeof liff.isApiAvailable === "function" && !liff.isApiAvailable("shareTargetPicker")) {
+          return { ok: false, reason: "no_picker" };
+        }
+      } catch (_) {}
 
       sharing = true;
-      if (!isAuto) {
-        shareBtn.disabled = true;
-        statusEl.textContent = "正在開啟 LINE 好友選擇…";
-        errBox.style.display = "none";
-      }
+      shareBtn.disabled = true;
+      statusEl.textContent = "正在開啟 LINE 好友選擇…";
+      errBox.style.display = "none";
 
       try {
         const result = await liff.shareTargetPicker([{ type: "text", text: inviteText }]);
-        // result 有值＝有送出；null／undefined＝取消。兩者都表示 picker 有開過。
         if (result) {
           statusEl.textContent = "已分享，正在關閉…";
           tryCloseWindow();
           return { ok: true, sent: true };
         }
-        // 取消：自動流程顯示重試；手動點擊則提示可再點
+        statusEl.textContent = "已取消，可再點大按鈕重試";
         return { ok: true, sent: false, cancelled: true };
       } catch (error) {
-        if (!isAuto) showError(error);
+        showError(error);
         return { ok: false, reason: "error", error: error };
       } finally {
         sharing = false;
-        if (!isAuto && !shareBlocked) shareBtn.disabled = false;
+        if (!shareBlocked) shareBtn.disabled = false;
       }
     }
 
@@ -210,39 +212,17 @@
         event.stopPropagation();
       }
       if (!ready || shareBlocked) return;
-      const outcome = await openSharePicker({ auto: false });
+      const outcome = await openSharePicker();
       if (outcome.ok && outcome.sent) return;
-      if (outcome.ok && outcome.cancelled) {
-        statusEl.textContent = "已取消，可再點大按鈕重試";
-        return;
-      }
+      if (outcome.ok && outcome.cancelled) return;
       if (outcome.reason === "not_in_client" || outcome.reason === "no_picker") {
         statusEl.textContent = "請在 LINE App 內開啟再分享";
+        try {
+          alert("暫時無法分享：請在 LINE App 內開啟此頁再點分享");
+        } catch (_) {}
         return;
       }
       statusEl.textContent = "分享沒成功，請再點大按鈕試試";
-    }
-
-    async function autoShareOnce() {
-      if (autoTried || shareBlocked) return;
-      autoTried = true;
-      statusEl.textContent = "正在開啟 LINE 好友選擇…";
-      leadEl.textContent = "正在開啟 LINE 好友選擇…";
-      const outcome = await openSharePicker({ auto: true });
-      if (outcome.ok && outcome.sent) {
-        // closeWindow 已嘗試
-        return;
-      }
-      if (outcome.ok && outcome.cancelled) {
-        showRetryUi("已取消，請點大按鈕再分享");
-        return;
-      }
-      if (outcome.reason === "not_in_client" || outcome.reason === "no_picker") {
-        showRetryUi("請在 LINE App 內開啟，再點大按鈕");
-        return;
-      }
-      // iOS 等環境可能拒絕非手勢呼叫 → 顯示一顆重試按鈕
-      showRetryUi("請點大按鈕開啟好友選擇");
     }
 
     async function initializeLiff() {
@@ -262,7 +242,6 @@
             } catch (loginErr2) {
               showError(loginErr2 || loginErr);
               statusEl.textContent = "登入失敗，請關閉後再從圖文選單進入";
-              showRetryUi("登入後請再點大按鈕");
             }
           }
           return;
@@ -280,28 +259,20 @@
 
         inviteText = buildInviteText(myUserId);
 
-        // 受邀者誤開此頁：不分享，導回首頁綁定語意
+        // 受邀者誤開此頁：不分享、不自動導頁（避免 Android 導頁迴圈）
         if (inviteFrom && myUserId && inviteFrom !== myUserId) {
           shareBlocked = true;
           leadEl.textContent = "這是別人的邀請連結";
           statusEl.textContent = "請回官方帳號首頁完成綁定";
-          shareBtn.classList.remove("visible");
           shareBtn.disabled = true;
           ready = false;
-          try {
-            window.location.replace(
-              "https://liff.line.me/" + LIFF_ID + "/?invite_from=" + encodeURIComponent(inviteFrom)
-            );
-          } catch (_) {}
           return;
         }
 
-        ready = true;
-        // Best-effort：同一導覽內立刻開 picker（Android 常可；iOS 可能失敗→顯示重試鈕）
-        await autoShareOnce();
+        enableShareUi("準備好了，請點大按鈕");
       } catch (error) {
         showError(error);
-        showRetryUi("載入失敗，請點大按鈕重試");
+        statusEl.textContent = "載入失敗，請關閉後再從圖文選單進入";
       }
     }
 

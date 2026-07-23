@@ -259,10 +259,16 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('alert("暫時無法分享："', page)
         self.assertIn('shareBtn.addEventListener("click", onShareClick)', page)
         self.assertIn("liff.shareTargetPicker", page)
-        # 禁止 init 後自動分享／自動導頁
+        # 禁止 init 後自動分享／自動導頁（W250723af 回歸根因）
         self.assertNotIn("await shareNow()", page)
+        self.assertNotIn("autoShareOnce", page)
+        self.assertNotIn("await autoShareOnce()", page)
+        self.assertNotIn("openSharePicker({ auto: true })", page)
         self.assertNotIn("location.replace(", page)
         self.assertNotIn("location.href =", page)
+        # 大按鈕必須一開始可顯示（不可 display:none 等 auto 失敗才出現）
+        self.assertNotIn(".share-btn.visible", page)
+        self.assertIn('shareBtn.disabled = false', page)
         # 產品路徑：不要複製連結備援
         self.assertNotIn("複製邀請訊息", page)
         self.assertNotIn("複製連結", page)
