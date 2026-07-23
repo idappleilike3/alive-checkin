@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <title>今天還在嗎後台</title>
   <style>
     * { box-sizing: border-box; }
@@ -59,9 +60,24 @@
       color: #14532d;
       font-size: 15px;
     }
+    .auth-bar .password-field {
+      display: flex;
+      gap: 8px;
+      align-items: stretch;
+      min-width: 0;
+    }
     .auth-bar input {
       width: 100%;
       background: #fff;
+      flex: 1;
+      min-width: 0;
+    }
+    #togglePassword {
+      flex: 0 0 auto;
+      min-width: 72px;
+      background: #64748b;
+      box-shadow: none;
+      white-space: nowrap;
     }
     @media (max-width: 760px) {
       .auth-bar { grid-template-columns: 1fr; }
@@ -303,8 +319,11 @@
 
     <section class="panel">
       <div class="auth-bar" id="authBar" aria-label="後台登入">
-        <label for="password">後台密碼（第一次開啟就能看到；輸入後按登入）</label>
-        <input id="password" type="password" placeholder="後台密碼，沒設定可留空" autocomplete="current-password">
+        <label for="password">後台密碼（預設可見；成功登入後會記住在這台瀏覽器）</label>
+        <div class="password-field">
+          <input id="password" type="text" placeholder="後台密碼，沒設定可留空" autocomplete="current-password" spellcheck="false">
+          <button id="togglePassword" type="button" aria-pressed="true" title="切換顯示／隱藏">隱藏</button>
+        </div>
         <button id="loginBtn" type="button">登入</button>
         <button id="refreshBtn" type="button">刷新資料</button>
       </div>
@@ -559,9 +578,41 @@
 
   <script>
     const $ = (id) => document.getElementById(id);
+    const ADMIN_PW_KEY = "alive_checkin_admin_password";
 
     function apiPassword() {
       return encodeURIComponent($("password").value.trim());
+    }
+
+    function loadSavedPassword() {
+      try {
+        const saved = localStorage.getItem(ADMIN_PW_KEY);
+        if (saved != null) $("password").value = saved;
+      } catch (_) { /* private mode / blocked storage */ }
+    }
+
+    function savePasswordLocally() {
+      try {
+        localStorage.setItem(ADMIN_PW_KEY, $("password").value);
+      } catch (_) { /* ignore */ }
+    }
+
+    function setPasswordVisible(visible) {
+      const input = $("password");
+      const btn = $("togglePassword");
+      input.type = visible ? "text" : "password";
+      btn.textContent = visible ? "隱藏" : "顯示";
+      btn.setAttribute("aria-pressed", visible ? "true" : "false");
+      btn.title = visible ? "隱藏密碼" : "顯示密碼";
+    }
+
+    async function runLoginOrRefresh() {
+      try {
+        await refresh();
+      } catch (error) {
+        $("message").textContent = "讀取失敗，請確認密碼後再按登入。";
+        console.warn(error);
+      }
     }
 
     function formatDate(value) {
@@ -663,12 +714,14 @@
     }
 
     async function refresh() {
+      $("message").textContent = "讀取中…";
       const res = await fetch(`/api/admin/summary?password=${apiPassword()}`);
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        $("message").textContent = "密碼不對，或後台目前不能讀取。";
+        $("message").textContent = data.error || "密碼不對，或後台目前不能讀取。";
         return;
       }
+      savePasswordLocally();
       $("totalUsers").textContent = data.total_users;
       $("checkedToday").textContent = data.checked_today;
       $("warningUsers").textContent = data.warning_users;
@@ -873,8 +926,18 @@
       }
     }
 
-    $("loginBtn").addEventListener("click", refresh);
-    $("refreshBtn").addEventListener("click", refresh);
+    $("loginBtn").addEventListener("click", (event) => {
+      event.preventDefault();
+      runLoginOrRefresh();
+    });
+    $("refreshBtn").addEventListener("click", (event) => {
+      event.preventDefault();
+      runLoginOrRefresh();
+    });
+    $("togglePassword").addEventListener("click", (event) => {
+      event.preventDefault();
+      setPasswordVisible($("password").type === "password");
+    });
     $("contactRemindBtn").addEventListener("click", sendContactReminders);
     $("remindBtn").addEventListener("click", sendReminders);
     $("renewalRemindBtn").addEventListener("click", sendRenewalReminders);
@@ -884,16 +947,17 @@
     $("password").addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        refresh();
+        runLoginOrRefresh();
       }
     });
-    // 首次載入：先保證登入列可見，再非同步拉資料（失敗也不要擋 UI）
-    $("message").textContent = "請輸入後台密碼後按「登入」。若未設定密碼可直接登入。";
+    // 首次載入：還原本機記住的密碼 → 保證登入列可用 → 再非同步拉資料
+    loadSavedPassword();
+    setPasswordVisible(true);
+    $("message").textContent = $("password").value
+      ? "已帶入本機記住的密碼，正在登入…"
+      : "請輸入後台密碼後按「登入」。若未設定密碼可直接登入。";
     setTimeout(() => {
-      refresh().catch((error) => {
-        $("message").textContent = "尚未登入或讀取失敗，請確認密碼後再按登入。";
-        console.warn(error);
-      });
+      runLoginOrRefresh();
     }, 0);
   </script>
 </body>
