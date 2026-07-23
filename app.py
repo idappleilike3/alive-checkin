@@ -54,6 +54,7 @@ try:
         welcome_flex,
         liff_entry_url,
         get_liff_id,
+        share_invite_liff_url,
     )
 except Exception:
     guardian_group_intro_flex = None
@@ -65,6 +66,7 @@ except Exception:
     welcome_flex = None
     liff_entry_url = None
     get_liff_id = None
+    share_invite_liff_url = None
 
 # 註:patch 15 的全域白名單機制(GROUP_ADMINS / is_group_admin / deny_if_not_admin)
 # 已於 2026-07-21 移除。「管理員」= 每個守護群的 owner_line_user_id(在 guardian_groups 裡)。
@@ -2951,7 +2953,7 @@ def send_missing_contact_reminders(config):
         if today in sent_dates:
             continue
         link_text = (
-            f"\n一鍵邀請守護人：{liff_entry_url(open_action='share-invite') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo/?open=share-invite'}"
+            f"\n一鍵邀請守護人：{share_invite_liff_url() if share_invite_liff_url else 'https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html'}"
         )
         if contact_count == 0:
             message = (
@@ -3221,7 +3223,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723m",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723p",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3362,9 +3364,11 @@ def create_app(config=None):
         return jsonify({"redirect": target}), 302
 
     # 圖文選單 / 舊連結：導向 liff.line.me 內嵌（單一 Endpoint = index.html）
-    @app.get("/liff/checkin")
-    def liff_checkin():
-        return _liff_embed_redirect(fragment="home")
+    @app.get("/liff/share-invite")
+    @app.get("/liff/share-invite.html")
+    def liff_share_invite_page():
+        """專用一鍵分享頁（給 LIFF 子路徑直連；不經 SPA home）。"""
+        return send_from_directory(app.static_folder, "liff/share-invite.html")
 
     # 2026-07-21 patch 24: Onboarding 流程 API
     @app.get("/liff/onboarding")
@@ -3510,7 +3514,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723m",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723p",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -3717,18 +3721,16 @@ def create_app(config=None):
         def _send_welcome(line_bot_api, reply_token=None, line_user_id=None, display_name=None, trigger=None):
             """Follow / 關鍵字共用：送 welcome_flex，失敗寫 log 並 push fallback。"""
             name = (display_name or "").strip() or "您"
-            welcome_version = "W250723m"
             app.logger.info(
-                "welcome_flex start version=%s trigger=%s user=%s has_reply=%s",
-                welcome_version,
+                "welcome_flex start trigger=%s user=%s has_reply=%s",
                 trigger or "unknown",
                 (line_user_id or "")[:8],
                 bool(reply_token),
             )
             share_invite_uri = (
-                liff_entry_url(open_action="share-invite")
-                if liff_entry_url
-                else "https://liff.line.me/2010674803-rK98c0lo/?open=share-invite"
+                share_invite_liff_url()
+                if share_invite_liff_url
+                else "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html"
             )
             welcome_fallback = (
                 f"👋 {name} 您好，歡迎加入「今天還在嗎」\n\n"
@@ -3738,9 +3740,9 @@ def create_app(config=None):
                 "🎁 完成設定即享 7 天免費安心體驗\n"
                 "🚨 緊急狀況請直接撥打 119，聊天訊息可能因網路延遲\n\n"
                 f"一鍵邀請守護人：{share_invite_uri}\n"
-                f"版本 {welcome_version}（傳「開始」可重拿）"
+                "傳「開始」可重拿歡迎卡"
             )
-            alt_text = f"❤️ 每日平安｜{name} 您好，歡迎加入（{welcome_version}）"
+            alt_text = f"❤️ 今天還在嗎｜{name} 您好，歡迎加入"
             flex_contents = welcome_flex(display_name) if welcome_flex is not None else None
             if flex_contents is None:
                 app.logger.error("welcome_flex contents is None — check import")
@@ -3750,11 +3752,11 @@ def create_app(config=None):
                         reply_token,
                         FlexSendMessage(alt_text=alt_text, contents=flex_contents),
                     )
-                    app.logger.info("welcome_flex reply ok version=%s", welcome_version)
+                    app.logger.info("welcome_flex reply ok")
                     return
                 if reply_token:
                     line_bot_api.reply_message(reply_token, TextSendMessage(text=welcome_fallback))
-                    app.logger.warning("welcome text reply fallback version=%s", welcome_version)
+                    app.logger.warning("welcome text reply fallback")
                     return
             except Exception as exc:
                 app.logger.exception("welcome reply failed: %s", exc)
@@ -3764,14 +3766,14 @@ def create_app(config=None):
                         line_user_id,
                         FlexSendMessage(alt_text=alt_text, contents=flex_contents),
                     )
-                    app.logger.info("welcome_flex push ok version=%s", welcome_version)
+                    app.logger.info("welcome_flex push ok")
                     return
                 except Exception as exc:
                     app.logger.exception("welcome push flex failed: %s", exc)
             if line_user_id:
                 try:
                     line_bot_api.push_message(line_user_id, TextSendMessage(text=welcome_fallback))
-                    app.logger.warning("welcome text push fallback version=%s", welcome_version)
+                    app.logger.warning("welcome text push fallback")
                 except Exception as exc:
                     app.logger.exception("welcome push text failed: %s", exc)
 

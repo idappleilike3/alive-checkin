@@ -4,7 +4,7 @@
     "height": 1686
   },
   "selected": true,
-  "name": "每日平安 - 平安守護主選單",
+  "name": "每日平安主選單-直連分享",
   "chatBarText": "平安守護選單",
   "areas": [
     {
@@ -13,7 +13,7 @@
     },
     {
       "bounds": { "x": 833, "y": 0, "width": 834, "height": 843 },
-      "action": { "type": "uri", "label": "守護人", "uri": "https://liff.line.me/2010674803-rK98c0lo/?open=share-invite" }
+      "action": { "type": "uri", "label": "一鍵邀請", "uri": "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html" }
     },
     {
       "bounds": { "x": 1667, "y": 0, "width": 833, "height": 843 },

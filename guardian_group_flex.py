@@ -42,6 +42,27 @@ def get_liff_id() -> str:
     return (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).strip() or DEFAULT_LIFF_ID
 
 
+def liff_path_url(path: str) -> str:
+    """直連 LIFF 子路徑（不經 SPA index / home）。
+
+    Endpoint 若為 https://alive-checkin.onrender.com/ ，則
+    https://liff.line.me/<LIFF_ID>/liff/share-invite.html
+    會直接開啟 /liff/share-invite.html，不會先載入首頁。
+    """
+    clean = "/" + str(path or "").lstrip("/")
+    return f"https://liff.line.me/{get_liff_id()}{clean}"
+
+
+def share_invite_liff_url() -> str:
+    """一鍵邀請守護人：專用分享頁（init→login→顯示按鈕；點擊才 shareTargetPicker）。"""
+    return liff_path_url("/liff/share-invite.html")
+
+
+def pricing_direct_url() -> str:
+    """方案頁直連（勿走 LIFF 首頁再轉跳）。"""
+    return f"{(os.environ.get('APP_PUBLIC_URL') or PUBLIC_BASE).rstrip('/')}/liff/pricing.html"
+
+
 def liff_entry_url(*, open_action: str | None = None, fragment: str = "", **query) -> str:
     """永久內嵌 LIFF 入口（https://liff.line.me/<LIFF_ID>）。
 
@@ -979,18 +1000,15 @@ def _owner_status_block(owner_info):
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友歡迎 Flex（W250723m）：歡迎文案 + 三顆永久 LIFF 按鈕。
+    """加好友歡迎 Flex：歡迎文案 + 三顆按鈕（無版本戳）。
 
-    僅按鈕：一鍵邀請守護人 / 需要幫忙時怎麼做 / 常見問題。
-    不含求救或升級按鈕。主 CTA → open=share-invite（LIFF 內 login 後 shareTargetPicker）。
-    footer 放大版本戳，方便對照是否為 Webhook Bot 新卡（非 OA 打招呼舊訊）。
+    主 CTA「一鍵邀請守護人」→ 專用 LIFF 分享頁（不經首頁 SPA）。
     """
     name = (display_name or "").strip() or "您"
-    bind_uri = liff_entry_url(open_action="share-invite")
+    bind_uri = share_invite_liff_url()
     help_uri = liff_entry_url(open_action="help")
     faq_uri = liff_entry_url(open_action="faq")
     hero_uri = f"{(os.environ.get('APP_PUBLIC_URL') or PUBLIC_BASE).rstrip('/')}/assets/daily-peace-hero.png"
-    welcome_version = "W250723m"
     return {
         "type": "bubble",
         "size": "mega",
@@ -1085,33 +1103,6 @@ def welcome_flex(display_name: str | None = None):
             "paddingAll": "lg",
             "backgroundColor": "#FAFAFA",
             "contents": [
-                {
-                    "type": "box",
-                    "layout": "vertical",
-                    "spacing": "xs",
-                    "backgroundColor": "#FFF3CD",
-                    "cornerRadius": "md",
-                    "paddingAll": "md",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": f"版本 {welcome_version}",
-                            "size": "lg",
-                            "weight": "bold",
-                            "color": "#856404",
-                            "align": "center",
-                            "wrap": True,
-                        },
-                        {
-                            "type": "text",
-                            "text": "傳「開始」可重拿此卡",
-                            "size": "md",
-                            "color": "#856404",
-                            "align": "center",
-                            "wrap": True,
-                        },
-                    ],
-                },
                 {
                     "type": "button",
                     "action": {

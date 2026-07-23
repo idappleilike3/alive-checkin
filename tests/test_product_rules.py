@@ -233,17 +233,27 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("wantsInviteShare", page)
         self.assertNotIn("setTimeout(() => shareContactInvite()", page)
         init_app = page[page.rindex("async function initApp()") : page.index("// ===== D01")]
-        self.assertIn("openShareInviteFallbackModal", init_app)
-        self.assertIn("tryLineShareTargetPicker", init_app)
         self.assertIn("wantsShareInvite", init_app)
+        # 一鍵邀請：改導專用分享頁，禁止首頁後自動 shareTargetPicker
+        self.assertIn('location.replace("/liff/share-invite.html")', init_app)
+        self.assertNotIn("shared = await tryLineShareTargetPicker(text)", init_app)
         self.assertIn('showTab("home")', init_app)
+        # 手動分享備援仍存在於頁面其他處（非 init 後自動呼叫）
+        self.assertIn("openShareInviteFallbackModal", page)
+        self.assertIn("tryLineShareTargetPicker", page)
 
-    def test_liff_login_redirect_removes_fragment_to_prevent_line_400(self):
-        page = (ROOT / "index.html").read_text(encoding="utf-8")
-        # 仍保留 helper 供相容，但實際 login 不再帶 redirectUri
-        self.assertIn("function buildCleanLoginRedirectUri", page)
+    def test_share_invite_page_is_stable_click_only(self):
+        page = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
+        self.assertIn('await liff.init({ liffId: LIFF_ID })', page)
         self.assertIn("liff.login();", page)
         self.assertNotIn("liff.login({ redirectUri:", page)
+        self.assertIn('alert("發生錯誤："', page)
+        self.assertIn('shareBtn.addEventListener("click", onShareClick)', page)
+        self.assertIn("liff.shareTargetPicker", page)
+        # 禁止 init 後自動分享／自動導頁
+        self.assertNotIn("await shareNow()", page)
+        self.assertNotIn("location.replace(", page)
+        self.assertNotIn("location.href =", page)
 
     def test_liff_links_use_query_params_for_android_compatibility(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -256,7 +266,8 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('"invite_from", "friend_invite", "open"', page)
         self.assertIn("https://alive-checkin.onrender.com/liff/pricing.html", rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=checkin", rich_menu)
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=share-invite", rich_menu)
+        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html", rich_menu)
+        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=share-invite", rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=sos", rich_menu)
         self.assertIn('"label": "需要幫忙"', rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=help", rich_menu)
@@ -277,14 +288,15 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('help_uri = liff_entry_url(open_action="help")', flex)
         self.assertIn('"label": "常見問題"', flex)
         self.assertIn('"label": "一鍵邀請守護人"', flex)
-        self.assertIn('open_action="share-invite"', flex)
-        self.assertIn('welcome_version = "W250723m"', flex)
-        self.assertIn("W250723m", flex)
+        self.assertIn("share_invite_liff_url()", flex)
+        self.assertIn("/liff/share-invite.html", flex)
         self.assertIn("❤️ 今天還在嗎", flex)
         self.assertIn("歡迎加入「今天還在嗎」", flex)
-        self.assertIn('f"版本 {welcome_version}"', flex)
         self.assertIn("完成設定即享 7 天免費安心體驗", flex)
         self.assertIn("緊急請撥 119", flex)
+        self.assertNotIn("welcome_version", flex)
+        self.assertNotIn("版本 W", flex)
+        self.assertNotIn("W250723", flex)
         self.assertNotIn('"label": "立即升級守護"', flex)
         self.assertNotIn('"label": "SOS 與緊急聯絡教學"', flex)
         self.assertNotIn('"label": "回到首頁"', flex)

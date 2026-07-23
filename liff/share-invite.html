@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>一鍵邀請守護人</title>
+  <title>一鍵分享守護人</title>
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -16,8 +16,6 @@
       display: grid;
       place-items: center;
       padding: 24px 18px max(28px, env(safe-area-inset-bottom));
-      /* 確保任何層都擋不住點擊 */
-      pointer-events: auto;
     }
     .card {
       width: min(100%, 440px);
@@ -27,9 +25,6 @@
       border: 2px solid #86efac;
       box-shadow: 0 16px 36px rgba(16, 85, 55, 0.16);
       text-align: center;
-      position: relative;
-      z-index: 2;
-      pointer-events: auto;
     }
     h1 {
       font-size: clamp(26px, 7vw, 34px);
@@ -65,10 +60,6 @@
       cursor: pointer;
       -webkit-tap-highlight-color: rgba(0,0,0,0.08);
       touch-action: manipulation;
-      pointer-events: auto;
-      position: relative;
-      z-index: 5;
-      box-shadow: 0 12px 24px rgba(22, 163, 74, 0.28);
     }
     .btn:disabled { opacity: 0.7; }
     .btn.secondary {
@@ -81,7 +72,6 @@
       font-size: 18px;
     }
     .fallback { margin-top: 16px; text-align: left; }
-    .fallback[hidden] { display: none !important; }
     textarea {
       width: 100%;
       min-height: 120px;
@@ -93,7 +83,6 @@
       line-height: 1.45;
       word-break: break-all;
       resize: none;
-      pointer-events: auto;
     }
     .home-link {
       display: inline-block;
@@ -102,37 +91,58 @@
       font-size: 16px;
       font-weight: 850;
       text-decoration: none;
-      pointer-events: auto;
+    }
+    .err {
+      margin-top: 12px;
+      padding: 10px;
+      border-radius: 10px;
+      background: #fef2f2;
+      color: #991b1b;
+      font-size: 14px;
+      font-weight: 700;
+      word-break: break-word;
+      display: none;
     }
   </style>
 </head>
 <body>
   <main class="card">
-    <h1>一鍵邀請守護人</h1>
-    <p id="lead">請點下方大按鈕，直接分享給 LINE 好友</p>
+    <h1>一鍵分享守護人</h1>
+    <p id="lead">請點下方大按鈕，分享給 LINE 好友</p>
     <div class="status" id="status">正在準備…</div>
-    <button class="btn" id="shareBtn" type="button">立即分享給好友</button>
+    <button class="btn" id="shareBtn" type="button" disabled>一鍵分享守護人</button>
     <div class="fallback" id="fallback">
       <p>若分享視窗沒跳出，請複製下方邀請訊息，貼到 LINE 給家人：</p>
       <textarea id="inviteBox" readonly></textarea>
       <button class="btn secondary" id="copyBtn" type="button">複製邀請訊息</button>
     </div>
-    <a class="home-link" id="homeLink" href="https://liff.line.me/2010674803-rK98c0lo/?open=home">回到首頁繼續設定</a>
+    <div class="err" id="errBox"></div>
+    <a class="home-link" href="https://liff.line.me/2010674803-rK98c0lo/?open=home">回到首頁繼續設定</a>
   </main>
 
   <script>
-    // 使用者指定標準：固定 LIFF ID；login() 絕不可帶 redirectUri
+    // 降級穩定版：init → login(無參數) → 顯示按鈕；分享只在 click
     const LIFF_ID = "2010674803-rK98c0lo";
 
     const statusEl = document.getElementById("status");
     const shareBtn = document.getElementById("shareBtn");
-    const fallbackEl = document.getElementById("fallback");
     const inviteBox = document.getElementById("inviteBox");
     const copyBtn = document.getElementById("copyBtn");
     const leadEl = document.getElementById("lead");
+    const errBox = document.getElementById("errBox");
 
     let inviteText = "";
     let myUserId = "";
+    let ready = false;
+
+    function showError(error) {
+      const msg = (error && error.message) ? String(error.message) : String(error || "未知錯誤");
+      errBox.style.display = "block";
+      errBox.textContent = "發生錯誤：" + msg;
+      try {
+        alert("發生錯誤：" + msg);
+      } catch (_) {}
+    }
 
     function sanitizeUserId(raw) {
       return String(raw || "").trim().replace(/[^a-zA-Z0-9_-]/g, "");
@@ -141,56 +151,58 @@
     function buildInviteText(userId) {
       const safeId = sanitizeUserId(userId);
       const bindUrl = safeId
-        ? `https://liff.line.me/${LIFF_ID}/?invite_from=${encodeURIComponent(safeId)}`
-        : `https://liff.line.me/${LIFF_ID}/?open=onboarding`;
+        ? ("https://liff.line.me/" + LIFF_ID + "/?invite_from=" + encodeURIComponent(safeId))
+        : ("https://liff.line.me/" + LIFF_ID + "/?open=onboarding");
       return (
-        `我想邀請你成為「每日平安」的守護人。\n` +
-        `請用 LINE 點開下面連結\n\n` +
-        `${bindUrl}`
+        "我想邀請你成為「每日平安」的守護人。\n" +
+        "請用 LINE 點開下面連結\n\n" +
+        bindUrl
       );
     }
 
-    function showFallback(message) {
-      if (message) statusEl.textContent = message;
+    function setReadyUi(message) {
+      inviteText = buildInviteText(myUserId);
       inviteBox.value = inviteText;
-      fallbackEl.hidden = false;
+      statusEl.textContent = message || "準備完成，請點下方按鈕分享";
       shareBtn.disabled = false;
+      ready = true;
     }
 
-    function canShare() {
-      try {
-        if (!window.liff || typeof liff.shareTargetPicker !== "function") return false;
-        if (typeof liff.isInClient === "function" && !liff.isInClient()) return false;
-        if (typeof liff.isApiAvailable === "function") {
-          return Boolean(liff.isApiAvailable("shareTargetPicker"));
-        }
-        return true;
-      } catch (_) {
-        return false;
+    // 規則：shareTargetPicker 只能綁在使用者 click，禁止 page load / init 後自動呼叫
+    async function onShareClick(event) {
+      if (event) event.preventDefault();
+      if (!ready) {
+        statusEl.textContent = "尚未準備好，請稍候再試";
+        return;
       }
-    }
-
-    async function shareNow() {
       shareBtn.disabled = true;
       statusEl.textContent = "正在開啟 LINE 分享…";
       try {
-        if (!inviteText) inviteText = buildInviteText(myUserId);
-        inviteBox.value = inviteText;
-        if (!canShare()) {
-          showFallback("目前無法直接開分享視窗，請改用下方複製");
-          return false;
+        if (!inviteText) {
+          inviteText = buildInviteText(myUserId);
+          inviteBox.value = inviteText;
+        }
+        if (!window.liff || typeof liff.shareTargetPicker !== "function") {
+          statusEl.textContent = "此環境不支援分享視窗，請改用下方複製";
+          return;
+        }
+        if (typeof liff.isInClient === "function" && !liff.isInClient()) {
+          statusEl.textContent = "請在 LINE App 內開啟再分享，或改用下方複製";
+          return;
+        }
+        if (typeof liff.isApiAvailable === "function" && !liff.isApiAvailable("shareTargetPicker")) {
+          statusEl.textContent = "分享功能未開啟，請改用下方複製";
+          return;
         }
         const result = await liff.shareTargetPicker([{ type: "text", text: inviteText }]);
         if (result) {
           statusEl.textContent = "已開啟 LINE 分享給好友";
-          return true;
+        } else {
+          statusEl.textContent = "已取消分享。可再按上方按鈕，或複製邀請訊息。";
         }
-        showFallback("已取消分享。可再按上方按鈕，或複製邀請訊息。");
-        return false;
       } catch (error) {
-        console.warn("shareTargetPicker failed", error);
-        showFallback("分享未成功，請再點「立即分享給好友」或複製訊息");
-        return false;
+        showError(error);
+        statusEl.textContent = "分享失敗，請再試一次或複製邀請訊息";
       } finally {
         shareBtn.disabled = false;
       }
@@ -198,54 +210,54 @@
 
     async function initializeLiff() {
       try {
-        // 1. 初始化 LIFF（固定 ID）
+        if (!window.liff) {
+          throw new Error("LIFF SDK 未載入");
+        }
+
         await liff.init({ liffId: LIFF_ID });
 
-        // 2. 未登入：絕對不要自己帶 redirectUri，讓 LINE 完美跳回原頁（含參數）
+        // Prefer: login() 無參數（勿帶 #、勿用含 hash 的 href）
         if (!liff.isLoggedIn()) {
           statusEl.textContent = "前往 LINE 登入…";
           liff.login();
           return;
         }
 
-        // 3. 已登入：讀網址參數
+        // 留在本頁，不做任何自動導頁（含 invite_from）
         const urlParams = new URLSearchParams(window.location.search);
         const inviteFrom = urlParams.get("invite_from");
 
-        const profile = await liff.getProfile();
-        myUserId = (profile && profile.userId) || "";
+        try {
+          const profile = await liff.getProfile();
+          myUserId = (profile && profile.userId) || "";
+        } catch (profileErr) {
+          showError(profileErr);
+          myUserId = "";
+        }
 
-        if (inviteFrom && inviteFrom !== myUserId) {
-          // 受邀者：這頁若被誤開，導回首頁帶 invite_from 完成綁定
-          console.log("成功抓到邀請人 ID:", inviteFrom);
-          leadEl.textContent = "偵測到邀請連結，正在前往綁定…";
-          statusEl.textContent = "請稍候";
-          location.replace(`https://liff.line.me/${LIFF_ID}/?invite_from=${encodeURIComponent(inviteFrom)}`);
+        if (inviteFrom && myUserId && inviteFrom !== myUserId) {
+          // 受邀者誤開此頁：仍留在本頁，只提示（不自動跳首頁）
+          leadEl.textContent = "偵測到邀請連結。請點下方「回到首頁」完成綁定。";
+          statusEl.textContent = "此頁是分享頁；綁定請回首頁";
+          inviteText = buildInviteText("");
+          inviteBox.value = inviteText;
+          shareBtn.disabled = true;
           return;
         }
 
-        console.log("這是邀請人分享頁（一般登入／一鍵分享）");
-        inviteText = buildInviteText(myUserId);
-        inviteBox.value = inviteText;
-        fallbackEl.hidden = false;
-
-        // 先嘗試自動開分享；失敗也不擋大按鈕（iOS/Android 皆可點）
-        const shared = await shareNow();
-        if (!shared) {
-          statusEl.textContent = "請點下方大按鈕，直接分享給 LINE 好友";
-        }
+        setReadyUi("準備完成，請點「一鍵分享守護人」");
       } catch (error) {
-        console.error("LIFF 初始化發生錯誤:", error);
+        showError(error);
         inviteText = buildInviteText("");
-        showFallback("載入失敗，請改用下方複製邀請訊息");
+        inviteBox.value = inviteText;
+        statusEl.textContent = "載入失敗，請改用下方複製邀請訊息";
+        shareBtn.disabled = false;
+        ready = true;
       }
     }
 
-    shareBtn.addEventListener("click", (event) => {
-      event.preventDefault();
-      shareNow();
-    });
-    copyBtn.addEventListener("click", async () => {
+    shareBtn.addEventListener("click", onShareClick);
+    copyBtn.addEventListener("click", async function () {
       try {
         await navigator.clipboard.writeText(inviteText || inviteBox.value);
         statusEl.textContent = "已複製邀請訊息，請貼到 LINE 給家人";

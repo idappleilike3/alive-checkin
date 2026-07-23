@@ -5447,6 +5447,9 @@
         return true;
       } catch (error) {
         console.error("LIFF 初始化失敗:", error);
+        try {
+          alert("發生錯誤：" + ((error && error.message) ? error.message : String(error)));
+        } catch (_) {}
         showLineLoginRequired(readSafeDeepLinkParams(), {
           detail: formatLiffError(error)
         });
@@ -6963,29 +6966,10 @@
           maybePrefillFriendInvite();
           await maybeShowGuardianComplete();
         } else if (wantsInviteShare) {
-          // 歡迎卡／圖文選單「一鍵邀請」：登入後立刻嘗試 shareTargetPicker；失敗則大按鈕＋複製備援
+          // 降級穩定：不經首頁、不自動 shareTargetPicker → 專用分享頁（點擊才分享）
           clearShareFirstLocalFlags();
-          if (typeof showTab === "function") showTab("home");
-          const { bindUrl, text } = buildContactInvite("");
-          fillShareInviteSurfaces(bindUrl, text);
-          let shared = false;
-          try {
-            shared = await tryLineShareTargetPicker(text);
-          } catch (shareErr) {
-            console.warn("auto shareTargetPicker failed", shareErr);
-          }
-          if (!shared) {
-            openShareInviteFallbackModal(bindUrl);
-            // 再露出 onboarding 分享步驟大按鈕，確保 Android/iOS 可點
-            if (!setupDone) {
-              await showOnboarding();
-              showOnboardingShareStep();
-            }
-            showInlineSuccess("請點「一鍵邀請守護人」大按鈕，或複製連結貼給家人");
-          } else {
-            showInlineSuccess("已開啟 LINE 分享，請選好友傳送邀請");
-            if (!setupDone) await showOnboarding();
-          }
+          location.replace("/liff/share-invite.html");
+          return;
         } else if (setupDone) {
           clearShareFirstLocalFlags();
           if (typeof showTab === "function") showTab("home");
