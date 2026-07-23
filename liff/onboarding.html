@@ -243,9 +243,10 @@ async function resolveLiffId() {
 async function init() {
   try {
     const liffId = await resolveLiffId();
-    await liff.init({ liffId, withLoginOnExternalBrowser: true });
+    await liff.init({ liffId });
     if (!liff.isLoggedIn()) {
-      liff.login();
+      // 標準：不可先擋 isInClient；redirectUri 保留目前 query（含 invite_from）
+      liff.login({ redirectUri: window.location.href });
       return;
     }
     

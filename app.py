@@ -3158,7 +3158,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723f",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723g",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3406,7 +3406,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723f",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723g",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -3622,9 +3622,9 @@ def create_app(config=None):
                 "平常不打擾有事才通知家人\n"
                 "7天體驗先邀請1位守護人\n\n"
                 f"一鍵邀請守護人：{(liff_entry_url(open_action='onboarding/invite') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo/?open=onboarding/invite')}\n"
-                "歡迎卡 W250723f"
+                "歡迎卡 W250723g"
             )
-            alt_text = f"{name} 您好，歡迎加入每日平安 — 我是您的平安小管家（W250723f）"
+            alt_text = f"{name} 您好，歡迎加入每日平安 — 我是您的平安小管家（W250723g）"
             flex_contents = welcome_flex(display_name) if welcome_flex is not None else None
             try:
                 if FlexSendMessage is not None and flex_contents is not None and reply_token:

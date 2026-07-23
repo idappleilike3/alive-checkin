@@ -213,16 +213,20 @@ class ProductRulesTests(unittest.TestCase):
     def test_liff_initialization_requires_line_login_before_member_use(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         init_line = page[
-            page.index("async function initLine()") : page.index("const LUNAR_DAY_NAMES")
+            page.index("async function initializeLiff()") : page.index("const LUNAR_DAY_NAMES")
         ]
 
-        self.assertIn("withLoginOnExternalBrowser: true", init_line)
-        self.assertIn("if (liff.isLoggedIn())", init_line)
-        self.assertIn("startLineLogin();", init_line)
-        self.assertIn("liff.isInClient && liff.isInClient()", init_line)
+        self.assertIn("async function initializeLiff()", page)
+        self.assertIn("await liff.init({ liffId: config.liff_id });", init_line)
+        self.assertIn("if (!liff.isLoggedIn())", init_line)
+        self.assertIn('liff.login({ redirectUri: window.location.href });', init_line)
+        # NEVER gate login behind !isInClient (breaks Android Chrome / OAuth return)
+        self.assertNotIn("if (inClient)", init_line)
+        self.assertNotIn("withLoginOnExternalBrowser", init_line)
+        self.assertIn("invite_from", init_line)
+        self.assertIn("LIFF 初始化失敗", init_line)
         self.assertNotIn("location.replace(joinUrl)", page)
         self.assertIn("requireLineMembership", page)
-        # Returning users must not auto-share on page load
         self.assertIn("clearShareFirstLocalFlags", page)
         self.assertIn("setupDone", page)
         self.assertIn("wantsInviteShare", page)
@@ -276,7 +280,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('"label": "常見問題"', flex)
         self.assertIn('"label": "一鍵邀請守護人"', flex)
         self.assertIn('open_action="onboarding/invite"', flex)
-        self.assertIn("W250723f", flex)
+        self.assertIn("W250723g", flex)
         self.assertIn("每天10秒報平安", flex)
         self.assertIn("平常不打擾有事才通知家人", flex)
         self.assertIn("7天體驗先邀請1位守護人", flex)

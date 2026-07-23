@@ -2,7 +2,7 @@
 
 Webhook Bot 已處理：
 
-- 加好友 `FollowEvent` → 歡迎 Flex（版本戳 W250723f）
+- 加好友 `FollowEvent` → 歡迎 Flex（版本戳 W250723g）
 - 關鍵字「開始」「歡迎」「說明」→ 重送歡迎 Flex
 - 進群 `JoinEvent` → 守護群歡迎／綁定卡
 - 關鍵字「需要幫忙」「緊急求助」「SOS」→ 緊急求助 Flex

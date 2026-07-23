@@ -3902,9 +3902,15 @@
         return false;
       }
       try {
-        liff.login({ redirectUri: buildCleanLoginRedirectUri(extraParams) });
+        // 標準：用目前網址當 redirectUri，保留 invite_from / open / code / state
+        const hasExtra = extraParams && Object.keys(extraParams).length > 0;
+        if (hasExtra) {
+          liff.login({ redirectUri: buildCleanLoginRedirectUri(extraParams) });
+        } else {
+          liff.login({ redirectUri: window.location.href });
+        }
       } catch (_) {
-        liff.login();
+        liff.login({ redirectUri: window.location.href });
       }
       return true;
     }
@@ -5374,69 +5380,85 @@
       return msg || "LIFF 初始化失敗";
     }
 
-    async function initLine() {
+    /**
+     * 標準 LIFF 初始化（不可用 !isInClient 擋住 invite_from OAuth 回流）：
+     * liff.init → isLoggedIn？→ 否：login({ redirectUri: location.href }) → return
+     * 只有登入後才讀 invite_from / friend_invite / open= 並跑業務邏輯。
+     */
+    async function initializeLiff() {
       if (useLocalMode) return true;
-      if (!window.liff) return false;
+      if (!window.liff) {
+        showLineLoginRequired(readSafeDeepLinkParams(), { detail: "LIFF SDK 未載入" });
+        return false;
+      }
       try {
         const configRes = await fetch("/api/config");
-        if (!configRes.ok) return false;
-        const config = await configRes.json();
-        appConfig = config || {};
-        if (!config.liff_id) return false;
-        window.__LIFF_ID__ = config.liff_id;
-        await liff.init({ liffId: config.liff_id, withLoginOnExternalBrowser: true });
-        const inClient = Boolean(liff.isInClient && liff.isInClient());
-        // 先處理已登入：OAuth 回到 Endpoint 時可能暫判 !inClient，不可擋住
-        if (liff.isLoggedIn()) {
-          const profile = await liff.getProfile();
-          lineUserId = profile.userId || "";
-          lineDisplayName = profile.displayName || "";
-          if (!lineUserId) return false;
-          await fetch("/api/line/register", {
-            method: "POST",
-            headers: await authHeaders(),
-            body: JSON.stringify({
-              line_user_id: lineUserId,
-              display_name: lineDisplayName,
-              picture_url: profile.pictureUrl || ""
-            })
-          });
-          const inviteFrom = getAppParam("invite_from");
-          if (inviteFrom && inviteFrom !== lineUserId) {
-            // 受邀者已是會員：直接綁定，不強制再分享
-            const bindResult = await apiBindEmergencyContact(inviteFrom);
-            if (bindResult?.bound) {
-              closeInviteAcceptPrompt();
-              alert("綁定完成！你已成為對方的緊急聯絡人。對方也會收到「綁定完成」通知。");
-            } else {
-              maybeShowInviteAcceptPrompt();
-            }
-          } else if (!inviteFrom && !isInviteeDeepLink()) {
-            maybeShowGuardianPrompt();
-          }
-          return true;
-        }
-        if (inClient) {
-          startLineLogin();
+        if (!configRes.ok) {
+          showLineLoginRequired(readSafeDeepLinkParams(), { detail: "無法讀取 /api/config" });
           return false;
         }
-        // 外部瀏覽器（Android Custom Tabs／貼上連結常見）：引導用 LINE 開啟
-        showLineLoginRequired(readSafeDeepLinkParams(), {
-          detail: "偵測到外部瀏覽器。請改在 LINE App 內開啟後再登入。"
+        const config = await configRes.json();
+        appConfig = config || {};
+        if (!config.liff_id) {
+          showLineLoginRequired(readSafeDeepLinkParams(), { detail: "缺少 liff_id" });
+          return false;
+        }
+        window.__LIFF_ID__ = config.liff_id;
+
+        // 1) 先 init（不要先判斷 isInClient）
+        await liff.init({ liffId: config.liff_id });
+
+        // 2) 未登入：一律 login，redirectUri 用目前網址（保留 invite_from / open / code / state）
+        if (!liff.isLoggedIn()) {
+          // Android Chrome / 外開 / LINE 內未授權 → 同一條路，不可因 !isInClient 擋掉
+          liff.login({ redirectUri: window.location.href });
+          return false;
+        }
+
+        // 3) 只有登入後才讀 deep link、跑守護人邀請業務
+        const profile = await liff.getProfile();
+        lineUserId = profile.userId || "";
+        lineDisplayName = profile.displayName || "";
+        if (!lineUserId) return false;
+
+        await fetch("/api/line/register", {
+          method: "POST",
+          headers: await authHeaders(),
+          body: JSON.stringify({
+            line_user_id: lineUserId,
+            display_name: lineDisplayName,
+            picture_url: profile.pictureUrl || ""
+          })
         });
-        return false;
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const inviteFrom = String(
+          urlParams.get("invite_from") || getAppParam("invite_from") || ""
+        ).trim();
+        if (inviteFrom && inviteFrom !== lineUserId) {
+          const bindResult = await apiBindEmergencyContact(inviteFrom);
+          if (bindResult?.bound) {
+            closeInviteAcceptPrompt();
+            alert("綁定完成！你已成為對方的緊急聯絡人。對方也會收到「綁定完成」通知。");
+          } else {
+            maybeShowInviteAcceptPrompt();
+          }
+        } else if (!inviteFrom && !isInviteeDeepLink()) {
+          maybeShowGuardianPrompt();
+        }
+        return true;
       } catch (error) {
-        const code = String(error?.code || error?.message || error || "");
-        console.warn("LINE 初始化未完成，改用一般模式。", error);
+        console.error("LIFF 初始化失敗:", error);
         showLineLoginRequired(readSafeDeepLinkParams(), {
           detail: formatLiffError(error)
         });
-        // LIFF 400 / 4000：Endpoint 不符或未在 LINE 內開啟
-        if (!/4000|400\b|INVALID|UNAUTHORIZED|FORBIDDEN|INIT/i.test(code) && !isInviteeDeepLink()) {
-          // still show the error panel above
-        }
         return false;
       }
+    }
+
+    // 相容舊呼叫名稱
+    async function initLine() {
+      return initializeLiff();
     }
 
     const LUNAR_DAY_NAMES = ["", "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十", "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十", "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"];
