@@ -13,19 +13,50 @@ from typing import Any, Callable, Optional
 VerifyFn = Callable[[str, str], Optional[dict]]
 
 
+def _env_first(*names: str) -> str:
+    """Read first non-empty env var among aliases (supports odd Render casing)."""
+    for name in names:
+        val = (os.environ.get(name) or "").strip()
+        if val:
+            return val
+    return ""
+
+
 def line_login_channel_id(config: Optional[dict] = None) -> str:
     cfg = config or {}
     explicit = (
         cfg.get("LINE_LOGIN_CHANNEL_ID")
-        or os.environ.get("LINE_LOGIN_CHANNEL_ID")
+        or _env_first(
+            "LINE_LOGIN_CHANNEL_ID",
+            "LINE_Login_Channel_ID",  # user Render typo casing
+            "LINE_LOGIN_CHANNELID",
+        )
         or ""
     ).strip()
     if explicit:
         return explicit
-    liff_id = (cfg.get("LIFF_ID") or os.environ.get("LIFF_ID") or "").strip()
+    liff_id = (
+        cfg.get("LIFF_ID")
+        or _env_first("LIFF_ID", "LIFF_Id")
+        or ""
+    ).strip()
     if "-" in liff_id:
         return liff_id.split("-", 1)[0]
     return liff_id
+
+
+def line_login_channel_secret(config: Optional[dict] = None) -> str:
+    """LINE Login channel secret (LIFF id_token verify may need channel context)."""
+    cfg = config or {}
+    return (
+        cfg.get("LINE_LOGIN_CHANNEL_SECRET")
+        or _env_first(
+            "LINE_LOGIN_CHANNEL_SECRET",
+            "LINE_Login_CHANNEL_SECRET",  # user Render typo casing
+            "LINE_LOGIN_SECRET",
+        )
+        or ""
+    ).strip()
 
 
 def verify_line_id_token(
