@@ -294,12 +294,15 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('help_uri = liff_entry_url(open_action="help")', flex)
         self.assertIn('"label": "常見問題"', flex)
         self.assertIn('"label": "一鍵邀請守護人"', flex)
+        self.assertIn('"label": "查看方案"', flex)
+        self.assertIn("pricing_direct_url()", flex)
         self.assertIn("share_invite_liff_url()", flex)
         self.assertIn("/liff/share-invite.html", flex)
         self.assertIn("❤️ 今天還在嗎", flex)
         self.assertIn("歡迎加入「今天還在嗎」", flex)
         self.assertIn("完成設定即享 7 天免費安心體驗", flex)
-        self.assertIn("緊急請撥 119", flex)
+        self.assertIn("開始使用前，請先完成 1 位守護人綁定", flex)
+        self.assertIn("緊急狀況請直接撥打 119", flex)
         self.assertNotIn("welcome_version", flex)
         self.assertNotIn("版本 W", flex)
         self.assertNotIn("W250723", flex)
@@ -311,6 +314,8 @@ class ProductRulesTests(unittest.TestCase):
         welcome_fn = flex.split("def welcome_flex", 1)[1].split("\ndef ", 1)[0]
         self.assertNotIn("SOS", welcome_fn)
         self.assertNotIn("立即升級守護", welcome_fn)
+        self.assertIn("pricing_uri", welcome_fn)
+        self.assertIn("pricing_direct_url()", welcome_fn)
 
     def test_public_liff_actions_redirect_to_standalone_pages(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

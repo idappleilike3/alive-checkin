@@ -1000,12 +1000,14 @@ def _owner_status_block(owner_info):
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友歡迎 Flex：歡迎文案 + 三顆按鈕（無版本戳）。
+    """加好友歡迎 Flex：歡迎文案 + 按鈕（無版本戳）。
 
     主 CTA「一鍵邀請守護人」→ 專用 LIFF 分享頁（不經首頁 SPA）。
+    「查看方案」→ 方案頁直連；「需要幫忙時怎麼做」→ help。
     """
     name = (display_name or "").strip() or "您"
     bind_uri = share_invite_liff_url()
+    pricing_uri = pricing_direct_url()
     help_uri = liff_entry_url(open_action="help")
     faq_uri = liff_entry_url(open_action="faq")
     hero_uri = f"{(os.environ.get('APP_PUBLIC_URL') or PUBLIC_BASE).rstrip('/')}/assets/daily-peace-hero.png"
@@ -1049,13 +1051,6 @@ def welcome_flex(display_name: str | None = None):
                             "size": "xl",
                             "wrap": True,
                         },
-                        {
-                            "type": "text",
-                            "text": "我是您的每日平安小助手",
-                            "color": "#FFFFFF",
-                            "size": "xl",
-                            "wrap": True,
-                        },
                     ],
                 },
                 {
@@ -1064,7 +1059,10 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "會在您設定的時間提醒報平安；只有超過時間仍未報平安，才會通知指定守護人",
+                    "text": (
+                        "我是您的每日平安小助手，會在您設定的時間提醒您報平安，"
+                        "只有超過時間仍未報平安，才會通知您指定的守護人"
+                    ),
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
@@ -1072,7 +1070,7 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "開始前請先完成 1 位守護人綁定，並設定每日提醒時間",
+                    "text": "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間",
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
@@ -1088,7 +1086,7 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "🚨 緊急請撥 119；聊天訊息可能因網路延遲",
+                    "text": "🚨 緊急狀況請直接撥打 119，聊天訊息可能因網路延遲",
                     "size": "lg",
                     "weight": "bold",
                     "color": RED_WARN,
@@ -1112,6 +1110,17 @@ def welcome_flex(display_name: str | None = None):
                     },
                     "style": "primary",
                     "color": GREEN_DARK,
+                    "height": "md",
+                },
+                {
+                    "type": "button",
+                    "action": {
+                        "type": "uri",
+                        "label": "查看方案",
+                        "uri": pricing_uri,
+                    },
+                    "style": "secondary",
+                    "color": GREEN,
                     "height": "md",
                 },
                 {
