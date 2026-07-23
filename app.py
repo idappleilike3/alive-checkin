@@ -3868,7 +3868,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723ad",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723ae",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -4595,44 +4595,50 @@ def create_app(config=None):
         try:
             body = body_bytes.decode("utf-8")
         except UnicodeDecodeError:
+            # LINE Console Verify must never see non-200
             app.logger.error("callback body not utf-8 len=%s", len(body_bytes))
-            return jsonify({"error": "invalid body encoding"}), 400
+            return jsonify({"ok": True, "verify": True})
 
-        def _is_line_verify_or_empty_payload(raw: str) -> bool:
-            """LINE Console Verify / empty webhook probe — no real events to process.
-
-            LINE docs expect HTTP 200 even when the bot cannot process the request.
-            Returning 400 on signature mismatch makes Console Verify fail.
-            """
-            text = (raw or "").strip()
-            if not text:
-                return True
-            try:
-                payload = json.loads(text)
-            except Exception:
-                return False
-            if not isinstance(payload, dict):
-                return False
-            events = payload.get("events")
-            return events is None or events == []
+        # Soft-accept: empty / no-events payloads always 200 (LINE Verify button)
+        stripped = (body or "").strip()
+        if not stripped:
+            return jsonify({"ok": True, "verify": True})
+        try:
+            probe = json.loads(stripped)
+            if isinstance(probe, dict) and not (probe.get("events") or []):
+                # Still run handler when signature is valid; on mismatch return 200
+                try:
+                    handler.handle(body, signature)
+                except InvalidSignatureError:
+                    app.logger.warning(
+                        "LINE verify/empty events bad signature body_len=%s secret_len=%s",
+                        len(body_bytes),
+                        len(secret or ""),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    app.logger.warning("LINE verify/empty handle skip: %s", type(exc).__name__)
+                return jsonify({"ok": True, "verify": True})
+        except Exception:
+            pass
 
         try:
             handler.handle(body, signature)
         except InvalidSignatureError:
-            app.logger.error(
-                "invalid LINE signature body_len=%s sig_len=%s secret_len=%s",
+            # LINE docs: always return 200 to the platform; do not process bad-sig events
+            app.logger.warning(
+                "invalid LINE signature ignored body_len=%s sig_len=%s secret_len=%s",
                 len(body_bytes),
                 len(signature or ""),
                 len(secret or ""),
             )
-            # Verify button / empty events: always 200 so Console Verify can pass
-            # while we still log secret mismatch for real event debugging.
-            if _is_line_verify_or_empty_payload(body):
-                return jsonify({"ok": True, "verify": True})
-            return jsonify({"error": "invalid signature"}), 400
+            return jsonify({"ok": True, "signature": "ignored"})
         except LineBotApiError as exc:
             app.logger.exception("callback LineBotApiError: %s", exc)
-            return jsonify({"error": "line api error", "detail": str(exc)}), 502
+            # Still 200 so LINE does not disable webhook / fail Verify-like probes
+            return jsonify({"ok": True, "line_api_error": True})
+        except Exception as exc:  # noqa: BLE001
+            app.logger.exception("callback unexpected: %s", exc)
+            return jsonify({"ok": True, "error_ignored": True})
         return jsonify({"ok": True})
 
     @app.post("/api/warning/cancel")
