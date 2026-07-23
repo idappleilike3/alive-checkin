@@ -1959,8 +1959,8 @@ def create_friend_invite(data_file, payload):
         "status": "pending",
     }
     save_state(data_file, state)
-    # 邀約對象必須走可強制進 LINE 的入口；勿回傳 onrender 裸網址或含 OAuth code/state 的連結（會觸發 LIFF 4000）
-    invite_url = line_app_invite_url(friend_invite=code)
+    # 邀約對象必須走永久 LIFF 入口；勿回傳 onrender 裸網址或含 OAuth code/state 的連結
+    invite_url = permanent_liff_invite_url(friend_invite=code)
     return {
         "invite_code": code,
         "invite_url": invite_url,
@@ -3158,7 +3158,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723d",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723e",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3224,43 +3224,26 @@ def create_app(config=None):
             config=app.config,
         )
 
-    def _redirect_invite_to_landing():
-        """Bare onrender invite links → /invite landing (not blind LIFF 302).
+    def _should_keep_liff_endpoint_spa():
+        """LIFF Endpoint MUST always serve the SPA that runs liff.init().
 
-        External browsers (common on Android) get a「用 LINE 開啟」page instead of
-        a blank LIFF 4000 error. Keep serving the SPA when LIFF loads Endpoint + liff.state.
+        Never 302 `/?invite_from=` (or friend_invite) away from `/`:
+        - LINE opens Endpoint with query / liff.state
+        - LINE Login returns `code`/`state` on the same Endpoint URL
+        Redirecting those to `/invite` strips OAuth params → iOS+Android login dies.
+        External-browser invitees should use explicit `/invite` short links instead.
         """
-        if request.args.get("liff.state") is not None:
-            return None
-        invite_from = (
-            request.args.get("invite_from")
-            or request.args.get("invite")
-            or request.args.get("from")
-            or ""
-        ).strip()
-        friend_invite = (request.args.get("friend_invite") or "").strip()
-        open_action = (request.args.get("open") or "").strip() or None
-        if not invite_from and not friend_invite:
-            return None
-        target = public_invite_landing_url(
-            invite_from=invite_from,
-            friend_invite=friend_invite,
-            open_action=open_action,
-        )
-        if redirect is not None:
-            return redirect(target, code=302)
-        return jsonify({"redirect": target}), 302
+        return True
 
     @app.get("/")
     def index():
-        bounced = _redirect_invite_to_landing()
-        if bounced is not None:
-            return bounced
+        # Always serve SPA on LIFF Endpoint `/` (see _should_keep_liff_endpoint_spa).
+        _ = _should_keep_liff_endpoint_spa()
         return send_from_directory(app.static_folder, "index.html")
 
     @app.get("/invite")
     def invite_short_link():
-        """Invite landing: outside LINE shows「用 LINE 開啟」; inside LINE auto-opens LIFF."""
+        """Invite landing for external browsers only (not the LIFF Endpoint)."""
         return send_from_directory(app.static_folder, "invite.html")
 
     @app.get("/health")
@@ -3423,7 +3406,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723d",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723e",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),

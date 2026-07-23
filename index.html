@@ -3783,9 +3783,9 @@
       return /Android/i.test(navigator.userAgent || "");
     }
 
-    /** 分享用單一乾淨連結（不分分享者裝置）：優先 line.me/R/app 強制進 LINE，利於 Android 受邀者。 */
+    /** 分享用單一乾淨連結：優先 liff.line.me（官方 LIFF，iOS/Android 皆可）；line.me/R/app 作備用。 */
     function buildShareInviteUrl(params = {}) {
-      return buildLineAppOpenUrl(params);
+      return buildLiffPermanentUrl(params);
     }
 
     /** 外部瀏覽器邀請落地頁（貼上網址／Chrome 開啟時用）。 */
@@ -5206,6 +5206,14 @@
       }
     }
 
+    function formatLiffError(error) {
+      const code = String(error?.code || "").trim();
+      const msg = String(error?.message || error || "未知錯誤").trim();
+      if (code && msg && !msg.includes(code)) return `LIFF ${code}：${msg}`;
+      if (code) return `LIFF 錯誤 ${code}`;
+      return msg || "LIFF 初始化失敗";
+    }
+
     async function initLine() {
       if (useLocalMode) return true;
       if (!window.liff) return false;
@@ -5218,48 +5226,54 @@
         window.__LIFF_ID__ = config.liff_id;
         await liff.init({ liffId: config.liff_id, withLoginOnExternalBrowser: true });
         const inClient = Boolean(liff.isInClient && liff.isInClient());
-        if (!inClient) {
-          // 外部瀏覽器（Android Custom Tabs／貼上連結常見）：引導用 LINE 開啟，勿在 Chrome 硬登
-          showLineLoginRequired(readSafeDeepLinkParams());
-          return false;
+        // 先處理已登入：OAuth 回到 Endpoint 時可能暫判 !inClient，不可擋住
+        if (liff.isLoggedIn()) {
+          const profile = await liff.getProfile();
+          lineUserId = profile.userId || "";
+          lineDisplayName = profile.displayName || "";
+          if (!lineUserId) return false;
+          await fetch("/api/line/register", {
+            method: "POST",
+            headers: await authHeaders(),
+            body: JSON.stringify({
+              line_user_id: lineUserId,
+              display_name: lineDisplayName,
+              picture_url: profile.pictureUrl || ""
+            })
+          });
+          const inviteFrom = getAppParam("invite_from");
+          if (inviteFrom && inviteFrom !== lineUserId) {
+            // 受邀者已是會員：直接綁定，不強制再分享
+            const bindResult = await apiBindEmergencyContact(inviteFrom);
+            if (bindResult?.bound) {
+              closeInviteAcceptPrompt();
+              alert("綁定完成！你已成為對方的緊急聯絡人。對方也會收到「綁定完成」通知。");
+            } else {
+              maybeShowInviteAcceptPrompt();
+            }
+          } else if (!inviteFrom && !isInviteeDeepLink()) {
+            maybeShowGuardianPrompt();
+          }
+          return true;
         }
-        if (!liff.isLoggedIn()) {
+        if (inClient) {
           startLineLogin();
           return false;
         }
-        const profile = await liff.getProfile();
-        lineUserId = profile.userId || "";
-        lineDisplayName = profile.displayName || "";
-        if (!lineUserId) return false;
-        await fetch("/api/line/register", {
-          method: "POST",
-          headers: await authHeaders(),
-          body: JSON.stringify({
-            line_user_id: lineUserId,
-            display_name: lineDisplayName,
-            picture_url: profile.pictureUrl || ""
-          })
+        // 外部瀏覽器（Android Custom Tabs／貼上連結常見）：引導用 LINE 開啟
+        showLineLoginRequired(readSafeDeepLinkParams(), {
+          detail: "偵測到外部瀏覽器。請改在 LINE App 內開啟後再登入。"
         });
-        const inviteFrom = getAppParam("invite_from");
-        if (inviteFrom && inviteFrom !== lineUserId) {
-          // 受邀者已是會員：直接綁定，不強制再分享
-          const bindResult = await apiBindEmergencyContact(inviteFrom);
-          if (bindResult?.bound) {
-            closeInviteAcceptPrompt();
-            alert("綁定完成！你已成為對方的緊急聯絡人。對方也會收到「綁定完成」通知。");
-          } else {
-            maybeShowInviteAcceptPrompt();
-          }
-        } else if (!inviteFrom && !isInviteeDeepLink()) {
-          maybeShowGuardianPrompt();
-        }
-        return true;
+        return false;
       } catch (error) {
         const code = String(error?.code || error?.message || error || "");
         console.warn("LINE 初始化未完成，改用一般模式。", error);
-        // LIFF 400 / 4000：Endpoint 不符或未在 LINE 內開啟 → 引導用 LINE 開啟
-        if (/4000|400\b|INVALID|UNAUTHORIZED|FORBIDDEN|INIT/i.test(code) || isInviteeDeepLink()) {
-          showLineLoginRequired(readSafeDeepLinkParams());
+        showLineLoginRequired(readSafeDeepLinkParams(), {
+          detail: formatLiffError(error)
+        });
+        // LIFF 400 / 4000：Endpoint 不符或未在 LINE 內開啟
+        if (!/4000|400\b|INVALID|UNAUTHORIZED|FORBIDDEN|INIT/i.test(code) && !isInviteeDeepLink()) {
+          // still show the error panel above
         }
         return false;
       }
@@ -5924,7 +5938,7 @@
       }, 3500);
     }
 
-    function showLineLoginRequired(nextParams = null) {
+    function showLineLoginRequired(nextParams = null, options = null) {
       const checkBtn = $("checkBtn");
       const dailyEl = $("dailyStatus");
       const errBox = $("inlineError");
@@ -5934,6 +5948,7 @@
       const liffEntry = buildLiffPermanentUrl(safeParams, "");
       const landingEntry = buildInviteLandingUrl(safeParams);
       const primaryEntry = isLikelyAndroid() ? lineAppEntry : liffEntry;
+      const detail = String((options && options.detail) || "").trim();
       if (checkBtn) {
         checkBtn.disabled = true;
         checkBtn.setAttribute("aria-busy", "false");
@@ -5945,12 +5960,13 @@
         errBox.classList.remove("inline-success");
         errBox.innerHTML = (
           `<strong style="display:block;margin-bottom:8px;">請用 LINE 開啟此頁</strong>` +
-          `Android 常會在外部瀏覽器打開，導致登入失敗／頁面錯誤。<br>` +
-          `請點下方按鈕，改在 LINE App 內開啟。<br>` +
+          (detail ? `<div style="margin-bottom:8px;color:#b42318;font-weight:700;">${detail}</div>` : "") +
+          `請在 LINE App 內開啟後完成登入（外部瀏覽器常會失敗）。<br>` +
           `<a class="member-upgrade-btn" style="display:inline-grid;place-items:center;margin-top:12px;text-decoration:none;min-width:220px;" href="${primaryEntry}">請用 LINE 開啟</a>` +
           `<div style="margin-top:10px;font-size:0.9rem;opacity:0.85;">` +
-          `<a href="${liffEntry}" style="color:inherit;margin-right:12px;">備用 LIFF 連結</a>` +
-          `<a href="${landingEntry}" style="color:inherit;">開啟邀請引導頁</a>` +
+          `<a href="${liffEntry}" style="color:inherit;margin-right:12px;">LIFF 連結</a>` +
+          `<a href="${lineAppEntry}" style="color:inherit;margin-right:12px;">LINE App 連結</a>` +
+          `<a href="${landingEntry}" style="color:inherit;">邀請引導頁</a>` +
           `</div>`
         );
         errBox.hidden = false;

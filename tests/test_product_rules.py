@@ -322,16 +322,22 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("function buildLineAppOpenUrl", page)
         self.assertIn("function buildShareInviteUrl", page)
         self.assertIn("buildShareInviteUrl(shareParams)", invite_block)
+        self.assertIn("return buildLiffPermanentUrl(params);", page)
         self.assertIn("請用 LINE 點開下面連結", invite_block)
         self.assertNotIn("備用短連結：", invite_block)
         self.assertIn('buildPublicAppUrl({ from: safeId }, "/invite")', page)
         self.assertIn('@app.get("/invite")', backend)
         self.assertIn('send_from_directory(app.static_folder, "invite.html")', backend)
         self.assertIn("public_invite_landing_url", backend)
-        self.assertIn("_redirect_invite_to_landing", backend)
+        # LIFF Endpoint `/` must always serve SPA — never 302 invite_from to /invite
+        self.assertIn("_should_keep_liff_endpoint_spa", backend)
+        self.assertNotIn("_redirect_invite_to_landing", backend)
+        self.assertNotIn("bounced = _redirect_invite_to_landing()", backend)
         self.assertIn("請用 LINE 開啟", landing)
         self.assertIn("line.me/R/app/", landing)
         self.assertIn("liff.line.me/", landing)
+        self.assertIn("formatLiffError", page)
+        self.assertIn("detail: formatLiffError(error)", page)
 
     def test_guardian_group_intro_has_large_four_button_actions(self):
         flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
