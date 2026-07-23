@@ -218,6 +218,11 @@ def public_page_url(path=""):
     return f"{public_url}/{path}" if path else f"{public_url}/"
 
 
+def pricing_direct_url():
+    """方案頁直連（勿走 LIFF Endpoint 首頁再 client redirect，會很慢）。"""
+    return public_page_url("liff/pricing.html")
+
+
 def permanent_liff_invite_url(*, invite_from="", friend_invite="", open_action=None):
     """Android-friendly permanent LIFF invite URL (never a bare onrender SPA link)."""
     params = {}
@@ -274,7 +279,7 @@ def public_invite_landing_url(*, invite_from="", friend_invite="", open_action=N
 
 
 def line_plan_message():
-    pricing_url = public_page_url("pricing")
+    pricing_url = pricing_direct_url()
     return (
         "可以，升級方案請點這裡：\n"
         f"{pricing_url}\n\n"
@@ -1164,7 +1169,11 @@ def confirm_payment_order(data_file, payload, config=None):
 
 
 def apply_expired_plan_downgrades(config):
-    """Downgrade paid members whose paid_until has passed."""
+    """Downgrade paid members whose paid_until has passed.
+
+    若 paid_until 為空（後台剛改方案尚未寫到期日），不要當成過期清掉方案。
+    降級只改 plan／付款欄位，绝不清空 contacts／friends／guardian_group_ids。
+    """
     data_file = config["DATA_FILE"]
     state = load_state(data_file)
     now = current_app_time(config)
@@ -1174,9 +1183,15 @@ def apply_expired_plan_downgrades(config):
         if not plan.startswith("paid_"):
             continue
         paid_until = parse_datetime(profile.get("paid_until"))
-        if paid_until and paid_until >= now:
+        if not paid_until:
+            # 無到期日：保留現況，避免誤降級並讓使用者以為好友被清掉
             continue
-        # unpaid/expired: force free plan
+        if paid_until >= now:
+            continue
+        # 已過期：只降方案，保留所有綁定
+        preserved_contacts = list(profile.get("contacts") or [])
+        preserved_friends = list(profile.get("friends") or [])
+        preserved_groups = list(profile.get("guardian_group_ids") or [])
         if profile.get("payment_status") == "active" or paid_until:
             profile["plan"] = "free"
             profile["payment_status"] = "expired"
@@ -1184,13 +1199,16 @@ def apply_expired_plan_downgrades(config):
             profile["auto_renew_enabled"] = False
             profile["auto_renew_status"] = "off"
             profile["next_billing_date"] = ""
+            profile["contacts"] = preserved_contacts
+            profile["friends"] = preserved_friends
+            profile["guardian_group_ids"] = preserved_groups
             downgraded.append(profile.get("line_user_id"))
             append_notification_log(
                 state,
                 "plan_expired",
                 profile.get("line_user_id"),
                 "downgraded",
-                f"plan expired -> free (was {plan})",
+                f"plan expired -> free (was {plan}); contacts kept={len(preserved_contacts)}",
             )
     if downgraded:
         save_state(data_file, state)
@@ -2206,12 +2224,10 @@ def trigger_sos(data_file, payload, config=None):
     if not profile:
         return {"error": "member not found"}, 404
 
+    # SOS 不依方案／價格分級：所有會員皆可用（仍受每日上限／冷卻防護）
     rules = plan_rules(profile)
-    if not rules.get("sos_enabled"):
+    if not rules.get("sos_enabled", True):
         return {"error": "sos is not available for this plan"}, 403
-    plan_name = profile.get("plan") or "trial"
-    if plan_name not in ("free", "trial") and not paid_membership_is_active(profile) and not trial_active(profile):
-        return {"error": "sos membership is not active"}, 403
 
     # === P0 FIX:3 層防護 ===
     now_dt = current_app_time(config or {})
@@ -2386,6 +2402,7 @@ def friend_locations(data_file, line_user_id):
 
 
 def admin_update_user_plan(data_file, payload):
+    """後台調整方案：只改方案／付款欄位，绝不清空守護人、好友或守護群。"""
     line_user_id = str(payload.get("line_user_id") or "").strip()
     if not line_user_id:
         return {"error": "missing line_user_id"}, 400
@@ -2394,11 +2411,56 @@ def admin_update_user_plan(data_file, payload):
         return {"error": "unknown plan"}, 400
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
+
+    # 升級前快照：確保後續邏輯不會誤清綁定資料
+    preserved_contacts = list(profile.get("contacts") or [])
+    preserved_friends = list(profile.get("friends") or [])
+    preserved_groups = list(profile.get("guardian_group_ids") or [])
+    preserved_onboarding = bool(profile.get("is_onboarding_completed"))
+    preserved_reminder_times = list(profile.get("reminder_times") or [])
+    preserved_reminder_time = profile.get("reminder_time")
+
     profile["plan"] = plan
-    profile["payment_status"] = str(payload.get("payment_status") or ("trial" if plan == "trial" else "active"))
-    profile["paid_until"] = str(payload.get("paid_until") or profile.get("paid_until") or "")
+    profile["payment_status"] = str(
+        payload.get("payment_status") or ("trial" if plan == "trial" else "active")
+    )
+
+    paid_until = str(payload.get("paid_until") or "").strip()
+    if not paid_until:
+        paid_until = str(profile.get("paid_until") or "").strip()
+    # 後台改成付費方案但未填到期日時，自動補合理到期日，避免被過期降級排程立刻打回 free
+    if plan.startswith("paid_") and not paid_until:
+        product = PAYMENT_PRODUCTS.get(plan) or {}
+        days = int(product.get("duration_days") or (365 if "year" in plan else 30))
+        paid_until = (datetime.now() + timedelta(days=days)).isoformat(timespec="seconds")
+        profile["billing_cycle"] = product.get("billing_cycle") or (
+            "yearly" if "year" in plan else "monthly"
+        )
+    if paid_until:
+        profile["paid_until"] = paid_until
+        profile["next_billing_date"] = paid_until
+    elif plan in ("trial", "free"):
+        # 明確降為試用／免費時才清到期日；付費升級絕不因空字串清掉
+        if "paid_until" in payload:
+            profile["paid_until"] = ""
+
+    # 明確寫回綁定資料（防止任何中間步驟誤改）
+    profile["contacts"] = preserved_contacts
+    profile["friends"] = preserved_friends
+    profile["guardian_group_ids"] = preserved_groups
+    if preserved_onboarding:
+        profile["is_onboarding_completed"] = True
+    if preserved_reminder_times:
+        profile["reminder_times"] = preserved_reminder_times
+    if preserved_reminder_time:
+        profile["reminder_time"] = preserved_reminder_time
+
     save_state(data_file, state)
-    return build_status(profile), 200
+    status = build_status(profile, state)
+    status["preserved_contacts"] = len(preserved_contacts)
+    status["preserved_friends"] = len(preserved_friends)
+    status["preserved_guardian_groups"] = len(preserved_groups)
+    return status, 200
 
 
 def create_support_ticket(data_file, payload):
@@ -2889,7 +2951,7 @@ def send_missing_contact_reminders(config):
         if today in sent_dates:
             continue
         link_text = (
-            f"\n一鍵邀請守護人：{liff_entry_url(open_action='onboarding/invite') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo/?open=onboarding/invite'}"
+            f"\n一鍵邀請守護人：{liff_entry_url(open_action='share-invite') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo/?open=share-invite'}"
         )
         if contact_count == 0:
             message = (
@@ -3159,7 +3221,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723j",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723k",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3277,7 +3339,8 @@ def create_app(config=None):
 
     @app.get("/pricing")
     def pricing_page():
-        return send_from_directory(app.static_folder, "pricing.html")
+        # 直出方案頁，避免 pricing.html → liff/pricing.html 雙重轉跳
+        return send_from_directory(app.static_folder, "liff/pricing.html")
 
     def _liff_embed_redirect(open_action=None, fragment=""):
         """舊 /liff/* HTTPS 連結改導永久內嵌入口，避免外開瀏覽器。"""
@@ -3447,7 +3510,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723j",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723k",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -3598,16 +3661,11 @@ def create_app(config=None):
                 reply(None, "請傳送「需要幫忙」開啟求助選項")
                 return
 
-            # === 通知家人：各方案 sos_enabled；不過度綁 799 ===
+            # === 通知家人：SOS 不依價格分級，全員可用 ===
             rules = plan_rules(profile) if profile else PLAN_LIMITS.get("trial", {})
             sos_enabled = bool(rules.get("sos_enabled", True))
-            if profile and (profile.get("plan") or "trial") not in ("free", "trial"):
-                if not paid_membership_is_active(profile) and not trial_active(profile):
-                    sos_enabled = False
-            plan_label = (profile or {}).get("plan") or "尚未完成設定"
 
             if not sos_enabled:
-                # 仍給入口卡（可打電話），並說明無法通知家人
                 liff_sos = (
                     liff_entry_url(open_action="sos")
                     if liff_entry_url
@@ -3615,7 +3673,7 @@ def create_app(config=None):
                 )
                 reply(
                     sos_flow.sos_emergency_flex(liff_sos_uri=liff_sos),
-                    f"目前可先打電話求助；通知家人需有效守護方案（{plan_label}）",
+                    "目前可先打電話求助；系統暫時無法通知家人，請稍後再試",
                 )
                 return
 
@@ -3659,7 +3717,7 @@ def create_app(config=None):
         def _send_welcome(line_bot_api, reply_token=None, line_user_id=None, display_name=None, trigger=None):
             """Follow / 關鍵字共用：送 welcome_flex，失敗寫 log 並 push fallback。"""
             name = (display_name or "").strip() or "您"
-            welcome_version = "W250723j"
+            welcome_version = "W250723k"
             app.logger.info(
                 "welcome_flex start version=%s trigger=%s user=%s has_reply=%s",
                 welcome_version,
@@ -3667,14 +3725,19 @@ def create_app(config=None):
                 (line_user_id or "")[:8],
                 bool(reply_token),
             )
+            share_invite_uri = (
+                liff_entry_url(open_action="share-invite")
+                if liff_entry_url
+                else "https://liff.line.me/2010674803-rK98c0lo/?open=share-invite"
+            )
             welcome_fallback = (
-                f"❤️ 每日平安\n"
-                f"{name} 您好，歡迎加入每日平安\n"
-                "我是您的平安小管家\n\n"
-                "每天10秒報平安\n"
-                "平常不打擾有事才通知家人\n"
-                "7天體驗先邀請1位守護人\n\n"
-                f"一鍵邀請守護人：{(liff_entry_url(open_action='onboarding/invite') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo/?open=onboarding/invite')}\n"
+                f"👋 {name} 您好，歡迎加入「今天還在嗎」\n\n"
+                "我是您的每日平安小助手，會在您設定的時間提醒您報平安，"
+                "只有超過時間仍未報平安，才會通知您指定的守護人\n\n"
+                "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間\n\n"
+                "🎁 完成設定即享 7 天免費安心體驗\n"
+                "🚨 緊急狀況請直接撥打 119，聊天訊息可能因網路延遲\n\n"
+                f"一鍵邀請守護人：{share_invite_uri}\n"
                 f"版本 {welcome_version}（傳「開始」可重拿）"
             )
             alt_text = f"❤️ 每日平安｜{name} 您好，歡迎加入（{welcome_version}）"

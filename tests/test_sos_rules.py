@@ -14,7 +14,9 @@ class SosRulesTests(unittest.TestCase):
         save_state(data_file, {"users": {profile["line_user_id"]: profile}})
         return data_file
 
-    def test_expired_799_membership_cannot_send_sos(self):
+    def test_expired_membership_can_still_send_sos(self):
+        """SOS 不依方案／價格：過期付費會員仍可送出（仍受每日上限／冷卻限制）。"""
+        messages = []
         profile = {
             "line_user_id": "U-owner",
             "display_name": "測試會員",
@@ -27,11 +29,30 @@ class SosRulesTests(unittest.TestCase):
 
         result, status = trigger_sos(data_file, {"line_user_id": "U-owner"}, {
             "LINE_CHANNEL_ACCESS_TOKEN": "test-token",
-            "LINE_PUSH_SENDER": lambda *_: {"ok": True},
+            "LINE_PUSH_SENDER": lambda _token, _target, message: messages.append(message) or {"ok": True},
         })
 
-        self.assertEqual(status, 403)
-        self.assertEqual(result["error"], "sos membership is not active")
+        self.assertEqual(status, 200)
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(len(messages), 1)
+
+    def test_free_plan_can_send_sos(self):
+        messages = []
+        profile = {
+            "line_user_id": "U-free",
+            "display_name": "免費會員",
+            "plan": "free",
+            "contacts": [{"line_id": "U-guardian", "priority": 1, "notify_methods": ["line"]}],
+        }
+        data_file = self.make_data_file(profile)
+
+        result, status = trigger_sos(data_file, {"line_user_id": "U-free"}, {
+            "LINE_CHANNEL_ACCESS_TOKEN": "test-token",
+            "LINE_PUSH_SENDER": lambda _token, _target, message: messages.append(message) or {"ok": True},
+        })
+
+        self.assertEqual(status, 200)
+        self.assertEqual(result["sent"], 1)
 
     def test_active_799_sends_clear_message_without_fake_cancel_code(self):
         messages = []

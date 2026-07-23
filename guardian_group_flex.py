@@ -979,18 +979,18 @@ def _owner_status_block(owner_info):
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友歡迎 Flex（W250723j）：每日平安文案 + 三顆永久 LIFF 按鈕。
+    """加好友歡迎 Flex（W250723k）：歡迎文案 + 三顆永久 LIFF 按鈕。
 
     僅按鈕：一鍵邀請守護人 / 需要幫忙時怎麼做 / 常見問題。
-    不含求救或升級按鈕。主 CTA → open=onboarding/invite（進 LIFF 後手動一鍵分享）。
+    不含求救或升級按鈕。主 CTA → open=share-invite（LIFF 載入後直接 shareTargetPicker）。
     footer 放大版本戳，方便對照是否為 Webhook Bot 新卡（非 OA 打招呼舊訊）。
     """
     name = (display_name or "").strip() or "您"
-    bind_uri = liff_entry_url(open_action="onboarding/invite")
+    bind_uri = liff_entry_url(open_action="share-invite")
     help_uri = liff_entry_url(open_action="help")
     faq_uri = liff_entry_url(open_action="faq")
     hero_uri = f"{(os.environ.get('APP_PUBLIC_URL') or PUBLIC_BASE).rstrip('/')}/assets/daily-peace-hero.png"
-    welcome_version = "W250723j"
+    welcome_version = "W250723k"
     return {
         "type": "bubble",
         "size": "mega",
@@ -1018,7 +1018,7 @@ def welcome_flex(display_name: str | None = None):
                     "contents": [
                         {
                             "type": "text",
-                            "text": "❤️ 每日平安",
+                            "text": "❤️ 今天還在嗎",
                             "color": "#FFFFFF",
                             "size": "xxl",
                             "weight": "bold",
@@ -1026,14 +1026,14 @@ def welcome_flex(display_name: str | None = None):
                         },
                         {
                             "type": "text",
-                            "text": f"{name} 您好，歡迎加入每日平安",
+                            "text": f"👋 {name} 您好，歡迎加入「今天還在嗎」",
                             "color": "#FFFFFF",
                             "size": "xl",
                             "wrap": True,
                         },
                         {
                             "type": "text",
-                            "text": "我是您的平安小管家",
+                            "text": "我是您的每日平安小助手",
                             "color": "#FFFFFF",
                             "size": "xl",
                             "wrap": True,
@@ -1046,7 +1046,7 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "每天10秒報平安",
+                    "text": "會在您設定的時間提醒報平安；只有超過時間仍未報平安，才會通知指定守護人",
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
@@ -1054,7 +1054,7 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "平常不打擾有事才通知家人",
+                    "text": "開始前請先完成 1 位守護人綁定，並設定每日提醒時間",
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
@@ -1062,10 +1062,18 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "7天體驗先邀請1位守護人",
+                    "text": "🎁 完成設定即享 7 天免費安心體驗",
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
+                    "wrap": True,
+                },
+                {
+                    "type": "text",
+                    "text": "🚨 緊急請撥 119；聊天訊息可能因網路延遲",
+                    "size": "lg",
+                    "weight": "bold",
+                    "color": RED_WARN,
                     "wrap": True,
                 },
             ],

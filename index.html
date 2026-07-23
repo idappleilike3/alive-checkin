@@ -2888,7 +2888,7 @@
           <span class="sos-hold-label" id="sosHoldLabel">連續按 3 次通知家人</span>
         </button>
         <p class="sos-feedback" id="sosFeedback" aria-live="polite"></p>
-        <a class="sos-upgrade-link" id="sosUpgradeLink" href="./liff/pricing.html">查看守護方案</a>
+        <a class="sos-upgrade-link" id="sosUpgradeLink" href="https://alive-checkin.onrender.com/liff/pricing.html">查看守護方案</a>
       <p class="sos-disclaimer">本服務不是報警或救援系統，若有立即危險請先打電話求助。</p>
         <div class="actions">
           <button class="action-btn" id="sosConfirmCancel" type="button">關閉</button>
@@ -5812,7 +5812,8 @@
     }
 
     function hasActiveSosAccess() {
-      return Boolean(currentStatusData && currentStatusData.sos_enabled);
+      // SOS 不依方案／價格分級：登入後即可用（後端另有每日上限／冷卻）
+      return Boolean(lineUserId || (currentStatusData && currentStatusData.sos_enabled !== false));
     }
 
     function primaryContactPhone() {
@@ -5857,11 +5858,11 @@
       holdButton.disabled = !enabled;
       planStatus.textContent = enabled
         ? "可以通知家人需要幫忙"
-        : "目前可先打電話求助；通知家人需守護方案";
+        : "請先從 LINE 開啟並登入後，即可通知家人";
       modalMessage.textContent = enabled
         ? "連續按 3 次後，會通知家人，並附上可分享的位置。"
-        : "請先打電話求助。升級守護方案後，也可一鍵通知家人。";
-      upgradeLink.hidden = enabled;
+        : "請先從 LINE 開啟本服務並登入。";
+      upgradeLink.hidden = true;
     }
 
     function openSosModal() {
@@ -6924,10 +6925,17 @@
         const publicOpenPages = {
           help: "help.html",
           pricing: "liff/pricing.html",
+          plan: "liff/pricing.html",
           faq: "faq.html",
           terms: "terms.html",
-          privacy: "privacy.html"
+          privacy: "privacy.html",
+          "share-invite": "liff/share-invite.html"
         };
+        // 方案頁：若還帶 open=pricing，立刻硬轉直連頁，避免先渲染首頁
+        if (openAction === "pricing" || openAction === "plan") {
+          location.replace("liff/pricing.html");
+          return;
+        }
         if (publicOpenPages[openAction]) {
           const target = publicOpenPages[openAction] + (sectionAction ? "#" + encodeURIComponent(sectionAction) : "");
           location.replace(target);

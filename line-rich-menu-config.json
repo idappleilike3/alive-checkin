@@ -25,7 +25,7 @@
     },
     {
       "bounds": { "x": 833, "y": 843, "width": 834, "height": 843 },
-      "action": { "type": "uri", "label": "查看方案", "uri": "https://liff.line.me/2010674803-rK98c0lo/?open=pricing" }
+      "action": { "type": "uri", "label": "查看方案", "uri": "https://alive-checkin.onrender.com/liff/pricing.html" }
     },
     {
       "bounds": { "x": 1667, "y": 843, "width": 833, "height": 843 },

@@ -8,12 +8,12 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       min-height: 100vh;
-      background:
-        radial-gradient(circle at top left, rgba(255, 236, 213, 0.9), transparent 34%),
-        linear-gradient(180deg, #fff7ed 0%, #fff1f7 48%, #eefdf8 100%);
       color: #5b1535;
       font-family: "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
-      line-height: 1.7;
+      line-height: 1.75;
+      background:
+        linear-gradient(180deg, rgba(255, 247, 237, 0.88) 0%, rgba(255, 241, 247, 0.9) 48%, rgba(238, 253, 248, 0.92) 100%),
+        url("assets/share-hero-family.png") center 18% / cover no-repeat fixed;
     }
     .page {
       width: min(100%, 760px);
@@ -23,27 +23,19 @@
     .hero {
       overflow: hidden;
       position: relative;
-      padding: 28px 18px;
+      padding: 32px 18px;
       border-radius: 24px;
-      background: linear-gradient(135deg, #ffe4ef 0%, #fff7ed 58%, #ecfdf5 100%);
+      background:
+        linear-gradient(135deg, rgba(255, 228, 239, 0.92) 0%, rgba(255, 247, 237, 0.9) 58%, rgba(236, 253, 245, 0.9) 100%),
+        url("assets/daily-peace-hero.png") center / cover no-repeat;
       border: 2px solid #f9a8d4;
       box-shadow: 0 18px 38px rgba(219, 39, 119, 0.16);
       text-align: center;
     }
-    .hero::after {
-      content: "";
-      position: absolute;
-      right: -34px;
-      bottom: -44px;
-      width: 150px;
-      height: 150px;
-      border-radius: 50%;
-      background: rgba(20, 184, 166, 0.18);
-    }
     .hero h1 {
       position: relative;
       z-index: 1;
-      font-size: clamp(34px, 9vw, 46px);
+      font-size: clamp(40px, 10vw, 54px);
       font-weight: 950;
       color: #be185d;
       line-height: 1.2;
@@ -51,44 +43,27 @@
     .hero p {
       position: relative;
       z-index: 1;
-      margin-top: 10px;
-      font-size: clamp(20px, 5.2vw, 24px);
+      margin-top: 12px;
+      font-size: clamp(24px, 6vw, 30px);
       font-weight: 950;
       color: #7c2d12;
-    }
-    .back {
-      display: grid;
-      place-items: center;
-      min-height: 58px;
-      margin: 16px 0;
-      border-radius: 999px;
-      background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
-      color: #fff;
-      text-decoration: none;
-      font-size: 21px;
-      font-weight: 950;
-      box-shadow: 0 12px 24px rgba(219, 39, 119, 0.22);
     }
     .quick-actions,
     .bottom-actions {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
-      margin: 16px 0;
-    }
-    .bottom-actions {
       grid-template-columns: repeat(2, 1fr);
-      margin-top: 18px;
+      gap: 12px;
+      margin: 18px 0;
     }
     .nav-btn {
       display: grid;
       place-items: center;
-      min-height: 58px;
-      padding: 10px;
+      min-height: 64px;
+      padding: 12px;
       border-radius: 18px;
       text-decoration: none;
       text-align: center;
-      font-size: clamp(18px, 4.8vw, 21px);
+      font-size: clamp(20px, 5.2vw, 24px);
       font-weight: 950;
       border: 2px solid transparent;
     }
@@ -97,13 +72,13 @@
     .nav-btn.faq { background: #fff7ed; color: #9a3412; border-color: #fb923c; }
     .guide-grid {
       display: grid;
-      gap: 14px;
+      gap: 16px;
       margin-top: 16px;
     }
     .guide-card {
-      padding: 18px;
+      padding: 22px;
       border-radius: 22px;
-      background: rgba(255, 255, 255, 0.9);
+      background: rgba(255, 255, 255, 0.94);
       border: 2px solid #f9a8d4;
       box-shadow: 0 12px 28px rgba(91, 21, 53, 0.09);
     }
@@ -111,28 +86,28 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      margin-bottom: 10px;
-      font-size: clamp(25px, 6.2vw, 32px);
+      margin-bottom: 12px;
+      font-size: clamp(28px, 7vw, 36px);
       font-weight: 950;
       color: #5b1535;
       line-height: 1.25;
     }
     .num {
-      width: 48px;
-      height: 48px;
+      width: 52px;
+      height: 52px;
       display: inline-grid;
       place-items: center;
       flex: 0 0 auto;
       border-radius: 50%;
       background: linear-gradient(135deg, #ec4899, #14b8a6);
       color: #fff;
-      font-size: 25px;
+      font-size: 28px;
       font-weight: 950;
       box-shadow: 0 8px 18px rgba(20, 184, 166, 0.18);
     }
     .guide-card p,
     .guide-card li {
-      font-size: clamp(19px, 5vw, 22px);
+      font-size: clamp(22px, 5.6vw, 26px);
       font-weight: 850;
       color: #3f1d2d;
     }
@@ -140,15 +115,15 @@
     .guide-card ol {
       margin: 10px 0 0 24px;
     }
-    .guide-card li + li { margin-top: 8px; }
+    .guide-card li + li { margin-top: 10px; }
     .note {
-      margin-top: 12px;
-      padding: 14px;
+      margin-top: 14px;
+      padding: 16px;
       border-radius: 16px;
       background: #fff7ed;
       border: 2px solid #fdba74;
       color: #7c2d12;
-      font-size: clamp(18px, 4.7vw, 21px);
+      font-size: clamp(20px, 5.2vw, 24px);
       font-weight: 900;
     }
     .danger {
@@ -169,26 +144,16 @@
     .cta {
       display: grid;
       place-items: center;
-      min-height: 60px;
+      min-height: 64px;
       border-radius: 999px;
       text-decoration: none;
-      font-size: 21px;
+      font-size: 22px;
       font-weight: 950;
     }
     .cta.line { background: #06c755; color: #fff; }
     .cta.dark { background: #5b1535; color: #fff; }
-    .mini-title {
-      display: inline-block;
-      margin-bottom: 8px;
-      padding: 5px 12px;
-      border-radius: 999px;
-      background: #ffe4ef;
-      color: #be185d;
-      font-size: 18px;
-      font-weight: 950;
-    }
     @media (max-width: 520px) {
-      .quick-actions { grid-template-columns: 1fr; }
+      .quick-actions,
       .bottom-actions { grid-template-columns: 1fr; }
     }
   </style>
@@ -196,14 +161,12 @@
 <body>
   <main class="page">
     <section class="hero">
-      <h1>每日平安圖文教學</h1>
+      <h1>需要幫忙時怎麼做</h1>
       <p>每天 10 秒，報個平安</p>
     </section>
 
-    <a class="back" href="index.html">回到每日平安首頁</a>
     <nav class="quick-actions" aria-label="教學快速操作">
-      <a class="nav-btn home" href="https://liff.line.me/2010674803-rK98c0lo/?open=home">回到首頁</a>
-      <a class="nav-btn upgrade" href="https://liff.line.me/2010674803-rK98c0lo/?open=pricing">立即升級守護</a>
+      <a class="nav-btn upgrade" href="https://alive-checkin.onrender.com/liff/pricing.html">立即升級守護</a>
       <a class="nav-btn faq" href="https://liff.line.me/2010674803-rK98c0lo/?open=faq">問與答</a>
     </nav>
 
@@ -216,7 +179,7 @@
 
       <article class="guide-card">
         <h2><span class="num">2</span>一鍵邀請守護人</h2>
-        <p>按下首頁的「一鍵邀請守護人」，會直接開啟 LINE 分享，不用複製邀請碼。</p>
+        <p>按下「一鍵邀請守護人」，會直接開啟 LINE 分享給好友，不用再跳到其他設定頁。</p>
         <div class="note soft">守護人無須另外註冊帳號，只要同意綁定，就能在緊急時收到 LINE 通知。</div>
       </article>
 
@@ -227,7 +190,7 @@
 
       <article class="guide-card">
         <h2><span class="num">4</span>逾期才通知守護人</h2>
-        <p>如果超過時間沒有簽到，系統會先提醒你。仍未回應時，才依方案通知指定守護人。</p>
+        <p>如果超過時間沒有簽到，系統會先提醒你。仍未回應時，才通知指定守護人。</p>
         <div class="note danger">有立即危險請直接撥打 119 或 110。本服務是提醒與通知工具，不取代報警或救護。</div>
       </article>
 
@@ -238,7 +201,7 @@
 
       <article class="guide-card" id="sos">
         <h2><span class="num">6</span>SOS 連續按 3 次</h2>
-        <p>SOS 是緊急求助入口。有效的 799 守護版會員連續按 3 次才會送出通知，避免誤觸。</p>
+        <p>SOS／需要幫忙是緊急求助入口。所有會員都可以使用，連續按 3 次才會送出通知，避免誤觸。</p>
         <div class="note danger">如果已經有危險，請先打 119 或 110，再使用 SOS 通知守護人。</div>
       </article>
 
@@ -264,7 +227,7 @@
       </article>
     </section>
     <nav class="bottom-actions" aria-label="教學頁底部操作">
-      <a class="nav-btn upgrade" href="https://liff.line.me/2010674803-rK98c0lo/?open=pricing">立即升級守護</a>
+      <a class="nav-btn upgrade" href="https://alive-checkin.onrender.com/liff/pricing.html">立即升級守護</a>
       <a class="nav-btn home" href="https://liff.line.me/2010674803-rK98c0lo/?open=home">回到首頁</a>
     </nav>
   </main>

@@ -136,7 +136,7 @@ def sos_emergency_flex(family_tel: str | None = None, family_label: str | None =
                     "type": "button",
                     "action": {
                         "type": "message",
-                        "label": "通知家人（連按 3 次）",
+                        "label": "通知家人連按3次",
                         "text": "通知家人",
                     },
                     "style": "primary",
