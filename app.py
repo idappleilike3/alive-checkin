@@ -3158,7 +3158,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723h",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723i",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3396,6 +3396,8 @@ def create_app(config=None):
             - guardian_groups_total: 守護群綁定總數
             - guardian_groups_active: 有效的守護群數
             - timestamp: 當下時間
+            - line_token_has_value / line_secret_has_value: env 是否有值（不回傳內容）
+            - line_token_ok / line_token_http: 用 /v2/bot/info 探測 token 是否被 LINE 接受
         """
         state = load_state(app.config["DATA_FILE"])
         groups = state.get("guardian_groups", {})
@@ -3403,15 +3405,57 @@ def create_app(config=None):
         now = datetime.now()
         proc_start = getattr(app, "_start_time", None)
         uptime = (now - proc_start).total_seconds() if proc_start else None
+        token = (
+            app.config.get("LINE_CHANNEL_ACCESS_TOKEN")
+            or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+            or os.environ.get("CHANNEL_ACCESS_TOKEN")
+            or ""
+        ).strip()
+        secret = (
+            app.config.get("LINE_CHANNEL_SECRET")
+            or os.environ.get("LINE_CHANNEL_SECRET")
+            or os.environ.get("CHANNEL_SECRET")
+            or ""
+        ).strip()
+        line_token_ok = None
+        line_token_http = None
+        if token:
+            try:
+                import urllib.request
+
+                req = urllib.request.Request(
+                    "https://api.line.me/v2/bot/info",
+                    headers={"Authorization": f"Bearer {token}"},
+                    method="GET",
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    line_token_http = int(getattr(resp, "status", 200) or 200)
+                    line_token_ok = line_token_http == 200
+            except Exception as exc:
+                code = getattr(getattr(exc, "code", None), "real", None) or getattr(exc, "code", None)
+                try:
+                    line_token_http = int(code) if code is not None else None
+                except Exception:
+                    line_token_http = None
+                line_token_ok = False
+                app.logger.warning(
+                    "line token probe failed http=%s err=%s",
+                    line_token_http,
+                    type(exc).__name__,
+                )
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723h",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723i",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
             "guardian_groups_active": active_groups,
             "timestamp": now.isoformat(timespec="seconds"),
+            "line_token_has_value": bool(token),
+            "line_secret_has_value": bool(secret),
+            "line_token_ok": line_token_ok,
+            "line_token_http": line_token_http,
         })
 
     @app.get("/api/status")
@@ -3614,7 +3658,7 @@ def create_app(config=None):
         def _send_welcome(line_bot_api, reply_token=None, line_user_id=None, display_name=None, trigger=None):
             """Follow / 關鍵字共用：送 welcome_flex，失敗寫 log 並 push fallback。"""
             name = (display_name or "").strip() or "您"
-            welcome_version = "W250723h"
+            welcome_version = "W250723i"
             app.logger.info(
                 "welcome_flex start version=%s trigger=%s user=%s has_reply=%s",
                 welcome_version,

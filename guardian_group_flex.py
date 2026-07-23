@@ -979,7 +979,7 @@ def _owner_status_block(owner_info):
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友歡迎 Flex（W250723h）：每日平安文案 + 三顆永久 LIFF 按鈕。
+    """加好友歡迎 Flex（W250723i）：每日平安文案 + 三顆永久 LIFF 按鈕。
 
     僅按鈕：一鍵邀請守護人 / 需要幫忙時怎麼做 / 常見問題。
     不含求救或升級按鈕。主 CTA → open=onboarding/invite（進 LIFF 後手動一鍵分享）。
@@ -990,7 +990,7 @@ def welcome_flex(display_name: str | None = None):
     help_uri = liff_entry_url(open_action="help")
     faq_uri = liff_entry_url(open_action="faq")
     hero_uri = f"{(os.environ.get('APP_PUBLIC_URL') or PUBLIC_BASE).rstrip('/')}/assets/daily-peace-hero.png"
-    welcome_version = "W250723h"
+    welcome_version = "W250723i"
     return {
         "type": "bubble",
         "size": "mega",

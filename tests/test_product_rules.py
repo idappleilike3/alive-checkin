@@ -280,7 +280,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('"label": "常見問題"', flex)
         self.assertIn('"label": "一鍵邀請守護人"', flex)
         self.assertIn('open_action="onboarding/invite"', flex)
-        self.assertIn("W250723h", flex)
+        self.assertIn("W250723i", flex)
         self.assertIn("❤️ 每日平安", flex)
         self.assertIn("每天10秒報平安", flex)
         self.assertIn("平常不打擾有事才通知家人", flex)
