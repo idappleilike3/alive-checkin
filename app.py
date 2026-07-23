@@ -2642,22 +2642,64 @@ def delete_personal_history(data_file, payload):
     }, 200
 
 
+def _normalize_admin_password(value):
+    """Strip whitespace / paste junk so env file CRLF and zero-width chars don't break login."""
+    text = str(value or "")
+    for ch in ("\ufeff", "\u200b", "\u200c", "\u200d", "\u2060"):
+        text = text.replace(ch, "")
+    # Normalize common unicode dashes to ASCII hyphen (copy/paste from chat)
+    for ch in ("\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\ufe58", "\ufe63", "\uff0d"):
+        text = text.replace(ch, "-")
+    return text.strip()
+
+
+def _env_flag_on(name, config=None):
+    raw = os.environ.get(name)
+    if raw is None and config is not None:
+        raw = config.get(name, "")
+    return str(raw or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def admin_open_mode(config=None):
+    """Open admin (no password) when ALLOW_OPEN_ADMIN/ADMIN_OPEN is on, or ADMIN_PASSWORD is empty.
+
+    WARNING: public URL with open admin is insecure — intentional for owner convenience.
+    """
+    cfg = config or {}
+    if _env_flag_on("ALLOW_OPEN_ADMIN", cfg) or _env_flag_on("ADMIN_OPEN", cfg):
+        return True
+    expected = _normalize_admin_password(
+        os.environ.get("ADMIN_PASSWORD") or cfg.get("ADMIN_PASSWORD", "")
+    )
+    return not expected
+
+
 def admin_allowed(config, password):
-    expected = os.environ.get("ADMIN_PASSWORD") or config.get("ADMIN_PASSWORD", "")
+    if admin_open_mode(config):
+        return True
+    expected = _normalize_admin_password(
+        os.environ.get("ADMIN_PASSWORD") or config.get("ADMIN_PASSWORD", "")
+    )
+    got = _normalize_admin_password(password)
     if not expected:
         return False
-    return secrets.compare_digest(str(expected), str(password or ""))
+    # compare_digest raises (→ HTTP 500) when lengths differ on some Python builds
+    if len(expected) != len(got):
+        return False
+    return secrets.compare_digest(expected, got)
 
 
 def admin_auth_error_payload(config, password):
     """Return (payload, http_status) when auth fails; None when allowed."""
-    expected = (os.environ.get("ADMIN_PASSWORD") or config.get("ADMIN_PASSWORD", "") or "")
-    if not str(expected).strip():
-        return {
-            "error": "admin_password_not_configured",
-            "message": "Set ADMIN_PASSWORD in Render Environment, then redeploy.",
-        }, 503
-    if not secrets.compare_digest(str(expected), str(password or "")):
+    if admin_open_mode(config):
+        return None
+    expected = _normalize_admin_password(
+        os.environ.get("ADMIN_PASSWORD") or config.get("ADMIN_PASSWORD", "")
+    )
+    if not expected:
+        # Should not reach here (empty password ⇒ open mode); keep safe fallback.
+        return None
+    if not admin_allowed(config, password):
         return {"error": "unauthorized"}, 401
     return None
 
@@ -3433,7 +3475,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723z",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723ab",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3459,6 +3501,8 @@ def create_app(config=None):
     app.config.update(
         DATA_FILE=os.environ.get("DATA_FILE", str(Path(__file__).resolve().parent / "data" / "state.json")),
         ADMIN_PASSWORD=os.environ.get("ADMIN_PASSWORD", ""),
+        ALLOW_OPEN_ADMIN=os.environ.get("ALLOW_OPEN_ADMIN", ""),
+        ADMIN_OPEN=os.environ.get("ADMIN_OPEN", ""),
         LINE_CHANNEL_ACCESS_TOKEN=os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
         LINE_CHANNEL_SECRET=os.environ.get("LINE_CHANNEL_SECRET", ""),
         LINE_LOGIN_CHANNEL_ID=os.environ.get("LINE_LOGIN_CHANNEL_ID", ""),
@@ -3728,7 +3772,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723z",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723ab",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -5415,6 +5459,8 @@ class MiniApp:
         self.config = {
             "DATA_FILE": os.environ.get("DATA_FILE", str(Path(__file__).resolve().parent / "data" / "state.json")),
             "ADMIN_PASSWORD": os.environ.get("ADMIN_PASSWORD", ""),
+            "ALLOW_OPEN_ADMIN": os.environ.get("ALLOW_OPEN_ADMIN", ""),
+            "ADMIN_OPEN": os.environ.get("ADMIN_OPEN", ""),
             "LINE_CHANNEL_ACCESS_TOKEN": os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
             "LINE_CHANNEL_SECRET": os.environ.get("LINE_CHANNEL_SECRET", ""),
             "LIFF_ID": os.environ.get("LIFF_ID", ""),
