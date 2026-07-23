@@ -4024,9 +4024,44 @@
       });
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        throw new Error(`API ${res.status}: ${text.slice(0, 80)}`);
+        throw new Error(friendlyApiFailure(res.status, text));
       }
       return await res.json();
+    }
+
+    function friendlyApiFailure(httpStatus, rawText) {
+      const text = String(rawText || "").trim();
+      let err = "";
+      try {
+        const data = JSON.parse(text);
+        err = String(data.error || data.message || "").trim();
+      } catch (_) {
+        err = "";
+      }
+      if (err === "user not registered") {
+        return "尚未建立帳號資料。請先在 LINE 傳「開始」給每日平安，或重新開啟本頁。";
+      }
+      if (err === "invalid id_token" || err === "missing id_token") {
+        return "LINE 登入已過期，請關閉後重新從 LINE 開啟。";
+      }
+      if (err === "LINE credentials are not configured") {
+        return "伺服器尚未設定 LINE 金鑰，暫時無法連線。請稍後再試或聯絡管理員。";
+      }
+      if (httpStatus === 503) {
+        return "服務暫時無法使用，請稍後再試。";
+      }
+      if (httpStatus === 401 || httpStatus === 403) {
+        return "登入驗證失敗，請重新從 LINE 開啟本服務。";
+      }
+      if (err) {
+        // 已知英文錯誤碼改成中文；其餘不把原始 JSON dump 到 UI
+        const map = {
+          "missing line_user_id": "缺少使用者身分，請從 LINE 重新開啟。",
+          "line_user_id mismatch": "登入身分不一致，請重新從 LINE 開啟。",
+        };
+        return map[err] || ("載入失敗（" + err + "）");
+      }
+      return "載入失敗，請稍後再試。";
     }
 
     async function apiGetCalendarNotes() {
@@ -6787,7 +6822,7 @@
       }
 
       try {
-        await fetch("/api/line/register", {
+        const regRes = await fetch("/api/line/register", {
           method: "POST",
           headers: await authHeaders(),
           body: JSON.stringify({
@@ -6796,9 +6831,14 @@
             picture_url: ""
           })
         });
+        if (!regRes.ok) {
+          const regText = await regRes.text().catch(() => "");
+          // 註冊失敗仍嘗試 status（後端可 auto-register）；兩者都失敗再顯示中文錯誤
+          console.warn("line/register failed", regRes.status, regText.slice(0, 120));
+        }
         const status = await apiGetStatus();
         if (status && status.ok === false) {
-          showInlineError("載入狀態失敗: " + (status.error || "未知錯誤"));
+          showInlineError(friendlyApiFailure(400, JSON.stringify(status)));
           return;
         }
         renderStatus(status);
@@ -6903,7 +6943,7 @@
           }
         }
       } catch (error) {
-        showInlineError("載入狀態失敗:" + (error.message || "請確認服務是否正常"));
+        showInlineError("載入狀態失敗：" + (error.message || "請確認服務是否正常"));
       }
     }
 

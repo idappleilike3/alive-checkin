@@ -23,7 +23,7 @@ services:
       - key: REQUIRE_LIFF_AUTH
         value: "1"
       - key: DEPLOY_VERSION
-        value: W250723t
+        value: W250723y
       - key: ADMIN_PASSWORD
         sync: false
       - key: LINE_CHANNEL_ACCESS_TOKEN
@@ -42,6 +42,13 @@ services:
         sync: false
       - key: NEWEBPAY_STAGE
         value: sandbox
+      # IMPORTANT (free plan): local disk is ephemeral. Process restart / redeploy
+      # wipes SQLite under data/ → users_total becomes 0 and LIFF shows
+      #「尚未建立帳號」until follow/register recreates the row. For production,
+      # upgrade and attach a persistent disk at /var/data, then set:
+      #   DATA_FILE=/var/data/state.json
+      # Also never wipe Render Environment Variables — LINE token/secret/LIFF_ID
+      # missing makes /callback return 503 and messaging die.
   - type: cron
     name: alive-checkin-contact-reminders
     env: python

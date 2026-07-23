@@ -3420,7 +3420,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723x",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723y",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3715,7 +3715,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723x",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723y",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -3729,13 +3729,26 @@ def create_app(config=None):
 
     @app.get("/api/status")
     def status():
-        line_user_id = (request.args.get("line_user_id") or "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        """LIFF 首載：有有效身分就 upsert，避免 DB 被 ephemeral disk 清掉後卡 404。"""
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
+        display_name = (request.args.get("display_name") or "").strip()
         state = load_state(app.config["DATA_FILE"])
         profile = state.get("users", {}).get(line_user_id)
         if not profile:
-            return jsonify({"ok": False, "error": "user not registered", "line_user_id": line_user_id}), 404
+            data, code = register_line_user(
+                app.config["DATA_FILE"],
+                {
+                    "line_user_id": line_user_id,
+                    "display_name": display_name or "LINE 使用者",
+                },
+            )
+            if code != 200:
+                return jsonify(data), code
+            if isinstance(data, dict):
+                data["auto_registered"] = True
+            return jsonify(data)
         return jsonify(build_status(profile, state))
 
     @app.post("/api/line/register")
@@ -3757,7 +3770,14 @@ def create_app(config=None):
         payload["line_user_id"] = line_user_id
         state = load_state(app.config["DATA_FILE"])
         if line_user_id not in state.get("users", {}):
-            return jsonify({"ok": False, "error": "user not registered", "line_user_id": line_user_id}), 404
+            # 與 /api/status 相同：已驗證身分即可補註冊，避免 wipe 後無法簽到
+            register_line_user(
+                app.config["DATA_FILE"],
+                {
+                    "line_user_id": line_user_id,
+                    "display_name": str(payload.get("display_name") or "LINE 使用者"),
+                },
+            )
         status = record_checkin(app.config["DATA_FILE"], payload)
         status["ok"] = True
         return jsonify(status)
@@ -4110,6 +4130,17 @@ def create_app(config=None):
                     display_name = getattr(profile, "display_name", None) or None
                 except Exception:
                     display_name = None
+                # Follow 當下就寫入 users，之後開 LIFF 不會因缺 row 而 404
+                try:
+                    register_line_user(
+                        app.config["DATA_FILE"],
+                        {
+                            "line_user_id": line_user_id,
+                            "display_name": display_name or "LINE 使用者",
+                        },
+                    )
+                except Exception as exc:
+                    app.logger.exception("FollowEvent register failed: %s", exc)
             app.logger.info("FollowEvent welcome trigger user=%s", (line_user_id or "")[:8])
             _send_welcome(
                 line_bot_api,
@@ -4175,6 +4206,16 @@ def create_app(config=None):
                         display_name = getattr(profile, "display_name", None) or None
                     except Exception:
                         display_name = None
+                    try:
+                        register_line_user(
+                            app.config["DATA_FILE"],
+                            {
+                                "line_user_id": line_user_id,
+                                "display_name": display_name or "LINE 使用者",
+                            },
+                        )
+                    except Exception as exc:
+                        app.logger.exception("welcome keyword register failed: %s", exc)
                 _send_welcome(
                     line_bot_api,
                     reply_token=event.reply_token,
@@ -5411,8 +5452,22 @@ class MiniApp:
                 if route == "/health":
                     return handler.send_json({"ok": True})
                 if route == "/api/status":
+                    line_user_id = (params.get("line_user_id") or "").strip()
+                    if not line_user_id:
+                        return handler.send_json({"ok": False, "error": "missing line_user_id"}, 400)
                     state = load_state(data_file)
-                    return handler.send_json(build_status(get_profile(state, params.get("line_user_id"))))
+                    if line_user_id not in state.get("users", {}):
+                        data, code = register_line_user(
+                            data_file,
+                            {
+                                "line_user_id": line_user_id,
+                                "display_name": params.get("display_name") or "LINE 使用者",
+                            },
+                        )
+                        if isinstance(data, dict):
+                            data["auto_registered"] = True
+                        return handler.send_json(data, code)
+                    return handler.send_json(build_status(state["users"][line_user_id], state))
                 if route == "/api/admin/summary":
                     if not admin_allowed(config, params.get("password", "")):
                         return handler.send_json({"error": "unauthorized"}, 401)

@@ -162,6 +162,32 @@ class NewebpayScaffoldTests(unittest.TestCase):
         self.assertIn("/payment-success", app_source)
 
 
+class StatusAutoRegisterTests(unittest.TestCase):
+    def test_status_auto_registers_missing_user(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_file = str(Path(tmp) / "state.json")
+            client = alive_app.create_app(
+                {
+                    "DATA_FILE": data_file,
+                    "REQUIRE_LIFF_AUTH": "0",
+                    "LIFF_ID": "2010674803-rK98c0lo",
+                }
+            ).test_client()
+            res = client.get("/api/status?line_user_id=U-auto-1")
+            self.assertEqual(res.status_code, 200)
+            payload = res.get_json()
+            self.assertTrue(payload.get("ok"))
+            self.assertEqual(payload.get("line_user_id"), "U-auto-1")
+            self.assertTrue(payload.get("auto_registered"))
+            state = alive_app.load_state(data_file)
+            self.assertIn("U-auto-1", state.get("users", {}))
+
+    def test_friendly_error_helper_in_index(self):
+        page = (Path(__file__).resolve().parents[1] / "index.html").read_text(encoding="utf-8")
+        self.assertIn("function friendlyApiFailure", page)
+        self.assertIn("尚未建立帳號資料", page)
+
+
 class BearerHeaderTests(unittest.TestCase):
     def test_group_api_uses_bearer_prefix(self):
         source = Path(alive_app.__file__).read_text(encoding="utf-8")

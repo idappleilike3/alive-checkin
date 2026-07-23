@@ -28,6 +28,22 @@ http://127.0.0.1:5000
 data/state.json
 ```
 
+（實際會自動遷移為 SQLite `data/state.db`。）
+
+## Render Free：磁碟與環境變數注意
+
+Render **free** web service 的本機磁碟是 **ephemeral（暫存）**：
+
+- 每次 redeploy / 休眠喚醒 / 重啟，`data/` 下的 SQLite 可能被清掉 → `users_total` 變 0
+- LIFF 會以為「帳號壞了」，其實只是 DB row 消失；LINE userId / token 通常沒壞
+- `/callback` webhook 若回 `LINE credentials are not configured`，代表 **Render Environment Variables 被清空**（比磁碟更嚴重）
+
+建議：
+
+1. 升級方案並掛 **Persistent Disk**（例如掛在 `/var/data`），設 `DATA_FILE=/var/data/state.json`
+2. 絕對不要整批清空 Render env；`LINE_CHANNEL_ACCESS_TOKEN` / `LINE_CHANNEL_SECRET` / `LIFF_ID` 缺一不可
+3. 程式已支援：LIFF `/api/status` 在身分驗證通過時會 **auto-register**；Follow /「開始」也會寫入 users
+
 ## LINE 內嵌與推播
 
 需要在 LINE Developers 建好：
