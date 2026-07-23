@@ -3755,7 +3755,8 @@
 
     /** 建立永久 LIFF 連結；絕不帶入 code=/state= 等 OAuth 殘留參數。 */
     function buildLiffPermanentUrl(params = {}, hash = "") {
-      const url = new URL(`https://liff.line.me/${getLiffId()}`);
+      // 與 rich menu / 後端一致：https://liff.line.me/<ID>/?key=value
+      const url = new URL(`https://liff.line.me/${getLiffId()}/`);
       Object.entries(params || {}).forEach(([key, value]) => {
         if (value == null || value === "") return;
         if (OAUTH_PARAM_KEYS.has(String(key))) return;
@@ -3775,6 +3776,16 @@
         url.searchParams.set(String(key), String(value));
       });
       return url.toString();
+    }
+
+    function sanitizeInviteUserId(raw) {
+      return String(raw || "").trim().replace(/[^a-zA-Z0-9_-]/g, "");
+    }
+
+    function buildShortInviteFallbackUrl(inviteFrom) {
+      const safeId = sanitizeInviteUserId(inviteFrom);
+      if (!safeId) return buildPublicAppUrl({}, "/invite");
+      return buildPublicAppUrl({ from: safeId }, "/invite");
     }
 
     function readSafeDeepLinkParams() {
@@ -4174,20 +4185,23 @@
     }
 
     function buildContactInvite(nickname = "") {
-      const bindUrl = lineUserId
-        ? buildLiffPermanentUrl({ invite_from: lineUserId })
+      const safeId = sanitizeInviteUserId(lineUserId);
+      const bindUrl = safeId
+        ? buildLiffPermanentUrl({ invite_from: safeId })
         : buildLiffPermanentUrl({ open: "onboarding" });
+      // 短連結只做 302 → liff.line.me，避免 Android 外開瀏覽器直接吃 SPA 造成「無法顯示網頁」
+      const fallbackUrl = safeId
+        ? buildShortInviteFallbackUrl(safeId)
+        : buildPublicAppUrl({}, "/invite");
       const nameText = nickname ? `嗨 ${nickname}，` : "";
       const text = (
-        `${nameText}我想邀請你成為「每日平安」的守護人。\n\n` +
-        `【如何綁定】\n` +
-        `1. 點下方連結，用 LINE 開啟\n` +
-        `2. 登入並同意成為守護人\n` +
-        `3. 綁定完成後，若我未準時報平安或發出 SOS，你會收到 LINE 通知\n\n` +
-        `你不需要另外註冊 App。點連結完成授權即可。\n\n` +
-        `守護邀請連結（請用 LINE 開啟）：\n${bindUrl}`
+        `${nameText}我想邀請你成為「每日平安」的守護人。\n` +
+        `請用 LINE 開啟下方連結完成綁定。\n\n` +
+        `${bindUrl}\n\n` +
+        `備用短連結：\n` +
+        `${fallbackUrl}`
       );
-      return { bindUrl, text };
+      return { bindUrl, fallbackUrl, text };
     }
 
     async function apiBindEmergencyContact(inviterLineUserId) {
@@ -4685,7 +4699,7 @@
       const inviteMeta = $("inviteMeta");
       if (inviteUrlBox) inviteUrlBox.value = bindUrl;
       if (inviteArea) inviteArea.hidden = false;
-      if (inviteMeta) inviteMeta.textContent = "此為永久 LIFF 內嵌連結（不含 code/state）。Android 與 iPhone 都請用 LINE 開啟。";
+      if (inviteMeta) inviteMeta.textContent = "永久 LIFF 連結。Android 請用 LINE 開啟；備用短連結會自動轉進 LINE。";
       try {
         if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
           await liff.shareTargetPicker([
@@ -4695,7 +4709,8 @@
             }
           ]);
         } else if (navigator.share) {
-          await navigator.share({ title: "每日平安 守護人邀請", text, url: bindUrl });
+          // Android：勿同時傳 text(含 URL) + url，否則 LINE 常把連結截斷／無法開啟
+          await navigator.share({ title: "每日平安 守護人邀請", text });
         } else if (navigator.clipboard) {
           await navigator.clipboard.writeText(text);
           alert("邀請文案已複製，可以貼到 LINE 傳給聯絡人。");
@@ -4976,16 +4991,18 @@
             ? data.invite_url
             : buildLiffPermanentUrl({ friend_invite: inviteCode })
         );
-        const fallbackUrl = buildPublicAppUrl({ friend_invite: inviteCode });
+        const fallbackUrl = buildPublicAppUrl({ friend_invite: inviteCode }, "/invite");
         const text = (
-          `我正在使用「每日平安」安全守護，想邀請你互相查看平安狀態與單次定位（可隨時停止）。\n\n` +
-          `請用 LINE 開啟下方連結並登入，邀請碼會自動帶入：\n${inviteUrl}\n\n` +
-          `如果 Android 打不開，請改點備用連結：\n${fallbackUrl}`
+          `我正在使用「每日平安」安全守護，想邀請你互相查看平安狀態與單次定位（可隨時停止）。\n` +
+          `請用 LINE 開啟下方連結：\n\n` +
+          `${inviteUrl}\n\n` +
+          `備用短連結：\n` +
+          `${fallbackUrl}`
         );
         if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
           await liff.shareTargetPicker([{ type: "text", text }]);
         } else if (navigator.share) {
-          await navigator.share({ title: "每日平安 好友地圖邀請", text, url: inviteUrl });
+          await navigator.share({ title: "每日平安 好友地圖邀請", text });
         } else if (navigator.clipboard) {
           await navigator.clipboard.writeText(text);
           alert("好友地圖邀請已複製，可以貼到 LINE 傳給朋友。");

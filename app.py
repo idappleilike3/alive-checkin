@@ -217,6 +217,27 @@ def public_page_url(path=""):
     return f"{public_url}/{path}" if path else f"{public_url}/"
 
 
+def permanent_liff_invite_url(*, invite_from="", friend_invite="", open_action=None):
+    """Android-friendly permanent LIFF invite URL (never a bare onrender SPA link)."""
+    params = {}
+    invite_from = str(invite_from or "").strip()
+    friend_invite = str(friend_invite or "").strip()
+    if invite_from:
+        params["invite_from"] = invite_from
+    if friend_invite:
+        params["friend_invite"] = friend_invite
+    if liff_entry_url is not None:
+        return liff_entry_url(open_action=open_action, **params)
+    lid = (os.environ.get("LIFF_ID") or "2010674803-rK98c0lo").strip() or "2010674803-rK98c0lo"
+    if open_action and not params:
+        return f"https://liff.line.me/{lid}/?open={open_action}"
+    if open_action:
+        params["open"] = open_action
+    if params:
+        return f"https://liff.line.me/{lid}/?{urllib.parse.urlencode(params)}"
+    return f"https://liff.line.me/{lid}"
+
+
 def line_plan_message():
     pricing_url = public_page_url("pricing")
     return (
@@ -3171,9 +3192,59 @@ def create_app(config=None):
             config=app.config,
         )
 
+    def _redirect_to_permanent_liff():
+        """Bare onrender invite links → 302 liff.line.me (Android WebView / external browser).
+
+        Keep serving the SPA when LINE LIFF loads the Endpoint with liff.state.
+        """
+        if request.args.get("liff.state") is not None:
+            return None
+        invite_from = (
+            request.args.get("invite_from")
+            or request.args.get("invite")
+            or request.args.get("from")
+            or ""
+        ).strip()
+        friend_invite = (request.args.get("friend_invite") or "").strip()
+        open_action = (request.args.get("open") or "").strip() or None
+        if not invite_from and not friend_invite:
+            return None
+        target = permanent_liff_invite_url(
+            invite_from=invite_from,
+            friend_invite=friend_invite,
+            open_action=open_action,
+        )
+        if redirect is not None:
+            return redirect(target, code=302)
+        return jsonify({"redirect": target}), 302
+
     @app.get("/")
     def index():
+        bounced = _redirect_to_permanent_liff()
+        if bounced is not None:
+            return bounced
         return send_from_directory(app.static_folder, "index.html")
+
+    @app.get("/invite")
+    def invite_short_link():
+        """Short public invite path that always 302s into permanent LIFF."""
+        invite_from = (
+            request.args.get("from")
+            or request.args.get("invite_from")
+            or request.args.get("invite")
+            or ""
+        ).strip()
+        friend_invite = (request.args.get("friend_invite") or "").strip()
+        if not invite_from and not friend_invite:
+            target = permanent_liff_invite_url(open_action="onboarding")
+        else:
+            target = permanent_liff_invite_url(
+                invite_from=invite_from,
+                friend_invite=friend_invite,
+            )
+        if redirect is not None:
+            return redirect(target, code=302)
+        return jsonify({"redirect": target}), 302
 
     @app.get("/health")
     def health():

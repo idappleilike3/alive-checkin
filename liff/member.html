@@ -395,14 +395,15 @@ function renderGuardians() {
 }
 
 function buildInviteText() {
-  const bindUrl = `https://liff.line.me/${LIFF_ID}?invite_from=${encodeURIComponent(state.lineUserId || "")}`;
+  const safeId = String(state.lineUserId || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  const bindUrl = `https://liff.line.me/${LIFF_ID}/?invite_from=${encodeURIComponent(safeId)}`;
+  const fallbackUrl = `https://alive-checkin.onrender.com/invite?from=${encodeURIComponent(safeId)}`;
   return (
-    `我想邀請你成為「今天還在嗎」的守護人。\n\n` +
-    `【如何綁定】\n` +
-    `1. 點下方連結，用 LINE 開啟\n` +
-    `2. 登入並同意成為守護人\n` +
-    `3. 綁定完成後，若我未準時報平安或發出 SOS，你會收到通知\n\n` +
-    `守護邀請連結：\n${bindUrl}`
+    `我想邀請你成為「每日平安」的守護人。\n` +
+    `請用 LINE 開啟下方連結完成綁定。\n\n` +
+    `${bindUrl}\n\n` +
+    `備用短連結：\n` +
+    `${fallbackUrl}`
   );
 }
 

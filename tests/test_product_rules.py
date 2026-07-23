@@ -298,18 +298,23 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("https://alive-checkin.onrender.com/", backend)
         self.assertNotIn("file:///C:/Users/WIN11", backend)
 
-    def test_guardian_invite_uses_liff_only_to_avoid_android_external_browser(self):
+    def test_guardian_invite_uses_liff_plus_short_302_fallback(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
+        backend = (ROOT / "app.py").read_text(encoding="utf-8")
         invite_block = page[
             page.index("function buildContactInvite")
             : page.index("async function apiBindEmergencyContact")
         ]
 
         self.assertIn("function buildPublicAppUrl", page)
-        self.assertIn("守護邀請連結（請用 LINE 開啟）", invite_block)
-        self.assertIn("buildLiffPermanentUrl({ invite_from: lineUserId })", invite_block)
+        self.assertIn("buildLiffPermanentUrl({ invite_from: safeId })", invite_block)
+        self.assertIn("buildShortInviteFallbackUrl(safeId)", invite_block)
+        self.assertIn("備用短連結：", invite_block)
+        self.assertIn('buildPublicAppUrl({ from: safeId }, "/invite")', page)
+        self.assertIn('@app.get("/invite")', backend)
+        self.assertIn("permanent_liff_invite_url", backend)
+        self.assertIn("_redirect_to_permanent_liff", backend)
         self.assertNotIn("如果 Android 打不開，請改點備用連結", invite_block)
-        self.assertNotIn("buildPublicAppUrl({ invite_from: lineUserId })", invite_block)
 
     def test_guardian_group_intro_has_large_four_button_actions(self):
         flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
@@ -330,9 +335,10 @@ class ProductRulesTests(unittest.TestCase):
             : page.index("function maybePrefillFriendInvite")
         ]
 
-        self.assertIn("buildPublicAppUrl({ friend_invite: inviteCode })", friend_invite_block)
-        self.assertIn("如果 Android 打不開，請改點備用連結", friend_invite_block)
+        self.assertIn('buildPublicAppUrl({ friend_invite: inviteCode }, "/invite")', friend_invite_block)
+        self.assertIn("備用短連結：", friend_invite_block)
         self.assertIn("navigator.share", friend_invite_block)
+        self.assertNotIn("url: inviteUrl", friend_invite_block)
 
     def test_calendar_note_modal_scrolls_on_mobile_and_confirms_save(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

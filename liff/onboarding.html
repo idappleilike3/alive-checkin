@@ -335,19 +335,20 @@ function renderStep() {
     document.getElementById("shareInviteFirstBtn").addEventListener("click", async () => {
       const hint = document.getElementById("shareStepHint");
       try {
-        const bindUrl = `https://liff.line.me/${LIFF_ID}?invite_from=${encodeURIComponent(state.lineUserId || "")}`;
+        const safeId = String(state.lineUserId || "").replace(/[^a-zA-Z0-9_-]/g, "");
+        const bindUrl = `https://liff.line.me/${LIFF_ID}/?invite_from=${encodeURIComponent(safeId)}`;
+        const fallbackUrl = `https://alive-checkin.onrender.com/invite?from=${encodeURIComponent(safeId)}`;
         const text =
-          `我想邀請你成為「今天還在嗎」的守護人。\n\n` +
-          `【如何綁定】\n` +
-          `1. 點下方連結，用 LINE 開啟\n` +
-          `2. 登入並同意成為守護人\n` +
-          `3. 綁定完成後，若我未準時報平安或發出 SOS，你會收到通知\n\n` +
-          `守護邀請連結：\n${bindUrl}`;
+          `我想邀請你成為「每日平安」的守護人。\n` +
+          `請用 LINE 開啟下方連結完成綁定。\n\n` +
+          `${bindUrl}\n\n` +
+          `備用短連結：\n` +
+          `${fallbackUrl}`;
         if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
           await liff.shareTargetPicker([{ type: "text", text }]);
           if (hint) hint.textContent = "✅ 已開啟分享。選好友送出後，請點「下一步」填寫資料。";
         } else if (navigator.share) {
-          await navigator.share({ title: "今天還在嗎 守護人邀請", text });
+          await navigator.share({ title: "每日平安 守護人邀請", text });
           if (hint) hint.textContent = "✅ 已分享。請點「下一步」填寫守護人資料。";
         } else if (navigator.clipboard) {
           await navigator.clipboard.writeText(text);
