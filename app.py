@@ -3868,7 +3868,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723ae",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723af",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
