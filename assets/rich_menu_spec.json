@@ -29,8 +29,8 @@
       },
       "action": {
         "type": "uri",
-        "label": "🚨 SOS 緊急聯絡",
-        "uri": "https://alive-checkin.onrender.com/liff/sos"
+        "label": "需要幫忙",
+        "uri": "https://liff.line.me/2010674803-rK98c0lo/?open=sos"
       }
     },
     {

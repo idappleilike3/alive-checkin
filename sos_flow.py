@@ -42,11 +42,11 @@ SOS_POST_SEND_CANCEL_MIN = 10
 # ────────────────────────────────────────────────────────────
 
 def sos_warning_flex(tap_count: int, window_sec: int = SOS_TAP_WINDOW_SEC):
-    """第 N 次 SOS 警告:還能取消 + 再按一次確認。"""
+    """第 N 次「需要幫忙」警告:還能取消 + 再按一次確認。"""
     remaining = tap_count - 2  # 第 1 次顯示 1/3, 第 2 次顯示 2/3
     bg = ORANGE if tap_count <= 2 else RED
-    title = f"🚨 SOS 求救 ({tap_count}/3)"
-    subtitle = "再按一次 SOS 才會發送" if tap_count <= 2 else "⚠️ 最後一次,再按就會立刻發送!"
+    title = f"🚨 需要幫忙 ({tap_count}/3)"
+    subtitle = "再按一次才會發送" if tap_count <= 2 else "⚠️ 最後一次,再按就會立刻發送!"
 
     return {
         "type": "bubble",
@@ -86,7 +86,7 @@ def sos_warning_flex(tap_count: int, window_sec: int = SOS_TAP_WINDOW_SEC):
             "contents": [
                 {
                     "type": "text",
-                    "text": f"⏰ {window_sec} 秒內不按 SOS = 自動取消(防止誤觸)",
+                    "text": f"⏰ {window_sec} 秒內不按 = 自動取消(防止誤觸)",
                     "size": "lg",
                     "color": ORANGE,
                     "weight": "bold",
@@ -94,7 +94,7 @@ def sos_warning_flex(tap_count: int, window_sec: int = SOS_TAP_WINDOW_SEC):
                 },
                 {
                     "type": "text",
-                    "text": "⚠️ 第 3 次按下去會立刻通知所有守護人 + 傳 SMS",
+                    "text": "⚠️ 第 3 次按下去會立刻通知所有守護人",
                     "size": "md",
                     "color": GRAY,
                     "wrap": True,
@@ -119,8 +119,8 @@ def sos_warning_flex(tap_count: int, window_sec: int = SOS_TAP_WINDOW_SEC):
                     "type": "button",
                     "action": {
                         "type": "message",
-                        "label": f"再按一次 SOS ({tap_count}/3 → {tap_count + 1 if tap_count < 3 else '發送'})",
-                        "text": "SOS",
+                        "label": f"再按一次 ({tap_count}/3 → {tap_count + 1 if tap_count < 3 else '發送'})",
+                        "text": "需要幫忙",
                     },
                     "style": "primary",
                     "color": bg,
@@ -130,8 +130,8 @@ def sos_warning_flex(tap_count: int, window_sec: int = SOS_TAP_WINDOW_SEC):
                     "type": "button",
                     "action": {
                         "type": "message",
-                        "label": "❌ 取消 SOS",
-                        "text": "SOS 取消",
+                        "label": "❌ 取消需要幫忙",
+                        "text": "取消需要幫忙",
                     },
                     "style": "link",
                     "color": GRAY,
@@ -143,7 +143,7 @@ def sos_warning_flex(tap_count: int, window_sec: int = SOS_TAP_WINDOW_SEC):
 
 
 def sos_cancelled_flex():
-    """SOS 已取消(任意階段)。"""
+    """需要幫忙已取消(任意階段)。"""
     return {
         "type": "bubble",
         "size": "kilo",
@@ -158,7 +158,7 @@ def sos_cancelled_flex():
             "contents": [
                 {
                     "type": "text",
-                    "text": "✅ SOS 已取消",
+                    "text": "✅ 已取消需要幫忙",
                     "color": "#FFFFFF",
                     "size": "xxl",
                     "weight": "bold",
@@ -174,7 +174,7 @@ def sos_cancelled_flex():
             "contents": [
                 {
                     "type": "text",
-                    "text": "求救訊息沒有發送出去,守護人沒有被通知",
+                    "text": "通知沒有發送出去,守護人沒有被通知",
                     "size": "md",
                     "color": GRAY,
                     "wrap": True,
@@ -192,7 +192,7 @@ def sos_cancelled_flex():
 
 
 def sos_sent_flex(cancel_min: int = SOS_POST_SEND_CANCEL_MIN):
-    """SOS 已實際發送 + 10 分鐘可取消。"""
+    """需要幫忙已實際發送 + 10 分鐘可取消。"""
     return {
         "type": "bubble",
         "size": "kilo",
@@ -207,11 +207,12 @@ def sos_sent_flex(cancel_min: int = SOS_POST_SEND_CANCEL_MIN):
             "contents": [
                 {
                     "type": "text",
-                    "text": "🚨 SOS 已發送",
+                    "text": "🚨 已通知家人需要幫忙",
                     "color": "#FFFFFF",
                     "size": "xxl",
                     "weight": "bold",
                     "align": "center",
+                    "wrap": True,
                 },
                 {
                     "type": "text",
@@ -231,7 +232,7 @@ def sos_sent_flex(cancel_min: int = SOS_POST_SEND_CANCEL_MIN):
             "contents": [
                 {
                     "type": "text",
-                    "text": "已通知所有守護人 + SMS + 守護群",
+                    "text": "已通知所有守護人與守護群",
                     "size": "lg",
                     "weight": "bold",
                     "color": RED,
@@ -264,8 +265,8 @@ def sos_sent_flex(cancel_min: int = SOS_POST_SEND_CANCEL_MIN):
                     "type": "button",
                     "action": {
                         "type": "message",
-                        "label": f"❌ 取消 SOS 預約 ({cancel_min} 分鐘內)",
-                        "text": "SOS 取消",
+                        "label": f"❌ 取消通知 ({cancel_min} 分鐘內)",
+                        "text": "取消需要幫忙",
                     },
                     "style": "link",
                     "color": RED,

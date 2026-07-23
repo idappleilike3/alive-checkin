@@ -2980,13 +2980,12 @@ def send_checkin_reminders(config):
 
         # 補跑時只推一次(取最晚已到點的時段),並把所有已到點未送時段標為已處理
         target_time = due_unsent[-1]
-        # 每日平安推播：❤️ 今天一切都好嗎？＋我平安 / 安全守護 / 緊急求助
+        # 每日平安推播：❤️ 今天一切都好嗎？＋我平安 / 安全守護 / 需要幫忙
         from datetime import datetime as _dt
         weekday_zh = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"][now.weekday()]
-        home_uri = f"{public_url}/" if public_url else (liff_entry_url(fragment="home") if liff_entry_url else "https://alive-checkin.onrender.com/")
-        checkin_uri = f"{public_url}/#open=checkin" if public_url else (liff_entry_url(open_action="checkin") if liff_entry_url else "https://alive-checkin.onrender.com/#open=checkin")
-        guard_uri = f"{public_url}/#open=guard" if public_url else (liff_entry_url(open_action="guard") if liff_entry_url else "https://alive-checkin.onrender.com/#open=guard")
-        sos_uri = f"{public_url}/#open=sos" if public_url else (liff_entry_url(open_action="sos") if liff_entry_url else "https://alive-checkin.onrender.com/#open=sos")
+        checkin_uri = liff_entry_url(open_action="checkin") if liff_entry_url else "https://liff.line.me/2010674803-rK98c0lo/?open=checkin"
+        guard_uri = liff_entry_url(open_action="guard") if liff_entry_url else "https://liff.line.me/2010674803-rK98c0lo/?open=guard"
+        sos_uri = liff_entry_url(open_action="sos") if liff_entry_url else "https://liff.line.me/2010674803-rK98c0lo/?open=sos"
         message = {
             "type": "flex",
             "altText": f"❤️ 今天一切都好嗎？ {today} {target_time}",
@@ -3026,7 +3025,7 @@ def send_checkin_reminders(config):
                     "contents": [
                         {"type": "button", "action": {"type": "uri", "label": "✅ 我平安", "uri": checkin_uri}, "style": "primary", "color": "#16A34A", "height": "md"},
                         {"type": "button", "action": {"type": "uri", "label": "🛡️ 安全守護", "uri": guard_uri}, "style": "primary", "color": "#2563EB", "height": "md"},
-                        {"type": "button", "action": {"type": "uri", "label": "🆘 緊急求助", "uri": sos_uri}, "style": "primary", "color": "#DC2626", "height": "md"},
+                        {"type": "button", "action": {"type": "uri", "label": "需要幫忙", "uri": sos_uri}, "style": "primary", "color": "#DC2626", "height": "md"},
                     ],
                 },
             },
@@ -3461,11 +3460,11 @@ def create_app(config=None):
         handler = WebhookHandler(secret)
 
         def _sos_handle(line_bot_api, line_user_id, command):
-            """2026-07-21 patch 21: SOS 3 次連按流程(快速發送版)。
+            """需要幫忙 3 次連按流程(快速發送版)。
 
             command:
-              - 'SOS' / 'sos'         : 按一次 SOS(累計 tap_count)
-              - 'SOS 取消'           : 取消 pending SOS
+              - '需要幫忙' / 'SOS' / 'sos' : 按一次(累計 tap_count)
+              - '取消需要幫忙' / 'SOS 取消' : 取消 pending
             """
             state = load_state(app.config["DATA_FILE"])
             profile = get_profile(state, line_user_id) if line_user_id else None
@@ -3479,10 +3478,10 @@ def create_app(config=None):
                 else:
                     line_bot_api.push_message(
                         line_user_id,
-                        TextSendMessage(text=alt_text or "SOS"),
+                        TextSendMessage(text=alt_text or "需要幫忙"),
                     )
 
-            # === Plan 檢查 ===
+            # === Plan 檢查（不依 799 限定；僅確認方案仍允許通知家人） ===
             rules = plan_rules(profile) if profile else {}
             sos_enabled = bool(rules.get("sos_enabled", False))
             _plan_map = {"paid_799": "799 月費", "paid_799_year": "799 年費"}
@@ -3490,22 +3489,22 @@ def create_app(config=None):
 
             if not sos_enabled:
                 reply(None, (
-                    f"🛡️ SOS 求救 是 799 方案限定功能\n\n"
+                    "目前無法使用「需要幫忙」通知家人。\n\n"
                     f"你目前的方案:{plan_label or '尚未訂閱'}\n\n"
-                    f"升級 799 守護版(月費/年費)才能使用 SOS 求救\n"
-                    f"在主選單點「查看方案」了解详情"
+                    "請先確認方案是否有效，或到主選單「查看方案」了解詳情。\n"
+                    "若有立即危險，請先撥打 119。"
                 ))
                 return
 
-            if command == "SOS 取消":
+            if command in ("SOS 取消", "取消需要幫忙"):
                 if sos_flow.sos_cancel_pending(state, line_user_id):
                     save_state(app.config["DATA_FILE"], state)
-                    reply(sos_flow.sos_cancelled_flex(), "✅ SOS 已取消")
+                    reply(sos_flow.sos_cancelled_flex(), "✅ 已取消需要幫忙")
                 else:
-                    reply(None, "沒有待取消的 SOS")
+                    reply(None, "沒有待取消的需要幫忙通知")
                 return
 
-            # command == 'SOS' / 'sos':記錄一次點選
+            # 記錄一次點選
             result = sos_flow.sos_tap(state, line_user_id)
             entry = result.get("entry", {})
             action = result.get("action")
@@ -3513,7 +3512,7 @@ def create_app(config=None):
 
             if action == "sent":
                 # 已送過的,顯示 sent Flex(並有取消按鈕)
-                reply(sos_flow.sos_sent_flex(), "🚨 SOS 已發送")
+                reply(sos_flow.sos_sent_flex(), "🚨 已通知家人需要幫忙")
                 save_state(app.config["DATA_FILE"], state)
                 return
 
@@ -3528,16 +3527,16 @@ def create_app(config=None):
                     )
                     event_id = res.get("event_id") if isinstance(res, dict) else None
                     sos_flow.sos_mark_sent(state, line_user_id, event_id)
-                    reply(sos_flow.sos_sent_flex(), "🚨 SOS 已發送")
+                    reply(sos_flow.sos_sent_flex(), "🚨 已通知家人需要幫忙")
                 except Exception as exc:
                     # 發送失敗也要讓用戶知道
                     sos_flow.sos_cancel_pending(state, line_user_id)
-                    reply(None, f"⚠️ SOS 發送失敗:{str(exc)[:200]}")
+                    reply(None, f"⚠️ 需要幫忙通知發送失敗:{str(exc)[:200]}")
                 save_state(app.config["DATA_FILE"], state)
                 return
 
             # 第 1 / 2 次按 → 顯示警告卡
-            reply(sos_flow.sos_warning_flex(tap_count), f"🚨 SOS 求救 ({tap_count}/3)")
+            reply(sos_flow.sos_warning_flex(tap_count), f"🚨 需要幫忙 ({tap_count}/3)")
             save_state(app.config["DATA_FILE"], state)
 
         @handler.add(JoinEvent)
@@ -3622,13 +3621,13 @@ def create_app(config=None):
                     display_name = None
             name = (display_name or "").strip() or "您"
             welcome_fallback = (
-                "🚨 緊急狀況，直接撥 119\n\n"
                 f"👋 {name} 您好\n"
                 "歡迎加入每日平安\n"
                 "我是您的平安小管家\n\n"
-                "每天一個問候一句話報平安\n"
-                "逾時通知緊急連絡人\n\n"
-                f"請開啟：{(liff_entry_url(open_action='onboarding') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo#open=onboarding')}"
+                "每天 10 秒，報個平安\n"
+                "平常不打擾，有事才通知您指定的家人\n"
+                "🎁 新手可先免費體驗 7 天。開始前，請先邀請 1 位家人當守護人\n\n"
+                f"一鍵邀請守護人：{(liff_entry_url(open_action='onboarding') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo/?open=onboarding')}"
             )
             alt_text = f"👋 {name} 您好，歡迎加入每日平安 — 立即免費試用 7 天"
             flex_contents = welcome_flex(display_name) if welcome_flex is not None else None
@@ -3706,9 +3705,16 @@ def create_app(config=None):
             group_id = getattr(event.source, "group_id", None)
             stripped = text.strip()
 
-            # 2026-07-21 patch 20: SOS 求救流程(3 次確認 + 10 分鐘取消期)
-            # 在 BOT 狀態前面 — SOS 生死大事必須最先判斷
-            if sos_flow is not None and stripped in ("SOS", "sos", "SOS 確認 2", "SOS 確認 3", "SOS 取消"):
+            # 需要幫忙 3 次連按流程（相容舊 SOS 關鍵字）
+            if sos_flow is not None and stripped in (
+                "需要幫忙",
+                "SOS",
+                "sos",
+                "SOS 確認 2",
+                "SOS 確認 3",
+                "SOS 取消",
+                "取消需要幫忙",
+            ):
                 _sos_handle(line_bot_api, line_user_id, stripped)
                 return
 

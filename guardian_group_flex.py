@@ -121,7 +121,7 @@ def _group_quick_actions():
             _postback_button("聯絡家人", "聯絡家人", style="secondary", color=GREEN_DARK, height="md"),
         ],
         [
-            _postback_button("需要幫忙", "需要幫忙", style="secondary", color=RED_WARN, height="md"),
+            _uri_button("需要幫忙", liff_entry_url(open_action="sos"), style="secondary", color=RED_WARN, height="md"),
             _postback_button("守護群狀態", "守護群狀態", style="secondary", color=GREEN_DARK, height="md"),
         ],
     ]
@@ -492,7 +492,7 @@ def guardian_group_bind_confirm_flex(result: dict):
     if already:
         body_text = f"此群已是你的守護群,目前已綁定 {count}/{limit} 個,無需重複操作"
     else:
-        body_text = f"綁定成功,目前已綁定 {count}/{limit} 個守護群。逾期未簽到與 SOS 提醒會在此群發送"
+        body_text = f"綁定成功,目前已綁定 {count}/{limit} 個守護群。逾期未簽到與需要幫忙提醒會在此群發送"
 
     return {
         "type": "bubble",
@@ -665,7 +665,7 @@ def guardian_group_user_guide_flex():
                 _guide_step("2", "建一個新的 LINE 群", "把你最關心的家人/長輩全部拉進來,群名可標「守護:OOO」"),
                 _guide_step("3", "把每日平安邀進群", "從「每日平安」聊天室右上「≡」→「邀請」,選這個新群"),
                 _guide_step("4", "把每日平安設為管理員", "這步必做,點下方「管理員設定」看 6 步驟教學"),
-                _guide_step("5", "在群裡點「點我綁定守護群」", "會回「✅ 我已完成守護群設定」,這樣這個群就會收到逾期未簽到/SOS 通知"),
+                _guide_step("5", "在群裡點「點我綁定守護群」", "會回「✅ 我已完成守護群設定」,這樣這個群就會收到逾期未簽到／需要幫忙通知"),
                 _guide_step("6", "每天在群裡打「簽到」", "成員簽到會在群裡顯示 ✓,沒簽到時會在群裡提醒"),
             ],
         },
@@ -967,42 +967,21 @@ def _owner_status_block(owner_info):
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友歡迎 Flex：2026-07-22 老人家友善版（119 紅字上移 + 小管家文案）。
+    """加好友歡迎 Flex：綠底標題 + 一鍵邀請守護人（其餘為文字連結）。
 
     display_name：LINE 顯示名稱；缺省時用「您」。
-    主 CTA：永久 liff.line.me 入口（內嵌）→ 先一鍵分享邀請 → 再填守護人表單 → 私訊預警提醒設定。
-    主按鈕加上教學／方案／問答入口；標題／內文放大方便閱讀。不使用 BOT 字眼。
+    主 CTA：永久 liff.line.me 入口 → onboarding（首次先分享邀請；已綁定則略過分享）。
+    次要連結：需要幫忙時怎麼做、常見問題。歡迎卡不出現求救字樣／升級文案。
     """
     name = (display_name or "").strip() or "您"
     # 永久連結：開 LIFF 內嵌 → onboarding（分享邀請 → 守護人表單 → 提醒）。勿硬編碼 OAuth code/state。
     bind_uri = liff_entry_url(open_action="onboarding")
-    pricing_uri = liff_entry_url(open_action="pricing")
     faq_uri = liff_entry_url(open_action="faq")
-    sos_help_uri = liff_entry_url(open_action="help", section="sos")
+    help_uri = liff_entry_url(open_action="help")
     hero_uri = f"{(os.environ.get('APP_PUBLIC_URL') or PUBLIC_BASE).rstrip('/')}/assets/daily-peace-hero.png"
     return {
         "type": "bubble",
         "size": "mega",
-        "header": {
-            "type": "box",
-            "layout": "vertical",
-            "backgroundColor": RED_WARN,
-            "paddingTop": "lg",
-            "paddingBottom": "lg",
-            "paddingStart": "lg",
-            "paddingEnd": "lg",
-            "contents": [
-                {
-                    "type": "text",
-                    "text": "🚨 緊急狀況，直接撥 119",
-                    "color": "#FFFFFF",
-                    "size": "xl",
-                    "weight": "bold",
-                    "align": "center",
-                    "wrap": True,
-                },
-            ],
-        },
         "body": {
             "type": "box",
             "layout": "vertical",
@@ -1027,10 +1006,9 @@ def welcome_flex(display_name: str | None = None):
                     "contents": [
                         {
                             "type": "text",
-                            "text": f"👋 {name} 您好,",
+                            "text": f"👋 {name} 您好",
                             "color": "#FFFFFF",
-                            "size": "xxl",
-                            "weight": "bold",
+                            "size": "xl",
                             "wrap": True,
                         },
                         {
@@ -1064,7 +1042,7 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "平常不打擾，有事才通知守護人",
+                    "text": "平常不打擾，有事才通知您指定的家人",
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
@@ -1072,7 +1050,7 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "🎁 新手禮包：加入即享 7 天免費體驗。先綁定 1 位守護人，緊急時才通知得到對方",
+                    "text": "🎁 新手可先免費體驗 7 天。開始前，請先邀請 1 位家人當守護人",
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
@@ -1102,34 +1080,23 @@ def welcome_flex(display_name: str | None = None):
                     "type": "button",
                     "action": {
                         "type": "uri",
-                        "label": "SOS 與緊急聯絡教學",
-                        "uri": sos_help_uri,
+                        "label": "需要幫忙時怎麼做",
+                        "uri": help_uri,
                     },
                     "style": "link",
                     "color": GRAY,
-                    "height": "md",
+                    "height": "sm",
                 },
                 {
                     "type": "button",
                     "action": {
                         "type": "uri",
-                        "label": "立即升級守護",
-                        "uri": pricing_uri,
-                    },
-                    "style": "link",
-                    "color": RED_WARN,
-                    "height": "md",
-                },
-                {
-                    "type": "button",
-                    "action": {
-                        "type": "uri",
-                        "label": "問與答",
+                        "label": "常見問題",
                         "uri": faq_uri,
                     },
                     "style": "link",
                     "color": GREEN_DARK,
-                    "height": "md",
+                    "height": "sm",
                 },
             ],
         },

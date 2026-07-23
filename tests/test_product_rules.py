@@ -77,7 +77,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("進入「平安紀錄」會直接展開月曆", help_page)
         self.assertIn('id="sos"', help_page)
         self.assertIn('("一鍵邀請", "heart", "邀請守護人")', rich_menu_script)
-        self.assertIn('("連按 SOS", "sos", "連續按 3 次")', rich_menu_script)
+        self.assertIn('("需要幫忙", "sos", "連按 3 次・防誤觸")', rich_menu_script)
         self.assertIn("typeof liff.scanCodeV2 === \"function\"", page)
         self.assertIn("iPhone 與 Android 都比較穩定", page)
 
@@ -260,17 +260,26 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo#open=", rich_menu)
         self.assertNotIn("https://alive-checkin.onrender.com/help.html", rich_menu)
         self.assertNotIn('"type": "message", "label": "SOS 求救"', rich_menu)
+        self.assertIn('"label": "需要幫忙"', rich_menu)
+        self.assertNotIn('"label": "連按SOS"', rich_menu)
 
-    def test_welcome_help_button_opens_sos_tutorial_directly(self):
+    def test_welcome_help_button_opens_help_and_faq(self):
         flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
 
-        self.assertIn('"label": "SOS 與緊急聯絡教學"', flex)
-        self.assertIn('sos_help_uri = liff_entry_url(open_action="help", section="sos")', flex)
-        self.assertIn('"label": "立即升級守護"', flex)
-        self.assertIn('"label": "問與答"', flex)
+        self.assertIn('"label": "需要幫忙時怎麼做"', flex)
+        self.assertIn('help_uri = liff_entry_url(open_action="help")', flex)
+        self.assertIn('"label": "常見問題"', flex)
+        self.assertIn('"label": "一鍵邀請守護人"', flex)
+        self.assertIn("新手可先免費體驗 7 天", flex)
+        self.assertIn("有事才通知您指定的家人", flex)
+        self.assertNotIn('"label": "立即升級守護"', flex)
+        self.assertNotIn('"label": "SOS 與緊急聯絡教學"', flex)
         self.assertNotIn('"label": "回到首頁"', flex)
         self.assertNotIn('f"{PUBLIC_BASE}/help.html#sos"', flex)
         self.assertNotIn("求助(連按看教學)", flex)
+        welcome_fn = flex.split("def welcome_flex", 1)[1].split("\ndef ", 1)[0]
+        self.assertNotIn("SOS", welcome_fn)
+        self.assertNotIn("立即升級守護", welcome_fn)
 
     def test_public_liff_actions_redirect_to_standalone_pages(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -323,7 +332,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('text": "收到家人的平安訊息。在這提醒報平安、發需要幫忙通知、逾期未報平安或主動求助時，才會在群裡提醒"', flex)
         self.assertIn('_uri_button("我平安", liff_entry_url(open_action="checkin")', flex)
         self.assertIn('_postback_button("聯絡家人"', flex)
-        self.assertIn('_postback_button("需要幫忙"', flex)
+        self.assertIn('_uri_button("需要幫忙", liff_entry_url(open_action="sos")', flex)
         self.assertIn('_postback_button("守護群狀態"', flex)
         self.assertIn('"label": "我已完成守護群設定"', flex)
         self.assertIn('"text": "守護群狀態"', flex)
