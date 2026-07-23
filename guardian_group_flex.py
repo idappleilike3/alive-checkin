@@ -1002,7 +1002,7 @@ def _owner_status_block(owner_info):
 def welcome_flex(display_name: str | None = None):
     """加好友歡迎 Flex：歡迎文案 + 三顆 Flex 按鈕（無版本戳）。
 
-    -「一鍵邀請」→ 專用 LIFF 分享頁（不經首頁 SPA）
+    -「一鍵邀請守護人」→ 專用 LIFF 分享頁（不經首頁 SPA）
     -「查看方案」→ 方案頁直連
     -「需要幫忙」→ message，由 Bot 回緊急求助 Flex
     """
@@ -1104,7 +1104,7 @@ def welcome_flex(display_name: str | None = None):
                     "type": "button",
                     "action": {
                         "type": "uri",
-                        "label": "一鍵邀請",
+                        "label": "一鍵邀請守護人",
                         "uri": bind_uri,
                     },
                     "style": "primary",
