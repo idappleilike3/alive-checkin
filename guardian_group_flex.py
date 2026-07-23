@@ -1000,16 +1000,15 @@ def _owner_status_block(owner_info):
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友歡迎 Flex：歡迎文案 + 按鈕（無版本戳）。
+    """加好友歡迎 Flex：歡迎文案 + 三顆 Flex 按鈕（無版本戳）。
 
-    主 CTA「一鍵邀請守護人」→ 專用 LIFF 分享頁（不經首頁 SPA）。
-    「查看方案」→ 方案頁直連；「需要幫忙時怎麼做」→ help。
+    -「一鍵邀請」→ 專用 LIFF 分享頁（不經首頁 SPA）
+    -「查看方案」→ 方案頁直連
+    -「需要幫忙」→ message，由 Bot 回緊急求助 Flex
     """
     name = (display_name or "").strip() or "您"
     bind_uri = share_invite_liff_url()
     pricing_uri = pricing_direct_url()
-    help_uri = liff_entry_url(open_action="help")
-    faq_uri = liff_entry_url(open_action="faq")
     hero_uri = f"{(os.environ.get('APP_PUBLIC_URL') or PUBLIC_BASE).rstrip('/')}/assets/daily-peace-hero.png"
     return {
         "type": "bubble",
@@ -1105,7 +1104,7 @@ def welcome_flex(display_name: str | None = None):
                     "type": "button",
                     "action": {
                         "type": "uri",
-                        "label": "一鍵邀請守護人",
+                        "label": "一鍵邀請",
                         "uri": bind_uri,
                     },
                     "style": "primary",
@@ -1126,23 +1125,12 @@ def welcome_flex(display_name: str | None = None):
                 {
                     "type": "button",
                     "action": {
-                        "type": "uri",
-                        "label": "需要幫忙時怎麼做",
-                        "uri": help_uri,
+                        "type": "message",
+                        "label": "需要幫忙",
+                        "text": "需要幫忙",
                     },
                     "style": "link",
-                    "color": GRAY,
-                    "height": "sm",
-                },
-                {
-                    "type": "button",
-                    "action": {
-                        "type": "uri",
-                        "label": "常見問題",
-                        "uri": faq_uri,
-                    },
-                    "style": "link",
-                    "color": GREEN_DARK,
+                    "color": RED_WARN,
                     "height": "sm",
                 },
             ],

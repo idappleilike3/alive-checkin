@@ -314,6 +314,7 @@
         <button id="renewalRemindBtn" class="secondary" type="button">推播續費提醒</button>
         <button id="birthdayRemindBtn" class="info" type="button">推播生日提醒</button>
         <button id="createBackupBtn" class="info" type="button">立即備份</button>
+        <button id="richMenuDeployBtn" class="secondary" type="button">上傳圖文選單</button>
       </div>
 
       <div class="stats">
@@ -858,6 +859,20 @@
       await refresh();
     }
 
+    async function deployRichMenu() {
+      if (!confirm("要用伺服器上的 LINE token 上傳並設為預設圖文選單嗎？")) return;
+      $("message").textContent = "圖文選單上傳中…";
+      const res = await fetch(`/api/admin/rich-menu/deploy?password=${apiPassword()}`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        $("message").textContent = `圖文選單已設為預設：${data.richMenuId || ""}（${data.name || ""}）`;
+      } else {
+        $("message").textContent = data.error
+          ? `圖文選單上傳失敗：${typeof data.error === "string" ? data.error : JSON.stringify(data.error)}`
+          : "圖文選單上傳失敗，請確認後台密碼與 Render 的 LINE token。";
+      }
+    }
+
     $("loginBtn").addEventListener("click", refresh);
     $("refreshBtn").addEventListener("click", refresh);
     $("contactRemindBtn").addEventListener("click", sendContactReminders);
@@ -865,6 +880,7 @@
     $("renewalRemindBtn").addEventListener("click", sendRenewalReminders);
     $("birthdayRemindBtn").addEventListener("click", sendBirthdayReminders);
     $("createBackupBtn").addEventListener("click", createBackup);
+    $("richMenuDeployBtn").addEventListener("click", deployRichMenu);
     $("password").addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();

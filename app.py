@@ -3,6 +3,7 @@ import os
 import re
 import secrets
 import sqlite3
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -2626,6 +2627,102 @@ def admin_allowed(config, password):
     return secrets.compare_digest(str(expected), str(password or ""))
 
 
+def _line_channel_access_token(config=None):
+    cfg = config or {}
+    return (
+        cfg.get("LINE_CHANNEL_ACCESS_TOKEN")
+        or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+        or os.environ.get("CHANNEL_ACCESS_TOKEN")
+        or ""
+    ).strip()
+
+
+def deploy_default_rich_menu(config=None, root_dir=None):
+    """用伺服器上的 LINE_CHANNEL_ACCESS_TOKEN 建立並設為預設圖文選單。
+
+    不回傳／不 log token。成功回 (payload, 200)；失敗回 (error, http_code)。
+    """
+    token = _line_channel_access_token(config)
+    if not token:
+        return {"ok": False, "error": "LINE_CHANNEL_ACCESS_TOKEN not configured"}, 503
+
+    root = Path(root_dir) if root_dir else Path(__file__).resolve().parent
+    config_path = root / "line-rich-menu-config.json"
+    image_path = root / "line-rich-menu.png"
+    if not config_path.exists():
+        return {"ok": False, "error": f"missing {config_path.name}"}, 500
+    if not image_path.exists():
+        return {"ok": False, "error": f"missing {image_path.name}"}, 500
+
+    menu_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+    def _request(method, url, body=None, content_type="application/json"):
+        data = None
+        headers = {"Authorization": f"Bearer {token}"}
+        if body is not None:
+            if content_type == "application/json":
+                data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            else:
+                data = body
+            headers["Content-Type"] = content_type
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+                code = int(getattr(resp, "status", 200) or 200)
+                parsed = json.loads(raw) if raw.strip() else {}
+                return code, parsed
+        except urllib.error.HTTPError as exc:
+            err_body = exc.read().decode("utf-8", errors="replace")
+            return int(exc.code), {"error": err_body}
+
+    code, created = _request("POST", "https://api.line.me/v2/bot/richmenu", menu_config)
+    if code != 200 or not created.get("richMenuId"):
+        return {
+            "ok": False,
+            "step": "create",
+            "http": code,
+            "error": created.get("error") or created,
+        }, 502
+
+    rich_menu_id = created["richMenuId"]
+    code, uploaded = _request(
+        "POST",
+        f"https://api-data.line.me/v2/bot/richmenu/{rich_menu_id}/content",
+        image_path.read_bytes(),
+        content_type="image/png",
+    )
+    if code not in (200, 204):
+        return {
+            "ok": False,
+            "step": "upload_image",
+            "richMenuId": rich_menu_id,
+            "http": code,
+            "error": uploaded.get("error") or uploaded,
+        }, 502
+
+    code, defaulted = _request(
+        "POST",
+        f"https://api.line.me/v2/bot/user/all/richmenu/{rich_menu_id}",
+    )
+    if code not in (200, 204):
+        return {
+            "ok": False,
+            "step": "set_default",
+            "richMenuId": rich_menu_id,
+            "http": code,
+            "error": defaulted.get("error") or defaulted,
+        }, 502
+
+    return {
+        "ok": True,
+        "richMenuId": rich_menu_id,
+        "name": menu_config.get("name"),
+        "chatBarText": menu_config.get("chatBarText"),
+        "image_bytes": image_path.stat().st_size,
+    }, 200
+
+
 def cron_allowed(config, secret):
     expected = (config.get("CRON_SECRET") or os.environ.get("CRON_SECRET", "") or "").strip()
     provided = str(secret or "").strip()
@@ -3223,7 +3320,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723r",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723s",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3514,7 +3611,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723r",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723s",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -3739,7 +3836,7 @@ def create_app(config=None):
                 "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間\n\n"
                 "🎁 完成設定即享 7 天免費安心體驗\n"
                 "🚨 緊急狀況請直接撥打 119，聊天訊息可能因網路延遲\n\n"
-                f"一鍵邀請守護人：{share_invite_uri}\n"
+                f"一鍵邀請：{share_invite_uri}\n"
                 "傳「開始」可重拿歡迎卡"
             )
             alt_text = f"❤️ 今天還在嗎｜{name} 您好，歡迎加入"
@@ -4904,6 +5001,27 @@ def create_app(config=None):
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = cleanup_expired_data(app.config)
+        return jsonify(data), code
+
+    @app.post("/api/admin/rich-menu/deploy")
+    def admin_rich_menu_deploy_api():
+        """用 Render 上的 LINE_CHANNEL_ACCESS_TOKEN 上傳並設為預設圖文選單。"""
+        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
+        if not admin_allowed(app.config, password):
+            return jsonify({"error": "unauthorized"}), 401
+        data, code = deploy_default_rich_menu(app.config)
+        if data.get("ok"):
+            app.logger.info(
+                "rich menu deployed richMenuId=%s name=%s",
+                data.get("richMenuId"),
+                data.get("name"),
+            )
+        else:
+            app.logger.warning(
+                "rich menu deploy failed step=%s http=%s",
+                data.get("step"),
+                data.get("http"),
+            )
         return jsonify(data), code
 
     @app.post("/api/admin/user-plan")
