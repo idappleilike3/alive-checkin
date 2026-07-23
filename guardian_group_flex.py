@@ -1000,94 +1000,139 @@ def _owner_status_block(owner_info):
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友歡迎 Flex：歡迎文案 + 三顆 Flex 按鈕（無版本戳）。
+    """加好友歡迎 Flex（粉白風格）：真實暱稱問候 + 兩顆 CTA。
 
-    -「一鍵邀請守護人」→ 專用 LIFF 分享頁（不經首頁 SPA）
+    -「立即開始設定」→ LIFF onboarding（綁守護人＋提醒時間）
     -「查看方案」→ 方案頁直連
-    -「需要幫忙」→ message，由 Bot 回緊急求助 Flex
     """
     name = (display_name or "").strip() or "您"
-    bind_uri = share_invite_liff_url()
+    setup_uri = liff_entry_url(open_action="onboarding")
     pricing_uri = pricing_direct_url()
-    hero_uri = f"{(os.environ.get('APP_PUBLIC_URL') or PUBLIC_BASE).rstrip('/')}/assets/daily-peace-hero.png"
+    base = (os.environ.get("APP_PUBLIC_URL") or PUBLIC_BASE).rstrip("/")
+    logo_uri = f"{base}/assets/daily-peace-logo.png"
+    heart_uri = f"{base}/assets/welcome-heart-banner.png"
+    pink_bg = "#FFF5F8"
+    pink_soft = "#FFE4EC"
+    pink_accent = "#DB2777"
+    text_dark = "#831843"
+
     return {
         "type": "bubble",
         "size": "mega",
-        "body": {
+        "header": {
             "type": "box",
-            "layout": "vertical",
-            "spacing": "lg",
-            "paddingTop": "lg",
-            "paddingBottom": "md",
+            "layout": "horizontal",
+            "spacing": "md",
+            "paddingAll": "lg",
+            "backgroundColor": pink_bg,
             "contents": [
                 {
                     "type": "image",
-                    "url": hero_uri,
-                    "size": "full",
+                    "url": logo_uri,
+                    "size": "xs",
                     "aspectMode": "cover",
-                    "aspectRatio": "20:9",
+                    "aspectRatio": "1:1",
+                    "flex": 0,
                 },
+                {
+                    "type": "text",
+                    "text": f"👋 {name} 您好，歡迎加入「每日平安」",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": text_dark,
+                    "wrap": True,
+                    "flex": 1,
+                    "gravity": "center",
+                },
+            ],
+        },
+        "hero": {
+            "type": "image",
+            "url": heart_uri,
+            "size": "full",
+            "aspectMode": "cover",
+            "aspectRatio": "20:9",
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "paddingAll": "lg",
+            "backgroundColor": "#FFFFFF",
+            "contents": [
                 {
                     "type": "box",
                     "layout": "vertical",
                     "spacing": "sm",
-                    "backgroundColor": GREEN_DARK,
+                    "paddingAll": "md",
+                    "backgroundColor": pink_soft,
                     "cornerRadius": "md",
-                    "paddingAll": "lg",
                     "contents": [
                         {
                             "type": "text",
-                            "text": "❤️ 今天還在嗎",
-                            "color": "#FFFFFF",
-                            "size": "xxl",
+                            "text": "每天 10 秒，報個平安",
                             "weight": "bold",
+                            "size": "lg",
+                            "color": pink_accent,
                             "wrap": True,
                         },
                         {
                             "type": "text",
-                            "text": f"👋 {name} 您好，歡迎加入「今天還在嗎」",
-                            "color": "#FFFFFF",
-                            "size": "xl",
+                            "text": "平常不打擾，有事才通知守護人",
+                            "weight": "bold",
+                            "size": "md",
+                            "color": text_dark,
                             "wrap": True,
                         },
                     ],
                 },
                 {
-                    "type": "separator",
-                    "margin": "md",
+                    "type": "text",
+                    "text": "開始使用前兩個步驟",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": text_dark,
+                    "wrap": True,
                 },
                 {
                     "type": "text",
-                    "text": (
-                        "我是您的每日平安小助手，會在您設定的時間提醒您報平安，"
-                        "只有超過時間仍未報平安，才會通知您指定的守護人"
-                    ),
-                    "size": "lg",
+                    "text": "① 新增 1 位守護人",
                     "weight": "bold",
+                    "size": "md",
                     "color": GRAY,
                     "wrap": True,
                 },
                 {
                     "type": "text",
-                    "text": "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間",
-                    "size": "lg",
+                    "text": "② 設定每日提醒時間",
                     "weight": "bold",
+                    "size": "md",
                     "color": GRAY,
                     "wrap": True,
                 },
                 {
-                    "type": "text",
-                    "text": "🎁 完成設定即享 7 天免費安心體驗",
-                    "size": "lg",
-                    "weight": "bold",
-                    "color": GRAY,
-                    "wrap": True,
+                    "type": "box",
+                    "layout": "vertical",
+                    "paddingAll": "md",
+                    "backgroundColor": pink_bg,
+                    "cornerRadius": "md",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "🎁 完成設定即可享 7 天免費安心體驗",
+                            "weight": "bold",
+                            "size": "md",
+                            "color": pink_accent,
+                            "wrap": True,
+                            "align": "center",
+                        },
+                    ],
                 },
                 {
                     "type": "text",
-                    "text": "🚨 緊急狀況請直接撥打 119，聊天訊息可能因網路延遲",
-                    "size": "lg",
+                    "text": "緊急狀況請直接撥打 119 或 110（本服務不是報警系統）",
                     "weight": "bold",
+                    "size": "md",
                     "color": RED_WARN,
                     "wrap": True,
                 },
@@ -1098,17 +1143,17 @@ def welcome_flex(display_name: str | None = None):
             "layout": "vertical",
             "spacing": "sm",
             "paddingAll": "lg",
-            "backgroundColor": "#FAFAFA",
+            "backgroundColor": pink_bg,
             "contents": [
                 {
                     "type": "button",
                     "action": {
                         "type": "uri",
-                        "label": "一鍵邀請守護人",
-                        "uri": bind_uri,
+                        "label": "立即開始設定",
+                        "uri": setup_uri,
                     },
                     "style": "primary",
-                    "color": GREEN_DARK,
+                    "color": pink_accent,
                     "height": "md",
                 },
                 {
@@ -1119,19 +1164,8 @@ def welcome_flex(display_name: str | None = None):
                         "uri": pricing_uri,
                     },
                     "style": "secondary",
-                    "color": GREEN,
+                    "color": "#BE185D",
                     "height": "md",
-                },
-                {
-                    "type": "button",
-                    "action": {
-                        "type": "message",
-                        "label": "需要幫忙",
-                        "text": "需要幫忙",
-                    },
-                    "style": "link",
-                    "color": RED_WARN,
-                    "height": "sm",
                 },
             ],
         },

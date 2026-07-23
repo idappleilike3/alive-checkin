@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 import sos_flow
-from guardian_group_flex import share_invite_liff_url, welcome_flex
+from guardian_group_flex import pricing_direct_url, share_invite_liff_url, welcome_flex
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +28,6 @@ class BotKeywordHandlerTests(unittest.TestCase):
         self.assertIn("需要幫忙", blob)
         self.assertNotIn("開啟完整求助頁", blob)
         self.assertNotIn("通知家人連按3次", blob)
-        # 119／110 不可再做成跟主按鈕同等級的 primary 大按鈕堆
         footer = flex.get("footer", {}).get("contents", [])
         primary_buttons = [
             item for item in footer
@@ -45,16 +44,34 @@ class BotKeywordHandlerTests(unittest.TestCase):
         self.assertIn("share-invite.html", blob)
         self.assertNotIn("no bound", blob.lower())
 
-    def test_welcome_flex_no_version_stamp_and_direct_share_uri(self):
+    def test_welcome_flex_new_card_two_ctas(self):
         flex = welcome_flex("小明")
         blob = str(flex)
-        self.assertIn("❤️ 今天還在嗎", blob)
-        self.assertIn("歡迎加入「今天還在嗎」", blob)
-        self.assertIn("完成設定即享 7 天免費安心體驗", blob)
-        self.assertIn("/liff/share-invite.html", blob)
+        self.assertIn("👋 小明 您好，歡迎加入「每日平安」", blob)
+        self.assertIn("每天 10 秒，報個平安", blob)
+        self.assertIn("平常不打擾，有事才通知守護人", blob)
+        self.assertIn("① 新增 1 位守護人", blob)
+        self.assertIn("② 設定每日提醒時間", blob)
+        self.assertIn("7 天免費安心體驗", blob)
+        self.assertIn("daily-peace-logo.png", blob)
+        self.assertIn("welcome-heart-banner.png", blob)
+        self.assertIn("open=onboarding", blob)
+        self.assertIn("/liff/pricing.html", blob)
         self.assertNotIn("版本 W", blob)
         self.assertNotIn("W250723", blob)
         self.assertNotIn("BOT", blob)
+        self.assertNotIn("一鍵邀請守護人", blob)
+        self.assertNotIn("需要幫忙", blob)
+        labels = [
+            item["action"]["label"]
+            for item in (flex.get("footer") or {}).get("contents") or []
+            if item.get("type") == "button"
+        ]
+        self.assertEqual(labels, ["立即開始設定", "查看方案"])
+        self.assertEqual(
+            pricing_direct_url(),
+            "https://alive-checkin.onrender.com/liff/pricing.html",
+        )
         self.assertEqual(
             share_invite_liff_url(),
             "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html",

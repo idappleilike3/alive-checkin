@@ -3342,7 +3342,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723v",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723w",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3633,7 +3633,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723v",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723w",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -3863,22 +3863,30 @@ def create_app(config=None):
                 (line_user_id or "")[:8],
                 bool(reply_token),
             )
-            share_invite_uri = (
-                share_invite_liff_url()
-                if share_invite_liff_url
-                else "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html"
+            setup_uri = (
+                liff_entry_url(open_action="onboarding")
+                if liff_entry_url
+                else "https://liff.line.me/2010674803-rK98c0lo/?open=onboarding"
+            )
+            pricing_uri = (
+                pricing_direct_url()
+                if pricing_direct_url
+                else "https://alive-checkin.onrender.com/liff/pricing.html"
             )
             welcome_fallback = (
-                f"👋 {name} 您好，歡迎加入「今天還在嗎」\n\n"
-                "我是您的每日平安小助手，會在您設定的時間提醒您報平安，"
-                "只有超過時間仍未報平安，才會通知您指定的守護人\n\n"
-                "開始使用前，請先完成 1 位守護人綁定，並設定每日提醒時間\n\n"
-                "🎁 完成設定即享 7 天免費安心體驗\n"
-                "🚨 緊急狀況請直接撥打 119，聊天訊息可能因網路延遲\n\n"
-                f"一鍵邀請：{share_invite_uri}\n"
+                f"👋 {name} 您好，歡迎加入「每日平安」\n\n"
+                "每天 10 秒，報個平安\n"
+                "平常不打擾，有事才通知守護人\n\n"
+                "開始使用前兩個步驟：\n"
+                "① 新增 1 位守護人\n"
+                "② 設定每日提醒時間\n\n"
+                "🎁 完成設定即可享 7 天免費安心體驗\n"
+                "緊急狀況請直接撥打 119 或 110\n\n"
+                f"立即開始設定：{setup_uri}\n"
+                f"查看方案：{pricing_uri}\n"
                 "傳「開始」可重拿歡迎卡"
             )
-            alt_text = f"❤️ 今天還在嗎｜{name} 您好，歡迎加入"
+            alt_text = f"每日平安｜{name} 您好，歡迎加入"
             flex_contents = welcome_flex(display_name) if welcome_flex is not None else None
             if flex_contents is None:
                 app.logger.error("welcome_flex contents is None — check import")
