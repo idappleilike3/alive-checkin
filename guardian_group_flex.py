@@ -979,10 +979,10 @@ def _owner_status_block(owner_info):
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友歡迎 Flex（W250723k）：歡迎文案 + 三顆永久 LIFF 按鈕。
+    """加好友歡迎 Flex（W250723m）：歡迎文案 + 三顆永久 LIFF 按鈕。
 
     僅按鈕：一鍵邀請守護人 / 需要幫忙時怎麼做 / 常見問題。
-    不含求救或升級按鈕。主 CTA → open=share-invite（LIFF 載入後直接 shareTargetPicker）。
+    不含求救或升級按鈕。主 CTA → open=share-invite（LIFF 內 login 後 shareTargetPicker）。
     footer 放大版本戳，方便對照是否為 Webhook Bot 新卡（非 OA 打招呼舊訊）。
     """
     name = (display_name or "").strip() or "您"
@@ -990,7 +990,7 @@ def welcome_flex(display_name: str | None = None):
     help_uri = liff_entry_url(open_action="help")
     faq_uri = liff_entry_url(open_action="faq")
     hero_uri = f"{(os.environ.get('APP_PUBLIC_URL') or PUBLIC_BASE).rstrip('/')}/assets/daily-peace-hero.png"
-    welcome_version = "W250723k"
+    welcome_version = "W250723m"
     return {
         "type": "bubble",
         "size": "mega",

@@ -1,4 +1,4 @@
-import ast
+﻿import ast
 import unittest
 from pathlib import Path
 
@@ -217,9 +217,10 @@ class ProductRulesTests(unittest.TestCase):
         ]
 
         self.assertIn("async function initializeLiff()", page)
-        self.assertIn("await liff.init({ liffId: config.liff_id });", init_line)
+        self.assertIn("await liff.init({ liffId });", init_line)
         self.assertIn("if (!liff.isLoggedIn())", init_line)
-        self.assertIn('liff.login({ redirectUri: window.location.href });', init_line)
+        self.assertIn("liff.login();", init_line)
+        self.assertNotIn("liff.login({ redirectUri:", init_line)
         # NEVER gate login behind !isInClient (breaks Android Chrome / OAuth return)
         self.assertNotIn("if (inClient)", init_line)
         self.assertNotIn("withLoginOnExternalBrowser", init_line)
@@ -233,21 +234,16 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("setTimeout(() => shareContactInvite()", page)
         init_app = page[page.rindex("async function initApp()") : page.index("// ===== D01")]
         self.assertIn("openShareInviteFallbackModal", init_app)
-        gate_start = init_app.index("} else if (setupDone) {")
-        gate_end = init_app.index("} else {", gate_start)
-        gate = init_app[gate_start:gate_end]
-        self.assertNotIn("shareContactInvite", gate)
-        self.assertIn('showTab("home")', gate)
+        self.assertIn("tryLineShareTargetPicker", init_app)
+        self.assertIn("wantsShareInvite", init_app)
+        self.assertIn('showTab("home")', init_app)
 
     def test_liff_login_redirect_removes_fragment_to_prevent_line_400(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
-        redirect_fn = page[
-            page.index("function buildCleanLoginRedirectUri(extraParams = {})") : page.index("function setTheme")
-        ]
-
-        self.assertIn("LINE Login redirectUri 不帶 fragment", redirect_fn)
-        self.assertIn("return qs ? `${endpoint}?${qs}` : endpoint;", redirect_fn)
-        self.assertNotIn("location.hash", redirect_fn)
+        # 仍保留 helper 供相容，但實際 login 不再帶 redirectUri
+        self.assertIn("function buildCleanLoginRedirectUri", page)
+        self.assertIn("liff.login();", page)
+        self.assertNotIn("liff.login({ redirectUri:", page)
 
     def test_liff_links_use_query_params_for_android_compatibility(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -260,7 +256,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('"invite_from", "friend_invite", "open"', page)
         self.assertIn("https://alive-checkin.onrender.com/liff/pricing.html", rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=checkin", rich_menu)
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=invite", rich_menu)
+        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=share-invite", rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=sos", rich_menu)
         self.assertIn('"label": "需要幫忙"', rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=help", rich_menu)
@@ -282,8 +278,8 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('"label": "常見問題"', flex)
         self.assertIn('"label": "一鍵邀請守護人"', flex)
         self.assertIn('open_action="share-invite"', flex)
-        self.assertIn('welcome_version = "W250723k"', flex)
-        self.assertIn("W250723k", flex)
+        self.assertIn('welcome_version = "W250723m"', flex)
+        self.assertIn("W250723m", flex)
         self.assertIn("❤️ 今天還在嗎", flex)
         self.assertIn("歡迎加入「今天還在嗎」", flex)
         self.assertIn('f"版本 {welcome_version}"', flex)
@@ -308,7 +304,10 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('help: "help.html"', page)
         self.assertIn('pricing: "liff/pricing.html"', page)
         self.assertIn('faq: "faq.html"', page)
-        self.assertIn('"share-invite": "liff/share-invite.html"', page)
+        self.assertIn("wantsShareInvite", page)
+        self.assertIn("tryLineShareTargetPicker", page)
+        self.assertIn("liff.login()", page)
+        self.assertNotIn('liff.login({ redirectUri:', page)
         self.assertIn('@app.get("/faq")', backend)
         self.assertIn('@app.get("/help")', backend)
         self.assertIn('@app.get("/pricing")', backend)
@@ -347,8 +346,9 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("shareInviteFallbackModal", page)
         self.assertIn("請貼到 LINE 給家人", page)
         self.assertIn("copyTextBestEffort", page)
-        # Never auto-fire shareTargetPicker without a user tap (breaks iOS/Android)
-        self.assertNotIn("setTimeout(() => shareContactInvite()", page)
+        # login 不帶 redirectUri（Android/iOS 參數才不會丟）
+        self.assertIn("liff.login()", page)
+        self.assertNotIn("liff.login({ redirectUri:", page)
         self.assertIn('buildPublicAppUrl({ from: safeId }, "/invite")', page)
         self.assertIn('@app.get("/invite")', backend)
         self.assertIn('send_from_directory(app.static_folder, "invite.html")', backend)

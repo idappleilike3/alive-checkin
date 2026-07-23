@@ -245,13 +245,24 @@ async function init() {
     const liffId = await resolveLiffId();
     await liff.init({ liffId });
     if (!liff.isLoggedIn()) {
-      // 標準：不可先擋 isInClient；redirectUri 保留目前 query（含 invite_from）
-      liff.login({ redirectUri: window.location.href });
+      // 絕對不要自己帶 redirectUri，LINE 會完美跳回當前頁（含參數）
+      liff.login();
       return;
     }
     
     state.loggedIn = true;
     state.lineUserId = liff.getProfile ? (await liff.getProfile()).userId : null;
+
+    // 已登入後才讀網址參數（invite_from）
+    const urlParams = new URLSearchParams(window.location.search);
+    const inviteFrom = urlParams.get("invite_from");
+    if (inviteFrom) {
+      console.log("成功抓到邀請人 ID:", inviteFrom);
+      location.replace(`https://liff.line.me/${liffId}/?invite_from=${encodeURIComponent(inviteFrom)}`);
+      return;
+    } else {
+      console.log("這是一般登入，網址沒有邀請人參數");
+    }
     
     if (state.lineUserId) {
       const res = await fetch(`${API_BASE}/api/onboarding/state?line_user_id=${state.lineUserId}`);

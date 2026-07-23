@@ -344,7 +344,8 @@ async function init() {
     const liffId = await resolveLiffId();
     await liff.init({ liffId });
     if (!liff.isLoggedIn()) {
-      liff.login({ redirectUri: window.location.href });
+      // 絕對不要自己帶 redirectUri
+      liff.login();
       return;
     }
 

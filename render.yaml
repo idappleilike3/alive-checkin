@@ -23,7 +23,7 @@ services:
       - key: REQUIRE_LIFF_AUTH
         value: "1"
       - key: DEPLOY_VERSION
-        value: W250723k
+        value: W250723m
       - key: ADMIN_PASSWORD
         sync: false
       - key: LINE_CHANNEL_ACCESS_TOKEN

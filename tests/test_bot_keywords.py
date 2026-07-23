@@ -30,10 +30,10 @@ class BotKeywordHandlerTests(unittest.TestCase):
     def test_welcome_flex_version_stamp(self):
         flex = welcome_flex("小明")
         blob = str(flex)
-        self.assertIn("W250723k", blob)
+        self.assertIn("W250723m", blob)
         self.assertIn("❤️ 今天還在嗎", blob)
         self.assertIn("歡迎加入「今天還在嗎」", blob)
-        self.assertIn("版本 W250723k", blob)
+        self.assertIn("版本 W250723m", blob)
         self.assertIn("完成設定即享 7 天免費安心體驗", blob)
         self.assertNotIn("BOT", blob)
 

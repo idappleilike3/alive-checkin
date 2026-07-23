@@ -3902,15 +3902,13 @@
         return false;
       }
       try {
-        // 標準：用目前網址當 redirectUri，保留 invite_from / open / code / state
-        const hasExtra = extraParams && Object.keys(extraParams).length > 0;
-        if (hasExtra) {
-          liff.login({ redirectUri: buildCleanLoginRedirectUri(extraParams) });
-        } else {
-          liff.login({ redirectUri: window.location.href });
-        }
+        // 使用者指定標準：絕對不要自己帶 redirectUri，LINE 會完美跳回當前頁（含參數）
+        liff.login();
       } catch (_) {
-        liff.login({ redirectUri: window.location.href });
+        try { liff.login(); } catch (e2) {
+          showLineLoginRequired(extraParams, { detail: String(e2 && e2.message || e2) });
+          return false;
+        }
       }
       return true;
     }
@@ -5381,9 +5379,9 @@
     }
 
     /**
-     * 標準 LIFF 初始化（不可用 !isInClient 擋住 invite_from OAuth 回流）：
-     * liff.init → isLoggedIn？→ 否：login({ redirectUri: location.href }) → return
-     * 只有登入後才讀 invite_from / friend_invite / open= 並跑業務邏輯。
+     * 標準 LIFF 初始化（使用者指定）：
+     * liff.init({ liffId }) → 未登入則 liff.login()（不帶 redirectUri）→ return
+     * 已登入後才讀 invite_from / friend_invite / open= 並跑業務邏輯。
      */
     async function initializeLiff() {
       if (useLocalMode) return true;
@@ -5392,26 +5390,24 @@
         return false;
       }
       try {
-        const configRes = await fetch("/api/config");
-        if (!configRes.ok) {
-          showLineLoginRequired(readSafeDeepLinkParams(), { detail: "無法讀取 /api/config" });
-          return false;
-        }
-        const config = await configRes.json();
-        appConfig = config || {};
-        if (!config.liff_id) {
-          showLineLoginRequired(readSafeDeepLinkParams(), { detail: "缺少 liff_id" });
-          return false;
-        }
-        window.__LIFF_ID__ = config.liff_id;
+        const FIXED_LIFF_ID = "2010674803-rK98c0lo";
+        let liffId = FIXED_LIFF_ID;
+        try {
+          const configRes = await fetch("/api/config");
+          if (configRes.ok) {
+            const config = await configRes.json();
+            appConfig = config || {};
+            if (config.liff_id) liffId = String(config.liff_id).trim() || FIXED_LIFF_ID;
+          }
+        } catch (_) {}
+        window.__LIFF_ID__ = liffId;
 
         // 1) 先 init（不要先判斷 isInClient）
-        await liff.init({ liffId: config.liff_id });
+        await liff.init({ liffId });
 
-        // 2) 未登入：一律 login，redirectUri 用目前網址（保留 invite_from / open / code / state）
+        // 2) 未登入：絕對不要自己帶 redirectUri
         if (!liff.isLoggedIn()) {
-          // Android Chrome / 外開 / LINE 內未授權 → 同一條路，不可因 !isInClient 擋掉
-          liff.login({ redirectUri: window.location.href });
+          liff.login();
           return false;
         }
 
@@ -5436,6 +5432,7 @@
           urlParams.get("invite_from") || getAppParam("invite_from") || ""
         ).trim();
         if (inviteFrom && inviteFrom !== lineUserId) {
+          console.log("成功抓到邀請人 ID:", inviteFrom);
           const bindResult = await apiBindEmergencyContact(inviteFrom);
           if (bindResult?.bound) {
             closeInviteAcceptPrompt();
@@ -5444,6 +5441,7 @@
             maybeShowInviteAcceptPrompt();
           }
         } else if (!inviteFrom && !isInviteeDeepLink()) {
+          console.log("這是一般登入，網址沒有邀請人參數");
           maybeShowGuardianPrompt();
         }
         return true;
@@ -6922,14 +6920,19 @@
         const openAction = getAppParam("open") || "";
         const sectionAction = getAppParam("section") || "";
         const isOnboardingInvite = openAction === "onboarding/invite";
+        const wantsShareInvite = (
+          openAction === "share-invite"
+          || openAction === "invite"
+          || isOnboardingInvite
+        );
         const publicOpenPages = {
           help: "help.html",
           pricing: "liff/pricing.html",
           plan: "liff/pricing.html",
           faq: "faq.html",
           terms: "terms.html",
-          privacy: "privacy.html",
-          "share-invite": "liff/share-invite.html"
+          privacy: "privacy.html"
+          // 注意：share-invite / invite 不轉頁，留在 LIFF SPA 內直接 shareTargetPicker
         };
         // 方案頁：若還帶 open=pricing，立刻硬轉直連頁，避免先渲染首頁
         if (openAction === "pricing" || openAction === "plan") {
@@ -6950,7 +6953,7 @@
           || currentGuardianContacts().length > 0
         );
         const setupDone = onboardingState.done || hasGuardians;
-        const wantsInviteShare = openAction === "invite" || isOnboardingInvite;
+        const wantsInviteShare = wantsShareInvite;
         if (inviteeMode) {
           clearShareFirstLocalFlags();
           if (typeof showTab === "function") {
@@ -6960,22 +6963,35 @@
           maybePrefillFriendInvite();
           await maybeShowGuardianComplete();
         } else if (wantsInviteShare) {
-          // 歡迎卡／圖文選單邀請：準備分享 UI，但絕不自動 shareTargetPicker（iOS/Android 無手勢會失敗）
+          // 歡迎卡／圖文選單「一鍵邀請」：登入後立刻嘗試 shareTargetPicker；失敗則大按鈕＋複製備援
           clearShareFirstLocalFlags();
           if (typeof showTab === "function") showTab("home");
-          if (!setupDone) {
-            await showOnboarding();
-          } else {
-            const { bindUrl, text } = buildContactInvite("");
-            fillShareInviteSurfaces(bindUrl, text);
+          const { bindUrl, text } = buildContactInvite("");
+          fillShareInviteSurfaces(bindUrl, text);
+          let shared = false;
+          try {
+            shared = await tryLineShareTargetPicker(text);
+          } catch (shareErr) {
+            console.warn("auto shareTargetPicker failed", shareErr);
+          }
+          if (!shared) {
             openShareInviteFallbackModal(bindUrl);
+            // 再露出 onboarding 分享步驟大按鈕，確保 Android/iOS 可點
+            if (!setupDone) {
+              await showOnboarding();
+              showOnboardingShareStep();
+            }
+            showInlineSuccess("請點「一鍵邀請守護人」大按鈕，或複製連結貼給家人");
+          } else {
+            showInlineSuccess("已開啟 LINE 分享，請選好友傳送邀請");
+            if (!setupDone) await showOnboarding();
           }
         } else if (setupDone) {
           clearShareFirstLocalFlags();
           if (typeof showTab === "function") showTab("home");
           await maybeShowGuardianComplete();
         } else {
-          // 首次使用者：顯示分享→填寫→提醒流程（不在 page load 自動叫起 shareTargetPicker）
+          // 首次使用者：顯示分享→填寫→提醒流程
           await showOnboarding();
         }
         // Deep link：已完成首次設定時，open=onboarding 也進首頁；其餘依參數切頁
