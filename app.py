@@ -3158,7 +3158,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723c",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723d",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3423,7 +3423,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723c",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723d",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -3478,44 +3478,50 @@ def create_app(config=None):
         line_bot_api = LineBotApi(token)
         handler = WebhookHandler(secret)
 
-        def _sos_handle(line_bot_api, line_user_id, command):
-            """需要幫忙 3 次連按流程(快速發送版)。
+        def _sos_handle(line_bot_api, line_user_id, command, reply_token=None, group_id=None):
+            """需要幫忙：先回緊急求助 Flex；通知家人走 3 連按。
 
             command:
-              - '需要幫忙' / 'SOS' / 'sos' : 按一次(累計 tap_count)
+              - '需要幫忙' / 'SOS' / 'sos' / '緊急求助' : 入口卡（撥打 + 通知家人）
+              - '通知家人' : 3 連按累計
               - '取消需要幫忙' / 'SOS 取消' : 取消 pending
             """
             state = load_state(app.config["DATA_FILE"])
             profile = get_profile(state, line_user_id) if line_user_id else None
+            app.logger.info(
+                "sos_handle command=%s user=%s group=%s",
+                command,
+                (line_user_id or "")[:8],
+                (group_id or "")[:8],
+            )
 
             def reply(flex, alt_text=""):
+                messages = []
                 if FlexSendMessage is not None and flex is not None:
-                    line_bot_api.push_message(
-                        line_user_id,
-                        FlexSendMessage(alt_text=alt_text, contents=flex),
-                    )
+                    messages.append(FlexSendMessage(alt_text=alt_text, contents=flex))
                 else:
-                    line_bot_api.push_message(
-                        line_user_id,
-                        TextSendMessage(text=alt_text or "需要幫忙"),
-                    )
+                    messages.append(TextSendMessage(text=alt_text or "需要幫忙"))
+                try:
+                    if reply_token:
+                        line_bot_api.reply_message(reply_token, messages)
+                        return
+                except Exception as exc:
+                    app.logger.exception("sos reply_message failed: %s", exc)
+                # reply_token 失敗或未提供 → push 到同一個對話
+                push_target = group_id or line_user_id
+                if not push_target:
+                    app.logger.error("sos send aborted: no push target")
+                    return
+                try:
+                    line_bot_api.push_message(push_target, messages)
+                except Exception as exc:
+                    app.logger.exception("sos push_message failed: %s", exc)
 
-            # === Plan 檢查（不依 799 限定；僅確認方案仍允許通知家人） ===
-            rules = plan_rules(profile) if profile else {}
-            sos_enabled = bool(rules.get("sos_enabled", False))
-            _plan_map = {"paid_799": "799 月費", "paid_799_year": "799 年費"}
-            plan_label = _plan_map.get((profile or {}).get("plan", ""), (profile or {}).get("plan") or "尚未訂閱")
+            entry_commands = ("需要幫忙", "SOS", "sos", "緊急求助")
+            notify_commands = ("通知家人", "需要幫忙確認", "SOS 確認 2", "SOS 確認 3")
+            cancel_commands = ("SOS 取消", "取消需要幫忙")
 
-            if not sos_enabled:
-                reply(None, (
-                    "目前無法使用「需要幫忙」通知家人。\n\n"
-                    f"你目前的方案:{plan_label or '尚未訂閱'}\n\n"
-                    "請先確認方案是否有效，或到主選單「查看方案」了解詳情。\n"
-                    "若有立即危險，請先撥打 119。"
-                ))
-                return
-
-            if command in ("SOS 取消", "取消需要幫忙"):
+            if command in cancel_commands:
                 if sos_flow.sos_cancel_pending(state, line_user_id):
                     save_state(app.config["DATA_FILE"], state)
                     reply(sos_flow.sos_cancelled_flex(), "✅ 已取消需要幫忙")
@@ -3523,121 +3529,107 @@ def create_app(config=None):
                     reply(None, "沒有待取消的需要幫忙通知")
                 return
 
-            # 記錄一次點選
+            # 入口卡：一律回緊急 Flex（不擋方案；實際通知再檢查）
+            pending = sos_flow.sos_get_pending(state, line_user_id) if line_user_id else None
+            pending_active = bool(
+                pending
+                and pending.get("stage") not in ("cancelled", "sent")
+                and int(pending.get("tap_count") or 0) > 0
+            )
+            if command in entry_commands and not pending_active:
+                family_tel = None
+                family_label = None
+                if profile:
+                    contacts = sorted(
+                        (profile.get("contacts") or []),
+                        key=lambda c: int(c.get("priority") or 9999),
+                    )
+                    for contact in contacts:
+                        phone = str(contact.get("phone") or contact.get("mobile") or "").strip()
+                        digits = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
+                        if digits:
+                            family_tel = digits
+                            family_label = contact.get("name") or contact.get("relationship") or "家人"
+                            break
+                liff_sos = (
+                    liff_entry_url(open_action="sos")
+                    if liff_entry_url
+                    else "https://liff.line.me/2010674803-rK98c0lo/?open=sos"
+                )
+                reply(
+                    sos_flow.sos_emergency_flex(
+                        family_tel=family_tel,
+                        family_label=family_label,
+                        liff_sos_uri=liff_sos,
+                    ),
+                    "🆘 需要幫忙 — 先打電話，必要時通知家人",
+                )
+                return
+
+            if command not in notify_commands and command not in entry_commands:
+                reply(None, "請傳送「需要幫忙」開啟求助選項")
+                return
+
+            # === 通知家人：各方案 sos_enabled；不過度綁 799 ===
+            rules = plan_rules(profile) if profile else PLAN_LIMITS.get("trial", {})
+            sos_enabled = bool(rules.get("sos_enabled", True))
+            if profile and (profile.get("plan") or "trial") not in ("free", "trial"):
+                if not paid_membership_is_active(profile) and not trial_active(profile):
+                    sos_enabled = False
+            plan_label = (profile or {}).get("plan") or "尚未完成設定"
+
+            if not sos_enabled:
+                # 仍給入口卡（可打電話），並說明無法通知家人
+                liff_sos = (
+                    liff_entry_url(open_action="sos")
+                    if liff_entry_url
+                    else "https://liff.line.me/2010674803-rK98c0lo/?open=sos"
+                )
+                reply(
+                    sos_flow.sos_emergency_flex(liff_sos_uri=liff_sos),
+                    f"目前可先打電話求助；通知家人需有效守護方案（{plan_label}）",
+                )
+                return
+
+            # 記錄一次點選（3 連按）
             result = sos_flow.sos_tap(state, line_user_id)
             entry = result.get("entry", {})
             action = result.get("action")
             tap_count = entry.get("tap_count", 1)
 
             if action == "sent":
-                # 已送過的,顯示 sent Flex(並有取消按鈕)
                 reply(sos_flow.sos_sent_flex(), "🚨 已通知家人需要幫忙")
                 save_state(app.config["DATA_FILE"], state)
                 return
 
-            # 第 3 次按 → 立刻發送
             if tap_count >= 3:
-                # 實際呼叫 trigger_sos
                 try:
                     res, code = trigger_sos(
                         app.config["DATA_FILE"],
                         {"line_user_id": line_user_id, "via": "3tap"},
                         app.config,
                     )
-                    event_id = res.get("event_id") if isinstance(res, dict) else None
-                    sos_flow.sos_mark_sent(state, line_user_id, event_id)
-                    reply(sos_flow.sos_sent_flex(), "🚨 已通知家人需要幫忙")
+                    if code >= 400:
+                        sos_flow.sos_cancel_pending(state, line_user_id)
+                        err = (res or {}).get("error") if isinstance(res, dict) else "send failed"
+                        app.logger.error("trigger_sos failed code=%s err=%s", code, err)
+                        reply(None, f"⚠️ 需要幫忙通知發送失敗：{str(err)[:160]}")
+                    else:
+                        event_id = res.get("event_id") if isinstance(res, dict) else None
+                        sos_flow.sos_mark_sent(state, line_user_id, event_id)
+                        reply(sos_flow.sos_sent_flex(), "🚨 已通知家人需要幫忙")
                 except Exception as exc:
-                    # 發送失敗也要讓用戶知道
+                    app.logger.exception("trigger_sos exception")
                     sos_flow.sos_cancel_pending(state, line_user_id)
                     reply(None, f"⚠️ 需要幫忙通知發送失敗:{str(exc)[:200]}")
                 save_state(app.config["DATA_FILE"], state)
                 return
 
-            # 第 1 / 2 次按 → 顯示警告卡
             reply(sos_flow.sos_warning_flex(tap_count), f"🚨 需要幫忙 ({tap_count}/3)")
             save_state(app.config["DATA_FILE"], state)
 
-        @handler.add(JoinEvent)
-        def handle_group_join(event):
-            line_user_id = getattr(event.source, "user_id", None)
-            group_id = getattr(event.source, "group_id", None)
-            outcome, _status = guardian_group_join_outcome(
-                app.config["DATA_FILE"], line_user_id, group_id
-            )
-            try:
-                # 2026-07-21 patch 27: 計算 owner_info 供 intro_flex 顯示管理員狀態
-                owner_info = {"bound": False, "is_owner": False, "owner_id": None,
-                              "is_active": False, "owner_plan": None}
-                state = load_state(app.config["DATA_FILE"])
-                existing_group = state.get("guardian_groups", {}).get(group_id or "", {})
-                if existing_group.get("status") == "active":
-                    owner_id = existing_group.get("owner_line_user_id")
-                    owner_profile = state.get("users", {}).get(owner_id, {})
-                    owner_plan = owner_profile.get("plan")
-                    is_active = bool(owner_profile) and paid_membership_is_active(owner_profile)
-                    owner_info = {
-                        "bound": True,
-                        "is_owner": (line_user_id == owner_id),
-                        "owner_id": owner_id,
-                        "is_active": is_active,
-                        "owner_plan": owner_plan,
-                    }
-
-                # 2026-07-21 patch 27: 一律先自我介紹(讓所有用戶都看到 bot 是什麼)
-                # 不論綁定成功或失敗,都先送 intro Flex(8 區塊)
-                # 如果未綁定,owner_info.bound=False → 不顯示 owner 區塊
-                # 在 footer 加 CTA 提示用戶對應動作
-                if FlexSendMessage is not None and guardian_group_intro_flex is not None:
-                    line_bot_api.reply_message(
-                        event.reply_token,
-                        FlexSendMessage(
-                            alt_text="🛡️ 守護群已就緒,管理員可一鍵綁定",
-                            contents=guardian_group_intro_flex(owner_info),
-                        ),
-                    )
-                    # 如果資格不符(需 799 但用戶不是),在自我介紹後補一張「如何啟用」Flex
-                    if _status != 200 and outcome.get("should_leave") is False:
-                        # 資格不符但不是「已被佔用」,發提醒
-                        reason = outcome.get("reply_text", "需要 799 守護版才能建立守護群")
-                        # 簡短文字提醒(因為剛才已送了 intro Flex)
-                        try:
-                            line_bot_api.push_message(
-                                group_id,
-                                TextSendMessage(text=(
-                                    f"💡 {reason}\n\n"
-                                    "升級 799 守護版(月費/年費)即可在群裡綁定守護群\n"
-                                    "在 LINE 主選單點「查看方案」了解更多"
-                                )),
-                            )
-                        except Exception:
-                            pass
-                else:
-                    line_bot_api.reply_message(
-                        event.reply_token,
-                        TextSendMessage(text=outcome["reply_text"]),
-                    )
-            finally:
-                # 已被其他會員佔用 → 直接離開(沒辦法搶別人的群)
-                # 資格不符 → 保留在群(讓用戶升級後可以綁)
-                # 2026-07-21 patch 27: 只在被佔用時離開
-                if group_id and _status == 409:
-                    line_bot_api.leave_group(group_id)
-
-        @handler.add(FollowEvent)
-        def handle_follow(event):
-            """加好友歡迎：優先回 Flex(Exact 歡迎文案 + 立即綁定守護人)。
-
-            不再用純文字為主、對使用者文案不出現機器人字眼。Flex 失敗時才 fallback 短文案。
-            """
-            line_user_id = getattr(event.source, "user_id", None)
-            display_name = None
-            if line_user_id:
-                try:
-                    profile = line_bot_api.get_profile(line_user_id)
-                    display_name = getattr(profile, "display_name", None) or None
-                except Exception:
-                    display_name = None
+        def _send_welcome(line_bot_api, reply_token=None, line_user_id=None, display_name=None):
+            """Follow / 關鍵字共用：送 welcome_flex，失敗寫 log 並 fallback。"""
             name = (display_name or "").strip() or "您"
             welcome_fallback = (
                 f"👋 {name} 您好\n"
@@ -3647,43 +3639,150 @@ def create_app(config=None):
                 "平常不打擾，有事才通知您指定的家人\n"
                 "🎁 新手可先免費體驗 7 天。開始前，請先邀請 1 位家人當守護人\n\n"
                 f"一鍵邀請守護人：{(liff_entry_url(open_action='onboarding/invite') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo/?open=onboarding/invite')}\n"
-                "歡迎卡 W250723c"
+                "歡迎卡 W250723d"
             )
-            alt_text = f"👋 {name} 您好，歡迎加入每日平安 — 立即免費試用 7 天（W250723c）"
+            alt_text = f"👋 {name} 您好，歡迎加入每日平安 — 立即免費試用 7 天（W250723d）"
             flex_contents = welcome_flex(display_name) if welcome_flex is not None else None
             try:
-                if FlexSendMessage is not None and flex_contents is not None:
+                if FlexSendMessage is not None and flex_contents is not None and reply_token:
+                    line_bot_api.reply_message(
+                        reply_token,
+                        FlexSendMessage(alt_text=alt_text, contents=flex_contents),
+                    )
+                    return
+                if reply_token:
+                    line_bot_api.reply_message(reply_token, TextSendMessage(text=welcome_fallback))
+                    return
+            except Exception as exc:
+                app.logger.exception("welcome reply failed: %s", exc)
+            if line_user_id and FlexSendMessage is not None and flex_contents is not None:
+                try:
+                    line_bot_api.push_message(
+                        line_user_id,
+                        FlexSendMessage(alt_text=alt_text, contents=flex_contents),
+                    )
+                    return
+                except Exception as exc:
+                    app.logger.exception("welcome push flex failed: %s", exc)
+            if line_user_id:
+                try:
+                    line_bot_api.push_message(line_user_id, TextSendMessage(text=welcome_fallback))
+                except Exception as exc:
+                    app.logger.exception("welcome push text failed: %s", exc)
+
+        @handler.add(JoinEvent)
+        def handle_group_join(event):
+            """Bot 被邀進群 → 必送守護群歡迎卡（不依賴自動綁定成功）。"""
+            line_user_id = getattr(event.source, "user_id", None)
+            group_id = getattr(event.source, "group_id", None)
+            room_id = getattr(event.source, "room_id", None)
+            target_id = group_id or room_id
+            app.logger.info(
+                "JoinEvent group=%s room=%s inviter=%s",
+                (group_id or "")[:12],
+                (room_id or "")[:12],
+                (line_user_id or "")[:8],
+            )
+
+            # JoinEvent 通常沒有 user_id；不要因無法自動綁定就拒送歡迎卡
+            outcome, _status = {"reply_text": "歡迎加入守護群", "should_leave": False}, 200
+            if line_user_id and group_id:
+                try:
+                    outcome, _status = guardian_group_join_outcome(
+                        app.config["DATA_FILE"], line_user_id, group_id
+                    )
+                except Exception as exc:
+                    app.logger.exception("guardian_group_join_outcome failed: %s", exc)
+                    outcome, _status = {"reply_text": "歡迎加入守護群", "should_leave": False}, 200
+
+            owner_info = {
+                "bound": False,
+                "is_owner": False,
+                "owner_id": None,
+                "is_active": False,
+                "owner_plan": None,
+            }
+            try:
+                state = load_state(app.config["DATA_FILE"])
+                existing_group = state.get("guardian_groups", {}).get(group_id or "", {})
+                if existing_group.get("status") == "active":
+                    owner_id = existing_group.get("owner_line_user_id")
+                    owner_profile = state.get("users", {}).get(owner_id, {})
+                    owner_plan = owner_profile.get("plan")
+                    is_active = bool(owner_profile) and paid_membership_is_active(owner_profile)
+                    owner_info = {
+                        "bound": True,
+                        "is_owner": (line_user_id == owner_id) if line_user_id else False,
+                        "owner_id": owner_id,
+                        "is_active": is_active,
+                        "owner_plan": owner_plan,
+                    }
+            except Exception as exc:
+                app.logger.exception("join owner_info load failed: %s", exc)
+
+            sent = False
+            try:
+                if FlexSendMessage is not None and guardian_group_intro_flex is not None:
+                    flex = guardian_group_intro_flex(owner_info)
                     line_bot_api.reply_message(
                         event.reply_token,
                         FlexSendMessage(
-                            alt_text=alt_text,
-                            contents=flex_contents,
+                            alt_text="❤️ 每日平安｜歡迎加入守護群",
+                            contents=flex,
                         ),
                     )
+                    sent = True
                 else:
                     line_bot_api.reply_message(
                         event.reply_token,
-                        TextSendMessage(text=welcome_fallback),
+                        TextSendMessage(text=outcome.get("reply_text") or "歡迎加入守護群，請管理員點「點我綁定守護群」"),
                     )
-            except Exception:
+                    sent = True
+            except Exception as exc:
+                app.logger.exception("JoinEvent reply intro failed: %s", exc)
+
+            if not sent and target_id:
                 try:
-                    line_bot_api.reply_message(
-                        event.reply_token,
-                        TextSendMessage(text=welcome_fallback),
-                    )
+                    if FlexSendMessage is not None and guardian_group_intro_flex is not None:
+                        line_bot_api.push_message(
+                            target_id,
+                            FlexSendMessage(
+                                alt_text="❤️ 每日平安｜歡迎加入守護群",
+                                contents=guardian_group_intro_flex(owner_info),
+                            ),
+                        )
+                    else:
+                        line_bot_api.push_message(
+                            target_id,
+                            TextSendMessage(text="歡迎加入守護群，請管理員傳送「點我綁定守護群」完成設定"),
+                        )
+                except Exception as exc:
+                    app.logger.exception("JoinEvent push intro failed: %s", exc)
+
+            # 僅在群已被其他會員佔用時離開
+            if group_id and _status == 409:
+                try:
+                    line_bot_api.leave_group(group_id)
+                except Exception as exc:
+                    app.logger.exception("leave_group failed: %s", exc)
+
+        @handler.add(FollowEvent)
+        def handle_follow(event):
+            """加好友歡迎：優先回 Flex(Exact 歡迎文案 + 立即綁定守護人)。"""
+            line_user_id = getattr(event.source, "user_id", None)
+            display_name = None
+            if line_user_id:
+                try:
+                    profile = line_bot_api.get_profile(line_user_id)
+                    display_name = getattr(profile, "display_name", None) or None
                 except Exception:
-                    # reply_token 可能已用過：改 push
-                    if line_user_id and FlexSendMessage is not None and flex_contents is not None:
-                        try:
-                            line_bot_api.push_message(
-                                line_user_id,
-                                FlexSendMessage(
-                                    alt_text=alt_text,
-                                    contents=flex_contents,
-                                ),
-                            )
-                        except Exception:
-                            pass
+                    display_name = None
+            _send_welcome(
+                line_bot_api,
+                reply_token=event.reply_token,
+                line_user_id=line_user_id,
+                display_name=display_name,
+            )
 
         @handler.add(MemberJoinedEvent)
         def handle_member_joined(event):
@@ -3725,17 +3824,43 @@ def create_app(config=None):
             group_id = getattr(event.source, "group_id", None)
             stripped = text.strip()
 
-            # 需要幫忙 3 次連按流程（相容舊 SOS 關鍵字）
+            # 歡迎詞關鍵字（已是好友也可重拿歡迎卡）
+            if stripped in ("開始", "歡迎", "說明", "歡迎詞"):
+                display_name = None
+                if line_user_id:
+                    try:
+                        profile = line_bot_api.get_profile(line_user_id)
+                        display_name = getattr(profile, "display_name", None) or None
+                    except Exception:
+                        display_name = None
+                _send_welcome(
+                    line_bot_api,
+                    reply_token=event.reply_token,
+                    line_user_id=line_user_id,
+                    display_name=display_name,
+                )
+                return
+
+            # 需要幫忙 / 緊急求助 / 通知家人（3 連按）
             if sos_flow is not None and stripped in (
                 "需要幫忙",
                 "SOS",
                 "sos",
+                "緊急求助",
+                "通知家人",
+                "需要幫忙確認",
                 "SOS 確認 2",
                 "SOS 確認 3",
                 "SOS 取消",
                 "取消需要幫忙",
             ):
-                _sos_handle(line_bot_api, line_user_id, stripped)
+                _sos_handle(
+                    line_bot_api,
+                    line_user_id,
+                    stripped,
+                    reply_token=event.reply_token,
+                    group_id=group_id,
+                )
                 return
 
             # 2026-07-21 patch 17: BOT 狀態查詢(DM + 群組都可用)
@@ -3818,17 +3943,13 @@ def create_app(config=None):
                         line_bot_api.reply_message(
                             event.reply_token,
                             FlexSendMessage(
-                                alt_text="📊 守護群狀態",
+                                alt_text="守護群狀態",
                                 contents=guardian_group_status_flex(profile, state),
                             ),
                         )
                     else:
-                        # fallback
-                        owned_count = len(profile.get("guardian_group_ids") or [])
-                        line_bot_api.reply_message(
-                            event.reply_token,
-                            TextSendMessage(text=f"目前已綁定 {owned_count} 個守護群"),
-                        )
+                        reply_text = f"守護群數量：{len(profile.get('guardian_group_ids') or [])}"
+                        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                     return
 
                 # 2-1) 今日平安名單：只有群組建立者/管理員可看詳細資料

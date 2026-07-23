@@ -45,7 +45,17 @@ class GuardianGroupJoinTests(unittest.TestCase):
 
         self.assertIn("JoinEvent", source)
         self.assertIn("@handler.add(JoinEvent)", source)
-        self.assertIn("guardian_group_join_outcome", source)
+        self.assertIn("guardian_group_intro_flex", source)
+        self.assertIn("JoinEvent reply intro failed", source)
+        self.assertIn("JoinEvent push intro failed", source)
+
+    def test_intro_flex_omits_empty_owner_box_when_unbound(self):
+        from guardian_group_flex import guardian_group_intro_flex
+
+        intro = guardian_group_intro_flex({"bound": False})
+        for block in intro["body"]["contents"]:
+            if block.get("type") == "box":
+                self.assertTrue(block.get("contents"), "LINE rejects empty Flex boxes")
 
 
 if __name__ == "__main__":

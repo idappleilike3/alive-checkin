@@ -122,7 +122,8 @@ def _group_quick_actions():
             _postback_button("聯絡家人", "聯絡家人", style="secondary", color=GREEN_DARK, height="md"),
         ],
         [
-            _uri_button("需要幫忙", liff_entry_url(open_action="sos"), style="secondary", color=RED_WARN, height="md"),
+            # 用 message 觸發 Bot 緊急求助 Flex（非只開 LIFF）
+            _postback_button("需要幫忙", "需要幫忙", style="secondary", color=RED_WARN, height="md"),
             _postback_button("守護群狀態", "守護群狀態", style="secondary", color=GREEN_DARK, height="md"),
         ],
     ]
@@ -182,6 +183,58 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
             "height": "md",
         }
 
+    # LINE Flex 禁止空 contents box；未綁定時不可塞空區塊，否則整張卡被 API 拒收
+    body_contents = [
+        {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "xs",
+            "backgroundColor": "#E8F8EE",
+            "cornerRadius": "md",
+            "paddingAll": "md",
+            "borderColor": GREEN_DARK,
+            "borderWidth": "1px",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "這裡用來互相關心",
+                    "size": "lg",
+                    "weight": "bold",
+                    "color": GREEN_DARK,
+                },
+                {
+                    "type": "text",
+                    "text": "收到家人的平安訊息。在這提醒報平安、發需要幫忙通知、逾期未報平安或主動求助時，才會在群裡提醒",
+                    "size": "lg",
+                    "color": GRAY,
+                    "wrap": True,
+                },
+            ],
+        },
+    ]
+    owner_block = _owner_status_block(owner_info)
+    if owner_block:
+        body_contents.append(owner_block)
+    body_contents.extend(
+        [
+            {
+                "type": "text",
+                "text": "管理員第一次進群，請先完成守護群設定",
+                "size": "lg",
+                "weight": "bold",
+                "color": GRAY,
+                "margin": "sm",
+            },
+            {
+                "type": "text",
+                "text": "完成後會顯示「我已完成守護群設定」。群內狀態明細預設只有管理員可以查看，保護家人隱私",
+                "size": "lg",
+                "color": GRAY_LIGHT,
+                "wrap": True,
+            },
+        ]
+    )
+
     return {
         "type": "bubble",
         "size": "mega",
@@ -219,50 +272,7 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
             "spacing": "md",
             "paddingTop": "lg",
             "paddingBottom": "md",
-            "contents": [
-                {
-                    "type": "box",
-                    "layout": "vertical",
-                    "spacing": "xs",
-                    "backgroundColor": "#E8F8EE",
-                    "cornerRadius": "md",
-                    "paddingAll": "md",
-                    "borderColor": GREEN_DARK,
-                    "borderWidth": "1px",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": "這裡用來互相關心",
-                            "size": "lg",
-                            "weight": "bold",
-                            "color": GREEN_DARK,
-                        },
-                        {
-                            "type": "text",
-                            "text": "收到家人的平安訊息。在這提醒報平安、發需要幫忙通知、逾期未報平安或主動求助時，才會在群裡提醒",
-                            "size": "lg",
-                            "color": GRAY,
-                            "wrap": True,
-                        },
-                    ],
-                },
-                _owner_status_block(owner_info),
-                {
-                    "type": "text",
-                    "text": "管理員第一次進群，請先完成守護群設定",
-                    "size": "lg",
-                    "weight": "bold",
-                    "color": GRAY,
-                    "margin": "sm",
-                },
-                {
-                    "type": "text",
-                    "text": "完成後會顯示「我已完成守護群設定」。群內狀態明細預設只有管理員可以查看，保護家人隱私",
-                    "size": "lg",
-                    "color": GRAY_LIGHT,
-                    "wrap": True,
-                },
-            ],
+            "contents": body_contents,
         },
         "footer": {
             "type": "box",
@@ -871,7 +881,8 @@ def _owner_status_block(owner_info):
     蝦董續約後會自動恢復 🛡️ 狀態。
     """
     if not owner_info or not owner_info.get("bound"):
-        return {"type": "box", "layout": "vertical", "contents": []}
+        # 不可回傳空 contents（LINE Flex 會整卡拒收 → 進群歡迎詞消失）
+        return None
 
     if owner_info.get("is_owner"):
         if owner_info.get("is_active"):
@@ -981,7 +992,7 @@ def welcome_flex(display_name: str | None = None):
     help_uri = liff_entry_url(open_action="help")
     hero_uri = f"{(os.environ.get('APP_PUBLIC_URL') or PUBLIC_BASE).rstrip('/')}/assets/daily-peace-hero.png"
     # 可見版本戳：方便確認 FollowEvent 是否已換成新歡迎卡（封鎖再加好友才會重送）
-    welcome_version = "W250723c"
+    welcome_version = "W250723d"
     return {
         "type": "bubble",
         "size": "mega",

@@ -41,6 +41,120 @@ SOS_POST_SEND_CANCEL_MIN = 10
 # Flex Message 構建器
 # ────────────────────────────────────────────────────────────
 
+def sos_emergency_flex(family_tel: str | None = None, family_label: str | None = None, liff_sos_uri: str | None = None):
+    """需要幫忙入口卡：先撥打 110/119／家人，再連按通知家人。
+
+    人人可看、不依 799。通知家人走 message「通知家人」進入 3 連按。
+    """
+    dial_family_label = (family_label or "第一聯絡人")[:16]
+    family_uri = f"tel:{family_tel}" if family_tel else (liff_sos_uri or "https://liff.line.me/2010674803-rK98c0lo/?open=call")
+    family_btn_label = f"📞 打給{dial_family_label}" if family_tel else "📞 聯絡家人"
+    panel_uri = liff_sos_uri or "https://liff.line.me/2010674803-rK98c0lo/?open=sos"
+
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": RED,
+            "paddingTop": "lg",
+            "paddingBottom": "lg",
+            "paddingStart": "lg",
+            "paddingEnd": "lg",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "🆘 需要幫忙",
+                    "color": "#FFFFFF",
+                    "size": "xxl",
+                    "weight": "bold",
+                    "align": "center",
+                },
+                {
+                    "type": "text",
+                    "text": "先打電話，必要時再通知家人",
+                    "color": "#FFFFFF",
+                    "size": "md",
+                    "align": "center",
+                    "margin": "sm",
+                    "wrap": True,
+                },
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "paddingAll": "lg",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "有立即危險請先撥打 119 或 110。本服務不是報警系統。",
+                    "size": "md",
+                    "color": GRAY,
+                    "wrap": True,
+                },
+                {
+                    "type": "text",
+                    "text": "若要通知家人，請點下方「通知家人」並連按 3 次確認。",
+                    "size": "md",
+                    "color": GRAY,
+                    "wrap": True,
+                },
+            ],
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "paddingAll": "md",
+            "backgroundColor": "#FAFAFA",
+            "contents": [
+                {
+                    "type": "button",
+                    "action": {"type": "uri", "label": "撥打 119", "uri": "tel:119"},
+                    "style": "primary",
+                    "color": RED,
+                    "height": "md",
+                },
+                {
+                    "type": "button",
+                    "action": {"type": "uri", "label": "撥打 110", "uri": "tel:110"},
+                    "style": "primary",
+                    "color": ORANGE,
+                    "height": "md",
+                },
+                {
+                    "type": "button",
+                    "action": {"type": "uri", "label": family_btn_label[:20], "uri": family_uri},
+                    "style": "secondary",
+                    "color": GREEN_DARK,
+                    "height": "md",
+                },
+                {
+                    "type": "button",
+                    "action": {
+                        "type": "message",
+                        "label": "通知家人（連按 3 次）",
+                        "text": "通知家人",
+                    },
+                    "style": "primary",
+                    "color": RED,
+                    "height": "md",
+                },
+                {
+                    "type": "button",
+                    "action": {"type": "uri", "label": "開啟完整求助頁", "uri": panel_uri},
+                    "style": "link",
+                    "color": GRAY,
+                    "height": "sm",
+                },
+            ],
+        },
+    }
+
+
 def sos_warning_flex(tap_count: int, window_sec: int = SOS_TAP_WINDOW_SEC):
     """第 N 次「需要幫忙」警告:還能取消 + 再按一次確認。"""
     remaining = tap_count - 2  # 第 1 次顯示 1/3, 第 2 次顯示 2/3
@@ -120,7 +234,7 @@ def sos_warning_flex(tap_count: int, window_sec: int = SOS_TAP_WINDOW_SEC):
                     "action": {
                         "type": "message",
                         "label": f"再按一次 ({tap_count}/3 → {tap_count + 1 if tap_count < 3 else '發送'})",
-                        "text": "需要幫忙",
+                        "text": "通知家人",
                     },
                     "style": "primary",
                     "color": bg,
