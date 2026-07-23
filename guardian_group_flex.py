@@ -1013,10 +1013,13 @@ def welcome_greeting_text(display_name: str | None = None) -> str:
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友歡迎 Flex（粉白風格）：真實暱稱問候 + 兩顆 CTA。
+    """加好友歡迎 Flex（粉白風格，對齊設計稿）：真實暱稱問候 + 兩顆 CTA。
 
-    -「立即開始設定」→ LIFF onboarding（綁守護人＋提醒時間）
-    -「查看方案」→ 方案頁直連
+    結構對齊 mockup：
+    - Header：唯一 Logo + 👋 您好歡迎加入 / 每日平安
+    - Hero：白卡視覺（心＋大字＋手機「我平安」），無第二個 Logo
+    - Body：兩步驟並排、黃底 7 天免費、119/110 免責
+    - Footer：立即開始設定 + 查看方案
     """
     greeting = welcome_greeting_text(display_name)
     setup_uri = liff_entry_url(open_action="onboarding")
@@ -1028,24 +1031,34 @@ def welcome_flex(display_name: str | None = None):
     pink_soft = "#FFE4EC"
     pink_accent = "#DB2777"
     text_dark = "#831843"
+    yellow_bg = "#FFF7D6"
+    step_bg = "#FFFFFF"
+    teal_btn = "#0EA5A4"
 
     return {
         "type": "bubble",
         "size": "mega",
         "header": {
             "type": "box",
-            "layout": "horizontal",
-            "spacing": "md",
+            "layout": "vertical",
+            "spacing": "sm",
             "paddingAll": "lg",
             "backgroundColor": pink_bg,
             "contents": [
                 {
-                    "type": "image",
-                    "url": logo_uri,
-                    "size": "xs",
-                    "aspectMode": "cover",
-                    "aspectRatio": "1:1",
-                    "flex": 0,
+                    "type": "box",
+                    "layout": "horizontal",
+                    "contents": [
+                        {
+                            "type": "image",
+                            "url": logo_uri,
+                            "size": "sm",
+                            "aspectMode": "fit",
+                            "aspectRatio": "1:1",
+                            "flex": 0,
+                        }
+                    ],
+                    "justifyContent": "center",
                 },
                 {
                     "type": "text",
@@ -1054,8 +1067,16 @@ def welcome_flex(display_name: str | None = None):
                     "size": "lg",
                     "color": text_dark,
                     "wrap": True,
-                    "flex": 1,
-                    "gravity": "center",
+                    "align": "center",
+                },
+                {
+                    "type": "text",
+                    "text": "每日平安",
+                    "weight": "bold",
+                    "size": "xl",
+                    "color": pink_accent,
+                    "wrap": True,
+                    "align": "center",
                 },
             ],
         },
@@ -1063,7 +1084,7 @@ def welcome_flex(display_name: str | None = None):
             "type": "image",
             "url": heart_uri,
             "size": "full",
-            "aspectMode": "cover",
+            "aspectMode": "fit",
             "aspectRatio": "20:9",
         },
         "body": {
@@ -1071,71 +1092,31 @@ def welcome_flex(display_name: str | None = None):
             "layout": "vertical",
             "spacing": "md",
             "paddingAll": "lg",
-            "backgroundColor": "#FFFFFF",
+            "backgroundColor": pink_bg,
             "contents": [
                 {
                     "type": "box",
                     "layout": "vertical",
                     "spacing": "sm",
                     "paddingAll": "md",
-                    "backgroundColor": pink_soft,
-                    "cornerRadius": "md",
+                    "backgroundColor": "#FFFFFF",
+                    "cornerRadius": "xl",
                     "contents": [
                         {
                             "type": "text",
                             "text": "每天 10 秒，報個平安",
                             "weight": "bold",
-                            "size": "lg",
+                            "size": "xl",
                             "color": pink_accent,
                             "wrap": True,
+                            "align": "center",
                         },
                         {
                             "type": "text",
                             "text": "平常不打擾，有事才通知守護人",
                             "weight": "bold",
-                            "size": "md",
+                            "size": "lg",
                             "color": text_dark,
-                            "wrap": True,
-                        },
-                    ],
-                },
-                {
-                    "type": "text",
-                    "text": "開始使用前兩個步驟",
-                    "weight": "bold",
-                    "size": "lg",
-                    "color": text_dark,
-                    "wrap": True,
-                },
-                {
-                    "type": "text",
-                    "text": "① 新增 1 位守護人",
-                    "weight": "bold",
-                    "size": "md",
-                    "color": GRAY,
-                    "wrap": True,
-                },
-                {
-                    "type": "text",
-                    "text": "② 設定每日提醒時間",
-                    "weight": "bold",
-                    "size": "md",
-                    "color": GRAY,
-                    "wrap": True,
-                },
-                {
-                    "type": "box",
-                    "layout": "vertical",
-                    "paddingAll": "md",
-                    "backgroundColor": pink_bg,
-                    "cornerRadius": "md",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": "🎁 完成設定即可享 7 天免費安心體驗",
-                            "weight": "bold",
-                            "size": "md",
-                            "color": pink_accent,
                             "wrap": True,
                             "align": "center",
                         },
@@ -1143,11 +1124,108 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "緊急狀況請直接撥打 119 或 110（本服務不是報警系統）",
+                    "text": "📋 開始使用前，只要完成兩個步驟：",
                     "weight": "bold",
-                    "size": "md",
-                    "color": RED_WARN,
+                    "size": "lg",
+                    "color": text_dark,
                     "wrap": True,
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "spacing": "md",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "spacing": "sm",
+                            "paddingAll": "md",
+                            "backgroundColor": step_bg,
+                            "cornerRadius": "xl",
+                            "flex": 1,
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "① 新增 1 位守護人",
+                                    "weight": "bold",
+                                    "size": "lg",
+                                    "color": pink_accent,
+                                    "wrap": True,
+                                },
+                                {
+                                    "type": "text",
+                                    "text": "讓重要的人在關鍵時刻收到通知",
+                                    "weight": "bold",
+                                    "size": "md",
+                                    "color": GRAY,
+                                    "wrap": True,
+                                },
+                            ],
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "spacing": "sm",
+                            "paddingAll": "md",
+                            "backgroundColor": step_bg,
+                            "cornerRadius": "xl",
+                            "flex": 1,
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "② 設定每日提醒時間",
+                                    "weight": "bold",
+                                    "size": "lg",
+                                    "color": pink_accent,
+                                    "wrap": True,
+                                },
+                                {
+                                    "type": "text",
+                                    "text": "系統會在您設定的時間提醒您報平安",
+                                    "weight": "bold",
+                                    "size": "md",
+                                    "color": GRAY,
+                                    "wrap": True,
+                                },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "spacing": "xs",
+                    "paddingAll": "md",
+                    "backgroundColor": yellow_bg,
+                    "cornerRadius": "xl",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "🎁 完成設定即可享 7 天免費安心體驗",
+                            "weight": "bold",
+                            "size": "lg",
+                            "color": pink_accent,
+                            "wrap": True,
+                            "align": "center",
+                        },
+                    ],
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "paddingAll": "md",
+                    "backgroundColor": pink_soft,
+                    "cornerRadius": "xl",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "🚨 緊急狀況請直接撥打 119 或 110，本服務無法取代緊急救援。",
+                            "weight": "bold",
+                            "size": "md",
+                            "color": RED_WARN,
+                            "wrap": True,
+                        },
+                    ],
                 },
             ],
         },
@@ -1166,7 +1244,7 @@ def welcome_flex(display_name: str | None = None):
                         "uri": setup_uri,
                     },
                     "style": "primary",
-                    "color": pink_accent,
+                    "color": GREEN_DARK,
                     "height": "md",
                 },
                 {
@@ -1176,8 +1254,8 @@ def welcome_flex(display_name: str | None = None):
                         "label": "查看方案",
                         "uri": pricing_uri,
                     },
-                    "style": "secondary",
-                    "color": "#BE185D",
+                    "style": "primary",
+                    "color": teal_btn,
                     "height": "md",
                 },
             ],
