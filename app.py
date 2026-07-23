@@ -2864,7 +2864,9 @@ def send_missing_contact_reminders(config):
         if is_799 and not guardian_details_complete:
             if not user.get("guardian_details_reminder_enabled", True) or user.get("guardian_details_reminder_sent_at"):
                 continue
-            link_text = f"\n前往我的守護資料：{public_url}/?page=profile" if public_url else ""
+            link_text = (
+                f"\n前往我的守護資料：{liff_entry_url(open_action='member') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo/?open=member'}"
+            )
             message = (
                 "你的 799 守護方案還少一份必要資料。請在『我的守護資料』完成至少 1 位守護人的姓名、關係與電話，"
                 f"緊急時系統才能正確聯絡對方。這則提醒只會傳送一次。{link_text}"
@@ -2885,7 +2887,9 @@ def send_missing_contact_reminders(config):
         sent_dates = set(user.get("contact_reminder_sent_dates") or [])
         if today in sent_dates:
             continue
-        link_text = f"\n一鍵邀請守護人：{public_url}/?page=guardian" if public_url else ""
+        link_text = (
+            f"\n一鍵邀請守護人：{liff_entry_url(open_action='onboarding/invite') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo/?open=onboarding/invite'}"
+        )
         if contact_count == 0:
             message = (
                 "你目前還沒有綁定守護人（緊急聯絡人）。請至少邀請 1 位信任的親友完成 LINE 綁定，"
@@ -3153,6 +3157,8 @@ def app_config(config):
     return {
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
+        # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723c",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3417,6 +3423,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723c",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -3639,9 +3646,10 @@ def create_app(config=None):
                 "每天 10 秒，報個平安\n"
                 "平常不打擾，有事才通知您指定的家人\n"
                 "🎁 新手可先免費體驗 7 天。開始前，請先邀請 1 位家人當守護人\n\n"
-                f"一鍵邀請守護人：{(liff_entry_url(open_action='onboarding') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo/?open=onboarding')}"
+                f"一鍵邀請守護人：{(liff_entry_url(open_action='onboarding/invite') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo/?open=onboarding/invite')}\n"
+                "歡迎卡 W250723c"
             )
-            alt_text = f"👋 {name} 您好，歡迎加入每日平安 — 立即免費試用 7 天"
+            alt_text = f"👋 {name} 您好，歡迎加入每日平安 — 立即免費試用 7 天（W250723c）"
             flex_contents = welcome_flex(display_name) if welcome_flex is not None else None
             try:
                 if FlexSendMessage is not None and flex_contents is not None:

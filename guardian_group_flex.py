@@ -61,7 +61,8 @@ def liff_entry_url(*, open_action: str | None = None, fragment: str = "", **quer
             continue
         params[key_s] = str(value)
     if params:
-        url += "/?" + urlencode(params)
+        # allow path-like open actions such as onboarding/invite
+        url += "/?" + urlencode(params, safe="/")
     elif fragment:
         url += f"#{fragment.lstrip('#')}"
     return url
@@ -974,11 +975,13 @@ def welcome_flex(display_name: str | None = None):
     次要連結：需要幫忙時怎麼做、常見問題。歡迎卡不出現求救字樣／升級文案。
     """
     name = (display_name or "").strip() or "您"
-    # 永久連結：開 LIFF 內嵌 → onboarding（分享邀請 → 守護人表單 → 提醒）。勿硬編碼 OAuth code/state。
-    bind_uri = liff_entry_url(open_action="onboarding")
+    # 永久連結：開 LIFF 內嵌 → onboarding/invite（分享邀請 → 守護人表單 → 提醒）。勿硬編碼 OAuth code/state。
+    bind_uri = liff_entry_url(open_action="onboarding/invite")
     faq_uri = liff_entry_url(open_action="faq")
     help_uri = liff_entry_url(open_action="help")
     hero_uri = f"{(os.environ.get('APP_PUBLIC_URL') or PUBLIC_BASE).rstrip('/')}/assets/daily-peace-hero.png"
+    # 可見版本戳：方便確認 FollowEvent 是否已換成新歡迎卡（封鎖再加好友才會重送）
+    welcome_version = "W250723c"
     return {
         "type": "bubble",
         "size": "mega",
@@ -1054,6 +1057,14 @@ def welcome_flex(display_name: str | None = None):
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
+                    "wrap": True,
+                },
+                {
+                    "type": "text",
+                    "text": f"歡迎卡 {welcome_version}",
+                    "size": "xs",
+                    "color": GRAY_LIGHT,
+                    "align": "end",
                     "wrap": True,
                 },
             ],

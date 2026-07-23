@@ -43,7 +43,7 @@
       "action": {
         "type": "uri",
         "label": "🛡️ 綁定守護人",
-        "uri": "https://alive-checkin.onrender.com/liff/contacts"
+        "uri": "https://liff.line.me/2010674803-rK98c0lo/?open=invite"
       }
     },
     {
@@ -56,7 +56,7 @@
       "action": {
         "type": "uri",
         "label": "👀 查看方案",
-        "uri": "https://alive-checkin.onrender.com/liff/pricing"
+        "uri": "https://liff.line.me/2010674803-rK98c0lo/?open=pricing"
       }
     },
     {

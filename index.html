@@ -6704,6 +6704,7 @@
         // 受邀者（invite_from / friend_invite）：登入後綁定／加入好友，不要再被逼分享
         const openAction = getAppParam("open") || "";
         const sectionAction = getAppParam("section") || "";
+        const isOnboardingInvite = openAction === "onboarding/invite";
         const publicOpenPages = {
           help: "help.html",
           pricing: "liff/pricing.html",
@@ -6716,7 +6717,7 @@
           location.replace(target);
           return;
         }
-        const forceOnboarding = openAction === "onboarding" || openAction === "guardian" || openAction === "bind";
+        const forceOnboarding = openAction === "onboarding" || openAction === "guardian" || openAction === "bind" || isOnboardingInvite;
         const inviteeMode = isInviteeDeepLink();
         const onboardingState = await fetchOnboardingState();
         const hasGuardians = (
@@ -6750,7 +6751,7 @@
           showTab("home");
         } else if (openAction === "guardians" && !forceOnboarding && typeof showTab === "function") {
           showTab("guardians");
-        } else if (openAction === "invite") {
+        } else if (openAction === "invite" || isOnboardingInvite) {
           if (typeof showTab === "function") showTab("home");
           setTimeout(() => shareContactInvite(), 350);
         } else if (openAction === "sos") {
