@@ -17,7 +17,7 @@
     },
     {
       "bounds": { "x": 1667, "y": 0, "width": 833, "height": 843 },
-      "action": { "type": "message", "label": "需要幫忙", "text": "需要幫忙" }
+      "action": { "type": "uri", "label": "需要幫忙", "uri": "https://liff.line.me/2010674803-rK98c0lo/?open=sos" }
     },
     {
       "bounds": { "x": 0, "y": 843, "width": 833, "height": 843 },

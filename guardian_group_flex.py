@@ -979,20 +979,17 @@ def _owner_status_block(owner_info):
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友歡迎 Flex：綠底標題 + 一鍵邀請守護人（其餘為文字連結）。
+    """加好友歡迎 Flex（W250723f）：每日平安文案 + 三顆永久 LIFF 按鈕。
 
-    display_name：LINE 顯示名稱；缺省時用「您」。
-    主 CTA：永久 liff.line.me 入口 → onboarding（首次先分享邀請；已綁定則略過分享）。
-    次要連結：需要幫忙時怎麼做、常見問題。歡迎卡不出現求救字樣／升級文案。
+    僅按鈕：一鍵邀請守護人 / 需要幫忙時怎麼做 / 常見問題。
+    不含求救或升級按鈕。主 CTA → open=onboarding/invite（進 LIFF 後手動一鍵分享）。
     """
     name = (display_name or "").strip() or "您"
-    # 永久連結：開 LIFF 內嵌 → onboarding/invite（分享邀請 → 守護人表單 → 提醒）。勿硬編碼 OAuth code/state。
     bind_uri = liff_entry_url(open_action="onboarding/invite")
-    faq_uri = liff_entry_url(open_action="faq")
     help_uri = liff_entry_url(open_action="help")
+    faq_uri = liff_entry_url(open_action="faq")
     hero_uri = f"{(os.environ.get('APP_PUBLIC_URL') or PUBLIC_BASE).rstrip('/')}/assets/daily-peace-hero.png"
-    # 可見版本戳：方便確認 FollowEvent 是否已換成新歡迎卡（封鎖再加好友才會重送）
-    welcome_version = "W250723d"
+    welcome_version = "W250723f"
     return {
         "type": "bubble",
         "size": "mega",
@@ -1020,7 +1017,7 @@ def welcome_flex(display_name: str | None = None):
                     "contents": [
                         {
                             "type": "text",
-                            "text": f"👋 {name} 您好",
+                            "text": f"{name} 您好",
                             "color": "#FFFFFF",
                             "size": "xl",
                             "wrap": True,
@@ -1048,7 +1045,7 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "每天 10 秒，報個平安",
+                    "text": "每天10秒報平安",
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
@@ -1056,7 +1053,7 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "平常不打擾，有事才通知您指定的家人",
+                    "text": "平常不打擾有事才通知家人",
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,
@@ -1064,7 +1061,7 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "text",
-                    "text": "🎁 新手可先免費體驗 7 天。開始前，請先邀請 1 位家人當守護人",
+                    "text": "7天體驗先邀請1位守護人",
                     "size": "lg",
                     "weight": "bold",
                     "color": GRAY,

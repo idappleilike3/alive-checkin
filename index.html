@@ -1749,6 +1749,41 @@
       gap: 12px;
     }
     .onboarding-form[hidden] { display: none !important; }
+    .share-invite-fallback {
+      display: grid;
+      gap: 10px;
+      margin: 4px 0 8px;
+      padding: 14px;
+      border: 2px solid #86efac;
+      border-radius: 14px;
+      background: #f0fdf4;
+      text-align: left;
+    }
+    .share-invite-fallback[hidden] { display: none !important; }
+    .share-invite-fallback-title {
+      margin: 0;
+      color: #14532d;
+      font-size: 17px;
+      font-weight: 850;
+      line-height: 1.45;
+    }
+    .share-invite-fallback textarea,
+    #shareInviteFallbackModal textarea {
+      width: 100%;
+      min-height: 88px;
+      padding: 12px;
+      border: 1.5px solid #86efac;
+      border-radius: 10px;
+      background: #fff;
+      color: #0f172a;
+      font-size: 14px;
+      line-height: 1.45;
+      word-break: break-all;
+      resize: none;
+    }
+    #shareInviteFallbackModal {
+      z-index: 80;
+    }
     .onboarding-modal-header {
       position: relative;
       padding-right: 44px;
@@ -3087,6 +3122,11 @@
           <div class="onboarding-form" id="onboardingShareStep">
             <p class="onboarding-note">對方點開邀請連結、用 LINE 同意後，就能成為你的守護人。分享完成後再繼續填寫資料。</p>
             <button class="onboarding-submit" id="onboardingShareBtn" type="button">一鍵分享邀請守護人</button>
+            <div id="onboardingShareFallback" class="share-invite-fallback" hidden>
+              <p class="share-invite-fallback-title">請把下面連結貼到 LINE 給家人</p>
+              <textarea id="onboardingShareUrlBox" readonly rows="3"></textarea>
+              <button class="onboarding-default-btn" id="onboardingCopyShareBtn" type="button">複製邀請連結</button>
+            </div>
             <button class="onboarding-default-btn" id="onboardingShareNextBtn" type="button">下一步：填寫守護人資料</button>
           </div>
 
@@ -3142,6 +3182,20 @@
             <button class="onboarding-default-btn" id="onboardingUseDefaultsBtn" type="button">使用方案預設時間</button>
             <p id="onboardingReminderError" class="inline-error" role="alert" hidden></p>
             <button class="onboarding-submit" id="onboardingReminderSaveBtn" type="button">完成設定並進入首頁</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 一鍵分享失敗時的可見備援：永遠顯示 liff.line.me/?invite_from=... -->
+      <div class="modal-backdrop" id="shareInviteFallbackModal" hidden>
+        <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="shareInviteFallbackTitle">
+          <h2 id="shareInviteFallbackTitle">請貼到 LINE 給家人</h2>
+          <p>LINE 分享視窗打不開時，請複製下面連結，到 LINE 聊天室貼給守護人。</p>
+          <textarea id="shareInviteFallbackUrlBox" readonly rows="4"></textarea>
+          <div class="actions">
+            <button class="action-btn" id="shareInviteFallbackCloseBtn" type="button">關閉</button>
+            <button class="action-btn primary" id="shareInviteFallbackCopyBtn" type="button">複製連結</button>
+            <button class="action-btn primary" id="shareInviteFallbackRetryBtn" type="button">再試一次分享</button>
           </div>
         </div>
       </div>
@@ -4720,40 +4774,139 @@
     }
 
     async function shareContactInvite() {
-      if (!requireLineMembership("請先完成 LINE 登入綁定，才能邀請守護人。")) return;
+      if (!requireLineMembership("請先完成 LINE 登入綁定，才能邀請守護人。")) return false;
       const nickname = $("inviteNickname") ? $("inviteNickname").value.trim() : "";
       const { bindUrl, text } = buildContactInvite(nickname);
+      // 永遠寫入可見備援區（含 onboarding）；勿只靠隱藏的 #guardianSection
+      fillShareInviteSurfaces(bindUrl, text);
+
+      let shared = false;
+      try {
+        shared = await tryLineShareTargetPicker(text);
+        if (!shared) {
+          shared = await tryWebShareOrClipboard(text, bindUrl, {
+            shareTitle: "每日平安 守護人邀請",
+            copiedMsg: "邀請連結已複製。請貼到 LINE 給家人。",
+          });
+        }
+      } catch (error) {
+        console.warn("shareContactInvite failed", error);
+        shared = false;
+      }
+
+      if (!shared) {
+        await copyTextBestEffort(bindUrl);
+        openShareInviteFallbackModal(bindUrl);
+        alert(`LINE 分享視窗沒有開啟。\n\n請複製連結貼到 LINE 給家人：\n${bindUrl}`);
+      } else {
+        showInlineSuccess("邀請已準備好，請在 LINE 傳給家人");
+      }
+      return shared;
+    }
+
+    function fillShareInviteSurfaces(bindUrl, text) {
       const inviteUrlBox = $("inviteUrlBox");
       const inviteArea = $("inviteArea");
       const inviteMeta = $("inviteMeta");
+      const onboardingBox = $("onboardingShareUrlBox");
+      const onboardingFallback = $("onboardingShareFallback");
       if (inviteUrlBox) inviteUrlBox.value = bindUrl;
       if (inviteArea) inviteArea.hidden = false;
-      if (inviteMeta) inviteMeta.textContent = "請用 LINE 點開上方連結。若在 Chrome 開啟，請改開邀請引導頁。";
+      if (inviteMeta) inviteMeta.textContent = "請用 LINE 點開上方連結。若分享失敗，請複製連結貼給家人。";
+      if (onboardingBox) onboardingBox.value = bindUrl;
+      if (onboardingFallback) onboardingFallback.hidden = false;
+      const fallbackBox = $("shareInviteFallbackUrlBox");
+      if (fallbackBox) fallbackBox.value = bindUrl;
+    }
+
+    function canUseShareTargetPicker() {
       try {
-        if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
-          await liff.shareTargetPicker([
-            {
-              type: "text",
-              text
-            }
-          ]);
-        } else if (navigator.share) {
-          // Android：勿同時傳 text(含 URL) + url，否則 LINE 常把連結截斷／無法開啟
-          await navigator.share({ title: "每日平安 守護人邀請", text });
-        } else if (navigator.clipboard) {
+        if (!window.liff || typeof liff.shareTargetPicker !== "function") return false;
+        if (!(liff.isInClient && liff.isInClient())) return false;
+        if (typeof liff.isApiAvailable === "function") {
+          return Boolean(liff.isApiAvailable("shareTargetPicker"));
+        }
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    async function tryLineShareTargetPicker(text) {
+      if (!canUseShareTargetPicker()) return false;
+      try {
+        const result = await Promise.race([
+          liff.shareTargetPicker([{ type: "text", text: String(text || "") }]),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("share_timeout")), 15000)),
+        ]);
+        // 使用者取消不算成功，但不丟錯；回傳 false 走備援複製
+        if (result == null) return false;
+        if (typeof result === "object" && String(result.status || "").toLowerCase() === "cancel") {
+          return false;
+        }
+        return true;
+      } catch (error) {
+        console.warn("shareTargetPicker unavailable/failed", error);
+        return false;
+      }
+    }
+
+    async function copyTextBestEffort(value) {
+      const text = String(value || "");
+      if (!text) return false;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
           await navigator.clipboard.writeText(text);
-          alert("邀請文案已複製，可以貼到 LINE 傳給聯絡人。");
-        } else {
-          alert(text);
+          return true;
+        }
+      } catch (_) {}
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        return Boolean(ok);
+      } catch (_) {
+        return false;
+      }
+    }
+
+    async function tryWebShareOrClipboard(text, bindUrl, options = {}) {
+      const shareTitle = options.shareTitle || "每日平安";
+      const copiedMsg = options.copiedMsg || "邀請連結已複製。請貼到 LINE 給家人。";
+      try {
+        if (navigator.share && !canUseShareTargetPicker()) {
+          // Android：勿同時傳 text(含 URL) + url，否則 LINE 常把連結截斷
+          await navigator.share({ title: shareTitle, text: String(text || bindUrl) });
+          return true;
         }
       } catch (error) {
-        if (navigator.clipboard) {
-          await navigator.clipboard.writeText(text);
-          alert("LINE 分享視窗沒有開啟，邀請文案已複製。請直接貼到 LINE 傳給守護人。");
-        } else {
-          alert("LINE 分享視窗沒有開啟，請複製畫面上的 LIFF 連結傳給守護人。");
-        }
+        // 使用者取消 Web Share → 繼續備援
+        if (String(error && error.name || "").toLowerCase() === "aborterror") return false;
       }
+      const copied = await copyTextBestEffort(bindUrl || text);
+      if (copied) {
+        showInlineSuccess(copiedMsg);
+        return false; // 已複製但仍要顯示明確 UI
+      }
+      return false;
+    }
+
+    function openShareInviteFallbackModal(bindUrl) {
+      const modal = $("shareInviteFallbackModal");
+      const box = $("shareInviteFallbackUrlBox");
+      if (box) box.value = String(bindUrl || "");
+      if (modal) modal.hidden = false;
+    }
+
+    function closeShareInviteFallbackModal() {
+      const modal = $("shareInviteFallbackModal");
+      if (modal) modal.hidden = true;
     }
 
     function maybeShowGuardianPrompt() {
@@ -5014,22 +5167,29 @@
         const data = await apiCreateFriendInvite();
         const inviteCode = String(data.invite_code || "").trim().toUpperCase();
         if (!inviteCode) throw new Error("無法產生好友邀請碼，請稍後再試。");
-        // 必須用永久 LINE App / LIFF 入口；單一乾淨 URL，避免 Android 截斷雙連結
         const inviteUrl = buildShareInviteUrl({ friend_invite: inviteCode });
         const text = (
           `我正在使用「每日平安」安全守護，想邀請你互相查看平安狀態與單次定位（可隨時停止）。\n` +
           `請用 LINE 點開下面連結\n\n` +
           `${inviteUrl}`
         );
-        if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
-          await liff.shareTargetPicker([{ type: "text", text }]);
-        } else if (navigator.share) {
-          await navigator.share({ title: "每日平安 好友地圖邀請", text });
-        } else if (navigator.clipboard) {
-          await navigator.clipboard.writeText(text);
-          alert("好友地圖邀請已複製，可以貼到 LINE 傳給朋友。");
-        } else {
-          alert(text);
+        fillShareInviteSurfaces(inviteUrl, text);
+        let shared = false;
+        try {
+          shared = await tryLineShareTargetPicker(text);
+          if (!shared) {
+            shared = await tryWebShareOrClipboard(text, inviteUrl, {
+              shareTitle: "每日平安 好友地圖邀請",
+              copiedMsg: "好友邀請連結已複製。請貼到 LINE 給朋友。",
+            });
+          }
+        } catch (error) {
+          console.warn("shareFriendInvite share failed", error);
+        }
+        if (!shared) {
+          await copyTextBestEffort(inviteUrl);
+          openShareInviteFallbackModal(inviteUrl);
+          alert(`LINE 分享視窗沒有開啟。\n\n請複製連結貼到 LINE：\n${inviteUrl}`);
         }
       } catch (error) {
         alert(error.message || "好友邀請分享失敗。");
@@ -6656,8 +6816,26 @@
       if (confirmDelBtn) confirmDelBtn.addEventListener("click", executeDeleteGuardian);
       if (obShareBtn) {
         obShareBtn.addEventListener("click", async () => {
-          await shareContactInvite();
+          obShareBtn.disabled = true;
+          const original = obShareBtn.textContent;
+          obShareBtn.textContent = "分享準備中…";
+          try {
+            await shareContactInvite();
+          } finally {
+            obShareBtn.disabled = false;
+            obShareBtn.textContent = original;
+          }
+          // 分享失敗也顯示備援連結；使用者可下一步繼續填資料
           showOnboardingGuardianStep();
+        });
+      }
+      const obCopyShareBtn = $("onboardingCopyShareBtn");
+      if (obCopyShareBtn) {
+        obCopyShareBtn.addEventListener("click", async () => {
+          const box = $("onboardingShareUrlBox");
+          const url = (box && box.value) || buildContactInvite("").bindUrl;
+          const ok = await copyTextBestEffort(url);
+          alert(ok ? `已複製連結。請貼到 LINE 給家人：\n${url}` : `請手動複製：\n${url}`);
         });
       }
       if (obShareNextBtn) obShareNextBtn.addEventListener("click", showOnboardingGuardianStep);
@@ -6742,6 +6920,7 @@
           || currentGuardianContacts().length > 0
         );
         const setupDone = onboardingState.done || hasGuardians;
+        const wantsInviteShare = openAction === "invite" || isOnboardingInvite;
         if (inviteeMode) {
           clearShareFirstLocalFlags();
           if (typeof showTab === "function") {
@@ -6750,6 +6929,17 @@
           maybeShowInviteAcceptPrompt();
           maybePrefillFriendInvite();
           await maybeShowGuardianComplete();
+        } else if (wantsInviteShare) {
+          // 歡迎卡／圖文選單邀請：準備分享 UI，但絕不自動 shareTargetPicker（iOS/Android 無手勢會失敗）
+          clearShareFirstLocalFlags();
+          if (typeof showTab === "function") showTab("home");
+          if (!setupDone) {
+            await showOnboarding();
+          } else {
+            const { bindUrl, text } = buildContactInvite("");
+            fillShareInviteSurfaces(bindUrl, text);
+            openShareInviteFallbackModal(bindUrl);
+          }
         } else if (setupDone) {
           clearShareFirstLocalFlags();
           if (typeof showTab === "function") showTab("home");
@@ -6759,7 +6949,7 @@
           await showOnboarding();
         }
         // Deep link：已完成首次設定時，open=onboarding 也進首頁；其餘依參數切頁
-        if (setupDone && forceOnboarding) {
+        if (setupDone && forceOnboarding && !wantsInviteShare) {
           if (typeof showTab === "function") showTab("home");
         } else if (openAction === "member" && !forceOnboarding && typeof showTab === "function") {
           showTab("member");
@@ -6767,9 +6957,6 @@
           showTab("home");
         } else if (openAction === "guardians" && !forceOnboarding && typeof showTab === "function") {
           showTab("guardians");
-        } else if (openAction === "invite" || isOnboardingInvite) {
-          if (typeof showTab === "function") showTab("home");
-          setTimeout(() => shareContactInvite(), 350);
         } else if (openAction === "sos") {
           if (typeof showTab === "function") showTab("home");
           openSosModal();
@@ -7137,6 +7324,24 @@
     document.querySelectorAll(".share-contact-invite-btn").forEach((button) => {
       button.addEventListener("click", shareContactInvite);
     });
+    const shareFallbackCopyBtn = $("shareInviteFallbackCopyBtn");
+    const shareFallbackCloseBtn = $("shareInviteFallbackCloseBtn");
+    const shareFallbackRetryBtn = $("shareInviteFallbackRetryBtn");
+    if (shareFallbackCopyBtn) {
+      shareFallbackCopyBtn.addEventListener("click", async () => {
+        const box = $("shareInviteFallbackUrlBox");
+        const url = (box && box.value) || "";
+        const ok = await copyTextBestEffort(url);
+        alert(ok ? `已複製連結。請貼到 LINE 給家人：\n${url}` : `請手動複製：\n${url}`);
+      });
+    }
+    if (shareFallbackCloseBtn) shareFallbackCloseBtn.addEventListener("click", closeShareInviteFallbackModal);
+    if (shareFallbackRetryBtn) {
+      shareFallbackRetryBtn.addEventListener("click", async () => {
+        closeShareInviteFallbackModal();
+        await shareContactInvite();
+      });
+    }
     $("promptInviteBtn").addEventListener("click", goGuardianInvite);
     $("dismissGuardianPromptBtn").addEventListener("click", closeGuardianPrompt);
     $("acceptGuardianInviteBtn").addEventListener("click", acceptGuardianInviteFromPrompt);
