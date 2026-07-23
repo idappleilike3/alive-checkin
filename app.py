@@ -2649,6 +2649,19 @@ def admin_allowed(config, password):
     return secrets.compare_digest(str(expected), str(password or ""))
 
 
+def admin_auth_error_payload(config, password):
+    """Return (payload, http_status) when auth fails; None when allowed."""
+    expected = (os.environ.get("ADMIN_PASSWORD") or config.get("ADMIN_PASSWORD", "") or "")
+    if not str(expected).strip():
+        return {
+            "error": "admin_password_not_configured",
+            "message": "Set ADMIN_PASSWORD in Render Environment, then redeploy.",
+        }, 503
+    if not secrets.compare_digest(str(expected), str(password or "")):
+        return {"error": "unauthorized"}, 401
+    return None
+
+
 def _line_channel_access_token(config=None):
     cfg = config or {}
     return (
@@ -3420,7 +3433,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723y",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723z",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3715,7 +3728,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723y",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723z",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -5036,8 +5049,10 @@ def create_app(config=None):
     @app.get("/api/admin/summary")
     def admin_summary_api():
         password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = admin_auth_error_payload(app.config, password)
+        if denied:
+            payload, code = denied
+            return jsonify(payload), code
         return jsonify(admin_summary(app.config["DATA_FILE"]))
 
     @app.get("/api/admin/support-tickets")
@@ -5240,8 +5255,10 @@ class MiniClient:
         if route == "/api/status":
             return MiniResponse(self.app.status(params.get("line_user_id")))
         if route == "/api/admin/summary":
-            if not admin_allowed(self.app.config, params.get("password", "")):
-                return MiniResponse({"error": "unauthorized"}, 401)
+            denied = admin_auth_error_payload(self.app.config, params.get("password", ""))
+            if denied:
+                payload, code = denied
+                return MiniResponse(payload, code)
             return MiniResponse(admin_summary(self.app.config["DATA_FILE"]))
         if route == "/api/admin/support-tickets":
             if not admin_allowed(self.app.config, params.get("password", "")):
@@ -5469,8 +5486,10 @@ class MiniApp:
                         return handler.send_json(data, code)
                     return handler.send_json(build_status(state["users"][line_user_id], state))
                 if route == "/api/admin/summary":
-                    if not admin_allowed(config, params.get("password", "")):
-                        return handler.send_json({"error": "unauthorized"}, 401)
+                    denied = admin_auth_error_payload(config, params.get("password", ""))
+                    if denied:
+                        payload, code = denied
+                        return handler.send_json(payload, code)
                     return handler.send_json(admin_summary(data_file))
                 if route == "/api/contacts":
                     return handler.send_json(get_contacts(data_file, params.get("line_user_id")))

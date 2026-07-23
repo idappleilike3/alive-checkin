@@ -79,6 +79,33 @@
       box-shadow: none;
       white-space: nowrap;
     }
+    .auth-status {
+      grid-column: 1 / -1;
+      margin: 0;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #fff;
+      border: 1px solid #bbf7d0;
+      color: #14532d;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .auth-status.is-loading { border-color: #93c5fd; color: #1e3a8a; background: #eff6ff; }
+    .auth-status.is-ok { border-color: #86efac; color: #14532d; background: #f0fdf4; }
+    .auth-status.is-err { border-color: #fda4af; color: #9f1239; background: #fff1f2; }
+    .auth-hint {
+      grid-column: 1 / -1;
+      margin: 0;
+      color: #3f6212;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .auth-hint code {
+      font-size: 12px;
+      background: #ecfccb;
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
     @media (max-width: 760px) {
       .auth-bar { grid-template-columns: 1fr; }
     }
@@ -319,13 +346,15 @@
 
     <section class="panel">
       <div class="auth-bar" id="authBar" aria-label="後台登入">
-        <label for="password">後台密碼（預設可見；成功登入後會記住在這台瀏覽器）</label>
+        <label for="password">後台密碼（填 Render 的 ADMIN_PASSWORD；成功後會記住在這台瀏覽器）</label>
         <div class="password-field">
-          <input id="password" type="text" placeholder="後台密碼，沒設定可留空" autocomplete="current-password" spellcheck="false">
+          <input id="password" type="text" placeholder="輸入 ADMIN_PASSWORD 的值" autocomplete="current-password" spellcheck="false">
           <button id="togglePassword" type="button" aria-pressed="true" title="切換顯示／隱藏">隱藏</button>
         </div>
         <button id="loginBtn" type="button">登入</button>
         <button id="refreshBtn" type="button">刷新資料</button>
+        <p class="auth-status" id="authStatus" role="status" aria-live="polite">請輸入後台密碼後按「登入」。</p>
+        <p class="auth-hint">提醒：瀏覽器裡的 <code>alive_checkin_admin_password</code> 只是本機記住密碼用的<strong>鍵名</strong>，不是密碼本身。</p>
       </div>
       <div class="toolbar">
         <button id="contactRemindBtn" class="info" type="button">提醒填聯絡人</button>
@@ -578,10 +607,34 @@
 
   <script>
     const $ = (id) => document.getElementById(id);
+    // 這只是瀏覽器 localStorage 的「鍵名」，不是密碼。真正密碼 = Render 環境變數 ADMIN_PASSWORD。
     const ADMIN_PW_KEY = "alive_checkin_admin_password";
 
     function apiPassword() {
       return encodeURIComponent($("password").value.trim());
+    }
+
+    function setAuthStatus(text, kind) {
+      const el = $("authStatus");
+      if (!el) return;
+      el.textContent = text;
+      el.classList.remove("is-loading", "is-ok", "is-err");
+      if (kind) el.classList.add(kind);
+      $("message").textContent = text;
+    }
+
+    function authErrorText(data, status) {
+      const code = (data && data.error) || "";
+      if (code === "admin_password_not_configured") {
+        return "伺服器尚未設定 ADMIN_PASSWORD。請到 Render → Environment 新增後再登入。";
+      }
+      if (status === 401 || code === "unauthorized") {
+        return "密碼不正確。請輸入 Render 的 ADMIN_PASSWORD（不是 alive_checkin_admin_password 這個鍵名）。";
+      }
+      if (!status) {
+        return "連線失敗，請稍後再試。";
+      }
+      return (data && (data.message || data.error)) || `登入失敗（HTTP ${status}）。`;
     }
 
     function loadSavedPassword() {
@@ -606,12 +659,26 @@
       btn.title = visible ? "隱藏密碼" : "顯示密碼";
     }
 
+    function setLoginBusy(busy) {
+      const loginBtn = $("loginBtn");
+      const refreshBtn = $("refreshBtn");
+      if (loginBtn) {
+        loginBtn.disabled = busy;
+        loginBtn.textContent = busy ? "登入中…" : "登入";
+      }
+      if (refreshBtn) refreshBtn.disabled = busy;
+    }
+
     async function runLoginOrRefresh() {
+      setLoginBusy(true);
+      setAuthStatus("正在驗證密碼並讀取資料…", "is-loading");
       try {
         await refresh();
       } catch (error) {
-        $("message").textContent = "讀取失敗，請確認密碼後再按登入。";
+        setAuthStatus("讀取失敗，請確認密碼與網路後再按登入。", "is-err");
         console.warn(error);
+      } finally {
+        setLoginBusy(false);
       }
     }
 
@@ -714,11 +781,11 @@
     }
 
     async function refresh() {
-      $("message").textContent = "讀取中…";
+      setAuthStatus("正在驗證密碼並讀取資料…", "is-loading");
       const res = await fetch(`/api/admin/summary?password=${apiPassword()}`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        $("message").textContent = data.error || "密碼不對，或後台目前不能讀取。";
+        setAuthStatus(authErrorText(data, res.status), "is-err");
         return;
       }
       savePasswordLocally();
@@ -828,7 +895,7 @@
         `).join("")
         : `<div class="support-item">目前沒有客服訊息</div>`;
       await refreshBackups();
-      $("message").textContent = "資料已更新。";
+      setAuthStatus("登入成功，資料已更新。", "is-ok");
     }
 
     async function refreshBackups() {
@@ -953,12 +1020,12 @@
     // 首次載入：還原本機記住的密碼 → 保證登入列可用 → 再非同步拉資料
     loadSavedPassword();
     setPasswordVisible(true);
-    $("message").textContent = $("password").value
-      ? "已帶入本機記住的密碼，正在登入…"
-      : "請輸入後台密碼後按「登入」。若未設定密碼可直接登入。";
-    setTimeout(() => {
-      runLoginOrRefresh();
-    }, 0);
+    if ($("password").value) {
+      setAuthStatus("已帶入本機記住的密碼，正在登入…", "is-loading");
+      setTimeout(() => { runLoginOrRefresh(); }, 0);
+    } else {
+      setAuthStatus("請輸入 Render 的 ADMIN_PASSWORD 後按「登入」。", null);
+    }
   </script>
 </body>
 </html>
