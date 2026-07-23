@@ -2742,6 +2742,84 @@ def deploy_default_rich_menu(config=None, root_dir=None):
         "name": menu_config.get("name"),
         "chatBarText": menu_config.get("chatBarText"),
         "image_bytes": image_path.stat().st_size,
+        "areas": [
+            {
+                "label": (area.get("action") or {}).get("label"),
+                "type": (area.get("action") or {}).get("type"),
+                "uri": (area.get("action") or {}).get("uri"),
+                "text": (area.get("action") or {}).get("text"),
+            }
+            for area in (menu_config.get("areas") or [])
+        ],
+    }, 200
+
+
+def inspect_default_rich_menu(config=None):
+    """查詢目前預設圖文選單（含各區塊 URI）。不回傳 token。"""
+    token = _line_channel_access_token(config)
+    if not token:
+        return {"ok": False, "error": "LINE_CHANNEL_ACCESS_TOKEN not configured"}, 503
+
+    def _request(method, url):
+        req = urllib.request.Request(
+            url, method=method, headers={"Authorization": f"Bearer {token}"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+                code = int(getattr(resp, "status", 200) or 200)
+                parsed = json.loads(raw) if raw.strip() else {}
+                return code, parsed
+        except urllib.error.HTTPError as exc:
+            err_body = exc.read().decode("utf-8", errors="replace")
+            return int(exc.code), {"error": err_body}
+
+    code, default = _request("GET", "https://api.line.me/v2/bot/user/all/richmenu")
+    if code != 200 or not isinstance(default, dict) or not default.get("richMenuId"):
+        return {
+            "ok": False,
+            "step": "get_default",
+            "http": code,
+            "error": default.get("error") if isinstance(default, dict) else default,
+        }, 502
+
+    rich_menu_id = default["richMenuId"]
+    code, detail = _request("GET", f"https://api.line.me/v2/bot/richmenu/{rich_menu_id}")
+    if code != 200 or not isinstance(detail, dict):
+        return {
+            "ok": False,
+            "step": "get_detail",
+            "richMenuId": rich_menu_id,
+            "http": code,
+            "error": detail.get("error") if isinstance(detail, dict) else detail,
+        }, 502
+
+    areas = []
+    invite_uri = None
+    for area in detail.get("areas") or []:
+        action = area.get("action") or {}
+        item = {
+            "label": action.get("label"),
+            "type": action.get("type"),
+            "uri": action.get("uri"),
+            "text": action.get("text"),
+        }
+        areas.append(item)
+        if action.get("label") == "一鍵邀請":
+            invite_uri = action.get("uri")
+
+    return {
+        "ok": True,
+        "richMenuId": rich_menu_id,
+        "name": detail.get("name"),
+        "chatBarText": detail.get("chatBarText"),
+        "areas": areas,
+        "invite_uri": invite_uri,
+        "invite_uri_ok": bool(
+            invite_uri
+            and "share-invite.html" in invite_uri
+            and "open=share" not in invite_uri
+        ),
     }, 200
 
 
@@ -3342,7 +3420,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723w",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723x",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3436,7 +3514,11 @@ def create_app(config=None):
 
     @app.get("/admin")
     def admin():
-        return send_from_directory(app.static_folder, "admin.html")
+        resp = send_from_directory(app.static_folder, "admin.html")
+        # Avoid stale cached admin UI (login bar / password UX) after deploys
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        return resp
 
     @app.get("/test_bind")
     def test_bind():
@@ -3633,7 +3715,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723w",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723x",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -5051,6 +5133,15 @@ def create_app(config=None):
         data, code = cleanup_expired_data(app.config)
         return jsonify(data), code
 
+    @app.get("/api/admin/rich-menu")
+    def admin_rich_menu_inspect_api():
+        """查詢目前預設圖文選單（含一鍵邀請 URI）。不回傳 token。"""
+        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
+        if not admin_allowed(app.config, password):
+            return jsonify({"error": "unauthorized"}), 401
+        data, code = inspect_default_rich_menu(app.config)
+        return jsonify(data), code
+
     @app.post("/api/admin/rich-menu/deploy")
     def admin_rich_menu_deploy_api():
         """用 Render 上的 LINE_CHANNEL_ACCESS_TOKEN 上傳並設為預設圖文選單。"""
@@ -5373,6 +5464,9 @@ class MiniApp:
                 handler.send_response(200)
                 handler.send_header("Content-Type", content_type)
                 handler.send_header("Content-Length", str(len(body)))
+                if route == "/admin":
+                    handler.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                    handler.send_header("Pragma", "no-cache")
                 handler.end_headers()
                 handler.wfile.write(body)
 

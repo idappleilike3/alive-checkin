@@ -344,34 +344,9 @@ function renderStep() {
         <p style="color:#888;font-size:13px;margin-top:12px;text-align:center;" id="shareStepHint">分享完成後，請點「下一步」填寫守護人資料。</p>
       </div>
     `;
-    document.getElementById("shareInviteFirstBtn").addEventListener("click", async () => {
-      const hint = document.getElementById("shareStepHint");
-      try {
-        const safeId = String(state.lineUserId || "").replace(/[^a-zA-Z0-9_-]/g, "");
-        // 單一乾淨 URL：line.me/R/app 強制進 LINE，利於 Android 受邀者
-        const base = `https://line.me/R/app/${LIFF_ID}/`;
-        const bindUrl = safeId
-          ? `${base}?invite_from=${encodeURIComponent(safeId)}`
-          : `${base}?open=onboarding`;
-        const text =
-          `我想邀請你成為「每日平安」的守護人。\n` +
-          `請用 LINE 點開下面連結\n\n` +
-          `${bindUrl}`;
-        if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
-          await liff.shareTargetPicker([{ type: "text", text }]);
-          if (hint) hint.textContent = "✅ 已開啟分享。選好友送出後，請點「下一步」填寫資料。";
-        } else if (navigator.share) {
-          await navigator.share({ title: "每日平安 守護人邀請", text });
-          if (hint) hint.textContent = "✅ 已分享。請點「下一步」填寫守護人資料。";
-        } else if (navigator.clipboard) {
-          await navigator.clipboard.writeText(text);
-          if (hint) hint.textContent = "✅ 邀請文案已複製。請貼到 LINE，再點「下一步」填寫資料。";
-        } else {
-          alert(text);
-        }
-      } catch (_) {
-        if (hint) hint.textContent = "分享已取消，可再按一次，或直接下一步填寫資料。";
-      }
+    document.getElementById("shareInviteFirstBtn").addEventListener("click", () => {
+      // 產品路徑：只進專用 LINE 好友分享頁（shareTargetPicker）
+      location.assign("/liff/share-invite.html");
     });
   } else if (state.currentStep === 3) {
     const count = state.dailyReminders || 1;

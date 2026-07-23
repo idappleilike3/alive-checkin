@@ -425,27 +425,8 @@ function buildInviteText() {
 }
 
 async function shareGuardianInvite() {
-  if (!state.lineUserId) {
-    alert("請先完成 LINE 登入");
-    return;
-  }
-  const text = buildInviteText();
-  const hint = document.getElementById("shareHint");
-  try {
-    if (window.liff && liff.isInClient && liff.isInClient() && liff.shareTargetPicker) {
-      await liff.shareTargetPicker([{ type: "text", text }]);
-      if (hint) { hint.style.display = "block"; hint.textContent = "✅ 已開啟分享，選好友送出即可"; }
-    } else if (navigator.share) {
-      await navigator.share({ title: "今天還在嗎 守護人邀請", text });
-    } else if (navigator.clipboard) {
-      await navigator.clipboard.writeText(text);
-      alert("邀請文案已複製，可貼到 LINE 傳給對方");
-    } else {
-      alert(text);
-    }
-  } catch (err) {
-    if (hint) { hint.style.display = "block"; hint.textContent = "分享已取消，可再按一次"; }
-  }
+  // 產品路徑：只進專用 LINE 好友分享頁（shareTargetPicker）
+  location.assign("/liff/share-invite.html");
 }
 
 function openEditor(contactId) {
