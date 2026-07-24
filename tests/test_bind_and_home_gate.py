@@ -88,8 +88,14 @@ class BindAndHomeGateTests(unittest.TestCase):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("function hasHomeSetupComplete(", page)
         self.assertIn("function hasLineBoundGuardian(", page)
+        self.assertIn("function syncInviteUiForBoundState(", page)
         self.assertIn("hasHomeSetupComplete(currentGuardianContacts())", page)
         self.assertIn("const homeReady = hasHomeSetupComplete(contactsNow);", page)
+        self.assertIn("mvpRewardInviteCard", page)
+        self.assertIn("mvpGuardInviteCard", page)
+        self.assertIn("isCheckinOpen", page)
+        self.assertIn("isGuardOpen", page)
+        self.assertIn("openAction === \"checkin\" && homeReady", page)
         # LINE 綁定即可進首頁（不再要求聯絡人電話）
         gate = page[page.index("function hasHomeSetupComplete(") : page.index("function closeGuardianPrompt(")]
         self.assertIn("return hasLineBoundGuardian(contacts);", gate)
@@ -100,6 +106,12 @@ class BindAndHomeGateTests(unittest.TestCase):
         ]
         self.assertNotIn("maybeShowGuardianPrompt();", init_line)
         self.assertIn("maybeShowInviteAcceptPrompt();", init_line)
+        init_app = page[page.rindex("async function initApp()") : page.index("// ===== D01")]
+        self.assertIn("else if (homeReady)", init_app)
+        self.assertIn("syncInviteUiForBoundState(homeReady)", init_app)
+        # 報平安／安全守護不得被 wantsInviteShare 帶走
+        self.assertIn('location.replace("/liff/share-invite.html")', init_app)
+        self.assertIn("僅「一鍵邀請」", init_app)
 
     def test_admin_summary_exposes_bound_guardians(self):
         app_module.bind_emergency_contact(

@@ -3086,7 +3086,7 @@
           </span>
         </button>
       </div>
-      <div class="mvp-reward-card" aria-label="綁定守護人獎勵">
+      <div class="mvp-reward-card" id="mvpRewardInviteCard" aria-label="綁定守護人獎勵">
         <div>
           <strong>完成綁定一位，二選一獎勵</strong>
           <span>免費延長 7 天，或多 1 位守護人名額 30 天</span>
@@ -3111,7 +3111,7 @@
         <button class="mvp-action start" id="mvpGuardStartBtn" type="button">開始安全守護（1 小時）</button>
         <button class="mvp-action stop" id="mvpGuardStopBtn" type="button">提前結束</button>
       </div>
-      <div class="contact-card contact-primary" style="margin-top:14px;">
+      <div class="contact-card contact-primary" id="mvpGuardInviteCard" style="margin-top:14px;">
         <div class="price-head"><strong>邀請家人一起守護</strong><span>推薦</span></div>
         <div class="helper">安全守護需要先有守護人，家人才看得到你分享的位置與平安狀態。</div>
         <button class="price-btn share-contact-invite-btn" type="button">一鍵邀請守護人</button>
@@ -4710,15 +4710,25 @@
       renderMemberCenter();
     }
 
+    function syncInviteUiForBoundState(hasBound) {
+      // ≥1 已綁守護人：首頁／安全守護不再催「一鍵邀請」；僅 0 位時說明
+      const reward = $("mvpRewardInviteCard");
+      const guardInvite = $("mvpGuardInviteCard");
+      if (reward) reward.hidden = Boolean(hasBound);
+      if (guardInvite) guardInvite.hidden = Boolean(hasBound);
+    }
+
     function renderHomeBoundSummary(contacts) {
       const box = $("mvpBoundSummary");
       const countEl = $("mvpBoundCountText");
       const listEl = $("mvpBoundList");
-      if (!box || !countEl || !listEl) return;
       const bound = (contacts || []).filter((c) =>
         c && (c.binding_status === "accepted" || c.consent_status === "accepted" || c.line_id || c.line_user_id)
       );
-      if (!bound.length) {
+      const hasBound = bound.length > 0;
+      syncInviteUiForBoundState(hasBound);
+      if (!box || !countEl || !listEl) return;
+      if (!hasBound) {
         box.hidden = true;
         listEl.innerHTML = "";
         countEl.textContent = "已綁定守護人 0 位";
@@ -5132,7 +5142,19 @@
 
     function hasLineBoundGuardian(contacts) {
       const list = Array.isArray(contacts) ? contacts : currentGuardianContacts();
-      return list.some((c) => {
+      if (list.some((c) => {
+        if (!c) return false;
+        return (
+          c.binding_status === "accepted"
+          || c.consent_status === "accepted"
+          || Boolean(String(c.line_id || c.line_user_id || "").trim())
+        );
+      })) return true;
+      // status API 備援：contacts 尚未灌入時仍可用 bound_guardian_count
+      const statusCount = Number(currentStatusData && currentStatusData.bound_guardian_count);
+      if (Number.isFinite(statusCount) && statusCount > 0) return true;
+      const statusContacts = (currentStatusData && currentStatusData.contacts) || [];
+      return statusContacts.some((c) => {
         if (!c) return false;
         return (
           c.binding_status === "accepted"
@@ -6934,6 +6956,8 @@
     function currentGuardianContacts() {
       if (Array.isArray(contactData) && contactData.length) return contactData;
       if (Array.isArray(guardianList) && guardianList.length) return guardianList;
+      const fromStatus = (currentStatusData && currentStatusData.contacts) || [];
+      if (Array.isArray(fromStatus) && fromStatus.length) return fromStatus;
       return [];
     }
 
@@ -7240,11 +7264,24 @@
           contactData = contactsRes.data.contacts || [];
           renderGuardians(contactData, contactsRes.data.contact_limit);
         } else if (currentStatusData) {
-          renderMemberCenter();
+          if (Array.isArray(currentStatusData.contacts) && currentStatusData.contacts.length) {
+            contactData = currentStatusData.contacts;
+            renderGuardians(contactData, currentStatusData.contact_limit || currentContactLimit);
+          } else {
+            renderMemberCenter();
+          }
+        }
+        // status 備援：contacts API 空但 status 已有綁定資料時，仍以 status 為準
+        if ((!Array.isArray(contactData) || !contactData.length)
+            && Array.isArray(status.contacts) && status.contacts.length) {
+          contactData = status.contacts;
+          renderGuardians(contactData, status.contact_limit || currentContactLimit);
         }
 
         // C00 Onboarding 檢查（#open=onboarding / 歡迎 CTA）
-        // 規則：一鍵分享只在「第一次設定」強制；已註冊／已有守護人／伺服器 setup_completed → 直接首頁，絕不自動彈分享
+        // 規則：一鍵分享只在「尚未綁定」強制；已註冊且 ≥1 已綁守護人 → 直接首頁／功能頁
+        // 報平安 open=checkin、安全守護 open=guard：已綁定則直達功能，絕不導 share-invite
+        // 一鍵邀請才走 share-invite（rich menu 直連或 open=share-invite／invite）
         // 受邀者（invite_from / friend_invite）：登入後綁定／加入好友，不要再被逼分享
         const openAction = getAppParam("open") || "";
         const sectionAction = getAppParam("section") || "";
@@ -7254,6 +7291,8 @@
           || openAction === "invite"
           || isOnboardingInvite
         );
+        const isCheckinOpen = openAction === "checkin" || location.hash === "#home";
+        const isGuardOpen = openAction === "guard" || openAction === "safety";
         const publicOpenPages = {
           help: "help.html",
           pricing: "liff/pricing.html",
@@ -7279,13 +7318,16 @@
         const contactsNow = currentGuardianContacts();
         const homeReady = hasHomeSetupComplete(contactsNow);
         const hasGuardians = (
-          onboardingState.hasGuardian
+          homeReady
+          || onboardingState.hasGuardian
           || Number(onboardingState.data?.guardian_count || 0) > 0
+          || Number(status.bound_guardian_count || 0) > 0
           || contactsNow.length > 0
         );
-        // ≥1 LINE 綁定守護人（或伺服器 setup_completed）→ 直接進首頁，不再彈重新綁定／邀請
+        // ≥1 LINE 綁定守護人（或伺服器 setup_completed）→ 直接進首頁／功能，不再彈重新綁定／邀請
         const setupDone = homeReady || onboardingState.done || hasGuardians;
         const wantsInviteShare = wantsShareInvite;
+        syncInviteUiForBoundState(homeReady);
         if (homeReady && !inviteeMode) {
           clearShareFirstLocalFlags();
           closeGuardianPrompt();
@@ -7305,23 +7347,29 @@
           maybePrefillFriendInvite();
           if (!homeReady) await maybeShowGuardianComplete();
         } else if (wantsInviteShare) {
-          // 降級穩定：不經首頁、不自動 shareTargetPicker → 專用分享頁（點擊才分享）
+          // 僅「一鍵邀請」：不經首頁 → 專用分享頁（報平安／安全守護絕不可進這裡）
           clearShareFirstLocalFlags();
           location.replace("/liff/share-invite.html");
           return;
-        } else if (setupDone) {
+        } else if (homeReady) {
+          // 已綁 ≥1 守護人：直接進功能／首頁，絕不 showOnboarding／share-invite
           clearShareFirstLocalFlags();
           if (typeof showTab === "function") showTab("home");
-          if (!homeReady) {
-            maybeShowGuardianPrompt();
-            await maybeShowGuardianComplete();
+        } else if (setupDone) {
+          // 有聯絡人資料但尚未 LINE 綁定：進首頁並說明需邀請綁定
+          clearShareFirstLocalFlags();
+          if (typeof showTab === "function") showTab("home");
+          maybeShowGuardianPrompt();
+          await maybeShowGuardianComplete();
+          if (isCheckinOpen || isGuardOpen || forceOnboarding) {
+            await showOnboarding();
           }
         } else {
-          // 首次使用者：顯示分享→填寫→提醒流程
+          // 首次使用者（0 位守護人）：顯示分享→填寫→提醒流程
           await showOnboarding();
         }
-        // Deep link：已完成首次設定時，open=onboarding 也進首頁；其餘依參數切頁
-        if (setupDone && forceOnboarding && !wantsInviteShare) {
+        // Deep link：已綁定直達功能；報平安／安全守護不導分享頁
+        if (homeReady && forceOnboarding && !wantsInviteShare) {
           if (typeof showTab === "function") showTab("home");
         } else if (openAction === "member" && !forceOnboarding && typeof showTab === "function") {
           showTab("member");
@@ -7332,13 +7380,17 @@
         } else if (openAction === "sos") {
           if (typeof showTab === "function") showTab("home");
           openSosModal();
-        } else if (openAction === "guard" || openAction === "safety") {
-          openMvpGuardPanel();
+        } else if (isGuardOpen) {
+          // 已綁定：直接開安全守護／定位；未綁定且 onboarding 已開時不要蓋住說明
+          const onboardingOpen = $("onboardingModal") && !$("onboardingModal").hidden;
+          if (homeReady || !onboardingOpen) {
+            openMvpGuardPanel();
+          }
         } else if (openAction === "call" || openAction === "family") {
           openMvpCallPanel();
-        } else if ((openAction === "checkin" || location.hash === "#home") && typeof showTab === "function") {
+        } else if (isCheckinOpen && typeof showTab === "function") {
           showTab("home");
-          if (openAction === "checkin") {
+          if (openAction === "checkin" && homeReady) {
             setTimeout(() => {
               if (currentStatusData && currentStatusData.is_today_checked) {
                 syncCheckBtn(currentStatusData);
@@ -7413,6 +7465,7 @@
       if (mvpHome) mvpHome.hidden = true;
       if (mvpCallPanel) mvpCallPanel.hidden = true;
       if (mvpGuardPanel) mvpGuardPanel.hidden = false;
+      syncInviteUiForBoundState(hasLineBoundGuardian());
       const radio = document.querySelector('input[name="safetyGuardDuration"][value="1"]');
       if (radio) radio.checked = true;
       renderSafetyGuardUi((currentStatusData && currentStatusData.safety_guard) || { active: false });
