@@ -2952,14 +2952,15 @@ def inspect_default_rich_menu(config=None):
             invite_text = action.get("text")
             invite_type = action.get("type")
 
-    # W250723aj：圖文選單一鍵邀請改 message → Bot 回 line.me/R/share Flex（略過 LIFF 大按鈕）
+    # W250723ak：圖文選單一鍵邀請 → 空白 LIFF 自動 line.me/R/share（無教學大按鈕文案）
+    # 仍相容舊版 message「一鍵邀請」→ Bot Flex
     invite_ok = (
-        invite_type == "message"
-        and str(invite_text or "").strip() in {"一鍵邀請", "一鍵邀請守護人"}
-    ) or (
         bool(invite_uri)
         and "share-invite.html" in str(invite_uri)
         and "open=share" not in str(invite_uri)
+    ) or (
+        invite_type == "message"
+        and str(invite_text or "").strip() in {"一鍵邀請", "一鍵邀請守護人"}
     )
 
     return {
@@ -3572,7 +3573,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723aj",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723ak",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3887,7 +3888,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723aj",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723ak",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),

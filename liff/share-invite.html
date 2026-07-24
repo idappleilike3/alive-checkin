@@ -3,98 +3,62 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="alive-deploy" content="W250723aj">
-  <title>分享給好友</title>
+  <meta name="alive-deploy" content="W250723ak">
+  <title>邀請</title>
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { min-height: 100%; }
-    body {
+    html, body {
+      min-height: 100%;
       min-height: 100dvh;
-      font-family: "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
-      color: #123c2c;
-      background: linear-gradient(180deg, #dcfce7 0%, #f0fdf4 45%, #ffffff 100%);
-      display: grid;
-      place-items: stretch;
-      padding: 0;
-      margin: 0;
+      background: #f0fdf4;
       overscroll-behavior: none;
     }
-    /* 全螢幕唯一可點層：載入完成後整頁＝分享手勢（不另開第二顆「大按鈕」流程） */
+    /* 全螢幕隱形可點層：無教學文案 */
     #tapLayer {
-      min-height: 100dvh;
+      position: fixed;
+      inset: 0;
       width: 100%;
+      height: 100%;
       border: 0;
       background: transparent;
-      color: #123c2c;
-      padding: max(16px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      gap: 14px;
       cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+      z-index: 2;
+    }
+    #tapLayer:disabled { pointer-events: none; }
+    #retry {
+      display: none;
+      position: fixed;
+      left: 50%;
+      bottom: max(28px, env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 3;
+      border: 0;
+      border-radius: 999px;
+      padding: 14px 28px;
+      background: #15803d;
+      color: #fff;
+      font-size: 18px;
+      font-weight: 800;
+      font-family: "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
       -webkit-tap-highlight-color: rgba(0,0,0,0.08);
       touch-action: manipulation;
-      pointer-events: auto;
-    }
-    #tapLayer:disabled {
-      cursor: wait;
-      opacity: 0.92;
-    }
-    h1 {
-      font-size: clamp(26px, 7vw, 34px);
-      font-weight: 950;
-      color: #067647;
-      line-height: 1.25;
-      text-align: center;
-      pointer-events: none;
-    }
-    .hint, .status {
-      text-align: center;
-      font-size: clamp(16px, 4.5vw, 19px);
-      font-weight: 800;
-      line-height: 1.5;
-      color: #166534;
-      pointer-events: none;
-      max-width: 28rem;
-    }
-    .status { min-height: 1.4em; color: #15803d; }
-    .err {
-      display: none;
-      width: min(100%, 420px);
-      padding: 12px 14px;
-      border-radius: 12px;
-      background: #fef2f2;
-      color: #991b1b;
-      font-size: 15px;
-      font-weight: 700;
-      text-align: center;
-      word-break: break-word;
-      pointer-events: none;
     }
   </style>
 </head>
 <body>
-  <button class="tap" id="tapLayer" type="button" disabled>
-    <h1>分享給好友</h1>
-    <p class="hint" id="lead">正在準備 LINE 好友選擇…</p>
-    <div class="status" id="status">載入中…</div>
-    <div class="err" id="errBox"></div>
-  </button>
+  <button id="tapLayer" type="button" aria-label="再試一次" disabled></button>
+  <button id="retry" type="button">再試一次</button>
 
   <script>
-    // W250723aj：
-    // - 禁止 auto shareTargetPicker（會害 iOS 死點／Android 白屏）
-    // - 登入後導向 line.me/R/share（原生好友選擇；選單點擊手勢延續）
-    // - 失敗才保留全螢幕單一點擊層重試
-    // - 受邀者連結用 line.me/R/app?invite_from=（避開 liff.line.me/? → LIFF 400）
+    // W250723ak：不要中間教學頁（禁止大按鈕／準備好了等文案）
+    // 流程：init → login → 立刻 line.me/R/share；失敗才顯示「再試一次」
+    // 受邀者連結：line.me/R/app?invite_from=（避開 liff.line.me/? → 400）
     const LIFF_ID = "2010674803-rK98c0lo";
-
-    const statusEl = document.getElementById("status");
-    const leadEl = document.getElementById("lead");
-    const errBox = document.getElementById("errBox");
     const tapLayer = document.getElementById("tapLayer");
+    const retryBtn = document.getElementById("retry");
 
     let inviteText = "";
     let myUserId = "";
@@ -102,22 +66,12 @@
     let sharing = false;
     let shareBlocked = false;
 
-    function showError(error) {
-      const msg = (error && error.message) ? String(error.message) : String(error || "未知錯誤");
-      errBox.style.display = "block";
-      errBox.textContent = "暫時無法分享：" + msg;
-      try {
-        alert("暫時無法分享：" + msg);
-      } catch (_) {}
-    }
-
     function sanitizeUserId(raw) {
       return String(raw || "").trim().replace(/[^a-zA-Z0-9_-]/g, "");
     }
 
     function buildInviteText(userId) {
       const safeId = sanitizeUserId(userId);
-      // 受邀者：line.me/R/app?invite_from=（強制 LINE、不用 liff.line.me/?）
       const bindUrl = safeId
         ? ("https://line.me/R/app/" + LIFF_ID + "?invite_from=" + encodeURIComponent(safeId))
         : ("https://line.me/R/app/" + LIFF_ID + "?open=onboarding");
@@ -141,104 +95,87 @@
       return window.location.origin + window.location.pathname + (query ? ("?" + query) : "");
     }
 
-    function enableShareUi(message) {
-      inviteText = buildInviteText(myUserId);
-      leadEl.textContent = "點螢幕任意處，開啟 LINE 好友選擇";
-      statusEl.textContent = message || "準備好了，請點一下";
+    function showRetry() {
+      retryBtn.style.display = "block";
       tapLayer.disabled = false;
       ready = true;
     }
 
+    function hideRetry() {
+      retryBtn.style.display = "none";
+    }
+
+    function alertFail(msg) {
+      try { alert(String(msg || "暫時無法分享")); } catch (_) {}
+    }
+
     function openNativeShare() {
       if (!inviteText) inviteText = buildInviteText(myUserId);
-      const url = buildNativeShareUrl(inviteText);
-      statusEl.textContent = "正在開啟 LINE 好友選擇…";
       try {
-        window.location.href = url;
+        window.location.href = buildNativeShareUrl(inviteText);
         return true;
       } catch (error) {
-        showError(error);
+        alertFail((error && error.message) ? error.message : error);
         return false;
       }
     }
 
-    async function openSharePicker() {
-      if (sharing || shareBlocked || !ready) return { ok: false, reason: "blocked" };
-      if (!inviteText) inviteText = buildInviteText(myUserId);
+    async function tryShareTargetPicker() {
+      if (!window.liff || typeof liff.shareTargetPicker !== "function") return false;
+      try {
+        if (typeof liff.isInClient === "function" && !liff.isInClient()) return false;
+        if (typeof liff.isApiAvailable === "function" && !liff.isApiAvailable("shareTargetPicker")) return false;
+        const result = await liff.shareTargetPicker([{ type: "text", text: inviteText }]);
+        if (result) {
+          try { if (typeof liff.closeWindow === "function") liff.closeWindow(); } catch (_) {}
+          return true;
+        }
+        return false;
+      } catch (error) {
+        alertFail((error && error.message) ? error.message : error);
+        return false;
+      }
+    }
 
+    async function openShare() {
+      if (sharing || shareBlocked || !ready) return;
+      if (!inviteText) inviteText = buildInviteText(myUserId);
       sharing = true;
       tapLayer.disabled = true;
-      errBox.style.display = "none";
-
+      hideRetry();
       try {
-        // 優先：LINE 原生分享 URL（不依賴 shareTargetPicker 手勢）
-        if (openNativeShare()) {
-          return { ok: true, sent: true, via: "native_share" };
-        }
-        // 備援：shareTargetPicker（必須在 click 手勢內）
-        if (window.liff && typeof liff.shareTargetPicker === "function") {
-          try {
-            if (typeof liff.isInClient === "function" && !liff.isInClient()) {
-              return { ok: false, reason: "not_in_client" };
-            }
-            if (typeof liff.isApiAvailable === "function" && !liff.isApiAvailable("shareTargetPicker")) {
-              return { ok: false, reason: "no_picker" };
-            }
-            const result = await liff.shareTargetPicker([{ type: "text", text: inviteText }]);
-            if (result) {
-              statusEl.textContent = "已分享";
-              try { if (typeof liff.closeWindow === "function") liff.closeWindow(); } catch (_) {}
-              return { ok: true, sent: true, via: "picker" };
-            }
-            statusEl.textContent = "已取消，可再點螢幕重試";
-            return { ok: true, sent: false, cancelled: true };
-          } catch (error) {
-            showError(error);
-            return { ok: false, reason: "error", error: error };
-          }
-        }
-        return { ok: false, reason: "no_picker" };
+        // 優先原生分享（不依賴 shareTargetPicker 手勢）
+        if (openNativeShare()) return;
+        // 備援：同一次 click 內呼叫 picker
+        const ok = await tryShareTargetPicker();
+        if (!ok) showRetry();
       } finally {
         sharing = false;
         if (!shareBlocked) tapLayer.disabled = false;
       }
     }
 
-    async function onTap(event) {
+    function onRetry(event) {
       if (event) {
         event.preventDefault();
         event.stopPropagation();
       }
-      if (!ready || shareBlocked) return;
-      const outcome = await openSharePicker();
-      if (outcome.ok && (outcome.sent || outcome.cancelled)) return;
-      if (outcome.reason === "not_in_client" || outcome.reason === "no_picker") {
-        statusEl.textContent = "請在 LINE App 內開啟再分享";
-        try {
-          alert("暫時無法分享：請在 LINE App 內開啟此頁再點一下");
-        } catch (_) {}
-        return;
-      }
-      statusEl.textContent = "分享沒成功，請再點螢幕試試";
+      openShare();
     }
 
     async function initializeLiff() {
       inviteText = buildInviteText("");
       try {
         if (!window.liff) throw new Error("LIFF SDK 未載入");
-
         await liff.init({ liffId: LIFF_ID });
 
         if (!liff.isLoggedIn()) {
-          statusEl.textContent = "前往 LINE 登入…";
           try {
             liff.login({ redirectUri: buildSafeRedirectUri() });
-          } catch (loginErr) {
-            try {
-              liff.login();
-            } catch (loginErr2) {
-              showError(loginErr2 || loginErr);
-              statusEl.textContent = "登入失敗，請關閉後再從圖文選單進入";
+          } catch (_) {
+            try { liff.login(); } catch (e2) {
+              alertFail(e2 && e2.message ? e2.message : e2);
+              showRetry();
             }
           }
           return;
@@ -246,39 +183,36 @@
 
         const urlParams = new URLSearchParams(window.location.search);
         const inviteFrom = urlParams.get("invite_from");
-
         try {
           const profile = await liff.getProfile();
           myUserId = (profile && profile.userId) || "";
-        } catch (profileErr) {
+        } catch (_) {
           myUserId = "";
         }
-
         inviteText = buildInviteText(myUserId);
 
-        // 受邀者誤開此頁：不分享、不自動導頁
         if (inviteFrom && myUserId && inviteFrom !== myUserId) {
           shareBlocked = true;
-          leadEl.textContent = "這是別人的邀請連結";
-          statusEl.textContent = "請回官方帳號首頁完成綁定";
+          alertFail("這是別人的邀請連結，請回官方帳號完成綁定");
           tapLayer.disabled = true;
-          ready = false;
           return;
         }
 
-        enableShareUi("即將開啟好友選擇…");
-        // 登入完成後導向原生分享（不是 picker API 自動呼叫）
-        // 若被瀏覽器擋下，全螢幕層仍可點一下重試
+        ready = true;
+        // 立刻導向原生好友選擇（無教學文案頁）
+        openNativeShare();
+        // 若仍停在本頁（被擋／外開失敗），短暫後顯示「再試一次」
         setTimeout(function () {
-          if (!shareBlocked && ready) openNativeShare();
-        }, 120);
+          if (!shareBlocked && document.visibilityState === "visible") showRetry();
+        }, 1600);
       } catch (error) {
-        showError(error);
-        statusEl.textContent = "載入失敗，請關閉後再從圖文選單進入";
+        alertFail((error && error.message) ? error.message : error);
+        showRetry();
       }
     }
 
-    tapLayer.addEventListener("click", onTap);
+    tapLayer.addEventListener("click", onRetry);
+    retryBtn.addEventListener("click", onRetry);
     initializeLiff();
   </script>
 </body>

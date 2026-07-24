@@ -119,40 +119,31 @@ def line_native_share_url(text: str) -> str:
 
 
 def share_invite_flex(invite_from: str, *, nickname: str = ""):
-    """圖文選單「一鍵邀請」回覆：單一 URI 直開 LINE 原生好友分享（略過 LIFF 大按鈕頁）。"""
+    """一鍵邀請回覆：整張卡片 URI＝line.me/R/share（無教學文案大按鈕頁）。"""
     text = guardian_invite_share_text(invite_from, nickname=nickname)
     share_uri = line_native_share_url(text)
     return {
         "type": "bubble",
+        "action": {"type": "uri", "label": "傳給家人", "uri": share_uri},
         "body": {
             "type": "box",
             "layout": "vertical",
-            "spacing": "md",
             "paddingAll": "xl",
             "contents": [
                 {
                     "type": "text",
-                    "text": "邀請家人當守護人",
+                    "text": "傳給家人",
                     "weight": "bold",
                     "size": "xl",
                     "color": "#067647",
-                    "wrap": True,
                     "align": "center",
-                },
-                {
-                    "type": "text",
-                    "text": "點下面按鈕，直接選 LINE 好友傳送邀請",
-                    "size": "md",
-                    "color": "#166534",
                     "wrap": True,
-                    "align": "center",
-                },
+                }
             ],
         },
         "footer": {
             "type": "box",
             "layout": "vertical",
-            "spacing": "sm",
             "paddingAll": "lg",
             "contents": [
                 _uri_button(

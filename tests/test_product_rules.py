@@ -251,33 +251,27 @@ class ProductRulesTests(unittest.TestCase):
     def test_share_invite_page_is_stable_click_only(self):
         page = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
         self.assertIn('await liff.init({ liffId: LIFF_ID })', page)
-        # 子路徑頁可用安全 redirectUri（origin+pathname+search，無 #）；禁止錯誤 redirect
         self.assertIn("buildSafeRedirectUri", page)
         self.assertIn("liff.login({ redirectUri: buildSafeRedirectUri() })", page)
         self.assertNotIn("redirectUri: window.location.href", page)
-        self.assertIn('alert("暫時無法分享："', page)
-        self.assertIn('tapLayer.addEventListener("click", onTap)', page)
+        self.assertIn("alertFail", page)
         self.assertIn("line.me/R/share?text=", page)
-        # 禁止 init 後自動 shareTargetPicker（W250723af 回歸根因）
+        self.assertIn("openNativeShare()", page)
+        # 禁止教學中間頁文案
+        self.assertNotIn("分享給好友", page)
+        self.assertNotIn("請點下面大按鈕", page)
+        self.assertNotIn("準備好了，請點大按鈕", page)
+        self.assertNotIn("開啟 LINE 好友選擇", page)
+        self.assertIn(">再試一次<", page)
         self.assertNotIn("await shareNow()", page)
         self.assertNotIn("autoShareOnce", page)
-        self.assertNotIn("await autoShareOnce()", page)
-        self.assertNotIn("openSharePicker({ auto: true })", page)
-        # shareTargetPicker 只能當 click 備援，不可在 initializeLiff 內呼叫
-        init_fn = page[page.index("async function initializeLiff()") : page.index("tapLayer.addEventListener")]
+        init_fn = page[page.index("async function initializeLiff()") :]
         self.assertNotIn("shareTargetPicker", init_fn)
         self.assertIn("openNativeShare()", init_fn)
-        # 產品路徑：不要複製連結備援
-        self.assertNotIn("複製邀請訊息", page)
-        self.assertNotIn("複製連結", page)
         self.assertNotIn("clipboard", page)
-        self.assertNotIn("inviteBox", page)
-        self.assertNotIn("copyBtn", page)
-        self.assertNotIn("?open=home", page)
-        # 邀請網址必須走 line.me/R/app?invite_from=（避開 liff.line.me/? → 400）
         self.assertIn("https://line.me/R/app/\" + LIFF_ID + \"?invite_from=", page)
         self.assertIn('const LIFF_ID = "2010674803-rK98c0lo"', page)
-        self.assertIn("W250723aj", page)
+        self.assertIn("W250723ak", page)
 
     def test_liff_links_use_query_params_for_android_compatibility(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -290,19 +284,16 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('"invite_from", "friend_invite", "open"', page)
         self.assertIn("https://alive-checkin.onrender.com/liff/pricing.html", rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=checkin", rich_menu)
-        # 一鍵邀請：message → Bot 回 line.me/R/share（略過 LIFF 大按鈕頁）
-        self.assertIn('"type": "message"', rich_menu)
-        self.assertIn('"label": "一鍵邀請"', rich_menu)
-        self.assertIn('"text": "一鍵邀請"', rich_menu)
-        self.assertNotIn("share-invite.html", rich_menu)
+        # 一鍵邀請：直連空白 share-invite（自動 R/share），無教學大按鈕文案頁
+        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html", rich_menu)
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=share-invite", rich_menu)
-        # 「需要幫忙」必須是 LINE message，觸發 Bot 緊急求助 Flex（不可 uri 連網頁）
+        # 「需要幫忙」必須是 LINE message
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo?open=sos", rich_menu)
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=sos", rich_menu)
+        self.assertIn('"type": "message"', rich_menu)
         self.assertIn('"label": "需要幫忙"', rich_menu)
         self.assertIn('"text": "需要幫忙"', rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=help", rich_menu)
-        # 查看方案必須直連方案頁，不可再走 open=pricing 首頁轉跳
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo?open=pricing", rich_menu)
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=pricing", rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=guard", rich_menu)
