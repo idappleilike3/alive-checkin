@@ -606,15 +606,23 @@ def _info_row(emoji_label: str, value: str):
     }
 
 
-def guardian_group_setup_nudge_text(guardian_count: int = 0, guardian_limit: int = 5) -> str:
+def guardian_group_setup_nudge_text(
+    guardian_count: int = 0,
+    guardian_limit: int = 5,
+    emergency_count: int = 0,
+    emergency_limit: int = 2,
+) -> str:
     """綁定成功後第二則文字：提醒再完成 2 個設定。"""
     count = max(0, int(guardian_count or 0))
     limit = max(1, int(guardian_limit or 5))
+    em_count = max(0, int(emergency_count or 0))
+    em_limit = max(1, int(emergency_limit or 2))
     return (
         "🎉 守護群已建立成功！\n"
-        "提醒：加進 LINE 群 ≠ 已綁定守護人。\n"
+        "提醒：加進 LINE 群 ≠ 已綁定核心守護人。\n"
         "建議再完成 2 個設定，讓守護更完整：\n"
-        f"✅ 用「一鍵邀請」完成 LINE 綁定（已綁定守護人目前 {count}/{limit} 位）\n"
+        f"✅ 用「一鍵邀請」完成 LINE 綁定（已綁定核心守護人目前 {count}/{limit} 位）\n"
+        f"☎️ 緊急聯絡人（電話備援，會員中心緊急分頁）目前 {em_count}/{em_limit} 位\n"
         "✅ 設定每日提醒時間\n"
         "完成後，系統就會開始每天守護您與家人的平安 ❤️"
     )
@@ -624,8 +632,19 @@ def guardian_group_bind_confirm_flex(result: dict):
     """綁定／建立成功後的「守護群資訊」卡（第二張）。"""
     already = result.get("already_bound")
     display_name = (result.get("display_name") or result.get("owner_display_name") or "管理員").strip() or "管理員"
+    # 核心守護人名額＝方案 core_guardian_alert_limit（799 月=10／年=15），不可用合計 contact_limit
     guardian_count = int(result.get("guardian_count") or 0)
-    guardian_limit = int(result.get("guardian_limit") or result.get("core_guardian_alert_limit") or 5)
+    guardian_limit = int(
+        result.get("guardian_limit")
+        or result.get("core_guardian_alert_limit")
+        or 5
+    )
+    emergency_count = int(result.get("emergency_count") or 0)
+    emergency_limit = int(
+        result.get("emergency_limit")
+        or result.get("emergency_contact_limit")
+        or 2
+    )
     member_count = result.get("member_count")
     if member_count is None:
         member_count = result.get("member_count_at_bind")
@@ -637,7 +656,8 @@ def guardian_group_bind_confirm_flex(result: dict):
     status_label = "🟢 正常守護中" if not already else "🟢 正常守護中（已綁定）"
     body_rows = [
         _info_row("👑 管理人", display_name),
-        _info_row("✅ 已綁定守護人", f"{guardian_count} / {guardian_limit} 位"),
+        _info_row("✅ 已綁定核心守護人", f"{guardian_count} / {guardian_limit} 位"),
+        _info_row("☎️ 緊急聯絡人", f"{emergency_count} / {emergency_limit} 位（電話備援）"),
     ]
     if member_count is not None and str(member_count).strip() != "":
         try:
@@ -654,7 +674,7 @@ def guardian_group_bind_confirm_flex(result: dict):
     body_rows.append(
         {
             "type": "text",
-            "text": "說明：群組成員可收群內提醒；個人 LINE 通知需「一鍵邀請」完成綁定。",
+            "text": "說明：核心守護人＝LINE 一鍵邀請綁定；緊急聯絡人＝電話備援（會員中心緊急分頁）。群組成員可收群內提醒，與核心／緊急名額無關。",
             "size": "md",
             "color": GRAY,
             "wrap": True,

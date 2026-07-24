@@ -97,14 +97,19 @@ class GuardianGroupJoinTests(unittest.TestCase):
             {
                 "display_name": "阿明",
                 "guardian_count": 1,
-                "guardian_limit": 5,
+                "guardian_limit": 15,
+                "emergency_count": 0,
+                "emergency_limit": 50,
                 "reminder_time": "09:00",
             }
         )
         body = str(info["body"])
         self.assertIn("阿明", body)
-        self.assertIn("1 / 5 位", body)
-        self.assertIn("已綁定守護人", body)
+        self.assertIn("1 / 15 位", body)
+        self.assertIn("已綁定核心守護人", body)
+        self.assertNotIn("已綁定守護人", body.replace("已綁定核心守護人", ""))
+        self.assertIn("緊急聯絡人", body)
+        self.assertIn("0 / 50 位", body)
         self.assertIn("一鍵邀請", body)
         self.assertIn("09:00", body)
         self.assertIn("正常守護中", body)
@@ -119,10 +124,11 @@ class GuardianGroupJoinTests(unittest.TestCase):
         self.assertIn("一鍵邀請", member_text)
         self.assertNotIn("邀請您成為守護人", member_text)
 
-        nudge = guardian_group_setup_nudge_text(1, 5)
+        nudge = guardian_group_setup_nudge_text(1, 15, 0, 50)
         self.assertIn("守護群已建立成功", nudge)
-        self.assertIn("已綁定守護人目前 1/5 位", nudge)
-        self.assertIn("加進 LINE 群 ≠ 已綁定守護人", nudge)
+        self.assertIn("已綁定核心守護人目前 1/15 位", nudge)
+        self.assertIn("緊急聯絡人（電話備援，會員中心緊急分頁）目前 0/50 位", nudge)
+        self.assertIn("加進 LINE 群 ≠ 已綁定核心守護人", nudge)
         self.assertIn("設定每日提醒時間", nudge)
 
     def test_refresh_member_snapshot_updates_count(self):

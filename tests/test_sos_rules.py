@@ -125,6 +125,17 @@ class SosRulesTests(unittest.TestCase):
         self.assertEqual(result["sent"], 1)
         self.assertEqual(result["group_sent"], 1)
         self.assertEqual(messages[0][0], "C-group")
+        group_msg = messages[0][1]
+        self.assertIsInstance(group_msg, dict)
+        self.assertEqual(group_msg.get("type"), "textV2")
+        substitution = group_msg.get("substitution") or {}
+        self.assertIn("everyone", substitution)
+        self.assertEqual(
+            ((substitution.get("everyone") or {}).get("mentionee") or {}).get("type"),
+            "all",
+        )
+        self.assertIn("@全體 緊急SOS", group_msg.get("text") or "")
+        self.assertEqual(result["results"][0].get("mention"), "all")
 
     def test_sos_accepts_inline_coords_and_reports_phone_only(self):
         messages = []

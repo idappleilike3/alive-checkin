@@ -5059,16 +5059,37 @@ def trigger_sos(data_file, payload, config=None):
 
     for group_id in active_group_ids:
         try:
-            result = sender(token, group_id, message)
-            append_notification_log(state, "sos_guardian_group", group_id, "sent", message, json.dumps(result, ensure_ascii=False))
+            group_info = (state.get("guardian_groups") or {}).get(group_id) or {}
+            member_ids = list(group_info.get("member_ids_at_bind") or [])
+            result, mention_mode, _payload = push_sos_to_guardian_group(
+                token,
+                group_id,
+                message,
+                sender=sender,
+                member_ids=member_ids,
+            )
+            append_notification_log(
+                state,
+                "sos_guardian_group",
+                group_id,
+                "sent",
+                message,
+                json.dumps({"result": result, "mention": mention_mode}, ensure_ascii=False),
+            )
             sent += 1
             group_sent += 1
-            results.append({"group_id": group_id, "status": "sent"})
+            results.append({
+                "group_id": group_id,
+                "status": "sent",
+                "mention": mention_mode,
+            })
+            print(f"[sos] group push ok group={str(group_id)[:8]} mention={mention_mode}", flush=True)
         except Exception as exc:
             append_notification_log(state, "sos_guardian_group", group_id, "failed", message, str(exc))
             failed += 1
             group_failed += 1
             results.append({"group_id": group_id, "status": "failed"})
+            print(f"[sos] group push FAIL group={str(group_id)[:8]} err={str(exc)[:180]}", flush=True)
 
     profile["last_sos_at"] = current_app_time(config or {}).isoformat(timespec="seconds")
     # 🔴 P0 FIX:累計今日 SOS 計數
@@ -5836,6 +5857,77 @@ def read_admin_backup(data_file, backup_id):
         return json.loads(path.read_text(encoding="utf-8")), 200
     except (json.JSONDecodeError, OSError):
         return {"error": "backup file unreadable"}, 500
+
+
+def build_sos_group_mention_message(alert_text: str):
+    """群組 SOS：用 textV2 + mentionee type=all（@全體），盡可能讓每位成員收到通知。"""
+    body = str(alert_text or "").strip()
+    return {
+        "type": "textV2",
+        "text": "{everyone}\n🚨【@全體 緊急SOS】\n" + body,
+        "substitution": {
+            "everyone": {
+                "type": "mention",
+                "mentionee": {"type": "all"},
+            }
+        },
+    }
+
+
+def build_sos_group_member_mentions_message(alert_text: str, member_user_ids=None):
+    """@all 失敗時備援：mention 已知成員 userId（單則最多 20 人）。"""
+    body = str(alert_text or "").strip()
+    ids = []
+    seen = set()
+    for uid in member_user_ids or []:
+        u = str(uid or "").strip()
+        if not u or u in seen or not u.startswith("U"):
+            continue
+        seen.add(u)
+        ids.append(u)
+        if len(ids) >= 20:
+            break
+    if not ids:
+        return "🚨【@全體 緊急SOS】\n" + body
+    substitution = {}
+    parts = []
+    for i, uid in enumerate(ids):
+        key = f"m{i}"
+        parts.append("{" + key + "}")
+        substitution[key] = {
+            "type": "mention",
+            "mentionee": {"type": "user", "userId": uid},
+        }
+    return {
+        "type": "textV2",
+        "text": " ".join(parts) + "\n🚨【@全體 緊急SOS】\n" + body,
+        "substitution": substitution,
+    }
+
+
+def push_sos_to_guardian_group(token, group_id, alert_text, *, sender=None, member_ids=None):
+    """推送群組 SOS，優先 @all；失敗再 mention 已知成員；最後純文字加 @全體 前綴。"""
+    push = sender or line_push_message
+    gid = str(group_id or "").strip()
+    if not gid:
+        raise ValueError("missing group_id for SOS group push")
+    primary = build_sos_group_mention_message(alert_text)
+    try:
+        result = push(token, gid, primary)
+        return result, "all", primary
+    except Exception:
+        fallback_ids = list(member_ids or [])
+        if not fallback_ids:
+            fallback_ids = get_group_member_ids(token, gid) or []
+        secondary = build_sos_group_member_mentions_message(alert_text, fallback_ids)
+        try:
+            result = push(token, gid, secondary)
+            mode = "members" if isinstance(secondary, dict) else "text"
+            return result, mode, secondary
+        except Exception:
+            plain = "🚨【@全體 緊急SOS】\n" + str(alert_text or "").strip()
+            result = push(token, gid, plain)
+            return result, "text", plain
 
 
 def line_push_message(token, line_user_id, message):
@@ -7090,7 +7182,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725pl",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gm",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -7412,7 +7504,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725pl",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gm",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -7793,7 +7885,7 @@ def create_app(config=None):
             return messages
 
         def _enrich_bind_result_for_flex(result, line_user_id):
-            """補上資訊卡需要的管理人／已綁定守護人數／群組成員數／提醒時間。"""
+            """補上資訊卡：管理人／核心守護人／緊急聯絡人／群組成員／提醒時間。"""
             enriched = dict(result or {})
             try:
                 state = load_state(app.config["DATA_FILE"])
@@ -7801,9 +7893,15 @@ def create_app(config=None):
                 rules = plan_rules(profile)
                 times = reminder_times_for_profile(profile) or ["09:00"]
                 contacts = profile.get("contacts") or []
-                # 已綁定守護人 ≠ 群組成員；只計算 LINE 一鍵邀請完成綁定者
+                # 已綁定核心守護人 ≠ 群組成員 ≠ 緊急聯絡人；只用 core 名額
                 guardian_count = sum(
-                    1 for c in contacts if contact_is_bound_guardian(c, line_user_id)
+                    1
+                    for c in contacts
+                    if resolve_contact_role(c) != "emergency"
+                    and contact_is_bound_guardian(c, line_user_id)
+                )
+                emergency_count = sum(
+                    1 for c in contacts if resolve_contact_role(c) == "emergency"
                 )
                 enriched.setdefault(
                     "display_name",
@@ -7812,11 +7910,17 @@ def create_app(config=None):
                 enriched.setdefault("guardian_count", guardian_count)
                 enriched.setdefault(
                     "guardian_limit",
-                    int(
-                        rules.get("contact_limit")
-                        or rules.get("core_guardian_alert_limit")
-                        or 5
-                    ),
+                    int(rules.get("core_guardian_alert_limit") or 5),
+                )
+                enriched.setdefault("core_guardian_alert_limit", int(rules.get("core_guardian_alert_limit") or 5))
+                enriched.setdefault("emergency_count", emergency_count)
+                enriched.setdefault(
+                    "emergency_limit",
+                    int(rules.get("emergency_contact_limit") or 2),
+                )
+                enriched.setdefault(
+                    "emergency_contact_limit",
+                    int(rules.get("emergency_contact_limit") or 2),
                 )
                 enriched.setdefault("reminder_time", str(times[0] if times else "09:00"))
                 enriched.setdefault("reminder_times", list(times))
@@ -7838,6 +7942,8 @@ def create_app(config=None):
                 enriched.setdefault("display_name", "管理員")
                 enriched.setdefault("guardian_count", 0)
                 enriched.setdefault("guardian_limit", 5)
+                enriched.setdefault("emergency_count", 0)
+                enriched.setdefault("emergency_limit", 2)
                 enriched.setdefault("reminder_time", "09:00")
             return enriched
 
@@ -8264,11 +8370,13 @@ def create_app(config=None):
                                     guardian_group_setup_nudge_text(
                                         enriched.get("guardian_count", 0),
                                         enriched.get("guardian_limit", 5),
+                                        enriched.get("emergency_count", 0),
+                                        enriched.get("emergency_limit", 2),
                                     )
                                     if guardian_group_setup_nudge_text is not None
                                     else (
                                         "🎉 守護群已建立成功！\n"
-                                        "建議再完成：新增守護人、設定每日提醒時間。"
+                                        "建議再完成：新增核心守護人、緊急聯絡人、設定每日提醒時間。"
                                     )
                                 )
                                 success_msgs.append(TextSendMessage(text=nudge))
@@ -8301,6 +8409,8 @@ def create_app(config=None):
                                     + guardian_group_setup_nudge_text(
                                         enriched.get("guardian_count", 0),
                                         enriched.get("guardian_limit", 5),
+                                        enriched.get("emergency_count", 0),
+                                        enriched.get("emergency_limit", 2),
                                     )
                                 )
                         elif result.get("should_leave"):
