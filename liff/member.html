@@ -141,6 +141,44 @@
     display: none;
   }
   .hint { color: #666; font-size: 14px; margin-bottom: 8px; }
+  .role-intro {
+    background: linear-gradient(165deg, #f0fdf4 0%, #ecfdf5 55%, #fff 100%);
+    border: 1.5px solid #bbf7d0;
+    border-radius: 14px;
+    padding: 16px;
+    margin: 0 0 16px;
+    display: grid;
+    gap: 12px;
+  }
+  .role-intro[hidden] { display: none; }
+  .role-intro-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .role-intro-head strong { color: #14532d; font-size: 17px; }
+  .role-intro-head span { display: block; margin-top: 4px; color: #3f6212; font-size: 13px; font-weight: 600; line-height: 1.45; }
+  .role-intro-dismiss {
+    border: 0;
+    background: transparent;
+    color: #64748b;
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    padding: 4px 6px;
+  }
+  .role-card {
+    background: rgba(255,255,255,0.9);
+    border: 1px solid #d1fae5;
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: grid;
+    gap: 6px;
+  }
+  .role-card h3 { margin: 0; font-size: 16px; color: #166534; }
+  .role-card p { margin: 0; font-size: 14px; color: #334155; line-height: 1.55; }
+  .role-card .role-label { color: #64748b; font-weight: 700; font-size: 12px; }
   .modal-backdrop {
     position: fixed;
     inset: 0;
@@ -197,6 +235,27 @@
   <div class="plan-box" id="planBox">
     <div class="plan-name" id="planName">載入中...</div>
     <div class="plan-detail" id="planDetail"></div>
+  </div>
+
+  <div class="role-intro" id="memberRoleIntro" hidden>
+    <div class="role-intro-head">
+      <div>
+        <strong>免費體驗小教室</strong>
+        <span>先分清楚兩種角色，設定才不會搞混。</span>
+      </div>
+      <button class="role-intro-dismiss" id="memberRoleIntroDismiss" type="button">知道了</button>
+    </div>
+    <article class="role-card">
+      <h3>👨‍👩‍👧 守護人（Guardian）</h3>
+      <p><span class="role-label">用途</span>　平常每天守護你的人。</p>
+      <p><span class="role-label">會收到</span>　未報平安通知、SOS、安全守護、可查看平安狀態（若有授權）。</p>
+      <p><span class="role-label">免費版建議</span>　1 位守護人（配偶／父母／子女足夠）。</p>
+    </article>
+    <article class="role-card">
+      <h3>☎️ 緊急聯絡人（Emergency Contact）</h3>
+      <p><span class="role-label">用途</span>　真正緊急時才聯絡（119 前／SOS 才通知，平時不收每日提醒）。</p>
+      <p><span class="role-label">免費版建議</span>　2 位（爸媽，或配偶＋好友）。</p>
+    </article>
   </div>
 
   <div class="btn-row">
@@ -297,8 +356,35 @@ let state = {
   reminderTimes: ["12:00"],
   dailyReminders: 1,
   guardians: [],
-  editId: null
+  editId: null,
+  plan: "trial"
 };
+
+const MEMBER_ROLE_INTRO_KEY = "member_role_intro_dismissed";
+
+function isRoleIntroDismissed() {
+  try { return localStorage.getItem(MEMBER_ROLE_INTRO_KEY) === "1"; } catch (_) { return false; }
+}
+
+function dismissRoleIntro() {
+  try { localStorage.setItem(MEMBER_ROLE_INTRO_KEY, "1"); } catch (_) {}
+  const el = document.getElementById("memberRoleIntro");
+  if (el) el.hidden = true;
+}
+
+function renderRoleIntro() {
+  const el = document.getElementById("memberRoleIntro");
+  if (!el || isRoleIntroDismissed()) {
+    if (el) el.hidden = true;
+    return;
+  }
+  const plan = String(state.plan || "trial");
+  const freeOrTrial = plan === "trial" || plan === "free" || !plan.startsWith("paid_");
+  const hasBound = (state.guardians || []).some((g) =>
+    g.binding_status === "accepted" || g.consent_status === "accepted" || g.line_id || g.line_user_id
+  );
+  el.hidden = !(freeOrTrial || hasBound);
+}
 
 function defaultTimesForCount(count) {
   const n = Math.max(1, Math.min(3, Number(count) || 1));
@@ -359,15 +445,17 @@ async function init() {
         ? d.reminder_times
         : (d.default_reminder_times || defaultTimesForCount(state.dailyReminders));
       document.getElementById("planName").textContent = d.plan || "尚未訂閱";
+      state.plan = d.plan || "trial";
       document.getElementById("planDetail").textContent = d.plan
         ? `每日提醒 ${state.dailyReminders} 次`
-        : "升級 799 守護版可開守護群";
+        : "免費／試用可綁 1 位守護人；799 進階解鎖多人共守與守護群";
       document.getElementById("reminderHint").textContent =
         `本方案每日可設定 ${state.dailyReminders} 個提醒時段。未自訂時預設：${(d.default_reminder_times || defaultTimesForCount(state.dailyReminders)).join("、")}`;
     }
 
     await refreshGuardians();
     renderReminderSlots(state.reminderTimes);
+    renderRoleIntro();
   } catch (err) {
     console.error(err);
   }
@@ -530,6 +618,8 @@ document.getElementById("useDefaultsBtn").addEventListener("click", () => {
   renderReminderSlots(defaultTimesForCount(state.dailyReminders));
 });
 document.getElementById("shareInviteBtn").addEventListener("click", shareGuardianInvite);
+const roleIntroDismiss = document.getElementById("memberRoleIntroDismiss");
+if (roleIntroDismiss) roleIntroDismiss.addEventListener("click", dismissRoleIntro);
 document.getElementById("addGuardianBtn").addEventListener("click", async () => {
   await shareGuardianInvite();
   openEditor(null);

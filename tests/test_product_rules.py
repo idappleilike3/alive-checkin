@@ -205,6 +205,21 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("所有會員都可以使用", help_page)
         self.assertNotIn("有效的 799 守護版會員", help_page)
 
+    def test_member_role_intro_explains_guardian_vs_emergency_contact(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        member = (ROOT / "liff" / "member.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="memberRoleIntro"', page)
+        self.assertIn("守護人（Guardian）", page)
+        self.assertIn("緊急聯絡人（Emergency Contact）", page)
+        self.assertIn("member_role_intro_dismissed", page)
+        self.assertIn("平常每天守護你的人", page)
+        self.assertIn("真正緊急時才聯絡", page)
+        self.assertIn('id="memberRoleIntro"', member)
+        self.assertIn("免費體驗小教室", member)
+        self.assertNotIn('id="memberAutoRenew"', page)
+        self.assertNotIn("儲存續扣", page)
+        self.assertNotIn("有效的 799 守護版會員，可連續按 3 次", page)
 
     def test_line_login_finishes_before_checkin_is_enabled(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
