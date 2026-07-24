@@ -3220,6 +3220,7 @@
         <p class="mvp-bound-hint">已綁定完成，不用再填聯絡人資料。若要再邀請其他人，請點上方「一鍵邀請守護人」轉傳分享。</p>
       </div>
       <div class="mvp-checkin-banner" id="mvpCheckinBanner" hidden>✅ 今天已完成平安回報</div>
+      <div class="mvp-checkin-banner" id="mvpNextReminderBanner" hidden style="background:#ecfdf3;color:#166534;"></div>
       <p id="inlineError" class="inline-error" hidden></p>
     </section>
 
@@ -4261,8 +4262,42 @@
     }
 
     function getToday() {
-      const d = new Date();
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      try {
+        const parts = new Intl.DateTimeFormat("en-CA", {
+          timeZone: "Asia/Taipei",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit"
+        }).formatToParts(new Date());
+        const pick = (type) => (parts.find((part) => part.type === type) || {}).value || "";
+        return `${pick("year")}-${pick("month")}-${pick("day")}`;
+      } catch (_) {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      }
+    }
+
+    function formatNextReminderMessage(data) {
+      const label = (data && (data.next_reminder_text || data.next_reminder_label)) || "";
+      if (!label) return "";
+      return label.startsWith("下次") ? label : `下次提醒 ${label}`;
+    }
+
+    function showCheckinSuccessMessage(data) {
+      const next = formatNextReminderMessage(data);
+      const duplicate = Boolean(data && (data.already_checked_today || data.is_duplicate));
+      const base = duplicate ? "✅ 今天已完成平安回報，不用再點一次" : "✅ 今天已完成平安回報";
+      showInlineSuccess(next ? `${base}｜${next}` : base);
+      const nextBanner = $("mvpNextReminderBanner");
+      if (nextBanner) {
+        if (next) {
+          nextBanner.hidden = false;
+          nextBanner.textContent = `⏰ ${next}`;
+        } else {
+          nextBanner.hidden = true;
+          nextBanner.textContent = "";
+        }
+      }
     }
 
     function formatDate(ts) {
@@ -5041,6 +5076,135 @@
       openShareInvitePage("member");
     }
 
+    let smartReminderCache = { entitled: false, reminders: [], categories: [] };
+
+    function planIs799(plan) {
+      return plan === "paid_799" || plan === "paid_799_year";
+    }
+
+    async function refreshSmartRemindersUi() {
+      const upgrade = $("smartReminderUpgrade");
+      const controls = $("smartReminderControls");
+      const listEl = $("smartReminderList");
+      const hint = $("smartReminderHint");
+      const plan = String((currentStatusData && currentStatusData.plan) || "trial");
+      if (!lineUserId) {
+        if (upgrade) upgrade.hidden = true;
+        if (controls) controls.hidden = true;
+        return;
+      }
+      try {
+        const res = await fetch(`/api/smart-reminders?line_user_id=${encodeURIComponent(lineUserId)}`, {
+          headers: await authHeaders()
+        });
+        const data = await res.json();
+        smartReminderCache = data || smartReminderCache;
+        const entitled = Boolean(data.entitled) || planIs799(plan);
+        if (hint) {
+          hint.textContent = entitled
+            ? "生活提醒只傳到 LINE 私訊（預設）。守護群只收安全事件，不會收到生日等提醒。"
+            : "智能提醒為 799 守護版功能。免費／399 僅顯示升級說明。";
+        }
+        if (upgrade) upgrade.hidden = entitled;
+        if (controls) controls.hidden = !entitled;
+        if (!entitled || !listEl) return;
+        const rows = data.reminders || [];
+        listEl.innerHTML = rows.length
+          ? rows.map((r) => `
+            <div class="member-guardian-manage-row" data-smart-id="${escapeHtml(r.id)}">
+              <div class="member-guardian-manage-meta">
+                <span class="guardian-manage-name">${escapeHtml(r.emoji || "🗓️")} ${escapeHtml(r.target_name || "")}</span>
+                <span>${escapeHtml(r.category_label || r.category || "")} ／ ${escapeHtml(String(r.month || ""))}/${escapeHtml(String(r.day || ""))}</span>
+                <small>${r.notify_private !== false ? "私訊✓" : "私訊關"}${r.notify_group ? "｜群組✓" : "｜群組關"}</small>
+              </div>
+              <div class="member-guardian-manage-actions">
+                <button class="action-btn smart-edit-btn" type="button" data-id="${escapeHtml(r.id)}">編輯</button>
+                <button class="action-btn danger-action smart-delete-btn" type="button" data-id="${escapeHtml(r.id)}">刪除</button>
+              </div>
+            </div>`).join("")
+          : `<div class="member-data-row"><span>目前狀態</span><strong>尚未新增提醒</strong></div>`;
+        listEl.querySelectorAll(".smart-edit-btn").forEach((btn) => {
+          btn.addEventListener("click", () => openSmartReminderEditor(btn.dataset.id));
+        });
+        listEl.querySelectorAll(".smart-delete-btn").forEach((btn) => {
+          btn.addEventListener("click", () => deleteSmartReminder(btn.dataset.id));
+        });
+        const groupCb = $("smartReminderNotifyGroup");
+        if (groupCb && data.defaults) groupCb.checked = Boolean(data.defaults.notify_group);
+      } catch (err) {
+        console.warn("smart reminders load failed", err);
+      }
+    }
+
+    function openSmartReminderEditor(id) {
+      const existing = (smartReminderCache.reminders || []).find((r) => r.id === id) || null;
+      const categories = smartReminderCache.categories || [];
+      const name = prompt("對象名稱（例如：媽媽）", existing ? existing.target_name : "");
+      if (name == null) return;
+      const catLabels = categories.map((c) => `${c.id}=${c.emoji}${c.label}`).join("\n");
+      const cat = prompt(
+        `類型代碼：\n${catLabels || "birthday=🎂生日"}\n（直接輸入代碼，例如 birthday）`,
+        existing ? existing.category : "birthday"
+      );
+      if (cat == null) return;
+      const md = prompt("日期（月/日，例如 7/24）", existing ? `${existing.month}/${existing.day}` : "7/24");
+      if (md == null) return;
+      const parts = String(md).split(/[\/\-.]/).map((x) => parseInt(x, 10));
+      const month = parts[0] || 1;
+      const day = parts[1] || 1;
+      const note = prompt("備註（可留空）", existing ? (existing.note || "") : "") || "";
+      const notifyGroup = Boolean($("smartReminderNotifyGroup") && $("smartReminderNotifyGroup").checked);
+      saveSmartReminder({
+        id: existing ? existing.id : undefined,
+        target_name: String(name).trim() || "家人",
+        category: String(cat).trim() || "birthday",
+        month,
+        day,
+        note,
+        notify_private: true,
+        notify_group: notifyGroup,
+        eve_remind: true,
+        defaults: { notify_private: true, notify_group: notifyGroup }
+      });
+    }
+
+    async function saveSmartReminder(payload) {
+      try {
+        const res = await fetch("/api/smart-reminders", {
+          method: "POST",
+          headers: await authHeaders(),
+          body: JSON.stringify({ ...payload, line_user_id: lineUserId })
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) {
+          alert(data.upgrade_hint || data.error || "儲存失敗");
+          return;
+        }
+        await refreshSmartRemindersUi();
+        showInlineSuccess("智能提醒已儲存（到期日會私訊提醒）");
+      } catch (err) {
+        alert("儲存失敗：" + (err.message || ""));
+      }
+    }
+
+    async function deleteSmartReminder(id) {
+      if (!id || !confirm("確定刪除此智能提醒？")) return;
+      try {
+        const res = await fetch(`/api/smart-reminders/${encodeURIComponent(id)}?line_user_id=${encodeURIComponent(lineUserId)}`, {
+          method: "DELETE",
+          headers: await authHeaders()
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) {
+          alert(data.error || "刪除失敗");
+          return;
+        }
+        await refreshSmartRemindersUi();
+      } catch (err) {
+        alert("刪除失敗：" + (err.message || ""));
+      }
+    }
+
     function renderContactManageRows(list, emptyText) {
       if (!list.length) {
         return `<div class="member-data-row"><span>目前狀態</span><strong>${escapeHtml(emptyText)}</strong></div>`;
@@ -5181,6 +5345,7 @@
       };
       bindManageList($("memberGuardianList"));
       bindManageList($("memberEmergencyList"));
+      refreshSmartRemindersUi();
 
       const recentHistory = [...historyData].sort().reverse().slice(0, 10);
       $("memberHistoryList").innerHTML = recentHistory.length
@@ -6835,6 +7000,7 @@
       const checkBtn = $("checkBtn");
       const mvpSafe = $("mvpSafeBtn");
       const banner = $("mvpCheckinBanner");
+      const nextBanner = $("mvpNextReminderBanner");
       const checked = Boolean(data && data.is_today_checked);
       if (checkBtn) {
         checkBtn.disabled = checked;
@@ -6849,9 +7015,23 @@
       if (mvpSafe) {
         mvpSafe.classList.toggle("done", checked);
         mvpSafe.querySelector(".mvp-btn-title").textContent = checked ? "今天已平安" : "我平安";
-        mvpSafe.querySelector(".mvp-btn-desc").textContent = checked ? "今天已完成平安回報" : "回報今天平安";
+        const desc = mvpSafe.querySelector(".mvp-btn-desc");
+        if (desc) {
+          const next = formatNextReminderMessage(data);
+          desc.textContent = checked ? (next || "今天已完成平安回報") : "回報今天平安";
+        }
       }
       if (banner) banner.hidden = !checked;
+      if (nextBanner) {
+        const next = formatNextReminderMessage(data);
+        if (checked && next) {
+          nextBanner.hidden = false;
+          nextBanner.textContent = `⏰ ${next}`;
+        } else if (!checked) {
+          nextBanner.hidden = true;
+          nextBanner.textContent = "";
+        }
+      }
       if (data && data.safety_guard) renderSafetyGuardUi(data.safety_guard);
     }
 
@@ -6946,7 +7126,7 @@
       // 防重複送出:今日已簽到時不送 API
       if (currentStatusData && currentStatusData.is_today_checked) {
         syncCheckBtn(currentStatusData);
-        showInlineSuccess("✅ 今天已完成平安回報");
+        showCheckinSuccessMessage(currentStatusData);
         return;
       }
 
@@ -6963,8 +7143,13 @@
           syncCheckBtn(currentStatusData || { is_today_checked: false });
           return;
         }
+        if (result && typeof result === "object") {
+          result.is_today_checked = true;
+          const today = getToday();
+          result.history = Array.from(new Set([...(result.history || []), today]));
+        }
         renderStatus(result);
-        showInlineSuccess("✅ 今天已完成平安回報");
+        showCheckinSuccessMessage(result || currentStatusData);
         const banner = $("mvpCheckinBanner");
         if (banner) banner.hidden = false;
       } catch (error) {
@@ -7791,7 +7976,7 @@
             setTimeout(() => {
               if (currentStatusData && currentStatusData.is_today_checked) {
                 syncCheckBtn(currentStatusData);
-                showInlineSuccess("✅ 今天已完成平安回報");
+                showCheckinSuccessMessage(currentStatusData);
                 return;
               }
               doCheckin().catch((error) => showInlineError("回報失敗：" + (error.message || "請稍後再試")));
@@ -8202,6 +8387,14 @@
     $("deleteAccountBtn").addEventListener("click", deleteAccountAndData);
     const memberAddGuardianBtn = $("memberAddGuardianBtn");
     if (memberAddGuardianBtn) memberAddGuardianBtn.addEventListener("click", openAddGuardianFromMember);
+    const smartReminderAddBtn = $("smartReminderAddBtn");
+    if (smartReminderAddBtn) smartReminderAddBtn.addEventListener("click", () => openSmartReminderEditor(null));
+    const smartReminderUpgradeBtn = $("smartReminderUpgradeBtn");
+    if (smartReminderUpgradeBtn) {
+      smartReminderUpgradeBtn.addEventListener("click", () => {
+        location.href = "https://alive-checkin.onrender.com/liff/pricing.html";
+      });
+    }
     const memberAddEmergencyBtn = $("memberAddEmergencyBtn");
     if (memberAddEmergencyBtn) {
       memberAddEmergencyBtn.addEventListener("click", () => {

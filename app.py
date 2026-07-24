@@ -193,7 +193,7 @@ RICH_MENU_COMMANDS = [
     "聯絡客服",
 ]
 
-CHECKIN_KEYWORDS = {"簽到", "打卡", "報平安", "今日簽到"}
+CHECKIN_KEYWORDS = {"簽到", "打卡", "報平安", "今日簽到", "我平安", "✅ 我平安", "今日已平安"}
 CONTACT_KEYWORDS = {"綁定守護人", "聯絡人", "緊急聯絡人", "填聯絡人", "修改電話", "守護人"}
 STATUS_KEYWORDS = {"狀態", "我的狀態", "查詢紀錄"}
 PLAN_KEYWORDS = {"方案", "價格", "收費", "升級", "查看方案", "多少錢"}
@@ -4639,10 +4639,9 @@ def send_checkin_reminders(config):
 
         # 補跑時只推一次(取最晚已到點的時段),並把所有已到點未送時段標為已處理
         target_time = due_unsent[-1]
-        # 每日平安推播：❤️ 今天一切都好嗎？＋我平安 / 安全守護 / 需要幫忙
+        # 每日平安推播：❤️ 今天一切都好嗎？＋我平安(postback 即時寫入簽到) / 安全守護 / 需要幫忙
         from datetime import datetime as _dt
         weekday_zh = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"][now.weekday()]
-        checkin_uri = liff_entry_url(open_action="checkin") if liff_entry_url else "https://liff.line.me/2010674803-rK98c0lo?open=checkin"
         guard_uri = liff_entry_url(open_action="guard") if liff_entry_url else "https://liff.line.me/2010674803-rK98c0lo?open=guard"
         sos_uri = liff_entry_url(open_action="sos") if liff_entry_url else "https://liff.line.me/2010674803-rK98c0lo?open=sos"
         message = {
@@ -4672,7 +4671,7 @@ def send_checkin_reminders(config):
                     "paddingAll": "lg",
                     "contents": [
                         {"type": "text", "text": "❤️ 今天一切都好嗎？", "size": "xl", "weight": "bold", "color": "#1a1a1a", "wrap": True},
-                        {"type": "text", "text": "點下面按鈕回報平安，或需要幫忙時求助", "size": "lg", "color": "#555555", "wrap": True},
+                        {"type": "text", "text": "點「我平安」立刻完成報到（不用再開網頁）", "size": "lg", "color": "#555555", "wrap": True},
                     ],
                 },
                 "footer": {
@@ -4682,7 +4681,18 @@ def send_checkin_reminders(config):
                     "paddingAll": "lg",
                     "backgroundColor": "#FAFAFA",
                     "contents": [
-                        {"type": "button", "action": {"type": "uri", "label": "✅ 我平安", "uri": checkin_uri}, "style": "primary", "color": "#16A34A", "height": "md"},
+                        {
+                            "type": "button",
+                            "action": {
+                                "type": "postback",
+                                "label": "✅ 我平安",
+                                "data": "action=checkin",
+                                "displayText": "我平安",
+                            },
+                            "style": "primary",
+                            "color": "#16A34A",
+                            "height": "md",
+                        },
                         {"type": "button", "action": {"type": "uri", "label": "🛡️ 安全守護", "uri": guard_uri}, "style": "primary", "color": "#2563EB", "height": "md"},
                         {"type": "button", "action": {"type": "uri", "label": "需要幫忙", "uri": sos_uri}, "style": "primary", "color": "#DC2626", "height": "md"},
                     ],
@@ -4963,6 +4973,39 @@ def build_smart_reminder_flex(reminder, *, mode="day"):
             },
         },
     }
+
+
+def is_checkin_postback(data):
+    """Daily push / Flex 「我平安」 postback."""
+    text = str(data or "").strip()
+    if not text:
+        return False
+    if text in {"action=checkin", "checkin", "checkin:ok", "checkin=1"}:
+        return True
+    if text.startswith("action=checkin"):
+        return True
+    if text.startswith("checkin:"):
+        return True
+    try:
+        from alerts.postback import parse_postback_data
+        return parse_postback_data(text).get("action") == "checkin"
+    except Exception:
+        return "action=checkin" in text
+
+
+def handle_checkin_postback(data_file, line_user_id, config=None):
+    """Persist check-in from LINE postback — same path as LIFF /api/checkin."""
+    if not line_user_id:
+        return "請先加入每日平安好友後再報平安。"
+    status = record_checkin(data_file, {"line_user_id": line_user_id})
+    next_text = status.get("next_reminder_text") or status.get("next_reminder_label") or ""
+    if status.get("already_checked_today") or status.get("is_duplicate"):
+        base = "✅ 今天已經報過平安了，不用再點一次。"
+    else:
+        base = "✅ 報平安成功！已寫入你的會員資料與簽到紀錄。"
+    if next_text:
+        return f"{base}\n⏰ {next_text}"
+    return base
 
 
 def handle_smart_reminder_postback(data_file, line_user_id, data, config=None):
@@ -6033,11 +6076,26 @@ def create_app(config=None):
                     data = str(getattr(event.postback, "data", "") or "")
                 except Exception:
                     data = ""
-                if not line_user_id or not data.startswith("smart:"):
+                if not line_user_id or not data:
                     return
-                reply = handle_smart_reminder_postback(
-                    app.config["DATA_FILE"], line_user_id, data, app.config
-                )
+                reply = None
+                # 每日推播「我平安」：在 LINE 內點選即寫入簽到（與 LIFF 同一套 record_checkin）
+                if is_checkin_postback(data):
+                    reply = handle_checkin_postback(app.config["DATA_FILE"], line_user_id, app.config)
+                elif data.startswith("smart:"):
+                    reply = handle_smart_reminder_postback(
+                        app.config["DATA_FILE"], line_user_id, data, app.config
+                    )
+                else:
+                    # 相容舊版取消警報 postback：也視為今日報平安
+                    try:
+                        from alerts.postback import is_alert_cancel_postback
+                        if is_alert_cancel_postback(data):
+                            reply = handle_checkin_postback(
+                                app.config["DATA_FILE"], line_user_id, app.config
+                            )
+                    except Exception:
+                        reply = None
                 if reply:
                     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 

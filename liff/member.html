@@ -293,9 +293,26 @@
   </div>
   <div class="contact-actions">
     <button class="btn btn-primary" type="button" id="addGuardianBtn">＋ 新增守護人</button>
-    <button class="btn" type="button" id="shareInviteBtn">一鍵分享邀請守護人</button>
   </div>
   <p class="hint" id="shareHint" style="display:none;color:#006400;"></p>
+</div>
+
+<div class="card" id="smartReminderCard">
+  <h2>智能提醒</h2>
+  <p class="hint" id="smartReminderHint">799 守護版：生日／紀念日／回診等生活提醒，預設只傳到 LINE 私訊。</p>
+  <div id="smartReminderUpgrade" class="lock-box" hidden>
+    <strong>智能提醒為 799 功能</strong>
+    <p>免費／399 可看說明；升級後可新增提醒。</p>
+    <a class="btn btn-primary" href="./pricing.html">查看 799 方案</a>
+  </div>
+  <div id="smartReminderControls" hidden>
+    <div id="smartReminderList"><div class="empty">載入中...</div></div>
+    <label class="check-row"><input type="checkbox" id="smartNotifyPrivate" checked disabled> 私訊提醒（預設）</label>
+    <label class="check-row"><input type="checkbox" id="smartNotifyGroup"> 群組提醒（選用，預設關）</label>
+    <div class="contact-actions">
+      <button class="btn btn-primary" type="button" id="addSmartReminderBtn">＋新增提醒</button>
+    </div>
+  </div>
 </div>
 
 <div class="card">
@@ -487,9 +504,91 @@ async function init() {
     await refreshGuardians();
     renderReminderSlots(state.reminderTimes);
     renderRoleIntro();
+    await refreshSmartReminders();
   } catch (err) {
     console.error(err);
   }
+}
+
+async function refreshSmartReminders() {
+  const upgrade = document.getElementById("smartReminderUpgrade");
+  const controls = document.getElementById("smartReminderControls");
+  const listEl = document.getElementById("smartReminderList");
+  if (!state.lineUserId || !listEl) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/smart-reminders?line_user_id=${encodeURIComponent(state.lineUserId)}`);
+    const data = await res.json();
+    state.smartReminders = data.reminders || [];
+    state.smartCategories = data.categories || [];
+    const entitled = Boolean(data.entitled);
+    if (upgrade) upgrade.hidden = entitled;
+    if (controls) controls.hidden = !entitled;
+    if (!entitled) return;
+    listEl.innerHTML = state.smartReminders.length
+      ? state.smartReminders.map((r) => `
+        <div class="guardian-row">
+          <div class="guardian-name">${escape(r.emoji || "🗓️")} ${escape(r.target_name)} ／ ${escape(r.category_label || "")} ／ ${escape(r.month)}/${escape(r.day)}</div>
+          <div class="guardian-actions">
+            <button class="btn btn-edit" type="button" data-smart-edit="${escape(r.id)}">編輯</button>
+            <button class="btn btn-danger" type="button" data-smart-del="${escape(r.id)}">刪除</button>
+          </div>
+        </div>`).join("")
+      : `<div class="empty">尚未新增提醒</div>`;
+    listEl.querySelectorAll("[data-smart-edit]").forEach((btn) => {
+      btn.addEventListener("click", () => editSmartReminder(btn.dataset.smartEdit));
+    });
+    listEl.querySelectorAll("[data-smart-del]").forEach((btn) => {
+      btn.addEventListener("click", () => deleteSmartReminder(btn.dataset.smartDel));
+    });
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+async function editSmartReminder(id) {
+  const existing = (state.smartReminders || []).find((r) => r.id === id) || null;
+  const name = prompt("對象名稱", existing ? existing.target_name : "媽媽");
+  if (name == null) return;
+  const cat = prompt("類型代碼（birthday/wedding/checkup/medicine/custom…）", existing ? existing.category : "birthday");
+  if (cat == null) return;
+  const md = prompt("月/日", existing ? `${existing.month}/${existing.day}` : "7/24");
+  if (md == null) return;
+  const parts = String(md).split(/[\/\-.]/).map((x) => parseInt(x, 10));
+  const notifyGroup = Boolean(document.getElementById("smartNotifyGroup")?.checked);
+  const res = await fetch(`${API_BASE}/api/smart-reminders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      line_user_id: state.lineUserId,
+      id: existing ? existing.id : undefined,
+      target_name: name.trim() || "家人",
+      category: (cat || "birthday").trim(),
+      month: parts[0] || 1,
+      day: parts[1] || 1,
+      notify_private: true,
+      notify_group: notifyGroup,
+      eve_remind: true
+    })
+  });
+  const data = await res.json();
+  if (!res.ok || data.ok === false) {
+    alert(data.upgrade_hint || data.error || "儲存失敗");
+    return;
+  }
+  await refreshSmartReminders();
+}
+
+async function deleteSmartReminder(id) {
+  if (!id || !confirm("確定刪除此提醒？")) return;
+  const res = await fetch(`${API_BASE}/api/smart-reminders/${encodeURIComponent(id)}?line_user_id=${encodeURIComponent(state.lineUserId)}`, {
+    method: "DELETE"
+  });
+  const data = await res.json();
+  if (!res.ok || data.ok === false) {
+    alert(data.error || "刪除失敗");
+    return;
+  }
+  await refreshSmartReminders();
 }
 
 async function refreshGuardians() {
@@ -681,12 +780,13 @@ async function deleteGuardian(contactId) {
 document.getElementById("useDefaultsBtn").addEventListener("click", () => {
   renderReminderSlots(defaultTimesForCount(state.dailyReminders));
 });
-document.getElementById("shareInviteBtn").addEventListener("click", shareGuardianInvite);
 const roleIntroDismiss = document.getElementById("memberRoleIntroDismiss");
 if (roleIntroDismiss) roleIntroDismiss.addEventListener("click", dismissRoleIntro);
 document.getElementById("addGuardianBtn").addEventListener("click", () => {
   openEditor(null, "guardian");
 });
+const addSmartBtn = document.getElementById("addSmartReminderBtn");
+if (addSmartBtn) addSmartBtn.addEventListener("click", () => editSmartReminder(null));
 const addEmergencyBtn = document.getElementById("addEmergencyBtn");
 if (addEmergencyBtn) {
   addEmergencyBtn.addEventListener("click", () => openEditor(null, "emergency"));
