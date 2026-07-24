@@ -34,8 +34,8 @@
     button, input, select { font: inherit; }
     .app {
       width: min(100%, 480px);
-      /* Extra bottom space so 下次提醒／banner clear bottom-nav + SOS FAB + safe-area */
-      padding: 24px 18px calc(220px + env(safe-area-inset-bottom, 0px));
+      /* Bottom nav (~56px) + small clearance — avoid giant empty void above 條款／隱私 */
+      padding: 24px 18px calc(88px + env(safe-area-inset-bottom, 0px));
       border-radius: 28px;
       text-align: center;
       box-shadow: 0 24px 70px rgba(24, 36, 58, 0.18);
@@ -686,6 +686,75 @@
       gap: 10px;
       margin: 8px 0 12px;
       font-weight: 750;
+    }
+    .daily-remind-count-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 12px;
+    }
+    .daily-remind-count-btn {
+      flex: 1 1 30%;
+      min-height: 44px;
+      border: 2px solid var(--line);
+      border-radius: 12px;
+      background: var(--soft);
+      color: var(--text);
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .daily-remind-count-btn[aria-pressed="true"] {
+      border-color: var(--button);
+      background: rgba(7, 94, 50, 0.12);
+      color: #075e32;
+    }
+    body.cute .daily-remind-count-btn[aria-pressed="true"] {
+      border-color: #db2777;
+      background: rgba(219, 39, 119, 0.12);
+      color: #9d174d;
+    }
+    .smart-editor-fields {
+      display: grid;
+      gap: 12px;
+    }
+    .smart-editor-fields label {
+      display: grid;
+      gap: 6px;
+      font-weight: 750;
+      font-size: 14px;
+      text-align: left;
+    }
+    .smart-editor-fields input,
+    .smart-editor-fields select,
+    .smart-editor-fields textarea {
+      min-height: 48px;
+      padding: 10px 12px;
+      border: 1.5px solid var(--line);
+      border-radius: 10px;
+      background: var(--soft);
+      color: var(--text);
+      font-size: 16px;
+    }
+    .guardian-group-bind-status {
+      margin: 12px 0 8px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 2px solid #86efac;
+      background: linear-gradient(180deg, #f0fdf4 0%, #ecfdf5 100%);
+      text-align: left;
+      color: #14532d;
+      font-weight: 850;
+      line-height: 1.55;
+    }
+    body.cute .guardian-group-bind-status {
+      border-color: #f9a8d4;
+      background: linear-gradient(180deg, #fff7ed 0%, #fff1f7 100%);
+      color: #5b1535;
+    }
+    .guardian-group-bind-status[data-bound="false"] {
+      border-color: #fcd34d;
+      background: linear-gradient(180deg, #fffbeb 0%, #fef3c7 100%);
+      color: #78350f;
     }
     .core-guardian-pick {
       display: grid;
@@ -1360,6 +1429,18 @@
     }
     .mvp-guard-duration label[hidden] { display: none !important; }
     .mvp-guard-duration input { accent-color: #079455; }
+    .mvp-guard-steps {
+      margin: 0 0 14px;
+      padding: 12px 14px 12px 32px;
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--soft) 88%, #dbeafe);
+      color: var(--text);
+      text-align: left;
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.55;
+    }
+    .mvp-guard-steps li + li { margin-top: 6px; }
     .mvp-guard-feedback {
       margin: 0 0 12px;
       padding: 12px 14px;
@@ -2626,26 +2707,37 @@
       border-left: 5px solid #f59e0b;
     }
 
-    /* === D01: body padding for bottom nav + SOS FAB clearance === */
+    /* === D01: body padding for bottom nav clearance（保留導覽空間，不要巨大空白） === */
     main.app,
     main {
-      padding-bottom: calc(220px + env(safe-area-inset-bottom, 0px));
+      padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
     }
     @media (max-width: 768px) {
       main.app,
       main {
-        padding-bottom: calc(240px + env(safe-area-inset-bottom, 0px));
+        padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
       }
     }
     .mvp-home {
-      padding-bottom: 28px;
+      padding-bottom: 16px;
     }
     .mvp-panel {
-      margin-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+      margin-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
     }
     .mvp-checkin-banner#mvpNextReminderBanner {
       margin-bottom: 12px;
-      scroll-margin-bottom: calc(160px + env(safe-area-inset-bottom, 0px));
+      scroll-margin-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+    }
+    .legal-links {
+      margin: 8px 0 4px;
+      padding: 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .legal-links a { color: var(--muted); text-decoration: underline; }
+    #modeNote,
+    main > .note {
+      display: none;
     }
 
     /* === D01: 守護群完成度提示卡內按鈕 full-width === */
@@ -3566,6 +3658,12 @@
       <button class="mvp-back" id="mvpGuardBack" type="button">← 回首頁</button>
       <h2>🛡️ 安全守護</h2>
       <p class="mvp-panel-lead">適合外出、夜歸、看診或短時間需要家人知道位置時使用。先選時長再開始，時間到會自動停止，也可提前結束。</p>
+      <ol class="mvp-guard-steps" aria-label="安全守護使用步驟">
+        <li>先「一鍵邀請」讓家人完成 LINE 綁定（對方需加入官方帳號好友）</li>
+        <li>選擇守護時長（依方案：1／3／6／8 小時）</li>
+        <li>點「開始安全守護」，允許位置權限</li>
+        <li>畫面會顯示狀態與「已通知幾位守護人」；時間到自動結束</li>
+      </ol>
       <div class="mvp-guard-status" id="mvpGuardStatus" data-active="false">目前未開啟安全守護</div>
       <div class="mvp-guard-feedback" id="mvpGuardFeedback" role="status" aria-live="polite" hidden></div>
       <div class="mvp-guard-duration" id="mvpGuardDuration" role="radiogroup" aria-label="安全守護時長">
@@ -3578,6 +3676,7 @@
         升級方案可享更長安全守護定位時間分享：
         <strong>399</strong> 可選 1／3 小時，
         <strong>799</strong> 可選 1／3／6／8 小時。
+        補差額即可升級，不必重設聯絡人；另有 7 天考慮期。
         <a class="mvp-guard-upgrade-link" href="https://alive-checkin.onrender.com/liff/pricing.html">查看方案</a>
       </p>
       <div class="mvp-panel-actions">
@@ -3874,6 +3973,7 @@
       </div>
       <div class="settings-title">LINE 守護群設定</div>
       <div class="guardian-group-guide-intro">不用填群組代碼。請先在 LINE 建立家人群組，再把「每日平安」官方帳號邀進群。升級 799 並綁定後，方案本人會自動成為守護群管理員，不必再走管理員設定。完成後由本人點選或輸入綁定指令即可啟用。</div>
+      <div class="guardian-group-bind-status" id="guardianGroupBindStatusCard" data-bound="false">目前狀態：載入中…</div>
       <div class="guardian-group-steps">
         <article class="guardian-group-step">
           <span class="guardian-group-step-number">1</span>
@@ -4005,8 +4105,13 @@
           <p class="helper" id="dailyReminderPlanHint">依方案設定每日提醒次數與時段。</p>
           <label class="daily-remind-toggle-row" for="dailyCheckinReminderEnabled">
             <input type="checkbox" id="dailyCheckinReminderEnabled" checked>
-            <span>每日提醒開關（開啟後依方案次數推播報平安提醒）</span>
+            <span>開啟每日提醒</span>
           </label>
+          <div class="daily-remind-count-row" id="memberDailyReminderCountRow" role="group" aria-label="每日提醒次數">
+            <button class="daily-remind-count-btn" type="button" data-count="1" aria-pressed="true">一次</button>
+            <button class="daily-remind-count-btn" type="button" data-count="2" aria-pressed="false">兩次</button>
+            <button class="daily-remind-count-btn" type="button" data-count="3" aria-pressed="false">三次</button>
+          </div>
           <div id="memberDailyReminderSlots"></div>
           <div class="member-data-actions" style="margin-top:10px;">
             <button class="action-btn" id="memberDailyReminderDefaultsBtn" type="button">使用方案預設時間</button>
@@ -4088,6 +4193,9 @@
 
     <section class="settings" aria-label="升級方案">
       <div class="settings-title">♡ 升級方案</div>
+      <p class="helper" id="upgradeDiffHint" style="margin:0 0 12px;text-align:left;">
+        💡 補差額即可升級，無需重新設定聯絡人。對方也有 <strong>7 天考慮期</strong> 可慢慢決定是否升級。
+      </p>
       <a href="liff/pricing.html" class="plan-toggle" id="pricingPageLink" style="display:grid; place-items:center; text-decoration:none;">查看完整方案與價目</a>
       <div class="pricing-grid plan-cards-six" id="pricingGrid" hidden>
         <article class="price-card plan-card tier-199 billing-month" data-plan-tier="199" data-billing-cycle="month">
@@ -4220,6 +4328,7 @@
           升級方案可享更長安全守護定位時間分享：
           <strong>399</strong> 可選 1／3 小時，
           <strong>799</strong> 可選 1／3／6／8 小時。
+          補差額即可升級；另有 7 天考慮期。
           <a class="mvp-guard-upgrade-link" href="https://alive-checkin.onrender.com/liff/pricing.html">查看方案</a>
         </p>
         <div class="friend-location-actions safety-guard-actions" id="safetyGuardActions" data-active="false">
@@ -4358,6 +4467,41 @@
         <button class="action-btn" id="deleteCalendarNoteBtn" type="button">清除記事</button>
         <button class="action-btn" id="closeCalendarNoteBtn" type="button">取消</button>
         <button class="action-btn primary" id="saveCalendarNoteBtn" type="button">儲存記事</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="smartReminderEditorModal" hidden>
+    <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="smartReminderEditorTitle">
+      <h2 id="smartReminderEditorTitle">新增智能提醒</h2>
+      <p class="helper">選擇類型、日期與提醒時間。儲存後只會私訊通知你。</p>
+      <div class="smart-editor-fields">
+        <label for="smartReminderName">對象名稱
+          <input id="smartReminderName" type="text" maxlength="40" placeholder="例如：媽媽" autocomplete="name">
+        </label>
+        <label for="smartReminderCategory">類型
+          <select id="smartReminderCategory"></select>
+        </label>
+        <label for="smartReminderCustomTitle" id="smartReminderCustomTitleWrap" hidden>自訂標題
+          <input id="smartReminderCustomTitle" type="text" maxlength="40" placeholder="例如：結婚週年">
+        </label>
+        <label for="smartReminderDate">日期
+          <input id="smartReminderDate" type="date">
+        </label>
+        <label class="checkbox-line" for="smartReminderYearly" style="display:flex;align-items:center;gap:8px;font-weight:750;">
+          <input id="smartReminderYearly" type="checkbox" checked>
+          <span>每年重複（生日／紀念日）</span>
+        </label>
+        <label for="smartReminderTime">提醒時間
+          <input id="smartReminderTime" type="time" value="09:00">
+        </label>
+        <label for="smartReminderNote">備註（選填）
+          <input id="smartReminderNote" type="text" maxlength="80" placeholder="可留空">
+        </label>
+      </div>
+      <div class="actions" style="margin-top:14px;">
+        <button class="action-btn" id="smartReminderCancelBtn" type="button">取消</button>
+        <button class="action-btn primary" id="smartReminderSaveBtn" type="button">儲存</button>
       </div>
     </div>
   </div>
@@ -5486,9 +5630,29 @@
     }
 
     let smartReminderCache = { entitled: false, reminders: [], categories: [] };
+    let smartReminderEditingId = null;
+    let selectedDailyReminderCount = null;
 
     function planIs799(plan) {
       return plan === "paid_799" || plan === "paid_799_year";
+    }
+
+    function updateGuardianGroupBindStatusCard(status) {
+      const card = $("guardianGroupBindStatusCard");
+      if (!card) return;
+      const ids = (status && status.guardian_group_ids) || [];
+      const limit = Number((status && status.guardian_group_limit) || 0);
+      const bound = ids.length > 0;
+      card.dataset.bound = bound ? "true" : "false";
+      if (limit <= 0) {
+        card.textContent = "目前方案不含守護群。升級 799 後即可綁定 LINE 守護群。";
+        return;
+      }
+      if (bound) {
+        card.innerHTML = `目前狀態：<strong>已綁定</strong> ${ids.length}/${limit} 個守護群。可到「會員中心 → 我的守護群」管理通知偏好。`;
+      } else {
+        card.innerHTML = `目前狀態：<strong>尚未綁定守護群</strong>。請在群組點「綁定守護群」完成後，這裡會顯示已綁定。`;
+      }
     }
 
     async function refreshSmartRemindersUi() {
@@ -5523,7 +5687,7 @@
             <div class="member-guardian-manage-row" data-smart-id="${escapeHtml(r.id)}">
               <div class="member-guardian-manage-meta">
                 <span class="guardian-manage-name">${escapeHtml(r.emoji || "🗓️")} ${escapeHtml(r.target_name || "")}</span>
-                <span>${escapeHtml(r.category_label || r.category || "")} ／ ${escapeHtml(String(r.month || ""))}/${escapeHtml(String(r.day || ""))}</span>
+                <span>${escapeHtml(r.category_label || r.category || "")} ／ ${escapeHtml(String(r.month || ""))}/${escapeHtml(String(r.day || ""))}${r.remind_time ? ` ／ ${escapeHtml(r.remind_time)}` : ""}</span>
                 <small>私訊</small>
               </div>
               <div class="member-guardian-manage-actions">
@@ -5543,35 +5707,105 @@
       }
     }
 
+    function fillSmartReminderCategoryOptions(selected) {
+      const select = $("smartReminderCategory");
+      if (!select) return;
+      const categories = (smartReminderCache.categories && smartReminderCache.categories.length)
+        ? smartReminderCache.categories
+        : [
+          { id: "birthday", emoji: "🎂", label: "生日" },
+          { id: "wedding", emoji: "💍", label: "結婚紀念日" },
+          { id: "checkup", emoji: "💊", label: "回診" },
+          { id: "medicine", emoji: "💊", label: "吃藥" },
+          { id: "schedule", emoji: "📅", label: "行程" },
+          { id: "greeting", emoji: "❤️", label: "問候" },
+          { id: "custom", emoji: "🗓️", label: "自訂" }
+        ];
+      select.innerHTML = categories.map((c) =>
+        `<option value="${escapeHtml(c.id)}" ${(selected || "birthday") === c.id ? "selected" : ""}>${escapeHtml((c.emoji || "") + " " + (c.label || c.id))}</option>`
+      ).join("");
+      syncSmartReminderCustomTitleVisibility();
+    }
+
+    function syncSmartReminderCustomTitleVisibility() {
+      const wrap = $("smartReminderCustomTitleWrap");
+      const select = $("smartReminderCategory");
+      if (!wrap || !select) return;
+      wrap.hidden = select.value !== "custom";
+    }
+
     function openSmartReminderEditor(id) {
       const existing = (smartReminderCache.reminders || []).find((r) => r.id === id) || null;
-      const categories = smartReminderCache.categories || [];
-      const name = prompt("對象名稱（例如：媽媽）", existing ? existing.target_name : "");
-      if (name == null) return;
-      const catLabels = categories.map((c) => `${c.id}=${c.emoji}${c.label}`).join("\n");
-      const cat = prompt(
-        `類型代碼：\n${catLabels || "birthday=🎂生日"}\n（直接輸入代碼，例如 birthday）`,
-        existing ? existing.category : "birthday"
-      );
-      if (cat == null) return;
-      const md = prompt("日期（月/日，例如 7/24）", existing ? `${existing.month}/${existing.day}` : "7/24");
-      if (md == null) return;
-      const parts = String(md).split(/[\/\-.]/).map((x) => parseInt(x, 10));
-      const month = parts[0] || 1;
-      const day = parts[1] || 1;
-      const note = prompt("備註（可留空）", existing ? (existing.note || "") : "") || "";
-      saveSmartReminder({
-        id: existing ? existing.id : undefined,
-        target_name: String(name).trim() || "家人",
-        category: String(cat).trim() || "birthday",
-        month,
-        day,
+      smartReminderEditingId = existing ? existing.id : null;
+      const modal = $("smartReminderEditorModal");
+      const title = $("smartReminderEditorTitle");
+      if (title) title.textContent = existing ? "編輯智能提醒" : "新增智能提醒";
+      fillSmartReminderCategoryOptions(existing ? existing.category : "birthday");
+      if ($("smartReminderName")) $("smartReminderName").value = existing ? (existing.target_name || "") : "";
+      if ($("smartReminderCustomTitle")) $("smartReminderCustomTitle").value = existing ? (existing.custom_title || "") : "";
+      if ($("smartReminderNote")) $("smartReminderNote").value = existing ? (existing.note || "") : "";
+      if ($("smartReminderTime")) $("smartReminderTime").value = existing && existing.remind_time ? existing.remind_time : "09:00";
+      const yearly = $("smartReminderYearly");
+      if (yearly) {
+        const isYearly = !(existing && existing.year);
+        yearly.checked = existing ? isYearly : true;
+      }
+      const dateEl = $("smartReminderDate");
+      if (dateEl) {
+        const now = new Date();
+        const y = existing && existing.year ? existing.year : now.getFullYear();
+        const m = existing ? Number(existing.month || 1) : (now.getMonth() + 1);
+        const d = existing ? Number(existing.day || 1) : now.getDate();
+        dateEl.value = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      }
+      if (modal) modal.hidden = false;
+    }
+
+    function closeSmartReminderEditor() {
+      const modal = $("smartReminderEditorModal");
+      if (modal) modal.hidden = true;
+      smartReminderEditingId = null;
+    }
+
+    async function submitSmartReminderEditor() {
+      const name = String(($("smartReminderName") && $("smartReminderName").value) || "").trim();
+      const category = String(($("smartReminderCategory") && $("smartReminderCategory").value) || "birthday").trim();
+      const customTitle = String(($("smartReminderCustomTitle") && $("smartReminderCustomTitle").value) || "").trim();
+      const dateVal = String(($("smartReminderDate") && $("smartReminderDate").value) || "").trim();
+      const timeVal = String(($("smartReminderTime") && $("smartReminderTime").value) || "09:00").trim();
+      const note = String(($("smartReminderNote") && $("smartReminderNote").value) || "").trim();
+      const yearly = Boolean($("smartReminderYearly") && $("smartReminderYearly").checked);
+      if (!name) {
+        alert("請填寫對象名稱");
+        return;
+      }
+      if (category === "custom" && !customTitle) {
+        alert("自訂類型請填寫標題");
+        return;
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
+        alert("請選擇日期");
+        return;
+      }
+      const [y, m, d] = dateVal.split("-").map((x) => parseInt(x, 10));
+      await saveSmartReminder({
+        id: smartReminderEditingId || undefined,
+        target_name: name,
+        category,
+        custom_title: customTitle,
+        month: m || 1,
+        day: d || 1,
+        year: yearly ? null : y,
+        date: dateVal,
+        yearly,
+        remind_time: timeVal || "09:00",
         note,
         notify_private: true,
         notify_group: false,
         eve_remind: true,
         defaults: { notify_private: true, notify_group: false }
       });
+      closeSmartReminderEditor();
     }
 
     async function saveSmartReminder(payload) {
@@ -5889,6 +6123,7 @@
           </div>
         `; }).join("")
         : `<div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護群</strong></div>`);
+      updateGuardianGroupBindStatusCard(status);
       renderGuardianDetailsEditor();
       renderMemberRoleIntro({ autoExpand: false });
     }
@@ -5995,40 +6230,77 @@
       return (map[n] || map[1]).slice();
     }
 
+    function planMaxDailyReminderCount(status) {
+      return Math.max(1, Math.min(3, Number((status || {}).daily_reminders) || 1));
+    }
+
+    function currentChosenDailyReminderCount(status) {
+      const maxCount = planMaxDailyReminderCount(status);
+      const saved = Array.isArray(status && status.reminder_times) ? status.reminder_times.length : 0;
+      const chosen = selectedDailyReminderCount != null
+        ? Number(selectedDailyReminderCount)
+        : (saved || maxCount);
+      return Math.max(1, Math.min(maxCount, Number(chosen) || 1));
+    }
+
+    function renderDailyReminderCountButtons(status) {
+      const maxCount = planMaxDailyReminderCount(status);
+      const chosen = currentChosenDailyReminderCount(status);
+      selectedDailyReminderCount = chosen;
+      const row = $("memberDailyReminderCountRow");
+      if (!row) return;
+      row.querySelectorAll(".daily-remind-count-btn").forEach((btn) => {
+        const n = Number(btn.dataset.count) || 1;
+        const allowed = n <= maxCount;
+        btn.disabled = !allowed;
+        btn.hidden = !allowed;
+        btn.setAttribute("aria-pressed", n === chosen ? "true" : "false");
+        btn.style.opacity = allowed ? "1" : "0.35";
+      });
+    }
+
     function renderMemberDailyReminderUi() {
       const status = currentStatusData || {};
-      const count = Math.max(1, Math.min(3, Number(status.daily_reminders) || 1));
+      const maxCount = planMaxDailyReminderCount(status);
+      const count = currentChosenDailyReminderCount(status);
       const hint = $("dailyReminderPlanHint");
       if (hint) {
-        hint.textContent = `本方案每日最多 ${count} 次提醒（例如 799 最多 3 次）。關閉後不再推播每日報平安提醒。`;
+        hint.textContent = `本方案每日最多 ${maxCount} 次。可選擇一次／兩次／三次（不超過方案上限），並各自設定時間。`;
       }
       const toggle = $("dailyCheckinReminderEnabled");
       if (toggle) toggle.checked = status.daily_checkin_reminder_enabled !== false;
+      renderDailyReminderCountButtons(status);
       const host = $("memberDailyReminderSlots");
       if (!host) return;
       const times = (Array.isArray(status.reminder_times) && status.reminder_times.length
         ? status.reminder_times
         : defaultTimesForDailyCount(count)).slice(0, count);
       while (times.length < count) times.push(defaultTimesForDailyCount(count)[times.length] || "12:00");
+      const labels = ["第 1 次（早／午）", "第 2 次（午後／傍晚）", "第 3 次（晚間）"];
       host.innerHTML = times.map((time, index) => `
         <label class="form-field" for="memberDailyReminder${index}" style="display:grid;gap:6px;margin-bottom:8px;">
-          <span>第 ${index + 1} 次提醒</span>
+          <span>${labels[index] || ("第 " + (index + 1) + " 次提醒")}</span>
           <input type="time" id="memberDailyReminder${index}" value="${escapeHtml(time)}">
         </label>`).join("");
       host.style.opacity = toggle && !toggle.checked ? "0.45" : "1";
       host.querySelectorAll("input").forEach((el) => { el.disabled = Boolean(toggle && !toggle.checked); });
+      const countRow = $("memberDailyReminderCountRow");
+      if (countRow) countRow.style.opacity = toggle && !toggle.checked ? "0.45" : "1";
+      countRow && countRow.querySelectorAll("button").forEach((el) => {
+        if (!el.hidden) el.disabled = Boolean(toggle && !toggle.checked) || el.disabled;
+      });
     }
 
     async function saveMemberDailyReminder() {
       const status = currentStatusData || {};
-      const count = Math.max(1, Math.min(3, Number(status.daily_reminders) || 1));
+      const count = currentChosenDailyReminderCount(status);
       const enabled = Boolean($("dailyCheckinReminderEnabled") && $("dailyCheckinReminderEnabled").checked);
       const times = [];
       for (let i = 0; i < count; i++) {
         const el = $(`memberDailyReminder${i}`);
         if (el && el.value) times.push(el.value);
       }
-      const reminderTimes = times.length ? times : defaultTimesForDailyCount(count);
+      const reminderTimes = times.length ? times.slice(0, count) : defaultTimesForDailyCount(count);
       try {
         const saved = await apiSaveSettings({
           contact_email: status.contact_email || "",
@@ -6039,8 +6311,9 @@
           contact_capacity_reminder_enabled: Boolean(status.contact_capacity_reminder_enabled),
           guardian_details_reminder_enabled: status.guardian_details_reminder_enabled !== false
         });
+        selectedDailyReminderCount = reminderTimes.length;
         renderStatus(saved);
-        showInlineSuccess(enabled ? "每日提醒已儲存" : "已關閉每日提醒");
+        showInlineSuccess(enabled ? `每日提醒已儲存（每天 ${reminderTimes.length} 次）` : "已關閉每日提醒");
       } catch (err) {
         alert(err.message || "每日提醒儲存失敗");
       }
@@ -6203,8 +6476,10 @@
 
     function hasLineBoundGuardian(contacts) {
       const selfId = String(lineUserId || (currentStatusData && currentStatusData.line_user_id) || "").trim();
-      const isOtherBound = (c) => {
+      const isOtherBoundGuardian = (c) => {
         if (!c) return false;
+        // 緊急聯絡人僅電話備援，不算可推播的 LINE 守護人
+        if (contactRoleOf(c) === "emergency") return false;
         const lid = String(c.line_id || c.line_user_id || "").trim();
         // 本人 ID 寫進聯絡人 = 表單污染，不算 LINE 守護人綁定
         if (lid && selfId && lid === selfId) return false;
@@ -6215,11 +6490,11 @@
         );
       };
       const list = Array.isArray(contacts) ? contacts : currentGuardianContacts();
-      if (list.some(isOtherBound)) return true;
+      if (list.some(isOtherBoundGuardian)) return true;
       const statusCount = Number(currentStatusData && currentStatusData.bound_guardian_count);
       if (Number.isFinite(statusCount) && statusCount > 0) return true;
       const statusContacts = (currentStatusData && currentStatusData.contacts) || [];
-      return statusContacts.some(isOtherBound);
+      return statusContacts.some(isOtherBoundGuardian);
     }
 
     function hasAnyGuardianOrContact(contacts) {
@@ -9026,7 +9301,7 @@
       // 對應 tab → 顯示哪些 sections（首頁只顯示四大按鈕；其餘進會員／紀錄）
       const tabMap = {
         home: [],
-        guardians: ["守護群設定教學", "緊急聯絡人"],
+        guardians: ["守護群設定教學"],
         history: ["簽到月曆", "簽到狀態"],
         member: ["會員個人中心", "升級方案"],
       };
@@ -9475,17 +9750,48 @@
     }
     const dailyToggle = $("dailyCheckinReminderEnabled");
     if (dailyToggle) dailyToggle.addEventListener("change", renderMemberDailyReminderUi);
+    const dailyCountRow = $("memberDailyReminderCountRow");
+    if (dailyCountRow) {
+      dailyCountRow.addEventListener("click", (event) => {
+        const btn = event.target.closest(".daily-remind-count-btn");
+        if (!btn || btn.disabled || btn.hidden) return;
+        const status = currentStatusData || {};
+        const maxCount = planMaxDailyReminderCount(status);
+        const next = Math.max(1, Math.min(maxCount, Number(btn.dataset.count) || 1));
+        selectedDailyReminderCount = next;
+        const existing = Array.isArray(status.reminder_times) ? status.reminder_times.slice() : [];
+        const defaults = defaultTimesForDailyCount(next);
+        const merged = [];
+        for (let i = 0; i < next; i++) merged.push(existing[i] || defaults[i] || "12:00");
+        if (currentStatusData) currentStatusData.reminder_times = merged;
+        renderMemberDailyReminderUi();
+      });
+    }
     const dailyDefaultsBtn = $("memberDailyReminderDefaultsBtn");
     if (dailyDefaultsBtn) {
       dailyDefaultsBtn.addEventListener("click", () => {
         const status = currentStatusData || {};
-        const count = Math.max(1, Math.min(3, Number(status.daily_reminders) || 1));
+        const count = currentChosenDailyReminderCount(status);
         if (currentStatusData) currentStatusData.reminder_times = defaultTimesForDailyCount(count);
         renderMemberDailyReminderUi();
       });
     }
     const saveDailyReminderBtn = $("saveDailyReminderBtn");
     if (saveDailyReminderBtn) saveDailyReminderBtn.addEventListener("click", saveMemberDailyReminder);
+    const smartReminderCategory = $("smartReminderCategory");
+    if (smartReminderCategory) {
+      smartReminderCategory.addEventListener("change", syncSmartReminderCustomTitleVisibility);
+    }
+    const smartReminderCancelBtn = $("smartReminderCancelBtn");
+    if (smartReminderCancelBtn) smartReminderCancelBtn.addEventListener("click", closeSmartReminderEditor);
+    const smartReminderSaveBtn = $("smartReminderSaveBtn");
+    if (smartReminderSaveBtn) smartReminderSaveBtn.addEventListener("click", submitSmartReminderEditor);
+    const smartReminderEditorModal = $("smartReminderEditorModal");
+    if (smartReminderEditorModal) {
+      smartReminderEditorModal.addEventListener("click", (event) => {
+        if (event.target === smartReminderEditorModal) closeSmartReminderEditor();
+      });
+    }
     $("guardianGroupsList").addEventListener("click", (event) => {
       const button = event.target.closest(".guardian-group-unbind");
       if (button) unbindGuardianGroup(button.dataset.groupId);

@@ -100,6 +100,46 @@ class PlanUpgradePreserveBindingsTests(unittest.TestCase):
         self.assertEqual(group.get("owner_line_user_id"), "U-owner")
         self.assertIn("U-owner", group.get("admin_line_user_ids") or [])
 
+    def test_bind_heals_missing_profile_group_ids(self):
+        """群已在 guardian_groups，但 profile.guardian_group_ids 遺失時，重新綁定／狀態應顯示已綁定。"""
+        from app import build_status, sync_owned_guardian_group_ids
+
+        profile = {
+            "line_user_id": "U-owner",
+            "display_name": "測試",
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": (datetime.now() + timedelta(days=30)).isoformat(timespec="seconds"),
+            "guardian_group_ids": [],
+        }
+        groups = {
+            "G-family": {
+                "group_id": "G-family",
+                "owner_line_user_id": "U-owner",
+                "admin_line_user_ids": ["U-owner"],
+                "status": "active",
+                "preferences": {},
+            }
+        }
+        data_file = self.make_data_file(profile, groups=groups)
+        result, code = bind_guardian_group(
+            data_file, {"line_user_id": "U-owner", "group_id": "G-family"}
+        )
+        self.assertEqual(code, 200)
+        self.assertTrue(result.get("bound"))
+        self.assertTrue(result.get("already_bound"))
+        self.assertIn("G-family", result.get("guardian_group_ids") or [])
+        saved = load_state(data_file)
+        self.assertIn("G-family", saved["users"]["U-owner"].get("guardian_group_ids") or [])
+        status = build_status(saved["users"]["U-owner"], saved)
+        self.assertIn("G-family", status.get("guardian_group_ids") or [])
+        self.assertEqual(len(status.get("guardian_groups") or []), 1)
+
+        # sync helper alone also heals
+        orphan = {"line_user_id": "U-owner", "guardian_group_ids": []}
+        sync_owned_guardian_group_ids(saved, orphan)
+        self.assertEqual(orphan["guardian_group_ids"], ["G-family"])
+
     def test_empty_paid_until_does_not_force_downgrade(self):
         profile = {
             "line_user_id": "U-owner",

@@ -343,7 +343,12 @@
 <div class="card">
   <h2>⏰ 每日提醒</h2>
   <p class="hint" id="reminderHint">依方案設定每日提醒次數與時段。</p>
-  <label class="check-row"><input type="checkbox" id="dailyCheckinReminderEnabled" checked> 每日提醒開關</label>
+  <label class="check-row"><input type="checkbox" id="dailyCheckinReminderEnabled" checked> 開啟每日提醒</label>
+  <div class="btn-row" id="reminderCountRow" style="margin:8px 0 12px;gap:8px;">
+    <button class="btn" type="button" data-count="1" id="reminderCount1">一次</button>
+    <button class="btn" type="button" data-count="2" id="reminderCount2">兩次</button>
+    <button class="btn" type="button" data-count="3" id="reminderCount3">三次</button>
+  </div>
   <div id="reminderSlots"></div>
   <button class="btn" type="button" id="useDefaultsBtn">使用方案預設時間</button>
   <div class="status-saved" id="statusSaved">✅ 已儲存!</div>
@@ -403,6 +408,35 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="smartEditorModal" hidden>
+  <div class="modal-card">
+    <h2 id="smartEditorTitle">新增智能提醒</h2>
+    <label class="form-field"><span>對象名稱</span>
+      <input id="srName" type="text" placeholder="例如：媽媽">
+    </label>
+    <label class="form-field"><span>類型</span>
+      <select id="srCategory"></select>
+    </label>
+    <label class="form-field" id="srCustomWrap" hidden><span>自訂標題</span>
+      <input id="srCustomTitle" type="text" placeholder="例如：結婚週年">
+    </label>
+    <label class="form-field"><span>日期</span>
+      <input id="srDate" type="date">
+    </label>
+    <label class="check-row"><input type="checkbox" id="srYearly" checked> 每年重複</label>
+    <label class="form-field"><span>提醒時間</span>
+      <input id="srTime" type="time" value="09:00">
+    </label>
+    <label class="form-field"><span>備註</span>
+      <input id="srNote" type="text" placeholder="可留空">
+    </label>
+    <div class="btn-row">
+      <button class="btn" type="button" id="srCancelBtn">取消</button>
+      <button class="btn btn-primary" type="button" id="srSaveBtn">儲存</button>
+    </div>
+  </div>
+</div>
+
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script>
 const LIFF_ID = "2010674803-rK98c0lo";
@@ -417,10 +451,12 @@ let state = {
   lineUserId: null,
   reminderTimes: ["12:00"],
   dailyReminders: 1,
+  chosenReminderCount: null,
   dailyCheckinReminderEnabled: true,
   guardians: [],
   editId: null,
-  plan: "trial"
+  plan: "trial",
+  smartEditingId: null
 };
 
 const MEMBER_ROLE_INTRO_KEY = "member_role_intro_dismissed";
@@ -454,9 +490,30 @@ function defaultTimesForCount(count) {
   return (DEFAULT_REMINDER_TIMES_BY_COUNT[n] || DEFAULT_REMINDER_TIMES_BY_COUNT[1]).slice();
 }
 
+function chosenReminderCount() {
+  const maxCount = Math.max(1, Math.min(3, Number(state.dailyReminders) || 1));
+  const saved = (state.reminderTimes || []).length;
+  const chosen = state.chosenReminderCount != null ? state.chosenReminderCount : (saved || maxCount);
+  return Math.max(1, Math.min(maxCount, Number(chosen) || 1));
+}
+
+function renderReminderCountButtons() {
+  const maxCount = Math.max(1, Math.min(3, Number(state.dailyReminders) || 1));
+  const chosen = chosenReminderCount();
+  [1, 2, 3].forEach((n) => {
+    const btn = document.getElementById(`reminderCount${n}`);
+    if (!btn) return;
+    const allowed = n <= maxCount;
+    btn.hidden = !allowed;
+    btn.disabled = !allowed;
+    btn.style.outline = n === chosen ? "2px solid #16a34a" : "";
+    btn.style.fontWeight = n === chosen ? "800" : "600";
+  });
+}
+
 function renderReminderSlots(times) {
   const host = document.getElementById("reminderSlots");
-  const count = Math.max(1, Math.min(3, state.dailyReminders || times.length || 1));
+  const count = chosenReminderCount();
   const values = (times && times.length ? times : defaultTimesForCount(count)).slice(0, count);
   while (values.length < count) values.push(defaultTimesForCount(count)[values.length] || "12:00");
   host.innerHTML = values.map((time, index) => `
@@ -465,10 +522,11 @@ function renderReminderSlots(times) {
       <input type="time" id="memberReminder${index}" value="${escape(time)}" />
     </div>
   `).join("");
+  renderReminderCountButtons();
 }
 
 function readReminderTimes() {
-  const count = state.dailyReminders || 1;
+  const count = chosenReminderCount();
   const times = [];
   for (let i = 0; i < count; i++) {
     const el = document.getElementById(`memberReminder${i}`);
@@ -565,23 +623,73 @@ async function refreshSmartReminders() {
 
 async function editSmartReminder(id) {
   const existing = (state.smartReminders || []).find((r) => r.id === id) || null;
-  const name = prompt("對象名稱", existing ? existing.target_name : "媽媽");
-  if (name == null) return;
-  const cat = prompt("類型代碼（birthday/wedding/checkup/medicine/custom…）", existing ? existing.category : "birthday");
-  if (cat == null) return;
-  const md = prompt("月/日", existing ? `${existing.month}/${existing.day}` : "7/24");
-  if (md == null) return;
-  const parts = String(md).split(/[\/\-.]/).map((x) => parseInt(x, 10));
+  state.smartEditingId = existing ? existing.id : null;
+  const modal = document.getElementById("smartEditorModal");
+  const title = document.getElementById("smartEditorTitle");
+  if (title) title.textContent = existing ? "編輯智能提醒" : "新增智能提醒";
+  const cats = state.smartCategories || [
+    { id: "birthday", emoji: "🎂", label: "生日" },
+    { id: "checkup", emoji: "💊", label: "回診" },
+    { id: "medicine", emoji: "💊", label: "吃藥" },
+    { id: "schedule", emoji: "📅", label: "行程" },
+    { id: "greeting", emoji: "❤️", label: "問候" },
+    { id: "custom", emoji: "🗓️", label: "自訂" }
+  ];
+  const select = document.getElementById("srCategory");
+  if (select) {
+    select.innerHTML = cats.map((c) =>
+      `<option value="${escape(c.id)}" ${(existing ? existing.category : "birthday") === c.id ? "selected" : ""}>${escape((c.emoji || "") + " " + (c.label || c.id))}</option>`
+    ).join("");
+  }
+  const syncCustom = () => {
+    const wrap = document.getElementById("srCustomWrap");
+    if (wrap) wrap.hidden = select.value !== "custom";
+  };
+  if (select) {
+    select.onchange = syncCustom;
+    syncCustom();
+  }
+  document.getElementById("srName").value = existing ? (existing.target_name || "") : "";
+  document.getElementById("srCustomTitle").value = existing ? (existing.custom_title || "") : "";
+  document.getElementById("srNote").value = existing ? (existing.note || "") : "";
+  document.getElementById("srTime").value = existing && existing.remind_time ? existing.remind_time : "09:00";
+  document.getElementById("srYearly").checked = existing ? !existing.year : true;
+  const now = new Date();
+  const y = existing && existing.year ? existing.year : now.getFullYear();
+  const m = existing ? Number(existing.month || 1) : (now.getMonth() + 1);
+  const d = existing ? Number(existing.day || 1) : now.getDate();
+  document.getElementById("srDate").value = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  if (modal) modal.hidden = false;
+}
+
+async function submitSmartReminder() {
+  const name = String(document.getElementById("srName").value || "").trim();
+  const category = String(document.getElementById("srCategory").value || "birthday").trim();
+  const customTitle = String(document.getElementById("srCustomTitle").value || "").trim();
+  const dateVal = String(document.getElementById("srDate").value || "").trim();
+  const timeVal = String(document.getElementById("srTime").value || "09:00").trim();
+  const note = String(document.getElementById("srNote").value || "").trim();
+  const yearly = Boolean(document.getElementById("srYearly").checked);
+  if (!name) return alert("請填寫對象名稱");
+  if (category === "custom" && !customTitle) return alert("自訂類型請填寫標題");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) return alert("請選擇日期");
+  const [y, m, d] = dateVal.split("-").map((x) => parseInt(x, 10));
   const res = await fetch(`${API_BASE}/api/smart-reminders`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       line_user_id: state.lineUserId,
-      id: existing ? existing.id : undefined,
-      target_name: name.trim() || "家人",
-      category: (cat || "birthday").trim(),
-      month: parts[0] || 1,
-      day: parts[1] || 1,
+      id: state.smartEditingId || undefined,
+      target_name: name,
+      category,
+      custom_title: customTitle,
+      month: m || 1,
+      day: d || 1,
+      year: yearly ? null : y,
+      date: dateVal,
+      yearly,
+      remind_time: timeVal || "09:00",
+      note,
       notify_private: true,
       notify_group: false,
       eve_remind: true
@@ -592,6 +700,8 @@ async function editSmartReminder(id) {
     alert(data.upgrade_hint || data.error || "儲存失敗");
     return;
   }
+  document.getElementById("smartEditorModal").hidden = true;
+  state.smartEditingId = null;
   await refreshSmartReminders();
 }
 
@@ -826,8 +936,31 @@ async function deleteGuardian(contactId) {
 }
 
 document.getElementById("useDefaultsBtn").addEventListener("click", () => {
-  renderReminderSlots(defaultTimesForCount(state.dailyReminders));
+  const count = chosenReminderCount();
+  state.reminderTimes = defaultTimesForCount(count);
+  renderReminderSlots(state.reminderTimes);
 });
+document.getElementById("reminderCountRow")?.addEventListener("click", (event) => {
+  const btn = event.target.closest("[data-count]");
+  if (!btn || btn.disabled || btn.hidden) return;
+  const maxCount = Math.max(1, Math.min(3, Number(state.dailyReminders) || 1));
+  const next = Math.max(1, Math.min(maxCount, Number(btn.dataset.count) || 1));
+  state.chosenReminderCount = next;
+  const existing = state.reminderTimes || [];
+  const defaults = defaultTimesForCount(next);
+  state.reminderTimes = Array.from({ length: next }, (_, i) => existing[i] || defaults[i] || "12:00");
+  renderReminderSlots(state.reminderTimes);
+});
+const srCancelBtn = document.getElementById("srCancelBtn");
+if (srCancelBtn) {
+  srCancelBtn.addEventListener("click", () => {
+    const modal = document.getElementById("smartEditorModal");
+    if (modal) modal.hidden = true;
+    state.smartEditingId = null;
+  });
+}
+const srSaveBtn = document.getElementById("srSaveBtn");
+if (srSaveBtn) srSaveBtn.addEventListener("click", submitSmartReminder);
 const roleIntroDismiss = document.getElementById("memberRoleIntroDismiss");
 if (roleIntroDismiss) roleIntroDismiss.addEventListener("click", dismissRoleIntro);
 document.getElementById("addGuardianBtn").addEventListener("click", () => {
@@ -862,9 +995,11 @@ document.getElementById("saveEditorBtn").addEventListener("click", saveEditor);
 async function saveReminder() {
   const btn = document.getElementById("saveBtn");
   let times = readReminderTimes();
-  if (times.length < state.dailyReminders) {
-    times = defaultTimesForCount(state.dailyReminders);
+  const count = chosenReminderCount();
+  if (times.length < count) {
+    times = defaultTimesForCount(count);
   }
+  times = times.slice(0, count);
   btn.disabled = true;
   btn.textContent = "儲存中...";
   try {
@@ -881,6 +1016,7 @@ async function saveReminder() {
     if (res.ok) {
       const data = await res.json();
       state.reminderTimes = data.reminder_times || times;
+      state.chosenReminderCount = (state.reminderTimes || []).length;
       const status = document.getElementById("statusSaved");
       status.style.display = "block";
       setTimeout(() => status.style.display = "none", 3000);

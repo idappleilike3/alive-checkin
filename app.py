@@ -534,7 +534,8 @@ def line_auto_reply_text(text, status=None):
     if any(keyword in text for keyword in SUPPORT_KEYWORDS):
         faq_url = line_liff_url("faq")
         return (
-            "客服在這裡。你可以直接回覆你的問題，我們會協助你設定簽到、守護人與方案。\n\n"
+            "客服在這裡。請直接在此 LINE 留言你的問題，我們會協助你設定簽到、守護人與方案。\n\n"
+            "📩 LINE 留言 24 小時內盡快回覆。\n\n"
             f"也可以先看問與答：{faq_url}\n\n"
             "提醒：若是立即危險或醫療緊急狀況，請先撥打 119。"
         )
@@ -1174,10 +1175,16 @@ def build_expiry_remind_flex(profile, now=None):
     days = info.get("days_left")
     if info.get("expired") or (isinstance(days, int) and days <= 0):
         title = f"你的{label}已到期"
-        body = "續用後可繼續每日問候與守護提醒，家人也能安心。"
+        body = (
+            "續用後可繼續每日問候與守護提醒，家人也能安心。"
+            "升級時補差額即可，不必重設聯絡人；對方也有 7 天考慮期可慢慢決定。"
+        )
     else:
         title = f"你的{label}即將到期"
-        body = f"還剩約 {days} 天。續用後可繼續每日問候，守護不中斷。"
+        body = (
+            f"還剩約 {days} 天。續用後可繼續每日問候，守護不中斷。"
+            "升級補差額即可；另有 7 天考慮期，方便家人一起決定。"
+        )
     pricing_uri = pricing_direct_url()
     return {
         "type": "flex",
@@ -1583,6 +1590,29 @@ def contact_is_bound_guardian(contact, owner_line_user_id=None):
     return bool(lid)
 
 
+def contact_is_notifiable_line_guardian(contact, owner_line_user_id=None):
+    """可收安全守護／SOS 等 LINE 推播的「守護人」。
+
+    排除：緊急聯絡人（僅電話備援）、本人 ID、未綁定、未勾選 line 通知。
+    """
+    if not isinstance(contact, dict):
+        return False
+    if resolve_contact_role(contact) == "emergency":
+        return False
+    if not contact_is_bound_guardian(contact, owner_line_user_id):
+        return False
+    methods = contact.get("notify_methods")
+    if methods is not None and len(methods) == 0:
+        methods = ["line"]
+    if "line" not in (methods or ["line"]):
+        return False
+    lid = get_contact_line_id(contact)
+    owner = str(owner_line_user_id or "").strip()
+    if not lid or (owner and lid == owner):
+        return False
+    return True
+
+
 def contact_has_guardian_profile(contact):
     """是否已填寫守護人基本資料（姓名＋關係）。"""
     if not isinstance(contact, dict):
@@ -1631,10 +1661,10 @@ def profile_has_guardian(profile):
 
 
 def profile_has_bound_line_guardian(profile):
-    """是否已有 ≥1 位「已接受 LINE 綁定」的守護人（安全守護／可通知對象）。"""
+    """是否已有 ≥1 位可 LINE 通知的守護人（安全守護／SOS 閘門；不含緊急聯絡人）。"""
     contacts = (profile or {}).get("contacts") or []
     owner = str((profile or {}).get("line_user_id") or "").strip()
-    return any(contact_is_bound_guardian(c, owner) for c in contacts)
+    return any(contact_is_notifiable_line_guardian(c, owner) for c in contacts)
 
 
 def profile_setup_completed(profile):
@@ -1948,6 +1978,8 @@ def build_status(profile, state=None):
     guardian_groups = []
     today_safety_roster = None
     if state is not None:
+        # 雙向對齊：避免群已綁定但 profile.guardian_group_ids 遺失 → LIFF 顯示「尚未綁定」
+        sync_owned_guardian_group_ids(state, profile)
         groups = state.get("guardian_groups", {}) or {}
         for group_id in profile.get("guardian_group_ids", []) or []:
             group = groups.get(group_id)
@@ -1980,17 +2012,19 @@ def build_status(profile, state=None):
         "contacts": profile.get("contacts", []),
         "contact_count": len(profile.get("contacts") or []),
         "bound_guardian_count": sum(
-            1 for c in (profile.get("contacts") or []) if contact_is_bound_guardian(c, owner_id)
+            1
+            for c in (profile.get("contacts") or [])
+            if contact_is_notifiable_line_guardian(c, owner_id)
         ),
         "core_guardian_count": sum(
             1
             for c in (profile.get("contacts") or [])
-            if contact_is_bound_guardian(c, owner_id) and bool(c.get("is_primary"))
+            if contact_is_notifiable_line_guardian(c, owner_id) and bool(c.get("is_primary"))
         ),
         "general_guardian_count": sum(
             1
             for c in (profile.get("contacts") or [])
-            if contact_is_bound_guardian(c, owner_id) and not bool(c.get("is_primary"))
+            if contact_is_notifiable_line_guardian(c, owner_id) and not bool(c.get("is_primary"))
         ),
         "bound_guardians": [
             {
@@ -2015,7 +2049,7 @@ def build_status(profile, state=None):
                 "contact_role": resolve_contact_role(c),
             }
             for c in (profile.get("contacts") or [])
-            if contact_is_bound_guardian(c, owner_id)
+            if contact_is_notifiable_line_guardian(c, owner_id)
         ],
         "profile_contact_count": sum(
             1 for c in (profile.get("contacts") or []) if contact_is_profile_complete(c)
@@ -4037,11 +4071,43 @@ def guardian_group_preference(group, key, default=None):
     return DEFAULT_GUARDIAN_GROUP_PREFERENCES.get(key)
 
 
+def sync_owned_guardian_group_ids(state, profile):
+    """把 guardian_groups 裡「此會員為 owner 且 active」的群同步回 profile.guardian_group_ids。
+
+    修常見不一致：群已綁定成功（guardian_groups 有資料），但 LIFF 讀 profile 仍顯示未綁定。
+    """
+    if not isinstance(profile, dict):
+        return []
+    owner_id = str(profile.get("line_user_id") or "").strip()
+    groups = (state or {}).get("guardian_groups") or {}
+    owned_ids = []
+    if owner_id:
+        for gid, group in groups.items():
+            if not isinstance(group, dict):
+                continue
+            if group.get("status") != "active":
+                continue
+            if str(group.get("owner_line_user_id") or "").strip() != owner_id:
+                continue
+            owned_ids.append(str(gid))
+    # 保留既有順序，再補上遺漏的 owned 群
+    existing = [str(x) for x in (profile.get("guardian_group_ids") or []) if str(x).strip()]
+    owned_set = set(owned_ids)
+    merged = [gid for gid in existing if gid in owned_set]
+    for gid in owned_ids:
+        if gid not in merged:
+            merged.append(gid)
+    if merged != list(profile.get("guardian_group_ids") or []):
+        profile["guardian_group_ids"] = merged
+    return list(profile.get("guardian_group_ids") or [])
+
+
 def owned_active_guardian_groups(state, profile):
-    """回傳此會員擁有且啟用的守護群列表。"""
+    """回傳此會員擁有且啟用的守護群列表（含 ids 與 groups 雙向對齊）。"""
     owner_id = str((profile or {}).get("line_user_id") or "").strip()
     if not owner_id:
         return []
+    sync_owned_guardian_group_ids(state, profile)
     groups = (state or {}).get("guardian_groups") or {}
     out = []
     for group_id in (profile or {}).get("guardian_group_ids") or []:
@@ -4138,15 +4204,22 @@ def bind_guardian_group(data_file, payload):
     existing_group = groups.get(group_id)
     if existing_group:
         if existing_group.get("owner_line_user_id") == line_user_id:
-            # 建立者重新綁定／已綁定：自動確保管理員身分（升級後補寫）
+            # 建立者重新綁定／已綁定：自動確保管理員身分，並補回 profile.guardian_group_ids
             grant_guardian_group_admin(existing_group, line_user_id)
             groups[group_id] = existing_group
+            group_ids = list(dict.fromkeys(profile.get("guardian_group_ids") or []))
+            if group_id not in group_ids:
+                group_ids.append(group_id)
+            profile["guardian_group_ids"] = group_ids
+            sync_owned_guardian_group_ids(state, profile)
             save_state(data_file, state)
             return {
                 "bound": True,
                 "already_bound": True,
                 "group_id": group_id,
+                "guardian_group_count": len(profile.get("guardian_group_ids") or []),
                 "guardian_group_limit": plan_rules(profile).get("guardian_group_limit", 0),
+                "guardian_group_ids": list(profile.get("guardian_group_ids") or []),
                 "is_group_admin": True,
                 "should_leave": False,
             }, 200
@@ -4213,13 +4286,15 @@ def bind_guardian_group(data_file, payload):
     }
     group_ids.append(group_id)
     profile["guardian_group_ids"] = group_ids
+    sync_owned_guardian_group_ids(state, profile)
     save_state(data_file, state)
     return {
         "bound": True,
         "already_bound": False,
         "group_id": group_id,
-        "guardian_group_count": len(group_ids),
+        "guardian_group_count": len(profile.get("guardian_group_ids") or group_ids),
         "guardian_group_limit": group_limit,
+        "guardian_group_ids": list(profile.get("guardian_group_ids") or group_ids),
         "is_group_admin": True,
         "should_leave": False,
     }, 200
@@ -4602,7 +4677,7 @@ def safety_guard_snapshot(profile, now=None):
 def notify_safety_guard_started(state, profile, line_user_id, duration_hours, config=None):
     """Notify bound LINE guardians that 安全守護 started. Mutates notification_logs on state.
 
-    Returns a small status dict for the LIFF UI (sent / failed / no_guardians).
+    Returns a small status dict for the LIFF UI (sent / failed / no_guardians / reason).
     Never raises — caller already started the guard session.
     """
     location = profile.get("location") or {}
@@ -4631,21 +4706,31 @@ def notify_safety_guard_started(state, profile, line_user_id, duration_hours, co
     )
     targets = []
     for contact in contacts:
+        if not contact_is_notifiable_line_guardian(contact, line_user_id):
+            continue
         target = get_contact_line_id(contact)
-        if not target or target == line_user_id:
-            continue
-        if not contact_is_bound_guardian(contact, line_user_id):
-            continue
-        if "line" not in (contact.get("notify_methods") or ["line"]):
-            continue
-        targets.append(target)
+        if target and target not in targets:
+            targets.append(target)
 
     if not targets:
+        emergency_line = any(
+            resolve_contact_role(c) == "emergency" and contact_is_bound_guardian(c, line_user_id)
+            for c in contacts
+        )
+        if emergency_line:
+            reason = "目前只有緊急聯絡人（電話備援），安全守護需先「一鍵邀請」LINE 守護人"
+            reason_code = "emergency_only"
+        else:
+            reason = "尚未綁定可通知的守護人。請先一鍵邀請家人完成 LINE 綁定，且對方需加入官方帳號好友"
+            reason_code = "no_guardians"
         return {
             "sent": 0,
             "failed": 0,
+            "target_count": 0,
             "no_guardians": True,
-            "message": "尚未綁定可通知的守護人",
+            "reason_code": reason_code,
+            "message": reason,
+            "failed_reasons": [],
         }
 
     token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -4653,13 +4738,17 @@ def notify_safety_guard_started(state, profile, line_user_id, duration_hours, co
         return {
             "sent": 0,
             "failed": len(targets),
+            "target_count": len(targets),
             "no_guardians": False,
-            "message": "系統暫時無法推播 LINE",
+            "reason_code": "missing_token",
+            "message": "系統暫時無法推播 LINE，請稍後再試",
+            "failed_reasons": ["missing_token"],
         }
 
     sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
     sent = 0
     failed = 0
+    failed_reasons = []
     for target in targets:
         try:
             result = sender(token, target, message)
@@ -4668,17 +4757,36 @@ def notify_safety_guard_started(state, profile, line_user_id, duration_hours, co
             )
             sent += 1
         except Exception as exc:
+            hint = classify_line_push_error(exc)
             append_notification_log(state, "safety_guard", target, "failed", message, str(exc))
             failed += 1
+            if hint not in failed_reasons:
+                failed_reasons.append(hint)
+
+    if sent and not failed:
+        summary = f"已通知 {sent} 位守護人"
+        reason_code = "ok"
+    elif sent and failed:
+        summary = f"已通知 {sent} 位，{failed} 位失敗"
+        reason_code = "partial"
+        if failed_reasons:
+            summary = f"{summary}。{failed_reasons[0]}"
+    else:
+        reason_code = "push_failed"
+        summary = "守護人通知失敗（已開啟安全守護，但對方沒收到）"
+        if failed_reasons:
+            summary = f"{summary}。{failed_reasons[0]}"
+        else:
+            summary = f"{summary}。請確認守護人已加入「每日平安」官方帳號好友且未封鎖"
+
     return {
         "sent": sent,
         "failed": failed,
+        "target_count": len(targets),
         "no_guardians": False,
-        "message": (
-            f"已通知 {sent} 位守護人"
-            if sent and not failed
-            else (f"已通知 {sent} 位，{failed} 位失敗" if sent else "守護人通知失敗")
-        ),
+        "reason_code": reason_code,
+        "message": summary,
+        "failed_reasons": failed_reasons,
     }
 
 
@@ -4789,10 +4897,14 @@ def update_location(data_file, payload, config=None):
         state, profile, line_user_id, duration_hours, config=config
     )
     save_state(data_file, state)
+    snap = safety_guard_snapshot(profile, now)
+    snap["notified_count"] = int(guardian_notify.get("sent") or 0)
+    snap["notify_message"] = str(guardian_notify.get("message") or "")
+    snap["notify_reason_code"] = str(guardian_notify.get("reason_code") or "")
     return {
         "ok": True,
         "location": profile["location"],
-        "safety_guard": safety_guard_snapshot(profile, now),
+        "safety_guard": snap,
         "guardian_notify": guardian_notify,
     }, 200
 
@@ -6794,6 +6906,25 @@ def normalize_smart_reminder(raw, index=0):
         year = int(year_raw) if year_raw not in (None, "", 0, "0") else None
     except (TypeError, ValueError):
         year = None
+    # date_iso（YYYY-MM-DD）優先於拆開的年月日
+    date_iso = str(raw.get("date") or raw.get("date_iso") or "").strip()
+    if date_iso and re.match(r"^\d{4}-\d{2}-\d{2}$", date_iso):
+        try:
+            y, m, d = date_iso.split("-")
+            year = int(y)
+            month = int(m)
+            day = int(d)
+        except (TypeError, ValueError):
+            pass
+    if bool(raw.get("yearly", False)) or bool(raw.get("repeat_yearly", False)):
+        year = None
+    remind_time = str(raw.get("remind_time") or raw.get("time") or "09:00").strip()
+    if not REMINDER_TIME_PATTERN.match(remind_time):
+        remind_time = "09:00"
+    custom_title = str(raw.get("custom_title") or "").strip()[:80]
+    category_label = meta["label"]
+    if category == "custom" and custom_title:
+        category_label = custom_title
     rid = str(raw.get("id") or "").strip() or f"sr_{secrets.token_hex(6)}"
     notify_private = True  # product: 智能提醒只走私訊
     notify_group = False
@@ -6801,11 +6932,13 @@ def normalize_smart_reminder(raw, index=0):
         "id": rid,
         "target_name": str(raw.get("target_name") or "").strip() or f"對象{index + 1}",
         "category": category,
-        "category_label": meta["label"],
+        "category_label": category_label,
+        "custom_title": custom_title,
         "emoji": emoji,
         "month": month if 1 <= month <= 12 else 1,
         "day": day if 1 <= day <= 31 else 1,
         "year": year,
+        "remind_time": remind_time,
         "note": str(raw.get("note") or "").strip()[:200],
         "notify_private": notify_private,
         "notify_group": notify_group,
@@ -7105,8 +7238,9 @@ def send_smart_reminders(config):
     sent = 0
     skipped = 0
     results = []
-    # Morning day-of window ~09:00; eve window ~20:00
-    day_window = now.hour >= 9
+    # Day-of：達到使用者設定的 remind_time 後推播（預設 09:00）；eve 仍約 20:00
+    now_hm = now.strftime("%H:%M")
+    day_window = True  # 改由各筆 remind_time 判斷
     eve_window = now.hour >= 20
 
     for user in state.get("users", {}).values():
@@ -7118,8 +7252,11 @@ def send_smart_reminders(config):
         snooze = user.get("smart_reminder_snooze") or {}
         for reminder in list_smart_reminders(user):
             rid = reminder.get("id")
+            remind_hm = str(reminder.get("remind_time") or "09:00").strip()
+            if not REMINDER_TIME_PATTERN.match(remind_hm):
+                remind_hm = "09:00"
             # Day-of
-            if day_window and smart_reminder_occurs_on(reminder, today_date):
+            if day_window and now_hm >= remind_hm and smart_reminder_occurs_on(reminder, today_date):
                 key = f"{today_key}:{rid}:day"
                 snooze_until = parse_datetime(snooze.get("until")) if snooze.get("id") == rid else None
                 if key in sent_keys and not (snooze_until and now >= snooze_until):
@@ -7182,7 +7319,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gm",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725sg",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -7504,7 +7641,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gm",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725sg",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -7546,6 +7683,10 @@ def create_app(config=None):
             hist = set(profile.get("history") or [])
             hist.add(today)
             profile["history"] = sorted(hist)
+            dirty = True
+        before_groups = list(profile.get("guardian_group_ids") or [])
+        sync_owned_guardian_group_ids(state, profile)
+        if list(profile.get("guardian_group_ids") or []) != before_groups:
             dirty = True
         if dirty:
             save_state(app.config["DATA_FILE"], state)
@@ -8556,7 +8697,11 @@ def create_app(config=None):
                         "message": text,
                     },
                 )
-                reply_text = "你的問題已經記錄下來，客服人員會盡快回覆你。若是立即危險，請先撥打 119。"
+                reply_text = (
+                    "你的問題已經記錄下來。"
+                    "📩 LINE 留言 24 小時內盡快回覆。"
+                    "若是立即危險，請先撥打 119。"
+                )
             else:
                 reply_text = line_auto_reply_text(text, status)
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
