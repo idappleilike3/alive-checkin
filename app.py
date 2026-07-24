@@ -3575,6 +3575,8 @@ def bind_emergency_contact(data_file, payload, config=None):
     inviter_notified = False
     guardian_notified = False
     sent = 0
+    notify_errors = []
+    notify_hint = ""
     # 首次綁定成功：一定推播雙方（重複綁定不狂推）
     if config and not was_duplicate:
         token = (
@@ -3592,6 +3594,7 @@ def bind_emergency_contact(data_file, payload, config=None):
                 "綁定完成通知未送出",
                 "LINE_CHANNEL_ACCESS_TOKEN missing",
             )
+            notify_hint = "系統推播憑證未設定，綁定完成通知未送出。"
         else:
             guardian_name = contact_display_name or "守護人"
             inviter_notice, guardian_notice = build_bind_success_notices(
@@ -3600,6 +3603,10 @@ def bind_emergency_contact(data_file, payload, config=None):
                 inviter_id,
                 guardian_name,
                 invite_reward_applied=invite_reward_applied,
+            )
+            print(
+                f"[bind] dual_notify start inviter={inviter_id[:8]} guardian={contact_line_user_id[:8]}",
+                flush=True,
             )
             for line_user_id, message, who in (
                 (inviter_id, inviter_notice, "inviter"),
@@ -3620,9 +3627,16 @@ def bind_emergency_contact(data_file, payload, config=None):
                         inviter_notified = True
                     else:
                         guardian_notified = True
+                    print(f"[bind] dual_notify ok who={who} uid={line_user_id[:8]}", flush=True)
                 except Exception as exc:
+                    hint = classify_line_push_error(exc)
+                    notify_errors.append({"who": who, "error": str(exc)[:400], "hint": hint})
                     append_notification_log(
                         state, "binding_complete", line_user_id, "failed", message, str(exc)
+                    )
+                    print(
+                        f"[bind] dual_notify FAIL who={who} uid={line_user_id[:8]} err={str(exc)[:180]}",
+                        flush=True,
                     )
             if inviter_notified and guardian_notified:
                 bound_row = next(
@@ -3635,6 +3649,10 @@ def bind_emergency_contact(data_file, payload, config=None):
                 )
                 if bound_row is not None:
                     bound_row["bind_notify_sent_at"] = accepted_at
+            elif notify_errors:
+                notify_hint = notify_errors[0].get("hint") or classify_line_push_error("")
+            elif not inviter_notified and not guardian_notified:
+                notify_hint = "雙方 LINE 通知皆未送出；請確認已加入「每日平安」官方帳號好友。"
 
     save_state(data_file, state)
     bound_contact = next(
@@ -3666,6 +3684,8 @@ def bind_emergency_contact(data_file, payload, config=None):
         "test_messages_sent": sent,  # 向下相容
         "inviter_notified": inviter_notified,
         "guardian_notified": guardian_notified,
+        "notify_errors": notify_errors,
+        "notify_hint": notify_hint,
         "persistence": persistence_info(data_file),
     }, 200
 
@@ -4384,6 +4404,42 @@ def sos_user_facing_error(err) -> str:
     return "暫時通知不到家人，有危險請先打 119 或 110，並直接聯絡親友"
 
 
+def classify_line_push_error(exc) -> str:
+    """Map LINE push failures to a short, user-facing hint (zh-Hant)."""
+    text = str(exc or "").lower()
+    if any(k in text for k in ("not a friend", "friendship", "you have been blocked", "blocked")):
+        return "對方或你尚未把「每日平安」加為好友（或封鎖了官方帳號），LINE 無法推播。"
+    if "429" in text or "rate" in text:
+        return "LINE 推播暫時過於頻繁，請稍後再試。"
+    if "401" in text or "invalid" in text and "token" in text:
+        return "系統推播憑證異常，請稍後再試或聯絡客服。"
+    if "400" in text:
+        return "LINE 推播被拒（常見原因：未加入官方帳號好友）。綁定本身已成功。"
+    return "LINE 推播失敗，請確認已加入官方帳號好友後再試。"
+
+
+def collect_phone_only_contacts(contacts):
+    """Emergency contacts that have a dialable phone but no LINE id (cannot receive push)."""
+    out = []
+    for contact in contacts or []:
+        if not isinstance(contact, dict):
+            continue
+        target = contact.get("line_id") or contact.get("line_user_id")
+        phone = str(contact.get("phone") or contact.get("mobile") or "").strip()
+        digits = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
+        if target:
+            continue
+        if not digits:
+            continue
+        out.append({
+            "name": contact.get("name") or contact.get("relationship") or "緊急聯絡人",
+            "phone": digits,
+            "priority": int(contact.get("priority") or 9999),
+        })
+    out.sort(key=lambda item: item.get("priority") or 9999)
+    return out
+
+
 def trigger_sos(data_file, payload, config=None):
     """
     🔴 P0 FIX v0.5:加 3 層防護
@@ -4467,6 +4523,7 @@ def trigger_sos(data_file, payload, config=None):
         profile.get("contacts") or [],
         key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
     )
+    phone_contacts = collect_phone_only_contacts(contacts)
     line_contacts = []
     for contact in contacts:
         target = contact.get("line_id") or contact.get("line_user_id")
@@ -4492,9 +4549,29 @@ def trigger_sos(data_file, payload, config=None):
 
     # 個人守護人或守護群任一可送；兩者都沒有才拒絕（方案本身不會自動綁定對象）
     if not line_contacts and not active_group_ids:
-        return {"error": "no bound LINE guardians", "sent": 0}, 400
+        return {
+            "error": "no bound LINE guardians",
+            "sent": 0,
+            "phone_only_count": len(phone_contacts),
+            "phone_contacts": phone_contacts[:5],
+        }, 400
 
-    location = profile.get("location") or {}
+    # Prefer fresh coords from this SOS request; fall back to last known profile location.
+    location = dict(profile.get("location") or {})
+    try:
+        req_lat = payload.get("latitude")
+        req_lng = payload.get("longitude")
+        if req_lat is not None and req_lng is not None:
+            location["latitude"] = float(req_lat)
+            location["longitude"] = float(req_lng)
+            city = str(payload.get("city") or location.get("city") or "").strip()
+            if city:
+                location["city"] = city
+            location["updated_at"] = now_dt.isoformat(timespec="seconds")
+            profile["location"] = location
+    except (TypeError, ValueError):
+        location = dict(profile.get("location") or {})
+
     location_text = ""
     if location.get("latitude") is not None and location.get("longitude") is not None:
         city = str(location.get("city") or "").strip()
@@ -4517,6 +4594,11 @@ def trigger_sos(data_file, payload, config=None):
     group_sent = 0
     group_failed = 0
     results = []
+    print(
+        f"[sos] trigger user={line_user_id[:8]} line_targets={len(line_contacts)} "
+        f"groups={len(active_group_ids)} loc={bool(location_text)} phone_only={len(phone_contacts)}",
+        flush=True,
+    )
     for contact in line_contacts:
         target = contact["line_id"]
         try:
@@ -4524,10 +4606,16 @@ def trigger_sos(data_file, payload, config=None):
             append_notification_log(state, "sos", target, "sent", message, json.dumps(result, ensure_ascii=False))
             sent += 1
             results.append({"line_user_id": target, "status": "sent"})
+            print(f"[sos] push ok target={str(target)[:8]}", flush=True)
         except Exception as exc:
             append_notification_log(state, "sos", target, "failed", message, str(exc))
             failed += 1
-            results.append({"line_user_id": target, "status": "failed"})
+            results.append({
+                "line_user_id": target,
+                "status": "failed",
+                "error_hint": classify_line_push_error(exc),
+            })
+            print(f"[sos] push FAIL target={str(target)[:8]} err={str(exc)[:180]}", flush=True)
 
     for group_id in active_group_ids:
         try:
@@ -4557,6 +4645,9 @@ def trigger_sos(data_file, payload, config=None):
         "guardian_limit": limit,
         "results": results,
         "location_attached": bool(location_text),
+        "phone_only_count": len(phone_contacts),
+        "phone_contacts": phone_contacts[:5],
+        "event_id": sos_event_id,
     }, code
 
 
@@ -6469,7 +6560,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725dn",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725sos",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -6791,7 +6882,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725dn",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725sos",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),

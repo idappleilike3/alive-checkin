@@ -126,6 +126,59 @@ class SosRulesTests(unittest.TestCase):
         self.assertEqual(result["group_sent"], 1)
         self.assertEqual(messages[0][0], "C-group")
 
+    def test_sos_accepts_inline_coords_and_reports_phone_only(self):
+        messages = []
+        profile = {
+            "line_user_id": "U-owner",
+            "display_name": "小美",
+            "plan": "free",
+            "contacts": [
+                {"line_id": "U-guardian", "priority": 1, "notify_methods": ["line"]},
+                {"name": "阿爸", "phone": "0912345678", "priority": 2},
+            ],
+        }
+        data_file = self.make_data_file(profile)
+        result, status = trigger_sos(
+            data_file,
+            {
+                "line_user_id": "U-owner",
+                "latitude": 25.04,
+                "longitude": 121.56,
+                "city": "台北市",
+            },
+            {
+                "LINE_CHANNEL_ACCESS_TOKEN": "test-token",
+                "LINE_PUSH_SENDER": lambda _token, _target, message: messages.append(message) or {"ok": True},
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["sent"], 1)
+        self.assertTrue(result["location_attached"])
+        self.assertEqual(result["phone_only_count"], 1)
+        self.assertEqual(result["phone_contacts"][0]["phone"], "0912345678")
+        self.assertIn("maps?q=25.04,121.56", messages[0])
+
+    def test_no_line_guardians_still_returns_phone_contacts(self):
+        profile = {
+            "line_user_id": "U-alone",
+            "display_name": "只有電話",
+            "plan": "free",
+            "contacts": [{"name": "媽媽", "phone": "0987654321", "priority": 1}],
+        }
+        data_file = self.make_data_file(profile)
+        result, status = trigger_sos(
+            data_file,
+            {"line_user_id": "U-alone"},
+            {
+                "LINE_CHANNEL_ACCESS_TOKEN": "test-token",
+                "LINE_PUSH_SENDER": lambda *_args: {"ok": True},
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(result["error"], "no bound LINE guardians")
+        self.assertEqual(result["phone_only_count"], 1)
+        self.assertEqual(result["phone_contacts"][0]["name"], "媽媽")
+
     def test_user_facing_error_hides_english(self):
         msg = sos_user_facing_error("no bound LINE guardians")
         self.assertIn("還沒綁定守護人喔", msg)

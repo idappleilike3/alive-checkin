@@ -4888,11 +4888,12 @@
       return true;
     }
 
-    async function apiTriggerSos() {
+    async function apiTriggerSos(extra = {}) {
+      const body = { line_user_id: lineUserId, ...(extra || {}) };
       const res = await fetch("/api/sos", {
         method: "POST",
         headers: await authHeaders(),
-        body: JSON.stringify({ line_user_id: lineUserId })
+        body: JSON.stringify(body)
       });
       const data = await res.json();
       if (!res.ok) {
@@ -6422,7 +6423,20 @@
           if (bindResult?.already_bound && bindResult?.binding_complete === false) {
             alert(bindResult?.message || "你已經是守護人了，請把邀請轉傳給其他好友");
           } else {
-            alert(bindResult?.message || "綁定完成！你已成為對方的守護人。對方也會收到「綁定完成」通知。");
+            let bindMsg = bindResult?.message || "綁定完成！你已成為對方的守護人。";
+            if (bindResult?.binding_complete !== false) {
+              const dualOk = Boolean(bindResult?.inviter_notified) && Boolean(bindResult?.guardian_notified);
+              if (dualOk) {
+                bindMsg += "\n雙方都已收到「綁定完成」LINE 通知。";
+              } else if (bindResult?.inviter_notified || bindResult?.guardian_notified) {
+                bindMsg += "\n綁定已成功，但有一方 LINE 通知未送出；請確認雙方都已加入「每日平安」官方帳號好友。";
+              } else if (bindResult?.notify_hint) {
+                bindMsg += `\n${bindResult.notify_hint}`;
+              } else {
+                bindMsg += "\n綁定已成功，但雙方 LINE 通知可能未送出；請確認已加入官方帳號好友後再試一次邀請。";
+              }
+            }
+            alert(bindMsg);
             try {
               await refreshContacts();
             } catch (_) {}
@@ -7552,24 +7566,37 @@
       openGuardianEditor(null, "guardian");
     }
 
+    /**
+     * SOS 定位：必須有 hard timeout。
+     * Android LIFF 常見 getCurrentPosition 永不回呼（權限彈窗卡住／GPS 掛死），
+     * 若只靠瀏覽器 timeout 會永遠停在「正在取得位置」。
+     * 失敗時回傳 ok:false，呼叫端仍應送出不含最新定位的 SOS。
+     */
     async function refreshLocationForSos() {
-      if (!navigator.geolocation || !lineUserId || useLocalMode) return false;
-      return await new Promise((resolve) => {
-        navigator.geolocation.getCurrentPosition(async (position) => {
-          try {
-            await apiUpdateLocation(
-              position.coords.latitude,
-              position.coords.longitude,
-              inferTaiwanCounty(position.coords.latitude, position.coords.longitude),
-              { refreshOnly: true }
-            );
-            resolve(true);
-          } catch (error) {
-            // SOS 不能因定位失敗而被阻擋，後端仍會使用最後一次可用位置。
-            resolve(false);
-          }
-        }, () => resolve(false), { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 });
-      });
+      if (!navigator.geolocation || !lineUserId || useLocalMode) {
+        return { ok: false, reason: "unavailable" };
+      }
+      try {
+        const position = await getCurrentPositionPromise(
+          { timeout: 7000, maximumAge: 60000 },
+          8000
+        );
+        const latitude = position.coords.latitude;
+        const longitude = position.coords.longitude;
+        const city = inferTaiwanCounty(latitude, longitude);
+        try {
+          await apiUpdateLocation(latitude, longitude, city, { refreshOnly: true });
+        } catch (error) {
+          console.warn("sos location persist failed", error);
+        }
+        return { ok: true, latitude, longitude, city };
+      } catch (error) {
+        console.warn("sos geolocation failed/timeout", error);
+        return {
+          ok: false,
+          reason: String((error && error.message) || "timeout"),
+        };
+      }
     }
 
     function hasActiveSosAccess() {
@@ -7634,6 +7661,43 @@
       openSosModal();
     }
 
+    function formatSosResultFeedback(result, locationMeta) {
+      const sent = Number(result && result.sent) || 0;
+      const failed = Number(result && result.failed) || 0;
+      const phoneOnly = Number(result && result.phone_only_count) || 0;
+      const locOk = Boolean(
+        (locationMeta && locationMeta.ok) || (result && result.location_attached)
+      );
+      const locHint = locOk
+        ? "，並附上地圖連結"
+        : "（這次沒附上即時位置，請用電話告訴家人你在哪）";
+      let msg = "";
+      if (sent > 0 && failed === 0) {
+        msg = `已通知 ${sent} 位 LINE 守護人${locHint}`;
+      } else if (sent > 0 && failed > 0) {
+        msg = `已通知 ${sent} 位 LINE 守護人，另有 ${failed} 位推播失敗${locHint}`;
+      } else {
+        msg = "系統未能推播給 LINE 守護人";
+      }
+      if (phoneOnly > 0) {
+        msg += `。另有 ${phoneOnly} 位僅有電話的緊急聯絡人，請用下方撥號聯絡（無法自動 LINE 通知）`;
+      }
+      return msg;
+    }
+
+    function revealSosPhoneDials(phoneContacts) {
+      const primaryLink = $("sosDialPrimary");
+      const list = Array.isArray(phoneContacts) ? phoneContacts : [];
+      if (!primaryLink || !list.length) return;
+      const first = list[0] || {};
+      const phone = String(first.phone || "").replace(/[^\d+]/g, "");
+      if (!phone) return;
+      primaryLink.href = `tel:${phone}`;
+      primaryLink.textContent = `📞 撥打 ${first.name || "緊急聯絡人"}`;
+      primaryLink.style.display = "";
+      primaryLink.hidden = false;
+    }
+
     async function sendSosAlert() {
       const button = $("sosHoldButton");
       const label = $("sosHoldLabel");
@@ -7649,19 +7713,35 @@
       }
 
       button.disabled = true;
-      label.textContent = "正在取得位置";
-      feedback.textContent = "請稍候，系統正在準備守護通知";
+      label.textContent = "正在取得定位…";
+      feedback.textContent = "請稍候（逾時會改送不含即時位置的 SOS）";
+      let locationMeta = { ok: false };
       try {
-        const locationUpdated = await refreshLocationForSos();
+        locationMeta = await refreshLocationForSos();
+        if (!locationMeta.ok) {
+          feedback.textContent = "定位逾時或未授權，改送不含即時位置的 SOS…";
+        }
         label.textContent = "正在通知守護人";
-        const result = await apiTriggerSos();
-        feedback.textContent = `SOS 已送出，已通知 ${result.sent} 個對象${locationUpdated || result.location_attached ? "，並附上位置" : ""}`;
+        const sosPayload = {};
+        if (locationMeta.ok) {
+          sosPayload.latitude = locationMeta.latitude;
+          sosPayload.longitude = locationMeta.longitude;
+          if (locationMeta.city) sosPayload.city = locationMeta.city;
+        }
+        const result = await apiTriggerSos(sosPayload);
+        revealSosPhoneDials(result.phone_contacts);
+        feedback.textContent = formatSosResultFeedback(result, locationMeta);
         label.textContent = "SOS 已送出";
         if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
       } catch (error) {
+        const details = (error && error.details) || {};
+        revealSosPhoneDials(details.phone_contacts);
         const message = String(error.message || "");
         if (message.includes("no bound LINE guardians")) {
-          feedback.textContent = "還沒綁定守護人喔 先去邀請家人加入再試；有危險請先打 119 或 110";
+          const phoneOnly = Number(details.phone_only_count) || 0;
+          feedback.textContent = phoneOnly > 0
+            ? `尚未綁定可 LINE 通知的守護人。請用下方撥號聯絡緊急聯絡人；有危險請先打 119 或 110`
+            : "還沒綁定守護人喔 先去邀請家人加入再試；有危險請先打 119 或 110";
         } else if (message.includes("not active") || message.includes("not available")) {
           feedback.textContent = "目前暫時無法用系統通知家人；有危險請先打 119 或 110，並直接聯絡親友";
         } else if (error.status === 429) {
@@ -9077,7 +9157,7 @@
         sosTapCount = 0;
         holdProgress.style.transition = "none";
         holdProgress.style.width = "0";
-        holdLabel.textContent = "連續按 3 次發出 SOS";
+        holdLabel.textContent = "聯絡家人連按3次";
       };
       const handleSosTap = async (event) => {
         if (holdButton.disabled) return;

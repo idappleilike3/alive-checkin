@@ -278,6 +278,8 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertTrue(first.get("invite_reward_applied"))
         self.assertEqual(first.get("trial_bonus_days"), 7)
         self.assertTrue(str(first["contact"].get("bind_notify_sent_at") or "").strip())
+        self.assertEqual(first.get("notify_hint") or "", "")
+        self.assertEqual(first.get("notify_errors") or [], [])
 
         second, code2 = app_module.bind_emergency_contact(
             self.data_file,
@@ -292,6 +294,28 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertTrue(second["already_bound"])
         self.assertIn("已經是守護人", second["message"])
         self.assertEqual(len(pushed), 2)  # no second notify storm
+
+    def test_bind_notify_failure_returns_hint_without_blocking_bind(self):
+        def failing_sender(token, line_user_id, message):
+            raise RuntimeError("400 Bad Request: Failed to send messages; not a friend")
+
+        result, code = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-inviter",
+                "contact_line_user_id": "U-guardian",
+                "contact_display_name": "寶寶",
+            },
+            config={"LINE_CHANNEL_ACCESS_TOKEN": "tok", "LINE_PUSH_SENDER": failing_sender},
+        )
+        self.assertEqual(code, 200)
+        self.assertTrue(result["bound"])
+        self.assertTrue(result["binding_complete"])
+        self.assertFalse(result["inviter_notified"])
+        self.assertFalse(result["guardian_notified"])
+        self.assertTrue(result.get("notify_hint"))
+        self.assertIn("好友", result["notify_hint"])
+        self.assertEqual(len(result.get("notify_errors") or []), 2)
 
     def test_limit_full_without_match_returns_chinese(self):
         state = app_module.load_state(self.data_file)
