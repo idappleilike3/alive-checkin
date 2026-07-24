@@ -251,6 +251,10 @@ class BindAndHomeGateTests(unittest.TestCase):
             },
             config={},
         )
+        # 模擬真實暱稱寫入
+        state = app_module.load_state(self.data_file)
+        state["users"]["U-inviter"]["display_name"] = "小美"
+        app_module.save_state(self.data_file, state)
         summary = app_module.admin_summary(self.data_file)
         inviter = next(u for u in summary["users"] if u["line_user_id"] == "U-inviter")
         self.assertEqual(inviter["bound_guardian_count"], 1)
@@ -258,6 +262,25 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertIn("trial_days_text", inviter)
         self.assertIn("upgrade_status", inviter)
         self.assertIn("membership_label", inviter)
+        self.assertEqual(inviter["display_name"], "小美")
+        self.assertIn("plan_expires_text", inviter)
+        self.assertIn("到期", inviter["plan_expires_text"])
+        self.assertFalse(inviter.get("display_name_missing"))
+
+    def test_admin_placeholder_name_marked(self):
+        state = app_module.load_state(self.data_file)
+        user = app_module.get_profile(state, "U-anon")
+        user["display_name"] = "LINE 使用者"
+        app_module.save_state(self.data_file, state)
+        summary = app_module.admin_summary(self.data_file)
+        anon = next(u for u in summary["users"] if u["line_user_id"] == "U-anon")
+        self.assertTrue(anon.get("display_name_missing"))
+        self.assertNotEqual(anon.get("display_name"), "LINE 使用者")
+        self.assertIn("未取得暱稱", anon.get("display_name"))
+        page = (ROOT / "admin.html").read_text(encoding="utf-8")
+        self.assertIn("memberNameCell", page)
+        self.assertIn("plan_expires_text", page)
+        self.assertIn("方案到期（試用／訂閱）", page)
 
     def test_member_center_list_before_add_markers(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

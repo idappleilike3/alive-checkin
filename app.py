@@ -920,6 +920,53 @@ def trial_active(profile):
     return (profile.get("plan") or "trial") == "trial" and trial_days_left(profile) > 0
 
 
+def plan_type_label(profile):
+    plan = str(profile.get("plan") or "trial")
+    return {
+        "trial": "免費試用",
+        "free": "免費方案",
+        "paid_199": "199 月費",
+        "paid_199_year": "199 年費",
+        "paid_399": "399 月費",
+        "paid_399_year": "399 年費",
+        "paid_799": "799 月費",
+        "paid_799_year": "799 年費",
+    }.get(plan, plan)
+
+
+def compute_plan_expires_at(profile):
+    """回傳方案到期 ISO 字串（試用結束日或付費 paid_until）；免費方案回空字串。"""
+    plan = str(profile.get("plan") or "trial")
+    if plan.startswith("paid"):
+        return str(profile.get("paid_until") or "").strip()
+    if plan == "free":
+        return ""
+    # trial：trial_started_at + 7 天
+    started = parse_datetime(profile.get("trial_started_at"))
+    if not started:
+        started = datetime.now()
+    return (started + timedelta(days=7)).isoformat(timespec="seconds")
+
+
+def plan_expires_text(profile):
+    plan = str(profile.get("plan") or "trial")
+    label = plan_type_label(profile)
+    expires = compute_plan_expires_at(profile)
+    if plan == "free":
+        return f"{label}｜無到期日"
+    if not expires:
+        return f"{label}｜尚未設定到期日"
+    try:
+        dt = parse_datetime(expires) or datetime.fromisoformat(str(expires)[:19])
+        date_part = dt.strftime("%Y/%m/%d")
+    except Exception:
+        date_part = str(expires)[:10].replace("-", "/")
+    if plan == "trial":
+        days = trial_days_left(profile)
+        return f"{label}｜到期 {date_part}（剩 {days} 天）"
+    return f"{label}｜到期 {date_part}"
+
+
 def compute_streak_days(history, today):
     """計算連續簽到天數(以 Asia/Taipei 為主)。
 
@@ -1094,6 +1141,14 @@ def build_status(profile, state=None):
         "membership_label": _membership_label(profile),
         "upgrade_status": _upgrade_status(profile),
         "trial_days_text": _trial_days_text(profile),
+        "plan_type_label": plan_type_label(profile),
+        "plan_expires_at": compute_plan_expires_at(profile),
+        "trial_end": (
+            compute_plan_expires_at(profile)
+            if str(profile.get("plan") or "trial") == "trial"
+            else ""
+        ),
+        "plan_expires_text": plan_expires_text(profile),
     }
 
 
@@ -1158,21 +1213,99 @@ def paid_membership_is_active(profile):
     return bool(expires_at and expires_at >= datetime.now())
 
 
+_WELCOME_NAME_PLACEHOLDERS = frozenset(
+    {
+        "",
+        "您",
+        "LINE 使用者",
+        "LINE使用者",
+        "LINE 會員",
+        "LINE會員",
+        "LINE 聯絡人",
+        "LINE聯絡人",
+        "使用者",
+    }
+)
+
+
+def is_placeholder_display_name(name) -> bool:
+    s = str(name or "").strip()
+    if s in _WELCOME_NAME_PLACEHOLDERS:
+        return True
+    # 相容「LINE使用者」等無空白寫法
+    return s.replace(" ", "").replace("\u3000", "") in {
+        "LINE使用者",
+        "LINE會員",
+        "LINE聯絡人",
+    }
+
+
+def fetch_line_profile_dict(token: str, line_user_id: str) -> dict | None:
+    """用 Messaging API 取 profile；失敗回 None。"""
+    token = (token or "").strip()
+    uid = str(line_user_id or "").strip()
+    if not token or not uid:
+        return None
+    url = f"https://api.line.me/v2/bot/profile/{uid}"
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def ensure_user_display_name(profile, *, token="", hint="", force_fetch=False) -> str:
+    """確保 profile 有真實 displayName；必要時打 LINE profile API 並寫回。"""
+    if not isinstance(profile, dict):
+        return ""
+    hint_clean = str(hint or "").strip()
+    current = str(profile.get("display_name") or "").strip()
+    if hint_clean and not is_placeholder_display_name(hint_clean):
+        profile["display_name"] = hint_clean
+        if hint_clean != current:
+            profile["display_name_updated_at"] = datetime.now().isoformat(timespec="seconds")
+        return hint_clean
+    if current and not is_placeholder_display_name(current) and not force_fetch:
+        return current
+    fetched = fetch_line_profile_dict(token, profile.get("line_user_id"))
+    name = extract_line_display_name(fetched) if fetched else None
+    if name:
+        profile["display_name"] = name
+        if fetched.get("pictureUrl"):
+            profile["picture_url"] = str(fetched.get("pictureUrl") or profile.get("picture_url") or "")
+        profile["display_name_updated_at"] = datetime.now().isoformat(timespec="seconds")
+        return name
+    if current:
+        return current
+    profile["display_name"] = "LINE 使用者"
+    return profile["display_name"]
+
+
 def register_line_user(data_file, payload):
     line_user_id = str(payload.get("line_user_id") or "").strip()
     if not line_user_id:
         return {"error": "missing line_user_id"}, 400
     state = load_state(data_file)
     user = get_profile(state, line_user_id)
-    user["display_name"] = str(payload.get("display_name") or user.get("display_name") or "LINE 使用者")
-    user["picture_url"] = str(payload.get("picture_url") or user.get("picture_url") or "")
+    token = (
+        (payload.get("access_token") if isinstance(payload, dict) else None)
+        or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    )
+    ensure_user_display_name(
+        user,
+        token=token,
+        hint=str(payload.get("display_name") or ""),
+    )
+    picture = str(payload.get("picture_url") or "").strip()
+    if picture:
+        user["picture_url"] = picture
     save_state(data_file, state)
     return build_status(user), 200
-
-
-_WELCOME_NAME_PLACEHOLDERS = frozenset(
-    {"", "您", "LINE 使用者", "LINE 會員", "LINE 聯絡人", "使用者"}
-)
 
 
 def extract_line_display_name(profile_obj) -> str | None:
@@ -3286,12 +3419,42 @@ def cron_allowed(config, secret):
     return secrets.compare_digest(expected, provided)
 
 
-def admin_summary(data_file):
+def admin_summary(data_file, config=None):
     state = load_state(data_file)
+    token = ""
+    if config is not None and hasattr(config, "get"):
+        token = str(config.get("LINE_CHANNEL_ACCESS_TOKEN") or "").strip()
+    if not token:
+        token = str(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN") or "").strip()
+
+    # 後台載入時補齊「LINE 使用者」佔位名稱（最多打 40 次 LINE profile，避免逾時）
+    hydrated = 0
+    dirty = False
+    for user in (state.get("users") or {}).values():
+        if hydrated >= 40:
+            break
+        if not is_placeholder_display_name(user.get("display_name")):
+            continue
+        before = str(user.get("display_name") or "")
+        ensure_user_display_name(user, token=token)
+        if str(user.get("display_name") or "") != before:
+            hydrated += 1
+            dirty = True
+    if dirty:
+        save_state(data_file, state)
+
     users = []
     invite_edges = []
     for user in state.get("users", {}).values():
         status = build_status(user, state)
+        # 後台顯示名稱：絕不空白；仍是佔位時至少附短 ID 方便辨識
+        name = str(status.get("display_name") or "").strip()
+        if is_placeholder_display_name(name):
+            short = str(status.get("line_user_id") or "")[-6:] or "?"
+            status["display_name"] = f"未取得暱稱（…{short}）"
+            status["display_name_missing"] = True
+        else:
+            status["display_name_missing"] = False
         users.append(status)
         inviter_id = status.get("line_user_id") or ""
         inviter_name = status.get("display_name") or ""
@@ -3357,6 +3520,7 @@ def admin_summary(data_file):
         "users": users,
         "contact_rewards": list(reversed(state.get("contact_rewards", [])[-20:])),
         "notification_logs": list(reversed(state.get("notification_logs", [])[-20:])),
+        "display_names_hydrated": hydrated,
         "persistence": persist,
     }
 
@@ -3466,7 +3630,7 @@ def send_due_reminders(config):
     if not token:
         return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
 
-    summary = admin_summary(config["DATA_FILE"])
+    summary = admin_summary(config["DATA_FILE"], config)
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
     state = load_state(config["DATA_FILE"])
     now = current_app_time(config)
@@ -4669,7 +4833,7 @@ def create_app(config=None):
                         app.config["DATA_FILE"],
                         {
                             "line_user_id": line_user_id,
-                            "display_name": display_name or "LINE 使用者",
+                            "display_name": display_name or "",
                         },
                     )
                 except Exception as exc:
@@ -5696,7 +5860,7 @@ def create_app(config=None):
         if denied:
             payload, code = denied
             return jsonify(payload), code
-        return jsonify(admin_summary(app.config["DATA_FILE"]))
+        return jsonify(admin_summary(app.config["DATA_FILE"], app.config))
 
     @app.get("/api/admin/support-tickets")
     def admin_support_tickets_api():
@@ -5978,7 +6142,7 @@ class MiniClient:
             if denied:
                 payload, code = denied
                 return MiniResponse(payload, code)
-            return MiniResponse(admin_summary(self.app.config["DATA_FILE"]))
+            return MiniResponse(admin_summary(self.app.config["DATA_FILE"], self.app.config))
         if route == "/api/admin/support-tickets":
             if not admin_allowed(self.app.config, params.get("password", "")):
                 return MiniResponse({"error": "unauthorized"}, 401)
@@ -6211,7 +6375,7 @@ class MiniApp:
                     if denied:
                         payload, code = denied
                         return handler.send_json(payload, code)
-                    return handler.send_json(admin_summary(data_file))
+                    return handler.send_json(admin_summary(data_file, config))
                 if route == "/api/contacts":
                     return handler.send_json(get_contacts(data_file, params.get("line_user_id")))
                 if route == "/api/calendar-notes":
