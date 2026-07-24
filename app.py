@@ -103,6 +103,11 @@ try:
 except Exception:  # pragma: no cover
     newebpay = None
 
+try:
+    import holidays_tw
+except Exception:  # pragma: no cover
+    holidays_tw = None
+
 
 DEFAULT_PROFILE = {
     "last_check_in": None,
@@ -2668,6 +2673,235 @@ ALREADY_BOUND_MESSAGE = "你已經是守護人了，請把邀請轉傳給其他�
 CONTACT_LIMIT_MESSAGE = "對方的守護人名額已滿，請請對方升級方案後再邀請你"
 
 
+def build_bind_success_notices(inviter, contacts, inviter_id, guardian_name, *, invite_reward_applied=False):
+    """Same bind-success LINE copy used by live bind + historical backfill."""
+    inviter_name = (inviter or {}).get("display_name") or "使用者"
+    guardian_name = guardian_name or "守護人"
+    bound_rows = [c for c in (contacts or []) if contact_is_bound_guardian(c, inviter_id)]
+    core_n = sum(1 for c in bound_rows if c.get("is_primary"))
+    if bound_rows and core_n == 0:
+        core_n = 1
+    general_n = max(0, len(bound_rows) - core_n)
+    if invite_reward_applied:
+        inviter_notice = (
+            "感謝邀請成功，已為您延長 7 天免費使用\n\n"
+            f"{guardian_name} 已成為你的守護人。\n"
+            f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n"
+            f"免費使用剩餘約 {trial_days_left(inviter)} 天（含邀請加碼）。"
+        )
+    else:
+        inviter_notice = (
+            f"🎉 守護人綁定完成\n\n"
+            f"{guardian_name} 已成為你的守護人。\n"
+            f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n"
+            f"之後若你未準時報平安或發出 SOS，系統會通知對方。"
+        )
+    guardian_notice = (
+        f"✅ 綁定成功\n\n"
+        f"你已接受邀請，成為「{inviter_name}」的守護人。\n"
+        f"未來若對方：\n"
+        f"⚠️ 超過提醒時間仍未報平安\n"
+        f"🚨 發出 SOS 緊急求助\n"
+        f"系統將第一時間通知您。\n"
+        f"謝謝您願意成為對方最安心的依靠。"
+    )
+    return inviter_notice, guardian_notice
+
+
+def pair_already_dual_bind_notified(state, inviter_id, guardian_id):
+    """Detect recent dual bind-success pushes from notification_logs (post-bn)."""
+    inviter_id = str(inviter_id or "").strip()
+    guardian_id = str(guardian_id or "").strip()
+    if not inviter_id or not guardian_id:
+        return False
+    inviter_ok = False
+    guardian_ok = False
+    for log in state.get("notification_logs") or []:
+        if not isinstance(log, dict):
+            continue
+        if log.get("kind") != "binding_complete" or log.get("status") != "sent":
+            continue
+        uid = str(log.get("line_user_id") or "").strip()
+        msg = str(log.get("message") or "")
+        if uid == inviter_id and (
+            "守護人綁定完成" in msg or "感謝邀請成功" in msg
+        ):
+            inviter_ok = True
+        if uid == guardian_id and (
+            "你已接受邀請" in msg or "綁定成功" in msg
+        ):
+            guardian_ok = True
+        if inviter_ok and guardian_ok:
+            return True
+    return False
+
+
+def iter_accepted_line_bind_pairs(state):
+    """Yield (inviter_id, inviter_profile, contact_row, guardian_id) for accepted LINE binds."""
+    for inviter_id, inviter in (state.get("users") or {}).items():
+        inviter_id = str(inviter_id or "").strip()
+        if not inviter_id or not isinstance(inviter, dict):
+            continue
+        for contact in inviter.get("contacts") or []:
+            if not isinstance(contact, dict):
+                continue
+            if not contact_is_bound_guardian(contact, inviter_id):
+                continue
+            guardian_id = get_contact_line_id(contact)
+            if not guardian_id or guardian_id == inviter_id:
+                continue
+            yield inviter_id, inviter, contact, guardian_id
+
+
+def backfill_bind_notify(config, *, dry_run=False, limit=0):
+    """One-shot: resend bind-success LINE to both sides for historical accepted binds.
+
+    Idempotent via contact.bind_notify_sent_at; also skips pairs already dual-notified
+    in recent notification_logs (post W250724bn dual notify).
+    """
+    token = (
+        (config.get("LINE_CHANNEL_ACCESS_TOKEN") if hasattr(config, "get") else None)
+        or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+        or os.environ.get("CHANNEL_ACCESS_TOKEN", "")
+    )
+    if not token and not dry_run:
+        return {"ok": False, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set", "pairs_notified": 0}, 400
+
+    data_file = config["DATA_FILE"]
+    state = load_state(data_file)
+    sender = (config.get("LINE_PUSH_SENDER") if hasattr(config, "get") else None) or line_push_message
+    now_stamp = current_app_time(config).isoformat(timespec="seconds")
+    try:
+        limit_n = int(limit or 0)
+    except (TypeError, ValueError):
+        limit_n = 0
+
+    pairs_total = 0
+    pairs_notified = 0
+    pairs_skipped = 0
+    pairs_failed = 0
+    pairs_marked_only = 0
+    results = []
+
+    for inviter_id, inviter, contact, guardian_id in iter_accepted_line_bind_pairs(state):
+        pairs_total += 1
+        if limit_n > 0 and (pairs_notified + pairs_marked_only) >= limit_n:
+            break
+
+        if str(contact.get("bind_notify_sent_at") or "").strip():
+            pairs_skipped += 1
+            results.append(
+                {
+                    "inviter_line_user_id": inviter_id,
+                    "guardian_line_user_id": guardian_id,
+                    "status": "skipped_already_flagged",
+                }
+            )
+            continue
+
+        if pair_already_dual_bind_notified(state, inviter_id, guardian_id):
+            if not dry_run:
+                contact["bind_notify_sent_at"] = now_stamp
+            pairs_marked_only += 1
+            results.append(
+                {
+                    "inviter_line_user_id": inviter_id,
+                    "guardian_line_user_id": guardian_id,
+                    "status": "marked_already_notified",
+                }
+            )
+            continue
+
+        guardian_name = (
+            str(contact.get("name") or "").strip()
+            or ((state.get("users") or {}).get(guardian_id) or {}).get("display_name")
+            or "守護人"
+        )
+        inviter_notice, guardian_notice = build_bind_success_notices(
+            inviter,
+            inviter.get("contacts") or [],
+            inviter_id,
+            guardian_name,
+            invite_reward_applied=False,
+        )
+
+        if dry_run:
+            pairs_notified += 1
+            results.append(
+                {
+                    "inviter_line_user_id": inviter_id,
+                    "guardian_line_user_id": guardian_id,
+                    "status": "dry_run_would_notify",
+                    "guardian_name": guardian_name,
+                }
+            )
+            continue
+
+        inviter_ok = False
+        guardian_ok = False
+        errors = []
+        for line_user_id, message, who in (
+            (inviter_id, inviter_notice, "inviter"),
+            (guardian_id, guardian_notice, "guardian"),
+        ):
+            try:
+                result = sender(token, line_user_id, message)
+                append_notification_log(
+                    state,
+                    "binding_complete",
+                    line_user_id,
+                    "sent",
+                    message,
+                    json.dumps(result, ensure_ascii=False),
+                )
+                if who == "inviter":
+                    inviter_ok = True
+                else:
+                    guardian_ok = True
+            except Exception as exc:
+                append_notification_log(
+                    state, "binding_complete", line_user_id, "failed", message, str(exc)
+                )
+                errors.append({"who": who, "error": str(exc)})
+
+        if inviter_ok and guardian_ok:
+            contact["bind_notify_sent_at"] = now_stamp
+            pairs_notified += 1
+            results.append(
+                {
+                    "inviter_line_user_id": inviter_id,
+                    "guardian_line_user_id": guardian_id,
+                    "status": "notified",
+                }
+            )
+        else:
+            pairs_failed += 1
+            results.append(
+                {
+                    "inviter_line_user_id": inviter_id,
+                    "guardian_line_user_id": guardian_id,
+                    "status": "failed",
+                    "inviter_ok": inviter_ok,
+                    "guardian_ok": guardian_ok,
+                    "errors": errors,
+                }
+            )
+
+    if not dry_run:
+        save_state(data_file, state)
+
+    return {
+        "ok": True,
+        "dry_run": bool(dry_run),
+        "pairs_total_seen": pairs_total,
+        "pairs_notified": pairs_notified,
+        "pairs_skipped": pairs_skipped,
+        "pairs_marked_only": pairs_marked_only,
+        "pairs_failed": pairs_failed,
+        "results": results,
+    }, 200
+
+
 def bind_emergency_contact(data_file, payload, config=None):
     inviter_id = str(payload.get("inviter_line_user_id") or "").strip()
     contact_line_user_id = str(payload.get("contact_line_user_id") or "").strip()
@@ -2886,37 +3120,13 @@ def bind_emergency_contact(data_file, payload, config=None):
                 "LINE_CHANNEL_ACCESS_TOKEN missing",
             )
         else:
-            inviter_name = inviter.get("display_name") or "使用者"
             guardian_name = contact_display_name or "守護人"
-            # 綁定後重新計算核心／一般人數（primary = 核心）
-            bound_rows = [c for c in contacts if contact_is_bound_guardian(c, inviter_id)]
-            core_n = sum(1 for c in bound_rows if c.get("is_primary"))
-            # 若尚無 primary，第一位視為核心
-            if bound_rows and core_n == 0:
-                core_n = 1
-            general_n = max(0, len(bound_rows) - core_n)
-            if invite_reward_applied:
-                inviter_notice = (
-                    "感謝邀請成功，已為您延長 7 天免費使用\n\n"
-                    f"{guardian_name} 已成為你的守護人。\n"
-                    f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n"
-                    f"免費使用剩餘約 {trial_days_left(inviter)} 天（含邀請加碼）。"
-                )
-            else:
-                inviter_notice = (
-                    f"🎉 守護人綁定完成\n\n"
-                    f"{guardian_name} 已成為你的守護人。\n"
-                    f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n"
-                    f"之後若你未準時報平安或發出 SOS，系統會通知對方。"
-                )
-            guardian_notice = (
-                f"✅ 綁定成功\n\n"
-                f"你已接受邀請，成為「{inviter_name}」的守護人。\n"
-                f"未來若對方：\n"
-                f"⚠️ 超過提醒時間仍未報平安\n"
-                f"🚨 發出 SOS 緊急求助\n"
-                f"系統將第一時間通知您。\n"
-                f"謝謝您願意成為對方最安心的依靠。"
+            inviter_notice, guardian_notice = build_bind_success_notices(
+                inviter,
+                contacts,
+                inviter_id,
+                guardian_name,
+                invite_reward_applied=invite_reward_applied,
             )
             for line_user_id, message, who in (
                 (inviter_id, inviter_notice, "inviter"),
@@ -2941,6 +3151,17 @@ def bind_emergency_contact(data_file, payload, config=None):
                     append_notification_log(
                         state, "binding_complete", line_user_id, "failed", message, str(exc)
                     )
+            if inviter_notified and guardian_notified:
+                bound_row = next(
+                    (
+                        contact
+                        for contact in contacts
+                        if get_contact_line_id(contact) == contact_line_user_id
+                    ),
+                    None,
+                )
+                if bound_row is not None:
+                    bound_row["bind_notify_sent_at"] = accepted_at
 
     save_state(data_file, state)
     bound_contact = next(
@@ -4909,7 +5130,198 @@ def reminder_time_due(reminder_time, now):
     return (now.hour, now.minute) >= (hour, minute)
 
 
+def build_daily_checkin_flex(now, target_time=""):
+    """Daily check-in Flex: greeting + optional holiday blessing + quote + postback.
+
+    Keeps classic green (#00B900) header; 「我平安」 uses postback action=checkin.
+    """
+    today = now.strftime("%Y-%m-%d")
+    weekday_zh = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"][now.weekday()]
+    time_bit = f" {target_time}" if target_time else ""
+    copy = (
+        holidays_tw.daily_push_copy(now)
+        if holidays_tw is not None
+        else {
+            "greeting": "❤️ 今天一切都好嗎？",
+            "holiday_name": "",
+            "holiday_blessing": "",
+            "positive_quote": "每一天的平安，都是給家人最好的禮物。",
+            "instruction": "點「我平安」立刻完成報到（不用再開網頁）",
+        }
+    )
+    guard_uri = (
+        liff_entry_url(open_action="guard")
+        if liff_entry_url
+        else "https://liff.line.me/2010674803-rK98c0lo?open=guard"
+    )
+    sos_uri = (
+        liff_entry_url(open_action="sos")
+        if liff_entry_url
+        else "https://liff.line.me/2010674803-rK98c0lo?open=sos"
+    )
+    body_contents = [
+        {
+            "type": "text",
+            "text": copy["greeting"],
+            "size": "xl",
+            "weight": "bold",
+            "color": "#1a1a1a",
+            "wrap": True,
+        },
+    ]
+    holiday_name = str(copy.get("holiday_name") or "").strip()
+    holiday_blessing = str(copy.get("holiday_blessing") or "").strip()
+    if holiday_name and holiday_blessing:
+        body_contents.append(
+            {
+                "type": "text",
+                "text": f"🎉 {holiday_name}",
+                "size": "md",
+                "weight": "bold",
+                "color": "#B45309",
+                "wrap": True,
+            }
+        )
+        body_contents.append(
+            {
+                "type": "text",
+                "text": holiday_blessing,
+                "size": "md",
+                "color": "#92400E",
+                "wrap": True,
+            }
+        )
+    body_contents.append(
+        {
+            "type": "text",
+            "text": f"✨ {copy['positive_quote']}",
+            "size": "md",
+            "color": "#166534",
+            "wrap": True,
+        }
+    )
+    body_contents.append(
+        {
+            "type": "text",
+            "text": copy["instruction"],
+            "size": "lg",
+            "color": "#555555",
+            "wrap": True,
+        }
+    )
+    alt_parts = [copy["greeting"], today]
+    if holiday_name:
+        alt_parts.append(holiday_name)
+    if target_time:
+        alt_parts.append(target_time)
+    return {
+        "type": "flex",
+        "altText": " ".join(alt_parts)[:400],
+        "contents": {
+            "type": "bubble",
+            "size": "mega",
+            "header": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "xs",
+                "backgroundColor": "#00B900",
+                "paddingTop": "lg",
+                "paddingBottom": "lg",
+                "paddingStart": "lg",
+                "paddingEnd": "lg",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": "每日平安",
+                        "color": "#FFFFFF",
+                        "size": "lg",
+                        "weight": "bold",
+                        "wrap": True,
+                    },
+                    {
+                        "type": "text",
+                        "text": f"📅 {today} {weekday_zh}{time_bit}".strip(),
+                        "color": "#FFFFFF",
+                        "size": "xl",
+                        "weight": "bold",
+                        "wrap": True,
+                    },
+                ],
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "md",
+                "paddingAll": "lg",
+                "contents": body_contents,
+            },
+            "footer": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "paddingAll": "lg",
+                "backgroundColor": "#FAFAFA",
+                "contents": [
+                    {
+                        "type": "button",
+                        "action": {
+                            "type": "postback",
+                            "label": "✅ 我平安",
+                            "data": "action=checkin",
+                            "displayText": "我平安",
+                        },
+                        "style": "primary",
+                        "color": "#16A34A",
+                        "height": "md",
+                    },
+                    {
+                        "type": "button",
+                        "action": {"type": "uri", "label": "🛡️ 安全守護", "uri": guard_uri},
+                        "style": "primary",
+                        "color": "#2563EB",
+                        "height": "md",
+                    },
+                    {
+                        "type": "button",
+                        "action": {"type": "uri", "label": "需要幫忙", "uri": sos_uri},
+                        "style": "primary",
+                        "color": "#DC2626",
+                        "height": "md",
+                    },
+                ],
+            },
+        },
+    }
+
+
+def _mark_line_push_blocked(user, exc):
+    """Mark blocked / gone users so future broadcasts skip them."""
+    code = None
+    if isinstance(exc, urllib.error.HTTPError):
+        code = exc.code
+    text = str(exc or "").lower()
+    if code in {401, 403, 404} or "not a friend" in text or "blocked" in text:
+        user["line_push_blocked"] = True
+        user["line_push_blocked_at"] = datetime.now().isoformat(timespec="seconds")
+        return True
+    return False
+
+
+def _mark_checkin_reminder_slots(user, today, times, due_times):
+    sent_slots = dict(user.get("checkin_reminder_sent_slots") or {})
+    sent_today = set(sent_slots.get(today) or [])
+    sent_today.update(due_times or times or [])
+    sent_slots[today] = sorted(sent_today)
+    keep_dates = sorted(sent_slots.keys())[-30:]
+    user["checkin_reminder_sent_slots"] = {d: sent_slots[d] for d in keep_dates}
+    legacy_dates = set(user.get("checkin_reminder_sent_dates") or [])
+    if set(times or []).issubset(sent_today):
+        legacy_dates.add(today)
+        user["checkin_reminder_sent_dates"] = sorted(legacy_dates)[-30:]
+
+
 def send_checkin_reminders(config):
+    """Morning/slot cron: skip users already checked in (Taipei). Prefer pre-check-in remind."""
     token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     if not token:
         return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
@@ -4917,7 +5329,6 @@ def send_checkin_reminders(config):
     data_file = config["DATA_FILE"]
     state = load_state(data_file)
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
-    public_url = (config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", "")).rstrip("/")
     now = current_app_time(config)
     today = now.strftime("%Y-%m-%d")
     sent = 0
@@ -4927,6 +5338,9 @@ def send_checkin_reminders(config):
     for user in state.get("users", {}).values():
         line_user_id = user.get("line_user_id")
         if not line_user_id:
+            skipped += 1
+            continue
+        if user.get("line_push_blocked"):
             skipped += 1
             continue
         if profile_is_today_checked(user, config=config, now=now):
@@ -4952,87 +5366,94 @@ def send_checkin_reminders(config):
 
         # 補跑時只推一次(取最晚已到點的時段),並把所有已到點未送時段標為已處理
         target_time = due_unsent[-1]
-        # 每日平安推播：❤️ 今天一切都好嗎？＋我平安(postback 即時寫入簽到) / 安全守護 / 需要幫忙
-        from datetime import datetime as _dt
-        weekday_zh = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"][now.weekday()]
-        guard_uri = liff_entry_url(open_action="guard") if liff_entry_url else "https://liff.line.me/2010674803-rK98c0lo?open=guard"
-        sos_uri = liff_entry_url(open_action="sos") if liff_entry_url else "https://liff.line.me/2010674803-rK98c0lo?open=sos"
-        message = {
-            "type": "flex",
-            "altText": f"❤️ 今天一切都好嗎？ {today} {target_time}",
-            "contents": {
-                "type": "bubble",
-                "size": "mega",
-                "header": {
-                    "type": "box",
-                    "layout": "vertical",
-                    "spacing": "xs",
-                    "backgroundColor": "#00B900",
-                    "paddingTop": "lg",
-                    "paddingBottom": "lg",
-                    "paddingStart": "lg",
-                    "paddingEnd": "lg",
-                    "contents": [
-                        {"type": "text", "text": "每日平安", "color": "#FFFFFF", "size": "lg", "weight": "bold", "wrap": True},
-                        {"type": "text", "text": f"📅 {today} {weekday_zh} {target_time}", "color": "#FFFFFF", "size": "xl", "weight": "bold", "wrap": True},
-                    ],
-                },
-                "body": {
-                    "type": "box",
-                    "layout": "vertical",
-                    "spacing": "md",
-                    "paddingAll": "lg",
-                    "contents": [
-                        {"type": "text", "text": "❤️ 今天一切都好嗎？", "size": "xl", "weight": "bold", "color": "#1a1a1a", "wrap": True},
-                        {"type": "text", "text": "點「我平安」立刻完成報到（不用再開網頁）", "size": "lg", "color": "#555555", "wrap": True},
-                    ],
-                },
-                "footer": {
-                    "type": "box",
-                    "layout": "vertical",
-                    "spacing": "sm",
-                    "paddingAll": "lg",
-                    "backgroundColor": "#FAFAFA",
-                    "contents": [
-                        {
-                            "type": "button",
-                            "action": {
-                                "type": "postback",
-                                "label": "✅ 我平安",
-                                "data": "action=checkin",
-                                "displayText": "我平安",
-                            },
-                            "style": "primary",
-                            "color": "#16A34A",
-                            "height": "md",
-                        },
-                        {"type": "button", "action": {"type": "uri", "label": "🛡️ 安全守護", "uri": guard_uri}, "style": "primary", "color": "#2563EB", "height": "md"},
-                        {"type": "button", "action": {"type": "uri", "label": "需要幫忙", "uri": sos_uri}, "style": "primary", "color": "#DC2626", "height": "md"},
-                    ],
-                },
-            },
-        }
+        message = build_daily_checkin_flex(now, target_time=target_time)
         try:
             result = sender(token, line_user_id, message)
-            sent_today.update(due_unsent)
-            sent_slots[today] = sorted(sent_today)
-            # 只保留近 30 天的 slot 紀錄
-            keep_dates = sorted(sent_slots.keys())[-30:]
-            user["checkin_reminder_sent_slots"] = {d: sent_slots[d] for d in keep_dates}
-            # 舊欄位：當日所有時段都處理完才標記，避免挡住後續時段
-            if set(times).issubset(sent_today):
-                legacy_dates.add(today)
-                user["checkin_reminder_sent_dates"] = sorted(legacy_dates)[-30:]
+            _mark_checkin_reminder_slots(user, today, times, due_unsent)
             append_notification_log(state, "checkin", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
             sent += 1
             results.append({"line_user_id": line_user_id, "reminder_time": target_time, "result": result})
         except Exception as exc:
-            append_notification_log(state, "checkin", line_user_id, "failed", message, str(exc))
+            if _mark_line_push_blocked(user, exc):
+                append_notification_log(state, "checkin", line_user_id, "blocked", message, str(exc))
+            else:
+                append_notification_log(state, "checkin", line_user_id, "failed", message, str(exc))
             skipped += 1
             results.append({"line_user_id": line_user_id, "error": str(exc)})
 
     save_state(data_file, state)
     return {"sent": sent, "skipped": skipped, "results": results}, 200
+
+
+def broadcast_checkin_reminders(config, *, pause_every=20, pause_seconds=1.0):
+    """重新推播：送新模板給所有已註冊會員（有 line_user_id），含今日已簽到者。
+
+    - 跳過 line_push_blocked
+    - 分批暫停以降低 LINE rate-limit 風險
+    - 標記今日 reminder slots，避免 cron 稍後再洗版
+    """
+    import time as _time
+
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not token:
+        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
+
+    data_file = config["DATA_FILE"]
+    state = load_state(data_file)
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    now = current_app_time(config)
+    today = now.strftime("%Y-%m-%d")
+    message = build_daily_checkin_flex(now, target_time="")
+    sent = 0
+    skipped = 0
+    blocked = 0
+    results = []
+    push_count = 0
+
+    for user in state.get("users", {}).values():
+        line_user_id = str(user.get("line_user_id") or "").strip()
+        if not line_user_id:
+            skipped += 1
+            continue
+        if user.get("line_push_blocked"):
+            blocked += 1
+            skipped += 1
+            continue
+        times = reminder_times_for_profile(user)
+        try:
+            result = sender(token, line_user_id, message)
+            _mark_checkin_reminder_slots(user, today, times, times)
+            user["checkin_broadcast_sent_dates"] = sorted(
+                set(user.get("checkin_broadcast_sent_dates") or []) | {today}
+            )[-30:]
+            append_notification_log(
+                state, "checkin_broadcast", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False)
+            )
+            sent += 1
+            push_count += 1
+            results.append({"line_user_id": line_user_id, "result": result})
+            if pause_every and push_count % int(pause_every) == 0:
+                _time.sleep(float(pause_seconds))
+        except Exception as exc:
+            if _mark_line_push_blocked(user, exc):
+                blocked += 1
+                append_notification_log(state, "checkin_broadcast", line_user_id, "blocked", message, str(exc))
+            else:
+                append_notification_log(state, "checkin_broadcast", line_user_id, "failed", message, str(exc))
+            skipped += 1
+            results.append({"line_user_id": line_user_id, "error": str(exc)})
+
+    save_state(data_file, state)
+    holiday = holidays_tw.holiday_for(now) if holidays_tw is not None else None
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "blocked": blocked,
+        "mode": "broadcast",
+        "holiday": (holiday or {}).get("name") if holiday else None,
+        "positive_quote": holidays_tw.positive_quote_for(now) if holidays_tw is not None else None,
+        "results": results,
+    }, 200
 
 
 def send_birthday_reminders(config):
@@ -5515,7 +5936,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724cg",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724bf",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -5831,7 +6252,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724cg",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724bf",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -7535,7 +7956,22 @@ def create_app(config=None):
         secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
-        data, code = send_checkin_reminders(app.config)
+        # ?mode=broadcast 或 force=1 → 重新推播給全部已註冊會員（含今日已簽到）
+        mode = str(request.args.get("mode") or "").strip().lower()
+        force = str(request.args.get("force") or "").strip().lower() in {"1", "true", "yes", "on"}
+        if mode in {"broadcast", "repush", "all"} or force:
+            data, code = broadcast_checkin_reminders(app.config)
+        else:
+            data, code = send_checkin_reminders(app.config)
+        return jsonify(data), code
+
+    @app.route("/api/cron/checkin-broadcast", methods=["GET", "POST"])
+    def cron_checkin_broadcast_api():
+        """重新推播專用：對有 line_user_id 的會員送新版每日平安 Flex。"""
+        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        if not cron_allowed(app.config, secret):
+            return jsonify({"error": "unauthorized"}), 401
+        data, code = broadcast_checkin_reminders(app.config)
         return jsonify(data), code
 
     @app.route("/api/cron/overdue-alerts", methods=["GET", "POST"])
@@ -7613,6 +8049,25 @@ def create_app(config=None):
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = cleanup_expired_data(app.config)
+        return jsonify(data), code
+
+    @app.route("/api/cron/backfill-bind-notify", methods=["GET", "POST"])
+    def cron_backfill_bind_notify_api():
+        """One-shot: 補發歷史已綁定雙方的綁定成功 LINE（冪等 bind_notify_sent_at）。"""
+        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        if not cron_allowed(app.config, secret):
+            return jsonify({"error": "unauthorized"}), 401
+        payload = request.get_json(silent=True) or {}
+        dry_run = str(
+            request.args.get("dry_run")
+            or payload.get("dry_run")
+            or ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        try:
+            limit = int(request.args.get("limit") or payload.get("limit") or 0)
+        except (TypeError, ValueError):
+            limit = 0
+        data, code = backfill_bind_notify(app.config, dry_run=dry_run, limit=limit)
         return jsonify(data), code
 
     @app.get("/api/admin/rich-menu")
@@ -7893,7 +8348,18 @@ class MiniClient:
             secret = params.get("secret", "")
             if not cron_allowed(self.app.config, secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
-            body, code = send_checkin_reminders(self.app.config)
+            mode = str(params.get("mode", "") or "").strip().lower()
+            force = str(params.get("force", "") or "").strip().lower() in {"1", "true", "yes", "on"}
+            if mode in {"broadcast", "repush", "all"} or force:
+                body, code = broadcast_checkin_reminders(self.app.config)
+            else:
+                body, code = send_checkin_reminders(self.app.config)
+            return MiniResponse(body, code)
+        if route == "/api/cron/checkin-broadcast":
+            secret = params.get("secret", "")
+            if not cron_allowed(self.app.config, secret):
+                return MiniResponse({"error": "unauthorized"}, 401)
+            body, code = broadcast_checkin_reminders(self.app.config)
             return MiniResponse(body, code)
         if route == "/api/cron/renewal-reminders":
             secret = params.get("secret", "")
@@ -7906,6 +8372,22 @@ class MiniClient:
             if not cron_allowed(self.app.config, secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
             body, code = cleanup_expired_data(self.app.config)
+            return MiniResponse(body, code)
+        if route == "/api/cron/backfill-bind-notify":
+            secret = params.get("secret", "")
+            if not cron_allowed(self.app.config, secret):
+                return MiniResponse({"error": "unauthorized"}, 401)
+            dry_run = str(params.get("dry_run") or payload.get("dry_run") or "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+            try:
+                limit = int(params.get("limit") or payload.get("limit") or 0)
+            except (TypeError, ValueError):
+                limit = 0
+            body, code = backfill_bind_notify(self.app.config, dry_run=dry_run, limit=limit)
             return MiniResponse(body, code)
         if route == "/api/admin/user-plan":
             if not admin_allowed(self.app.config, params.get("password", "")):
@@ -8030,12 +8512,37 @@ class MiniApp:
                 if route == "/api/cron/checkin-reminders":
                     if not cron_allowed(config, params.get("secret", "")):
                         return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = send_checkin_reminders(config)
+                    mode = str(params.get("mode", "") or "").strip().lower()
+                    force = str(params.get("force", "") or "").strip().lower() in {"1", "true", "yes", "on"}
+                    if mode in {"broadcast", "repush", "all"} or force:
+                        data, code = broadcast_checkin_reminders(config)
+                    else:
+                        data, code = send_checkin_reminders(config)
+                    return handler.send_json(data, code)
+                if route == "/api/cron/checkin-broadcast":
+                    if not cron_allowed(config, params.get("secret", "")):
+                        return handler.send_json({"error": "unauthorized"}, 401)
+                    data, code = broadcast_checkin_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/data-cleanup":
                     if not cron_allowed(config, params.get("secret", "")):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = cleanup_expired_data(config)
+                    return handler.send_json(data, code)
+                if route == "/api/cron/backfill-bind-notify":
+                    if not cron_allowed(config, params.get("secret", "")):
+                        return handler.send_json({"error": "unauthorized"}, 401)
+                    dry_run = str(params.get("dry_run") or "").strip().lower() in {
+                        "1",
+                        "true",
+                        "yes",
+                        "on",
+                    }
+                    try:
+                        limit = int(params.get("limit") or 0)
+                    except (TypeError, ValueError):
+                        limit = 0
+                    data, code = backfill_bind_notify(config, dry_run=dry_run, limit=limit)
                     return handler.send_json(data, code)
 
                 file_name = "index.html" if route == "/" else route.lstrip("/")
@@ -8147,7 +8654,17 @@ class MiniApp:
                 if route == "/api/cron/checkin-reminders":
                     if not cron_allowed(config, params.get("secret", "")):
                         return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = send_checkin_reminders(config)
+                    mode = str(params.get("mode", "") or "").strip().lower()
+                    force = str(params.get("force", "") or "").strip().lower() in {"1", "true", "yes", "on"}
+                    if mode in {"broadcast", "repush", "all"} or force:
+                        data, code = broadcast_checkin_reminders(config)
+                    else:
+                        data, code = send_checkin_reminders(config)
+                    return handler.send_json(data, code)
+                if route == "/api/cron/checkin-broadcast":
+                    if not cron_allowed(config, params.get("secret", "")):
+                        return handler.send_json({"error": "unauthorized"}, 401)
+                    data, code = broadcast_checkin_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/renewal-reminders":
                     if not cron_allowed(config, params.get("secret", "")):
@@ -8158,6 +8675,18 @@ class MiniApp:
                     if not cron_allowed(config, params.get("secret", "")):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = cleanup_expired_data(config)
+                    return handler.send_json(data, code)
+                if route == "/api/cron/backfill-bind-notify":
+                    if not cron_allowed(config, params.get("secret", "")):
+                        return handler.send_json({"error": "unauthorized"}, 401)
+                    dry_run = str(
+                        params.get("dry_run") or payload.get("dry_run") or ""
+                    ).strip().lower() in {"1", "true", "yes", "on"}
+                    try:
+                        limit = int(params.get("limit") or payload.get("limit") or 0)
+                    except (TypeError, ValueError):
+                        limit = 0
+                    data, code = backfill_bind_notify(config, dry_run=dry_run, limit=limit)
                     return handler.send_json(data, code)
                 if route == "/api/admin/user-plan":
                     if not admin_allowed(config, params.get("password", "")):

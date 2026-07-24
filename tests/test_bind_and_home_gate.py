@@ -275,6 +275,7 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertTrue(first.get("binding_complete"))
         self.assertTrue(first.get("invite_reward_applied"))
         self.assertEqual(first.get("trial_bonus_days"), 7)
+        self.assertTrue(str(first["contact"].get("bind_notify_sent_at") or "").strip())
 
         second, code2 = app_module.bind_emergency_contact(
             self.data_file,
@@ -540,6 +541,64 @@ class BindAndHomeGateTests(unittest.TestCase):
         )
         self.assertEqual(normalized["contact_role"], "guardian")
         self.assertNotIn("role", normalized)
+
+    def test_backfill_bind_notify_is_idempotent(self):
+        pushed = []
+
+        def fake_sender(token, line_user_id, message):
+            pushed.append((line_user_id, message))
+            return {"ok": True, "status": 200}
+
+        # Seed a historical accepted bind WITHOUT notify flag (pre dual-notify era)
+        state = app_module.load_state(self.data_file)
+        inviter = app_module.get_profile(state, "U-old-inviter")
+        inviter["display_name"] = "小孟"
+        inviter["contacts"] = [
+            {
+                "id": "line-U-old-g",
+                "name": "阿公",
+                "relationship": "爺爺",
+                "line_id": "U-old-g",
+                "line_user_id": "U-old-g",
+                "binding_status": "accepted",
+                "consent_status": "accepted",
+                "accepted_at": "2026-07-20T10:00:00",
+                "contact_role": "guardian",
+                "is_primary": True,
+            }
+        ]
+        guardian = app_module.get_profile(state, "U-old-g")
+        guardian["display_name"] = "阿公"
+        guardian["guarding_for"] = ["U-old-inviter"]
+        app_module.save_state(self.data_file, state)
+
+        cfg = {
+            "DATA_FILE": self.data_file,
+            "LINE_CHANNEL_ACCESS_TOKEN": "tok",
+            "LINE_PUSH_SENDER": fake_sender,
+            "APP_TIMEZONE": "Asia/Taipei",
+        }
+        first, code = app_module.backfill_bind_notify(cfg)
+        self.assertEqual(code, 200)
+        self.assertEqual(first["pairs_notified"], 1)
+        self.assertEqual(len(pushed), 2)
+        self.assertIn("守護人綁定完成", pushed[0][1])
+        self.assertIn("你已接受邀請", pushed[1][1])
+
+        state2 = app_module.load_state(self.data_file)
+        contact = state2["users"]["U-old-inviter"]["contacts"][0]
+        self.assertTrue(str(contact.get("bind_notify_sent_at") or "").strip())
+
+        second, code2 = app_module.backfill_bind_notify(cfg)
+        self.assertEqual(code2, 200)
+        self.assertEqual(second["pairs_notified"], 0)
+        self.assertEqual(second["pairs_skipped"], 1)
+        self.assertEqual(len(pushed), 2)  # no re-spam
+
+        dry, code3 = app_module.backfill_bind_notify(cfg, dry_run=True)
+        self.assertEqual(code3, 200)
+        self.assertTrue(dry["dry_run"])
+        self.assertEqual(dry["pairs_notified"], 0)
 
 
 if __name__ == "__main__":

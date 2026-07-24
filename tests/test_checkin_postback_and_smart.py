@@ -95,6 +95,11 @@ class CheckinPostbackTests(unittest.TestCase):
         self.assertEqual(checkin_btn["action"]["type"], "postback")
         self.assertEqual(checkin_btn["action"]["data"], "action=checkin")
         self.assertIn("我平安", checkin_btn["action"]["label"])
+        body_texts = "\n".join(
+            c.get("text", "") for c in sent[0]["contents"]["body"]["contents"]
+        )
+        self.assertIn("✨", body_texts)
+        self.assertEqual(sent[0]["contents"]["header"]["backgroundColor"], "#00B900")
 
 
 class SmartReminderTests(unittest.TestCase):
