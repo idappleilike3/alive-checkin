@@ -6601,7 +6601,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725mem",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gg0",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -6923,7 +6923,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725mem",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gg0",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -7304,7 +7304,7 @@ def create_app(config=None):
             return messages
 
         def _enrich_bind_result_for_flex(result, line_user_id):
-            """補上資訊卡需要的管理人／守護人數／提醒時間。"""
+            """補上資訊卡需要的管理人／已綁定守護人數／群組成員數／提醒時間。"""
             enriched = dict(result or {})
             try:
                 state = load_state(app.config["DATA_FILE"])
@@ -7312,13 +7312,10 @@ def create_app(config=None):
                 rules = plan_rules(profile)
                 times = reminder_times_for_profile(profile) or ["09:00"]
                 contacts = profile.get("contacts") or []
+                # 已綁定守護人 ≠ 群組成員；只計算 LINE 一鍵邀請完成綁定者
                 guardian_count = sum(
                     1 for c in contacts if contact_is_bound_guardian(c, line_user_id)
                 )
-                if guardian_count <= 0:
-                    guardian_count = sum(
-                        1 for c in contacts if contact_has_guardian_profile(c)
-                    )
                 enriched.setdefault(
                     "display_name",
                     (profile.get("display_name") or "").strip() or "管理員",
@@ -7326,10 +7323,27 @@ def create_app(config=None):
                 enriched.setdefault("guardian_count", guardian_count)
                 enriched.setdefault(
                     "guardian_limit",
-                    int(rules.get("core_guardian_alert_limit") or 5),
+                    int(
+                        rules.get("contact_limit")
+                        or rules.get("core_guardian_alert_limit")
+                        or 5
+                    ),
                 )
                 enriched.setdefault("reminder_time", str(times[0] if times else "09:00"))
                 enriched.setdefault("reminder_times", list(times))
+                group_id = enriched.get("group_id")
+                if group_id:
+                    refreshed = refresh_guardian_group_member_snapshot(
+                        app.config["DATA_FILE"], group_id
+                    )
+                    if refreshed and refreshed.get("member_count_at_bind") is not None:
+                        enriched["member_count"] = refreshed.get("member_count_at_bind")
+                    else:
+                        g = (state.get("guardian_groups") or {}).get(group_id) or {}
+                        if g.get("member_count_at_bind") is not None:
+                            enriched.setdefault(
+                                "member_count", g.get("member_count_at_bind")
+                            )
             except Exception as exc:
                 app.logger.exception("enrich bind result failed: %s", exc)
                 enriched.setdefault("display_name", "管理員")
@@ -7468,6 +7482,7 @@ def create_app(config=None):
         def handle_member_joined(event):
             # 2026-07-20 蝦董 added: 超過 50 人上限時,請出新成員
             # 2026-07-24: 成員進群也補歡迎／綁定提醒（JoinEvent 漏送時的備援）
+            # 2026-07-25: 進群刷新群成員數；文案區分「群組成員」vs「已綁定守護人」
             if getattr(event.source, "type", None) != "group":
                 return
             group_id = getattr(event.source, "group_id", None)
@@ -7476,8 +7491,16 @@ def create_app(config=None):
             try:
                 new_ids = [m.user_id for m in (event.joined.members or []) if getattr(m, "user_id", None)]
                 owner_info = _load_group_owner_info(group_id)
+                # 已綁定守護群：刷新群組成員數快照（不影響已綁定守護人計數）
+                if owner_info.get("bound"):
+                    try:
+                        refresh_guardian_group_member_snapshot(
+                            app.config["DATA_FILE"], group_id
+                        )
+                    except Exception as exc:
+                        app.logger.exception("MemberJoined member snapshot refresh failed: %s", exc)
                 # 未綁定：推歡迎卡，請管理員點「綁定守護群」
-                # 已綁定：簡短歡迎新成員
+                # 已綁定：簡短歡迎新成員（進群 ≠ 一鍵邀請綁定）
                 if not owner_info.get("bound"):
                     try:
                         line_bot_api.push_message(
@@ -7498,7 +7521,7 @@ def create_app(config=None):
                         if FlexSendMessage is not None and guardian_group_member_joined_flex is not None:
                             member_msgs.append(
                                 FlexSendMessage(
-                                    alt_text=f"❤️ {inviter_name} 邀請您成為守護人",
+                                    alt_text=f"❤️ 歡迎加入 {inviter_name} 的守護群",
                                     contents=guardian_group_member_joined_flex(inviter_name),
                                 )
                             )
@@ -7506,9 +7529,10 @@ def create_app(config=None):
                             member_msgs.append(
                                 TextSendMessage(
                                     text=(
-                                        f"❤️ {inviter_name} 邀請您成為守護人\n"
-                                        "您已加入「每日平安」守護群。\n"
-                                        "對方逾時未報平安或發出 SOS 時，系統會第一時間通知您。"
+                                        f"❤️ 歡迎加入 {inviter_name} 的守護群\n"
+                                        "您已加入「每日平安」LINE 守護群。\n"
+                                        "群內可收提醒；若要成為個人已綁定守護人，"
+                                        "請請對方用「一鍵邀請」再綁一次。"
                                     )
                                 )
                             )
@@ -7803,13 +7827,20 @@ def create_app(config=None):
 
                 # 2) 守護群狀態（含「查看守護群」按鈕別名）
                 if stripped in ("守護群狀態", "群狀態", "狀態", "查看守護群"):
+                    # 查詢前先刷新本群成員數，避免仍顯示綁定當下的舊快照
+                    try:
+                        refresh_guardian_group_member_snapshot(
+                            app.config["DATA_FILE"], group_id
+                        )
+                    except Exception as exc:
+                        app.logger.exception("status member snapshot refresh failed: %s", exc)
                     state = load_state(app.config["DATA_FILE"])
                     profile = get_profile(state, line_user_id) or {}
                     if FlexSendMessage is not None and guardian_group_status_flex is not None:
                         line_bot_api.reply_message(
                             event.reply_token,
                             FlexSendMessage(
-                                alt_text="守護群狀態",
+                                alt_text="守護群狀態（群組成員數）",
                                 contents=guardian_group_status_flex(profile, state),
                             ),
                         )

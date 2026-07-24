@@ -3863,7 +3863,7 @@
     <section class="settings guardian-group-guide" aria-label="守護群設定教學">
       <div class="core-guardian-group-block" id="coreGuardianGroupBlock">
         <div class="settings-title">核心守護群</div>
-        <div class="guardian-group-guide-intro">先邀請核心守護人完成 LINE 綁定，對方才收得到未報平安、SOS 與安全守護通知。再依下方步驟建立／綁定 LINE 守護群。</div>
+        <div class="guardian-group-guide-intro">先用「一鍵邀請」讓核心守護人完成 LINE 綁定（可收個人通知）。把人加進 LINE 群只會變成「群組成員」，不會自動變成「已綁定守護人」。再依下方步驟建立／綁定 LINE 守護群。</div>
         <div class="guardian-group-link-row">
           <button class="action-btn primary" id="coreGuardianShareBtn" type="button">核心守護一鍵分享</button>
         </div>
@@ -4079,7 +4079,7 @@
 
         <div class="member-data-section" id="guardianGroupsSection" hidden>
           <h3>我的守護群</h3>
-          <div class="helper">799 月費會員最多可綁定 1 個 LINE 群組，年費會員最多 3 個。把官方帳號加入群組後，在群組輸入「點我綁定守護群」即可啟用。</div>
+          <div class="helper">799 月費會員最多可綁定 1 個 LINE 群組，年費會員最多 3 個。把官方帳號加入群組後，在群組輸入「點我綁定守護群」即可啟用。<br>注意：群組成員數 ≠ 已綁定守護人；加進群不會自動完成 LINE 一鍵邀請綁定。</div>
           <div class="member-data-list" id="guardianGroupsList">
             <div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護群</strong></div>
           </div>
@@ -5913,7 +5913,7 @@
           const prefs = group.preferences || {};
           return `
           <div class="member-data-row guardian-group-card">
-            <span><strong>守護群 ${index + 1}</strong><small>${escapeHtml(group.member_count_at_bind || "LINE 群組")} 位成員紀錄</small></span>
+            <span><strong>守護群 ${index + 1}</strong><small>群組成員 ${escapeHtml(group.member_count_at_bind != null ? group.member_count_at_bind : "—")} 人（進群≠已綁定守護人）</small></span>
             <div class="guardian-group-preferences">
               <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_group_on_overdue" ${prefs.notify_group_on_overdue !== false ? "checked" : ""}> 群內逾期提醒</label>
               <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_admin_only" ${prefs.notify_admin_only !== false ? "checked" : ""}> 詳細名單僅管理員可看</label>

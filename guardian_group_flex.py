@@ -4,7 +4,7 @@
 1. guardian_group_intro_flex()       — 進群歡迎（Apple/LINE 官方風格，短文＋三鈕）
 2. guardian_group_status_flex()      — 守護群狀態查詢
 3. guardian_group_bind_confirm_flex  — 綁定成功：守護群資訊卡
-4. guardian_group_member_joined_flex — 家人首次進群／成為守護人（情感卡）
+4. guardian_group_member_joined_flex — 家人首次進群歡迎（進群≠已綁定守護人）
 5. guardian_group_user_guide_flex()  — 使用說明(給群成員)
 6. guardian_group_admin_setup_flex() — 管理員設定 6 步驟
 7. welcome_flex()                   — 加好友歡迎(7 天免費體驗 + 綁定守護人)
@@ -481,6 +481,9 @@ def guardian_group_status_flex(profile: dict, state: dict):
             g = all_groups.get(gid, {})
             mc = g.get("member_count_at_bind") or len(g.get("member_ids_at_bind") or [])
             plan = _plan_label(profile.get("plan", ""))
+            mc_label = f"群組成員 {mc} 人" if mc not in (None, "", 0) else "群組成員（尚無人數）"
+            if mc == 0:
+                mc_label = "群組成員 0 人"
             body_contents.append({
                 "type": "box",
                 "layout": "horizontal",
@@ -497,7 +500,7 @@ def guardian_group_status_flex(profile: dict, state: dict):
                     },
                     {
                         "type": "text",
-                        "text": f"{plan} · {mc} 人",
+                        "text": f"{plan} · {mc_label}",
                         "size": "lg",
                         "color": GRAY,
                         "flex": 1,
@@ -599,8 +602,9 @@ def guardian_group_setup_nudge_text(guardian_count: int = 0, guardian_limit: int
     limit = max(1, int(guardian_limit or 5))
     return (
         "🎉 守護群已建立成功！\n"
+        "提醒：加進 LINE 群 ≠ 已綁定守護人。\n"
         "建議再完成 2 個設定，讓守護更完整：\n"
-        f"✅ 新增守護人（目前 {count}/{limit} 位）\n"
+        f"✅ 用「一鍵邀請」完成 LINE 綁定（已綁定守護人目前 {count}/{limit} 位）\n"
         "✅ 設定每日提醒時間\n"
         "完成後，系統就會開始每天守護您與家人的平安 ❤️"
     )
@@ -612,12 +616,41 @@ def guardian_group_bind_confirm_flex(result: dict):
     display_name = (result.get("display_name") or result.get("owner_display_name") or "管理員").strip() or "管理員"
     guardian_count = int(result.get("guardian_count") or 0)
     guardian_limit = int(result.get("guardian_limit") or result.get("core_guardian_alert_limit") or 5)
+    member_count = result.get("member_count")
+    if member_count is None:
+        member_count = result.get("member_count_at_bind")
     reminder = (
         result.get("reminder_time")
         or (result.get("reminder_times") or [None])[0]
         or "09:00"
     )
     status_label = "🟢 正常守護中" if not already else "🟢 正常守護中（已綁定）"
+    body_rows = [
+        _info_row("👑 管理人", display_name),
+        _info_row("✅ 已綁定守護人", f"{guardian_count} / {guardian_limit} 位"),
+    ]
+    if member_count is not None and str(member_count).strip() != "":
+        try:
+            mc_int = int(member_count)
+            body_rows.append(_info_row("👪 群組成員", f"{mc_int} 人（進群≠綁定）"))
+        except (TypeError, ValueError):
+            body_rows.append(_info_row("👪 群組成員", f"{member_count}（進群≠綁定）"))
+    body_rows.extend(
+        [
+            _info_row("🕘 每日提醒", str(reminder)),
+            _info_row("📍 群組狀態", status_label),
+        ]
+    )
+    body_rows.append(
+        {
+            "type": "text",
+            "text": "說明：群組成員可收群內提醒；個人 LINE 通知需「一鍵邀請」完成綁定。",
+            "size": "md",
+            "color": GRAY,
+            "wrap": True,
+            "margin": "md",
+        }
+    )
 
     return {
         "type": "bubble",
@@ -647,12 +680,7 @@ def guardian_group_bind_confirm_flex(result: dict):
             "layout": "vertical",
             "spacing": "xs",
             "paddingAll": "lg",
-            "contents": [
-                _info_row("👑 管理人", display_name),
-                _info_row("👥 守護人", f"{guardian_count} / {guardian_limit} 位"),
-                _info_row("🕘 每日提醒", str(reminder)),
-                _info_row("📍 群組狀態", status_label),
-            ],
+            "contents": body_rows,
         },
         "footer": {
             "type": "box",
@@ -661,7 +689,7 @@ def guardian_group_bind_confirm_flex(result: dict):
             "paddingAll": "md",
             "backgroundColor": "#FAFAFA",
             "contents": [
-                _postback_button("➕ 新增守護人", "邀請守護人", style="primary", color=GREEN_DARK, height="md"),
+                _postback_button("➕ 一鍵邀請守護人", "邀請守護人", style="primary", color=GREEN_DARK, height="md"),
                 _uri_button(
                     "⏰ 修改提醒",
                     liff_entry_url(open_action="member"),
@@ -675,7 +703,7 @@ def guardian_group_bind_confirm_flex(result: dict):
 
 
 def guardian_group_member_joined_flex(inviter_display_name: str | None = None):
-    """家人首次被邀請／加入守護群（情感卡）。"""
+    """家人首次被邀請／加入守護群（情感卡）。進群 ≠ 已綁定守護人。"""
     name = (inviter_display_name or "").strip() or "家人"
     return {
         "type": "bubble",
@@ -686,13 +714,19 @@ def guardian_group_member_joined_flex(inviter_display_name: str | None = None):
             "spacing": "sm",
             "paddingAll": "lg",
             "contents": [
-                _body_line(f"❤️ {name} 邀請您成為守護人", weight="bold", color="#1a1a1a", size="xl"),
-                _body_line("您已加入「每日平安」守護群。", color=GRAY, size="lg", margin="md"),
+                _body_line(f"❤️ 歡迎加入 {name} 的守護群", weight="bold", color="#1a1a1a", size="xl"),
+                _body_line("您已加入「每日平安」LINE 守護群。", color=GRAY, size="lg", margin="md"),
                 _body_line("未來若對方：", color=GRAY, size="lg", margin="md"),
                 _body_line("⚠️ 超過提醒時間仍未報平安", color=GRAY, size="lg"),
                 _body_line("🚨 發出 SOS 緊急求助", color=GRAY, size="lg"),
-                _body_line("系統將第一時間通知您。", color=GRAY, size="lg", margin="md"),
-                _body_line("謝謝您願意成為對方最安心的依靠。", weight="bold", color=GREEN_DARK, size="lg", margin="md"),
+                _body_line("系統可在群內提醒大家。", color=GRAY, size="lg", margin="md"),
+                _body_line(
+                    "若要成為個人「已綁定守護人」（可收私訊通知），請請對方用「一鍵邀請」再綁一次。",
+                    weight="bold",
+                    color=GREEN_DARK,
+                    size="lg",
+                    margin="md",
+                ),
             ],
         },
         "footer": {

@@ -99,21 +99,60 @@ class GuardianGroupJoinTests(unittest.TestCase):
         body = str(info["body"])
         self.assertIn("阿明", body)
         self.assertIn("1 / 5 位", body)
+        self.assertIn("已綁定守護人", body)
+        self.assertIn("一鍵邀請", body)
         self.assertIn("09:00", body)
         self.assertIn("正常守護中", body)
         footer_labels = [b["action"]["label"] for b in info["footer"]["contents"]]
-        self.assertEqual(footer_labels[0], "➕ 新增守護人")
+        self.assertEqual(footer_labels[0], "➕ 一鍵邀請守護人")
         self.assertEqual(footer_labels[1], "⏰ 修改提醒")
 
         member = guardian_group_member_joined_flex("小美")
         member_text = str(member["body"])
-        self.assertIn("小美 邀請您成為守護人", member_text)
-        self.assertIn("最安心的依靠", member_text)
+        self.assertIn("歡迎加入 小美 的守護群", member_text)
+        self.assertIn("一鍵邀請", member_text)
+        self.assertNotIn("邀請您成為守護人", member_text)
 
         nudge = guardian_group_setup_nudge_text(1, 5)
         self.assertIn("守護群已建立成功", nudge)
-        self.assertIn("目前 1/5 位", nudge)
+        self.assertIn("已綁定守護人目前 1/5 位", nudge)
+        self.assertIn("加進 LINE 群 ≠ 已綁定守護人", nudge)
         self.assertIn("設定每日提醒時間", nudge)
+
+    def test_refresh_member_snapshot_updates_count(self):
+        from unittest.mock import patch
+
+        from app import refresh_guardian_group_member_snapshot, load_state
+
+        profile = {
+            "line_user_id": "U-owner",
+            "display_name": "測試會員",
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": (datetime.now() + timedelta(days=30)).isoformat(timespec="seconds"),
+            "guardian_group_ids": ["G-family"],
+        }
+        data_file = self.make_data_file(profile)
+        state = load_state(data_file)
+        state["guardian_groups"] = {
+            "G-family": {
+                "group_id": "G-family",
+                "owner_line_user_id": "U-owner",
+                "status": "active",
+                "member_count_at_bind": 2,
+            }
+        }
+        save_state(data_file, state)
+
+        with patch("app.get_group_member_count", return_value=5), patch(
+            "app.get_group_member_ids", return_value=["U1", "U2", "U3", "U4", "U5"]
+        ):
+            updated = refresh_guardian_group_member_snapshot(data_file, "G-family", token="tok")
+
+        self.assertEqual(updated["member_count_at_bind"], 5)
+        self.assertEqual(len(updated["member_ids_at_bind"]), 5)
+        reloaded = load_state(data_file)["guardian_groups"]["G-family"]
+        self.assertEqual(reloaded["member_count_at_bind"], 5)
 
 
 if __name__ == "__main__":
