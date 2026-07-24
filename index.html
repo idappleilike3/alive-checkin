@@ -3332,6 +3332,29 @@
       color: #166534;
     }
     .member-core-line { font-weight: 600; color: #3f6212; }
+    .member-contact-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin: 0 0 14px;
+    }
+    .member-contact-tab {
+      border: 1.5px solid #bbf7d0;
+      background: #f0fdf4;
+      color: #166534;
+      border-radius: 999px;
+      min-height: 44px;
+      padding: 10px 12px;
+      font-weight: 800;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    .member-contact-tab[aria-selected="true"] {
+      background: #15803d;
+      border-color: #15803d;
+      color: #fff;
+    }
+    .member-contact-panel[hidden] { display: none !important; }
     .member-limit-banner {
       margin: 12px 0;
       padding: 14px 16px;
@@ -3919,31 +3942,100 @@
           </div>
         </div>
 
-        <div class="member-data-section" id="memberGuardianSection">
-          <h3>👨‍👩‍👧 守護人（Guardian）</h3>
-          <div class="member-role-bind-intro" aria-label="守護人說明">
-            <p><strong>用途</strong>：平常每天守護你的人。</p>
-            <p><strong>會收到</strong>：未報平安通知、SOS、安全守護、可查看平安狀態（若有授權）。</p>
-            <p><strong>免費版建議</strong>：1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。</p>
+        <div class="member-data-section" id="memberContactsManageSection">
+          <div class="member-contact-tabs" role="tablist" aria-label="聯絡人類型">
+            <button class="member-contact-tab" id="memberTabCoreBtn" type="button" role="tab" aria-selected="true" aria-controls="memberGuardianSection" data-contact-tab="core">核心守護人</button>
+            <button class="member-contact-tab" id="memberTabEmergencyBtn" type="button" role="tab" aria-selected="false" aria-controls="memberEmergencySection" data-contact-tab="emergency">緊急聯絡人</button>
           </div>
-          <div class="member-quota-line" id="memberGuardianQuotaLine">目前：0 / 1（免費方案）</div>
-          <div class="member-core-line" id="memberCoreGeneralLine">核心守護人 0 位／一般守護人 0 位</div>
-          <div class="helper">完成 LINE 綁定後，重要狀況才會通知對方。已有守護人時登入不會再逼你填表。</div>
-          <div class="member-data-list" id="memberGuardianList">
-            <div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護人</strong></div>
-          </div>
-          <div class="member-limit-banner" id="memberGuardianLimitBanner" hidden>
-            <strong id="memberLimitTitle">你已經有 1 位守護人囉</strong>
-            <p id="memberLimitBody">免費／試用方案最多 1 位。升級可新增更多守護人。</p>
-            <div class="member-limit-actions" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
-              <button class="action-btn primary" id="memberInviteMoreGuardianBtn" type="button">再邀請一位守護人</button>
-              <button class="action-btn" id="memberLimitUpgradeBtn" type="button">立即升級</button>
+
+          <div class="member-contact-panel" id="memberGuardianSection" role="tabpanel" data-contact-panel="core">
+            <h3 id="memberGuardianSectionTitle">核心守護人</h3>
+            <div class="member-role-bind-intro" id="memberGuardianBindIntro" aria-label="核心守護人說明">
+              <p><strong>用途</strong>：平常每天守護你的人，需完成 LINE 綁定。</p>
+              <p><strong>會收到</strong>：未報平安通知、SOS、安全守護、可查看平安狀態（若有授權）。</p>
+              <p id="memberGuardianPlanTip"><strong>免費版建議</strong>：1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。</p>
             </div>
-            <p class="helper" id="memberInviteRewardHint" style="margin-top:8px;">每成功邀請 1 位新守護人 → 免費延長 7 天；方案到期後守護人與聯絡人資料保留 30 天。</p>
+            <div class="member-quota-line" id="memberGuardianQuotaLine">核心守護人 0/1</div>
+            <div class="member-core-line" id="memberCoreGeneralLine">可新增 1 位・已新增 0 位</div>
+            <div class="helper">完成 LINE 綁定後，重要狀況才會通知對方。已有守護人時登入不會再逼你填表。</div>
+            <div class="member-data-list" id="memberGuardianList">
+              <div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護人</strong></div>
+            </div>
+            <div class="member-limit-banner" id="memberGuardianLimitBanner" hidden>
+              <strong id="memberLimitTitle">你已經有 1 位守護人囉</strong>
+              <p id="memberLimitBody">免費／試用方案最多 1 位。升級可新增更多守護人。</p>
+              <div class="member-limit-actions" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
+                <button class="action-btn primary" id="memberInviteMoreGuardianBtn" type="button">再邀請一位守護人</button>
+                <button class="action-btn" id="memberLimitUpgradeBtn" type="button">立即升級</button>
+              </div>
+              <p class="helper" id="memberInviteRewardHint" style="margin-top:8px;">每成功邀請 1 位新守護人 → 免費延長 7 天；方案到期後守護人與聯絡人資料保留 30 天。</p>
+            </div>
+            <div class="member-data-actions" id="memberGuardianInviteActions">
+              <button class="action-btn primary share-contact-invite-btn" id="memberReinviteGuardianBtn" type="button">一鍵邀請守護人</button>
+              <button class="action-btn" id="memberAddGuardianBtn" type="button">➕ 新增守護人資料</button>
+            </div>
+            <div id="guardianDetails799" hidden>
+              <div class="helper" style="margin-top:14px;">從已綁定守護人指定核心（緊急時優先通知）。下方可補齊姓名、關係與電話。</div>
+              <div class="core-guardian-pick" id="memberCoreGuardianPick"></div>
+              <div class="guardian-details-form" id="guardianDetailsFormBlock">
+                <input type="hidden" id="guardianDetailsContact" value="">
+                <label class="form-field" for="guardianDetailsName"><span>姓名</span>
+                  <input id="guardianDetailsName" placeholder="守護人姓名或暱稱" autocomplete="name">
+                </label>
+                <label class="form-field" for="guardianDetailsRelation"><span>關係</span>
+                  <select id="guardianDetailsRelation" aria-label="與守護人的關係">
+                    <option value="">請選擇關係</option>
+                    <option value="爺爺">爺爺</option>
+                    <option value="奶奶">奶奶</option>
+                    <option value="阿公">阿公</option>
+                    <option value="阿嬤">阿嬤</option>
+                    <option value="爸爸">爸爸</option>
+                    <option value="媽媽">媽媽</option>
+                    <option value="老公">老公</option>
+                    <option value="老婆">老婆</option>
+                    <option value="哥哥">哥哥</option>
+                    <option value="姊姊">姊姊</option>
+                    <option value="弟弟">弟弟</option>
+                    <option value="妹妹">妹妹</option>
+                    <option value="兒子">兒子</option>
+                    <option value="女兒">女兒</option>
+                    <option value="媳婦">媳婦</option>
+                    <option value="女婿">女婿</option>
+                    <option value="孫子">孫子</option>
+                    <option value="孫女">孫女</option>
+                    <option value="家人">家人</option>
+                    <option value="朋友">朋友</option>
+                    <option value="同事">同事</option>
+                    <option value="鄰居">鄰居</option>
+                    <option value="其他">其他</option>
+                  </select>
+                  <input id="guardianDetailsRelationshipOther" class="relationship-other" placeholder="請輸入關係" hidden>
+                </label>
+                <label class="form-field" for="guardianDetailsPhone"><span>電話</span>
+                  <input id="guardianDetailsPhone" type="tel" inputmode="tel" placeholder="守護人聯絡電話" autocomplete="tel">
+                </label>
+              </div>
+              <label class="setting-choice" for="guardianDetailsReminderEnabled">
+                <input type="checkbox" id="guardianDetailsReminderEnabled" checked>
+                <span>資料尚未完成時，透過 LINE 提醒我一次</span>
+              </label>
+              <button class="action-btn" id="saveGuardianDetailsBtn" type="button">儲存守護資料</button>
+            </div>
           </div>
-          <div class="member-data-actions" id="memberGuardianInviteActions">
-            <button class="action-btn primary share-contact-invite-btn" id="memberReinviteGuardianBtn" type="button">一鍵邀請守護人</button>
-            <button class="action-btn" id="memberAddGuardianBtn" type="button">➕ 新增守護人資料</button>
+
+          <div class="member-contact-panel" id="memberEmergencySection" role="tabpanel" data-contact-panel="emergency" hidden>
+            <h3>緊急聯絡人</h3>
+            <div class="member-role-bind-intro" id="memberEmergencyBindIntro" aria-label="緊急聯絡人說明">
+              <p><strong>用途</strong>：電話備援，緊急時可手動撥打（不會自動群發簡訊／推播）。</p>
+              <p id="memberEmergencyPlanTip"><strong>免費版建議</strong>：2 位（爸媽，或配偶＋好友）。可先填姓名與電話。</p>
+            </div>
+            <div class="member-quota-line" id="memberEmergencyQuotaLine">緊急聯絡人 0/2</div>
+            <div class="member-data-list" id="memberEmergencyList">
+              <div class="member-data-row"><span>目前狀態</span><strong>尚未新增緊急聯絡人</strong></div>
+            </div>
+            <div class="member-data-actions">
+              <button class="action-btn primary" id="memberAddEmergencyBtn" type="button">➕ 新增緊急聯絡人</button>
+            </div>
           </div>
         </div>
 
@@ -3985,71 +4077,6 @@
           </div>
         </div>
 
-        <div class="member-data-section" id="memberEmergencySection">
-          <h3>☎️ 緊急聯絡人（Emergency Contact）</h3>
-          <div class="member-role-bind-intro" aria-label="緊急聯絡人說明">
-            <p><strong>用途</strong>：電話備援，緊急時可手動撥打（不會自動群發簡訊／推播）。</p>
-            <p><strong>免費版建議</strong>：2 位（爸媽，或配偶＋好友）。可先填姓名與電話。</p>
-          </div>
-          <div class="member-quota-line" id="memberEmergencyQuotaLine">緊急聯絡人：0 位（建議 2 位）</div>
-          <div class="member-data-list" id="memberEmergencyList">
-            <div class="member-data-row"><span>目前狀態</span><strong>尚未新增緊急聯絡人</strong></div>
-          </div>
-          <div class="member-data-actions">
-            <button class="action-btn primary" id="memberAddEmergencyBtn" type="button">➕ 新增緊急聯絡人</button>
-          </div>
-        </div>
-
-        <div class="member-data-section" id="guardianDetails799" hidden>
-          <h3>核心守護人</h3>
-          <div class="helper">從已綁定守護人指定核心（緊急時優先通知）。下方只需補齊姓名、關係與電話一次。</div>
-          <div class="core-guardian-pick" id="memberCoreGuardianPick"></div>
-          <div class="guardian-details-status" id="guardianDetailsStatus">尚未完成必要資料</div>
-          <div class="guardian-details-form" id="guardianDetailsFormBlock">
-            <input type="hidden" id="guardianDetailsContact" value="">
-            <label class="form-field" for="guardianDetailsName"><span>姓名</span>
-              <input id="guardianDetailsName" placeholder="守護人姓名或暱稱" autocomplete="name">
-            </label>
-            <label class="form-field" for="guardianDetailsRelation"><span>關係</span>
-              <select id="guardianDetailsRelation" aria-label="與守護人的關係">
-                <option value="">請選擇關係</option>
-                <option value="爺爺">爺爺</option>
-                <option value="奶奶">奶奶</option>
-                <option value="阿公">阿公</option>
-                <option value="阿嬤">阿嬤</option>
-                <option value="爸爸">爸爸</option>
-                <option value="媽媽">媽媽</option>
-                <option value="老公">老公</option>
-                <option value="老婆">老婆</option>
-                <option value="哥哥">哥哥</option>
-                <option value="姊姊">姊姊</option>
-                <option value="弟弟">弟弟</option>
-                <option value="妹妹">妹妹</option>
-                <option value="兒子">兒子</option>
-                <option value="女兒">女兒</option>
-                <option value="媳婦">媳婦</option>
-                <option value="女婿">女婿</option>
-                <option value="孫子">孫子</option>
-                <option value="孫女">孫女</option>
-                <option value="家人">家人</option>
-                <option value="朋友">朋友</option>
-                <option value="同事">同事</option>
-                <option value="鄰居">鄰居</option>
-                <option value="其他">其他</option>
-              </select>
-              <input id="guardianDetailsRelationshipOther" class="relationship-other" placeholder="請輸入關係" hidden>
-            </label>
-            <label class="form-field" for="guardianDetailsPhone"><span>電話</span>
-              <input id="guardianDetailsPhone" type="tel" inputmode="tel" placeholder="守護人聯絡電話" autocomplete="tel">
-            </label>
-          </div>
-          <label class="setting-choice" for="guardianDetailsReminderEnabled">
-            <input type="checkbox" id="guardianDetailsReminderEnabled" checked>
-            <span>資料尚未完成時，透過 LINE 提醒我一次</span>
-          </label>
-          <button class="action-btn" id="saveGuardianDetailsBtn" type="button">儲存守護資料</button>
-        </div>
-
         <div class="member-data-section" id="guardianGroupsSection" hidden>
           <h3>我的守護群</h3>
           <div class="helper">799 月費會員最多可綁定 1 個 LINE 群組，年費會員最多 3 個。把官方帳號加入群組後，在群組輸入「點我綁定守護群」即可啟用。</div>
@@ -4088,7 +4115,7 @@
 
         <div class="member-data-section">
           <h3>我的資料管理</h3>
-          <div class="helper">所有會員都能匯出及刪除自己的個人資料，不會因方案不同而限制基本權利。</div>
+          <div class="helper">所有會員都能匯出及刪除自己的個人資料，不會因方案不同而限制基本權利。可下載 JSON／CSV（個人資料、聯絡人、簽到紀錄）。</div>
           <div class="member-data-actions">
             <button class="action-btn" id="exportMyDataBtn" type="button">匯出我的資料</button>
             <button class="action-btn" id="deleteCheckinHistoryBtn" type="button">刪除簽到紀錄</button>
@@ -5685,17 +5712,48 @@
       }
     }
 
+    function planEmergencyLimit(plan, contactLimit) {
+      const p = String(plan || "trial");
+      if (p === "paid_799" || p === "paid_799_year") return 5;
+      if (String(p).startsWith("paid_")) return Math.max(2, Math.min(Number(contactLimit) || 2, 6));
+      return 2;
+    }
+
+    function planCoreGuardianLimit(status) {
+      const raw = Number(status && status.core_guardian_alert_limit);
+      if (Number.isFinite(raw) && raw > 0) return raw;
+      const plan = String((status && status.plan) || "trial");
+      if (plan === "paid_799" || plan === "paid_799_year") return 5;
+      if (plan === "paid_399_year") return 3;
+      if (String(plan).startsWith("paid_")) return 2;
+      return 1;
+    }
+
+    function setMemberContactTab(tabName) {
+      const tab = tabName === "emergency" ? "emergency" : "core";
+      document.querySelectorAll(".member-contact-tab").forEach((btn) => {
+        const selected = btn.getAttribute("data-contact-tab") === tab;
+        btn.setAttribute("aria-selected", selected ? "true" : "false");
+      });
+      document.querySelectorAll(".member-contact-panel").forEach((panel) => {
+        panel.hidden = panel.getAttribute("data-contact-panel") !== tab;
+      });
+    }
+
     function renderMemberCenter() {
       const status = currentStatusData || {};
       const displayName = lineDisplayName || status.display_name || "LINE 會員";
       const memberPlan = status.plan || "trial";
+      const isPaidPlan = String(memberPlan).startsWith("paid_");
       const guardians = contactsByRole("guardian");
       const emergencies = contactsByRole("emergency");
       const limit = Number(status.contact_limit || currentContactLimit || 1);
+      const coreLimit = planCoreGuardianLimit(status);
+      const emergencyLimit = planEmergencyLimit(memberPlan, limit);
       const totalCount = guardians.length;
       const boundCount = guardians.filter((contact) => isContactBound(contact)).length;
       const realCore = guardians.filter((c) => isContactBound(c) && c.is_primary).length;
-      const shownCore = realCore > 0 ? realCore : (boundCount > 0 ? 1 : 0);
+      const shownCore = realCore > 0 ? realCore : (boundCount > 0 ? Math.min(1, boundCount) : 0);
       const shownGeneral = Math.max(0, boundCount - shownCore);
       $("memberDisplayName").textContent = displayName;
       $("memberAvatar").textContent = displayName.trim().slice(0, 1) || "我";
@@ -5707,13 +5765,34 @@
           : "尚未設定到期日";
       $("memberLineAccount").textContent = lineUserId || status.line_user_id ? "LINE 已綁定" : "尚未綁定 LINE";
       $("memberContactEmail").textContent = status.contact_email || "尚未填寫";
-      $("memberGuardianQuota").textContent = `目前：${totalCount} / ${limit}（${planQuotaLabel(memberPlan)}）`;
+      $("memberGuardianQuota").textContent = `核心守護人 ${shownCore}/${coreLimit}（總守護人 ${totalCount}/${limit}）`;
       const quotaLine = $("memberGuardianQuotaLine");
-      if (quotaLine) quotaLine.textContent = `目前：${totalCount} / ${limit}（${planQuotaLabel(memberPlan)}）`;
+      if (quotaLine) quotaLine.textContent = `核心守護人 ${shownCore}/${coreLimit}`;
       const emergencyQuota = $("memberEmergencyQuotaLine");
-      if (emergencyQuota) emergencyQuota.textContent = `緊急聯絡人：${emergencies.length} 位（建議 2 位）`;
+      if (emergencyQuota) emergencyQuota.textContent = `緊急聯絡人 ${emergencies.length}/${emergencyLimit}`;
       const coreLine = $("memberCoreGeneralLine");
-      if (coreLine) coreLine.textContent = `核心守護人 ${shownCore} 位／一般守護人 ${shownGeneral} 位`;
+      if (coreLine) {
+        coreLine.textContent = isPaidPlan
+          ? `可新增 ${coreLimit} 位・已新增 ${shownCore} 位（總守護人 ${totalCount}/${limit}，一般 ${shownGeneral}）`
+          : `可新增 ${coreLimit} 位・已新增 ${shownCore} 位`;
+      }
+      const guardianTip = $("memberGuardianPlanTip");
+      if (guardianTip) {
+        guardianTip.hidden = isPaidPlan;
+        if (!isPaidPlan) {
+          guardianTip.innerHTML = `<strong>免費版建議</strong>：1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。`;
+        }
+      }
+      const emergencyTip = $("memberEmergencyPlanTip");
+      if (emergencyTip) {
+        emergencyTip.hidden = isPaidPlan;
+        if (!isPaidPlan) {
+          emergencyTip.innerHTML = `<strong>免費版建議</strong>：2 位（爸媽，或配偶＋好友）。可先填姓名與電話。`;
+        } else {
+          emergencyTip.hidden = false;
+          emergencyTip.innerHTML = `<strong>方案名額</strong>：最多 ${emergencyLimit} 位電話備援。可先填姓名與電話。`;
+        }
+      }
       $("memberBillingPlan").textContent = planLabel(memberPlan);
       $("memberBillingCycle").textContent = {
         monthly: "月繳",
@@ -5870,10 +5949,8 @@
       if (isMemberRoleIntroDismissed()) return false;
       const plan = String((status && status.plan) || "trial");
       const isFreeOrTrial = plan === "trial" || plan === "free" || !String(plan).startsWith("paid_");
-      const lineBound = Boolean(lineUserId || (status && (status.line_user_id || status.display_name)));
-      const boundCount = contactData.filter((contact) => isContactBound(contact)).length;
-      // 免費／試用，或註冊＋綁定完成後第一次進會員中心
-      return isFreeOrTrial || (lineBound && boundCount > 0);
+      // 付費（含 799）不顯示「免費體驗小教室／免費版建議」
+      return isFreeOrTrial;
     }
 
     function renderMemberRoleIntro(options = {}) {
@@ -5985,15 +6062,6 @@
         $("guardianDetailsReminderEnabled").checked = status.guardian_details_reminder_enabled !== false;
       }
 
-      const completeCount = boundContacts.filter(({ contact }) => guardianDetailsComplete(contact)).length;
-      const statusEl = $("guardianDetailsStatus");
-      if (statusEl) {
-        statusEl.textContent = !boundContacts.length
-          ? "請先完成 LINE 守護人綁定"
-          : completeCount
-            ? `已完成 ${completeCount} 位守護人必要資料`
-            : "請補齊至少 1 位核心守護人的姓名、關係與電話";
-      }
       const formBlock = $("guardianDetailsFormBlock");
       if (formBlock) formBlock.hidden = !boundContacts.length;
       populateGuardianDetailsForm();
@@ -7454,22 +7522,127 @@
       $("memberCenterToggleBtn").setAttribute("aria-expanded", String(expanded));
     }
 
+    function csvEscape(value) {
+      const text = String(value == null ? "" : value);
+      if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+      return text;
+    }
+
+    function buildExportCsv(exportData) {
+      const member = (exportData && exportData.member) || {};
+      const contacts = Array.isArray(member.contacts) ? member.contacts : [];
+      const history = Array.isArray(member.history) ? member.history : [];
+      const lines = [];
+      lines.push("區塊,欄位,值");
+      lines.push(["個人資料", "display_name", member.display_name || ""].map(csvEscape).join(","));
+      lines.push(["個人資料", "line_user_id", member.line_user_id || ""].map(csvEscape).join(","));
+      lines.push(["個人資料", "plan", member.plan || ""].map(csvEscape).join(","));
+      lines.push(["個人資料", "paid_until", member.paid_until || ""].map(csvEscape).join(","));
+      lines.push(["個人資料", "contact_email", member.contact_email || ""].map(csvEscape).join(","));
+      lines.push("");
+      lines.push("聯絡人,姓名,關係,電話,信箱,角色,LINE綁定,核心");
+      contacts.forEach((c) => {
+        lines.push([
+          "聯絡人",
+          c.name || c.display_name || "",
+          c.relationship || "",
+          c.phone || "",
+          c.email || "",
+          c.contact_role || "guardian",
+          (c.binding_status || c.consent_status || c.line_id || c.line_user_id) ? "是" : "否",
+          c.is_primary ? "是" : "否"
+        ].map(csvEscape).join(","));
+      });
+      lines.push("");
+      lines.push("簽到紀錄,日期");
+      history.forEach((d) => {
+        lines.push(["簽到紀錄", d].map(csvEscape).join(","));
+      });
+      return "\uFEFF" + lines.join("\n");
+    }
+
+    function triggerBlobDownload(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.rel = "noopener";
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => {
+        link.remove();
+        URL.revokeObjectURL(url);
+      }, 1500);
+      return true;
+    }
+
+    async function shareOrDownloadBlob(blob, filename, mime) {
+      const file = (typeof File !== "undefined")
+        ? new File([blob], filename, { type: mime })
+        : null;
+      if (file && navigator.share && navigator.canShare) {
+        try {
+          if (navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: filename });
+            return "shared";
+          }
+        } catch (err) {
+          if (err && err.name === "AbortError") return "aborted";
+        }
+      }
+      try {
+        triggerBlobDownload(blob, filename);
+        return "download";
+      } catch (_) {}
+      // LIFF WebView 常擋 download：改開外部瀏覽器
+      try {
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+        if (window.liff && typeof liff.openWindow === "function") {
+          liff.openWindow({ url: String(dataUrl), external: true });
+          return "external";
+        }
+        window.open(String(dataUrl), "_blank");
+        return "window";
+      } catch (_) {}
+      return "failed";
+    }
+
     async function exportMyData() {
       const button = $("exportMyDataBtn");
       button.disabled = true;
       button.textContent = "整理資料中…";
       try {
         const exportData = await apiExportMyData();
-        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `每日平安_我的完整資料_${getToday()}.json`;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(url);
+        const stamp = getToday();
+        const jsonText = JSON.stringify(exportData, null, 2);
+        const csvText = buildExportCsv(exportData);
+        const jsonBlob = new Blob([jsonText], { type: "application/json;charset=utf-8" });
+        const csvBlob = new Blob([csvText], { type: "text/csv;charset=utf-8" });
+        const jsonName = `每日平安_我的完整資料_${stamp}.json`;
+        const csvName = `每日平安_我的完整資料_${stamp}.csv`;
+        const jsonResult = await shareOrDownloadBlob(jsonBlob, jsonName, "application/json");
+        const csvResult = await shareOrDownloadBlob(csvBlob, csvName, "text/csv");
+        if (jsonResult === "failed" && csvResult === "failed") {
+          // 最後手段：複製 JSON 到剪貼簿
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(jsonText);
+            alert("LIFF 無法直接下載檔案，已將 JSON 複製到剪貼簿。也可改用外部瀏覽器開啟會員中心再匯出。");
+          } else {
+            alert("資料暫時無法匯出，請改用外部瀏覽器開啟後再試。");
+          }
+        } else if (jsonResult === "download" || csvResult === "download" || jsonResult === "external" || csvResult === "external") {
+          showInlineSuccess("已匯出 JSON 與 CSV（若未看到下載，請到分享／檔案管理查看）");
+        } else if (jsonResult === "shared" || csvResult === "shared") {
+          showInlineSuccess("已透過分享匯出資料");
+        }
       } catch (error) {
+        console.warn("exportMyData failed", error);
         alert("資料暫時無法匯出，請稍後再試。");
       } finally {
         button.disabled = false;
@@ -8869,10 +9042,15 @@
           maybePrefillFriendInvite();
           if (!homeReady) await maybeShowGuardianComplete();
         } else if (wantsInviteShare) {
-          // 僅「一鍵邀請」：不經首頁 → 專用分享頁（報平安／安全守護絕不可進這裡）
+          // 一鍵邀請：已綁定仍可再邀（rich menu share-invite／invite）
+          // 但 onboarding/invite 教學路徑：已有 ≥1 綁定守護人 → 進首頁，不再推「邀請家人加入」
           clearShareFirstLocalFlags();
-          location.replace(buildShareInvitePageUrl("home"));
-          return;
+          if ((homeReady || hasGuardians) && isOnboardingInvite) {
+            if (typeof showTab === "function") showTab("home");
+          } else {
+            location.replace(buildShareInvitePageUrl("home"));
+            return;
+          }
         } else if (homeReady || hasGuardians || setupDone) {
           // 已有 ≥1 LINE 守護人或 ≥1 聯絡人：絕不 showOnboarding／share-invite
           clearShareFirstLocalFlags();
@@ -9339,8 +9517,18 @@
     $("exportMyDataBtn").addEventListener("click", exportMyData);
     $("deleteCheckinHistoryBtn").addEventListener("click", deleteCheckinHistory);
     $("deleteAccountBtn").addEventListener("click", deleteAccountAndData);
+    document.querySelectorAll(".member-contact-tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setMemberContactTab(btn.getAttribute("data-contact-tab") || "core");
+      });
+    });
     const memberAddGuardianBtn = $("memberAddGuardianBtn");
-    if (memberAddGuardianBtn) memberAddGuardianBtn.addEventListener("click", openAddGuardianFromMember);
+    if (memberAddGuardianBtn) {
+      memberAddGuardianBtn.addEventListener("click", () => {
+        setMemberContactTab("core");
+        openAddGuardianFromMember();
+      });
+    }
     const smartReminderAddBtn = $("smartReminderAddBtn");
     if (smartReminderAddBtn) smartReminderAddBtn.addEventListener("click", () => openSmartReminderEditor(null));
     const smartReminderUpgradeBtn = $("smartReminderUpgradeBtn");
@@ -9355,6 +9543,7 @@
         if (!requireLineMembership("新增緊急聯絡人前，請先完成 LINE 登入綁定。")) return;
         if (typeof showTab === "function") showTab("member");
         setMemberCenterExpanded(true);
+        setMemberContactTab("emergency");
         openGuardianEditor(null, "emergency");
       });
     }

@@ -122,7 +122,8 @@ class BindAndHomeGateTests(unittest.TestCase):
             'location.replace("/liff/share-invite.html")' in init_app
             or "buildShareInvitePageUrl(" in init_app
         )
-        self.assertIn("僅「一鍵邀請」", init_app)
+        self.assertIn("onboarding/invite", init_app)
+        self.assertIn("isOnboardingInvite", init_app)
 
     def test_form_add_does_not_copy_owner_line_id(self):
         state = app_module.load_state(self.data_file)

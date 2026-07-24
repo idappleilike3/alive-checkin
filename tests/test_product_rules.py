@@ -242,9 +242,26 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("memberEmergencySection", page)
         self.assertIn("member-role-bind-intro", page)
         self.assertIn("memberAddEmergencyBtn", page)
+        self.assertIn("member-contact-tabs", page)
+        self.assertIn("setMemberContactTab", page)
+        self.assertIn("核心守護人", page)
+        self.assertIn("planCoreGuardianLimit", page)
+        self.assertIn("planEmergencyLimit", page)
+        self.assertNotIn('id="guardianDetailsStatus"', page)
+        self.assertNotIn("已完成守護人的必要資料", page)
         self.assertNotIn('id="memberAutoRenew"', page)
         self.assertNotIn("儲存續扣", page)
         self.assertNotIn("有效的 799 守護版會員，可連續按 3 次", page)
+
+    def test_export_my_data_supports_liff_json_csv(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn("function exportMyData(", page)
+        self.assertIn("function buildExportCsv(", page)
+        self.assertIn("function shareOrDownloadBlob(", page)
+        self.assertIn("liff.openWindow", page)
+        self.assertIn("application/json", page)
+        self.assertIn("text/csv", page)
+        self.assertIn('id="exportMyDataBtn"', page)
 
     def test_member_unbound_guardian_shows_one_tap_invite(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

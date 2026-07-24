@@ -3725,6 +3725,38 @@ def get_group_member_ids(token, group_id, max_count=200):
         return None
 
 
+def refresh_guardian_group_member_snapshot(data_file, group_id, token=None):
+    """進群／查狀態時刷新群組成員數快照（與「已綁定守護人」無關）。
+
+    Returns:
+        dict | None: 更新後的 group 資料；群不存在或 API 失敗時回傳現有值／None。
+    """
+    group_id = str(group_id or "").strip()
+    if not group_id:
+        return None
+    state = load_state(data_file)
+    groups = state.get("guardian_groups") or {}
+    group = groups.get(group_id)
+    if not group or group.get("status") != "active":
+        return group
+    access_token = token or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not access_token:
+        return group
+    mc = get_group_member_count(access_token, group_id)
+    if mc is None:
+        return group
+    group["member_count_at_bind"] = mc
+    group["member_count_updated_at"] = datetime.now().isoformat(timespec="seconds")
+    ids = get_group_member_ids(access_token, group_id)
+    if ids is not None:
+        group["member_ids_at_bind"] = ids
+    groups[group_id] = group
+    state["guardian_groups"] = groups
+    save_state(data_file, state)
+    return group
+
+
+
 def kick_group_member(token, group_id, user_id):
     """踢 userId 出 group(bot 必須是 admin)。失敗:回 None / HTTPError code。"""
     if not token or not group_id or not user_id:
@@ -4519,6 +4551,7 @@ def trigger_sos(data_file, payload, config=None):
 
     limit = int(rules.get("core_guardian_alert_limit") or 1)
     # 核心守護人（is_primary）優先收到 SOS；其餘依 priority
+    # 與安全守護相同：只用 contact_is_bound_guardian，排除本人 ID／緊急聯絡人
     contacts = sorted(
         profile.get("contacts") or [],
         key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
@@ -4526,10 +4559,17 @@ def trigger_sos(data_file, payload, config=None):
     phone_contacts = collect_phone_only_contacts(contacts)
     line_contacts = []
     for contact in contacts:
-        target = contact.get("line_id") or contact.get("line_user_id")
-        if not target:
+        if resolve_contact_role(contact) == "emergency":
             continue
-        if "line" not in (contact.get("notify_methods") or ["line"]):
+        if not contact_is_bound_guardian(contact, line_user_id):
+            continue
+        target = get_contact_line_id(contact)
+        if not target or target == line_user_id:
+            continue
+        methods = contact.get("notify_methods")
+        if methods is not None and len(methods) == 0:
+            methods = ["line"]
+        if "line" not in (methods or ["line"]):
             continue
         row = dict(contact)
         row["line_id"] = target
@@ -4554,6 +4594,7 @@ def trigger_sos(data_file, payload, config=None):
             "sent": 0,
             "phone_only_count": len(phone_contacts),
             "phone_contacts": phone_contacts[:5],
+            "has_bound_guardian": profile_has_bound_line_guardian(profile),
         }, 400
 
     # Prefer fresh coords from this SOS request; fall back to last known profile location.
@@ -6560,7 +6601,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725sos",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725mem",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -6882,7 +6923,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725sos",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725mem",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -7119,15 +7160,26 @@ def create_app(config=None):
                         err = (res or {}).get("error") if isinstance(res, dict) else "send failed"
                         app.logger.error("trigger_sos failed code=%s err=%s", code, err)
                         if "no bound line guardians" in str(err).lower():
-                            invite_uri = (
-                                share_invite_liff_url()
-                                if share_invite_liff_url
-                                else "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html"
+                            # 已有 ≥1 LINE 綁定守護人：绝不再推「邀請家人加入」
+                            already_bound = bool(
+                                (isinstance(res, dict) and res.get("has_bound_guardian"))
+                                or (profile and profile_has_bound_line_guardian(profile))
                             )
-                            reply(
-                                sos_flow.sos_no_guardians_flex(invite_uri),
-                                sos_user_facing_error(err),
-                            )
+                            if already_bound:
+                                reply(
+                                    None,
+                                    "你已綁定守護人，系統暫時通知失敗；有危險請先打 119 或 110，並直接聯絡親友",
+                                )
+                            else:
+                                invite_uri = (
+                                    share_invite_liff_url()
+                                    if share_invite_liff_url
+                                    else "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html"
+                                )
+                                reply(
+                                    sos_flow.sos_no_guardians_flex(invite_uri),
+                                    sos_user_facing_error(err),
+                                )
                         else:
                             reply(None, sos_user_facing_error(err))
                     else:

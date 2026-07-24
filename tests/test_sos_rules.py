@@ -179,6 +179,34 @@ class SosRulesTests(unittest.TestCase):
         self.assertEqual(result["phone_only_count"], 1)
         self.assertEqual(result["phone_contacts"][0]["name"], "媽媽")
 
+    def test_bound_guardian_with_line_user_id_can_receive_sos(self):
+        """綁定欄位若只寫 line_user_id（無 line_id）仍應可送 SOS，不可誤判邀請家人。"""
+        messages = []
+        profile = {
+            "line_user_id": "U-owner",
+            "display_name": "已綁會員",
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": (datetime.now() + timedelta(days=30)).isoformat(timespec="seconds"),
+            "contacts": [{
+                "line_user_id": "U-guardian",
+                "binding_status": "accepted",
+                "consent_status": "accepted",
+                "contact_role": "guardian",
+                "is_primary": True,
+                "priority": 1,
+                "notify_methods": ["line"],
+            }],
+        }
+        data_file = self.make_data_file(profile)
+        result, status = trigger_sos(data_file, {"line_user_id": "U-owner"}, {
+            "LINE_CHANNEL_ACCESS_TOKEN": "test-token",
+            "LINE_PUSH_SENDER": lambda _token, _target, message: messages.append(message) or {"ok": True},
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(len(messages), 1)
+
     def test_user_facing_error_hides_english(self):
         msg = sos_user_facing_error("no bound LINE guardians")
         self.assertIn("還沒綁定守護人喔", msg)
