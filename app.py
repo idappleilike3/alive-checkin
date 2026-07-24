@@ -126,6 +126,7 @@ DEFAULT_PROFILE = {
     "contact_reminder_sent_dates": [],
     "checkin_reminder_sent_dates": [],
     "checkin_reminder_sent_slots": {},
+    "daily_checkin_reminder_enabled": True,
     "guardian_details_reminder_enabled": True,
     "guardian_details_reminder_sent_at": "",
     "plan": "trial",
@@ -1831,6 +1832,7 @@ def build_status(profile, state=None):
         "grace_hours": grace_hours,
         "reminder_time": _reminder_times[0],
         "reminder_times": _reminder_times,
+        "daily_checkin_reminder_enabled": bool(profile.get("daily_checkin_reminder_enabled", True)),
         "checkin_mode": profile.get("checkin_mode", "manual"),
         "auto_checkin_on_open": bool(profile.get("auto_checkin_on_open", False)),
         "warning_cancel_minutes": warning_cancel_minutes,
@@ -2285,6 +2287,8 @@ def save_settings_for_profile(data_file, payload):
         profile["contact_capacity_reminder_enabled"] = bool(payload.get("contact_capacity_reminder_enabled"))
     if "guardian_details_reminder_enabled" in payload:
         profile["guardian_details_reminder_enabled"] = bool(payload.get("guardian_details_reminder_enabled"))
+    if "daily_checkin_reminder_enabled" in payload:
+        profile["daily_checkin_reminder_enabled"] = bool(payload.get("daily_checkin_reminder_enabled"))
     save_state(data_file, state)
     return build_status(profile)
 
@@ -5840,6 +5844,9 @@ def send_checkin_reminders(config):
         if user.get("line_push_blocked"):
             skipped += 1
             continue
+        if not bool(user.get("daily_checkin_reminder_enabled", True)):
+            skipped += 1
+            continue
         if profile_is_today_checked(user, config=config, now=now):
             # Heal missing Taipei history so later cron/status stay consistent
             hist = set(user.get("history") or [])
@@ -6075,8 +6082,8 @@ def normalize_smart_reminder(raw, index=0):
     except (TypeError, ValueError):
         year = None
     rid = str(raw.get("id") or "").strip() or f"sr_{secrets.token_hex(6)}"
-    notify_private = True if "notify_private" not in raw else bool(raw.get("notify_private"))
-    notify_group = bool(raw.get("notify_group")) if "notify_group" in raw else False
+    notify_private = True  # product: 智能提醒只走私訊
+    notify_group = False
     return {
         "id": rid,
         "target_name": str(raw.get("target_name") or "").strip() or f"對象{index + 1}",
@@ -6348,11 +6355,8 @@ def save_smart_reminder(data_file, payload):
             return {"ok": False, "error": "smart_reminder_limit"}, 400
         rows.append(reminder)
     profile["smart_reminders"] = rows
-    if isinstance(payload.get("defaults"), dict):
-        defaults = profile.get("smart_reminder_defaults") or {}
-        defaults["notify_private"] = bool(payload["defaults"].get("notify_private", True))
-        defaults["notify_group"] = bool(payload["defaults"].get("notify_group", False))
-        profile["smart_reminder_defaults"] = defaults
+    # 產品決策：智能提醒永遠只私訊，群組旗標固定關閉
+    profile["smart_reminder_defaults"] = {"notify_private": True, "notify_group": False}
     save_state(data_file, state)
     return {"ok": True, "reminder": reminder, "reminders": rows}, 200
 
@@ -6665,6 +6669,7 @@ def create_app(config=None):
             "reminder_time": times[0] if times else None,
             "reminder_times": times,
             "daily_reminders": daily_reminders,
+            "daily_checkin_reminder_enabled": bool(profile.get("daily_checkin_reminder_enabled", True)) if profile else True,
             "default_reminder_times": default_reminder_times_for_count(daily_reminders),
             "plan": profile.get("plan"),
             "is_onboarding_completed": setup_done,
@@ -6689,17 +6694,22 @@ def create_app(config=None):
             if not normalized:
                 return jsonify({"ok": False, "error": "invalid reminder_times format, use HH:MM"}), 400
             times = apply_reminder_times_to_profile(profile, times=normalized)
+            if "daily_checkin_reminder_enabled" in data:
+                profile["daily_checkin_reminder_enabled"] = bool(data.get("daily_checkin_reminder_enabled"))
         else:
             reminder_time = (data.get("reminder_time") or "").strip()
             if not REMINDER_TIME_PATTERN.match(reminder_time):
                 return jsonify({"ok": False, "error": "invalid reminder_time format, use HH:MM"}), 400
             times = apply_reminder_times_to_profile(profile, single=reminder_time)
+        if "daily_checkin_reminder_enabled" in data:
+            profile["daily_checkin_reminder_enabled"] = bool(data.get("daily_checkin_reminder_enabled"))
         save_state(app.config["DATA_FILE"], state)
         return jsonify({
             "ok": True,
             "reminder_time": times[0],
             "reminder_times": times,
             "daily_reminders": max_count,
+            "daily_checkin_reminder_enabled": bool(profile.get("daily_checkin_reminder_enabled", True)),
         })
 
     @app.get("/liff/guardian")

@@ -308,19 +308,22 @@
 </div>
 
 <div class="card" id="smartReminderCard">
-  <h2>智能提醒</h2>
-  <p class="hint" id="smartReminderHint">799 守護版：生日／紀念日／回診等生活提醒，預設只傳到 LINE 私訊。</p>
-  <div id="smartReminderUpgrade" class="lock-box" hidden>
-    <strong>智能提醒為 799 功能</strong>
-    <p>免費／399 可看說明；升級後可新增提醒。</p>
-    <a class="btn btn-primary" href="./pricing.html">查看 799 方案</a>
-  </div>
-  <div id="smartReminderControls" hidden>
-    <div id="smartReminderList"><div class="empty">載入中...</div></div>
-    <label class="check-row"><input type="checkbox" id="smartNotifyPrivate" checked disabled> 私訊提醒（預設）</label>
-    <label class="check-row"><input type="checkbox" id="smartNotifyGroup"> 群組提醒（選用，預設關）</label>
-    <div class="contact-actions">
-      <button class="btn btn-primary" type="button" id="addSmartReminderBtn">＋新增提醒</button>
+  <button class="btn" type="button" id="smartRemindersToggleBtn" aria-expanded="false" aria-controls="smartRemindersPanel" style="width:100%;display:flex;justify-content:space-between;align-items:center;font-weight:800;">
+    <span>智能提醒</span><span aria-hidden="true">›</span>
+  </button>
+  <div id="smartRemindersPanel" hidden style="margin-top:12px;">
+    <p class="hint" id="smartReminderHint">799 守護版：生日／紀念日／回診等生活提醒，只傳到 LINE 私訊。</p>
+    <div id="smartReminderUpgrade" class="lock-box" hidden>
+      <strong>智能提醒為 799 功能</strong>
+      <p>免費／399 可看說明；升級後可新增提醒。</p>
+      <a class="btn btn-primary" href="./pricing.html">查看 799 方案</a>
+    </div>
+    <div id="smartReminderControls" hidden>
+      <div id="smartReminderList"><div class="empty">載入中...</div></div>
+      <p class="hint">提醒方式：私訊（預設）</p>
+      <div class="contact-actions">
+        <button class="btn btn-primary" type="button" id="addSmartReminderBtn">＋新增提醒</button>
+      </div>
     </div>
   </div>
 </div>
@@ -338,8 +341,9 @@
 
 <!-- 每日提醒時間設定 -->
 <div class="card">
-  <h2>⏰ 每日提醒時間</h2>
+  <h2>⏰ 每日提醒</h2>
   <p class="hint" id="reminderHint">依方案設定每日提醒次數與時段。</p>
+  <label class="check-row"><input type="checkbox" id="dailyCheckinReminderEnabled" checked> 每日提醒開關</label>
   <div id="reminderSlots"></div>
   <button class="btn" type="button" id="useDefaultsBtn">使用方案預設時間</button>
   <div class="status-saved" id="statusSaved">✅ 已儲存!</div>
@@ -413,6 +417,7 @@ let state = {
   lineUserId: null,
   reminderTimes: ["12:00"],
   dailyReminders: 1,
+  dailyCheckinReminderEnabled: true,
   guardians: [],
   editId: null,
   plan: "trial"
@@ -499,6 +504,9 @@ async function init() {
     if (r1.ok) {
       const d = await r1.json();
       state.dailyReminders = Number(d.daily_reminders) || 1;
+      state.dailyCheckinReminderEnabled = d.daily_checkin_reminder_enabled !== false;
+      const dailyToggle = document.getElementById("dailyCheckinReminderEnabled");
+      if (dailyToggle) dailyToggle.checked = state.dailyCheckinReminderEnabled;
       state.reminderTimes = (d.reminder_times && d.reminder_times.length)
         ? d.reminder_times
         : (d.default_reminder_times || defaultTimesForCount(state.dailyReminders));
@@ -564,7 +572,6 @@ async function editSmartReminder(id) {
   const md = prompt("月/日", existing ? `${existing.month}/${existing.day}` : "7/24");
   if (md == null) return;
   const parts = String(md).split(/[\/\-.]/).map((x) => parseInt(x, 10));
-  const notifyGroup = Boolean(document.getElementById("smartNotifyGroup")?.checked);
   const res = await fetch(`${API_BASE}/api/smart-reminders`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -576,7 +583,7 @@ async function editSmartReminder(id) {
       month: parts[0] || 1,
       day: parts[1] || 1,
       notify_private: true,
-      notify_group: notifyGroup,
+      notify_group: false,
       eve_remind: true
     })
   });
@@ -832,6 +839,19 @@ if (reinviteGuardianBtn) {
 }
 const addSmartBtn = document.getElementById("addSmartReminderBtn");
 if (addSmartBtn) addSmartBtn.addEventListener("click", () => editSmartReminder(null));
+const smartToggle = document.getElementById("smartRemindersToggleBtn");
+const smartPanel = document.getElementById("smartRemindersPanel");
+if (smartToggle && smartPanel) {
+  smartToggle.addEventListener("click", () => {
+    const open = smartToggle.getAttribute("aria-expanded") !== "true";
+    smartPanel.hidden = !open;
+    smartToggle.setAttribute("aria-expanded", String(open));
+  });
+  if (location.hash === "#smart-reminders") {
+    smartPanel.hidden = false;
+    smartToggle.setAttribute("aria-expanded", "true");
+  }
+}
 const addEmergencyBtn = document.getElementById("addEmergencyBtn");
 if (addEmergencyBtn) {
   addEmergencyBtn.addEventListener("click", () => openEditor(null, "emergency"));
@@ -854,7 +874,8 @@ async function saveReminder() {
       body: JSON.stringify({
         line_user_id: state.lineUserId,
         reminder_times: times,
-        reminder_time: times[0]
+        reminder_time: times[0],
+        daily_checkin_reminder_enabled: Boolean(document.getElementById("dailyCheckinReminderEnabled")?.checked)
       })
     });
     if (res.ok) {

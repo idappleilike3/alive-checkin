@@ -305,6 +305,26 @@ class InviteButtonCleanupTests(unittest.TestCase):
         self.assertIn("免費延長 7 天", page)
         self.assertNotIn("shareInviteBtn", page)
         self.assertIn("智能提醒", page)
+        self.assertIn("smartRemindersPanel", page)
+        self.assertIn("dailyCheckinReminderEnabled", page)
+        self.assertNotIn("smartNotifyGroup", page)
+        self.assertNotIn("群組提醒", page)
+
+    def test_index_smart_remind_second_layer_and_home_padding(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="smartRemindersPanel"', page)
+        self.assertIn('id="smartRemindersToggleBtn"', page)
+        self.assertIn("dailyCheckinReminderEnabled", page)
+        self.assertNotIn("smartReminderNotifyGroup", page)
+        self.assertNotIn("群組提醒", page)
+        self.assertNotIn("選擇守護人", page)
+        self.assertIn("核心守護人", page)
+        self.assertIn("148px + env(safe-area-inset-bottom", page)
+        self.assertIn("220px + env(safe-area-inset-bottom", page)
+        self.assertIn("flex-direction: column", page)
+        self.assertIn("核心守護一鍵分享", page)
+        self.assertIn('id="coreGuardianShareBtn"', page)
+        self.assertIn('openShareInvitePage("guardians")', page)
 
 
 if __name__ == "__main__":

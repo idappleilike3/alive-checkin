@@ -34,14 +34,16 @@
     button, input, select { font: inherit; }
     .app {
       width: min(100%, 480px);
-      padding: 24px 18px 28px;
+      /* Extra bottom space so 下次提醒／banner clear bottom-nav + SOS FAB + safe-area */
+      padding: 24px 18px calc(220px + env(safe-area-inset-bottom, 0px));
       border-radius: 28px;
       text-align: center;
       box-shadow: 0 24px 70px rgba(24, 36, 58, 0.18);
       transition: background 0.35s ease, border-color 0.35s ease;
       position: relative;
       z-index: 1;
-      overflow: hidden;
+      overflow-x: hidden;
+      overflow-y: visible;
     }
     .app::before {
       content: "♡  ✦  ✿  ☁  ♡";
@@ -626,16 +628,80 @@
       line-height: 1.65;
     }
     .member-profile-row strong { display: block; color: #5b1535; font-size: 20px; line-height: 1.3; }
-    .member-profile-date,
-    .member-profile-plan {
+    .member-profile-date {
       display: block;
       margin: 0;
       color: #8a3f5f;
       font-size: 15px;
       line-height: 1.45;
-      word-break: keep-all;
-      overflow-wrap: normal;
-      white-space: nowrap;
+    }
+    .member-profile-plan {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2px;
+      margin: 0;
+      max-width: 100%;
+      color: #8a3f5f;
+      font-size: 15px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      white-space: normal;
+    }
+    .member-profile-plan #memberPlanText,
+    .member-profile-plan #memberExpiryText {
+      display: block;
+      max-width: 100%;
+    }
+    .member-subpanel-toggle {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border: 0;
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font: inherit;
+      font-size: 21px;
+      font-weight: 950;
+      cursor: pointer;
+      text-align: left;
+    }
+    .member-subpanel-toggle span[aria-hidden] {
+      color: #db2777;
+      font-size: 22px;
+      transition: transform 0.15s;
+    }
+    .member-subpanel-toggle[aria-expanded="true"] span[aria-hidden] {
+      transform: rotate(90deg);
+    }
+    .member-subpanel-body { margin-top: 10px; }
+    .member-subpanel-body[hidden] { display: none; }
+    .daily-remind-toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 8px 0 12px;
+      font-weight: 750;
+    }
+    .core-guardian-pick {
+      display: grid;
+      gap: 8px;
+      margin: 8px 0 12px;
+    }
+    .core-guardian-pick-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.7);
+      border: 1px solid var(--line);
     }
     .member-upgrade-btn {
       display: inline-flex;
@@ -2417,7 +2483,10 @@
     @media (max-width: 420px) {
       .plan-cards-six { grid-template-columns: 1fr; }
       body { padding: 10px; align-items: start; }
-      .app { border-radius: 22px; padding: 18px 12px 22px; }
+      .app {
+        border-radius: 22px;
+        padding: 18px 12px calc(240px + env(safe-area-inset-bottom, 0px));
+      }
       .check-btn { width: 168px; height: 168px; font-size: 23px; }
       .setting-row { grid-template-columns: 1fr; }
       .plan-strip, .contact-grid { grid-template-columns: 1fr; }
@@ -2468,7 +2537,9 @@
     /* === D01: SOS 浮動按鈕（低於 modal；modal 開啟時 pointer-events 會被關掉） === */
     .sos-fab {
       position: fixed;
-      bottom: 76px; right: 16px;
+      /* Clear bottom nav (~56px) + extra gap so Android 會員中心 不被誤觸 */
+      bottom: calc(148px + env(safe-area-inset-bottom, 0px));
+      right: 16px;
       width: 60px; height: 60px;
       border-radius: 50%;
       background: #dc2626;
@@ -2555,9 +2626,26 @@
       border-left: 5px solid #f59e0b;
     }
 
-    /* === D01: body padding for bottom nav === */
+    /* === D01: body padding for bottom nav + SOS FAB clearance === */
+    main.app,
+    main {
+      padding-bottom: calc(220px + env(safe-area-inset-bottom, 0px));
+    }
     @media (max-width: 768px) {
-      main { padding-bottom: 80px; }
+      main.app,
+      main {
+        padding-bottom: calc(240px + env(safe-area-inset-bottom, 0px));
+      }
+    }
+    .mvp-home {
+      padding-bottom: 28px;
+    }
+    .mvp-panel {
+      margin-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    }
+    .mvp-checkin-banner#mvpNextReminderBanner {
+      margin-bottom: 12px;
+      scroll-margin-bottom: calc(160px + env(safe-area-inset-bottom, 0px));
     }
 
     /* === D01: 守護群完成度提示卡內按鈕 full-width === */
@@ -2566,6 +2654,23 @@
     }
     .guardian-group-guide {
       text-align: left;
+    }
+    .core-guardian-group-block {
+      margin-bottom: 18px;
+      padding-bottom: 16px;
+      border-bottom: 2px solid #f9a8d4;
+    }
+    body.classic .core-guardian-group-block {
+      border-bottom-color: #86efac;
+    }
+    .core-guardian-group-block .guardian-group-link-row {
+      margin-top: 12px;
+    }
+    .core-guardian-group-block #coreGuardianShareBtn {
+      width: 100%;
+      min-height: 52px;
+      font-size: 18px;
+      font-weight: 900;
     }
     .guardian-group-guide .settings-title {
       font-size: 26px;
@@ -2675,6 +2780,7 @@
       position: relative;
       z-index: 2;
       margin-bottom: 12px;
+      padding-bottom: 28px;
       text-align: center;
     }
     .mvp-brand {
@@ -3732,6 +3838,13 @@
     </section>
 
     <section class="settings guardian-group-guide" aria-label="守護群設定教學">
+      <div class="core-guardian-group-block" id="coreGuardianGroupBlock">
+        <div class="settings-title">核心守護群</div>
+        <div class="guardian-group-guide-intro">先邀請核心守護人完成 LINE 綁定，對方才收得到未報平安、SOS 與安全守護通知。再依下方步驟建立／綁定 LINE 守護群。</div>
+        <div class="guardian-group-link-row">
+          <button class="action-btn primary" id="coreGuardianShareBtn" type="button">核心守護一鍵分享</button>
+        </div>
+      </div>
       <div class="settings-title">LINE 守護群設定</div>
       <div class="guardian-group-guide-intro">不用填群組代碼。請先在 LINE 建立家人群組，再把「每日平安」官方帳號邀進群。完成後由管理員點選或輸入綁定指令即可啟用。</div>
       <div class="guardian-group-steps">
@@ -3770,7 +3883,7 @@
           <div class="member-profile-info">
             <strong id="memberDisplayName">LINE 會員</strong>
             <small id="todayDateText" class="member-profile-date">今天：載入中</small>
-            <small class="member-profile-plan"><span id="memberPlanText">安心體驗</span>｜<span id="memberExpiryText">尚未設定到期日</span></small>
+            <small class="member-profile-plan"><span id="memberPlanText">安心體驗</span><span id="memberExpiryText">尚未設定到期日</span></small>
           </div>
           <button class="member-upgrade-btn" id="memberUpgradeBtn" type="button">立即升級 <span aria-hidden="true">→</span></button>
         </div>
@@ -3834,28 +3947,40 @@
           </div>
         </div>
 
-        <div class="member-data-section" id="memberSmartRemindersSection">
-          <h3>智能提醒</h3>
-          <p class="helper" id="smartReminderHint">799 守護版：生日／紀念日／回診等生活提醒，預設只傳到 LINE 私訊（不進守護群）。</p>
-          <div id="smartReminderUpgrade" class="member-limit-banner" hidden>
-            <strong>智能提醒為 799 功能</strong>
-            <p>免費／399 僅可看說明。升級 799 後可新增提醒，系統會在到期日早上私訊你。</p>
-            <button class="action-btn primary" id="smartReminderUpgradeBtn" type="button">查看 799 方案</button>
+        <div class="member-data-section" id="memberDailyReminderSection">
+          <h3>每日提醒</h3>
+          <p class="helper" id="dailyReminderPlanHint">依方案設定每日提醒次數與時段。</p>
+          <label class="daily-remind-toggle-row" for="dailyCheckinReminderEnabled">
+            <input type="checkbox" id="dailyCheckinReminderEnabled" checked>
+            <span>每日提醒開關（開啟後依方案次數推播報平安提醒）</span>
+          </label>
+          <div id="memberDailyReminderSlots"></div>
+          <div class="member-data-actions" style="margin-top:10px;">
+            <button class="action-btn" id="memberDailyReminderDefaultsBtn" type="button">使用方案預設時間</button>
+            <button class="action-btn primary" id="saveDailyReminderBtn" type="button">儲存每日提醒</button>
           </div>
-          <div id="smartReminderControls" hidden>
-            <div class="member-data-list" id="smartReminderList">
-              <div class="member-data-row"><span>目前狀態</span><strong>尚未新增提醒</strong></div>
+        </div>
+
+        <div class="member-data-section" id="memberSmartRemindersSection">
+          <button class="member-subpanel-toggle" id="smartRemindersToggleBtn" type="button" aria-expanded="false" aria-controls="smartRemindersPanel">
+            智能提醒
+            <span aria-hidden="true">›</span>
+          </button>
+          <div class="member-subpanel-body" id="smartRemindersPanel" hidden>
+            <p class="helper" id="smartReminderHint">799 守護版：生日／紀念日／回診等生活提醒，只傳到 LINE 私訊。</p>
+            <div id="smartReminderUpgrade" class="member-limit-banner" hidden>
+              <strong>智能提醒為 799 功能</strong>
+              <p>免費／399 僅可看說明。升級 799 後可新增提醒，系統會在到期日早上私訊你。</p>
+              <button class="action-btn primary" id="smartReminderUpgradeBtn" type="button">查看 799 方案</button>
             </div>
-            <label class="check-row" style="display:flex;gap:8px;align-items:center;margin:8px 0;">
-              <input type="checkbox" id="smartReminderNotifyPrivate" checked disabled>
-              <span>☑ 私訊提醒（預設，建議）</span>
-            </label>
-            <label class="check-row" style="display:flex;gap:8px;align-items:center;margin:8px 0;">
-              <input type="checkbox" id="smartReminderNotifyGroup">
-              <span>☐ 群組提醒（選用；預設關閉，為隱私仍建議私訊）</span>
-            </label>
-            <div class="member-data-actions">
-              <button class="action-btn primary" id="smartReminderAddBtn" type="button">＋新增提醒</button>
+            <div id="smartReminderControls" hidden>
+              <div class="member-data-list" id="smartReminderList">
+                <div class="member-data-row"><span>目前狀態</span><strong>尚未新增提醒</strong></div>
+              </div>
+              <p class="helper" style="margin:8px 0;">提醒方式：私訊（預設）</p>
+              <div class="member-data-actions">
+                <button class="action-btn primary" id="smartReminderAddBtn" type="button">＋新增提醒</button>
+              </div>
             </div>
           </div>
         </div>
@@ -3876,13 +4001,12 @@
         </div>
 
         <div class="member-data-section" id="guardianDetails799" hidden>
-          <h3>我的守護資料</h3>
-          <div class="helper">799 方案請至少完成 1 位守護人的姓名、關係與電話。電話只會用於緊急通知，不會拿來做廣告。</div>
+          <h3>核心守護人</h3>
+          <div class="helper">從已綁定守護人指定核心（緊急時優先通知）。下方只需補齊姓名、關係與電話一次。</div>
+          <div class="core-guardian-pick" id="memberCoreGuardianPick"></div>
           <div class="guardian-details-status" id="guardianDetailsStatus">尚未完成必要資料</div>
-          <div class="guardian-details-form">
-            <label class="form-field" for="guardianDetailsContact"><span>選擇守護人</span>
-              <select id="guardianDetailsContact" aria-label="選擇已綁定守護人"></select>
-            </label>
+          <div class="guardian-details-form" id="guardianDetailsFormBlock">
+            <input type="hidden" id="guardianDetailsContact" value="">
             <label class="form-field" for="guardianDetailsName"><span>姓名</span>
               <input id="guardianDetailsName" placeholder="守護人姓名或暱稱" autocomplete="name">
             </label>
@@ -3915,11 +4039,8 @@
               </select>
               <input id="guardianDetailsRelationshipOther" class="relationship-other" placeholder="請輸入關係" hidden>
             </label>
-            <label class="form-field" for="guardianDetailsPhone"><span>手機</span>
+            <label class="form-field" for="guardianDetailsPhone"><span>電話</span>
               <input id="guardianDetailsPhone" type="tel" inputmode="tel" placeholder="守護人聯絡電話" autocomplete="tel">
-            </label>
-            <label class="form-field" for="guardianDetailsEmail"><span>EMAIL（選填）</span>
-              <input id="guardianDetailsEmail" type="email" inputmode="email" placeholder="name@example.com" autocomplete="email">
             </label>
           </div>
           <label class="setting-choice" for="guardianDetailsReminderEnabled">
@@ -5430,7 +5551,7 @@
               <div class="member-guardian-manage-meta">
                 <span class="guardian-manage-name">${escapeHtml(r.emoji || "🗓️")} ${escapeHtml(r.target_name || "")}</span>
                 <span>${escapeHtml(r.category_label || r.category || "")} ／ ${escapeHtml(String(r.month || ""))}/${escapeHtml(String(r.day || ""))}</span>
-                <small>${r.notify_private !== false ? "私訊✓" : "私訊關"}${r.notify_group ? "｜群組✓" : "｜群組關"}</small>
+                <small>私訊</small>
               </div>
               <div class="member-guardian-manage-actions">
                 <button class="action-btn smart-edit-btn" type="button" data-id="${escapeHtml(r.id)}">編輯</button>
@@ -5444,8 +5565,6 @@
         listEl.querySelectorAll(".smart-delete-btn").forEach((btn) => {
           btn.addEventListener("click", () => deleteSmartReminder(btn.dataset.id));
         });
-        const groupCb = $("smartReminderNotifyGroup");
-        if (groupCb && data.defaults) groupCb.checked = Boolean(data.defaults.notify_group);
       } catch (err) {
         console.warn("smart reminders load failed", err);
       }
@@ -5468,7 +5587,6 @@
       const month = parts[0] || 1;
       const day = parts[1] || 1;
       const note = prompt("備註（可留空）", existing ? (existing.note || "") : "") || "";
-      const notifyGroup = Boolean($("smartReminderNotifyGroup") && $("smartReminderNotifyGroup").checked);
       saveSmartReminder({
         id: existing ? existing.id : undefined,
         target_name: String(name).trim() || "家人",
@@ -5477,9 +5595,9 @@
         day,
         note,
         notify_private: true,
-        notify_group: notifyGroup,
+        notify_group: false,
         eve_remind: true,
-        defaults: { notify_private: true, notify_group: notifyGroup }
+        defaults: { notify_private: true, notify_group: false }
       });
     }
 
@@ -5658,6 +5776,7 @@
             `方案已到期：守護人與聯絡人資料尚可保留約 ${status.contacts_retain_days_left} 天（之後將軟封存）。每成功邀請 1 位新守護人仍可延長免費使用。`;
         }
       }
+      renderMemberDailyReminderUi();
       $("memberGuardianList").innerHTML = renderContactManageRows(guardians, "尚未綁定守護人");
       const emergencyList = $("memberEmergencyList");
       if (emergencyList) {
@@ -5783,14 +5902,71 @@
       );
     }
 
+    function guardianDetailsTargetIndex() {
+      const hidden = $("guardianDetailsContact");
+      const idx = Number(hidden && hidden.value);
+      if (Number.isInteger(idx) && contactData[idx]) return idx;
+      const bound = contactData
+        .map((contact, index) => ({ contact, index }))
+        .filter(({ contact }) => isContactBound(contact) && contactRoleOf(contact) !== "emergency");
+      if (!bound.length) return -1;
+      const incomplete = bound.find(({ contact }) => !guardianDetailsComplete(contact));
+      const primary = bound.find(({ contact }) => contact.is_primary);
+      return (incomplete || primary || bound[0]).index;
+    }
+
     function populateGuardianDetailsForm() {
-      const select = $("guardianDetailsContact");
-      const index = Number(select.value);
-      const contact = Number.isInteger(index) ? contactData[index] : null;
-      $("guardianDetailsName").value = contact?.name || "";
+      const index = guardianDetailsTargetIndex();
+      const contact = index >= 0 ? contactData[index] : null;
+      const hidden = $("guardianDetailsContact");
+      if (hidden) hidden.value = index >= 0 ? String(index) : "";
+      if ($("guardianDetailsName")) $("guardianDetailsName").value = contact?.name || "";
       setRelationshipValue("guardianDetailsRelation", "guardianDetailsRelationshipOther", contact?.relationship || "");
-      $("guardianDetailsPhone").value = contact?.phone || "";
-      if ($("guardianDetailsEmail")) $("guardianDetailsEmail").value = contact?.email || "";
+      if ($("guardianDetailsPhone")) $("guardianDetailsPhone").value = contact?.phone || "";
+    }
+
+    function renderCoreGuardianPick() {
+      const host = $("memberCoreGuardianPick");
+      if (!host) return;
+      const bound = contactData
+        .map((contact, index) => ({ contact, index }))
+        .filter(({ contact }) => isContactBound(contact) && contactRoleOf(contact) !== "emergency");
+      if (!bound.length) {
+        host.innerHTML = `<div class="helper">請先完成 LINE 守護人綁定，才能指定核心守護人。</div>`;
+        return;
+      }
+      host.innerHTML = bound.map(({ contact, index }) => {
+        const nick = contactPeerDisplayName(contact);
+        const isCore = Boolean(contact.is_primary);
+        return `<div class="core-guardian-pick-row" data-index="${index}">
+          <div><strong>${escapeHtml(nick)}</strong>
+            <div class="helper" style="margin:0;">${escapeHtml(contact.relationship || "關係未設定")}${isCore ? " ／ 核心" : ""}</div>
+          </div>
+          <button class="action-btn ${isCore ? "primary" : ""} core-set-primary-btn" type="button" data-id="${escapeHtml(contact.id || "")}" ${isCore ? "disabled" : ""}>
+            ${isCore ? "目前核心" : "設為核心"}
+          </button>
+        </div>`;
+      }).join("");
+      host.querySelectorAll(".core-set-primary-btn").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.dataset.id;
+          const idx = contactData.findIndex((c) => String(c.id || "") === String(id));
+          if (idx < 0) return;
+          contactData = contactData.map((c, i) => ({
+            ...c,
+            is_primary: i === idx && contactRoleOf(c) !== "emergency"
+          }));
+          try {
+            const saved = await apiSaveContacts(false);
+            contactData = saved.contacts || contactData;
+            renderContacts();
+            renderGuardianDetailsEditor();
+            showInlineSuccess("已更新核心守護人");
+          } catch (err) {
+            alert(err.message || "無法更新核心守護人");
+          }
+        });
+      });
     }
 
     function renderGuardianDetailsEditor() {
@@ -5802,40 +5978,41 @@
 
       const boundContacts = contactData
         .map((contact, index) => ({ contact, index }))
-        .filter(({ contact }) => contact.line_id || contact.consent_status === "accepted");
-      const select = $("guardianDetailsContact");
-      const previousValue = select.value;
-      select.innerHTML = boundContacts.length
-        ? boundContacts.map(({ contact, index }) => `<option value="${index}">${escapeHtml(contact.name || `守護人 ${index + 1}`)}</option>`).join("")
-        : `<option value="">請先完成 LINE 守護人綁定</option>`;
-      select.disabled = !boundContacts.length;
-      if (boundContacts.some(({ index }) => String(index) === previousValue)) select.value = previousValue;
-      $("guardianDetailsReminderEnabled").checked = status.guardian_details_reminder_enabled !== false;
+        .filter(({ contact }) => isContactBound(contact) && contactRoleOf(contact) !== "emergency");
+      renderCoreGuardianPick();
+      if ($("guardianDetailsReminderEnabled")) {
+        $("guardianDetailsReminderEnabled").checked = status.guardian_details_reminder_enabled !== false;
+      }
 
       const completeCount = boundContacts.filter(({ contact }) => guardianDetailsComplete(contact)).length;
-      $("guardianDetailsStatus").textContent = completeCount
-        ? `已完成 ${completeCount} 位守護人必要資料`
-        : "請至少完成 1 位守護人的姓名、關係與電話";
+      const statusEl = $("guardianDetailsStatus");
+      if (statusEl) {
+        statusEl.textContent = !boundContacts.length
+          ? "請先完成 LINE 守護人綁定"
+          : completeCount
+            ? `已完成 ${completeCount} 位守護人必要資料`
+            : "請補齊至少 1 位核心守護人的姓名、關係與電話";
+      }
+      const formBlock = $("guardianDetailsFormBlock");
+      if (formBlock) formBlock.hidden = !boundContacts.length;
       populateGuardianDetailsForm();
     }
 
     async function saveGuardianDetails() {
-      const select = $("guardianDetailsContact");
-      const index = Number(select.value);
-      if (!Number.isInteger(index) || !contactData[index]) {
+      const index = guardianDetailsTargetIndex();
+      if (index < 0 || !contactData[index]) {
         alert("請先用 LINE 邀請並綁定至少 1 位守護人。");
         return;
       }
       const name = $("guardianDetailsName").value.trim();
       const relationship = readRelationship("guardianDetailsRelation", "guardianDetailsRelationshipOther");
       const phone = $("guardianDetailsPhone").value.trim();
-      const email = $("guardianDetailsEmail") ? $("guardianDetailsEmail").value.trim() : (contactData[index].email || "");
       if (!name || !relationship || !phone) {
         alert("請填寫守護人姓名、關係與聯絡電話。");
         return;
       }
 
-      contactData[index] = { ...contactData[index], name, relationship, phone, email };
+      contactData[index] = { ...contactData[index], name, relationship, phone };
       try {
         const savedContacts = await apiSaveContacts(true);
         contactData = savedContacts.contacts || contactData;
@@ -5846,13 +6023,89 @@
           reminder_time: status.reminder_time || "12:00",
           reminder_times: status.reminder_times || [status.reminder_time || "12:00"],
           contact_capacity_reminder_enabled: Boolean(status.contact_capacity_reminder_enabled),
-          guardian_details_reminder_enabled: $("guardianDetailsReminderEnabled").checked
+          guardian_details_reminder_enabled: $("guardianDetailsReminderEnabled").checked,
+          daily_checkin_reminder_enabled: status.daily_checkin_reminder_enabled !== false
         });
         renderContacts();
         renderStatus(savedStatus);
         alert("守護資料已儲存。緊急時會依你設定的順序通知守護人。");
       } catch (error) {
         alert(error.message || "守護資料儲存失敗，請稍後再試。");
+      }
+    }
+
+    function defaultTimesForDailyCount(count) {
+      const map = { 1: ["12:00"], 2: ["12:00", "18:00"], 3: ["12:00", "18:00", "22:00"] };
+      const n = Math.max(1, Math.min(3, Number(count) || 1));
+      return (map[n] || map[1]).slice();
+    }
+
+    function renderMemberDailyReminderUi() {
+      const status = currentStatusData || {};
+      const count = Math.max(1, Math.min(3, Number(status.daily_reminders) || 1));
+      const hint = $("dailyReminderPlanHint");
+      if (hint) {
+        hint.textContent = `本方案每日最多 ${count} 次提醒（例如 799 最多 3 次）。關閉後不再推播每日報平安提醒。`;
+      }
+      const toggle = $("dailyCheckinReminderEnabled");
+      if (toggle) toggle.checked = status.daily_checkin_reminder_enabled !== false;
+      const host = $("memberDailyReminderSlots");
+      if (!host) return;
+      const times = (Array.isArray(status.reminder_times) && status.reminder_times.length
+        ? status.reminder_times
+        : defaultTimesForDailyCount(count)).slice(0, count);
+      while (times.length < count) times.push(defaultTimesForDailyCount(count)[times.length] || "12:00");
+      host.innerHTML = times.map((time, index) => `
+        <label class="form-field" for="memberDailyReminder${index}" style="display:grid;gap:6px;margin-bottom:8px;">
+          <span>第 ${index + 1} 次提醒</span>
+          <input type="time" id="memberDailyReminder${index}" value="${escapeHtml(time)}">
+        </label>`).join("");
+      host.style.opacity = toggle && !toggle.checked ? "0.45" : "1";
+      host.querySelectorAll("input").forEach((el) => { el.disabled = Boolean(toggle && !toggle.checked); });
+    }
+
+    async function saveMemberDailyReminder() {
+      const status = currentStatusData || {};
+      const count = Math.max(1, Math.min(3, Number(status.daily_reminders) || 1));
+      const enabled = Boolean($("dailyCheckinReminderEnabled") && $("dailyCheckinReminderEnabled").checked);
+      const times = [];
+      for (let i = 0; i < count; i++) {
+        const el = $(`memberDailyReminder${i}`);
+        if (el && el.value) times.push(el.value);
+      }
+      const reminderTimes = times.length ? times : defaultTimesForDailyCount(count);
+      try {
+        const saved = await apiSaveSettings({
+          contact_email: status.contact_email || "",
+          grace_hours: status.grace_hours || 36,
+          reminder_time: reminderTimes[0],
+          reminder_times: reminderTimes,
+          daily_checkin_reminder_enabled: enabled,
+          contact_capacity_reminder_enabled: Boolean(status.contact_capacity_reminder_enabled),
+          guardian_details_reminder_enabled: status.guardian_details_reminder_enabled !== false
+        });
+        renderStatus(saved);
+        showInlineSuccess(enabled ? "每日提醒已儲存" : "已關閉每日提醒");
+      } catch (err) {
+        alert(err.message || "每日提醒儲存失敗");
+      }
+    }
+
+    function setSmartRemindersExpanded(expanded) {
+      const btn = $("smartRemindersToggleBtn");
+      const panel = $("smartRemindersPanel");
+      if (!btn || !panel) return;
+      panel.hidden = !expanded;
+      btn.setAttribute("aria-expanded", String(expanded));
+    }
+
+    function openSmartRemindersSecondLayer() {
+      if (typeof showTab === "function") showTab("member");
+      setMemberCenterExpanded(true);
+      setSmartRemindersExpanded(true);
+      const section = $("memberSmartRemindersSection");
+      if (section && section.scrollIntoView) {
+        setTimeout(() => section.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
       }
     }
 
@@ -5908,7 +6161,7 @@
     function currentShareReturnHash() {
       const hash = String(location.hash || "").replace(/^#/, "").trim().toLowerCase();
       if (hash === "member" || hash === "guardians" || hash === "settings" || hash === "home") {
-        return hash === "guardians" ? "member" : hash;
+        return hash;
       }
       const mvpGuard = $("mvpGuardPanel");
       if (mvpGuard && !mvpGuard.hidden) return "home";
@@ -8789,14 +9042,18 @@
         });
       });
       // hash 變化(直接打 URL)
-      window.addEventListener("hashchange", () => {
-        const h = location.hash.replace("#", "") || "home";
+      const applyHashRoute = () => {
+        const raw = (location.hash || "").replace(/^#/, "");
+        if (raw === "smart-reminders" || raw === "smart_reminders") {
+          openSmartRemindersSecondLayer();
+          return;
+        }
+        const h = raw || "home";
         showTab(["home", "guardians", "history", "member"].includes(h) ? h : "home");
-      });
-      // 初始 tab
-      const requestedTab = location.hash.replace("#", "") || "home";
-      const initial = ["home", "guardians", "history", "member"].includes(requestedTab) ? requestedTab : "home";
-      showTab(initial);
+        if (h === "member") setMemberCenterExpanded(true);
+      };
+      window.addEventListener("hashchange", applyHashRoute);
+      applyHashRoute();
     }
 
     const SOS_HOLD_DURATION_MS = 3000;
@@ -8947,6 +9204,10 @@
     document.querySelectorAll(".share-contact-invite-btn").forEach((button) => {
       button.addEventListener("click", shareContactInvite);
     });
+    const coreGuardianShareBtn = $("coreGuardianShareBtn");
+    if (coreGuardianShareBtn) {
+      coreGuardianShareBtn.addEventListener("click", () => openShareInvitePage("guardians"));
+    }
     const shareFallbackCloseBtn = $("shareInviteFallbackCloseBtn");
     const shareFallbackRetryBtn = $("shareInviteFallbackRetryBtn");
     if (shareFallbackCloseBtn) shareFallbackCloseBtn.addEventListener("click", closeShareInviteFallbackModal);
@@ -9019,8 +9280,28 @@
     }
     const memberShareGuardianBtn = $("memberShareGuardianBtn");
     if (memberShareGuardianBtn) memberShareGuardianBtn.addEventListener("click", shareContactInvite);
-    $("guardianDetailsContact").addEventListener("change", populateGuardianDetailsForm);
-    $("saveGuardianDetailsBtn").addEventListener("click", saveGuardianDetails);
+    const saveGuardianDetailsBtn = $("saveGuardianDetailsBtn");
+    if (saveGuardianDetailsBtn) saveGuardianDetailsBtn.addEventListener("click", saveGuardianDetails);
+    const smartRemindersToggleBtn = $("smartRemindersToggleBtn");
+    if (smartRemindersToggleBtn) {
+      smartRemindersToggleBtn.addEventListener("click", () => {
+        const open = smartRemindersToggleBtn.getAttribute("aria-expanded") !== "true";
+        setSmartRemindersExpanded(open);
+      });
+    }
+    const dailyToggle = $("dailyCheckinReminderEnabled");
+    if (dailyToggle) dailyToggle.addEventListener("change", renderMemberDailyReminderUi);
+    const dailyDefaultsBtn = $("memberDailyReminderDefaultsBtn");
+    if (dailyDefaultsBtn) {
+      dailyDefaultsBtn.addEventListener("click", () => {
+        const status = currentStatusData || {};
+        const count = Math.max(1, Math.min(3, Number(status.daily_reminders) || 1));
+        if (currentStatusData) currentStatusData.reminder_times = defaultTimesForDailyCount(count);
+        renderMemberDailyReminderUi();
+      });
+    }
+    const saveDailyReminderBtn = $("saveDailyReminderBtn");
+    if (saveDailyReminderBtn) saveDailyReminderBtn.addEventListener("click", saveMemberDailyReminder);
     $("guardianGroupsList").addEventListener("click", (event) => {
       const button = event.target.closest(".guardian-group-unbind");
       if (button) unbindGuardianGroup(button.dataset.groupId);

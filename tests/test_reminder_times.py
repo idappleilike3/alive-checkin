@@ -94,6 +94,38 @@ class ReminderTimesTests(unittest.TestCase):
             self.assertEqual(slots2, ["12:00", "18:00"])
             self.assertIn("2026-07-22", reloaded2["users"]["U1"]["checkin_reminder_sent_dates"])
 
+    def test_send_checkin_reminders_skips_when_daily_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_file = Path(tmp) / "state.json"
+            sent_messages = []
+
+            def fake_push(token, user_id, message):
+                sent_messages.append((user_id, message))
+                return {"ok": True}
+
+            state = {
+                "users": {
+                    "U1": {
+                        "line_user_id": "U1",
+                        "plan": "paid_199",
+                        "reminder_times": ["12:00"],
+                        "daily_checkin_reminder_enabled": False,
+                        "history": [],
+                    }
+                }
+            }
+            alive_app.save_state(data_file, state)
+            config = {
+                "DATA_FILE": str(data_file),
+                "LINE_CHANNEL_ACCESS_TOKEN": "x",
+                "LINE_PUSH_SENDER": fake_push,
+                "CRON_NOW": datetime(2026, 7, 22, 12, 5),
+            }
+            result, code = alive_app.send_checkin_reminders(config)
+            self.assertEqual(code, 200)
+            self.assertEqual(result["sent"], 0)
+            self.assertEqual(sent_messages, [])
+
 
 if __name__ == "__main__":
     unittest.main()
