@@ -600,6 +600,80 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertTrue(dry["dry_run"])
         self.assertEqual(dry["pairs_notified"], 0)
 
+    def test_reverse_invite_preview_and_mutual_core_bind(self):
+        """媽媽已綁女兒後，女兒反向邀請媽媽 → is_reverse + 可互設核心。"""
+        first, code1 = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-mom",
+                "contact_line_user_id": "U-daughter",
+                "contact_display_name": "女兒",
+            },
+            config={},
+        )
+        self.assertEqual(code1, 200)
+        self.assertFalse(first.get("is_reverse_invite"))
+
+        state = app_module.load_state(self.data_file)
+        state["users"]["U-mom"]["display_name"] = "媽媽"
+        state["users"]["U-daughter"]["display_name"] = "女兒"
+        app_module.save_state(self.data_file, state)
+
+        preview, pcode = app_module.invite_bind_preview(
+            self.data_file,
+            {"invite_from": "U-daughter", "line_user_id": "U-mom"},
+        )
+        self.assertEqual(pcode, 200)
+        self.assertTrue(preview["is_reverse_invite"])
+        self.assertEqual(preview["inviter_display_name"], "女兒")
+        self.assertIn("已是你的守護對象", preview["message"])
+
+        preview2, pcode2 = app_module.invite_bind_preview(
+            self.data_file,
+            {"invite_from": "U-stranger", "line_user_id": "U-mom"},
+        )
+        self.assertEqual(pcode2, 200)
+        self.assertFalse(preview2["is_reverse_invite"])
+
+        second, code2 = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-daughter",
+                "contact_line_user_id": "U-mom",
+                "contact_display_name": "媽媽",
+                "mutual_core": True,
+            },
+            config={},
+        )
+        self.assertEqual(code2, 200)
+        self.assertTrue(second["is_reverse_invite"])
+        self.assertTrue(second["mutual_core_requested"])
+        self.assertTrue(second["mutual_core_applied"])
+        self.assertIn("互綁完成", second["message"])
+
+        state2 = app_module.load_state(self.data_file)
+        mom = state2["users"]["U-mom"]
+        daughter = state2["users"]["U-daughter"]
+        mom_on_daughter = next(
+            c for c in daughter["contacts"] if app_module.get_contact_line_id(c) == "U-mom"
+        )
+        self.assertTrue(mom_on_daughter.get("is_primary"))
+        daughter_on_mom = next(
+            c for c in mom["contacts"] if app_module.get_contact_line_id(c) == "U-daughter"
+        )
+        self.assertTrue(daughter_on_mom.get("is_primary"))
+        self.assertIn("U-daughter", mom.get("guarding_for") or [])
+        self.assertIn("U-mom", daughter.get("guarding_for") or [])
+
+    def test_spa_has_mutual_core_invite_ui(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn("mutualCoreCheckbox", page)
+        self.assertIn("同時互相設為核心守護人", page)
+        self.assertIn("apiInviteBindPreview", page)
+        self.assertIn("確認互相設為守護人", page)
+        self.assertIn("is_reverse_invite", page)
+        self.assertIn("mutual_core", page)
+
 
 if __name__ == "__main__":
     unittest.main()

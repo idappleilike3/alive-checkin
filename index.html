@@ -2142,6 +2142,19 @@
       -webkit-user-select: none;
       user-select: none;
     }
+    #inviteAcceptPrompt .mutual-core-option {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin: 12px 0 4px;
+      text-align: left;
+      font-size: 14px;
+      line-height: 1.4;
+      color: #334155;
+    }
+    #inviteAcceptPrompt .mutual-core-option[hidden] {
+      display: none !important;
+    }
     .warning-modal {
       border: 0;
       background: linear-gradient(145deg, #991b1b, #ef4444);
@@ -4147,8 +4160,12 @@
   <div class="modal-backdrop" id="inviteAcceptPrompt" hidden>
     <div class="guardian-modal">
       <div class="line-trust"><span class="line-logo">LINE</span> LINE 官方授權綁定</div>
-      <h2>您收到一位親友的守護邀請</h2>
-      <p>點擊同意即可在緊急時接收位置通知，無需下載 APP。您只會收到這位親友的安全守護提醒，不會被公開個人資料。</p>
+      <h2 id="inviteAcceptTitle">您收到一位親友的守護邀請</h2>
+      <p id="inviteAcceptBody">點擊同意即可在緊急時接收位置通知，無需下載 APP。您只會收到這位親友的安全守護提醒，不會被公開個人資料。</p>
+      <label class="setting-choice mutual-core-option" id="mutualCoreOption" hidden for="mutualCoreCheckbox">
+        <input type="checkbox" id="mutualCoreCheckbox">
+        <span>同時互相設為核心守護人</span>
+      </label>
       <button class="agree-btn" id="acceptGuardianInviteBtn" type="button">同意成為守護人</button>
     </div>
   </div>
@@ -4894,17 +4911,21 @@
       return { bindUrl, fallbackUrl, text };
     }
 
-    async function apiBindEmergencyContact(inviterLineUserId) {
+    async function apiBindEmergencyContact(inviterLineUserId, options = {}) {
       if (useLocalMode || !lineUserId || !inviterLineUserId || inviterLineUserId === lineUserId) return null;
+      const body = {
+        inviter_line_user_id: inviterLineUserId,
+        contact_line_user_id: lineUserId,
+        contact_display_name: lineDisplayName || "LINE 聯絡人",
+        contact_picture_url: linePictureUrl || (currentStatusData && currentStatusData.picture_url) || ""
+      };
+      if (options && options.mutual_core) {
+        body.mutual_core = true;
+      }
       const res = await fetch("/api/emergency-contact/bind", {
         method: "POST",
         headers: await authHeaders(),
-        body: JSON.stringify({
-          inviter_line_user_id: inviterLineUserId,
-          contact_line_user_id: lineUserId,
-          contact_display_name: lineDisplayName || "LINE 聯絡人",
-          contact_picture_url: linePictureUrl || (currentStatusData && currentStatusData.picture_url) || ""
-        })
+        body: JSON.stringify(body)
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -4917,6 +4938,29 @@
           throw err;
         }
         throw new Error(data.message || data.error || "綁定失敗，請稍後再試");
+      }
+      return data;
+    }
+
+    async function apiInviteBindPreview(inviterLineUserId) {
+      if (useLocalMode || !lineUserId || !inviterLineUserId || inviterLineUserId === lineUserId) {
+        return { ok: true, is_reverse_invite: false, inviter_display_name: "親友" };
+      }
+      const qs = new URLSearchParams({
+        invite_from: inviterLineUserId,
+        line_user_id: lineUserId,
+      });
+      const res = await fetch(await withAuthQuery(`/api/emergency-contact/invite-preview?${qs.toString()}`), {
+        headers: await authHeaders(),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          ok: false,
+          is_reverse_invite: false,
+          inviter_display_name: "親友",
+          error: data.error || data.message || "preview failed",
+        };
       }
       return data;
     }
@@ -6093,14 +6137,15 @@
      * 擋住 Android 雙擊、自動綁定 + 同意按鈕雙路徑、URL 殘留重入。
      * 已綁定／名額已滿：友善中文，不顯示英文 contact_limit exceeded。
      */
-    async function completeGuardianBindOnce(inviteFromRaw) {
+    async function completeGuardianBindOnce(inviteFromRaw, options = {}) {
       const inviteFrom = sanitizeInviteUserId(inviteFromRaw || getAppParam("invite_from"));
       if (bindDone) return { bound: true, already_bound: true, skipped: true };
       if (bindInFlight) return { bound: false, skipped: true, inFlight: true };
       if (!inviteFrom || inviteFrom === lineUserId) return null;
       bindInFlight = true;
       try {
-        const bindResult = await apiBindEmergencyContact(inviteFrom);
+        const mutualCore = Boolean(options && options.mutual_core);
+        const bindResult = await apiBindEmergencyContact(inviteFrom, { mutual_core: mutualCore });
         if (bindResult?.bound || bindResult?.already_bound || bindResult?.ok) {
           bindDone = true;
           clearInviteFromUrl();
@@ -6132,15 +6177,55 @@
       }
     }
 
-    function maybeShowInviteAcceptPrompt() {
+    function resetInviteAcceptPromptUi() {
+      const titleEl = $("inviteAcceptTitle");
+      const bodyEl = $("inviteAcceptBody");
+      const optionEl = $("mutualCoreOption");
+      const checkEl = $("mutualCoreCheckbox");
+      const btn = $("acceptGuardianInviteBtn");
+      if (titleEl) titleEl.textContent = "您收到一位親友的守護邀請";
+      if (bodyEl) {
+        bodyEl.textContent = "點擊同意即可在緊急時接收位置通知，無需下載 APP。您只會收到這位親友的安全守護提醒，不會被公開個人資料。";
+      }
+      if (optionEl) optionEl.hidden = true;
+      if (checkEl) checkEl.checked = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "同意成為守護人";
+      }
+    }
+
+    async function maybeShowInviteAcceptPrompt() {
       if (bindDone || bindInFlight) return;
       const inviteFrom = getAppParam("invite_from");
       if (!inviteFrom || inviteFrom === lineUserId) return;
       // 僅在網址真的帶邀請參數時顯示「同意成為守護人」；一般登入不跳
       const modal = $("inviteAcceptPrompt");
       if (!modal) return;
+      resetInviteAcceptPromptUi();
       modal.hidden = false;
       document.body.classList.add("invite-modal-open");
+
+      // 反向互綁：改文案＋顯示「同時互相設為核心」
+      try {
+        if (lineUserId) {
+          const preview = await apiInviteBindPreview(inviteFrom);
+          if (preview && preview.is_reverse_invite) {
+            const name = String(preview.inviter_display_name || "親友").trim() || "親友";
+            const titleEl = $("inviteAcceptTitle");
+            const bodyEl = $("inviteAcceptBody");
+            const optionEl = $("mutualCoreOption");
+            const btn = $("acceptGuardianInviteBtn");
+            if (titleEl) titleEl.textContent = "互相守護邀請";
+            if (bodyEl) {
+              bodyEl.textContent = `${name} 已是你的守護對象／已加入，是否互相設為守護人？`;
+            }
+            if (optionEl) optionEl.hidden = false;
+            if (btn) btn.textContent = "確認互相設為守護人";
+          }
+        }
+      } catch (_) {}
+
       try {
         requestAnimationFrame(() => {
           const btn = $("acceptGuardianInviteBtn");
@@ -6154,11 +6239,7 @@
     function closeInviteAcceptPrompt() {
       $("inviteAcceptPrompt").hidden = true;
       document.body.classList.remove("invite-modal-open");
-      const btn = $("acceptGuardianInviteBtn");
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = "同意成為守護人";
-      }
+      resetInviteAcceptPromptUi();
     }
 
     async function acceptGuardianInviteFromPrompt() {
@@ -6191,8 +6272,9 @@
         btn.disabled = true;
         btn.textContent = "綁定中…";
       }
+      const mutualCore = Boolean($("mutualCoreCheckbox") && $("mutualCoreCheckbox").checked);
       try {
-        const bindResult = await completeGuardianBindOnce(inviteFrom);
+        const bindResult = await completeGuardianBindOnce(inviteFrom, { mutual_core: mutualCore });
         if (bindResult?.skipped) return;
         if (bindResult?.bound || bindResult?.ok || bindResult?.already_bound) return;
         alert(bindResult?.error || "綁定尚未完成，請再試一次。若仍失敗，請請對方重新分享邀請連結。");
@@ -6201,7 +6283,8 @@
       } finally {
         if (btn && !$("inviteAcceptPrompt").hidden && !bindDone) {
           btn.disabled = false;
-          btn.textContent = "同意成為守護人";
+          const optionVisible = $("mutualCoreOption") && !$("mutualCoreOption").hidden;
+          btn.textContent = optionVisible ? "確認互相設為守護人" : "同意成為守護人";
         }
       }
     }

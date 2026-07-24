@@ -2926,6 +2926,135 @@ ALREADY_BOUND_MESSAGE = "你已經是守護人了，請把邀請轉傳給其他�
 CONTACT_LIMIT_MESSAGE = "對方的守護人名額已滿，請請對方升級方案後再邀請你"
 
 
+def detect_reverse_invite(state, inviter_id, invitee_id):
+    """對方是否已單向守護邀請人（反向互綁情境）。
+
+    True when:
+    - invitee already has inviter as an accepted LINE guardian contact, OR
+    - invitee is already listed in inviter.guarding_for
+    """
+    inviter_id = str(inviter_id or "").strip()
+    invitee_id = str(invitee_id or "").strip()
+    if not inviter_id or not invitee_id or inviter_id == invitee_id:
+        return False
+    users = (state or {}).get("users") or {}
+    invitee = users.get(invitee_id) if isinstance(users.get(invitee_id), dict) else {}
+    inviter = users.get(inviter_id) if isinstance(users.get(inviter_id), dict) else {}
+
+    for contact in invitee.get("contacts") or []:
+        if get_contact_line_id(contact) == inviter_id and contact_is_bound_guardian(
+            contact, invitee_id
+        ):
+            return True
+
+    guarding = [
+        str(x or "").strip()
+        for x in (inviter.get("guarding_for") or [])
+        if str(x or "").strip()
+    ]
+    return invitee_id in guarding
+
+
+def apply_is_primary_to_contact_line(profile, contact_line_user_id, *, make_core=True):
+    """Set/unset is_primary for a contact by LINE id; enforce core_guardian_alert_limit.
+
+    Returns True if a matching contact row was found and updated.
+    """
+    if not isinstance(profile, dict):
+        return False
+    target_lid = str(contact_line_user_id or "").strip()
+    if not target_lid:
+        return False
+    contacts = list(profile.get("contacts") or [])
+    target_idx = None
+    for i, contact in enumerate(contacts):
+        if get_contact_line_id(contact) == target_lid:
+            target_idx = i
+            break
+    if target_idx is None:
+        return False
+
+    limit = int(plan_rules(profile).get("core_guardian_alert_limit") or 1)
+    now = iso_now()
+    if make_core:
+        contacts[target_idx]["is_primary"] = True
+        contacts[target_idx]["updated_at"] = now
+        core_idxs = [i for i, c in enumerate(contacts) if bool(c.get("is_primary"))]
+        if len(core_idxs) > limit:
+            core_idxs_sorted = sorted(
+                core_idxs,
+                key=lambda i: int(contacts[i].get("priority") or 9999),
+            )
+            keep = set(core_idxs_sorted[:limit])
+            if target_idx not in keep:
+                keep = set(core_idxs_sorted[: max(0, limit - 1)] + [target_idx])
+                keep = set(list(keep)[:limit])
+            for i, c in enumerate(contacts):
+                if bool(c.get("is_primary")) and i not in keep:
+                    c["is_primary"] = False
+                    c["updated_at"] = now
+    else:
+        contacts[target_idx]["is_primary"] = False
+        contacts[target_idx]["updated_at"] = now
+        if contacts and not any(bool(c.get("is_primary")) for c in contacts):
+            ranked = sorted(
+                range(len(contacts)),
+                key=lambda i: int(contacts[i].get("priority") or 9999),
+            )
+            contacts[ranked[0]]["is_primary"] = True
+            contacts[ranked[0]]["updated_at"] = now
+
+    profile["contacts"] = contacts
+    return True
+
+
+def invite_bind_preview(data_file, payload):
+    """Preview guardian invite: is_reverse_invite + inviter display name for LIFF modal."""
+    inviter_id = str(
+        payload.get("invite_from")
+        or payload.get("inviter_line_user_id")
+        or payload.get("from")
+        or ""
+    ).strip()
+    invitee_id = str(
+        payload.get("line_user_id")
+        or payload.get("contact_line_user_id")
+        or ""
+    ).strip()
+    if not inviter_id or not invitee_id:
+        return {"ok": False, "error": "缺少邀請人或本人資料", "code": "missing_ids"}, 400
+    if inviter_id == invitee_id:
+        return {"ok": False, "error": "不能綁定自己成為守護人", "code": "self_bind"}, 400
+
+    state = load_state(data_file)
+    users = state.get("users") or {}
+    inviter = users.get(inviter_id) if isinstance(users.get(inviter_id), dict) else {}
+    invitee = users.get(invitee_id) if isinstance(users.get(invitee_id), dict) else {}
+    is_reverse = detect_reverse_invite(state, inviter_id, invitee_id)
+    inviter_name = str(inviter.get("display_name") or "").strip() or "親友"
+    inviter_rules = plan_rules(inviter or {"plan": "trial"})
+    invitee_rules = plan_rules(invitee or {"plan": "trial"})
+    return {
+        "ok": True,
+        "is_reverse_invite": is_reverse,
+        "inviter_line_user_id": inviter_id,
+        "inviter_display_name": inviter_name,
+        "invitee_line_user_id": invitee_id,
+        "mutual_core_available": is_reverse,
+        "inviter_core_guardian_alert_limit": int(
+            inviter_rules.get("core_guardian_alert_limit") or 1
+        ),
+        "invitee_core_guardian_alert_limit": int(
+            invitee_rules.get("core_guardian_alert_limit") or 1
+        ),
+        "message": (
+            f"{inviter_name} 已是你的守護對象／已加入，是否互相設為守護人？"
+            if is_reverse
+            else "您收到一位親友的守護邀請"
+        ),
+    }, 200
+
+
 def build_bind_success_notices(inviter, contacts, inviter_id, guardian_name, *, invite_reward_applied=False):
     """Same bind-success LINE copy used by live bind + historical backfill."""
     inviter_name = (inviter or {}).get("display_name") or "使用者"
@@ -3166,12 +3295,15 @@ def bind_emergency_contact(data_file, payload, config=None):
     contact_picture_url = str(
         payload.get("contact_picture_url") or payload.get("picture_url") or ""
     ).strip()
+    mutual_core = bool(payload.get("mutual_core"))
     if not inviter_id or not contact_line_user_id:
         return {"ok": False, "error": "缺少邀請人或守護人資料", "code": "missing_ids"}, 400
     if inviter_id == contact_line_user_id:
         return {"ok": False, "error": "不能綁定自己成為守護人", "code": "self_bind"}, 400
 
     state = load_state(data_file)
+    # 綁定前偵測反向：綁定後 guarding_for 一定會寫入，不可事後判斷
+    is_reverse_invite = detect_reverse_invite(state, inviter_id, contact_line_user_id)
     inviter = get_profile(state, inviter_id)
     contact_user = get_profile(state, contact_line_user_id)
     contact_user["display_name"] = contact_display_name or contact_user.get("display_name") or "LINE 聯絡人"
@@ -3322,6 +3454,19 @@ def bind_emergency_contact(data_file, payload, config=None):
             }
         )
     contact_user["guarding_details"] = details
+
+    # 互綁可選：兩邊互相設為核心（各受方案 core_guardian_alert_limit 約束）
+    mutual_core_applied = False
+    if is_reverse_invite and mutual_core:
+        inviter_core_ok = apply_is_primary_to_contact_line(
+            inviter, contact_line_user_id, make_core=True
+        )
+        invitee_core_ok = apply_is_primary_to_contact_line(
+            contact_user, inviter_id, make_core=True
+        )
+        mutual_core_applied = bool(inviter_core_ok and invitee_core_ok)
+        contacts = list(inviter.get("contacts") or [])
+
     ensure_onboarding_completed_flag(inviter)
 
     rewards = state.setdefault("contact_rewards", [])
@@ -3425,12 +3570,22 @@ def bind_emergency_contact(data_file, payload, config=None):
         (contact for contact in contacts if get_contact_line_id(contact) == contact_line_user_id),
         None,
     )
+    bind_message = ALREADY_BOUND_MESSAGE if was_duplicate else "綁定完成！你已成為對方的守護人。"
+    if is_reverse_invite and not was_duplicate:
+        bind_message = (
+            f"互綁完成！你與「{inviter_name}」已互相設為守護人。"
+            + ("（已同時設為核心守護人）" if mutual_core_applied else "")
+        )
     return {
         "ok": True,
         "bound": True,
         "already_bound": was_duplicate,
         "binding_complete": not was_duplicate,
-        "message": ALREADY_BOUND_MESSAGE if was_duplicate else "綁定完成！你已成為對方的守護人。",
+        "is_reverse_invite": is_reverse_invite,
+        "mutual_core_requested": mutual_core,
+        "mutual_core_applied": mutual_core_applied,
+        "inviter_display_name": inviter_name,
+        "message": bind_message,
         "contact": bound_contact,
         "reward": reward,
         "invite_reward_applied": invite_reward_applied,
@@ -6243,7 +6398,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725sr",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725mb",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -6559,7 +6714,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725sr",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725mb",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -7938,6 +8093,18 @@ def create_app(config=None):
             "interaction_state": istate,
         }), 200
 
+    @app.get("/api/emergency-contact/invite-preview")
+    def emergency_contact_invite_preview_api():
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload = {
+            "invite_from": request.args.get("invite_from") or request.args.get("from") or "",
+            "line_user_id": line_user_id,
+        }
+        data, code = invite_bind_preview(app.config["DATA_FILE"], payload)
+        return jsonify(data), code
+
     @app.post("/api/emergency-contact/bind")
     def emergency_contact_bind_api():
         data, code = bind_emergency_contact(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
@@ -8613,6 +8780,15 @@ class MiniClient:
             return MiniResponse(body, code)
         if route == "/api/contacts":
             return MiniResponse(get_contacts(self.app.config["DATA_FILE"], params.get("line_user_id")))
+        if route == "/api/emergency-contact/invite-preview":
+            body, code = invite_bind_preview(
+                self.app.config["DATA_FILE"],
+                {
+                    "invite_from": params.get("invite_from") or params.get("from") or "",
+                    "line_user_id": params.get("line_user_id") or "",
+                },
+            )
+            return MiniResponse(body, code)
         if route == "/api/calendar-notes":
             return MiniResponse(get_calendar_notes(self.app.config["DATA_FILE"], params.get("line_user_id")))
         if route == "/api/friends/locations":
@@ -8864,6 +9040,15 @@ class MiniApp:
                     return handler.send_json(admin_summary(data_file, config))
                 if route == "/api/contacts":
                     return handler.send_json(get_contacts(data_file, params.get("line_user_id")))
+                if route == "/api/emergency-contact/invite-preview":
+                    data, code = invite_bind_preview(
+                        data_file,
+                        {
+                            "invite_from": params.get("invite_from") or params.get("from") or "",
+                            "line_user_id": params.get("line_user_id") or "",
+                        },
+                    )
+                    return handler.send_json(data, code)
                 if route == "/api/calendar-notes":
                     return handler.send_json(get_calendar_notes(data_file, params.get("line_user_id")))
                 if route == "/api/friends/locations":

@@ -566,6 +566,9 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("pointer-events: none !important", css)
         self.assertIn('id="acceptGuardianInviteBtn"', page)
         self.assertIn("同意成為守護人", page)
+        self.assertIn("mutualCoreCheckbox", page)
+        self.assertIn("同時互相設為核心守護人", page)
+        self.assertIn("apiInviteBindPreview", page)
         self.assertIn("invite-modal-open", page)
         self.assertIn("touch-action: manipulation", css)
         # bottom nav / SOS must stay below modal layer
