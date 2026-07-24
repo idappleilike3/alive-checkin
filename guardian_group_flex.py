@@ -1,12 +1,12 @@
 """守護群 / 歡迎 Flex Message 構建器。
 
 主要 Flex:
-1. guardian_group_intro_flex()       — 進群歡迎（Apple/LINE 官方風格，短文＋三鈕）
+1. guardian_group_intro_flex()       — 進群歡迎（短文＋綁定／狀態兩鈕）
 2. guardian_group_status_flex()      — 守護群狀態查詢
 3. guardian_group_bind_confirm_flex  — 綁定成功：守護群資訊卡
 4. guardian_group_member_joined_flex — 家人首次進群歡迎（進群≠已綁定守護人）
 5. guardian_group_user_guide_flex()  — 使用說明(給群成員)
-6. guardian_group_admin_setup_flex() — 管理員設定 6 步驟
+6. guardian_group_admin_setup_flex() — 管理員設定 6 步驟（選用；官方帳號踢人時才需要）
 7. welcome_flex()                   — 加好友歡迎(7 天免費體驗 + 綁定守護人)
 
 設計原則:
@@ -195,15 +195,15 @@ def _uri_button(label: str, uri: str, style: str = "link", color: str | None = N
     return btn
 
 
-def _footer_buttons(include: tuple[str, ...] = ("status", "guide", "admin")):
-    """常駐 footer 小按鈕:守護群狀態 / 使用說明 / 管理員設定。"""
+def _footer_buttons(include: tuple[str, ...] = ("status", "guide")):
+    """常駐 footer 小按鈕。預設不含「管理員設定」（升級／綁定後已自動是守護群管理員）。"""
     btns = []
     if "status" in include:
-        btns.append(_postback_button("守護群狀態", "守護群狀態", style="link", color=GREEN_DARK))
+        btns.append(_postback_button("守護群狀態", "守護群狀態", style="link", color=GREEN_DARK, height="md"))
     if "guide" in include:
-        btns.append(_postback_button("使用說明", "使用說明", style="link", color=GRAY))
+        btns.append(_postback_button("使用說明", "使用說明", style="link", color=GRAY, height="md"))
     if "admin" in include:
-        btns.append(_postback_button("管理員設定", "管理員設定", style="link", color=GRAY))
+        btns.append(_postback_button("管理員設定", "管理員設定", style="link", color=GRAY, height="md"))
     return btns
 
 
@@ -274,7 +274,8 @@ def guardian_group_intro_flex(owner_info: dict | None = None, *, include_oath: b
     """進群歡迎 Flex（短、暖、像 LINE／Apple 官方首次加入）。
 
     只說明「這個群何時會通知」，不塞資格／上限長文。
-    未綁定時保留主 CTA「綁定守護群」；已綁定則直接三顆常用鈕。
+    未綁定：主 CTA「綁定守護群」＋「查看守護群狀態」（兩鈕垂直，避免 LINE 截字）。
+    已綁定：只留「查看守護群狀態」。
 
     owner_info 結構: {
         "bound": bool,
@@ -302,17 +303,20 @@ def guardian_group_intro_flex(owner_info: dict | None = None, *, include_oath: b
     if owner_block:
         body_contents.append(owner_block)
 
+    # LINE Flex：直排、少鈕、完整標籤，避免手機版按鈕文字被裁切
     footer_contents = []
     if not already_bound:
         footer_contents.append(
             _postback_button("綁定守護群", "綁定守護群", style="primary", color=GREEN_DARK, height="md")
         )
-    footer_contents.extend(
-        [
-            _postback_button("🟢 查看守護群", "守護群狀態", style="primary", color=GREEN_DARK, height="md"),
-            _postback_button("➕ 邀請守護人", "邀請守護人", style="secondary", color=GREEN_DARK, height="md"),
-            _postback_button("⚙️ 群組設定", "管理員設定", style="secondary", color=GRAY, height="md"),
-        ]
+    footer_contents.append(
+        _postback_button(
+            "查看守護群狀態",
+            "查看守護群狀態",
+            style="primary" if already_bound else "secondary",
+            color=GREEN_DARK,
+            height="md",
+        )
     )
 
     return {
@@ -348,8 +352,9 @@ def guardian_group_intro_flex(owner_info: dict | None = None, *, include_oath: b
         "footer": {
             "type": "box",
             "layout": "vertical",
-            "spacing": "sm",
+            "spacing": "md",
             "paddingAll": "md",
+            "flex": 0,
             "backgroundColor": "#FAFAFA",
             "contents": footer_contents,
         },
@@ -469,7 +474,7 @@ def guardian_group_status_flex(profile: dict, state: dict):
     if not owned:
         contents.append({
             "type": "text",
-            "text": "尚未綁定任何守護群,請先升級 799 方案,然後邀請「每日平安」官方帳號進群,再點「點我綁定守護群」",
+            "text": "尚未綁定任何守護群。請先升級 799，邀請「每日平安」進群後，點「綁定守護群」（升級／綁定後自動成為守護群管理員）。",
             "size": "md",
             "color": GRAY,
             "wrap": True,
@@ -554,11 +559,15 @@ def guardian_group_status_flex(profile: dict, state: dict):
         },
         "footer": {
             "type": "box",
-            "layout": "horizontal",
-            "spacing": "sm",
+            "layout": "vertical",
+            "spacing": "md",
             "paddingAll": "md",
+            "flex": 0,
             "backgroundColor": "#FAFAFA",
-            "contents": _footer_buttons(("status", "guide", "admin")),
+            "contents": [
+                _postback_button("綁定守護群", "綁定守護群", style="secondary", color=GREEN_DARK, height="md"),
+                _postback_button("使用說明", "使用說明", style="link", color=GRAY, height="md"),
+            ],
         },
     }
 
@@ -689,9 +698,9 @@ def guardian_group_bind_confirm_flex(result: dict):
             "paddingAll": "md",
             "backgroundColor": "#FAFAFA",
             "contents": [
-                _postback_button("➕ 一鍵邀請守護人", "邀請守護人", style="primary", color=GREEN_DARK, height="md"),
+                _postback_button("邀請守護人", "邀請守護人", style="primary", color=GREEN_DARK, height="md"),
                 _uri_button(
-                    "⏰ 修改提醒",
+                    "修改提醒",
                     liff_entry_url(open_action="member"),
                     style="secondary",
                     color=GREEN_DARK,
@@ -732,11 +741,12 @@ def guardian_group_member_joined_flex(inviter_display_name: str | None = None):
         "footer": {
             "type": "box",
             "layout": "vertical",
-            "spacing": "sm",
+            "spacing": "md",
             "paddingAll": "md",
+            "flex": 0,
             "backgroundColor": "#FAFAFA",
             "contents": [
-                _postback_button("🟢 查看守護群", "守護群狀態", style="primary", color=GREEN_DARK, height="md"),
+                _postback_button("查看守護群狀態", "查看守護群狀態", style="primary", color=GREEN_DARK, height="md"),
             ],
         },
     }
@@ -825,28 +835,23 @@ def guardian_group_user_guide_flex():
             "spacing": "md",
             "paddingAll": "lg",
             "contents": [
-                _guide_step("1", "升級 799 守護版", "在 LINE 主選單「方案」挑月費或年費,完成付款才能開守護群"),
+                _guide_step("1", "升級 799 守護版", "在 LINE 主選單「方案」挑月費或年費,完成付款後自動成為守護群管理員"),
                 _guide_step("2", "建一個新的 LINE 群", "把你最關心的家人/長輩全部拉進來,群名可標「守護:OOO」"),
                 _guide_step("3", "把每日平安邀進群", "從「每日平安」聊天室右上「≡」→「邀請」,選這個新群"),
-                _guide_step("4", "把每日平安設為管理員", "這步必做,點下方「管理員設定」看 6 步驟教學"),
-                _guide_step("5", "在群裡點「點我綁定守護群」", "會回「✅ 我已完成守護群設定」,這樣這個群就會收到逾期未簽到／需要幫忙通知"),
-                _guide_step("6", "每天在群裡打「簽到」", "成員簽到會在群裡顯示 ✓,沒簽到時會在群裡提醒"),
+                _guide_step("4", "在群裡點「綁定守護群」", "會回「✅ 我已完成守護群設定」；建立者自動是守護群管理員,不必再手動設定"),
+                _guide_step("5", "每天在群裡打「簽到」", "成員簽到會在群裡顯示 ✓,沒簽到時會在群裡提醒"),
             ],
         },
         "footer": {
             "type": "box",
             "layout": "vertical",
-            "spacing": "sm",
+            "spacing": "md",
             "paddingAll": "md",
+            "flex": 0,
             "backgroundColor": "#FAFAFA",
             "contents": [
-                _postback_button("管理員設定 6 步驟", "管理員設定", style="primary", color=GREEN_DARK, height="md"),
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "sm",
-                    "contents": _footer_buttons(("status", "guide", "admin")),
-                },
+                _postback_button("綁定守護群", "綁定守護群", style="primary", color=GREEN_DARK, height="md"),
+                _postback_button("查看守護群狀態", "查看守護群狀態", style="secondary", color=GREEN_DARK, height="md"),
             ],
         },
     }
@@ -914,15 +919,16 @@ def guardian_group_admin_setup_flex():
             "contents": [
                 {
                     "type": "text",
-                    "text": "⚙️ 設定「每日平安」為管理員",
+                    "text": "⚙️ 選用：官方帳號踢人權限",
                     "color": "#FFFFFF",
-                    "size": "xxl",
+                    "size": "xl",
                     "weight": "bold",
                     "align": "center",
+                    "wrap": True,
                 },
                 {
                     "type": "text",
-                    "text": "LINE 規定「每日平安」無法自動設自己為管理員,需用戶手動操作",
+                    "text": "守護群管理員已在升級／綁定時自動完成。此教學僅在需要請出超額成員時才用。",
                     "color": "#FFFFFF",
                     "size": "md",
                     "align": "center",
@@ -942,23 +948,19 @@ def guardian_group_admin_setup_flex():
                 _admin_step("3", "長按「每日平安」名稱", "在「每日平安」名稱上長按,跳出選單"),
                 _admin_step("4", "選「設為管理員」", "從選單中選「設為管理員」"),
                 _admin_step("5", "確認權限", "LINE 會列出可授與的權限,直接按「確定」即可"),
-                _admin_step("6", "完成", "回群裡,打「守護群狀態」可確認是否已生效,看到「✅ 已設為管理員」就成功"),
+                _admin_step("6", "完成", "回群裡,若超額請出成功即表示權限已生效"),
             ],
         },
         "footer": {
             "type": "box",
             "layout": "vertical",
-            "spacing": "sm",
+            "spacing": "md",
             "paddingAll": "md",
+            "flex": 0,
             "backgroundColor": "#FAFAFA",
             "contents": [
-                _postback_button("📖 使用說明", "使用說明", style="primary", color=GREEN_DARK, height="md"),
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "sm",
-                    "contents": _footer_buttons(("status", "guide", "admin")),
-                },
+                _postback_button("查看守護群狀態", "查看守護群狀態", style="primary", color=GREEN_DARK, height="md"),
+                _postback_button("使用說明", "使用說明", style="secondary", color=GRAY, height="md"),
             ],
         },
     }

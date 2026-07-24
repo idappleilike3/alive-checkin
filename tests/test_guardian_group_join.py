@@ -72,14 +72,19 @@ class GuardianGroupJoinTests(unittest.TestCase):
         footer_btns = intro["footer"]["contents"]
         labels = [b["action"]["label"] for b in footer_btns]
         self.assertEqual(labels[0], "綁定守護群")
-        self.assertIn("🟢 查看守護群", labels)
-        self.assertIn("➕ 邀請守護人", labels)
-        self.assertIn("⚙️ 群組設定", labels)
+        self.assertEqual(labels[1], "查看守護群狀態")
+        self.assertEqual(len(labels), 2)
+        self.assertTrue(all(len(lb) <= 20 for lb in labels))
+        self.assertNotIn("邀請守護人", labels)
+        self.assertNotIn("群組設定", labels)
+        self.assertNotIn("管理員設定", labels)
 
-        # 已綁定：不顯示綁定 CTA
+        # 已綁定：不顯示綁定 CTA，只留狀態
         bound = guardian_group_intro_flex({"bound": True, "is_owner": True, "is_active": True})
         bound_labels = [b["action"]["label"] for b in bound["footer"]["contents"]]
         self.assertNotIn("綁定守護群", bound_labels)
+        self.assertEqual(bound_labels, ["查看守護群狀態"])
+        self.assertEqual(bound["footer"]["layout"], "vertical")
 
     def test_bind_confirm_and_member_joined_cards(self):
         from guardian_group_flex import (
@@ -104,8 +109,9 @@ class GuardianGroupJoinTests(unittest.TestCase):
         self.assertIn("09:00", body)
         self.assertIn("正常守護中", body)
         footer_labels = [b["action"]["label"] for b in info["footer"]["contents"]]
-        self.assertEqual(footer_labels[0], "➕ 一鍵邀請守護人")
-        self.assertEqual(footer_labels[1], "⏰ 修改提醒")
+        self.assertEqual(footer_labels[0], "邀請守護人")
+        self.assertEqual(footer_labels[1], "修改提醒")
+        self.assertTrue(all(len(lb) <= 20 for lb in footer_labels))
 
         member = guardian_group_member_joined_flex("小美")
         member_text = str(member["body"])

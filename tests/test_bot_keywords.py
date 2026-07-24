@@ -92,8 +92,8 @@ class BotKeywordHandlerTests(unittest.TestCase):
             welcome_greeting_text("您"),
             "👋 您好，歡迎加入「每日平安」",
         )
-        self.assertNotIn("您 您好", welcome_flex(None)["header"]["contents"][1]["text"])
-        self.assertIn("阿美", welcome_flex("阿美")["header"]["contents"][1]["text"])
+        self.assertNotIn("您 您好", welcome_flex(None)["header"]["contents"][1]["contents"][0]["text"])
+        self.assertIn("阿美", welcome_flex("阿美")["header"]["contents"][1]["contents"][0]["text"])
 
     def test_resolve_welcome_display_name_prefers_hint_and_profile(self):
         import app as app_mod

@@ -2388,8 +2388,15 @@ def confirm_payment_order(data_file, payload, config=None):
     if payload.get("auto_renew_enabled") is not None:
         profile["auto_renew_enabled"] = bool(payload.get("auto_renew_enabled"))
         profile["auto_renew_status"] = "active" if profile["auto_renew_enabled"] else "off"
+    # 升級含守護群方案：自動把建立者設為守護群管理員（不必再走管理員設定）
+    admin_granted = ensure_guardian_group_admin_for_user(state, profile)
     save_state(data_file, state)
-    return {"order": order, "member": build_status(profile), "already_confirmed": False}, 200
+    return {
+        "order": order,
+        "member": build_status(profile, state),
+        "already_confirmed": False,
+        "guardian_group_admin_granted": admin_granted,
+    }, 200
 
 
 def apply_expired_plan_downgrades(config):
@@ -3832,6 +3839,70 @@ def enforce_group_member_limit(group_id, config=None, simulated_new_ids=None):
             "group_id": group_id}, 200
 
 
+def plan_includes_guardian_group(profile) -> bool:
+    """方案是否含守護群（目前為 799 月／年）。"""
+    return int(plan_rules(profile or {}).get("guardian_group_limit") or 0) > 0
+
+
+def is_guardian_group_admin(group, line_user_id) -> bool:
+    """守護群管理員＝建立者（owner）或 admin_line_user_ids 名單。"""
+    uid = str(line_user_id or "").strip()
+    if not uid or not isinstance(group, dict):
+        return False
+    if str(group.get("owner_line_user_id") or "").strip() == uid:
+        return True
+    admins = group.get("admin_line_user_ids") or []
+    return uid in {str(x).strip() for x in admins if str(x).strip()}
+
+
+def grant_guardian_group_admin(group, line_user_id) -> bool:
+    """把用戶寫入守護群管理員名單；必要時補 owner。回傳是否有變更。"""
+    uid = str(line_user_id or "").strip()
+    if not uid or not isinstance(group, dict):
+        return False
+    changed = False
+    owner = str(group.get("owner_line_user_id") or "").strip()
+    if not owner:
+        group["owner_line_user_id"] = uid
+        owner = uid
+        changed = True
+    admins = [
+        str(x).strip()
+        for x in (group.get("admin_line_user_ids") or [])
+        if str(x).strip()
+    ]
+    for candidate in (owner, uid):
+        if candidate and candidate not in admins:
+            admins.append(candidate)
+            changed = True
+    if changed:
+        group["admin_line_user_ids"] = list(dict.fromkeys(admins))
+        group["admin_granted_at"] = datetime.now().isoformat(timespec="seconds")
+    return changed
+
+
+def ensure_guardian_group_admin_for_user(state, profile) -> int:
+    """升級含守護群方案後：對其已綁定／擁有的群自動授予管理員（不必再走「管理員設定」）。"""
+    if not plan_includes_guardian_group(profile):
+        return 0
+    uid = str((profile or {}).get("line_user_id") or "").strip()
+    if not uid:
+        return 0
+    groups = state.setdefault("guardian_groups", {})
+    granted = 0
+    for gid in list(dict.fromkeys((profile or {}).get("guardian_group_ids") or [])):
+        group = groups.get(gid)
+        if not isinstance(group, dict):
+            continue
+        owner = str(group.get("owner_line_user_id") or "").strip()
+        if owner and owner != uid:
+            continue
+        if grant_guardian_group_admin(group, uid):
+            granted += 1
+        groups[gid] = group
+    return granted
+
+
 def bind_guardian_group(data_file, payload):
     line_user_id = str(payload.get("line_user_id") or "").strip()
     group_id = str(payload.get("group_id") or "").strip()
@@ -3844,11 +3915,16 @@ def bind_guardian_group(data_file, payload):
     existing_group = groups.get(group_id)
     if existing_group:
         if existing_group.get("owner_line_user_id") == line_user_id:
+            # 建立者重新綁定／已綁定：自動確保管理員身分（升級後補寫）
+            grant_guardian_group_admin(existing_group, line_user_id)
+            groups[group_id] = existing_group
+            save_state(data_file, state)
             return {
                 "bound": True,
                 "already_bound": True,
                 "group_id": group_id,
                 "guardian_group_limit": plan_rules(profile).get("guardian_group_limit", 0),
+                "is_group_admin": True,
                 "should_leave": False,
             }, 200
         return {
@@ -3899,6 +3975,8 @@ def bind_guardian_group(data_file, payload):
     groups[group_id] = {
         "group_id": group_id,
         "owner_line_user_id": line_user_id,
+        "admin_line_user_ids": [line_user_id],
+        "admin_granted_at": now,
         "status": "active",
         "created_at": now,
         "member_count_at_bind": member_count_at_bind,
@@ -3919,6 +3997,7 @@ def bind_guardian_group(data_file, payload):
         "group_id": group_id,
         "guardian_group_count": len(group_ids),
         "guardian_group_limit": group_limit,
+        "is_group_admin": True,
         "should_leave": False,
     }, 200
 
@@ -3953,7 +4032,7 @@ def guardian_group_daily_status_text(data_file, line_user_id, group_id):
     if not group or group.get("status") != "active":
         return "此群尚未完成守護群綁定。請由有效的 799 會員在群裡輸入「點我綁定守護群」。", 404
     prefs = group.get("preferences") or {}
-    if prefs.get("notify_admin_only", True) and group.get("owner_line_user_id") != line_user_id:
+    if prefs.get("notify_admin_only", True) and not is_guardian_group_admin(group, line_user_id):
         return "為了保護成員隱私，今日平安名單只有守護群管理員可以查看。", 403
 
     users = state.get("users", {}) or {}
@@ -4782,11 +4861,15 @@ def admin_update_user_plan(data_file, payload):
     if plan.startswith("paid_") or (plan == "trial" and trial_days_left(profile) > 0):
         clear_contacts_retain_window(profile)
 
+    # 後台升級到含守護群方案：自動授予守護群管理員
+    admin_granted = ensure_guardian_group_admin_for_user(state, profile)
+
     save_state(data_file, state)
     status = build_status(profile, state)
     status["preserved_contacts"] = len(preserved_contacts)
     status["preserved_friends"] = len(preserved_friends)
     status["preserved_guardian_groups"] = len(preserved_groups)
+    status["guardian_group_admin_granted"] = admin_granted
     return status, 200
 
 
@@ -6601,7 +6684,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gg0",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725ga",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -6923,7 +7006,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gg0",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725ga",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -7551,13 +7634,14 @@ def create_app(config=None):
                     msg_lines.append(f"已請出 {len(result['kicked'])} 位新成員。")
                 if result.get("bot_not_admin_count"):
                     msg_lines.append(
-                        f"⚠️ 「每日平安」不是此群管理員,另有 {result['bot_not_admin_count']} 位無法請出。"
-                        "請把「每日平安」設為管理員後再試,或管理員手動退出超額成員。"
+                        f"⚠️ 「每日平安」目前無法請出超額成員（另有 {result['bot_not_admin_count']} 位）。"
+                        "請管理員手動退出超額成員，或必要時把「每日平安」設為群組管理員後再試。"
                     )
                 if result.get("failed") and not result.get("bot_not_admin_count"):
                     msg_lines.append(f"請出失敗:{len(result['failed'])} 位。")
-                # 2026-07-21 patch 11: 額外提醒把 Bot 設為管理員
-                msg_lines.append("💡 在群裡打「管理員設定」可看 6 步驟教學")
+                # 僅在 Bot 無管理員權限、真的踢人失敗時才提示；升級／綁定後使用者已自動是守護群管理員
+                if result.get("bot_not_admin_count"):
+                    msg_lines.append("💡 若需請出超額成員，可在群裡打「管理員設定」看教學（非必要開通步驟）")
                 line_bot_api.push_message(group_id, TextSendMessage(text="\n".join(msg_lines)))
             except Exception:
                 pass
@@ -7746,7 +7830,7 @@ def create_app(config=None):
                     f"• 簽到 / 報平安\\n"
                     f"• 綁定守護人\\n"
                     f"• 查看方案 / 我的狀態\\n\\n"
-                    f"👥 群組指令:管理員設定 / 使用說明 / 守護群狀態"
+                    f"👥 群組指令:守護群狀態 / 綁定守護群 / 使用說明"
                 )
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=status_text))
                 return
@@ -7825,8 +7909,8 @@ def create_app(config=None):
                         line_bot_api.leave_group(group_id)
                     return
 
-                # 2) 守護群狀態（含「查看守護群」按鈕別名）
-                if stripped in ("守護群狀態", "群狀態", "狀態", "查看守護群"):
+                # 2) 守護群狀態（含「查看守護群／查看守護群狀態」按鈕別名）
+                if stripped in ("守護群狀態", "群狀態", "狀態", "查看守護群", "查看守護群狀態"):
                     # 查詢前先刷新本群成員數，避免仍顯示綁定當下的舊快照
                     try:
                         refresh_guardian_group_member_snapshot(
@@ -7870,7 +7954,7 @@ def create_app(config=None):
                     else:
                         line_bot_api.reply_message(
                             event.reply_token,
-                            TextSendMessage(text="使用說明:1.升級 799 → 2.建群 → 3.邀「每日平安」 → 4.設管理員 → 5.輸入「點我綁定守護群」"),
+                            TextSendMessage(text="使用說明:1.升級 799 → 2.建群 → 3.邀「每日平安」進群 → 4.點「綁定守護群」（升級／綁定後自動成為守護群管理員）"),
                         )
                     return
 

@@ -533,7 +533,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("apiBindEmergencyContact(inviteFrom)", init_liff)
         self.assertIn("maybeShowInviteAcceptPrompt()", init_liff)
 
-    def test_guardian_group_intro_has_large_four_button_actions(self):
+    def test_guardian_group_intro_has_two_readable_ctas(self):
         flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
 
         self.assertIn("def _group_quick_actions", flex)
@@ -542,9 +542,10 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("發出 SOS 緊急求助", flex)
         self.assertIn("今日守護宣言", flex)
         self.assertIn("綁定守護群", flex)
-        self.assertIn("查看守護群", flex)
-        self.assertIn("邀請守護人", flex)
-        self.assertIn("群組設定", flex)
+        self.assertIn("查看守護群狀態", flex)
+        self.assertIn("自動成為守護群管理員", flex)
+        self.assertNotIn('_postback_button("⚙️ 群組設定"', flex)
+        self.assertNotIn('_postback_button("🟢 查看守護群"', flex)
         self.assertIn("def guardian_group_member_joined_flex", flex)
         self.assertIn("def guardian_group_setup_nudge_text", flex)
         self.assertIn('_uri_button("我平安", liff_entry_url(open_action="checkin")', flex)
