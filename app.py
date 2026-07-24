@@ -321,11 +321,11 @@ PLAN_LIMITS = {
 PAYMENT_PRODUCTS = {
     # 產品政策：SOS 全方案開放；799 賣「更完整守護」（更多核心／緊急、早中晚、守護群等）
     "paid_199": {"amount": 199, "billing_cycle": "monthly", "duration_days": 30, "display_name": "199 平安版(月)", "tagline": "2 位核心守護人＋1 小時安全守護"},
-    "paid_199_year": {"amount": 1680, "billing_cycle": "yearly", "duration_days": 365, "display_name": "199 平安版(年)", "tagline": "3 位核心守護人＋每日 2 次 LINE 預警"},
+    "paid_199_year": {"amount": 1990, "billing_cycle": "yearly", "duration_days": 365, "display_name": "199 平安版(年)", "tagline": "付 10 個月送 2 個月：3 位核心守護人＋每日 2 次 LINE 預警"},
     "paid_399": {"amount": 399, "billing_cycle": "monthly", "duration_days": 30, "display_name": "399 安心版(月)", "tagline": "5 位核心守護人＋安全守護 1／3 小時"},
-    "paid_399_year": {"amount": 3680, "billing_cycle": "yearly", "duration_days": 365, "display_name": "399 安心版(年)", "tagline": "7 位核心守護人＋安全守護 1／3 小時"},
+    "paid_399_year": {"amount": 3990, "billing_cycle": "yearly", "duration_days": 365, "display_name": "399 安心版(年)", "tagline": "付 10 個月送 2 個月：7 位核心守護人＋安全守護 1／3 小時"},
     "paid_799": {"amount": 799, "billing_cycle": "monthly", "duration_days": 30, "display_name": "799 守護版(月)", "tagline": "更完整守護：10 位核心＋早中晚＋守護群"},
-    "paid_799_year": {"amount": 7200, "billing_cycle": "yearly", "duration_days": 426, "display_name": "799 守護版(年)", "tagline": "付 9 享 14 月：15 位核心＋最多 3 個守護群"},
+    "paid_799_year": {"amount": 7990, "billing_cycle": "yearly", "duration_days": 365, "display_name": "799 守護版(年)", "tagline": "付 10 個月送 2 個月：15 位核心＋最多 3 個守護群"},
 }
 
 RICH_MENU_COMMANDS = [
