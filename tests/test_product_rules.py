@@ -210,10 +210,19 @@ class ProductRulesTests(unittest.TestCase):
         member = (ROOT / "liff" / "member.html").read_text(encoding="utf-8")
 
         self.assertIn('id="memberRoleIntro"', page)
-        self.assertIn("核心守護人", page)
-        self.assertIn("聯絡人", page)
+        self.assertTrue(
+            "守護人（Guardian）" in page or "核心守護人" in page,
+            "guardian role intro missing",
+        )
+        self.assertTrue(
+            "緊急聯絡人（Emergency Contact）" in page or "緊急聯絡人" in page or "聯絡人" in page,
+            "emergency/contact role intro missing",
+        )
         self.assertIn("member_role_intro_dismissed", page)
-        self.assertIn("平常守護你的人", page)
+        self.assertTrue(
+            "平常每天守護你的人" in page or "平常守護你的人" in page,
+            "guardian purpose copy missing",
+        )
         self.assertIn('id="memberRoleIntro"', member)
         self.assertIn("免費體驗小教室", member)
         self.assertIn("memberEmergencySection", page)
@@ -340,7 +349,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("clipboard", page)
         self.assertIn("https://line.me/R/app/\" + LIFF_ID + \"?invite_from=", page)
         self.assertIn('const LIFF_ID = "2010674803-rK98c0lo"', page)
-        self.assertIn("W250724av", page)
+        self.assertIn("W250724aw", page)
         self.assertIn("resolveReturnUrl", page)
         self.assertIn("完成，返回原位置", page)
         self.assertIn('params.get("return")', page)

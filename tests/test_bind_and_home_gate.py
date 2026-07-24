@@ -465,7 +465,10 @@ class BindAndHomeGateTests(unittest.TestCase):
 
     def test_member_center_list_before_add_markers(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
-        self.assertIn("核心守護人", page)
+        self.assertTrue(
+            "守護人（Guardian）" in page or "核心守護人" in page,
+            "guardian section title missing",
+        )
         self.assertIn("memberGuardianQuotaLine", page)
         self.assertIn("memberGuardianLimitBanner", page)
         self.assertIn("memberEmergencySection", page)

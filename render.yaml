@@ -26,7 +26,7 @@ services:
       - key: REQUIRE_LIFF_AUTH
         value: "1"
       - key: DEPLOY_VERSION
-        value: W250724au
+        value: W250724aw
       # Prefer Postgres kv_store when DATABASE_URL is set (survives Free redeploys).
       # Persistent Disk (/var/data) still preferred on Starter+.
       - key: DATABASE_URL
