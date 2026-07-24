@@ -145,10 +145,15 @@ class CheckinPostbackStillLive(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
 
     def test_postback_still_writes_history(self):
-        reply = app.handle_checkin_postback(self.data_file, "U_live_pb")
+        fixed = datetime(2026, 7, 25, 1, 26, 0)
+        with mock.patch.object(app, "current_app_time", return_value=fixed):
+            reply = app.handle_checkin_postback(self.data_file, "U_live_pb")
+        if isinstance(reply, list):
+            reply = "\n".join(str(x) if not isinstance(x, dict) else x.get("altText", "") for x in reply)
         self.assertIn("報平安成功", reply)
+        self.assertIn("7/25（六）", reply)
         state = app.load_state(self.data_file)
-        self.assertIn(app.today_string(), state["users"]["U_live_pb"].get("history") or [])
+        self.assertIn("2026-07-25", state["users"]["U_live_pb"].get("history") or [])
 
 
 if __name__ == "__main__":

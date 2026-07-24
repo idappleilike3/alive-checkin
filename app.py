@@ -155,7 +155,14 @@ DEFAULT_PROFILE = {
     "guarding_for": [],
     "invited_by": "",
     "guarding_details": [],
+    # 試用／方案到期提醒（≤3 天或已到期）；opt-out 後不再催
+    "expiry_remind_opt_out": False,
+    "expiry_remind_sent_date": "",
 }
+
+# 試用／付費方案剩餘 ≤ 此天數（含已到期）才推到期提醒；每日最多一次
+EXPIRY_REMIND_WITHIN_DAYS = 3
+WEEKDAY_SHORT_ZH = ("一", "二", "三", "四", "五", "六", "日")
 
 # 試用基準 7 天；每成功邀請 1 位新守護人再 +7（無上限，同一人只算一次）
 TRIAL_BASE_DAYS = 7
@@ -334,14 +341,7 @@ def line_auto_reply_text(text, status=None):
     text = (text or "").strip()
     if any(keyword in text for keyword in CHECKIN_KEYWORDS):
         if status and status.get("is_today_checked"):
-            next_text = status.get("next_reminder_text") or status.get("next_reminder_label") or ""
-            if status.get("already_checked_today") or status.get("is_duplicate"):
-                base = "今天已經報過平安了，不用再點一次。"
-            else:
-                base = "今天平安簽到成功。系統已幫你留下紀錄，守護人不用擔心。"
-            if next_text:
-                return f"{base}\n{next_text}"
-            return base
+            return build_checkin_success_text(status)
         return "今天平安簽到成功。系統已幫你留下紀錄，守護人不用擔心。"
     if any(keyword in text for keyword in CONTACT_KEYWORDS):
         return (
@@ -873,10 +873,44 @@ def profile_is_today_checked(profile, config=None, now=None):
         return str(last)[:10] == today
 
 
+def format_md_weekday(dt):
+    """Asia/Taipei 顯示：7/25（六）"""
+    try:
+        return f"{int(dt.month)}/{int(dt.day)}（{WEEKDAY_SHORT_ZH[dt.weekday()]}）"
+    except Exception:
+        return ""
+
+
+def format_hm(dt):
+    try:
+        return dt.strftime("%H:%M")
+    except Exception:
+        return ""
+
+
+def checkin_blessing_text(now):
+    """節日祝福優先，否則輪播正向短句（holidays_tw）。"""
+    if holidays_tw is not None:
+        try:
+            holiday = holidays_tw.holiday_for(now)
+            blessing = str((holiday or {}).get("blessing") or "").strip()
+            if blessing:
+                return blessing
+            quote = str(holidays_tw.positive_quote_for(now) or "").strip()
+            if quote:
+                return quote
+        except Exception:
+            pass
+    return "每一天的平安，都是給家人最好的禮物。"
+
+
 def next_checkin_reminder_info(profile, config=None, now=None):
-    """Next daily 報平安 reminder slot after now (or tomorrow first slot if already checked)."""
+    """Next daily 報平安 reminder slot after now (or tomorrow first slot if already checked).
+
+    Product rule: once 報平安成功 for Taipei today, remaining same-day slots are skipped
+    — next_reminder jumps to tomorrow's first slot.
+    """
     now = now or current_app_time(config)
-    today = now.strftime("%Y-%m-%d")
     times = reminder_times_for_profile(profile) or ["12:00"]
     checked = profile_is_today_checked(profile, config=config, now=now)
 
@@ -895,19 +929,235 @@ def next_checkin_reminder_info(profile, config=None, now=None):
                 return {
                     "next_reminder_at": candidate.isoformat(timespec="seconds"),
                     "next_reminder_time": slot,
-                    "next_reminder_text": f"下次提醒 {today} {slot}",
+                    "next_reminder_text": f"下次提醒 {format_md_weekday(candidate)} {slot}",
                     "next_reminder_label": f"今天 {slot}",
                 }
     # Already checked today, or all of today's slots passed → tomorrow first
     hour, minute = _parse_hm(times[0])
     tomorrow = (now + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
-    tomorrow_day = tomorrow.strftime("%Y-%m-%d")
     return {
         "next_reminder_at": tomorrow.isoformat(timespec="seconds"),
         "next_reminder_time": times[0],
-        "next_reminder_text": f"下次提醒 {tomorrow_day} {times[0]}",
+        "next_reminder_text": f"下次提醒 {format_md_weekday(tomorrow)} {times[0]}",
         "next_reminder_label": f"明天 {times[0]}",
     }
+
+
+def build_checkin_success_text(status, *, now=None, config=None):
+    """報平安成功回覆：星期、報到時間、祝福語、下次提醒。"""
+    now = now or current_app_time(config)
+    duplicate = bool(status.get("already_checked_today") or status.get("is_duplicate"))
+    header = "✅ 今天已經報過平安了，不用再點一次。" if duplicate else "✅ 報平安成功！"
+    check_dt = parse_last_checkin(status.get("last_check_in")) or now
+    if getattr(check_dt, "tzinfo", None) is not None:
+        try:
+            check_dt = check_dt.astimezone(ZoneInfo("Asia/Taipei")).replace(tzinfo=None)
+        except Exception:
+            check_dt = check_dt.replace(tzinfo=None)
+    blessing = checkin_blessing_text(now)
+    lines = [
+        header,
+        f"📅 今天是 {format_md_weekday(now)}｜報到時間 {format_hm(check_dt)}",
+        f"💌 {blessing}",
+    ]
+    next_text = str(status.get("next_reminder_text") or "").strip()
+    if next_text:
+        lines.append(f"⏰ {next_text}" if next_text.startswith("下次提醒") else f"⏰ 下次提醒 {next_text}")
+    return "\n".join(lines)
+
+
+def membership_expiry_info(profile, now=None):
+    """試用／付費到期資訊；無需提醒時回 None。"""
+    if not isinstance(profile, dict):
+        return None
+    now = now or current_app_time({})
+    plan = str(profile.get("plan") or "trial")
+    if plan == "trial":
+        started = parse_datetime(profile.get("trial_started_at"))
+        total = trial_total_days(profile)
+        if started:
+            try:
+                days = max(0, total - (now - started).days)
+            except Exception:
+                days = trial_days_left(profile)
+        else:
+            days = total
+        return {
+            "plan": plan,
+            "label": "免費試用",
+            "days_left": days,
+            "expired": days <= 0,
+            "near": days <= EXPIRY_REMIND_WITHIN_DAYS,
+        }
+    if plan.startswith("paid_"):
+        paid_until = parse_datetime(str(profile.get("paid_until") or "").strip())
+        if not paid_until:
+            return None
+        days = (paid_until.date() - now.date()).days
+        return {
+            "plan": plan,
+            "label": plan_type_label(profile),
+            "days_left": days,
+            "expired": days < 0,
+            "near": days <= EXPIRY_REMIND_WITHIN_DAYS,
+        }
+    if plan == "free":
+        # 僅對「曾到期降級」或曾開過試用的會員催促，避免全新 free 被洗版
+        if not (
+            str(profile.get("plan_expired_at") or "").strip()
+            or str(profile.get("trial_started_at") or "").strip()
+        ):
+            return None
+        return {
+            "plan": plan,
+            "label": "免費方案",
+            "days_left": 0,
+            "expired": True,
+            "near": True,
+        }
+    return None
+
+
+def should_offer_expiry_remind(profile, now=None):
+    """是否應推方案到期提醒（opt-out／當日已推過則否）。"""
+    if bool(profile.get("expiry_remind_opt_out")):
+        return False
+    now = now or current_app_time({})
+    today = now.strftime("%Y-%m-%d")
+    if str(profile.get("expiry_remind_sent_date") or "").strip() == today:
+        return False
+    info = membership_expiry_info(profile, now)
+    if not info:
+        return False
+    return bool(info.get("expired") or info.get("near"))
+
+
+def build_expiry_remind_flex(profile, now=None):
+    """到期／即將到期 Flex：繼續每日問候 → 方案頁；不再提醒我 → opt-out postback。"""
+    now = now or current_app_time({})
+    info = membership_expiry_info(profile, now) or {}
+    label = info.get("label") or "方案"
+    days = info.get("days_left")
+    if info.get("expired") or (isinstance(days, int) and days <= 0):
+        title = f"你的{label}已到期"
+        body = "續用後可繼續每日問候與守護提醒，家人也能安心。"
+    else:
+        title = f"你的{label}即將到期"
+        body = f"還剩約 {days} 天。續用後可繼續每日問候，守護不中斷。"
+    pricing_uri = pricing_direct_url()
+    return {
+        "type": "flex",
+        "altText": title,
+        "contents": {
+            "type": "bubble",
+            "size": "mega",
+            "header": {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#0F766E",
+                "paddingAll": "lg",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": "方案提醒",
+                        "color": "#FFFFFF",
+                        "size": "sm",
+                        "wrap": True,
+                    },
+                    {
+                        "type": "text",
+                        "text": title,
+                        "color": "#FFFFFF",
+                        "size": "lg",
+                        "weight": "bold",
+                        "wrap": True,
+                    },
+                ],
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "md",
+                "paddingAll": "lg",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": body,
+                        "size": "md",
+                        "color": "#334155",
+                        "wrap": True,
+                    }
+                ],
+            },
+            "footer": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "paddingAll": "lg",
+                "contents": [
+                    {
+                        "type": "button",
+                        "action": {
+                            "type": "uri",
+                            "label": "繼續每日問候",
+                            "uri": pricing_uri,
+                        },
+                        "style": "primary",
+                        "color": "#0F766E",
+                        "height": "md",
+                    },
+                    {
+                        "type": "button",
+                        "action": {
+                            "type": "postback",
+                            "label": "不再提醒我",
+                            "data": "action=expiry_opt_out",
+                            "displayText": "不再提醒我方案到期",
+                        },
+                        "style": "secondary",
+                        "height": "md",
+                    },
+                ],
+            },
+        },
+    }
+
+
+def mark_expiry_remind_sent(profile, now=None):
+    now = now or current_app_time({})
+    profile["expiry_remind_sent_date"] = now.strftime("%Y-%m-%d")
+
+
+def handle_expiry_opt_out_postback(data_file, line_user_id):
+    if not line_user_id:
+        return "請先加入每日平安好友。"
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id)
+    profile["expiry_remind_opt_out"] = True
+    save_state(data_file, state)
+    return "好的，之後不會再提醒方案到期。若要續用，隨時點「查看方案」即可。"
+
+
+def maybe_attach_expiry_remind(messages, profile, *, now=None, state=None, data_file=None):
+    """若符合條件，附加到期 Flex 並標記今日已推（寫入 profile；呼叫端負責 save）。"""
+    now = now or current_app_time({})
+    if not should_offer_expiry_remind(profile, now):
+        return messages
+    messages = list(messages or [])
+    messages.append(build_expiry_remind_flex(profile, now))
+    mark_expiry_remind_sent(profile, now)
+    if state is not None and data_file:
+        save_state(data_file, state)
+    return messages
+
+
+def normalize_line_reply_items(reply):
+    """把 postback／關鍵字回覆正規成 list（text str 或 flex dict）。"""
+    if reply is None:
+        return []
+    if isinstance(reply, list):
+        return [item for item in reply if item is not None]
+    return [reply]
 
 
 def parse_datetime(value):
@@ -1944,20 +2194,23 @@ def resolve_welcome_display_name(
     return None
 
 
-def record_checkin(data_file, payload=None):
+def record_checkin(data_file, payload=None, config=None):
     payload = payload or {}
     state = load_state(data_file)
     profile = get_profile(state, payload.get("line_user_id"))
-    now = current_app_time({})
+    now = current_app_time(config or {})
     today = now.strftime("%Y-%m-%d")
     history = set(profile.get("history") or [])
-    already_checked = profile_is_today_checked(profile, now=now)
+    already_checked = profile_is_today_checked(profile, config=config, now=now)
     if today not in history:
         history.add(today)
         profile["history"] = sorted(history)
     # Persist as Taipei-local naive ISO so [:10] matches today_string()
     profile["last_check_in"] = now.isoformat(timespec="seconds")
     profile["last_warning_cancelled_at"] = None
+    # Product rule: 今日已報平安 → 略過同日剩餘排程提醒（標記所有 slots）
+    times = reminder_times_for_profile(profile) or ["12:00"]
+    _mark_checkin_reminder_slots(profile, today, times, times)
     save_state(data_file, state)
     status = build_status(profile, state)
     status["already_checked_today"] = already_checked
@@ -2781,11 +3034,12 @@ def backfill_bind_notify(config, *, dry_run=False, limit=0):
     pairs_skipped = 0
     pairs_failed = 0
     pairs_marked_only = 0
+    pairs_attempted = 0
     results = []
 
     for inviter_id, inviter, contact, guardian_id in iter_accepted_line_bind_pairs(state):
         pairs_total += 1
-        if limit_n > 0 and (pairs_notified + pairs_marked_only) >= limit_n:
+        if limit_n > 0 and pairs_attempted >= limit_n:
             break
 
         if str(contact.get("bind_notify_sent_at") or "").strip():
@@ -2803,6 +3057,7 @@ def backfill_bind_notify(config, *, dry_run=False, limit=0):
             if not dry_run:
                 contact["bind_notify_sent_at"] = now_stamp
             pairs_marked_only += 1
+            pairs_attempted += 1
             results.append(
                 {
                     "inviter_line_user_id": inviter_id,
@@ -2827,6 +3082,7 @@ def backfill_bind_notify(config, *, dry_run=False, limit=0):
 
         if dry_run:
             pairs_notified += 1
+            pairs_attempted += 1
             results.append(
                 {
                     "inviter_line_user_id": inviter_id,
@@ -2837,6 +3093,7 @@ def backfill_bind_notify(config, *, dry_run=False, limit=0):
             )
             continue
 
+        pairs_attempted += 1
         inviter_ok = False
         guardian_ok = False
         errors = []
@@ -2860,9 +3117,9 @@ def backfill_bind_notify(config, *, dry_run=False, limit=0):
                     guardian_ok = True
             except Exception as exc:
                 append_notification_log(
-                    state, "binding_complete", line_user_id, "failed", message, str(exc)
+                    state, "binding_complete", line_user_id, "failed", message, str(exc)[:400]
                 )
-                errors.append({"who": who, "error": str(exc)})
+                errors.append({"who": who, "error": str(exc)[:400]})
 
         if inviter_ok and guardian_ok:
             contact["bind_notify_sent_at"] = now_stamp
@@ -4827,25 +5084,43 @@ def line_push_message(token, line_user_id, message):
     - str: 純文字訊息
     - dict 且帶 "type" key: 直接作為 LINE message object (例如 flex)
     """
+    to_id = str(line_user_id or "").strip()
+    if not to_id:
+        raise ValueError("missing line_user_id for push")
     if isinstance(message, dict) and message.get("type"):
         msg_obj = message
     else:
         msg_obj = {"type": "text", "text": str(message)}
     body = json.dumps(
-        {"to": line_user_id, "messages": [msg_obj]},
+        {"to": to_id, "messages": [msg_obj]},
         ensure_ascii=False,
     ).encode("utf-8")
     req = urllib.request.Request(
         "https://api.line.me/v2/bot/message/push",
         data=body,
         headers={
-            "Content-Type": "application/json",
+            "Content-Type": "application/json; charset=UTF-8",
             "Authorization": f"Bearer {token}",
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=10) as res:
-        return {"ok": 200 <= res.status < 300, "status": res.status}
+    try:
+        with urllib.request.urlopen(req, timeout=10) as res:
+            return {"ok": 200 <= res.status < 300, "status": res.status}
+    except urllib.error.HTTPError as exc:
+        err_body = ""
+        try:
+            err_body = exc.read().decode("utf-8", errors="replace")[:500]
+        except Exception:
+            err_body = ""
+        # Re-raise with LINE body so cron/backfill can surface the real cause.
+        raise urllib.error.HTTPError(
+            exc.url,
+            exc.code,
+            f"{exc.reason}: {err_body}" if err_body else exc.reason,
+            exc.headers,
+            None,
+        ) from exc
 
 
 def append_notification_log(state, kind, line_user_id, status, message, detail=None):
@@ -5349,6 +5624,10 @@ def send_checkin_reminders(config):
             if today not in hist:
                 hist.add(today)
                 user["history"] = sorted(hist)
+            # 今日已報平安 → 略過同日剩餘排程提醒（標記 slots，避免後續誤推）
+            times = reminder_times_for_profile(user) or ["12:00"]
+            _mark_checkin_reminder_slots(user, today, times, times)
+            skipped += 1
             continue
 
         times = reminder_times_for_profile(user)
@@ -5373,6 +5652,24 @@ def send_checkin_reminders(config):
             append_notification_log(state, "checkin", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
             sent += 1
             results.append({"line_user_id": line_user_id, "reminder_time": target_time, "result": result})
+            # 方案即將／已到期：同日最多附帶一次提醒（不洗版）
+            if should_offer_expiry_remind(user, now):
+                expiry_msg = build_expiry_remind_flex(user, now)
+                try:
+                    expiry_result = sender(token, line_user_id, expiry_msg)
+                    mark_expiry_remind_sent(user, now)
+                    append_notification_log(
+                        state,
+                        "expiry_remind",
+                        line_user_id,
+                        "sent",
+                        expiry_msg,
+                        json.dumps(expiry_result, ensure_ascii=False),
+                    )
+                except Exception as expiry_exc:
+                    append_notification_log(
+                        state, "expiry_remind", line_user_id, "failed", expiry_msg, str(expiry_exc)
+                    )
         except Exception as exc:
             if _mark_line_push_blocked(user, exc):
                 append_notification_log(state, "checkin", line_user_id, "blocked", message, str(exc))
@@ -5728,18 +6025,28 @@ def is_checkin_postback(data):
 
 
 def handle_checkin_postback(data_file, line_user_id, config=None):
-    """Persist check-in from LINE postback — same path as LIFF /api/checkin."""
+    """Persist check-in from LINE postback — same path as LIFF /api/checkin.
+
+    Returns text, or a list of [text, optional expiry Flex] when membership is near expiry.
+    """
     if not line_user_id:
         return "請先加入每日平安好友後再報平安。"
-    status = record_checkin(data_file, {"line_user_id": line_user_id})
-    next_text = status.get("next_reminder_text") or status.get("next_reminder_label") or ""
-    if status.get("already_checked_today") or status.get("is_duplicate"):
-        base = "✅ 今天已經報過平安了，不用再點一次。"
-    else:
-        base = "✅ 報平安成功！已寫入你的會員資料與簽到紀錄。"
-    if next_text:
-        return f"{base}\n⏰ {next_text}"
-    return base
+    status = record_checkin(data_file, {"line_user_id": line_user_id}, config=config)
+    now = current_app_time(config)
+    text = build_checkin_success_text(status, now=now, config=config)
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id)
+    messages = maybe_attach_expiry_remind(
+        [text], profile, now=now, state=state, data_file=data_file
+    )
+    if len(messages) == 1:
+        return messages[0]
+    return messages
+
+
+def is_expiry_opt_out_postback(data):
+    text = str(data or "").strip()
+    return text == "action=expiry_opt_out" or "action=expiry_opt_out" in text
 
 
 def handle_smart_reminder_postback(data_file, line_user_id, data, config=None):
@@ -5936,7 +6243,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724bf",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725sr",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -6252,7 +6559,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724bf",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725sr",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -6871,6 +7178,8 @@ def create_app(config=None):
                 # 每日推播「我平安」：在 LINE 內點選即寫入簽到（與 LIFF 同一套 record_checkin）
                 if is_checkin_postback(data):
                     reply = handle_checkin_postback(app.config["DATA_FILE"], line_user_id, app.config)
+                elif is_expiry_opt_out_postback(data):
+                    reply = handle_expiry_opt_out_postback(app.config["DATA_FILE"], line_user_id)
                 elif data.startswith("smart:"):
                     reply = handle_smart_reminder_postback(
                         app.config["DATA_FILE"], line_user_id, data, app.config
@@ -6886,7 +7195,27 @@ def create_app(config=None):
                     except Exception:
                         reply = None
                 if reply:
-                    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+                    items = normalize_line_reply_items(reply)
+                    messages = []
+                    for item in items:
+                        if isinstance(item, dict) and item.get("type") == "flex":
+                            if FlexSendMessage is None:
+                                messages.append(
+                                    TextSendMessage(
+                                        text=str(item.get("altText") or "每日平安")
+                                    )
+                                )
+                            else:
+                                messages.append(
+                                    FlexSendMessage(
+                                        alt_text=str(item.get("altText") or "每日平安")[:400],
+                                        contents=item.get("contents") or {},
+                                    )
+                                )
+                        else:
+                            messages.append(TextSendMessage(text=str(item)))
+                    if messages:
+                        line_bot_api.reply_message(event.reply_token, messages)
 
         @handler.add(MessageEvent, message=TextMessage)
         def handle_text_message(event):
@@ -7158,7 +7487,50 @@ def create_app(config=None):
 
             status = None
             if any(keyword in text for keyword in CHECKIN_KEYWORDS):
-                status = record_checkin(app.config["DATA_FILE"], {"line_user_id": line_user_id})
+                status = record_checkin(
+                    app.config["DATA_FILE"],
+                    {"line_user_id": line_user_id},
+                    config=app.config,
+                )
+                reply_items = normalize_line_reply_items(
+                    build_checkin_success_text(status, config=app.config)
+                )
+                state = load_state(app.config["DATA_FILE"])
+                profile = get_profile(state, line_user_id)
+                reply_items = maybe_attach_expiry_remind(
+                    reply_items,
+                    profile,
+                    now=current_app_time(app.config),
+                    state=state,
+                    data_file=app.config["DATA_FILE"],
+                )
+                messages = []
+                for item in reply_items:
+                    if isinstance(item, dict) and item.get("type") == "flex":
+                        if FlexSendMessage is not None:
+                            messages.append(
+                                FlexSendMessage(
+                                    alt_text=str(item.get("altText") or "方案提醒")[:400],
+                                    contents=item.get("contents") or {},
+                                )
+                            )
+                        else:
+                            messages.append(
+                                TextSendMessage(text=str(item.get("altText") or "方案提醒"))
+                            )
+                    else:
+                        messages.append(TextSendMessage(text=str(item)))
+                if should_create_support_ticket(text):
+                    create_support_ticket(
+                        app.config["DATA_FILE"],
+                        {
+                            "line_user_id": line_user_id,
+                            "message": text,
+                        },
+                    )
+                if messages:
+                    line_bot_api.reply_message(event.reply_token, messages)
+                return
             elif any(keyword in text for keyword in STATUS_KEYWORDS):
                 state = load_state(app.config["DATA_FILE"])
                 status = build_status(get_profile(state, line_user_id))

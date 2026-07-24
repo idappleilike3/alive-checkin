@@ -49,15 +49,114 @@ class CheckinPostbackTests(unittest.TestCase):
         self.assertTrue(again.get("is_today_checked"))
 
     def test_checkin_postback_writes_member_history(self):
-        reply = app.handle_checkin_postback(self.data_file, "U_pb_1")
+        fixed = datetime(2026, 7, 25, 1, 26, 0)
+        with mock.patch.object(app, "current_app_time", return_value=fixed):
+            reply = app.handle_checkin_postback(self.data_file, "U_pb_1")
+        if isinstance(reply, list):
+            reply = "\n".join(str(x) if not isinstance(x, dict) else x.get("altText", "") for x in reply)
         self.assertIn("報平安成功", reply)
+        self.assertIn("7/25（六）", reply)
+        self.assertIn("01:26", reply)
+        self.assertIn("💌", reply)
+        self.assertIn("下次提醒", reply)
         state = app.load_state(self.data_file)
         profile = state["users"]["U_pb_1"]
-        self.assertIn(app.today_string(), profile.get("history") or [])
+        self.assertIn("2026-07-25", profile.get("history") or [])
         self.assertTrue(profile.get("last_check_in"))
+        # 同日剩餘提醒 slot 應標記為已處理
+        slots = (profile.get("checkin_reminder_sent_slots") or {}).get("2026-07-25") or []
+        self.assertTrue(slots)
 
-        reply2 = app.handle_checkin_postback(self.data_file, "U_pb_1")
+        with mock.patch.object(app, "current_app_time", return_value=fixed):
+            reply2 = app.handle_checkin_postback(self.data_file, "U_pb_1")
+        if isinstance(reply2, list):
+            reply2 = "\n".join(str(x) if not isinstance(x, dict) else x.get("altText", "") for x in reply2)
         self.assertIn("已經報過", reply2)
+
+    def test_after_checkin_cron_skips_remaining_same_day_slots(self):
+        """今日已報平安後，同日後續排程提醒不再推「請報平安」視窗。"""
+        sent = []
+
+        def fake_sender(token, to, message):
+            sent.append((to, message))
+            return {"ok": True}
+
+        fixed_morning = datetime(2026, 7, 25, 8, 0, 0)
+        with mock.patch.object(app, "current_app_time", return_value=fixed_morning):
+            app.record_checkin(
+                self.data_file,
+                {"line_user_id": "U_skip_slots"},
+                config={"CRON_NOW": fixed_morning, "APP_TIMEZONE": "Asia/Taipei"},
+            )
+        state = app.load_state(self.data_file)
+        profile = state["users"]["U_skip_slots"]
+        profile["reminder_times"] = ["08:00", "12:00", "18:00"]
+        profile["plan"] = "paid_799"
+        profile["payment_status"] = "active"
+        profile["paid_until"] = "2099-01-01"
+        app.save_state(self.data_file, state)
+
+        afternoon = datetime(2026, 7, 25, 18, 5, 0)
+        data, code = app.send_checkin_reminders(
+            {
+                "DATA_FILE": self.data_file,
+                "LINE_CHANNEL_ACCESS_TOKEN": "x",
+                "LINE_PUSH_SENDER": fake_sender,
+                "CRON_NOW": afternoon,
+                "APP_TIMEZONE": "Asia/Taipei",
+            }
+        )
+        self.assertEqual(code, 200)
+        self.assertEqual(data.get("sent", 0), 0)
+        self.assertEqual(sent, [])
+
+        # 隔日第一個時段仍會推
+        next_day = datetime(2026, 7, 26, 12, 5, 0)
+        data2, code2 = app.send_checkin_reminders(
+            {
+                "DATA_FILE": self.data_file,
+                "LINE_CHANNEL_ACCESS_TOKEN": "x",
+                "LINE_PUSH_SENDER": fake_sender,
+                "CRON_NOW": next_day,
+                "APP_TIMEZONE": "Asia/Taipei",
+            }
+        )
+        self.assertEqual(code2, 200)
+        self.assertGreaterEqual(data2.get("sent", 0), 1)
+        self.assertTrue(sent)
+
+    def test_expiry_remind_on_checkin_and_opt_out(self):
+        fixed = datetime(2026, 7, 25, 10, 0, 0)
+        state = app.load_state(self.data_file)
+        profile = app.get_profile(state, "U_exp")
+        profile["plan"] = "trial"
+        profile["trial_started_at"] = (fixed - timedelta(days=6)).isoformat(timespec="seconds")
+        profile["trial_bonus_days"] = 0
+        app.save_state(self.data_file, state)
+
+        with mock.patch.object(app, "current_app_time", return_value=fixed):
+            reply = app.handle_checkin_postback(self.data_file, "U_exp")
+        self.assertIsInstance(reply, list)
+        self.assertEqual(len(reply), 2)
+        self.assertIn("報平安成功", reply[0])
+        self.assertEqual(reply[1]["type"], "flex")
+        footer = reply[1]["contents"]["footer"]["contents"]
+        self.assertEqual(footer[0]["action"]["type"], "uri")
+        self.assertIn("pricing", footer[0]["action"]["uri"])
+        self.assertEqual(footer[1]["action"]["data"], "action=expiry_opt_out")
+
+        state2 = app.load_state(self.data_file)
+        self.assertEqual(state2["users"]["U_exp"].get("expiry_remind_sent_date"), "2026-07-25")
+
+        # 同日不再附帶
+        with mock.patch.object(app, "current_app_time", return_value=fixed.replace(hour=15)):
+            reply2 = app.handle_checkin_postback(self.data_file, "U_exp")
+        self.assertIsInstance(reply2, str)
+
+        opt = app.handle_expiry_opt_out_postback(self.data_file, "U_exp")
+        self.assertIn("不會再提醒", opt)
+        self.assertTrue(app.load_state(self.data_file)["users"]["U_exp"].get("expiry_remind_opt_out"))
+
 
     def test_is_checkin_postback_variants(self):
         self.assertTrue(app.is_checkin_postback("action=checkin"))
