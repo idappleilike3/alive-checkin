@@ -132,6 +132,9 @@ DEFAULT_PROFILE = {
     "location": {},
     "guardian_group_ids": [],
     "calendar_notes": {},
+    "guarding_for": [],
+    "invited_by": "",
+    "guarding_details": [],
 }
 
 # 依每日提醒次數的預設時段(使用者未自訂時使用)
@@ -403,6 +406,44 @@ def _resolve_db_path(data_file):
     return text
 
 
+def database_url():
+    """External Postgres URL (survives Free web redeploys when disk unavailable)."""
+    return (os.environ.get("DATABASE_URL") or os.environ.get("STATE_DATABASE_URL") or "").strip()
+
+
+def _normalize_database_url(url):
+    text = str(url or "").strip()
+    if text.startswith("postgres://"):
+        return "postgresql://" + text[len("postgres://") :]
+    return text
+
+
+def _pg_connect():
+    """Open a short-lived Postgres connection; raises if DATABASE_URL missing/broken."""
+    import psycopg
+
+    url = _normalize_database_url(database_url())
+    if not url:
+        raise RuntimeError("DATABASE_URL not set")
+    # External Render host needs SSL; internal hostname usually does not.
+    if "render.com" in url and "sslmode=" not in url:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}sslmode=require"
+    return psycopg.connect(url, connect_timeout=10)
+
+
+def _ensure_pg_kv():
+    with _pg_connect() as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS kv_store ("
+            "  key TEXT PRIMARY KEY,"
+            "  value TEXT NOT NULL,"
+            "  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+            ")"
+        )
+        conn.commit()
+
+
 def resolve_data_file(explicit=None):
     """Pick durable state path when a mounted disk is available.
 
@@ -410,6 +451,9 @@ def resolve_data_file(explicit=None):
     1) explicit DATA_FILE / argument
     2) ``/var/data/state.json`` when that mount exists and is writable
     3) repo-local ``data/state.json`` (ephemeral on free Render)
+
+    When ``DATABASE_URL`` is set, SQLite is still used as a local cache mirror;
+    authoritative state lives in Postgres ``kv_store``.
     """
     candidates = []
     if explicit:
@@ -442,20 +486,31 @@ def resolve_data_file(explicit=None):
 
 
 def persistence_info(data_file):
-    """Describe whether the active state path looks durable (mounted disk)."""
+    """Describe whether the active state path looks durable (disk or Postgres)."""
     path = str(data_file or "")
     db_path = _resolve_db_path(path)
-    durable = path.startswith("/var/data") or bool(os.environ.get("RENDER_DISK_MOUNT_PATH"))
+    has_pg = bool(database_url())
+    durable = (
+        has_pg
+        or path.startswith("/var/data")
+        or bool(os.environ.get("RENDER_DISK_MOUNT_PATH"))
+    )
+    backend = "postgres" if has_pg else ("disk" if path.startswith("/var/data") else "ephemeral")
+    warning = ""
+    if not durable:
+        warning = (
+            "資料可能因重啟遺失請掛磁碟。"
+            "Render Free 本機磁碟會在 redeploy／重啟清空；"
+            "請升級 Starter 後掛 Persistent Disk（/var/data）並設 DATA_FILE=/var/data/state.json，"
+            "或設定 DATABASE_URL 使用外部 Postgres。"
+        )
     return {
         "data_file": path,
         "db_path": db_path,
         "durable": durable,
-        "ephemeral_warning": (
-            ""
-            if durable
-            else "Render free disk is ephemeral: redeploy/restart may wipe bindings. "
-            "Attach a Persistent Disk at /var/data and set DATA_FILE=/var/data/state.json."
-        ),
+        "backend": backend,
+        "database_url_configured": has_pg,
+        "ephemeral_warning": warning,
     }
 
 
@@ -517,7 +572,21 @@ def _migrate_legacy_json(data_file, db_path):
         pass
 
 
-def load_state(data_file):
+def _hydrate_state(saved):
+    state = {**DEFAULT_STATE, **(saved or {})}
+    state["history"] = sorted(set(state.get("history") or []))
+    state["users"] = state.get("users") or {}
+    state["notification_logs"] = state.get("notification_logs") or []
+    state["friend_invites"] = state.get("friend_invites") or {}
+    state["contact_rewards"] = state.get("contact_rewards") or []
+    state["support_tickets"] = state.get("support_tickets") or []
+    state["backup_exports"] = state.get("backup_exports") or []
+    state["guardian_groups"] = state.get("guardian_groups") or {}
+    state["orders"] = state.get("orders") or []
+    return state
+
+
+def _load_state_sqlite(data_file):
     """Load state from SQLite (auto-migrates legacy state.json on first call)."""
     db_path = _resolve_db_path(data_file)
     if not Path(db_path).exists():
@@ -533,27 +602,15 @@ def load_state(data_file):
         conn.close()
 
     if not row:
-        return {**DEFAULT_STATE, "users": {}}
+        return _hydrate_state({})
     try:
         saved = json.loads(row[0])
     except (json.JSONDecodeError, TypeError):
-        return {**DEFAULT_STATE, "users": {}}
-
-    state = {**DEFAULT_STATE, **saved}
-    state["history"] = sorted(set(state.get("history") or []))
-    state["users"] = state.get("users") or {}
-    state["notification_logs"] = state.get("notification_logs") or []
-    state["friend_invites"] = state.get("friend_invites") or {}
-    state["contact_rewards"] = state.get("contact_rewards") or []
-    state["support_tickets"] = state.get("support_tickets") or []
-    state["backup_exports"] = state.get("backup_exports") or []
-    state["guardian_groups"] = state.get("guardian_groups") or {}
-    state["orders"] = state.get("orders") or []
-    return state
+        return _hydrate_state({})
+    return _hydrate_state(saved)
 
 
-def save_state(data_file, state):
-    """Persist state to SQLite with an atomic transaction."""
+def _save_state_sqlite(data_file, state):
     db_path = _resolve_db_path(data_file)
     _ensure_db(db_path)
     payload = json.dumps(state, ensure_ascii=False, indent=2)
@@ -567,6 +624,78 @@ def save_state(data_file, state):
         conn.commit()
     finally:
         conn.close()
+
+
+def _load_state_postgres():
+    _ensure_pg_kv()
+    with _pg_connect() as conn:
+        row = conn.execute(
+            "SELECT value FROM kv_store WHERE key = %s", ("default",)
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        return _hydrate_state(json.loads(row[0]))
+    except (json.JSONDecodeError, TypeError, IndexError):
+        return None
+
+
+def _save_state_postgres(state):
+    _ensure_pg_kv()
+    payload = json.dumps(state, ensure_ascii=False, indent=2)
+    with _pg_connect() as conn:
+        conn.execute(
+            "INSERT INTO kv_store (key, value, updated_at) VALUES (%s, %s, NOW()) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+            ("default", payload),
+        )
+        conn.commit()
+
+
+def load_state(data_file):
+    """Load state from Postgres (preferred) or SQLite local cache."""
+    if database_url():
+        try:
+            pg_state = _load_state_postgres()
+            if pg_state is not None and (pg_state.get("users") or pg_state.get("orders")):
+                # Keep a local mirror for ops/debug; never wipe Postgres on mirror fail.
+                try:
+                    _save_state_sqlite(data_file, pg_state)
+                except OSError:
+                    pass
+                return pg_state
+            # First boot / empty PG: seed from local SQLite if present
+            local = _load_state_sqlite(data_file)
+            if local.get("users") or local.get("orders") or local.get("guardian_groups"):
+                try:
+                    _save_state_postgres(local)
+                except Exception:
+                    pass
+                return local
+            if pg_state is not None:
+                return pg_state
+            return _hydrate_state({})
+        except Exception:
+            # PG down → last-resort local cache (may be stale after redeploy)
+            return _load_state_sqlite(data_file)
+    return _load_state_sqlite(data_file)
+
+
+def save_state(data_file, state):
+    """Persist state to Postgres when configured; always mirror to SQLite when possible."""
+    if database_url():
+        try:
+            _save_state_postgres(state)
+        except Exception:
+            # Still try local write so the request does not silently discard mutations.
+            _save_state_sqlite(data_file, state)
+            raise
+        try:
+            _save_state_sqlite(data_file, state)
+        except OSError:
+            pass
+        return
+    _save_state_sqlite(data_file, state)
 
 
 def today_string():
@@ -1134,6 +1263,7 @@ def build_status(profile, state=None):
             1 for c in (profile.get("contacts") or []) if contact_is_profile_complete(c)
         ),
         "guarding_for": list(profile.get("guarding_for") or []),
+        "guarding_details": list(profile.get("guarding_details") or []),
         "invited_by": str(profile.get("invited_by") or "").strip(),
         "contact_capacity_reminder_enabled": bool(profile.get("contact_capacity_reminder_enabled", False)),
         "guardian_details_reminder_enabled": bool(profile.get("guardian_details_reminder_enabled", True)),
@@ -1701,6 +1831,8 @@ def normalize_contact(contact, index):
         or contact.get("line_id")
         or ""
     ).strip()
+    role_raw = str(contact.get("contact_role") or contact.get("role") or "guardian").strip().lower()
+    contact_role = "emergency" if role_raw in ("emergency", "emergency_contact", "緊急聯絡人") else "guardian"
     return {
         "id": contact_id,
         "name": str(contact.get("name") or "").strip(),
@@ -1712,6 +1844,7 @@ def normalize_contact(contact, index):
         "line_id": line_user_id,
         "binding_status": str(contact.get("binding_status") or ("accepted" if line_user_id else "unbound")),
         "is_primary": is_primary,
+        "contact_role": contact_role,
         "notify_methods": methods,
         "priority": priority,
         "consent_status": str(contact.get("consent_status") or "pending"),
@@ -1782,12 +1915,15 @@ def validate_contact_payload(contact, existing=None, contact_limit=10):
 
     # 注意：payload 的 line_user_id 多半是「會員本人」認證欄，不是守護人 LINE。
     # 表單新增／編輯不可由此寫入 LINE 綁定；真正綁定只走 bind_emergency_contact(invite_from)。
+    role_raw = str(contact.get("contact_role") or contact.get("role") or "guardian").strip().lower()
+    contact_role = "emergency" if role_raw in ("emergency", "emergency_contact", "緊急聯絡人") else "guardian"
     cleaned = {
         "name": name,
         "relationship": relationship,
         "phone": phone,
         "email": email,
         "is_primary": bool(contact.get("is_primary", False)),
+        "contact_role": contact_role,
         "notify_methods": contact.get("notify_methods") or ["line"],
         "available_time": str(contact.get("available_time") or "").strip(),
         "note": str(contact.get("note") or "").strip(),
@@ -2042,6 +2178,7 @@ def bind_emergency_contact(data_file, payload, config=None):
         existing["accepted_at"] = existing.get("accepted_at") or accepted_at
         existing["invited_by"] = inviter_id
         existing["notify_methods"] = list(dict.fromkeys([*(existing.get("notify_methods") or []), "line"]))
+        existing["contact_role"] = "guardian"
     elif unbound_slot is not None:
         # 合併到既有未綁 LINE 的聯絡人列（常見：邀請人先填資料再分享邀請）
         unbound_slot["name"] = unbound_slot.get("name") or contact_display_name or "LINE 聯絡人"
@@ -2051,6 +2188,7 @@ def bind_emergency_contact(data_file, payload, config=None):
         unbound_slot["binding_status"] = "accepted"
         unbound_slot["accepted_at"] = accepted_at
         unbound_slot["invited_by"] = inviter_id
+        unbound_slot["contact_role"] = "guardian"
         unbound_slot["notify_methods"] = list(
             dict.fromkeys([*(unbound_slot.get("notify_methods") or []), "line"])
         )
@@ -2087,7 +2225,7 @@ def bind_emergency_contact(data_file, payload, config=None):
             {
                 "id": f"line-{contact_line_user_id}",
                 "name": contact_display_name or "LINE 聯絡人",
-                "relationship": "受邀緊急聯絡人",
+                "relationship": "守護人",
                 "phone": "",
                 "line_id": contact_line_user_id,
                 "line_user_id": contact_line_user_id,
@@ -2099,11 +2237,14 @@ def bind_emergency_contact(data_file, payload, config=None):
                 "binding_status": "accepted",
                 "accepted_at": accepted_at,
                 "invited_by": inviter_id,
+                "contact_role": "guardian",
                 "note": "LINE 一鍵授權綁定",
             }
         )
     # Always write back so shallow-list mutations + new rows both persist
     # 首位守護人自動設為核心（is_primary）
+    if existing is not None:
+        existing["contact_role"] = "guardian"
     if contacts and not any(bool(c.get("is_primary")) for c in contacts):
         contacts[0]["is_primary"] = True
     inviter["contacts"] = contacts
@@ -2113,6 +2254,24 @@ def bind_emergency_contact(data_file, payload, config=None):
         guarding.append(inviter_id)
     contact_user["guarding_for"] = guarding
     contact_user["invited_by"] = inviter_id
+    # Mirror inviter details onto invitee so admin can see「守護誰」without only counting users
+    details = list(contact_user.get("guarding_details") or [])
+    detail_row = next((d for d in details if str(d.get("line_user_id") or "") == inviter_id), None)
+    inviter_name = inviter.get("display_name") or "邀請人"
+    if detail_row:
+        detail_row["display_name"] = inviter_name
+        detail_row["accepted_at"] = detail_row.get("accepted_at") or accepted_at
+        detail_row["role"] = "guardian"
+    else:
+        details.append(
+            {
+                "line_user_id": inviter_id,
+                "display_name": inviter_name,
+                "accepted_at": accepted_at,
+                "role": "guardian",
+            }
+        )
+    contact_user["guarding_details"] = details
     ensure_onboarding_completed_flag(inviter)
 
     rewards = state.setdefault("contact_rewards", [])
@@ -4221,7 +4380,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724as",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724at",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -4537,7 +4696,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724as",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724at",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),

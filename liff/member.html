@@ -88,6 +88,26 @@
     margin-top: 10px;
     width: 100%;
   }
+  .guardian-bind-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  .one-tap-invite-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 40px;
+    padding: 8px 14px;
+    border-radius: 10px;
+    border: 0;
+    background: #0f766e;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 800;
+    cursor: pointer;
+  }
   .guardian-actions .btn {
     margin: 0;
     min-height: 48px;
@@ -266,16 +286,27 @@
 
 <!-- 守護人管理（會員中心：編輯／刪除在此） -->
 <div class="card">
-  <h2>👨‍👩‍👧 守護人聯絡人</h2>
-  <p class="hint">依優先順序顯示。編輯／刪除在列表內操作；需要新增時再按下方按鈕。</p>
+  <h2>👨‍👩‍👧 守護人（Guardian）</h2>
+  <p class="hint"><strong>用途</strong>：平常每天守護你的人。<strong>會收到</strong>：未報平安／SOS／安全守護。<strong>免費建議</strong>：1 位，請用一鍵邀請完成 LINE 綁定。</p>
   <div id="guardianList">
     <div class="empty">載入中...</div>
   </div>
   <div class="contact-actions">
-    <button class="btn btn-primary" type="button" id="addGuardianBtn">＋ 新增聯絡人</button>
+    <button class="btn btn-primary" type="button" id="addGuardianBtn">＋ 新增守護人</button>
     <button class="btn" type="button" id="shareInviteBtn">一鍵分享邀請守護人</button>
   </div>
   <p class="hint" id="shareHint" style="display:none;color:#006400;"></p>
+</div>
+
+<div class="card">
+  <h2>☎️ 緊急聯絡人（Emergency Contact）</h2>
+  <p class="hint"><strong>用途</strong>：真正緊急才聯絡（119 前／SOS）。平時不收每日提醒。<strong>免費建議</strong>：2 位（爸媽，或配偶＋好友）。</p>
+  <div id="emergencyList">
+    <div class="empty">載入中...</div>
+  </div>
+  <div class="contact-actions">
+    <button class="btn btn-primary" type="button" id="addEmergencyBtn">＋ 新增緊急聯絡人</button>
+  </div>
 </div>
 
 <!-- 每日提醒時間設定 -->
@@ -470,32 +501,58 @@ async function refreshGuardians() {
   }
 }
 
-function renderGuardians() {
-  const list = document.getElementById("guardianList");
-  if (!state.guardians.length) {
-    list.innerHTML = '<div class="empty">尚未綁定守護人，請新增或分享邀請連結</div>';
+function contactRoleOf(g) {
+  const raw = String(g?.contact_role || g?.role || "guardian").trim().toLowerCase();
+  if (raw === "emergency" || raw === "emergency_contact" || raw === "緊急聯絡人") return "emergency";
+  return "guardian";
+}
+
+function isBoundContact(g) {
+  return Boolean(g && (g.binding_status === "accepted" || g.consent_status === "accepted" || g.line_id || g.line_user_id));
+}
+
+function renderContactList(listEl, items, emptyText) {
+  if (!listEl) return;
+  if (!items.length) {
+    listEl.innerHTML = `<div class="empty">${escape(emptyText)}</div>`;
     return;
   }
-  list.innerHTML = state.guardians.map((g, i) => {
-    const bound = g.binding_status === "accepted" || g.consent_status === "accepted" || g.line_id;
+  listEl.innerHTML = items.map((g, i) => {
+    const bound = isBoundContact(g);
+    const statusHtml = bound
+      ? `<div class="guardian-detail" style="color:#166534;font-weight:700;">✓ 已綁定</div>`
+      : `<div class="guardian-bind-row">
+          <div class="guardian-detail" style="color:#b45309;font-weight:700;">⏳ 等待 LINE 綁定</div>
+          <button class="one-tap-invite-btn" type="button" data-invite="1">一鍵邀請</button>
+        </div>`;
     return `
     <div class="guardian-row ${g.is_primary || i === 0 ? "primary" : ""}">
-      <div class="guardian-name">${i + 1}. ${escape(g.name || "守護人 " + (i + 1))}${g.is_primary || i === 0 ? " ⭐ 主要" : ""}</div>
+      <div class="guardian-name">${i + 1}. ${escape(g.name || "聯絡人 " + (i + 1))}${g.is_primary || i === 0 ? " ⭐ 主要" : ""}</div>
       <div class="guardian-detail">${escape(g.relationship || "關係未設定")}</div>
       <div class="guardian-detail">${escape(g.phone || g.email || "未填聯絡方式")}</div>
-      <div class="guardian-detail">${bound ? "✅ LINE 已綁定" : "⏳ 等待 LINE 綁定"}</div>
+      ${statusHtml}
       <div class="guardian-actions">
         <button class="btn btn-edit" type="button" data-edit="${escape(g.id)}">編輯</button>
         <button class="btn btn-danger" type="button" data-delete="${escape(g.id)}">刪除</button>
       </div>
     </div>`;
   }).join("");
-  list.querySelectorAll("[data-edit]").forEach((btn) => {
+  listEl.querySelectorAll("[data-invite]").forEach((btn) => {
+    btn.addEventListener("click", () => shareGuardianInvite());
+  });
+  listEl.querySelectorAll("[data-edit]").forEach((btn) => {
     btn.addEventListener("click", () => openEditor(btn.dataset.edit));
   });
-  list.querySelectorAll("[data-delete]").forEach((btn) => {
+  listEl.querySelectorAll("[data-delete]").forEach((btn) => {
     btn.addEventListener("click", () => deleteGuardian(btn.dataset.delete));
   });
+}
+
+function renderGuardians() {
+  const guardians = (state.guardians || []).filter((g) => contactRoleOf(g) === "guardian");
+  const emergencies = (state.guardians || []).filter((g) => contactRoleOf(g) === "emergency");
+  renderContactList(document.getElementById("guardianList"), guardians, "尚未綁定守護人，請新增或分享邀請連結");
+  renderContactList(document.getElementById("emergencyList"), emergencies, "尚未新增緊急聯絡人");
 }
 
 function buildInviteText() {
@@ -517,13 +574,17 @@ async function shareGuardianInvite() {
   location.assign("/liff/share-invite.html");
 }
 
-function openEditor(contactId) {
+function openEditor(contactId, preferredRole) {
   const modal = document.getElementById("editorModal");
   const err = document.getElementById("editorError");
   err.style.display = "none";
   state.editId = contactId || null;
   const g = state.guardians.find((x) => x.id === contactId);
-  document.getElementById("editorTitle").textContent = g ? "編輯守護人" : "新增守護人";
+  const role = g ? contactRoleOf(g) : (preferredRole === "emergency" ? "emergency" : "guardian");
+  state.editRole = role;
+  document.getElementById("editorTitle").textContent = g
+    ? (role === "emergency" ? "編輯緊急聯絡人" : "編輯守護人")
+    : (role === "emergency" ? "新增緊急聯絡人" : "新增守護人");
   document.getElementById("gName").value = g?.name || "";
   const rel = document.getElementById("gRelationship");
   const relationship = g?.relationship || "家人";
@@ -536,7 +597,8 @@ function openEditor(contactId) {
   rel.value = relationship;
   document.getElementById("gPhone").value = g?.phone || "";
   document.getElementById("gEmail").value = g?.email || "";
-  document.getElementById("gIsPrimary").checked = Boolean(g?.is_primary || (!g && !state.guardians.length));
+  const sameRole = (state.guardians || []).filter((x) => contactRoleOf(x) === role);
+  document.getElementById("gIsPrimary").checked = Boolean(g?.is_primary || (!g && role === "guardian" && !sameRole.length));
   modal.hidden = false;
 }
 
@@ -553,7 +615,8 @@ async function saveEditor() {
     relationship: document.getElementById("gRelationship").value.trim(),
     phone: document.getElementById("gPhone").value.trim(),
     email: document.getElementById("gEmail").value.trim(),
-    is_primary: document.getElementById("gIsPrimary").checked
+    is_primary: document.getElementById("gIsPrimary").checked,
+    contact_role: state.editRole === "emergency" ? "emergency" : "guardian"
   };
   if (!payload.name || !payload.relationship) {
     err.style.display = "block";
@@ -620,10 +683,13 @@ document.getElementById("useDefaultsBtn").addEventListener("click", () => {
 document.getElementById("shareInviteBtn").addEventListener("click", shareGuardianInvite);
 const roleIntroDismiss = document.getElementById("memberRoleIntroDismiss");
 if (roleIntroDismiss) roleIntroDismiss.addEventListener("click", dismissRoleIntro);
-document.getElementById("addGuardianBtn").addEventListener("click", async () => {
-  await shareGuardianInvite();
-  openEditor(null);
+document.getElementById("addGuardianBtn").addEventListener("click", () => {
+  openEditor(null, "guardian");
 });
+const addEmergencyBtn = document.getElementById("addEmergencyBtn");
+if (addEmergencyBtn) {
+  addEmergencyBtn.addEventListener("click", () => openEditor(null, "emergency"));
+}
 document.getElementById("cancelEditorBtn").addEventListener("click", closeEditor);
 document.getElementById("saveEditorBtn").addEventListener("click", saveEditor);
 

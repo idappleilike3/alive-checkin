@@ -217,9 +217,42 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("真正緊急時才聯絡", page)
         self.assertIn('id="memberRoleIntro"', member)
         self.assertIn("免費體驗小教室", member)
+        self.assertIn("memberEmergencySection", page)
+        self.assertIn("member-role-bind-intro", page)
+        self.assertIn("memberAddEmergencyBtn", page)
         self.assertNotIn('id="memberAutoRenew"', page)
         self.assertNotIn("儲存續扣", page)
         self.assertNotIn("有效的 799 守護版會員，可連續按 3 次", page)
+
+    def test_member_unbound_guardian_shows_one_tap_invite(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        member = (ROOT / "liff" / "member.html").read_text(encoding="utf-8")
+
+        self.assertIn("function renderContactManageRows", page)
+        self.assertIn("一鍵邀請", page)
+        self.assertIn("✓ 已綁定", page)
+        self.assertIn("等待 LINE 綁定", page)
+        self.assertIn("openShareInviteForContact", page)
+        self.assertIn('id="memberEmergencySection"', page)
+        self.assertIn('id="memberEmergencyList"', page)
+        self.assertIn('id="memberAddEmergencyBtn"', page)
+        self.assertIn("contact_role", page)
+        self.assertIn("contactsByRole", page)
+        self.assertIn("guardian-bind-row", page)
+        self.assertIn("one-tap-invite-btn", member)
+        self.assertIn("✓ 已綁定", member)
+        self.assertIn('id="emergencyList"', member)
+        self.assertIn("contact_role", member)
+
+    def test_login_skips_onboarding_when_guardians_exist(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        init_app = page[page.rindex("async function initApp()") : page.index("// ===== D01")]
+        self.assertIn("hasGuardians", init_app)
+        self.assertIn("homeReady || hasGuardians || setupDone", init_app)
+        self.assertIn("await showOnboarding()", init_app)
+        # 有守護人時關閉填寫／邀請彈窗
+        self.assertIn("onboardingModal.hidden = true", init_app)
+        self.assertIn("closeGuardianPrompt()", init_app)
 
     def test_line_login_finishes_before_checkin_is_enabled(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

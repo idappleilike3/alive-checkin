@@ -838,23 +838,37 @@
       const general = user.general_guardian_count != null
         ? user.general_guardian_count
         : Math.max(0, count - core);
+      const guarding = Array.isArray(user.guarding_details) && user.guarding_details.length
+        ? user.guarding_details
+        : (user.guarding_for || []).map((id) => ({ line_user_id: id, display_name: "" }));
+      const parts = [];
       if (!bound.length) {
-        return `<div><span class="badge warn">已綁定 0 位</span><br><small>尚未 LINE 綁定</small></div>`;
+        parts.push(`<div><span class="badge warn">已綁定 0 位</span><br><small>尚未 LINE 綁定</small></div>`);
+      } else {
+        const ownerId = user.line_user_id || "";
+        const lines = bound.map((c, i) => {
+          const name = c.name || "未命名";
+          const rel = c.relationship ? `／${c.relationship}` : "";
+          const gid = c.line_user_id || c.line_id || "-";
+          const cid = c.id || "";
+          const role = c.role || (c.is_primary ? "核心" : "一般");
+          const st = c.binding_status || "accepted";
+          const isCore = Boolean(c.is_primary);
+          const btnLabel = isCore ? "改一般" : "設核心";
+          const btn = `<button type="button" class="plan-select" style="margin-top:4px;padding:2px 8px;font-size:12px;" onclick="setCoreGuardian('${ownerId}', '${cid}', '${gid}', ${isCore ? "false" : "true"})">${btnLabel}</button>`;
+          return `<div><strong>${i + 1}. ${name}${rel}（${role}）</strong><br><small>LINE ID：${gid}</small> <span class="badge ${st === "accepted" ? "ok" : "warn"}">${st === "accepted" ? "已綁定" : st}</span><br>${btn}</div>`;
+        });
+        parts.push(`<div style="display:grid;gap:6px;min-width:180px;"><span class="badge ok">已綁定 ${count} 位</span><small>核心 ${core}／一般 ${general}（可點按鈕變更）</small>${lines.join("")}</div>`);
       }
-      const ownerId = user.line_user_id || "";
-      const lines = bound.map((c, i) => {
-        const name = c.name || "未命名";
-        const rel = c.relationship ? `／${c.relationship}` : "";
-        const gid = c.line_user_id || c.line_id || "-";
-        const cid = c.id || "";
-        const role = c.role || (c.is_primary ? "核心" : "一般");
-        const st = c.binding_status || "accepted";
-        const isCore = Boolean(c.is_primary);
-        const btnLabel = isCore ? "改一般" : "設核心";
-        const btn = `<button type="button" class="plan-select" style="margin-top:4px;padding:2px 8px;font-size:12px;" onclick="setCoreGuardian('${ownerId}', '${cid}', '${gid}', ${isCore ? "false" : "true"})">${btnLabel}</button>`;
-        return `<div><strong>${i + 1}. ${name}${rel}（${role}）</strong><br><small>LINE ID：${gid}</small> <span class="badge ${st === "accepted" ? "ok" : "warn"}">${st === "accepted" ? "已綁定" : st}</span><br>${btn}</div>`;
-      });
-      return `<div style="display:grid;gap:6px;min-width:180px;"><span class="badge ok">已綁定 ${count} 位</span><small>核心 ${core}／一般 ${general}（可點按鈕變更）</small>${lines.join("")}</div>`;
+      if (guarding.length) {
+        const gLines = guarding.map((g, i) => {
+          const name = g.display_name || "邀請人";
+          const gid = g.line_user_id || "-";
+          return `<div><strong>守護對象 ${i + 1}. ${name}</strong><br><small>LINE ID：${gid}</small></div>`;
+        }).join("");
+        parts.push(`<div style="display:grid;gap:4px;margin-top:6px;"><span class="badge ok">作為守護人：${guarding.length}</span>${gLines}</div>`);
+      }
+      return parts.join("") || `<div><span class="badge warn">已綁定 0 位</span></div>`;
     }
 
     async function refresh() {
@@ -877,15 +891,16 @@
         if (persist.ephemeral_warning) {
           persistNote.hidden = false;
           persistNote.style.color = "#9a3412";
-          persistNote.textContent = `⚠️ 資料儲存：${persist.data_file || "?"}（暫存磁碟）— ${persist.ephemeral_warning}`;
+          persistNote.textContent = `⚠️ 資料可能因重啟遺失請掛磁碟 — ${persist.ephemeral_warning}（目前：${persist.backend || "?"}／${persist.data_file || "?"}）`;
         } else if (persist.durable) {
           persistNote.hidden = false;
           persistNote.style.color = "#166534";
-          persistNote.textContent = `✅ 持久化磁碟：${persist.data_file || persist.db_path || "ok"}（綁定不會因重啟消失）`;
+          const backendLabel = persist.backend === "postgres" ? "外部 Postgres" : "持久化磁碟";
+          persistNote.textContent = `✅ ${backendLabel}：${persist.data_file || persist.db_path || "ok"}（綁定不會因重啟消失）`;
         } else {
           persistNote.hidden = false;
           persistNote.style.color = "#9a3412";
-          persistNote.textContent = `⚠️ 資料儲存：${persist.data_file || "?"}（尚未確認持久化）`;
+          persistNote.textContent = `⚠️ 資料可能因重啟遺失請掛磁碟 — 目前：${persist.data_file || "?"}（尚未確認持久化）`;
         }
       }
       $("paidRevenue").textContent = `NT$${Number(data.paid_revenue || 0).toLocaleString("zh-TW")}`;
