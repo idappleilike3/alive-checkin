@@ -1094,7 +1094,7 @@ def welcome_flex(display_name: str | None = None):
     pricing_uri = pricing_direct_url()
     base = (os.environ.get("APP_PUBLIC_URL") or PUBLIC_BASE).rstrip("/")
     # cache-bust so LINE clients refresh logo after transparent PNG / layout updates
-    logo_uri = f"{base}/assets/daily-peace-logo.png?v=W250724al"
+    logo_uri = f"{base}/assets/daily-peace-logo.png?v=W250724am"
     heart_uri = f"{base}/assets/welcome-heart-banner.png"
     pink_bg = "#FFF5F8"
     pink_soft = "#FFE4EC"

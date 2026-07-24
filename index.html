@@ -1465,14 +1465,23 @@
     .modal-backdrop {
       position: fixed;
       inset: 0;
-      z-index: 20;
+      /* Must beat .bottom-nav(30) and .sos-fab(35); otherwise iOS taps hit nav, not modal buttons */
+      z-index: 90;
       display: grid;
       place-items: center;
       padding: 18px;
+      padding-bottom: max(18px, env(safe-area-inset-bottom, 0px));
       background: rgba(15, 23, 42, 0.46);
       backdrop-filter: blur(8px);
+      -webkit-overflow-scrolling: touch;
+      touch-action: manipulation;
     }
     .modal-backdrop[hidden] { display: none; }
+    /* While invite/consent modal is open, kill nav/SOS hit targets as belt-and-suspenders */
+    body.invite-modal-open .bottom-nav,
+    body.invite-modal-open .sos-fab {
+      pointer-events: none !important;
+    }
     .guardian-modal {
       width: min(100%, 420px);
       border-radius: 20px;
@@ -1937,15 +1946,36 @@
       letter-spacing: 0;
     }
     .agree-btn {
+      position: relative;
+      z-index: 2;
       width: 100%;
-      min-height: 54px;
+      min-height: 56px;
       border: 0;
       border-radius: 16px;
       color: #fff;
       background: linear-gradient(135deg, #22c55e, #16a34a);
       font-weight: 950;
+      font-size: 18px;
       cursor: pointer;
+      -webkit-tap-highlight-color: rgba(34, 197, 94, 0.35);
+      touch-action: manipulation;
       box-shadow: 0 16px 34px rgba(34, 197, 94, 0.28);
+    }
+    .agree-btn:disabled {
+      opacity: 0.7;
+      cursor: wait;
+    }
+    #inviteAcceptPrompt {
+      z-index: 100;
+      place-items: center;
+      align-content: center;
+      overflow-y: auto;
+    }
+    #inviteAcceptPrompt .guardian-modal {
+      position: relative;
+      z-index: 1;
+      margin: 12px auto;
+      padding-bottom: max(18px, env(safe-area-inset-bottom, 0px));
     }
     .warning-modal {
       border: 0;
@@ -2153,7 +2183,7 @@
       }
     }
   
-    /* === D01: 底部導覽列(z-index 30 確保高於 onboarding modal) === */
+    /* === D01: 底部導覽列（低於 .modal-backdrop z-index 90，避免擋住同意按鈕） === */
     .bottom-nav {
       position: fixed;
       bottom: 0; left: 0; right: 0;
@@ -2180,7 +2210,7 @@
     .nav-icon { font-size: 20px; line-height: 1; }
     .nav-label { font-size: 11px; }
 
-    /* === D01: SOS 浮動按鈕(z-index 35, 最高) === */
+    /* === D01: SOS 浮動按鈕（低於 modal；modal 開啟時 pointer-events 會被關掉） === */
     .sos-fab {
       position: fixed;
       bottom: 76px; right: 16px;
@@ -4980,11 +5010,28 @@
     function maybeShowInviteAcceptPrompt() {
       const inviteFrom = getAppParam("invite_from");
       if (!inviteFrom || inviteFrom === lineUserId) return;
-      $("inviteAcceptPrompt").hidden = false;
+      const modal = $("inviteAcceptPrompt");
+      modal.hidden = false;
+      document.body.classList.add("invite-modal-open");
+      // iOS LIFF: ensure button is in view and not under chrome
+      try {
+        requestAnimationFrame(() => {
+          const btn = $("acceptGuardianInviteBtn");
+          if (btn && typeof btn.scrollIntoView === "function") {
+            btn.scrollIntoView({ block: "center", inline: "nearest" });
+          }
+        });
+      } catch (_) {}
     }
 
     function closeInviteAcceptPrompt() {
       $("inviteAcceptPrompt").hidden = true;
+      document.body.classList.remove("invite-modal-open");
+      const btn = $("acceptGuardianInviteBtn");
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "同意成為守護人";
+      }
     }
 
     async function acceptGuardianInviteFromPrompt() {
@@ -4999,10 +5046,26 @@
         alert("請先用 LINE 登入，系統會自動帶回這份守護邀請。");
         return;
       }
-      const bindResult = await apiBindEmergencyContact(inviteFrom);
-      if (bindResult?.bound) {
-        closeInviteAcceptPrompt();
-        alert("綁定完成！你已成為對方的守護人。對方也會收到「綁定完成」通知。");
+      const btn = $("acceptGuardianInviteBtn");
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "綁定中…";
+      }
+      try {
+        const bindResult = await apiBindEmergencyContact(inviteFrom);
+        if (bindResult?.bound) {
+          closeInviteAcceptPrompt();
+          alert("綁定完成！你已成為對方的守護人。對方也會收到「綁定完成」通知。");
+          return;
+        }
+        alert(bindResult?.error || "綁定尚未完成，請再試一次。若仍失敗，請請對方重新分享邀請連結。");
+      } catch (error) {
+        alert((error && error.message) ? error.message : "綁定失敗，請稍後再試。");
+      } finally {
+        if (btn && !$("inviteAcceptPrompt").hidden) {
+          btn.disabled = false;
+          btn.textContent = "同意成為守護人";
+        }
       }
     }
 
@@ -5395,11 +5458,16 @@
         ).trim();
         if (inviteFrom && inviteFrom !== lineUserId) {
           console.log("成功抓到邀請人 ID:", inviteFrom);
-          const bindResult = await apiBindEmergencyContact(inviteFrom);
-          if (bindResult?.bound) {
-            closeInviteAcceptPrompt();
-            alert("綁定完成！你已成為對方的緊急聯絡人。對方也會收到「綁定完成」通知。");
-          } else {
+          try {
+            const bindResult = await apiBindEmergencyContact(inviteFrom);
+            if (bindResult?.bound) {
+              closeInviteAcceptPrompt();
+              alert("綁定完成！你已成為對方的緊急聯絡人。對方也會收到「綁定完成」通知。");
+            } else {
+              maybeShowInviteAcceptPrompt();
+            }
+          } catch (bindErr) {
+            console.error("auto bind failed:", bindErr);
             maybeShowInviteAcceptPrompt();
           }
         } else if (!inviteFrom && !isInviteeDeepLink()) {

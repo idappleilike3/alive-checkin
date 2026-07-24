@@ -441,6 +441,26 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("#calendarNoteModal .guardian-modal", page)
         self.assertIn('showInlineSuccess(contentOverride === "" ? "已清除記事" : "記事已儲存")', page)
 
+    def test_invite_accept_modal_is_above_bottom_nav_for_ios_taps(self):
+        """iPhone: 「同意成為守護人」must not sit under bottom-nav/SOS hit targets."""
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        css = page[: page.index("</style>")]
+
+        self.assertIn(".modal-backdrop {", css)
+        self.assertIn("z-index: 90", css)
+        self.assertIn("#inviteAcceptPrompt", css)
+        self.assertIn("z-index: 100", css)
+        self.assertIn("body.invite-modal-open .bottom-nav", css)
+        self.assertIn("pointer-events: none !important", css)
+        self.assertIn('id="acceptGuardianInviteBtn"', page)
+        self.assertIn("同意成為守護人", page)
+        self.assertIn("invite-modal-open", page)
+        self.assertIn("touch-action: manipulation", css)
+        # bottom nav / SOS must stay below modal layer
+        self.assertIn(".bottom-nav", css)
+        self.assertRegex(css, r"\.bottom-nav\s*\{[^}]*z-index:\s*30")
+        self.assertRegex(css, r"\.sos-fab\s*\{[^}]*z-index:\s*35")
+
     def test_onboarding_guardian_form_is_senior_friendly_and_traditional_chinese(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         onboarding = page[
