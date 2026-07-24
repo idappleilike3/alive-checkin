@@ -3529,13 +3529,7 @@
             <div class="member-data-row"><span>付款狀態</span><strong id="memberPaymentStatus">尚未付費</strong></div>
             <div class="member-data-row"><span>使用期限</span><strong id="memberBillingExpiry">尚未設定</strong></div>
           </div>
-          <label class="setting-choice" for="memberAutoRenew">
-            <input type="checkbox" id="memberAutoRenew">
-            <span>申請每月自動續扣。完成藍新信用卡授權後才會生效，可在到期前提出取消。</span>
-          </label>
-          <button class="action-btn" id="saveBillingPreferencesBtn" type="button">儲存續扣設定</button>
-          <div class="helper" id="memberAutoRenewStatus">目前尚未啟用自動續扣。</div>
-          <div class="member-advanced-note">付款會前往藍新金流安全頁面完成；平台不會保存完整信用卡號，只保留付款結果、授權狀態與必要的卡號末四碼。</div>
+          <div class="member-advanced-note">付款會前往藍新金流安全頁面完成；平台不會保存完整信用卡號，只保留付款結果、授權狀態與必要的卡號末四碼。續扣選項請於藍新付款頁自行選擇。</div>
         </div>
 
         <div class="member-data-section">
@@ -4283,25 +4277,6 @@
       return await res.json();
     }
 
-    async function apiSaveBillingPreferences(requested) {
-      if (useLocalMode || !lineUserId) {
-        const state = loadLocalState();
-        state.auto_renew_requested = requested;
-        state.auto_renew_enabled = false;
-        state.auto_renew_status = requested ? "pending_gateway" : "off";
-        saveLocalState(state);
-        return buildLocalStatus(state);
-      }
-      const res = await fetch("/api/billing/preferences", {
-        method: "POST",
-        headers: await authHeaders(),
-        body: JSON.stringify({ line_user_id: lineUserId, auto_renew_requested: requested })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "billing preference failed");
-      return data;
-    }
-
     async function apiCreatePaymentOrder(plan) {
       const res = await fetch("/api/payments/orders", {
         method: "POST",
@@ -4839,13 +4814,6 @@
       $("memberPlanBenefits").textContent = `${benefits.contacts} 位`;
       $("memberLocationQuota").textContent = `${benefits.locations} 位`;
       $("memberPlanBenefitDetail").textContent = benefits.detail;
-      $("memberAutoRenew").checked = Boolean(status.auto_renew_requested || status.auto_renew_enabled);
-      $("memberAutoRenewStatus").textContent = status.auto_renew_enabled
-        ? `自動續扣已啟用${status.next_billing_date ? `，下次扣款日 ${status.next_billing_date}` : ""}。`
-        : status.auto_renew_requested
-          ? "已收到申請；待藍新定期定額完成授權後才會開始每月扣款。"
-          : "目前尚未啟用自動續扣。";
-
       const atLimit = totalCount >= limit;
       const limitBanner = $("memberGuardianLimitBanner");
       if (limitBanner) {
@@ -6134,18 +6102,6 @@
       }
       // 有名額才開新增表單；已有列表時仍可新增下一位
       openGuardianEditor(null);
-    }
-
-    async function saveBillingPreferences() {
-      try {
-        renderStatus(await apiSaveBillingPreferences($("memberAutoRenew").checked));
-        alert($("memberAutoRenew").checked
-          ? "已記錄自動續扣申請。完成藍新授權後才會正式生效。"
-          : "已記錄取消續扣申請；若原本已啟用，需等藍新確認後停止。"
-        );
-      } catch (error) {
-        alert("續扣設定暫時無法儲存，請稍後再試。");
-      }
     }
 
     async function refreshLocationForSos() {
@@ -7802,7 +7758,6 @@
     if (memberShareGuardianBtn) memberShareGuardianBtn.addEventListener("click", shareContactInvite);
     $("guardianDetailsContact").addEventListener("change", populateGuardianDetailsForm);
     $("saveGuardianDetailsBtn").addEventListener("click", saveGuardianDetails);
-    $("saveBillingPreferencesBtn").addEventListener("click", saveBillingPreferences);
     $("sosBtn").addEventListener("click", triggerSos);
     $("guardianGroupsList").addEventListener("click", (event) => {
       const button = event.target.closest(".guardian-group-unbind");
