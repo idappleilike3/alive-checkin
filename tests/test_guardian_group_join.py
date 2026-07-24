@@ -57,6 +57,19 @@ class GuardianGroupJoinTests(unittest.TestCase):
             if block.get("type") == "box":
                 self.assertTrue(block.get("contents"), "LINE rejects empty Flex boxes")
 
+        # 主 CTA 必須是可點的「綁定守護群」
+        footer_btns = intro["footer"]["contents"]
+        primary = footer_btns[0]
+        self.assertEqual(primary["action"]["label"], "綁定守護群")
+        self.assertEqual(primary["action"]["text"], "綁定守護群")
+
+        # 文案需含用途／資格／上限／怎麼用
+        body_text = str(intro["body"])
+        self.assertIn("用途", body_text)
+        self.assertIn("資格", body_text)
+        self.assertIn("50", body_text)
+        self.assertIn("怎麼用", body_text)
+
 
 if __name__ == "__main__":
     unittest.main()

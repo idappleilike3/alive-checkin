@@ -3730,7 +3730,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724an",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724ap",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -4046,7 +4046,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724an",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724ap",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -4388,6 +4388,54 @@ def create_app(config=None):
                 except Exception as exc:
                     app.logger.exception("welcome push text failed: %s", exc)
 
+        def _guardian_intro_messages(owner_info, hint_text=None):
+            """進群歡迎：短文字 + Flex（雙保險，避免 Flex 被拒時整段消失）。"""
+            tip = hint_text or (
+                "歡迎加入每日平安守護群。\n"
+                "用途：沒簽到時會在群裡提醒。\n"
+                "資格：799 月費 1 群／年費 3 群。\n"
+                "上限：每群 50 人，超額會自動請出。\n"
+                "請管理員點「綁定守護群」完成設定。"
+            )
+            messages = [TextSendMessage(text=tip)]
+            if FlexSendMessage is not None and guardian_group_intro_flex is not None:
+                messages.append(
+                    FlexSendMessage(
+                        alt_text="❤️ 每日平安｜歡迎加入守護群｜請點綁定守護群",
+                        contents=guardian_group_intro_flex(owner_info),
+                    )
+                )
+            return messages
+
+        def _load_group_owner_info(group_id, line_user_id=None):
+            owner_info = {
+                "bound": False,
+                "is_owner": False,
+                "owner_id": None,
+                "is_active": False,
+                "owner_plan": None,
+            }
+            if not group_id:
+                return owner_info
+            try:
+                state = load_state(app.config["DATA_FILE"])
+                existing_group = state.get("guardian_groups", {}).get(group_id or "", {})
+                if existing_group.get("status") == "active":
+                    owner_id = existing_group.get("owner_line_user_id")
+                    owner_profile = state.get("users", {}).get(owner_id, {})
+                    owner_plan = owner_profile.get("plan")
+                    is_active = bool(owner_profile) and paid_membership_is_active(owner_profile)
+                    owner_info = {
+                        "bound": True,
+                        "is_owner": (line_user_id == owner_id) if line_user_id else False,
+                        "owner_id": owner_id,
+                        "is_active": is_active,
+                        "owner_plan": owner_plan,
+                    }
+            except Exception as exc:
+                app.logger.exception("group owner_info load failed: %s", exc)
+            return owner_info
+
         @handler.add(JoinEvent)
         def handle_group_join(event):
             """Bot 被邀進群 → 必送守護群歡迎卡（不依賴自動綁定成功）。"""
@@ -4413,67 +4461,21 @@ def create_app(config=None):
                     app.logger.exception("guardian_group_join_outcome failed: %s", exc)
                     outcome, _status = {"reply_text": "歡迎加入守護群", "should_leave": False}, 200
 
-            owner_info = {
-                "bound": False,
-                "is_owner": False,
-                "owner_id": None,
-                "is_active": False,
-                "owner_plan": None,
-            }
-            try:
-                state = load_state(app.config["DATA_FILE"])
-                existing_group = state.get("guardian_groups", {}).get(group_id or "", {})
-                if existing_group.get("status") == "active":
-                    owner_id = existing_group.get("owner_line_user_id")
-                    owner_profile = state.get("users", {}).get(owner_id, {})
-                    owner_plan = owner_profile.get("plan")
-                    is_active = bool(owner_profile) and paid_membership_is_active(owner_profile)
-                    owner_info = {
-                        "bound": True,
-                        "is_owner": (line_user_id == owner_id) if line_user_id else False,
-                        "owner_id": owner_id,
-                        "is_active": is_active,
-                        "owner_plan": owner_plan,
-                    }
-            except Exception as exc:
-                app.logger.exception("join owner_info load failed: %s", exc)
+            owner_info = _load_group_owner_info(group_id, line_user_id)
+            intro_msgs = _guardian_intro_messages(owner_info, outcome.get("reply_text") if owner_info.get("bound") else None)
 
             sent = False
             try:
-                if FlexSendMessage is not None and guardian_group_intro_flex is not None:
-                    flex = guardian_group_intro_flex(owner_info)
-                    line_bot_api.reply_message(
-                        event.reply_token,
-                        FlexSendMessage(
-                            alt_text="❤️ 每日平安｜歡迎加入守護群",
-                            contents=flex,
-                        ),
-                    )
-                    sent = True
-                else:
-                    line_bot_api.reply_message(
-                        event.reply_token,
-                        TextSendMessage(text=outcome.get("reply_text") or "歡迎加入守護群，請管理員點「點我綁定守護群」"),
-                    )
-                    sent = True
+                line_bot_api.reply_message(event.reply_token, intro_msgs)
+                sent = True
+                app.logger.info("JoinEvent reply intro ok group=%s", (group_id or "")[:12])
             except Exception as exc:
                 app.logger.exception("JoinEvent reply intro failed: %s", exc)
 
             if not sent and target_id:
                 try:
-                    if FlexSendMessage is not None and guardian_group_intro_flex is not None:
-                        line_bot_api.push_message(
-                            target_id,
-                            FlexSendMessage(
-                                alt_text="❤️ 每日平安｜歡迎加入守護群",
-                                contents=guardian_group_intro_flex(owner_info),
-                            ),
-                        )
-                    else:
-                        line_bot_api.push_message(
-                            target_id,
-                            TextSendMessage(text="歡迎加入守護群，請管理員傳送「點我綁定守護群」完成設定"),
-                        )
+                    line_bot_api.push_message(target_id, intro_msgs)
+                    app.logger.info("JoinEvent push intro ok group=%s", (group_id or "")[:12])
                 except Exception as exc:
                     app.logger.exception("JoinEvent push intro failed: %s", exc)
 
@@ -4522,7 +4524,7 @@ def create_app(config=None):
         @handler.add(MemberJoinedEvent)
         def handle_member_joined(event):
             # 2026-07-20 蝦董 added: 超過 50 人上限時,請出新成員
-            # 2026-07-21 patch 11: 額外提示「記得把 Bot 設為管理員」
+            # 2026-07-24: 成員進群也補歡迎／綁定提醒（JoinEvent 漏送時的備援）
             if getattr(event.source, "type", None) != "group":
                 return
             group_id = getattr(event.source, "group_id", None)
@@ -4530,6 +4532,36 @@ def create_app(config=None):
                 return
             try:
                 new_ids = [m.user_id for m in (event.joined.members or []) if getattr(m, "user_id", None)]
+                owner_info = _load_group_owner_info(group_id)
+                # 未綁定：推歡迎卡，請管理員點「綁定守護群」
+                # 已綁定：簡短歡迎新成員
+                if not owner_info.get("bound"):
+                    try:
+                        line_bot_api.push_message(
+                            group_id,
+                            _guardian_intro_messages(owner_info),
+                        )
+                        app.logger.info(
+                            "MemberJoined unbound intro push group=%s new=%s",
+                            group_id[:12],
+                            len(new_ids),
+                        )
+                    except Exception as exc:
+                        app.logger.exception("MemberJoined intro push failed: %s", exc)
+                elif new_ids:
+                    try:
+                        line_bot_api.push_message(
+                            group_id,
+                            TextSendMessage(
+                                text=(
+                                    "歡迎加入每日平安守護群。\n"
+                                    "記得每天報平安；若超過時間還沒簽到，系統會在這個群提醒家人。"
+                                )
+                            ),
+                        )
+                    except Exception as exc:
+                        app.logger.exception("MemberJoined welcome text failed: %s", exc)
+
                 result, code = enforce_group_member_limit(group_id, dict(app.config))
                 if code != 200 or not result.get("enforced"):
                     return
