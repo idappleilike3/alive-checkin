@@ -854,9 +854,13 @@
           const role = c.role || (c.is_primary ? "核心" : "一般");
           const st = c.binding_status || "accepted";
           const isCore = Boolean(c.is_primary);
+          const pic = c.picture_url || "";
+          const avatar = pic
+            ? `<img src="${pic}" alt="" width="28" height="28" style="border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px;" loading="lazy" referrerpolicy="no-referrer">`
+            : "";
           const btnLabel = isCore ? "改一般" : "設核心";
           const btn = `<button type="button" class="plan-select" style="margin-top:4px;padding:2px 8px;font-size:12px;" onclick="setCoreGuardian('${ownerId}', '${cid}', '${gid}', ${isCore ? "false" : "true"})">${btnLabel}</button>`;
-          return `<div><strong>${i + 1}. ${name}${rel}（${role}）</strong><br><small>LINE ID：${gid}</small> <span class="badge ${st === "accepted" ? "ok" : "warn"}">${st === "accepted" ? "已綁定" : st}</span><br>${btn}</div>`;
+          return `<div>${avatar}<strong>${i + 1}. ${name}${rel}（${role}）</strong><br><small>LINE ID：${gid}</small> <span class="badge ${st === "accepted" ? "ok" : "warn"}">${st === "accepted" ? "已綁定" : st}</span><br>${btn}</div>`;
         });
         parts.push(`<div style="display:grid;gap:6px;min-width:180px;"><span class="badge ok">已綁定 ${count} 位</span><small>核心 ${core}／一般 ${general}（可點按鈕變更）</small>${lines.join("")}</div>`);
       }

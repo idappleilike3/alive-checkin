@@ -125,6 +125,8 @@ DEFAULT_PROFILE = {
     "guardian_details_reminder_sent_at": "",
     "plan": "trial",
     "trial_started_at": None,
+    # 每成功邀請 1 位「新的」守護人綁定 → +7；不重複計算同一人
+    "trial_bonus_days": 0,
     "payment_status": "trial",
     "paid_until": "",
     "billing_cycle": "trial",
@@ -134,6 +136,10 @@ DEFAULT_PROFILE = {
     "auto_renew_requested": False,
     "auto_renew_enabled": False,
     "auto_renew_status": "off",
+    # 方案／試用到期後：守護人＋緊急連絡人軟保留至 contacts_retain_until
+    "plan_expired_at": "",
+    "contacts_retain_until": "",
+    "contacts_archived": [],
     "friends": [],
     "location": {},
     "guardian_group_ids": [],
@@ -145,6 +151,12 @@ DEFAULT_PROFILE = {
     "invited_by": "",
     "guarding_details": [],
 }
+
+# 試用基準 7 天；每成功邀請 1 位新守護人再 +7（無上限，同一人只算一次）
+TRIAL_BASE_DAYS = 7
+INVITE_REWARD_DAYS = 7
+# 方案／試用到期後，守護人＋緊急連絡人資料再保留天數（之後軟封存）
+CONTACTS_RETAIN_DAYS = 30
 
 # 依每日提醒次數的預設時段(使用者未自訂時使用)
 DEFAULT_REMINDER_TIMES_BY_COUNT = {
@@ -909,6 +921,10 @@ def parse_datetime(value):
 # Fields that must survive re-login / upsert and must never be replaced by defaults.
 _PROFILE_PERSIST_KEYS = (
     "trial_started_at",
+    "trial_bonus_days",
+    "plan_expired_at",
+    "contacts_retain_until",
+    "contacts_archived",
     "contacts",
     "history",
     "last_check_in",
@@ -1303,16 +1319,102 @@ def should_show_guardian_prompt(profile, contact_count):
 
 
 
+def trial_bonus_days(profile):
+    try:
+        return max(0, int(profile.get("trial_bonus_days") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def trial_total_days(profile):
+    """試用總天數＝基準 7 ＋邀請加碼（每位新守護人 +7）。"""
+    return TRIAL_BASE_DAYS + trial_bonus_days(profile)
+
+
 def trial_days_left(profile):
     started_at = parse_datetime(profile.get("trial_started_at"))
+    total = trial_total_days(profile)
     if not started_at:
-        return 7
+        return total
     elapsed_days = (datetime.now() - started_at).days
-    return max(0, 7 - elapsed_days)
+    return max(0, total - elapsed_days)
 
 
 def trial_active(profile):
     return (profile.get("plan") or "trial") == "trial" and trial_days_left(profile) > 0
+
+
+def clear_contacts_retain_window(profile):
+    """付費／試用權益恢復時，取消到期保留倒數（資料繼續留下）。"""
+    if not isinstance(profile, dict):
+        return
+    profile["plan_expired_at"] = ""
+    profile["contacts_retain_until"] = ""
+
+
+def mark_entitlement_lapsed(profile, now):
+    """方案／試用到期：開始 30 天軟保留倒數（當下不清空 contacts）。"""
+    if not isinstance(profile, dict):
+        return
+    stamp = now.isoformat(timespec="seconds")
+    if not str(profile.get("plan_expired_at") or "").strip():
+        profile["plan_expired_at"] = stamp
+    if not str(profile.get("contacts_retain_until") or "").strip():
+        profile["contacts_retain_until"] = (now + timedelta(days=CONTACTS_RETAIN_DAYS)).isoformat(
+            timespec="seconds"
+        )
+
+
+def contacts_retain_days_left(profile, now=None):
+    retain_until = parse_datetime(profile.get("contacts_retain_until"))
+    if not retain_until:
+        return None
+    clock = now or datetime.now()
+    return max(0, (retain_until.date() - clock.date()).days)
+
+
+def soft_archive_contacts_past_retain(profile, now):
+    """保留期結束後軟封存守護人／緊急連絡人（不清簽到 history）。"""
+    retain_until = parse_datetime(profile.get("contacts_retain_until"))
+    if not retain_until or retain_until >= now:
+        return False
+    contacts = list(profile.get("contacts") or [])
+    if not contacts and not profile.get("contacts_retain_until"):
+        return False
+    archived = list(profile.get("contacts_archived") or [])
+    stamp = now.isoformat(timespec="seconds")
+    for contact in contacts:
+        if not isinstance(contact, dict):
+            continue
+        archived.append({**contact, "archived_at": stamp, "archive_reason": "retain_window_ended"})
+    profile["contacts_archived"] = archived[-200:]
+    profile["contacts"] = []
+    profile["contacts_retain_until"] = ""
+    return True
+
+
+def apply_invite_trial_reward(inviter, reward, *, accepted_at):
+    """新守護人綁定成功：邀請人免費延長 7 天（同一人只套用一次）。
+
+    Returns True when bonus was newly applied.
+    """
+    if not isinstance(inviter, dict) or not isinstance(reward, dict):
+        return False
+    if reward.get("status") == "applied" and reward.get("selected_reward") == "trial_7_days":
+        return False
+    inviter["trial_bonus_days"] = trial_bonus_days(inviter) + INVITE_REWARD_DAYS
+    # 若已因到期落到 free，邀請成功後回到 trial，讓加碼天數立即生效
+    plan = str(inviter.get("plan") or "trial")
+    if plan in ("free", "trial"):
+        inviter["plan"] = "trial"
+        if str(inviter.get("payment_status") or "") in ("expired", "free", ""):
+            inviter["payment_status"] = "trial"
+        clear_contacts_retain_window(inviter)
+    reward["selected_reward"] = "trial_7_days"
+    reward["status"] = "applied"
+    reward["applied_at"] = accepted_at
+    reward["reward_days"] = INVITE_REWARD_DAYS
+    return True
 
 
 def plan_type_label(profile):
@@ -1336,11 +1438,11 @@ def compute_plan_expires_at(profile):
         return str(profile.get("paid_until") or "").strip()
     if plan == "free":
         return ""
-    # trial：trial_started_at + 7 天
+    # trial：trial_started_at +（7 + 邀請加碼）天
     started = parse_datetime(profile.get("trial_started_at"))
     if not started:
         started = datetime.now()
-    return (started + timedelta(days=7)).isoformat(timespec="seconds")
+    return (started + timedelta(days=trial_total_days(profile))).isoformat(timespec="seconds")
 
 
 def plan_expires_text(profile):
@@ -1529,8 +1631,13 @@ def build_status(profile, state=None):
         "auto_renew_enabled": bool(profile.get("auto_renew_enabled", False)),
         "auto_renew_status": profile.get("auto_renew_status", "off"),
         "trial_started_at": profile.get("trial_started_at"),
+        "trial_bonus_days": trial_bonus_days(profile),
+        "trial_total_days": trial_total_days(profile),
         "trial_days_left": trial_days_left(profile),
         "trial_active": trial_active(profile),
+        "plan_expired_at": str(profile.get("plan_expired_at") or ""),
+        "contacts_retain_until": str(profile.get("contacts_retain_until") or ""),
+        "contacts_retain_days_left": contacts_retain_days_left(profile),
         "contact_limit": plan_rules(profile)["contact_limit"],
         "daily_reminders": plan_rules(profile)["daily_reminders"],
         "channels": plan_rules(profile)["channels"],
@@ -2005,6 +2112,7 @@ def confirm_payment_order(data_file, payload, config=None):
     profile["payment_method_last4"] = str(payload.get("payment_method_last4") or "").strip()[-4:]
     profile["next_billing_date"] = profile["paid_until"]
     profile["renewal_reminder_sent_for"] = ""
+    clear_contacts_retain_window(profile)
     if payload.get("auto_renew_enabled") is not None:
         profile["auto_renew_enabled"] = bool(payload.get("auto_renew_enabled"))
         profile["auto_renew_status"] = "active" if profile["auto_renew_enabled"] else "off"
@@ -2013,10 +2121,11 @@ def confirm_payment_order(data_file, payload, config=None):
 
 
 def apply_expired_plan_downgrades(config):
-    """Downgrade paid members whose paid_until has passed.
+    """試用／付費到期：降為 free，當下保留守護人＋連絡人，並開始 30 天軟保留倒數。
 
     若 paid_until 為空（後台剛改方案尚未寫到期日），不要當成過期清掉方案。
     降級只改 plan／付款欄位，绝不清空 contacts／friends／guardian_group_ids。
+    保留期結束後由 cleanup_expired_data 軟封存。
     """
     data_file = config["DATA_FILE"]
     state = load_state(data_file)
@@ -2024,6 +2133,30 @@ def apply_expired_plan_downgrades(config):
     downgraded = []
     for profile in state.get("users", {}).values():
         plan = str(profile.get("plan") or "")
+        preserved_contacts = list(profile.get("contacts") or [])
+        preserved_friends = list(profile.get("friends") or [])
+        preserved_groups = list(profile.get("guardian_group_ids") or [])
+
+        # 試用到期 → free，資料保留 30 天
+        if plan == "trial" and trial_days_left(profile) <= 0:
+            profile["plan"] = "free"
+            profile["payment_status"] = "expired"
+            profile["billing_cycle"] = ""
+            profile["contacts"] = preserved_contacts
+            profile["friends"] = preserved_friends
+            profile["guardian_group_ids"] = preserved_groups
+            mark_entitlement_lapsed(profile, now)
+            downgraded.append(profile.get("line_user_id"))
+            append_notification_log(
+                state,
+                "plan_expired",
+                profile.get("line_user_id"),
+                "downgraded",
+                f"trial expired -> free; contacts kept={len(preserved_contacts)}; "
+                f"retain_until={profile.get('contacts_retain_until')}",
+            )
+            continue
+
         if not plan.startswith("paid_"):
             continue
         paid_until = parse_datetime(profile.get("paid_until"))
@@ -2032,10 +2165,7 @@ def apply_expired_plan_downgrades(config):
             continue
         if paid_until >= now:
             continue
-        # 已過期：只降方案，保留所有綁定
-        preserved_contacts = list(profile.get("contacts") or [])
-        preserved_friends = list(profile.get("friends") or [])
-        preserved_groups = list(profile.get("guardian_group_ids") or [])
+        # 已過期：只降方案，保留所有綁定，並開始 30 天軟保留
         if profile.get("payment_status") == "active" or paid_until:
             profile["plan"] = "free"
             profile["payment_status"] = "expired"
@@ -2046,13 +2176,15 @@ def apply_expired_plan_downgrades(config):
             profile["contacts"] = preserved_contacts
             profile["friends"] = preserved_friends
             profile["guardian_group_ids"] = preserved_groups
+            mark_entitlement_lapsed(profile, now)
             downgraded.append(profile.get("line_user_id"))
             append_notification_log(
                 state,
                 "plan_expired",
                 profile.get("line_user_id"),
                 "downgraded",
-                f"plan expired -> free (was {plan}); contacts kept={len(preserved_contacts)}",
+                f"plan expired -> free (was {plan}); contacts kept={len(preserved_contacts)}; "
+                f"retain_until={profile.get('contacts_retain_until')}",
             )
     if downgraded:
         save_state(data_file, state)
@@ -2161,6 +2293,8 @@ def normalize_contact(contact, index):
         "updated_at": str(contact.get("updated_at") or ""),
         "accepted_at": str(contact.get("accepted_at") or "").strip(),
         "invited_by": str(contact.get("invited_by") or "").strip(),
+        # LINE 頭像（綁定／register 寫入；列表 UI 顯示用，不是後台內部 UID）
+        "picture_url": str(contact.get("picture_url") or contact.get("pictureUrl") or "").strip(),
     }
 
 
@@ -2252,6 +2386,29 @@ def complete_guardian_contact(contact):
     )
 
 
+def enrich_contact_peer_picture(state, contact):
+    """用對方 LINE 會員 profile 補齊聯絡人 picture_url（缺圖時）。回傳是否變更。"""
+    if not isinstance(contact, dict):
+        return False
+    lid = get_contact_line_id(contact)
+    if not lid:
+        return False
+    current = str(contact.get("picture_url") or contact.get("pictureUrl") or "").strip()
+    if current:
+        if contact.get("picture_url") != current:
+            contact["picture_url"] = current
+            return True
+        return False
+    peer = (state.get("users") or {}).get(lid) if isinstance(state, dict) else None
+    if not isinstance(peer, dict):
+        return False
+    pic = str(peer.get("picture_url") or "").strip()
+    if not pic:
+        return False
+    contact["picture_url"] = pic
+    return True
+
+
 def get_contacts(data_file, line_user_id=None):
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
@@ -2273,6 +2430,10 @@ def get_contacts(data_file, line_user_id=None):
             {"contact_role": contact.get("contact_role") or normalized.get("contact_role")}
         )
         if contact.get("contact_role") != normalized["contact_role"] or "contact_role" not in contact:
+            changed = True
+        if enrich_contact_peer_picture(state, normalized):
+            # 回寫到原始列，之後列表／會員中心就能看到頭像
+            contact["picture_url"] = normalized["picture_url"]
             changed = True
         contacts.append(normalized)
     if changed:
@@ -2511,6 +2672,9 @@ def bind_emergency_contact(data_file, payload, config=None):
     inviter_id = str(payload.get("inviter_line_user_id") or "").strip()
     contact_line_user_id = str(payload.get("contact_line_user_id") or "").strip()
     contact_display_name = str(payload.get("contact_display_name") or "LINE 聯絡人").strip()
+    contact_picture_url = str(
+        payload.get("contact_picture_url") or payload.get("picture_url") or ""
+    ).strip()
     if not inviter_id or not contact_line_user_id:
         return {"ok": False, "error": "缺少邀請人或守護人資料", "code": "missing_ids"}, 400
     if inviter_id == contact_line_user_id:
@@ -2520,6 +2684,9 @@ def bind_emergency_contact(data_file, payload, config=None):
     inviter = get_profile(state, inviter_id)
     contact_user = get_profile(state, contact_line_user_id)
     contact_user["display_name"] = contact_display_name or contact_user.get("display_name") or "LINE 聯絡人"
+    if contact_picture_url:
+        contact_user["picture_url"] = contact_picture_url
+    peer_picture = str(contact_picture_url or contact_user.get("picture_url") or "").strip()
 
     contacts = list(inviter.get("contacts") or [])
     guarding = list(contact_user.get("guarding_for") or [])
@@ -2541,7 +2708,6 @@ def bind_emergency_contact(data_file, payload, config=None):
             None,
         )
 
-    already_bound = bool(existing) or already_guarding
     already_accepted = bool(
         existing
         and (
@@ -2552,34 +2718,35 @@ def bind_emergency_contact(data_file, payload, config=None):
     # 反向索引已存在＝先前綁過，視為已完成（勿再當新綁定狂推）
     if already_guarding and not existing and not unbound_slot:
         already_accepted = True
+    # 凍結「這次是否為重複綁定」——unbound_slot 合併後 existing 會變 truthy，不可再拿來當 already_bound
+    was_duplicate = bool(already_accepted)
 
     accepted_at = datetime.now().isoformat(timespec="seconds")
+
+    def _apply_line_bind_fields(row, *, is_new_accept):
+        row["name"] = row.get("name") or contact_display_name or "LINE 聯絡人"
+        row["line_id"] = contact_line_user_id
+        row["line_user_id"] = contact_line_user_id
+        row["consent_status"] = "accepted"
+        row["binding_status"] = "accepted"
+        if is_new_accept or not row.get("accepted_at"):
+            row["accepted_at"] = row.get("accepted_at") or accepted_at
+        row["invited_by"] = inviter_id
+        row["notify_methods"] = list(dict.fromkeys([*(row.get("notify_methods") or []), "line"]))
+        row["contact_role"] = "guardian"
+        if peer_picture:
+            row["picture_url"] = peer_picture
+        elif not str(row.get("picture_url") or "").strip():
+            row["picture_url"] = ""
+
     # LIFF 點擊授權即視為守護人本人同意綁定（不需再回「同意」）
     if existing:
-        existing["name"] = existing.get("name") or contact_display_name or "LINE 聯絡人"
-        existing["line_id"] = contact_line_user_id
-        existing["line_user_id"] = contact_line_user_id
-        existing["consent_status"] = "accepted"
-        existing["binding_status"] = "accepted"
-        existing["accepted_at"] = existing.get("accepted_at") or accepted_at
-        existing["invited_by"] = inviter_id
-        existing["notify_methods"] = list(dict.fromkeys([*(existing.get("notify_methods") or []), "line"]))
-        existing["contact_role"] = "guardian"
+        _apply_line_bind_fields(existing, is_new_accept=not was_duplicate)
     elif unbound_slot is not None:
         # 合併到既有未綁 LINE 的聯絡人列（常見：邀請人先填資料再分享邀請）
-        unbound_slot["name"] = unbound_slot.get("name") or contact_display_name or "LINE 聯絡人"
-        unbound_slot["line_id"] = contact_line_user_id
-        unbound_slot["line_user_id"] = contact_line_user_id
-        unbound_slot["consent_status"] = "accepted"
-        unbound_slot["binding_status"] = "accepted"
+        _apply_line_bind_fields(unbound_slot, is_new_accept=True)
         unbound_slot["accepted_at"] = accepted_at
-        unbound_slot["invited_by"] = inviter_id
-        unbound_slot["contact_role"] = "guardian"
-        unbound_slot["notify_methods"] = list(
-            dict.fromkeys([*(unbound_slot.get("notify_methods") or []), "line"])
-        )
         existing = unbound_slot
-        already_bound = True
     else:
         limit = int(plan_rules(inviter)["contact_limit"] or 1)
         if len(contacts) >= limit:
@@ -2598,6 +2765,7 @@ def bind_emergency_contact(data_file, payload, config=None):
                     "consent_request_sent": 0,
                     "test_messages_sent": 0,
                     "inviter_notified": False,
+                    "guardian_notified": False,
                     "persistence": persistence_info(data_file),
                 }, 200
             return {
@@ -2615,6 +2783,7 @@ def bind_emergency_contact(data_file, payload, config=None):
                 "phone": "",
                 "line_id": contact_line_user_id,
                 "line_user_id": contact_line_user_id,
+                "picture_url": peer_picture,
                 "email": "",
                 "available_time": "",
                 "notify_methods": ["line"],
@@ -2644,10 +2813,13 @@ def bind_emergency_contact(data_file, payload, config=None):
     details = list(contact_user.get("guarding_details") or [])
     detail_row = next((d for d in details if str(d.get("line_user_id") or "") == inviter_id), None)
     inviter_name = inviter.get("display_name") or "邀請人"
+    inviter_picture = str(inviter.get("picture_url") or "").strip()
     if detail_row:
         detail_row["display_name"] = inviter_name
         detail_row["accepted_at"] = detail_row.get("accepted_at") or accepted_at
         detail_row["role"] = "guardian"
+        if inviter_picture:
+            detail_row["picture_url"] = inviter_picture
     else:
         details.append(
             {
@@ -2655,6 +2827,7 @@ def bind_emergency_contact(data_file, payload, config=None):
                 "display_name": inviter_name,
                 "accepted_at": accepted_at,
                 "role": "guardian",
+                "picture_url": inviter_picture,
             }
         )
     contact_user["guarding_details"] = details
@@ -2678,7 +2851,7 @@ def bind_emergency_contact(data_file, payload, config=None):
             "inviter_display_name": inviter.get("display_name") or "",
             "contact_display_name": contact_display_name or "",
             "status": "available",
-            "reward_options": ["trial_7_days", "extra_contact_30_days"],
+            "reward_options": ["trial_7_days"],
             "selected_reward": "",
         }
         rewards.append(reward)
@@ -2686,13 +2859,21 @@ def bind_emergency_contact(data_file, payload, config=None):
         reward["inviter_display_name"] = inviter.get("display_name") or reward.get("inviter_display_name") or ""
         reward["contact_display_name"] = contact_display_name or reward.get("contact_display_name") or ""
 
+    invite_reward_applied = False
+    if not was_duplicate:
+        invite_reward_applied = apply_invite_trial_reward(
+            inviter, reward, accepted_at=accepted_at
+        )
+
     inviter_notified = False
     guardian_notified = False
     sent = 0
-    if config and not already_accepted:
+    # 首次綁定成功：一定推播雙方（重複綁定不狂推）
+    if config and not was_duplicate:
         token = (
             (config.get("LINE_CHANNEL_ACCESS_TOKEN") if hasattr(config, "get") else None)
             or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+            or os.environ.get("CHANNEL_ACCESS_TOKEN", "")
         )
         sender = (config.get("LINE_PUSH_SENDER") if hasattr(config, "get") else None) or line_push_message
         if not token:
@@ -2714,20 +2895,28 @@ def bind_emergency_contact(data_file, payload, config=None):
             if bound_rows and core_n == 0:
                 core_n = 1
             general_n = max(0, len(bound_rows) - core_n)
-            inviter_notice = (
-                f"🎉 守護人綁定完成\n\n"
-                f"{guardian_name} 已成為你的守護人。\n"
-                f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n"
-                f"之後若你未準時報平安或發出 SOS，系統會通知對方。"
-            )
+            if invite_reward_applied:
+                inviter_notice = (
+                    "感謝邀請成功，已為您延長 7 天免費使用\n\n"
+                    f"{guardian_name} 已成為你的守護人。\n"
+                    f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n"
+                    f"免費使用剩餘約 {trial_days_left(inviter)} 天（含邀請加碼）。"
+                )
+            else:
+                inviter_notice = (
+                    f"🎉 守護人綁定完成\n\n"
+                    f"{guardian_name} 已成為你的守護人。\n"
+                    f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n"
+                    f"之後若你未準時報平安或發出 SOS，系統會通知對方。"
+                )
             guardian_notice = (
-                f"❤️ {inviter_name} 邀請您成為守護人\n"
-                "您已加入「每日平安」守護群。\n"
-                "未來若對方：\n"
-                "⚠️ 超過提醒時間仍未報平安\n"
-                "🚨 發出 SOS 緊急求助\n"
-                "系統將第一時間通知您。\n"
-                "謝謝您願意成為對方最安心的依靠。"
+                f"✅ 綁定成功\n\n"
+                f"你已接受邀請，成為「{inviter_name}」的守護人。\n"
+                f"未來若對方：\n"
+                f"⚠️ 超過提醒時間仍未報平安\n"
+                f"🚨 發出 SOS 緊急求助\n"
+                f"系統將第一時間通知您。\n"
+                f"謝謝您願意成為對方最安心的依靠。"
             )
             for line_user_id, message, who in (
                 (inviter_id, inviter_notice, "inviter"),
@@ -2758,21 +2947,24 @@ def bind_emergency_contact(data_file, payload, config=None):
         (contact for contact in contacts if get_contact_line_id(contact) == contact_line_user_id),
         None,
     )
-    was_duplicate = bool(already_accepted)
     return {
         "ok": True,
         "bound": True,
-        "already_bound": bool(existing) or was_duplicate or already_guarding,
+        "already_bound": was_duplicate,
         "binding_complete": not was_duplicate,
-        "message": ALREADY_BOUND_MESSAGE if was_duplicate else "綁定完成",
+        "message": ALREADY_BOUND_MESSAGE if was_duplicate else "綁定完成！你已成為對方的守護人。",
         "contact": bound_contact,
         "reward": reward,
+        "invite_reward_applied": invite_reward_applied,
+        "trial_bonus_days": trial_bonus_days(inviter),
+        "trial_days_left": trial_days_left(inviter),
         "consent_request_sent": sent,
         "test_messages_sent": sent,  # 向下相容
         "inviter_notified": inviter_notified,
         "guardian_notified": guardian_notified,
         "persistence": persistence_info(data_file),
     }, 200
+
 
 
 # ============================================================
@@ -5315,7 +5507,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724cp",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724bn",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -5631,7 +5823,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724cp",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724bn",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),

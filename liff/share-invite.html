@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="alive-deploy" content="W250724aw">
+  <meta name="alive-deploy" content="W250724bn">
   <title>邀請</title>
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
@@ -87,7 +87,7 @@
   </div>
 
   <script>
-    // W250724aw：分享成功／按完成鈕 → 跳回原位置（return / open / #home|#member）
+    // W250724bn：分享成功／按完成鈕 → 跳回 endpoint 原位置（勿用 liff.line.me origin）
     const LIFF_ID = "2010674803-rK98c0lo";
     const AUTO_SHARE_KEY = "alive_share_invite_auto_v1";
     const DONE_KEY = "alive_share_invite_done_v1";
@@ -163,31 +163,48 @@
       return text;
     }
 
-    function resolveReturnUrl() {
+    const PUBLIC_APP_ORIGIN = "https://alive-checkin.onrender.com";
+
+    function appPublicOrigin() {
+      try {
+        const host = String(window.location.hostname || "").toLowerCase();
+        // liff.line.me / line.me 上的 origin 不能當返回首頁，否則 LIFF 會炸出「發生錯誤」
+        if (host && host !== "liff.line.me" && !host.endsWith(".line.me")) {
+          return window.location.origin;
+        }
+      } catch (_) {}
+      return PUBLIC_APP_ORIGIN;
+    }
+
+    function resolveReturnPathOnly() {
       const params = new URLSearchParams(window.location.search || "");
       const fromQuery = sanitizeReturnPath(params.get("return") || params.get("back") || "");
       if (fromQuery) {
         rememberReturnTarget(fromQuery);
-        return window.location.origin + fromQuery;
+        return fromQuery;
       }
       const open = String(params.get("open") || "").trim().toLowerCase();
       if (open === "member" || open === "guardians") {
         rememberReturnTarget("/#member");
-        return window.location.origin + "/#member";
+        return "/#member";
       }
       if (open === "home" || open === "guard" || open === "checkin") {
         rememberReturnTarget("/#home");
-        return window.location.origin + "/#home";
+        return "/#home";
       }
       try {
         const stored = sanitizeReturnPath(sessionStorage.getItem(RETURN_KEY) || "");
-        if (stored) return window.location.origin + stored;
+        if (stored) return stored;
       } catch (_) {}
-      return window.location.origin + "/#home";
+      return "/#home";
+    }
+
+    function resolveReturnUrl() {
+      return appPublicOrigin() + resolveReturnPathOnly();
     }
 
     function homeUrl() {
-      return window.location.origin + "/#home";
+      return appPublicOrigin() + "/#home";
     }
 
     function markAutoShareTried() {
@@ -204,20 +221,12 @@
 
     function goNextStep() {
       markShareDone();
-      const target = resolveReturnUrl();
+      // 只用 endpoint 絕對／相對網址，避免 openWindow+closeWindow 競態造成首頁 LIFF「發生錯誤」
+      const path = resolveReturnPathOnly();
+      const target = appPublicOrigin() + path;
       try {
-        if (window.liff && typeof liff.isInClient === "function" && liff.isInClient()) {
-          try {
-            if (typeof liff.openWindow === "function") {
-              liff.openWindow({ url: target, external: false });
-            }
-          } catch (_) {}
-          setTimeout(function () {
-            try {
-              if (typeof liff.closeWindow === "function") liff.closeWindow();
-            } catch (_) {}
-            window.location.replace(target);
-          }, 250);
+        if (window.location.origin === appPublicOrigin()) {
+          window.location.replace(path);
           return;
         }
       } catch (_) {}

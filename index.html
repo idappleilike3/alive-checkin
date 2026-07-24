@@ -1028,6 +1028,36 @@
       border-radius: 14px;
       background: var(--soft);
     }
+    .guardian-avatar,
+    .bound-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+      background: #e5e7eb;
+      display: inline-grid;
+      place-items: center;
+      font-weight: 800;
+      color: #374151;
+      font-size: 15px;
+      overflow: hidden;
+    }
+    .guardian-avatar img,
+    .bound-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .guardian-avatar-fallback,
+    .bound-avatar-fallback {
+      width: 100%;
+      height: 100%;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(145deg, #dbeafe, #e2e8f0);
+    }
     .guardian-info {
       min-width: 0;
       flex: 1;
@@ -1701,6 +1731,11 @@
       font-size: 16px;
       color: var(--muted);
       line-height: 1.5;
+    }
+    .member-guardian-manage-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
     .member-guardian-manage-meta .guardian-manage-name {
       color: var(--text);
@@ -3037,11 +3072,18 @@
     }
     .mvp-bound-list .bound-row {
       display: flex;
-      flex-direction: column;
-      gap: 2px;
+      flex-direction: row;
+      align-items: center;
+      gap: 10px;
       padding: 8px 10px;
       border-radius: 10px;
       background: rgba(255,255,255,0.72);
+    }
+    .mvp-bound-list .bound-meta {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
     }
     .mvp-bound-list .bound-row small { color: #3f6212; word-break: break-all; }
     .mvp-bound-hint {
@@ -4136,6 +4178,7 @@
     let qrScanTimer = null;
     let pendingFriendInviteCode = "";
     let lineDisplayName = "";
+    let linePictureUrl = "";
     /** Once-guard: Android LIFF 上成功後勿重複 alert／重複 bind（自動綁定 + 同意按鈕／雙擊／URL 殘留）。 */
     let bindDone = false;
     let bindInFlight = false;
@@ -4745,7 +4788,8 @@
         body: JSON.stringify({
           inviter_line_user_id: inviterLineUserId,
           contact_line_user_id: lineUserId,
-          contact_display_name: lineDisplayName || "LINE 聯絡人"
+          contact_display_name: lineDisplayName || "LINE 聯絡人",
+          contact_picture_url: linePictureUrl || (currentStatusData && currentStatusData.picture_url) || ""
         })
       });
       const data = await res.json().catch(() => ({}));
@@ -4992,6 +5036,37 @@
       if (guardInvite) guardInvite.hidden = Boolean(hasBound);
     }
 
+
+    function contactPeerLineId(contact) {
+      return String((contact && (contact.line_user_id || contact.line_id)) || "").trim();
+    }
+
+    function contactPictureUrl(contact) {
+      return String((contact && (contact.picture_url || contact.pictureUrl)) || "").trim();
+    }
+
+    /** 顯示對方 LINE userId（不是後台 contact id）。 */
+    function formatLineIdLabel(lineId) {
+      const lid = String(lineId || "").trim();
+      return lid || "（尚無 LINE ID）";
+    }
+
+    function guardianAvatarHtml(contact, className) {
+      const cls = className || "guardian-avatar";
+      const pic = contactPictureUrl(contact);
+      const initial = String((contact && contact.name) || "?").trim().slice(0, 1) || "?";
+      if (pic) {
+        return (
+          `<span class="${cls}" aria-hidden="true">` +
+          `<img src="${escapeHtml(pic)}" alt="" loading="lazy" referrerpolicy="no-referrer" ` +
+          `onerror="this.style.display='none';var f=this.nextElementSibling;if(f)f.hidden=false;">` +
+          `<span class="${cls}-fallback" hidden>${escapeHtml(initial)}</span>` +
+          `</span>`
+        );
+      }
+      return `<span class="${cls}" aria-hidden="true"><span class="${cls}-fallback">${escapeHtml(initial)}</span></span>`;
+    }
+
     function renderHomeBoundSummary(contacts) {
       const box = $("mvpBoundSummary");
       const countEl = $("mvpBoundCountText");
@@ -5011,8 +5086,8 @@
       box.hidden = false;
       countEl.textContent = `已綁定守護人 ${bound.length} 位`;
       listEl.innerHTML = bound.map((c, index) => {
-        const lid = String(c.line_user_id || c.line_id || "").trim() || "（尚無 LINE ID）";
-        return `<div class="bound-row"><span>${index + 1}. ${escapeHtml(c.name || "未命名守護人")}${c.relationship ? `｜${escapeHtml(c.relationship)}` : ""}</span><small>LINE ID：${escapeHtml(lid)}</small></div>`;
+        const lid = formatLineIdLabel(contactPeerLineId(c));
+        return `<div class="bound-row">${guardianAvatarHtml(c, "bound-avatar")}<div class="bound-meta"><span>${index + 1}. ${escapeHtml(c.name || "未命名守護人")}${c.relationship ? `｜${escapeHtml(c.relationship)}` : ""}</span><small>LINE ID：${escapeHtml(lid)}</small></div></div>`;
       }).join("");
     }
 
@@ -5281,7 +5356,7 @@
           ? "核心"
           : "一般";
         const added = formatGuardianAddedAt(contact);
-        const lid = String(contact.line_user_id || contact.line_id || "").trim();
+        const lid = formatLineIdLabel(contactPeerLineId(contact));
         const statusHtml = bound
           ? `<strong class="guardian-bind-ok">✓ 已綁定</strong>`
           : `<div class="guardian-bind-row">
@@ -5291,10 +5366,10 @@
         return `
           <div class="member-guardian-manage-row" data-id="${cid}">
             <div class="member-guardian-manage-meta">
-              <span class="guardian-manage-name">👤 ${escapeHtml(contact.name || "未命名")}</span>
+              <div class="member-guardian-manage-head">${guardianAvatarHtml(contact)}<span class="guardian-manage-name">${escapeHtml(contact.name || "未命名")}</span></div>
               <span>${escapeHtml(contact.relationship || "關係未設定")} ／ ${escapeHtml(contact.phone || contact.email || "未填電話")} ／ ${tier}${contact.is_primary ? "／主要" : ""}</span>
               ${statusHtml}
-              ${lid ? `<small>LINE ID：${escapeHtml(lid)}</small>` : ""}
+              ${bound ? `<small>LINE ID：${escapeHtml(lid)}</small>` : ""}
               ${added ? `<small>新增日期：${escapeHtml(added)}</small>` : ""}
             </div>
             <div class="member-guardian-manage-actions">
@@ -5947,6 +6022,18 @@
       if (bindDone || bindInFlight) return;
       const inviteFrom = getAppParam("invite_from");
       if (!inviteFrom) return closeInviteAcceptPrompt();
+      // 等 bootstrap／LIFF profile：避免未拿到 lineUserId 就點同意 → 看起來要點兩次
+      if (!lineUserId && appBootstrapPromise && !appBootstrapComplete) {
+        try { await appBootstrapPromise; } catch (_) {}
+      }
+      if (!lineUserId && window.liff && typeof liff.isLoggedIn === "function" && liff.isLoggedIn()) {
+        try {
+          const profile = await liff.getProfile();
+          lineUserId = profile.userId || "";
+          lineDisplayName = profile.displayName || lineDisplayName || "";
+          linePictureUrl = profile.pictureUrl || linePictureUrl || "";
+        } catch (_) {}
+      }
       if (!lineUserId && window.liff && !liff.isLoggedIn()) {
         startLineLogin({ invite_from: inviteFrom });
         return;
@@ -5964,7 +6051,7 @@
       try {
         const bindResult = await completeGuardianBindOnce(inviteFrom);
         if (bindResult?.skipped) return;
-        if (bindResult?.bound) return;
+        if (bindResult?.bound || bindResult?.ok || bindResult?.already_bound) return;
         alert(bindResult?.error || "綁定尚未完成，請再試一次。若仍失敗，請請對方重新分享邀請連結。");
       } catch (error) {
         alert((error && error.message) ? error.message : "綁定失敗，請稍後再試。");
@@ -6563,6 +6650,7 @@
         const profile = await liff.getProfile();
         lineUserId = profile.userId || "";
         lineDisplayName = profile.displayName || "";
+        linePictureUrl = profile.pictureUrl || "";
         if (!lineUserId) return false;
 
         await fetch("/api/line/register", {
@@ -6571,7 +6659,7 @@
           body: JSON.stringify({
             line_user_id: lineUserId,
             display_name: lineDisplayName,
-            picture_url: profile.pictureUrl || ""
+            picture_url: linePictureUrl || ""
           })
         });
 
@@ -6587,11 +6675,23 @@
         return true;
       } catch (error) {
         console.error("LIFF 初始化失敗:", error);
+        // 分享返回首頁：不要用「發生錯誤」嚇使用者；改安靜提示登入／重開
+        let fromShareReturn = false;
         try {
-          alert("發生錯誤：" + ((error && error.message) ? error.message : String(error)));
+          fromShareReturn = sessionStorage.getItem("alive_share_invite_done_v1") === "1"
+            || sessionStorage.getItem("alive_share_invite_auto_v1") === "1";
+          if (fromShareReturn) {
+            sessionStorage.removeItem("alive_share_invite_done_v1");
+            sessionStorage.removeItem("alive_share_invite_auto_v1");
+          }
         } catch (_) {}
+        if (!fromShareReturn) {
+          try {
+            console.warn("LIFF init error:", formatLiffError(error));
+          } catch (_) {}
+        }
         showLineLoginRequired(readSafeDeepLinkParams(), {
-          detail: formatLiffError(error)
+          detail: fromShareReturn ? "" : formatLiffError(error)
         });
         return false;
       }
@@ -7599,13 +7699,14 @@
             : `<button class="one-tap-invite-btn" type="button" data-invite="1" aria-label="一鍵邀請尚未綁定對象">一鍵邀請</button>`;
           return `
           <div class="guardian-item" data-id="${escapeHtml(c.id)}">
+            ${guardianAvatarHtml(c)}
             <div class="guardian-info">
               <div class="guardian-info-top">
                 <strong>${escapeHtml(c.name || "未命名")}</strong>
                 ${c.is_primary ? '<span class="badge primary">主要</span>' : ""}
               </div>
               <small>${escapeHtml(c.relationship || "關係未設定")}</small>
-              <small>LINE ID：${escapeHtml(String(c.line_user_id || c.line_id || "").trim() || "尚未綁定")}</small>
+              <small>LINE ID：${escapeHtml(formatLineIdLabel(contactPeerLineId(c)))}</small>
               <small>${escapeHtml(c.phone || c.email || "尚未留下聯絡方式")}</small>
               <div class="guardian-bind-row">
                 <small class="${statusClass}">${statusText}</small>
@@ -8692,7 +8793,7 @@
 
     setTheme(localStorage.getItem("preferred_theme") || "classic");
     maybePrefillFriendInvite();
-    maybeShowInviteAcceptPrompt();
+    // 勿在 lineUserId 就緒前顯示同意視窗（會造成「要點兩次」）
 
     async function bootstrapApp() {
       appBootstrapComplete = false;

@@ -358,8 +358,9 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("clipboard", page)
         self.assertIn("https://line.me/R/app/\" + LIFF_ID + \"?invite_from=", page)
         self.assertIn('const LIFF_ID = "2010674803-rK98c0lo"', page)
-        self.assertIn("W250724aw", page)
+        self.assertIn("W250724bn", page)
         self.assertIn("resolveReturnUrl", page)
+        self.assertIn("appPublicOrigin", page)
         self.assertIn("完成，返回原位置", page)
         self.assertIn('params.get("return")', page)
 
@@ -496,7 +497,8 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("line.me/R/app/", landing)
         self.assertIn("liff.line.me/", landing)
         self.assertIn("formatLiffError", page)
-        self.assertIn("detail: formatLiffError(error)", page)
+        self.assertIn("fromShareReturn", page)
+        self.assertIn("formatLiffError(error)", page)
         # Android 雙重確認：綁定成功只 alert 一次，並清掉 invite_from
         self.assertIn("let bindDone = false", page)
         self.assertIn("function clearInviteFromUrl", page)

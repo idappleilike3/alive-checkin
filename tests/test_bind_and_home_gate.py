@@ -78,7 +78,9 @@ class BindAndHomeGateTests(unittest.TestCase):
             config={},
         )
         self.assertEqual(code, 200)
-        self.assertTrue(result["already_bound"])
+        self.assertTrue(result["bound"])
+        self.assertFalse(result["already_bound"])  # unbound → 首次同意，應推播／顯示成功
+        self.assertTrue(result["binding_complete"])
         state2 = app_module.load_state(self.data_file)
         contacts = state2["users"]["U-inviter"]["contacts"]
         self.assertEqual(len(contacts), 1)
@@ -254,15 +256,20 @@ class BindAndHomeGateTests(unittest.TestCase):
                 "inviter_line_user_id": "U-inviter",
                 "contact_line_user_id": "U-guardian",
                 "contact_display_name": "寶寶",
+                "contact_picture_url": "https://example.com/avatar.jpg",
             },
             config={"LINE_CHANNEL_ACCESS_TOKEN": "tok", "LINE_PUSH_SENDER": fake_sender},
         )
         self.assertEqual(code1, 200)
         self.assertTrue(first["bound"])
         self.assertFalse(first["already_bound"])
+        self.assertEqual(first["contact"]["picture_url"], "https://example.com/avatar.jpg")
         self.assertEqual(len(pushed), 2)
         self.assertIn("守護人綁定完成", pushed[0][1])
         self.assertIn("你已接受邀請", pushed[1][1])
+        self.assertTrue(first.get("inviter_notified"))
+        self.assertTrue(first.get("guardian_notified"))
+        self.assertTrue(first.get("binding_complete"))
 
         second, code2 = app_module.bind_emergency_contact(
             self.data_file,

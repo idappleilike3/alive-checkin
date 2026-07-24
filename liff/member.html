@@ -245,6 +245,14 @@
     margin: 12px 0;
     font-size: 15px;
   }
+
+  .member-avatar-sm {
+    width: 40px; height: 40px; border-radius: 50%; object-fit: cover;
+    background: #e5e7eb; display: inline-grid; place-items: center;
+    font-weight: 800; flex-shrink: 0; overflow: hidden;
+  }
+  .member-avatar-sm img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .guardian-row-head { display: flex; align-items: center; gap: 10px; }
 </style>
 </head>
 <body>
@@ -618,6 +626,12 @@ function renderContactList(listEl, items, emptyText) {
   }
   listEl.innerHTML = items.map((g, i) => {
     const bound = isBoundContact(g);
+    const lid = String(g.line_user_id || g.line_id || "").trim();
+    const pic = String(g.picture_url || g.pictureUrl || "").trim();
+    const initial = String(g.name || "?").trim().slice(0, 1) || "?";
+    const avatar = pic
+      ? `<span class="member-avatar-sm"><img src="${escape(pic)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"></span>`
+      : `<span class="member-avatar-sm">${escape(initial)}</span>`;
     const statusHtml = bound
       ? `<div class="guardian-detail" style="color:#166534;font-weight:700;">✓ 已綁定</div>`
       : `<div class="guardian-bind-row">
@@ -626,9 +640,10 @@ function renderContactList(listEl, items, emptyText) {
         </div>`;
     return `
     <div class="guardian-row ${g.is_primary || i === 0 ? "primary" : ""}">
-      <div class="guardian-name">${i + 1}. ${escape(g.name || "聯絡人 " + (i + 1))}${g.is_primary || i === 0 ? " ⭐ 主要" : ""}</div>
+      <div class="guardian-row-head">${avatar}<div class="guardian-name">${i + 1}. ${escape(g.name || "聯絡人 " + (i + 1))}${g.is_primary || i === 0 ? " ⭐ 主要" : ""}</div></div>
       <div class="guardian-detail">${escape(g.relationship || "關係未設定")}</div>
       <div class="guardian-detail">${escape(g.phone || g.email || "未填聯絡方式")}</div>
+      ${bound ? `<div class="guardian-detail">LINE ID：${escape(lid || "（尚無 LINE ID）")}</div>` : ""}
       ${statusHtml}
       <div class="guardian-actions">
         <button class="btn btn-edit" type="button" data-edit="${escape(g.id)}">編輯</button>
