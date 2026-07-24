@@ -5090,7 +5090,7 @@
       const quotaLine = $("memberGuardianQuotaLine");
       if (quotaLine) quotaLine.textContent = `目前：${totalCount} / ${limit}（${planQuotaLabel(memberPlan)}）`;
       const emergencyQuota = $("memberEmergencyQuotaLine");
-      if (emergencyQuota) emergencyQuota.textContent = `緊急聯絡人：${emergencies.length} 位（建議 2 位）`;
+      if (emergencyQuota) emergencyQuota.textContent = `緊急緊急聯絡人：${emergencies.length} 位（建議 2 位）`;
       const coreLine = $("memberCoreGeneralLine");
       if (coreLine) coreLine.textContent = `核心守護人 ${shownCore} 位／一般守護人 ${shownGeneral} 位`;
       $("memberBillingPlan").textContent = planLabel(memberPlan);
@@ -5124,7 +5124,7 @@
         }
       }
       const addBtn = $("memberAddGuardianBtn");
-      if (addBtn) addBtn.textContent = atLimit ? "➕ 名額已滿（可升級）" : "➕ 新增守護人";
+      if (addBtn) addBtn.textContent = atLimit ? "➕ 名額已滿（可升級）" : "➕ 新增核心守護人";
 
       $("memberGuardianList").innerHTML = renderContactManageRows(guardians, "尚未綁定守護人");
       const emergencyList = $("memberEmergencyList");
