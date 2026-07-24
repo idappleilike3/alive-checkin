@@ -3709,6 +3709,10 @@
               <input type="checkbox" id="gIsPrimary">
               <span>設為主要聯絡人（顯示在最前）</span>
             </label>
+            <label class="setting-choice" id="gDetailsReminderRow" for="gDetailsReminderEnabled" hidden>
+              <input type="checkbox" id="gDetailsReminderEnabled" checked>
+              <span>資料尚未完成時，透過 LINE 提醒我一次</span>
+            </label>
           </div>
           <p class="helper">姓名與關係必填；手機號碼與 Email 至少填一個。</p>
           <div class="actions">
@@ -3975,51 +3979,8 @@
               <button class="action-btn" id="memberAddGuardianBtn" type="button">➕ 新增守護人資料</button>
             </div>
             <div id="guardianDetails799" hidden>
-              <div class="helper" style="margin-top:14px;">從已綁定守護人指定核心（緊急時優先通知）。下方可補齊姓名、關係與電話。</div>
+              <div class="helper" style="margin-top:14px;">從已綁定守護人指定核心（緊急時優先通知）。姓名／關係／電話請用上方列表的「編輯」補齊。</div>
               <div class="core-guardian-pick" id="memberCoreGuardianPick"></div>
-              <div class="guardian-details-form" id="guardianDetailsFormBlock">
-                <input type="hidden" id="guardianDetailsContact" value="">
-                <label class="form-field" for="guardianDetailsName"><span>姓名</span>
-                  <input id="guardianDetailsName" placeholder="守護人姓名或暱稱" autocomplete="name">
-                </label>
-                <label class="form-field" for="guardianDetailsRelation"><span>關係</span>
-                  <select id="guardianDetailsRelation" aria-label="與守護人的關係">
-                    <option value="">請選擇關係</option>
-                    <option value="爺爺">爺爺</option>
-                    <option value="奶奶">奶奶</option>
-                    <option value="阿公">阿公</option>
-                    <option value="阿嬤">阿嬤</option>
-                    <option value="爸爸">爸爸</option>
-                    <option value="媽媽">媽媽</option>
-                    <option value="老公">老公</option>
-                    <option value="老婆">老婆</option>
-                    <option value="哥哥">哥哥</option>
-                    <option value="姊姊">姊姊</option>
-                    <option value="弟弟">弟弟</option>
-                    <option value="妹妹">妹妹</option>
-                    <option value="兒子">兒子</option>
-                    <option value="女兒">女兒</option>
-                    <option value="媳婦">媳婦</option>
-                    <option value="女婿">女婿</option>
-                    <option value="孫子">孫子</option>
-                    <option value="孫女">孫女</option>
-                    <option value="家人">家人</option>
-                    <option value="朋友">朋友</option>
-                    <option value="同事">同事</option>
-                    <option value="鄰居">鄰居</option>
-                    <option value="其他">其他</option>
-                  </select>
-                  <input id="guardianDetailsRelationshipOther" class="relationship-other" placeholder="請輸入關係" hidden>
-                </label>
-                <label class="form-field" for="guardianDetailsPhone"><span>電話</span>
-                  <input id="guardianDetailsPhone" type="tel" inputmode="tel" placeholder="守護人聯絡電話" autocomplete="tel">
-                </label>
-              </div>
-              <label class="setting-choice" for="guardianDetailsReminderEnabled">
-                <input type="checkbox" id="guardianDetailsReminderEnabled" checked>
-                <span>資料尚未完成時，透過 LINE 提醒我一次</span>
-              </label>
-              <button class="action-btn" id="saveGuardianDetailsBtn" type="button">儲存守護資料</button>
             </div>
           </div>
 
@@ -5257,7 +5218,6 @@
       ["mvpContactRelation", "mvpContactRelationOther"],
       ["gRelationship", "gRelationshipOther"],
       ["obRelationship", "obRelationshipOther"],
-      ["guardianDetailsRelation", "guardianDetailsRelationshipOther"],
     ];
 
     function bindRelationshipOther(selectId, inputId) {
@@ -5983,39 +5943,6 @@
       return plan === "paid_799" || plan === "paid_799_year";
     }
 
-    function guardianDetailsComplete(contact) {
-      return Boolean(
-        contact &&
-        String(contact.name || "").trim() &&
-        String(contact.relationship || "").trim() &&
-        String(contact.phone || "").trim() &&
-        (contact.line_id || contact.consent_status === "accepted")
-      );
-    }
-
-    function guardianDetailsTargetIndex() {
-      const hidden = $("guardianDetailsContact");
-      const idx = Number(hidden && hidden.value);
-      if (Number.isInteger(idx) && contactData[idx]) return idx;
-      const bound = contactData
-        .map((contact, index) => ({ contact, index }))
-        .filter(({ contact }) => isContactBound(contact) && contactRoleOf(contact) !== "emergency");
-      if (!bound.length) return -1;
-      const incomplete = bound.find(({ contact }) => !guardianDetailsComplete(contact));
-      const primary = bound.find(({ contact }) => contact.is_primary);
-      return (incomplete || primary || bound[0]).index;
-    }
-
-    function populateGuardianDetailsForm() {
-      const index = guardianDetailsTargetIndex();
-      const contact = index >= 0 ? contactData[index] : null;
-      const hidden = $("guardianDetailsContact");
-      if (hidden) hidden.value = index >= 0 ? String(index) : "";
-      if ($("guardianDetailsName")) $("guardianDetailsName").value = contact?.name || "";
-      setRelationshipValue("guardianDetailsRelation", "guardianDetailsRelationshipOther", contact?.relationship || "");
-      if ($("guardianDetailsPhone")) $("guardianDetailsPhone").value = contact?.phone || "";
-    }
-
     function renderCoreGuardianPick() {
       const host = $("memberCoreGuardianPick");
       if (!host) return;
@@ -6066,54 +5993,7 @@
       const status = currentStatusData || {};
       panel.hidden = !is799Plan(status.plan);
       if (panel.hidden) return;
-
-      const boundContacts = contactData
-        .map((contact, index) => ({ contact, index }))
-        .filter(({ contact }) => isContactBound(contact) && contactRoleOf(contact) !== "emergency");
       renderCoreGuardianPick();
-      if ($("guardianDetailsReminderEnabled")) {
-        $("guardianDetailsReminderEnabled").checked = status.guardian_details_reminder_enabled !== false;
-      }
-
-      const formBlock = $("guardianDetailsFormBlock");
-      if (formBlock) formBlock.hidden = !boundContacts.length;
-      populateGuardianDetailsForm();
-    }
-
-    async function saveGuardianDetails() {
-      const index = guardianDetailsTargetIndex();
-      if (index < 0 || !contactData[index]) {
-        alert("請先用 LINE 邀請並綁定至少 1 位守護人。");
-        return;
-      }
-      const name = $("guardianDetailsName").value.trim();
-      const relationship = readRelationship("guardianDetailsRelation", "guardianDetailsRelationshipOther");
-      const phone = $("guardianDetailsPhone").value.trim();
-      if (!name || !relationship || !phone) {
-        alert("請填寫守護人姓名、關係與聯絡電話。");
-        return;
-      }
-
-      contactData[index] = { ...contactData[index], name, relationship, phone };
-      try {
-        const savedContacts = await apiSaveContacts(true);
-        contactData = savedContacts.contacts || contactData;
-        const status = currentStatusData || {};
-        const savedStatus = await apiSaveSettings({
-          contact_email: status.contact_email || "",
-          grace_hours: status.grace_hours || 36,
-          reminder_time: status.reminder_time || "12:00",
-          reminder_times: status.reminder_times || [status.reminder_time || "12:00"],
-          contact_capacity_reminder_enabled: Boolean(status.contact_capacity_reminder_enabled),
-          guardian_details_reminder_enabled: $("guardianDetailsReminderEnabled").checked,
-          daily_checkin_reminder_enabled: status.daily_checkin_reminder_enabled !== false
-        });
-        renderContacts();
-        renderStatus(savedStatus);
-        alert("守護資料已儲存。緊急時會依你設定的順序通知守護人。");
-      } catch (error) {
-        alert(error.message || "守護資料儲存失敗，請稍後再試。");
-      }
     }
 
     function defaultTimesForDailyCount(count) {
@@ -8543,6 +8423,14 @@
         $("gIsPrimary").checked = role === "guardian" && sameRoleCount === 0;
         delete modal.dataset.editId;
       }
+      const roleNow = modal.dataset.contactRole === "emergency" ? "emergency" : "guardian";
+      const reminderRow = $("gDetailsReminderRow");
+      const reminderCb = $("gDetailsReminderEnabled");
+      const showReminder = roleNow === "guardian" && is799Plan((currentStatusData || {}).plan);
+      if (reminderRow) reminderRow.hidden = !showReminder;
+      if (reminderCb) {
+        reminderCb.checked = (currentStatusData || {}).guardian_details_reminder_enabled !== false;
+      }
       modal.hidden = false;
     }
 
@@ -8580,6 +8468,23 @@
         }
         if (res.status === 200 && res.data && res.data.ok !== false) {
           renderGuardians(res.data.contacts || [], res.data.contact_limit);
+          const reminderRow = $("gDetailsReminderRow");
+          const reminderCb = $("gDetailsReminderEnabled");
+          if (reminderRow && !reminderRow.hidden && reminderCb) {
+            try {
+              const status = currentStatusData || {};
+              const savedStatus = await apiSaveSettings({
+                contact_email: status.contact_email || "",
+                grace_hours: status.grace_hours || 36,
+                reminder_time: status.reminder_time || "12:00",
+                reminder_times: status.reminder_times || [status.reminder_time || "12:00"],
+                contact_capacity_reminder_enabled: Boolean(status.contact_capacity_reminder_enabled),
+                guardian_details_reminder_enabled: reminderCb.checked,
+                daily_checkin_reminder_enabled: status.daily_checkin_reminder_enabled !== false
+              });
+              if (savedStatus) renderStatus(savedStatus);
+            } catch (_) { /* 聯絡人已存；提醒設定失敗不擋關閉 */ }
+          }
           if (currentStatusData) renderMemberCenter();
           closeGuardianEditor();
         } else {
@@ -9562,8 +9467,6 @@
     }
     const memberShareGuardianBtn = $("memberShareGuardianBtn");
     if (memberShareGuardianBtn) memberShareGuardianBtn.addEventListener("click", shareContactInvite);
-    const saveGuardianDetailsBtn = $("saveGuardianDetailsBtn");
-    if (saveGuardianDetailsBtn) saveGuardianDetailsBtn.addEventListener("click", saveGuardianDetails);
     const smartRemindersToggleBtn = $("smartRemindersToggleBtn");
     if (smartRemindersToggleBtn) {
       smartRemindersToggleBtn.addEventListener("click", () => {
