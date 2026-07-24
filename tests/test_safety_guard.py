@@ -229,6 +229,66 @@ class SafetyGuardTests(unittest.TestCase):
         self.assertIn("1 小時", sent[0]["message"])
         self.assertIn("台北市", sent[0]["message"])
 
+    def test_safety_guard_skips_emergency_only_and_reports_reason(self):
+        """緊急聯絡人有 LINE 不算可通知守護人；須回傳 notified 0 與原因。"""
+        state = alive_app.load_state(self.data_file)
+        owner = alive_app.get_profile(state, "owner_em")
+        owner["plan"] = "free"
+        owner["contacts"] = [
+            {
+                "name": "爸爸",
+                "relationship": "爸爸",
+                "line_user_id": "U_dad_phone",
+                "binding_status": "accepted",
+                "notify_methods": ["line"],
+                "contact_role": "emergency",
+            }
+        ]
+        alive_app.save_state(self.data_file, state)
+        self.assertFalse(alive_app.profile_has_bound_line_guardian(owner))
+        body, code = alive_app.update_location(
+            self.data_file,
+            {
+                "line_user_id": "owner_em",
+                "latitude": 25.0,
+                "longitude": 121.5,
+                "city": "台北市",
+                "duration": 1,
+            },
+            {"LINE_CHANNEL_ACCESS_TOKEN": "test-token"},
+        )
+        self.assertEqual(code, 403)
+        self.assertEqual(body.get("error_code"), "guardian_required")
+
+    def test_safety_guard_push_failure_includes_reason(self):
+        def boom_sender(token, target, message):
+            raise RuntimeError("You have been blocked by the user")
+
+        state = alive_app.load_state(self.data_file)
+        owner = alive_app.get_profile(state, "owner_blk")
+        owner["plan"] = "free"
+        owner["display_name"] = "小華"
+        _add_bound_guardian(owner, "U_blocked", "家人")
+        alive_app.save_state(self.data_file, state)
+        body, code = alive_app.update_location(
+            self.data_file,
+            {
+                "line_user_id": "owner_blk",
+                "latitude": 25.04,
+                "longitude": 121.56,
+                "city": "台北市",
+                "duration": 1,
+            },
+            {"LINE_CHANNEL_ACCESS_TOKEN": "test-token", "LINE_PUSH_SENDER": boom_sender},
+        )
+        self.assertEqual(code, 200)
+        self.assertTrue(body["safety_guard"]["active"])
+        self.assertEqual(body["guardian_notify"]["sent"], 0)
+        self.assertEqual(body["guardian_notify"]["failed"], 1)
+        self.assertEqual(body["safety_guard"].get("notified_count"), 0)
+        self.assertIn("好友", body["guardian_notify"]["message"])
+        self.assertTrue(body["guardian_notify"].get("failed_reasons"))
+
     def test_friend_can_see_active_safety_status(self):
         state = alive_app.load_state(self.data_file)
         owner = alive_app.get_profile(state, "owner")

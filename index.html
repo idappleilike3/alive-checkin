@@ -6985,8 +6985,9 @@
       if (remain) parts.push(remain);
       if (guard.city) parts.push(String(guard.city));
       const notified = Number(guard.notified_count);
-      if (Number.isFinite(notified) && notified > 0) {
-        parts.push(`已通知 ${notified} 位守護人`);
+      if (Number.isFinite(notified)) {
+        if (notified > 0) parts.push(`已通知 ${notified} 位守護人`);
+        else if (guard.notify_message) parts.push("守護人通知 0 位");
       }
       return parts.join("｜");
     }
@@ -7098,17 +7099,25 @@
       const h = Number(hours) || 1;
       const place = city ? `（${city}）` : "";
       const base = `安全守護已開啟 ${h} 小時${place}。`;
-      if (!notify) return `${base}請確認守護人是否已綁定 LINE。`;
-      if (notify.no_guardians) {
-        return `${base}\n尚未綁定可通知的守護人，對方還收不到訊息。請先「一鍵邀請守護人」。`;
+      if (!notify || typeof notify !== "object") {
+        return `${base}\n通知結果不明，請確認守護人是否已綁定 LINE 並加入官方帳號好友。`;
       }
-      if (notify.sent > 0 && !notify.failed) {
-        return `${base}\n已通知 ${notify.sent} 位守護人（含大致位置）。`;
+      const sent = Number(notify.sent) || 0;
+      const failed = Number(notify.failed) || 0;
+      const targets = Number(notify.target_count);
+      const serverMsg = String(notify.message || "").trim();
+      if (notify.no_guardians || notify.reason_code === "emergency_only" || notify.reason_code === "no_guardians") {
+        return `${base}\n已通知 0 位守護人。${serverMsg || "尚未綁定可通知的守護人，請先一鍵邀請。"}`;
       }
-      if (notify.sent > 0 && notify.failed > 0) {
-        return `${base}\n已通知 ${notify.sent} 位守護人，另有 ${notify.failed} 位通知失敗。`;
+      if (sent > 0 && !failed) {
+        return `${base}\n✅ 已通知 ${sent} 位守護人（含大致位置）。`;
       }
-      return `${base}\n守護已開始，但守護人通知失敗，請稍後再試或直接告訴家人。`;
+      if (sent > 0 && failed > 0) {
+        return `${base}\n⚠️ 已通知 ${sent} 位守護人，另有 ${failed} 位失敗。${serverMsg ? `\n${serverMsg}` : ""}`;
+      }
+      const why = serverMsg || "請確認對方已加入「每日平安」官方帳號好友，且未封鎖官方帳號。";
+      const targetHint = Number.isFinite(targets) && targets > 0 ? `（目標 ${targets} 位）` : "";
+      return `${base}\n❌ 已通知 0 位守護人${targetHint}。${why}`;
     }
 
     async function shareFriendInvite() {
@@ -7289,12 +7298,17 @@
             duration_hours: Number(duration) || 1,
           }),
           notified_count: notifiedCount,
+          notify_message: notify.message || "",
+          notify_reason_code: notify.reason_code || "",
         };
         if (currentStatusData) currentStatusData.safety_guard = guard;
         renderSafetyGuardUi(guard);
         await refreshFriendLocations().catch(() => {});
         const msg = formatGuardianNotifyMessage(notify, duration, city);
-        setSafetyGuardFeedback(msg, notify.failed && !notify.sent ? "err" : "ok");
+        const tone = notifiedCount > 0
+          ? (notify.failed ? "info" : "ok")
+          : "err";
+        setSafetyGuardFeedback(msg, tone);
         alert(msg);
       } catch (error) {
         if (error && error.code === "guardian_required") {
@@ -7869,7 +7883,8 @@
       if (totalCount >= limit) {
         const goUpgrade = confirm(
           `你已經有 ${totalCount} 位守護人囉（目前方案上限 ${limit} 位）。\n\n` +
-          `升級方案可增加守護人名額；每成功邀請 1 位新守護人也可免費延長 7 天。\n\n` +
+          `升級方案可增加守護人名額；補差額即可升級，不必重設聯絡人。\n` +
+          `另有 7 天考慮期；每成功邀請 1 位新守護人也可免費延長 7 天。\n\n` +
           `按「確定」查看方案與價目。`
         );
         if (goUpgrade) openUpgradePlans();

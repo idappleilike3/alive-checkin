@@ -183,7 +183,7 @@ Jika Anda sudah menghubungi mereka, silakan ketuk tombol di bawah.
 ```
 📝 客服留言
 
-請直接在此輸入您的問題,客服人員將於 4 小時內回覆您。
+請直接在此輸入您的問題，LINE 留言 24 小時內盡快回覆。
 
 ⏰ 服務時間:每日 09:00 - 21:00(非此時段留言,次日優先處理)
 
