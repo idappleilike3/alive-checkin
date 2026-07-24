@@ -527,14 +527,15 @@
               <th>付款</th>
               <th>方案到期</th>
               <th>試用剩餘</th>
-              <th>聯絡人</th>
+              <th>LINE 守護人綁定</th>
+              <th>聯絡人名額</th>
               <th>守護群</th>
               <th>寬限</th>
               <th>提醒</th>
             </tr>
           </thead>
           <tbody id="usersBody">
-            <tr><td colspan="13">尚未載入資料</td></tr>
+            <tr><td colspan="14">尚未載入資料</td></tr>
           </tbody>
         </table>
       </div>
@@ -758,6 +759,25 @@
       await refresh();
     }
 
+    function formatBoundGuardiansCell(user) {
+      const bound = Array.isArray(user.bound_guardians) && user.bound_guardians.length
+        ? user.bound_guardians
+        : (user.contacts || []).filter((c) =>
+            (c && (c.line_id || c.line_user_id || c.binding_status === "accepted" || c.consent_status === "accepted"))
+          );
+      if (!bound.length) {
+        return `<span class="badge warn">尚未 LINE 綁定</span>`;
+      }
+      const lines = bound.map((c) => {
+        const name = c.name || "未命名";
+        const rel = c.relationship ? `／${c.relationship}` : "";
+        const gid = c.line_user_id || c.line_id || "-";
+        const st = c.binding_status || "accepted";
+        return `<div><strong>${name}${rel}</strong><br><small>${gid}</small> <span class="badge ${st === "accepted" ? "ok" : "warn"}">${st}</span></div>`;
+      });
+      return `<div style="display:grid;gap:6px;min-width:160px;">${lines.join("")}</div>`;
+    }
+
     async function refresh() {
       setAuthStatus("正在載入後台資料…", "is-loading");
       const res = await fetch(`/api/admin/summary?password=${apiPassword()}`);
@@ -777,11 +797,16 @@
         const persist = data.persistence || {};
         if (persist.ephemeral_warning) {
           persistNote.hidden = false;
+          persistNote.style.color = "#9a3412";
           persistNote.textContent = `⚠️ 資料儲存：${persist.data_file || "?"}（暫存磁碟）— ${persist.ephemeral_warning}`;
-        } else {
+        } else if (persist.durable) {
           persistNote.hidden = false;
           persistNote.style.color = "#166534";
-          persistNote.textContent = `✅ 持久化磁碟：${persist.data_file || persist.db_path || "ok"}`;
+          persistNote.textContent = `✅ 持久化磁碟：${persist.data_file || persist.db_path || "ok"}（綁定不會因重啟消失）`;
+        } else {
+          persistNote.hidden = false;
+          persistNote.style.color = "#9a3412";
+          persistNote.textContent = `⚠️ 資料儲存：${persist.data_file || "?"}（尚未確認持久化）`;
         }
       }
       $("paidRevenue").textContent = `NT$${Number(data.paid_revenue || 0).toLocaleString("zh-TW")}`;
@@ -816,13 +841,14 @@
             <td><span class="badge ${user.payment_status === "active" ? "ok" : user.payment_status === "expired" ? "bad" : "warn"}">${paymentLabel(user.payment_status)}</span></td>
             <td>${expiryText(user)}</td>
             <td>${trialText(user)}</td>
+            <td>${formatBoundGuardiansCell(user)}</td>
             <td>${user.bound_guardian_count || 0} 綁定／${(user.contacts || []).length}/${user.contact_limit || 1}</td>
             <td>${(user.guardian_group_ids || []).length}/${user.guardian_group_limit || 0}</td>
             <td>${user.grace_hours} 小時</td>
             <td>${user.reminder_time}</td>
           </tr>
         `).join("")
-        : `<tr><td colspan="13">還沒有 LINE 使用者進來簽到。</td></tr>`;
+        : `<tr><td colspan="14">還沒有 LINE 使用者進來簽到。</td></tr>`;
       $("ordersBody").innerHTML = (data.orders || []).length
         ? data.orders.map((order) => `
           <tr>
@@ -875,7 +901,7 @@
                 <small>${edge.inviter_display_name || ""} ${edge.inviter_line_user_id || "-"}</small>
               </div>
               <div>
-                <strong>守護人</strong><br>
+                <strong>守護人（LINE 已綁）</strong><br>
                 <small>${edge.guardian_display_name || ""} ${edge.guardian_line_user_id || "-"}</small>
               </div>
               <span class="badge ${edge.binding_status === "accepted" ? "ok" : "warn"}">${edge.binding_status || "-"}</span>
@@ -902,7 +928,7 @@
         `).join("")
         : `<div class="support-item">目前沒有客服訊息</div>`;
       await refreshBackups();
-      setAuthStatus("資料已載入。", "is-ok");
+      setAuthStatus(`資料已載入（已綁守護人 ${data.bound_guardian_total || 0}、邀請關係 ${(data.invite_edges || []).length}）。`, "is-ok");
     }
 
     async function refreshBackups() {
@@ -1010,9 +1036,22 @@
     $("birthdayRemindBtn").addEventListener("click", sendBirthdayReminders);
     $("createBackupBtn").addEventListener("click", createBackup);
     $("richMenuDeployBtn").addEventListener("click", deployRichMenu);
-    // 免密碼：一開頁就載入總覽
+    // 免密碼：一開頁就載入總覽；綁定後約 20 秒自動刷新，不需手動 hack
+    let autoRefreshAdminBusy = false;
+    async function autoRefreshAdmin() {
+      if (document.visibilityState !== "visible" || autoRefreshAdminBusy) return;
+      autoRefreshAdminBusy = true;
+      try {
+        await refresh();
+      } catch (error) {
+        console.warn(error);
+      } finally {
+        autoRefreshAdminBusy = false;
+      }
+    }
     setAuthStatus("正在載入後台資料…", "is-loading");
     setTimeout(() => { runLoginOrRefresh(); }, 0);
+    setInterval(autoRefreshAdmin, 20000);
   </script>
 </body>
 </html>

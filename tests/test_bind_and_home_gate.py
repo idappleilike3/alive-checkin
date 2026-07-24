@@ -87,14 +87,44 @@ class BindAndHomeGateTests(unittest.TestCase):
     def test_home_gate_helpers_exist_in_spa(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("function hasHomeSetupComplete(", page)
+        self.assertIn("function hasLineBoundGuardian(", page)
         self.assertIn("hasHomeSetupComplete(currentGuardianContacts())", page)
         self.assertIn("const homeReady = hasHomeSetupComplete(contactsNow);", page)
+        # LINE 綁定即可進首頁（不再要求聯絡人電話）
+        gate = page[page.index("function hasHomeSetupComplete(") : page.index("function closeGuardianPrompt(")]
+        self.assertIn("return hasLineBoundGuardian(contacts);", gate)
+        self.assertNotIn("hasContactProfile", gate)
         # 一般登入不再於 LIFF init 立刻彈守護提示（等 contacts）
         init_line = page[
             page.index("async function initializeLiff()") : page.index("const LUNAR_DAY_NAMES")
         ]
         self.assertNotIn("maybeShowGuardianPrompt();", init_line)
         self.assertIn("maybeShowInviteAcceptPrompt();", init_line)
+
+    def test_admin_summary_exposes_bound_guardians(self):
+        app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-inviter",
+                "contact_line_user_id": "U-guardian",
+                "contact_display_name": "阿媽",
+            },
+            config={},
+        )
+        summary = app_module.admin_summary(self.data_file)
+        inviter = next(u for u in summary["users"] if u["line_user_id"] == "U-inviter")
+        self.assertEqual(inviter["bound_guardian_count"], 1)
+        self.assertEqual(inviter["bound_guardians"][0]["line_user_id"], "U-guardian")
+        self.assertEqual(summary["bound_guardian_total"], 1)
+        self.assertEqual(len(summary["invite_edges"]), 1)
+
+    def test_admin_html_renders_bind_panels(self):
+        page = (ROOT / "admin.html").read_text(encoding="utf-8")
+        self.assertIn("boundGuardians", page)
+        self.assertIn("inviteEdgeList", page)
+        self.assertIn("formatBoundGuardiansCell", page)
+        self.assertIn("LINE 守護人綁定", page)
+        self.assertIn("autoRefreshAdmin", page)
 
     def test_per_user_invite_link_format(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

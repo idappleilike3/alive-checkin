@@ -4950,7 +4950,7 @@
     }
 
     function maybeShowGuardianPrompt() {
-      // 已有守護人＋聯絡人：登入首頁不再催「守護綁定／邀請」
+      // ≥1 位 LINE 已綁守護人：登入首頁不再催「重新綁定／邀請」
       if (hasHomeSetupComplete(currentGuardianContacts())) return;
       if (localStorage.getItem("guardian_prompt_seen") === "1") return;
       const prompt = $("guardianPrompt");
@@ -4959,9 +4959,9 @@
       localStorage.setItem("guardian_prompt_seen", "1");
     }
 
-    function hasHomeSetupComplete(contacts) {
+    function hasLineBoundGuardian(contacts) {
       const list = Array.isArray(contacts) ? contacts : currentGuardianContacts();
-      const hasBoundGuardian = list.some((c) => {
+      return list.some((c) => {
         if (!c) return false;
         return (
           c.binding_status === "accepted"
@@ -4969,15 +4969,12 @@
           || Boolean(String(c.line_id || c.line_user_id || "").trim())
         );
       });
-      const hasContactProfile = list.some((c) => {
-        if (!c) return false;
-        const name = String(c.name || "").trim();
-        const phone = String(c.phone || "").trim();
-        const email = String(c.email || "").trim();
-        return Boolean(name && (phone || email));
-      });
-      // 同一筆可同時滿足「已綁守護人」＋「聯絡人資料」
-      return hasBoundGuardian && hasContactProfile;
+    }
+
+    function hasHomeSetupComplete(contacts) {
+      // 只要有 ≥1 位 LINE 綁定守護人，一般登入就進首頁，不再顯示重新綁定／onboarding 邀請卡
+      // （invite_from 受邀深連結仍可另走綁定流程）
+      return hasLineBoundGuardian(contacts);
     }
 
     function closeGuardianPrompt() {
@@ -7075,7 +7072,7 @@
           || Number(onboardingState.data?.guardian_count || 0) > 0
           || contactsNow.length > 0
         );
-        // 已有 ≥1 守護人（LINE 綁定）且 ≥1 聯絡人資料 → 直接進首頁，不再彈邀請／綁定
+        // ≥1 LINE 綁定守護人（或伺服器 setup_completed）→ 直接進首頁，不再彈重新綁定／邀請
         const setupDone = homeReady || onboardingState.done || hasGuardians;
         const wantsInviteShare = wantsShareInvite;
         if (homeReady && !inviteeMode) {

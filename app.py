@@ -1015,6 +1015,17 @@ def build_status(profile, state=None):
         "bound_guardian_count": sum(
             1 for c in (profile.get("contacts") or []) if contact_is_bound_guardian(c)
         ),
+        "bound_guardians": [
+            {
+                "name": str(c.get("name") or "").strip(),
+                "line_user_id": get_contact_line_id(c),
+                "relationship": str(c.get("relationship") or "").strip(),
+                "binding_status": str(c.get("binding_status") or "").strip() or "accepted",
+                "phone": str(c.get("phone") or "").strip(),
+            }
+            for c in (profile.get("contacts") or [])
+            if contact_is_bound_guardian(c)
+        ],
         "profile_contact_count": sum(
             1 for c in (profile.get("contacts") or []) if contact_is_profile_complete(c)
         ),
