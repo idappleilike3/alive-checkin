@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="alive-deploy" content="W250723ak">
+  <meta name="alive-deploy" content="W250724a">
   <title>邀請</title>
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
@@ -53,10 +53,11 @@
   <button id="retry" type="button">再試一次</button>
 
   <script>
-    // W250723ak：不要中間教學頁（禁止大按鈕／準備好了等文案）
-    // 流程：init → login → 立刻 line.me/R/share；失敗才顯示「再試一次」
+    // W250724a：修好 R/share 返回後自動再開的迴圈；分享文加上加入官方帳號說明
+    // 流程：init → login → 首次自動 line.me/R/share；返回／取消只顯示「再試一次」
     // 受邀者連結：line.me/R/app?invite_from=（避開 liff.line.me/? → 400）
     const LIFF_ID = "2010674803-rK98c0lo";
+    const AUTO_SHARE_KEY = "alive_share_invite_auto_v1";
     const tapLayer = document.getElementById("tapLayer");
     const retryBtn = document.getElementById("retry");
 
@@ -76,8 +77,9 @@
         ? ("https://line.me/R/app/" + LIFF_ID + "?invite_from=" + encodeURIComponent(safeId))
         : ("https://line.me/R/app/" + LIFF_ID + "?open=onboarding");
       return (
-        "我想邀請你成為「每日平安」的守護人。\n" +
-        "請用 LINE 點開下面連結\n\n" +
+        "我想邀請你成為「每日平安」的守護人\n" +
+        "有緊急或我沒報平安時，系統會通知你\n" +
+        "請先加入 LINE 官方帳號「每日平安」，再點下面連結完成綁定\n" +
         bindUrl
       );
     }
@@ -93,6 +95,14 @@
       });
       const query = params.toString();
       return window.location.origin + window.location.pathname + (query ? ("?" + query) : "");
+    }
+
+    function markAutoShareTried() {
+      try { sessionStorage.setItem(AUTO_SHARE_KEY, "1"); } catch (_) {}
+    }
+
+    function hasAutoShareTried() {
+      try { return sessionStorage.getItem(AUTO_SHARE_KEY) === "1"; } catch (_) { return false; }
     }
 
     function showRetry() {
@@ -111,8 +121,19 @@
 
     function openNativeShare() {
       if (!inviteText) inviteText = buildInviteText(myUserId);
+      const shareUrl = buildNativeShareUrl(inviteText);
       try {
-        window.location.href = buildNativeShareUrl(inviteText);
+        // LIFF 內用 openWindow 較穩；location.href 常白屏或返回後重載再卡迴圈
+        if (
+          window.liff &&
+          typeof liff.openWindow === "function" &&
+          typeof liff.isInClient === "function" &&
+          liff.isInClient()
+        ) {
+          liff.openWindow({ url: shareUrl, external: false });
+          return true;
+        }
+        window.location.assign(shareUrl);
         return true;
       } catch (error) {
         alertFail((error && error.message) ? error.message : error);
@@ -144,9 +165,11 @@
       tapLayer.disabled = true;
       hideRetry();
       try {
-        // 優先原生分享（不依賴 shareTargetPicker 手勢）
-        if (openNativeShare()) return;
-        // 備援：同一次 click 內呼叫 picker
+        if (openNativeShare()) {
+          // openWindow 不會離開本頁：立刻給再試，避免空白卡住
+          showRetry();
+          return;
+        }
         const ok = await tryShareTargetPicker();
         if (!ok) showRetry();
       } finally {
@@ -199,17 +222,29 @@
         }
 
         ready = true;
-        // 立刻導向原生好友選擇（無教學文案頁）
+
+        // bfcache／分享取消返回：不要再自動跳 R/share，否則會卡在連結迴圈
+        if (hasAutoShareTried()) {
+          showRetry();
+          return;
+        }
+
+        markAutoShareTried();
         openNativeShare();
-        // 若仍停在本頁（被擋／外開失敗），短暫後顯示「再試一次」
-        setTimeout(function () {
-          if (!shareBlocked && document.visibilityState === "visible") showRetry();
-        }, 1600);
+        // openWindow 後本頁仍在：馬上可再點；若真的導走，返回時走上面 hasAutoShareTried
+        showRetry();
       } catch (error) {
         alertFail((error && error.message) ? error.message : error);
         showRetry();
       }
     }
+
+    window.addEventListener("pageshow", function (event) {
+      if (event && event.persisted && !shareBlocked) {
+        markAutoShareTried();
+        showRetry();
+      }
+    });
 
     tapLayer.addEventListener("click", onRetry);
     retryBtn.addEventListener("click", onRetry);

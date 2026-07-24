@@ -3087,7 +3087,7 @@ def inspect_default_rich_menu(config=None):
             invite_text = action.get("text")
             invite_type = action.get("type")
 
-    # W250723ak：圖文選單一鍵邀請 → 空白 LIFF 自動 line.me/R/share（無教學大按鈕文案）
+    # W250724a：圖文選單一鍵邀請 → 空白 LIFF；首次自動 R/share，返回只顯示再試（防迴圈）
     # 仍相容舊版 message「一鍵邀請」→ Bot Flex
     invite_ok = (
         bool(invite_uri)

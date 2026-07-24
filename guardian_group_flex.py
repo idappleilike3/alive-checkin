@@ -54,7 +54,7 @@ def liff_path_url(path: str) -> str:
 
 
 def share_invite_liff_url() -> str:
-    """一鍵邀請守護人：專用分享頁（init→login→導向 line.me/R/share；失敗才全螢幕重試）。"""
+    """一鍵邀請守護人：專用分享頁（init→login→首次自動 R/share；返回不重開迴圈）。"""
     return liff_path_url("/liff/share-invite.html")
 
 

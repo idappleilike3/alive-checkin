@@ -417,8 +417,9 @@ function buildInviteText() {
     ? `https://line.me/R/app/${LIFF_ID}?invite_from=${encodeURIComponent(safeId)}`
     : `https://line.me/R/app/${LIFF_ID}?open=onboarding`;
   return (
-    `我想邀請你成為「每日平安」的守護人。\n` +
-    `請用 LINE 點開下面連結\n\n` +
+    `我想邀請你成為「每日平安」的守護人\n` +
+    `有緊急或我沒報平安時，系統會通知你\n` +
+    `請先加入 LINE 官方帳號「每日平安」，再點下面連結完成綁定\n` +
     `${bindUrl}`
   );
 }
