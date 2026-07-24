@@ -37,6 +37,8 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(contact["line_user_id"], "U-guardian")
         self.assertEqual(contact["binding_status"], "accepted")
         self.assertEqual(contact["invited_by"], "U-inviter")
+        self.assertEqual(contact.get("display_name") or contact.get("line_display_name"), "阿媽")
+        self.assertEqual(contact.get("line_display_name") or contact.get("display_name"), "阿媽")
 
         state = app_module.load_state(self.data_file)
         inviter = state["users"]["U-inviter"]

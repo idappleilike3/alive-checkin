@@ -3207,7 +3207,11 @@
       flex-direction: column;
       gap: 2px;
     }
-    .mvp-bound-list .bound-row small { color: #3f6212; word-break: break-all; }
+    .mvp-bound-list .bound-name {
+      font-weight: 800;
+      color: #14532d;
+    }
+    .mvp-bound-list .bound-row small { color: #3f6212; word-break: break-word; }
     .mvp-bound-hint {
       margin: 10px 0 0;
       font-size: 0.86rem;
@@ -5203,16 +5207,22 @@
       return String((contact && (contact.picture_url || contact.pictureUrl)) || "").trim();
     }
 
-    /** 顯示對方 LINE userId（不是後台 contact id）。 */
-    function formatLineIdLabel(lineId) {
-      const lid = String(lineId || "").trim();
-      return lid || "（尚無 LINE ID）";
+    /** 對方 LINE 暱稱（displayName）；勿顯示 raw userId。 */
+    function contactPeerDisplayName(contact) {
+      const nick = String(
+        (contact && (contact.line_display_name || contact.display_name || contact.displayName)) || ""
+      ).trim();
+      if (nick && nick !== "LINE 聯絡人" && nick !== "LINE 使用者" && !/^未取得暱稱/.test(nick)) {
+        return nick;
+      }
+      const fallback = String((contact && contact.name) || "").trim();
+      return fallback || "未命名守護人";
     }
 
     function guardianAvatarHtml(contact, className) {
       const cls = className || "guardian-avatar";
       const pic = contactPictureUrl(contact);
-      const initial = String((contact && contact.name) || "?").trim().slice(0, 1) || "?";
+      const initial = contactPeerDisplayName(contact).trim().slice(0, 1) || "?";
       if (pic) {
         return (
           `<span class="${cls}" aria-hidden="true">` +
@@ -5243,9 +5253,10 @@
       }
       box.hidden = false;
       countEl.textContent = `已綁定守護人 ${bound.length} 位`;
-      listEl.innerHTML = bound.map((c, index) => {
-        const lid = formatLineIdLabel(contactPeerLineId(c));
-        return `<div class="bound-row">${guardianAvatarHtml(c, "bound-avatar")}<div class="bound-meta"><span>${index + 1}. ${escapeHtml(c.name || "未命名守護人")}${c.relationship ? `｜${escapeHtml(c.relationship)}` : ""}</span><small>LINE ID：${escapeHtml(lid)}</small></div></div>`;
+      listEl.innerHTML = bound.map((c) => {
+        const nick = contactPeerDisplayName(c);
+        const rel = String(c.relationship || "").trim();
+        return `<div class="bound-row">${guardianAvatarHtml(c, "bound-avatar")}<div class="bound-meta"><span class="bound-name">${escapeHtml(nick)}</span>${rel ? `<small>${escapeHtml(rel)}</small>` : ""}</div></div>`;
       }).join("");
     }
 
@@ -5322,11 +5333,14 @@
         list = boundGuardians.map((g) => ({
           id: g.id || (`line-${g.line_user_id || ""}`),
           name: g.name || "",
+          display_name: g.display_name || g.line_display_name || g.name || "",
+          line_display_name: g.line_display_name || g.display_name || "",
           relationship: g.relationship || "",
           phone: g.phone || "",
           email: g.email || "",
           line_user_id: g.line_user_id || "",
           line_id: g.line_user_id || g.line_id || "",
+          picture_url: g.picture_url || "",
           binding_status: g.binding_status || "accepted",
           consent_status: "accepted",
           is_primary: Boolean(g.is_primary),
@@ -5351,11 +5365,14 @@
           return {
             ...c,
             name: c.name || match.name || "",
+            display_name: c.display_name || match.display_name || match.line_display_name || "",
+            line_display_name: c.line_display_name || match.line_display_name || match.display_name || "",
             relationship: c.relationship || match.relationship || "",
             phone: c.phone || match.phone || "",
             email: c.email || match.email || "",
             line_user_id: c.line_user_id || match.line_user_id || "",
             line_id: c.line_id || match.line_user_id || match.line_id || "",
+            picture_url: c.picture_url || match.picture_url || "",
             binding_status: c.binding_status || match.binding_status || "accepted",
             is_primary: c.is_primary != null ? c.is_primary : match.is_primary,
             accepted_at: c.accepted_at || match.accepted_at || "",
@@ -5514,7 +5531,7 @@
           ? "核心"
           : "一般";
         const added = formatGuardianAddedAt(contact);
-        const lid = formatLineIdLabel(contactPeerLineId(contact));
+        const nick = contactPeerDisplayName(contact);
         const statusHtml = bound
           ? `<strong class="guardian-bind-ok">✓ 已綁定</strong>`
           : `<div class="guardian-bind-row">
@@ -5524,10 +5541,9 @@
         return `
           <div class="member-guardian-manage-row" data-id="${cid}">
             <div class="member-guardian-manage-meta">
-              <div class="member-guardian-manage-head">${guardianAvatarHtml(contact)}<span class="guardian-manage-name">${escapeHtml(contact.name || "未命名")}</span></div>
+              <div class="member-guardian-manage-head">${guardianAvatarHtml(contact)}<span class="guardian-manage-name">${escapeHtml(nick)}</span></div>
               <span>${escapeHtml(contact.relationship || "關係未設定")} ／ ${escapeHtml(contact.phone || contact.email || "未填電話")} ／ ${tier}${contact.is_primary ? "／主要" : ""}</span>
               ${statusHtml}
-              ${bound ? `<small>LINE ID：${escapeHtml(lid)}</small>` : ""}
               ${added ? `<small>新增日期：${escapeHtml(added)}</small>` : ""}
             </div>
             <div class="member-guardian-manage-actions">
@@ -7935,6 +7951,7 @@
           const bound = isContactBound(c);
           const statusClass = bound ? "guardian-bind-ok" : "guardian-bind-pending";
           const statusText = bound ? "✓ 已綁定" : "等待 LINE 綁定";
+          const nick = contactPeerDisplayName(c);
           const inviteBtn = bound
             ? ""
             : `<button class="one-tap-invite-btn" type="button" data-invite="1" aria-label="一鍵邀請尚未綁定對象">一鍵邀請</button>`;
@@ -7943,11 +7960,10 @@
             ${guardianAvatarHtml(c)}
             <div class="guardian-info">
               <div class="guardian-info-top">
-                <strong>${escapeHtml(c.name || "未命名")}</strong>
+                <strong>${escapeHtml(nick)}</strong>
                 ${c.is_primary ? '<span class="badge primary">主要</span>' : ""}
               </div>
               <small>${escapeHtml(c.relationship || "關係未設定")}</small>
-              <small>LINE ID：${escapeHtml(formatLineIdLabel(contactPeerLineId(c)))}</small>
               <small>${escapeHtml(c.phone || c.email || "尚未留下聯絡方式")}</small>
               <div class="guardian-bind-row">
                 <small class="${statusClass}">${statusText}</small>

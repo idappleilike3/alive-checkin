@@ -1770,6 +1770,9 @@ def build_status(profile, state=None):
         row["contact_role"] = resolve_contact_role(
             {"contact_role": raw.get("contact_role") or row.get("contact_role")}
         )
+        if state is not None:
+            enrich_contact_peer_picture(state, row)
+            enrich_contact_peer_display_name(state, row)
         normalized_contacts.append(row)
     profile["contacts"] = normalized_contacts
     now = datetime.now()
@@ -1852,6 +1855,12 @@ def build_status(profile, state=None):
             {
                 "id": str(c.get("id") or "").strip(),
                 "name": str(c.get("name") or "").strip(),
+                "display_name": str(
+                    c.get("display_name") or c.get("line_display_name") or c.get("name") or ""
+                ).strip(),
+                "line_display_name": str(
+                    c.get("line_display_name") or c.get("display_name") or ""
+                ).strip(),
                 "line_user_id": get_contact_line_id(c),
                 "relationship": str(c.get("relationship") or "").strip(),
                 "binding_status": str(c.get("binding_status") or "").strip() or "accepted",
@@ -1859,6 +1868,7 @@ def build_status(profile, state=None):
                 "email": str(c.get("email") or "").strip(),
                 "is_primary": bool(c.get("is_primary")),
                 "accepted_at": str(c.get("accepted_at") or c.get("created_at") or "").strip(),
+                "picture_url": str(c.get("picture_url") or c.get("pictureUrl") or "").strip(),
                 # role = 核心／一般層級；contact_role = 守護人／緊急聯絡人（勿混用）
                 "role": "核心" if c.get("is_primary") else "一般",
                 "contact_role": resolve_contact_role(c),
@@ -2551,6 +2561,17 @@ def normalize_contact(contact, index):
         "updated_at": str(contact.get("updated_at") or ""),
         "accepted_at": str(contact.get("accepted_at") or "").strip(),
         "invited_by": str(contact.get("invited_by") or "").strip(),
+        # LINE 暱稱（綁定時自 profile 寫入；列表主標籤用，勿顯示 raw userId）
+        "display_name": str(
+            contact.get("display_name")
+            or contact.get("line_display_name")
+            or ""
+        ).strip(),
+        "line_display_name": str(
+            contact.get("line_display_name")
+            or contact.get("display_name")
+            or ""
+        ).strip(),
         # LINE 頭像（綁定／register 寫入；列表 UI 顯示用，不是後台內部 UID）
         "picture_url": str(contact.get("picture_url") or contact.get("pictureUrl") or "").strip(),
     }
@@ -2667,6 +2688,37 @@ def enrich_contact_peer_picture(state, contact):
     return True
 
 
+def enrich_contact_peer_display_name(state, contact):
+    """用對方 LINE 會員 profile 補齊聯絡人 display_name／line_display_name。回傳是否變更。"""
+    if not isinstance(contact, dict):
+        return False
+    lid = get_contact_line_id(contact)
+    if not lid:
+        return False
+    current = str(
+        contact.get("line_display_name") or contact.get("display_name") or ""
+    ).strip()
+    if current and not is_placeholder_display_name(current):
+        # 正規化雙欄位
+        changed = False
+        if contact.get("display_name") != current:
+            contact["display_name"] = current
+            changed = True
+        if contact.get("line_display_name") != current:
+            contact["line_display_name"] = current
+            changed = True
+        return changed
+    peer = (state.get("users") or {}).get(lid) if isinstance(state, dict) else None
+    if not isinstance(peer, dict):
+        return False
+    nick = str(peer.get("display_name") or "").strip()
+    if not nick or is_placeholder_display_name(nick):
+        return False
+    contact["display_name"] = nick
+    contact["line_display_name"] = nick
+    return True
+
+
 def get_contacts(data_file, line_user_id=None):
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
@@ -2692,6 +2744,10 @@ def get_contacts(data_file, line_user_id=None):
         if enrich_contact_peer_picture(state, normalized):
             # 回寫到原始列，之後列表／會員中心就能看到頭像
             contact["picture_url"] = normalized["picture_url"]
+            changed = True
+        if enrich_contact_peer_display_name(state, normalized):
+            contact["display_name"] = normalized["display_name"]
+            contact["line_display_name"] = normalized["line_display_name"]
             changed = True
         contacts.append(normalized)
     if changed:
@@ -3348,6 +3404,15 @@ def bind_emergency_contact(data_file, payload, config=None):
 
     def _apply_line_bind_fields(row, *, is_new_accept):
         row["name"] = row.get("name") or contact_display_name or "LINE 聯絡人"
+        # 綁定時持久化對方 LINE 暱稱（列表主標籤用，勿露出 raw userId）
+        if contact_display_name and not is_placeholder_display_name(contact_display_name):
+            row["display_name"] = contact_display_name
+            row["line_display_name"] = contact_display_name
+        elif not str(row.get("display_name") or row.get("line_display_name") or "").strip():
+            peer_nick = str(contact_user.get("display_name") or "").strip()
+            if peer_nick and not is_placeholder_display_name(peer_nick):
+                row["display_name"] = peer_nick
+                row["line_display_name"] = peer_nick
         row["line_id"] = contact_line_user_id
         row["line_user_id"] = contact_line_user_id
         row["consent_status"] = "accepted"
@@ -3402,6 +3467,8 @@ def bind_emergency_contact(data_file, payload, config=None):
             {
                 "id": f"line-{contact_line_user_id}",
                 "name": contact_display_name or "LINE 聯絡人",
+                "display_name": contact_display_name or "",
+                "line_display_name": contact_display_name or "",
                 "relationship": "守護人",
                 "phone": "",
                 "line_id": contact_line_user_id,
@@ -6398,7 +6465,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725mb",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725dn",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -6714,7 +6781,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725mb",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725dn",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),

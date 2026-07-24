@@ -620,6 +620,14 @@ function isBoundContact(g) {
   return Boolean(g && (g.binding_status === "accepted" || g.consent_status === "accepted" || g.line_id || g.line_user_id));
 }
 
+function contactPeerDisplayName(g) {
+  const nick = String(g?.line_display_name || g?.display_name || g?.displayName || "").trim();
+  if (nick && nick !== "LINE 聯絡人" && nick !== "LINE 使用者" && !/^未取得暱稱/.test(nick)) {
+    return nick;
+  }
+  return String(g?.name || "").trim() || "聯絡人";
+}
+
 function renderContactList(listEl, items, emptyText) {
   if (!listEl) return;
   if (!items.length) {
@@ -628,9 +636,9 @@ function renderContactList(listEl, items, emptyText) {
   }
   listEl.innerHTML = items.map((g, i) => {
     const bound = isBoundContact(g);
-    const lid = String(g.line_user_id || g.line_id || "").trim();
+    const nick = contactPeerDisplayName(g);
     const pic = String(g.picture_url || g.pictureUrl || "").trim();
-    const initial = String(g.name || "?").trim().slice(0, 1) || "?";
+    const initial = nick.trim().slice(0, 1) || "?";
     const avatar = pic
       ? `<span class="member-avatar-sm"><img src="${escape(pic)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"></span>`
       : `<span class="member-avatar-sm">${escape(initial)}</span>`;
@@ -642,10 +650,9 @@ function renderContactList(listEl, items, emptyText) {
         </div>`;
     return `
     <div class="guardian-row ${g.is_primary || i === 0 ? "primary" : ""}">
-      <div class="guardian-row-head">${avatar}<div class="guardian-name">${i + 1}. ${escape(g.name || "聯絡人 " + (i + 1))}${g.is_primary || i === 0 ? " ⭐ 主要" : ""}</div></div>
+      <div class="guardian-row-head">${avatar}<div class="guardian-name">${escape(nick)}${g.is_primary || i === 0 ? " ⭐ 主要" : ""}</div></div>
       <div class="guardian-detail">${escape(g.relationship || "關係未設定")}</div>
       <div class="guardian-detail">${escape(g.phone || g.email || "未填聯絡方式")}</div>
-      ${bound ? `<div class="guardian-detail">LINE ID：${escape(lid || "（尚無 LINE ID）")}</div>` : ""}
       ${statusHtml}
       <div class="guardian-actions">
         <button class="btn btn-edit" type="button" data-edit="${escape(g.id)}">編輯</button>
