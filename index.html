@@ -5907,7 +5907,18 @@
       const guardianGroups = status.guardian_groups || [];
       const groupById = Object.fromEntries(guardianGroups.map((group) => [group.group_id, group]));
       $("guardianGroupsSection").hidden = !(status.guardian_group_limit > 0);
-      $("guardianGroupsList").innerHTML = guardianGroupIds.length
+      const roster = status.today_safety_roster || null;
+      const rosterHtml = roster ? (() => {
+        const unchecked = (roster.unchecked || []).map((x) => escapeHtml(x.name || "")).filter(Boolean);
+        const checked = (roster.checked || []).map((x) => escapeHtml(x.name || "")).filter(Boolean);
+        return `<div class="member-data-row" style="flex-direction:column;align-items:flex-start;gap:4px;margin-bottom:8px;">
+          <span><strong>今天誰還沒報平安</strong><small>${escapeHtml(roster.date || "")}</small></span>
+          <small>尚未：${unchecked.length ? unchecked.join("、") : "目前都已完成"}</small>
+          <small>已報：${checked.length ? checked.join("、") : "尚無"}</small>
+          <small style="color:#64748b;">私訊報平安成功＝今日完成。也可在 LINE 私訊輸入「誰還沒報平安」查詢。</small>
+        </div>`;
+      })() : "";
+      $("guardianGroupsList").innerHTML = (rosterHtml || "") + (guardianGroupIds.length
         ? guardianGroupIds.map((groupId, index) => {
           const group = groupById[groupId] || { group_id: groupId, preferences: {} };
           const prefs = group.preferences || {};
@@ -5915,14 +5926,16 @@
           <div class="member-data-row guardian-group-card">
             <span><strong>守護群 ${index + 1}</strong><small>群組成員 ${escapeHtml(group.member_count_at_bind != null ? group.member_count_at_bind : "—")} 人（進群≠已綁定守護人）</small></span>
             <div class="guardian-group-preferences">
-              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_group_on_overdue" ${prefs.notify_group_on_overdue !== false ? "checked" : ""}> 群內逾期提醒</label>
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_private_guardians" ${prefs.notify_private_guardians !== false ? "checked" : ""}> 私訊提醒（預設，建議）</label>
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_group_on_overdue" ${prefs.notify_group_on_overdue === true ? "checked" : ""}> 群組提醒（選用）</label>
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="daily_admin_summary" ${prefs.daily_admin_summary === true ? "checked" : ""}> 群組每日已報／未報摘要（選用）</label>
               <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_admin_only" ${prefs.notify_admin_only !== false ? "checked" : ""}> 詳細名單僅管理員可看</label>
-              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_private_guardians" ${prefs.notify_private_guardians !== false ? "checked" : ""}> 同步私訊核心守護人</label>
+              <small style="display:block;margin-top:6px;color:#64748b;line-height:1.45;">生日／生活提醒只會私訊，不會發到群組。</small>
             </div>
             <button class="action-btn guardian-group-unbind" type="button" data-group-id="${escapeHtml(groupId)}">解除綁定</button>
           </div>
         `; }).join("")
-        : `<div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護群</strong></div>`;
+        : `<div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護群</strong></div>`);
       renderGuardianDetailsEditor();
       renderMemberRoleIntro({ autoExpand: false });
     }

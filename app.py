@@ -225,6 +225,23 @@ RICH_MENU_COMMANDS = [
 CHECKIN_KEYWORDS = {"簽到", "打卡", "報平安", "今日簽到", "我平安", "✅ 我平安", "今日已平安"}
 CONTACT_KEYWORDS = {"綁定守護人", "聯絡人", "緊急聯絡人", "填聯絡人", "修改電話", "守護人"}
 STATUS_KEYWORDS = {"狀態", "我的狀態", "查詢紀錄"}
+# 管理員查詢今日誰還沒報平安（私訊或守護群皆可）
+DAILY_ROSTER_KEYWORDS = {
+    "今日狀態",
+    "今日平安狀態",
+    "誰沒報平安",
+    "未報平安",
+    "誰還沒簽到",
+    "今天誰還沒報平安",
+    "誰還沒報平安",
+}
+# 守護群通知偏好：逾期／平安狀態預設只私訊核心守護人；群組為選用（預設關）
+DEFAULT_GUARDIAN_GROUP_PREFERENCES = {
+    "notify_private_guardians": True,
+    "notify_group_on_overdue": False,
+    "notify_admin_only": True,
+    "daily_admin_summary": False,
+}
 PLAN_KEYWORDS = {"方案", "價格", "收費", "升級", "查看方案", "多少錢"}
 FAQ_KEYWORDS = {"問與答", "FAQ", "常見問題"}
 SUPPORT_KEYWORDS = {"客服", "人工", "幫助", "找不到", "問題", "聯絡客服"}
@@ -420,6 +437,7 @@ def should_create_support_ticket(text):
         CHECKIN_KEYWORDS,
         CONTACT_KEYWORDS,
         STATUS_KEYWORDS,
+        DAILY_ROSTER_KEYWORDS,
         PLAN_KEYWORDS,
         FAQ_KEYWORDS,
         SUPPORT_KEYWORDS,
@@ -1813,12 +1831,18 @@ def build_status(profile, state=None):
     _reminder_times = reminder_times_for_profile(profile) or ["12:00"]
     _next_reminder = next_checkin_reminder_info(profile)
     guardian_groups = []
+    today_safety_roster = None
     if state is not None:
         groups = state.get("guardian_groups", {}) or {}
         for group_id in profile.get("guardian_group_ids", []) or []:
             group = groups.get(group_id)
             if group and group.get("owner_line_user_id") == profile.get("line_user_id"):
-                guardian_groups.append(group)
+                row = dict(group)
+                row["group_id"] = group_id
+                row["preferences"] = normalize_guardian_group_preferences(group.get("preferences"))
+                guardian_groups.append(row)
+        if guardian_groups or plan_includes_guardian_group(profile):
+            today_safety_roster = build_owner_today_safety_roster(state, profile)
 
     return {
         "ok": True,
@@ -1921,6 +1945,7 @@ def build_status(profile, state=None):
         "safety_guard_hours": allowed_safety_guard_hours(profile),
         "guardian_group_ids": profile.get("guardian_group_ids", []),
         "guardian_groups": guardian_groups,
+        "today_safety_roster": today_safety_roster,
         "is_today_checked": is_today_checked,
         "is_prealert": prealert,
         "is_overdue": overdue,
@@ -3844,6 +3869,55 @@ def plan_includes_guardian_group(profile) -> bool:
     return int(plan_rules(profile or {}).get("guardian_group_limit") or 0) > 0
 
 
+def normalize_guardian_group_preferences(raw=None):
+    """Product defaults: 私訊提醒 ON、群組提醒 OFF、每日群組摘要 OFF。"""
+    prefs = dict(DEFAULT_GUARDIAN_GROUP_PREFERENCES)
+    if isinstance(raw, dict):
+        for key in DEFAULT_GUARDIAN_GROUP_PREFERENCES:
+            if key in raw:
+                prefs[key] = bool(raw.get(key))
+    return prefs
+
+
+def guardian_group_preference(group, key, default=None):
+    prefs = normalize_guardian_group_preferences((group or {}).get("preferences"))
+    if key in prefs:
+        return prefs[key]
+    if default is not None:
+        return default
+    return DEFAULT_GUARDIAN_GROUP_PREFERENCES.get(key)
+
+
+def owned_active_guardian_groups(state, profile):
+    """回傳此會員擁有且啟用的守護群列表。"""
+    owner_id = str((profile or {}).get("line_user_id") or "").strip()
+    if not owner_id:
+        return []
+    groups = (state or {}).get("guardian_groups") or {}
+    out = []
+    for group_id in (profile or {}).get("guardian_group_ids") or []:
+        group = groups.get(group_id)
+        if not isinstance(group, dict):
+            continue
+        if str(group.get("owner_line_user_id") or "").strip() != owner_id:
+            continue
+        if group.get("status") != "active":
+            continue
+        row = dict(group)
+        row["group_id"] = group_id
+        row["preferences"] = normalize_guardian_group_preferences(group.get("preferences"))
+        out.append(row)
+    return out
+
+
+def should_notify_private_guardians(state, profile):
+    """無守護群 → 永遠私訊；有群 → 任一群勾選私訊即發送（預設勾選）。"""
+    owned = owned_active_guardian_groups(state, profile)
+    if not owned:
+        return True
+    return any(guardian_group_preference(g, "notify_private_guardians") for g in owned)
+
+
 def is_guardian_group_admin(group, line_user_id) -> bool:
     """守護群管理員＝建立者（owner）或 admin_line_user_ids 名單。"""
     uid = str(line_user_id or "").strip()
@@ -3981,12 +4055,12 @@ def bind_guardian_group(data_file, payload):
         "created_at": now,
         "member_count_at_bind": member_count_at_bind,
         "member_ids_at_bind": member_ids_at_bind,
-        "preferences": {
+        "preferences": normalize_guardian_group_preferences({
             "notify_private_guardians": True,
-            "notify_group_on_overdue": True,
+            "notify_group_on_overdue": False,
             "notify_admin_only": True,
-            "daily_admin_summary": True,
-        },
+            "daily_admin_summary": False,
+        }),
     }
     group_ids.append(group_id)
     profile["guardian_group_ids"] = group_ids
@@ -4015,12 +4089,107 @@ def update_guardian_group_preferences(data_file, payload):
     if group.get("owner_line_user_id") != line_user_id:
         return {"error": "not guardian group owner"}, 403
 
-    preferences = group.setdefault("preferences", {})
-    for key in ("notify_private_guardians", "notify_group_on_overdue", "notify_admin_only", "daily_admin_summary"):
+    preferences = normalize_guardian_group_preferences(group.get("preferences"))
+    for key in DEFAULT_GUARDIAN_GROUP_PREFERENCES:
         if key in payload:
             preferences[key] = bool(payload.get(key))
+    group["preferences"] = preferences
     save_state(data_file, state)
     return {"ok": True, "group_id": group_id, "preferences": preferences}, 200
+
+
+def _member_checked_today(profile, today):
+    if not profile:
+        return False
+    history = profile.get("history") or []
+    if today in history:
+        return True
+    return any(str(item.get("date", "")) == today for item in history if isinstance(item, dict))
+
+
+def build_owner_today_safety_roster(state, profile, config=None):
+    """管理員用：今天誰已報／尚未報平安（私訊／LIFF；不依賴群組提醒開關）。"""
+    now = current_app_time(config or {})
+    today = now.strftime("%Y-%m-%d")
+    users = (state or {}).get("users") or {}
+    owner_id = str((profile or {}).get("line_user_id") or "").strip()
+    checked = []
+    unchecked = []
+    seen = set()
+
+    def add_uid(uid, fallback_name="LINE 成員"):
+        uid = str(uid or "").strip()
+        if not uid or uid in seen:
+            return
+        seen.add(uid)
+        row = users.get(uid) or {}
+        name = row.get("display_name") or row.get("name") or fallback_name
+        if uid == owner_id:
+            name = f"{name}（我）"
+        target = checked if _member_checked_today(row if row else profile, today) else unchecked
+        if uid == owner_id and not row:
+            target = checked if _member_checked_today(profile, today) else unchecked
+        target.append({"line_user_id": uid, "name": name})
+
+    # 本人
+    if owner_id:
+        add_uid(owner_id, (profile or {}).get("display_name") or "我")
+
+    # 已綁定核心／一般守護人（報平安對象是會員本人；此處列出「家人圈」狀態用群內／綁定成員）
+    for contact in (profile or {}).get("contacts") or []:
+        if not contact_is_bound_guardian(contact, owner_id):
+            continue
+        gid = get_contact_line_id(contact)
+        if gid:
+            add_uid(gid, contact.get("name") or contact.get("display_name") or "守護人")
+
+    # 守護群綁定當下成員快照（799）
+    for group in owned_active_guardian_groups(state, profile):
+        for uid in group.get("member_ids_at_bind") or []:
+            add_uid(uid)
+
+    return {
+        "date": today,
+        "checked": checked,
+        "unchecked": unchecked,
+        "checked_count": len(checked),
+        "unchecked_count": len(unchecked),
+    }
+
+
+def owner_today_safety_roster_text(data_file, line_user_id, config=None):
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id) or {}
+    if not profile.get("line_user_id"):
+        return "目前無法確認你的身分，請稍後再試。", 400
+    roster = build_owner_today_safety_roster(state, profile, config=config)
+    checked_names = [x["name"] for x in roster["checked"]]
+    unchecked_names = [x["name"] for x in roster["unchecked"]]
+    owned = owned_active_guardian_groups(state, profile)
+    group_hint = ""
+    if owned:
+        flags = []
+        for g in owned:
+            prefs = g.get("preferences") or {}
+            flags.append(
+                f"・私訊提醒：{'開' if prefs.get('notify_private_guardians') else '關'}／"
+                f"群組提醒：{'開' if prefs.get('notify_group_on_overdue') else '關'}／"
+                f"群組每日摘要：{'開' if prefs.get('daily_admin_summary') else '關'}"
+            )
+        group_hint = "\n\n守護群通知設定：\n" + "\n".join(flags)
+    else:
+        group_hint = "\n\n（尚未綁定守護群時，逾期預警預設只私訊核心守護人。）"
+    lines = [
+        "📊 今天誰還沒報平安",
+        f"日期：{roster['date']}",
+        f"已報平安：{', '.join(checked_names) if checked_names else '尚無'}",
+        f"尚未報平安：{', '.join(unchecked_names) if unchecked_names else '目前都已完成'}",
+        group_hint,
+        "",
+        "說明：私訊報平安成功＝今日完成，不必再另外做群組簽到。",
+        "生日／生活提醒只會私訊本人，不會發到守護群。",
+    ]
+    return "\n".join(lines), 200
 
 
 def guardian_group_daily_status_text(data_file, line_user_id, group_id):
@@ -4031,7 +4200,7 @@ def guardian_group_daily_status_text(data_file, line_user_id, group_id):
     group = state.get("guardian_groups", {}).get(group_id)
     if not group or group.get("status") != "active":
         return "此群尚未完成守護群綁定。請由有效的 799 會員在群裡輸入「點我綁定守護群」。", 404
-    prefs = group.get("preferences") or {}
+    prefs = normalize_guardian_group_preferences(group.get("preferences"))
     if prefs.get("notify_admin_only", True) and not is_guardian_group_admin(group, line_user_id):
         return "為了保護成員隱私，今日平安名單只有守護群管理員可以查看。", 403
 
@@ -4046,8 +4215,7 @@ def guardian_group_daily_status_text(data_file, line_user_id, group_id):
     for uid in member_ids:
         profile = users.get(uid) or {}
         name = profile.get("display_name") or profile.get("name") or "LINE 成員"
-        history = profile.get("history") or []
-        is_checked = today in history or any(str(item.get("date", "")) == today for item in history if isinstance(item, dict))
+        is_checked = _member_checked_today(profile, today)
         (checked if is_checked else unchecked).append(name)
 
     lines = [
@@ -4056,9 +4224,12 @@ def guardian_group_daily_status_text(data_file, line_user_id, group_id):
         f"尚未報平安：{', '.join(unchecked) if unchecked else '目前都已完成'}",
         "",
         "群組隱私設定：",
-        f"群內逾期提醒：{'開啟' if prefs.get('notify_group_on_overdue', True) else '關閉'}",
-        f"詳細名單：{'僅管理員可看' if prefs.get('notify_admin_only', True) else '群內可看'}",
-        f"核心守護人私訊：{'開啟' if prefs.get('notify_private_guardians', True) else '關閉'}",
+        f"私訊提醒（核心守護人）：{'開啟' if prefs.get('notify_private_guardians') else '關閉'}（預設建議開啟）",
+        f"群組提醒：{'開啟' if prefs.get('notify_group_on_overdue') else '關閉'}（選用，預設關閉）",
+        f"群組每日摘要：{'開啟' if prefs.get('daily_admin_summary') else '關閉'}（選用，預設關閉）",
+        f"詳細名單：{'僅管理員可看' if prefs.get('notify_admin_only') else '群內可看'}",
+        "",
+        "私訊報平安成功＝今日完成，不必再另外做群組簽到。",
     ]
     return "\n".join(lines), 200
 
@@ -4663,7 +4834,7 @@ def trigger_sos(data_file, payload, config=None):
             group_id for group_id in (profile.get("guardian_group_ids") or [])
             if groups.get(group_id, {}).get("owner_line_user_id") == line_user_id
             and groups.get(group_id, {}).get("status") == "active"
-            and (groups.get(group_id, {}).get("preferences") or {}).get("notify_group_on_overdue", True)
+            and guardian_group_preference(groups.get(group_id), "notify_group_on_overdue")
         ][: int(rules.get("guardian_group_limit") or 0)]
 
     # 個人守護人或守護群任一可送；兩者都沒有才拒絕（方案本身不會自動綁定對象）
@@ -5631,38 +5802,40 @@ def send_due_reminders(config):
             f"{location_link}"
         )
         rules = plan_rules(profile)
-        alert_limit = int(rules.get("core_guardian_alert_limit") or 1)
-        contacts = sorted(
-            profile.get("contacts") or [],
-            key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
-        )
-        line_contacts = [
-            contact for contact in contacts
-            if (contact.get("line_id") or contact.get("line_user_id"))
-            and "line" in (contact.get("notify_methods") or ["line"])
-        ][:alert_limit]
-        for contact in line_contacts:
-            target = contact.get("line_id") or contact.get("line_user_id")
-            try:
-                result = sender(token, target, contact_message)
-                append_notification_log(state, "contact_alert", target, "sent", contact_message, json.dumps(result, ensure_ascii=False))
-                sent += 1
-                results.append({"line_user_id": target, "result": result})
-            except Exception as exc:
-                append_notification_log(state, "contact_alert", target, "failed", contact_message, str(exc))
-                skipped += 1
-                results.append({"line_user_id": target, "error": str(exc)})
-            for method in (contact.get("notify_methods") or ["line"]):
-                if method in {"sms", "phone"}:
-                    detail = contact.get("phone") or "missing phone"
-                    append_notification_log(
-                        state,
-                        f"{method}_contact_alert",
-                        user["line_user_id"],
-                        "skipped_not_live",
-                        contact_message,
-                        detail,
-                    )
+        notify_private = should_notify_private_guardians(state, profile)
+        if notify_private:
+            alert_limit = int(rules.get("core_guardian_alert_limit") or 1)
+            contacts = sorted(
+                profile.get("contacts") or [],
+                key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
+            )
+            line_contacts = [
+                contact for contact in contacts
+                if (contact.get("line_id") or contact.get("line_user_id"))
+                and "line" in (contact.get("notify_methods") or ["line"])
+            ][:alert_limit]
+            for contact in line_contacts:
+                target = contact.get("line_id") or contact.get("line_user_id")
+                try:
+                    result = sender(token, target, contact_message)
+                    append_notification_log(state, "contact_alert", target, "sent", contact_message, json.dumps(result, ensure_ascii=False))
+                    sent += 1
+                    results.append({"line_user_id": target, "result": result})
+                except Exception as exc:
+                    append_notification_log(state, "contact_alert", target, "failed", contact_message, str(exc))
+                    skipped += 1
+                    results.append({"line_user_id": target, "error": str(exc)})
+                for method in (contact.get("notify_methods") or ["line"]):
+                    if method in {"sms", "phone"}:
+                        detail = contact.get("phone") or "missing phone"
+                        append_notification_log(
+                            state,
+                            f"{method}_contact_alert",
+                            user["line_user_id"],
+                            "skipped_not_live",
+                            contact_message,
+                            detail,
+                        )
 
         group_limit = int(rules.get("guardian_group_limit") or 0)
         if group_limit > 0:
@@ -5671,7 +5844,7 @@ def send_due_reminders(config):
                 group_id for group_id in (profile.get("guardian_group_ids") or [])
                 if groups.get(group_id, {}).get("owner_line_user_id") == user["line_user_id"]
                 and groups.get(group_id, {}).get("status") == "active"
-                and (groups.get(group_id, {}).get("preferences") or {}).get("notify_group_on_overdue", True)
+                and guardian_group_preference(groups.get(group_id), "notify_group_on_overdue")
             ][:group_limit]
             group_message = (
                 f"【失聯預警】{profile.get('display_name') or '成員'} 已超過平安簽到時間，"
@@ -5706,6 +5879,90 @@ def send_due_reminders(config):
 
     save_state(config["DATA_FILE"], state)
     return {"sent": sent, "skipped": skipped, "results": results}, 200
+
+
+def send_guardian_group_daily_summaries(config):
+    """選用：守護群勾選「群組每日摘要」時，於晚間推播今日已報／未報（預設關閉）。"""
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not token:
+        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
+
+    state = load_state(config["DATA_FILE"])
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    now = current_app_time(config)
+    today = now.strftime("%Y-%m-%d")
+    # 預設 21:00 後才推群組摘要，避免白天洗版
+    if now.hour < 21:
+        return {"sent": 0, "skipped": 0, "deferred_until": "21:00", "date": today}, 200
+
+    users = state.get("users") or {}
+    groups = state.get("guardian_groups") or {}
+    sent = 0
+    skipped = 0
+    results = []
+    dirty = False
+    for group_id, group in list(groups.items()):
+        if not isinstance(group, dict) or group.get("status") != "active":
+            skipped += 1
+            continue
+        prefs = normalize_guardian_group_preferences(group.get("preferences"))
+        if not prefs.get("daily_admin_summary"):
+            skipped += 1
+            continue
+        if group.get("last_daily_summary_date") == today:
+            skipped += 1
+            continue
+        owner_id = str(group.get("owner_line_user_id") or "").strip()
+        owner = users.get(owner_id) or {}
+        member_ids = [owner_id] if owner_id else []
+        for uid in group.get("member_ids_at_bind") or []:
+            if uid not in member_ids:
+                member_ids.append(uid)
+        checked = []
+        unchecked = []
+        for uid in member_ids:
+            if not uid:
+                continue
+            profile = users.get(uid) or {}
+            name = profile.get("display_name") or profile.get("name") or "LINE 成員"
+            (checked if _member_checked_today(profile, today) else unchecked).append(name)
+        message = (
+            f"📊 今日平安摘要（{today}）\n"
+            f"已報平安：{', '.join(checked) if checked else '尚無'}\n"
+            f"尚未報平安：{', '.join(unchecked) if unchecked else '目前都已完成'}\n\n"
+            "（此為選用群組摘要；關閉後只會私訊核心守護人。）"
+        )
+        try:
+            result = sender(token, group_id, message)
+            append_notification_log(
+                state,
+                "guardian_group_daily_summary",
+                group_id,
+                "sent",
+                message,
+                json.dumps(result, ensure_ascii=False),
+            )
+            group["last_daily_summary_date"] = today
+            groups[group_id] = group
+            dirty = True
+            sent += 1
+            results.append({"group_id": group_id, "result": result})
+        except Exception as exc:
+            append_notification_log(
+                state,
+                "guardian_group_daily_summary",
+                group_id,
+                "failed",
+                message,
+                str(exc),
+            )
+            skipped += 1
+            results.append({"group_id": group_id, "error": str(exc)})
+
+    if dirty:
+        state["guardian_groups"] = groups
+        save_state(config["DATA_FILE"], state)
+    return {"sent": sent, "skipped": skipped, "results": results, "date": today}, 200
 
 
 def send_missing_contact_reminders(config):
@@ -6684,7 +6941,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725ga",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725nc",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -7006,7 +7263,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725ga",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725nc",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -7934,7 +8191,7 @@ def create_app(config=None):
                     return
 
                 # 2-1) 今日平安名單：只有群組建立者/管理員可看詳細資料
-                if stripped in ("今日狀態", "今日平安狀態", "誰沒報平安", "未報平安", "誰還沒簽到"):
+                if stripped in DAILY_ROSTER_KEYWORDS:
                     reply_text, _status = guardian_group_daily_status_text(
                         app.config["DATA_FILE"], line_user_id, group_id
                     )
@@ -7974,6 +8231,14 @@ def create_app(config=None):
                             TextSendMessage(text="管理員設定 6 步驟:1.群右上「≡」→ 2.選成員 → 3.長按「每日平安」 → 4.設為管理員 → 5.確定 → 6.完成"),
                         )
                     return
+
+            # 私訊：管理員可查「今天誰還沒報平安」（不需開群組提醒）
+            if not group_id and stripped in DAILY_ROSTER_KEYWORDS:
+                reply_text, _status = owner_today_safety_roster_text(
+                    app.config["DATA_FILE"], line_user_id, config=app.config
+                )
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+                return
 
             status = None
             if any(keyword in text for keyword in CHECKIN_KEYWORDS):
@@ -8854,6 +9119,10 @@ def create_app(config=None):
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = send_due_reminders(app.config)
+        daily, _daily_code = send_guardian_group_daily_summaries(app.config)
+        if isinstance(data, dict):
+            data = dict(data)
+            data["daily_group_summary"] = daily
         return jsonify(data), code
 
     @app.route("/api/cron/renewal-reminders", methods=["GET", "POST"])

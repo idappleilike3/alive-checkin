@@ -82,7 +82,7 @@ class ExpiryDowngradeTests(unittest.TestCase):
 
 
 class OverdueAlertTests(unittest.TestCase):
-    def test_overdue_notifies_core_guardians_and_group(self):
+    def test_overdue_defaults_to_private_not_group(self):
         pushes = []
 
         def fake_sender(token, target, message):
@@ -120,6 +120,66 @@ class OverdueAlertTests(unittest.TestCase):
                     "owner_line_user_id": "U-owner",
                     "status": "active",
                     "created_at": now.isoformat(timespec="seconds"),
+                    # no preferences → group notify default OFF
+                }
+            }
+            alive_app.save_state(data_file, state)
+            result, code = alive_app.send_due_reminders(
+                {
+                    "DATA_FILE": data_file,
+                    "LINE_CHANNEL_ACCESS_TOKEN": "token",
+                    "LINE_PUSH_SENDER": fake_sender,
+                    "CRON_NOW": now,
+                }
+            )
+            self.assertEqual(code, 200)
+            targets = [item[0] for item in pushes]
+            self.assertIn("U-owner", targets)
+            self.assertIn("U-g1", targets)
+            self.assertNotIn("Cgroup1", targets)
+
+    def test_overdue_group_notify_when_enabled(self):
+        pushes = []
+
+        def fake_sender(token, target, message):
+            pushes.append((target, message))
+            return {"ok": True}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_file = str(Path(tmp) / "state.json")
+            now = datetime.now()
+            state = alive_app.load_state(data_file)
+            state["users"]["U-owner"] = {
+                **alive_app.DEFAULT_PROFILE,
+                "line_user_id": "U-owner",
+                "display_name": "阿明",
+                "plan": "paid_799",
+                "payment_status": "active",
+                "paid_until": (now + timedelta(days=10)).isoformat(timespec="seconds"),
+                "last_check_in": (now - timedelta(days=2)).isoformat(timespec="seconds"),
+                "history": [],
+                "reminder_time": "08:00",
+                "contacts": [
+                    {
+                        "id": "c1",
+                        "name": "家人",
+                        "line_id": "U-g1",
+                        "priority": 1,
+                        "notify_methods": ["line"],
+                        "binding_status": "accepted",
+                    }
+                ],
+                "guardian_group_ids": ["Cgroup1"],
+            }
+            state["guardian_groups"] = {
+                "Cgroup1": {
+                    "owner_line_user_id": "U-owner",
+                    "status": "active",
+                    "created_at": now.isoformat(timespec="seconds"),
+                    "preferences": {
+                        "notify_private_guardians": True,
+                        "notify_group_on_overdue": True,
+                    },
                 }
             }
             alive_app.save_state(data_file, state)
