@@ -4,16 +4,16 @@
     "height": 1686
   },
   "selected": true,
-  "name": "每日平安主選單-直連分享",
+  "name": "每日平安主選單-原生分享",
   "chatBarText": "平安守護選單",
   "areas": [
     {
       "bounds": { "x": 0, "y": 0, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "報平安", "uri": "https://liff.line.me/2010674803-rK98c0lo/?open=checkin" }
+      "action": { "type": "uri", "label": "報平安", "uri": "https://liff.line.me/2010674803-rK98c0lo?open=checkin" }
     },
     {
       "bounds": { "x": 833, "y": 0, "width": 834, "height": 843 },
-      "action": { "type": "uri", "label": "一鍵邀請", "uri": "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html" }
+      "action": { "type": "message", "label": "一鍵邀請", "text": "一鍵邀請" }
     },
     {
       "bounds": { "x": 1667, "y": 0, "width": 833, "height": 843 },
@@ -21,7 +21,7 @@
     },
     {
       "bounds": { "x": 0, "y": 843, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "使用教學", "uri": "https://liff.line.me/2010674803-rK98c0lo/?open=help" }
+      "action": { "type": "uri", "label": "使用教學", "uri": "https://liff.line.me/2010674803-rK98c0lo?open=help" }
     },
     {
       "bounds": { "x": 833, "y": 843, "width": 834, "height": 843 },
@@ -29,7 +29,7 @@
     },
     {
       "bounds": { "x": 1667, "y": 843, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "安全守護", "uri": "https://liff.line.me/2010674803-rK98c0lo/?open=guard" }
+      "action": { "type": "uri", "label": "安全守護", "uri": "https://liff.line.me/2010674803-rK98c0lo?open=guard" }
     }
   ]
 }

@@ -251,24 +251,22 @@ class ProductRulesTests(unittest.TestCase):
     def test_share_invite_page_is_stable_click_only(self):
         page = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
         self.assertIn('await liff.init({ liffId: LIFF_ID })', page)
-        # 子路徑頁可用安全 redirectUri（origin+pathname+search，無 #）；禁止 window.location.href
+        # 子路徑頁可用安全 redirectUri（origin+pathname+search，無 #）；禁止錯誤 redirect
         self.assertIn("buildSafeRedirectUri", page)
         self.assertIn("liff.login({ redirectUri: buildSafeRedirectUri() })", page)
-        self.assertNotIn("window.location.href", page)
         self.assertNotIn("redirectUri: window.location.href", page)
         self.assertIn('alert("暫時無法分享："', page)
-        self.assertIn('shareBtn.addEventListener("click", onShareClick)', page)
-        self.assertIn("liff.shareTargetPicker", page)
-        # 禁止 init 後自動分享／自動導頁（W250723af 回歸根因）
+        self.assertIn('tapLayer.addEventListener("click", onTap)', page)
+        self.assertIn("line.me/R/share?text=", page)
+        # 禁止 init 後自動 shareTargetPicker（W250723af 回歸根因）
         self.assertNotIn("await shareNow()", page)
         self.assertNotIn("autoShareOnce", page)
         self.assertNotIn("await autoShareOnce()", page)
         self.assertNotIn("openSharePicker({ auto: true })", page)
-        self.assertNotIn("location.replace(", page)
-        self.assertNotIn("location.href =", page)
-        # 大按鈕必須一開始可顯示（不可 display:none 等 auto 失敗才出現）
-        self.assertNotIn(".share-btn.visible", page)
-        self.assertIn('shareBtn.disabled = false', page)
+        # shareTargetPicker 只能當 click 備援，不可在 initializeLiff 內呼叫
+        init_fn = page[page.index("async function initializeLiff()") : page.index("tapLayer.addEventListener")]
+        self.assertNotIn("shareTargetPicker", init_fn)
+        self.assertIn("openNativeShare()", init_fn)
         # 產品路徑：不要複製連結備援
         self.assertNotIn("複製邀請訊息", page)
         self.assertNotIn("複製連結", page)
@@ -276,9 +274,10 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("inviteBox", page)
         self.assertNotIn("copyBtn", page)
         self.assertNotIn("?open=home", page)
-        # 邀請網址必須走正確 LIFF ID
-        self.assertIn("https://liff.line.me/\" + LIFF_ID + \"/?invite_from=", page)
+        # 邀請網址必須走 line.me/R/app?invite_from=（避開 liff.line.me/? → 400）
+        self.assertIn("https://line.me/R/app/\" + LIFF_ID + \"?invite_from=", page)
         self.assertIn('const LIFF_ID = "2010674803-rK98c0lo"', page)
+        self.assertIn("W250723aj", page)
 
     def test_liff_links_use_query_params_for_android_compatibility(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -290,19 +289,27 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('String(key) === "liff.state"', page)
         self.assertIn('"invite_from", "friend_invite", "open"', page)
         self.assertIn("https://alive-checkin.onrender.com/liff/pricing.html", rich_menu)
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=checkin", rich_menu)
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html", rich_menu)
+        self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=checkin", rich_menu)
+        # 一鍵邀請：message → Bot 回 line.me/R/share（略過 LIFF 大按鈕頁）
+        self.assertIn('"type": "message"', rich_menu)
+        self.assertIn('"label": "一鍵邀請"', rich_menu)
+        self.assertIn('"text": "一鍵邀請"', rich_menu)
+        self.assertNotIn("share-invite.html", rich_menu)
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=share-invite", rich_menu)
         # 「需要幫忙」必須是 LINE message，觸發 Bot 緊急求助 Flex（不可 uri 連網頁）
+        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo?open=sos", rich_menu)
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=sos", rich_menu)
-        self.assertIn('"type": "message"', rich_menu)
         self.assertIn('"label": "需要幫忙"', rich_menu)
         self.assertIn('"text": "需要幫忙"', rich_menu)
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=help", rich_menu)
+        self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=help", rich_menu)
         # 查看方案必須直連方案頁，不可再走 open=pricing 首頁轉跳
+        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo?open=pricing", rich_menu)
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=pricing", rich_menu)
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/?open=guard", rich_menu)
-        self.assertIn('url += "/?" + urlencode(params, safe="/")', flex)
+        self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=guard", rich_menu)
+        self.assertIn('url += "?" + urlencode(params, safe="/")', flex)
+        self.assertNotIn('url += "/?" + urlencode(params, safe="/")', flex)
+        self.assertIn("line_native_share_url", flex)
+        self.assertIn("share_invite_flex", flex)
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo#open=", rich_menu)
         self.assertNotIn("https://alive-checkin.onrender.com/help.html", rich_menu)
         self.assertNotIn('"type": "message", "label": "SOS 求救"', rich_menu)

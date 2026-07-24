@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 import os
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 
 # ───────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ def liff_path_url(path: str) -> str:
 
 
 def share_invite_liff_url() -> str:
-    """一鍵邀請守護人：專用分享頁（init→login→顯示按鈕；點擊才 shareTargetPicker）。"""
+    """一鍵邀請守護人：專用分享頁（init→login→導向 line.me/R/share；失敗才全螢幕重試）。"""
     return liff_path_url("/liff/share-invite.html")
 
 
@@ -69,6 +69,9 @@ def liff_entry_url(*, open_action: str | None = None, fragment: str = "", **quer
     不要使用含 code= / state= 的一次性 OAuth callback URL。
     open_action 會傳到 Endpoint（例如 open=onboarding → 先一鍵分享邀請，再填守護人表單→提醒設定）。
     其餘 query（如 invite_from / friend_invite）會附加在同一條永久連結上。
+
+    重要：query 用 ``?`` 不要用 ``/?``。``/?`` 會讓 LIFF 把 path 當成 ``/``
+    接到 Endpoint（常是 .../），合成 ``...//?``，OAuth／LIFF 閘道容易回 400。
     """
     url = f"https://liff.line.me/{get_liff_id()}"
     params = {}
@@ -83,11 +86,85 @@ def liff_entry_url(*, open_action: str | None = None, fragment: str = "", **quer
         params[key_s] = str(value)
     if params:
         # allow path-like open actions such as onboarding/invite
-        url += "/?" + urlencode(params, safe="/")
+        url += "?" + urlencode(params, safe="/")
     elif fragment:
         url += f"#{fragment.lstrip('#')}"
     return url
 
+
+def guardian_invite_bind_url(invite_from: str) -> str:
+    """受邀者綁定連結：強制進 LINE App，避免 liff.line.me/? 造成閘道 400。"""
+    safe = "".join(ch for ch in str(invite_from or "").strip() if ch.isalnum() or ch in "_-")
+    lid = get_liff_id()
+    if not safe:
+        return f"https://line.me/R/app/{lid}?open=onboarding"
+    return f"https://line.me/R/app/{lid}?invite_from={quote(safe, safe='')}"
+
+
+def guardian_invite_share_text(invite_from: str, *, nickname: str = "") -> str:
+    """分享給好友的純文字（含綁定連結）。"""
+    name = (nickname or "").strip()
+    prefix = f"嗨 {name}，" if name else ""
+    bind = guardian_invite_bind_url(invite_from)
+    return (
+        f"{prefix}我想邀請你成為「每日平安」的守護人。\n"
+        "請用 LINE 點開下面連結\n\n"
+        f"{bind}"
+    )
+
+
+def line_native_share_url(text: str) -> str:
+    """LINE 原生分享（好友選擇）：由選單／按鈕點擊開啟，不經 LIFF shareTargetPicker。"""
+    return "https://line.me/R/share?text=" + quote(str(text or ""), safe="")
+
+
+def share_invite_flex(invite_from: str, *, nickname: str = ""):
+    """圖文選單「一鍵邀請」回覆：單一 URI 直開 LINE 原生好友分享（略過 LIFF 大按鈕頁）。"""
+    text = guardian_invite_share_text(invite_from, nickname=nickname)
+    share_uri = line_native_share_url(text)
+    return {
+        "type": "bubble",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "paddingAll": "xl",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "邀請家人當守護人",
+                    "weight": "bold",
+                    "size": "xl",
+                    "color": "#067647",
+                    "wrap": True,
+                    "align": "center",
+                },
+                {
+                    "type": "text",
+                    "text": "點下面按鈕，直接選 LINE 好友傳送邀請",
+                    "size": "md",
+                    "color": "#166534",
+                    "wrap": True,
+                    "align": "center",
+                },
+            ],
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "paddingAll": "lg",
+            "contents": [
+                _uri_button(
+                    "傳給家人",
+                    share_uri,
+                    style="primary",
+                    color=GREEN_DARK,
+                    height="md",
+                )
+            ],
+        },
+    }
 
 def _postback_button(label: str, text: str, style: str = "link", color: str | None = None, height: str = "md"):
     """建立一個點下去會送出指定文字訊息的按鈕(message action,不是 postback event)。

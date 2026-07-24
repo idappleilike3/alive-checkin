@@ -153,15 +153,15 @@
         return q.toString();
       }
 
-      // 兩種官方入口都要可用：liff.line.me 與 line.me/R/app
+      // 兩種官方入口：用 ? 不要用 /?（避免 LIFF 閘道 400）
       function buildLiffUrl() {
         var qs = buildQuery();
-        return "https://liff.line.me/" + getLiffId() + "/?" + qs;
+        return "https://liff.line.me/" + getLiffId() + "?" + qs;
       }
 
       function buildLineAppUrl() {
         var qs = buildQuery();
-        return "https://line.me/R/app/" + getLiffId() + "/?" + qs;
+        return "https://line.me/R/app/" + getLiffId() + "?" + qs;
       }
 
       function isLineInAppBrowser() {

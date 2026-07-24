@@ -3817,8 +3817,8 @@
 
     /** 建立永久 LIFF 連結；絕不帶入 code=/state= 等 OAuth 殘留參數。 */
     function buildLiffPermanentUrl(params = {}, hash = "") {
-      // 與 rich menu / 後端一致：https://liff.line.me/<ID>/?key=value
-      const url = new URL(`https://liff.line.me/${getLiffId()}/`);
+      // 用 ? 不要用 /? — /? 會讓 LIFF 把 path「/」接到 Endpoint，易出現閘道 400
+      const url = new URL(`https://liff.line.me/${getLiffId()}`);
       Object.entries(params || {}).forEach(([key, value]) => {
         if (value == null || value === "") return;
         if (OAUTH_PARAM_KEYS.has(String(key))) return;
@@ -3829,9 +3829,9 @@
       return url.toString();
     }
 
-    /** Android 較穩：line.me/R/app 會強制喚起 LINE App，減少外開 Chrome 造成 LIFF 4000。 */
+    /** 強制喚起 LINE App：受邀者主連結（避開 liff.line.me/? → 400）。 */
     function buildLineAppOpenUrl(params = {}) {
-      const url = new URL(`https://line.me/R/app/${getLiffId()}/`);
+      const url = new URL(`https://line.me/R/app/${getLiffId()}`);
       Object.entries(params || {}).forEach(([key, value]) => {
         if (value == null || value === "") return;
         if (OAUTH_PARAM_KEYS.has(String(key))) return;
@@ -3845,8 +3845,11 @@
       return /Android/i.test(navigator.userAgent || "");
     }
 
-    /** 分享用單一乾淨連結：優先 liff.line.me（官方 LIFF，iOS/Android 皆可）；line.me/R/app 作備用。 */
+    /** 分享用受邀者連結：優先 line.me/R/app（強制 LINE、降低 400）。 */
     function buildShareInviteUrl(params = {}) {
+      if (params && (params.invite_from || params.friend_invite)) {
+        return buildLineAppOpenUrl(params);
+      }
       return buildLiffPermanentUrl(params);
     }
 

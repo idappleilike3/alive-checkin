@@ -57,6 +57,9 @@ try:
         liff_entry_url,
         get_liff_id,
         share_invite_liff_url,
+        share_invite_flex,
+        line_native_share_url,
+        guardian_invite_share_text,
     )
 except Exception:
     guardian_group_intro_flex = None
@@ -70,6 +73,9 @@ except Exception:
     liff_entry_url = None
     get_liff_id = None
     share_invite_liff_url = None
+    share_invite_flex = None
+    line_native_share_url = None
+    guardian_invite_share_text = None
 
 # 註:patch 15 的全域白名單機制(GROUP_ADMINS / is_group_admin / deny_if_not_admin)
 # 已於 2026-07-21 移除。「管理員」= 每個守護群的 owner_line_user_id(在 guardian_groups 裡)。
@@ -214,7 +220,7 @@ def line_liff_url(open_action):
     if liff_entry_url is not None:
         return liff_entry_url(open_action=open_action)
     liff_id = (os.environ.get("LIFF_ID") or "2010674803-rK98c0lo").strip()
-    return f"https://liff.line.me/{liff_id}/?open={open_action}"
+    return f"https://liff.line.me/{liff_id}?open={open_action}"
 
 
 def public_page_url(path=""):
@@ -241,16 +247,18 @@ def permanent_liff_invite_url(*, invite_from="", friend_invite="", open_action=N
         return liff_entry_url(open_action=open_action, **params)
     lid = (os.environ.get("LIFF_ID") or "2010674803-rK98c0lo").strip() or "2010674803-rK98c0lo"
     if open_action and not params:
-        return f"https://liff.line.me/{lid}/?open={open_action}"
+        return f"https://liff.line.me/{lid}?open={open_action}"
     if open_action:
         params["open"] = open_action
     if params:
-        return f"https://liff.line.me/{lid}/?{urllib.parse.urlencode(params)}"
+        return f"https://liff.line.me/{lid}?{urllib.parse.urlencode(params)}"
     return f"https://liff.line.me/{lid}"
 
-
 def line_app_invite_url(*, invite_from="", friend_invite="", open_action=None):
-    """Force-open-in-LINE URL (https://line.me/R/app/...) — more reliable on Android Chrome."""
+    """Force-open-in-LINE URL (https://line.me/R/app/...) — more reliable on Android Chrome.
+
+    Use ``?`` not ``/?`` — the slash-before-query form can make LIFF/OAuth return 400.
+    """
     lid = (os.environ.get("LIFF_ID") or "2010674803-rK98c0lo").strip() or "2010674803-rK98c0lo"
     params = {}
     invite_from = str(invite_from or "").strip()
@@ -263,8 +271,7 @@ def line_app_invite_url(*, invite_from="", friend_invite="", open_action=None):
         params["open"] = str(open_action).strip()
     if not params:
         params["open"] = "onboarding"
-    return f"https://line.me/R/app/{lid}/?{urllib.parse.urlencode(params)}"
-
+    return f"https://line.me/R/app/{lid}?{urllib.parse.urlencode(params)}"
 
 def public_invite_landing_url(*, invite_from="", friend_invite="", open_action=None):
     """Public /invite landing — shows「用 LINE 開啟」when opened outside LINE."""
@@ -2929,6 +2936,8 @@ def inspect_default_rich_menu(config=None):
 
     areas = []
     invite_uri = None
+    invite_text = None
+    invite_type = None
     for area in detail.get("areas") or []:
         action = area.get("action") or {}
         item = {
@@ -2940,6 +2949,18 @@ def inspect_default_rich_menu(config=None):
         areas.append(item)
         if action.get("label") == "一鍵邀請":
             invite_uri = action.get("uri")
+            invite_text = action.get("text")
+            invite_type = action.get("type")
+
+    # W250723aj：圖文選單一鍵邀請改 message → Bot 回 line.me/R/share Flex（略過 LIFF 大按鈕）
+    invite_ok = (
+        invite_type == "message"
+        and str(invite_text or "").strip() in {"一鍵邀請", "一鍵邀請守護人"}
+    ) or (
+        bool(invite_uri)
+        and "share-invite.html" in str(invite_uri)
+        and "open=share" not in str(invite_uri)
+    )
 
     return {
         "ok": True,
@@ -2948,11 +2969,9 @@ def inspect_default_rich_menu(config=None):
         "chatBarText": detail.get("chatBarText"),
         "areas": areas,
         "invite_uri": invite_uri,
-        "invite_uri_ok": bool(
-            invite_uri
-            and "share-invite.html" in invite_uri
-            and "open=share" not in invite_uri
-        ),
+        "invite_text": invite_text,
+        "invite_type": invite_type,
+        "invite_uri_ok": invite_ok,
     }, 200
 
 
@@ -3260,7 +3279,7 @@ def send_missing_contact_reminders(config):
             if not user.get("guardian_details_reminder_enabled", True) or user.get("guardian_details_reminder_sent_at"):
                 continue
             link_text = (
-                f"\n前往我的守護資料：{liff_entry_url(open_action='member') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo/?open=member'}"
+                f"\n前往我的守護資料：{liff_entry_url(open_action='member') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo?open=member'}"
             )
             message = (
                 "你的 799 守護方案還少一份必要資料。請在『我的守護資料』完成至少 1 位守護人的姓名、關係與電話，"
@@ -3409,9 +3428,9 @@ def send_checkin_reminders(config):
         # 每日平安推播：❤️ 今天一切都好嗎？＋我平安 / 安全守護 / 需要幫忙
         from datetime import datetime as _dt
         weekday_zh = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"][now.weekday()]
-        checkin_uri = liff_entry_url(open_action="checkin") if liff_entry_url else "https://liff.line.me/2010674803-rK98c0lo/?open=checkin"
-        guard_uri = liff_entry_url(open_action="guard") if liff_entry_url else "https://liff.line.me/2010674803-rK98c0lo/?open=guard"
-        sos_uri = liff_entry_url(open_action="sos") if liff_entry_url else "https://liff.line.me/2010674803-rK98c0lo/?open=sos"
+        checkin_uri = liff_entry_url(open_action="checkin") if liff_entry_url else "https://liff.line.me/2010674803-rK98c0lo?open=checkin"
+        guard_uri = liff_entry_url(open_action="guard") if liff_entry_url else "https://liff.line.me/2010674803-rK98c0lo?open=guard"
+        sos_uri = liff_entry_url(open_action="sos") if liff_entry_url else "https://liff.line.me/2010674803-rK98c0lo?open=sos"
         message = {
             "type": "flex",
             "altText": f"❤️ 今天一切都好嗎？ {today} {target_time}",
@@ -3553,7 +3572,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723ai",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723aj",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -3868,7 +3887,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723ai",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250723aj",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -4039,7 +4058,7 @@ def create_app(config=None):
                 liff_sos = (
                     liff_entry_url(open_action="sos")
                     if liff_entry_url
-                    else "https://liff.line.me/2010674803-rK98c0lo/?open=sos"
+                    else "https://liff.line.me/2010674803-rK98c0lo?open=sos"
                 )
                 reply(
                     sos_flow.sos_emergency_flex(
@@ -4063,7 +4082,7 @@ def create_app(config=None):
                 liff_sos = (
                     liff_entry_url(open_action="sos")
                     if liff_entry_url
-                    else "https://liff.line.me/2010674803-rK98c0lo/?open=sos"
+                    else "https://liff.line.me/2010674803-rK98c0lo?open=sos"
                 )
                 reply(
                     sos_flow.sos_emergency_flex(liff_sos_uri=liff_sos),
@@ -4145,7 +4164,7 @@ def create_app(config=None):
             setup_uri = (
                 liff_entry_url(open_action="onboarding")
                 if liff_entry_url
-                else "https://liff.line.me/2010674803-rK98c0lo/?open=onboarding"
+                else "https://liff.line.me/2010674803-rK98c0lo?open=onboarding"
             )
             pricing_uri = (
                 pricing_direct_url()
@@ -4413,6 +4432,53 @@ def create_app(config=None):
                     line_user_id=line_user_id,
                     display_name=display_name,
                     trigger=f"keyword:{stripped[:20]}",
+                )
+                return
+
+            # 一鍵邀請：略過 LIFF 大按鈕頁 → 回 Flex URI（line.me/R/share）直接開好友選擇
+            if stripped in ("一鍵邀請", "一鍵邀請守護人", "邀請守護人"):
+                if not line_user_id:
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        TextSendMessage(text="請先加「每日平安」為好友，再點一鍵邀請。"),
+                    )
+                    return
+                try:
+                    register_line_user(
+                        app.config["DATA_FILE"],
+                        {"line_user_id": line_user_id, "display_name": "LINE 使用者"},
+                    )
+                except Exception as exc:
+                    app.logger.exception("invite keyword register failed: %s", exc)
+                if FlexSendMessage is not None and share_invite_flex is not None:
+                    flex = share_invite_flex(line_user_id)
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        FlexSendMessage(alt_text="邀請家人當守護人｜點擊傳給家人", contents=flex),
+                    )
+                    return
+                # fallback：純文字附上原生分享網址
+                if guardian_invite_share_text is not None and line_native_share_url is not None:
+                    share_text = guardian_invite_share_text(line_user_id)
+                    share_uri = line_native_share_url(share_text)
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        TextSendMessage(
+                            text=(
+                                "請點開下面連結，選一位家人傳送邀請：\n"
+                                f"{share_uri}"
+                            )
+                        ),
+                    )
+                    return
+                share_page = (
+                    share_invite_liff_url()
+                    if share_invite_liff_url
+                    else "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html"
+                )
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text=f"請開啟邀請頁分享給家人：\n{share_page}"),
                 )
                 return
 

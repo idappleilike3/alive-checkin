@@ -25,7 +25,7 @@
    - 一鍵邀請 URI：`https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html`
 
 6. **分享連結型態**  
-   - 正確：`https://line.me/R/app/{LIFF_ID}/?invite_from=...` 或 `https://liff.line.me/{LIFF_ID}/?...`  
+   - 正確：`https://line.me/R/app/{LIFF_ID}?invite_from=...` 或 `https://liff.line.me/{LIFF_ID}?...`（用 `?` 不要用 `/?`）  
    - 或短連結落地頁：`https://alive-checkin.onrender.com/invite?from=...`  
    - 錯誤：直接貼裸的 `onrender.com/?invite_from=...` 且期待在 Chrome 完成登入
 
@@ -42,7 +42,8 @@
 1. 用 **Android** 與 **iPhone** 各測一次，務必在 **LINE App 內**開啟  
 2. 點歡迎詞或圖文選單「一鍵邀請」→ 應進專用頁（大綠鈕「一鍵分享守護人」），**不要**先看到首頁再跳  
 3. 點大按鈕 → 應跳出 LINE 選好友分享；若沒跳出，應出現複製提示／錯誤 `alert`  
-4. 對方收到的連結應為：`https://liff.line.me/2010674803-rK98c0lo/?invite_from=...`  
+4. 對方收到的連結應為：`https://line.me/R/app/2010674803-rK98c0lo?invite_from=...`  
+   （不要再用 `liff.line.me/.../?invite_from=` 的 `/?` 形式，容易 LIFF／OAuth 400）
 5. 對照 `/api/config` 的 `deploy_version`（內部戳，歡迎 Flex 不會顯示黃底版本）
 
 ## 舊版邀請登入重測

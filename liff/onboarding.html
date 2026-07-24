@@ -258,7 +258,7 @@ async function init() {
     const inviteFrom = urlParams.get("invite_from");
     if (inviteFrom) {
       console.log("成功抓到邀請人 ID:", inviteFrom);
-      location.replace(`https://liff.line.me/${liffId}/?invite_from=${encodeURIComponent(inviteFrom)}`);
+      location.replace(`https://line.me/R/app/${liffId}?invite_from=${encodeURIComponent(inviteFrom)}`);
       return;
     } else {
       console.log("這是一般登入，網址沒有邀請人參數");

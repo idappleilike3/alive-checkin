@@ -412,11 +412,10 @@ function renderGuardians() {
 
 function buildInviteText() {
   const safeId = String(state.lineUserId || "").replace(/[^a-zA-Z0-9_-]/g, "");
-  // 單一乾淨 URL：line.me/R/app 強制進 LINE，利於 Android 受邀者
-  const base = `https://line.me/R/app/${LIFF_ID}/`;
+  // 單一乾淨 URL：line.me/R/app?invite_from=（強制 LINE，避開 /? → 400）
   const bindUrl = safeId
-    ? `${base}?invite_from=${encodeURIComponent(safeId)}`
-    : `${base}?open=onboarding`;
+    ? `https://line.me/R/app/${LIFF_ID}?invite_from=${encodeURIComponent(safeId)}`
+    : `https://line.me/R/app/${LIFF_ID}?open=onboarding`;
   return (
     `我想邀請你成為「每日平安」的守護人。\n` +
     `請用 LINE 點開下面連結\n\n` +
