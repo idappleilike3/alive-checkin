@@ -1084,7 +1084,7 @@ def welcome_flex(display_name: str | None = None):
     """加好友歡迎 Flex（粉白風格，對齊設計稿）：真實暱稱問候 + 兩顆 CTA。
 
     結構對齊 mockup：
-    - Header：唯一 Logo + 👋 您好歡迎加入 / 每日平安
+    - Header：左上 Logo + 旁側問候文字（含暱稱）／每日平安
     - Hero：白卡視覺（心＋大字＋手機「我平安」），無第二個 Logo
     - Body：兩步驟並排、黃底 7 天免費、119/110 免責
     - Footer：立即開始設定 + 查看方案
@@ -1093,7 +1093,8 @@ def welcome_flex(display_name: str | None = None):
     setup_uri = liff_entry_url(open_action="onboarding")
     pricing_uri = pricing_direct_url()
     base = (os.environ.get("APP_PUBLIC_URL") or PUBLIC_BASE).rstrip("/")
-    logo_uri = f"{base}/assets/daily-peace-logo.png"
+    # cache-bust so LINE clients refresh logo after transparent PNG / layout updates
+    logo_uri = f"{base}/assets/daily-peace-logo.png?v=W250724al"
     heart_uri = f"{base}/assets/welcome-heart-banner.png"
     pink_bg = "#FFF5F8"
     pink_soft = "#FFE4EC"
@@ -1108,43 +1109,45 @@ def welcome_flex(display_name: str | None = None):
         "size": "mega",
         "header": {
             "type": "box",
-            "layout": "vertical",
-            "spacing": "sm",
+            "layout": "horizontal",
+            "spacing": "md",
             "paddingAll": "lg",
             "backgroundColor": pink_bg,
+            "alignItems": "center",
             "contents": [
                 {
+                    "type": "image",
+                    "url": logo_uri,
+                    "size": "xs",
+                    "aspectMode": "fit",
+                    "aspectRatio": "1:1",
+                    "flex": 0,
+                },
+                {
                     "type": "box",
-                    "layout": "horizontal",
+                    "layout": "vertical",
+                    "spacing": "xs",
+                    "flex": 1,
                     "contents": [
                         {
-                            "type": "image",
-                            "url": logo_uri,
-                            "size": "sm",
-                            "aspectMode": "fit",
-                            "aspectRatio": "1:1",
-                            "flex": 0,
-                        }
+                            "type": "text",
+                            "text": greeting,
+                            "weight": "bold",
+                            "size": "md",
+                            "color": text_dark,
+                            "wrap": True,
+                            "align": "start",
+                        },
+                        {
+                            "type": "text",
+                            "text": "每日平安",
+                            "weight": "bold",
+                            "size": "xl",
+                            "color": pink_accent,
+                            "wrap": True,
+                            "align": "start",
+                        },
                     ],
-                    "justifyContent": "center",
-                },
-                {
-                    "type": "text",
-                    "text": greeting,
-                    "weight": "bold",
-                    "size": "lg",
-                    "color": text_dark,
-                    "wrap": True,
-                    "align": "center",
-                },
-                {
-                    "type": "text",
-                    "text": "每日平安",
-                    "weight": "bold",
-                    "size": "xl",
-                    "color": pink_accent,
-                    "wrap": True,
-                    "align": "center",
                 },
             ],
         },

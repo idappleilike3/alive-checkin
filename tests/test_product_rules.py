@@ -331,6 +331,10 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('"label": "查看方案"', welcome_fn)
         self.assertIn("pricing_uri", welcome_fn)
         self.assertIn("setup_uri", welcome_fn)
+        # Header: logo top-left + greeting text beside (horizontal row)
+        self.assertIn('"alignItems": "center"', welcome_fn)
+        self.assertIn('"size": "xs"', welcome_fn)
+        self.assertNotIn('"justifyContent": "center"', welcome_fn)
 
     def test_public_liff_actions_redirect_to_standalone_pages(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
