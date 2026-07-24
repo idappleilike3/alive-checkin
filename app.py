@@ -357,9 +357,9 @@ def line_auto_reply_text(text, status=None):
     if any(keyword in text for keyword in ALERT_CHANNEL_KEYWORDS):
         return (
             "緊急通知方式說明：\n"
-            "199／399 以 LINE 通知為主。\n"
-            "799 月費可用 LINE 通知 3 位核心守護人，年費可通知 5 位。\n"
-            "簡訊預警尚未開放；目前以 LINE 與守護群通知為主。"
+            "目前以 LINE 通知已綁定「守護人」為主（逾期未報平安、SOS、安全守護）。\n"
+            "守護群僅用於安全事件通知。\n"
+            "「緊急聯絡人」是電話備援（手動撥打），不會自動群發。"
         )
     if any(keyword in text for keyword in LARGE_TEXT_KEYWORDS):
         return (
@@ -1223,6 +1223,13 @@ def profile_has_guardian(profile):
         contact_has_guardian_profile(c) or contact_is_bound_guardian(c, owner)
         for c in contacts
     )
+
+
+def profile_has_bound_line_guardian(profile):
+    """是否已有 ≥1 位「已接受 LINE 綁定」的守護人（安全守護／可通知對象）。"""
+    contacts = (profile or {}).get("contacts") or []
+    owner = str((profile or {}).get("line_user_id") or "").strip()
+    return any(contact_is_bound_guardian(c, owner) for c in contacts)
 
 
 def profile_setup_completed(profile):
@@ -3382,6 +3389,15 @@ def update_location(data_file, payload, config=None):
             "safety_guard": safety_guard_snapshot(profile, now),
         }, 200
 
+    # 開始／重開安全守護：必須已有 ≥1 位 LINE 已綁守護人（前端也會先擋；此處為後端保底）
+    if not profile_has_bound_line_guardian(profile):
+        return {
+            "ok": False,
+            "error": "還沒完成綁定守護人，無法使用此功能",
+            "error_code": "guardian_required",
+            "message": "還沒完成綁定守護人，無法使用此功能",
+        }, 403
+
     allowed_hours = allowed_safety_guard_hours(profile)
     try:
         duration_hours, until_stop = _parse_safety_guard_duration(payload, allowed_hours)
@@ -5299,7 +5315,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724gw",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724sg",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -5615,7 +5631,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724gw",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724sg",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),

@@ -124,9 +124,11 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('id="pricingPageLink"', page)
         self.assertIn("查看完整方案與價目", page)
         self.assertIn(
-            "<tr><td>核心守護人 LINE 預警</td><td>1 位</td><td>2 位</td><td>2 位</td><td>2 位</td><td>3 位</td><td>5 位</td><td>5 位</td></tr>",
+            "<tr><td>守護人 LINE 預警</td><td>1 位</td><td>2 位</td><td>2 位</td><td>2 位</td><td>3 位</td><td>5 位</td><td>5 位</td></tr>",
             pricing,
         )
+        self.assertNotIn("簡訊預警", pricing)
+        self.assertNotIn("稍後開放", pricing)
         self.assertIn("<tr><td>SOS</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td></tr>", pricing)
         self.assertNotIn("長照專線 1966", pricing)
 
@@ -190,6 +192,9 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("mvpGuardUpgradeHint", page)
         self.assertIn("formatGuardianNotifyMessage", page)
         self.assertIn("getCurrentPositionPromise", page)
+        self.assertIn("requireBoundGuardianForSafetyGuard", page)
+        self.assertIn("還沒完成綁定守護人，無法使用此功能", page)
+        self.assertIn("🟢 安全守護中", page)
         self.assertIn('id="mvpCallBtn"', page)
         self.assertIn('id="mvpSosBtn"', page)
         self.assertIn("今天已完成平安回報", page)

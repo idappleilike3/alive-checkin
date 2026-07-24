@@ -7,6 +7,19 @@ from pathlib import Path
 import app as alive_app
 
 
+def _add_bound_guardian(profile, lid="U_guard", name="家人"):
+    profile["contacts"] = [
+        {
+            "name": name,
+            "relationship": "家人",
+            "line_user_id": lid,
+            "binding_status": "accepted",
+            "notify_methods": ["line"],
+            "is_primary": True,
+        }
+    ]
+
+
 class SafetyGuardTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -16,10 +29,34 @@ class SafetyGuardTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_start_rejects_without_bound_guardian(self):
+        state = alive_app.load_state(self.data_file)
+        profile = alive_app.get_profile(state, "U0")
+        profile["plan"] = "free"
+        # 僅表單資料、尚未 LINE 綁定 → 不可開安全守護
+        profile["contacts"] = [
+            {"name": "媽媽", "relationship": "媽媽", "phone": "0911111111"}
+        ]
+        alive_app.save_state(self.data_file, state)
+        body, code = alive_app.update_location(
+            self.data_file,
+            {
+                "line_user_id": "U0",
+                "latitude": 25.033,
+                "longitude": 121.5654,
+                "city": "台北市",
+                "duration": 1,
+            },
+        )
+        self.assertEqual(code, 403)
+        self.assertEqual(body.get("error_code"), "guardian_required")
+        self.assertIn("還沒完成綁定守護人", body.get("error") or "")
+
     def test_start_timed_session_and_stop(self):
         state = alive_app.load_state(self.data_file)
         profile = alive_app.get_profile(state, "U1")
         profile["plan"] = "paid_399"
+        _add_bound_guardian(profile, "U_mom", "媽媽")
         alive_app.save_state(self.data_file, state)
         body, code = alive_app.update_location(
             self.data_file,
@@ -37,7 +74,8 @@ class SafetyGuardTests(unittest.TestCase):
         self.assertFalse(body["safety_guard"]["until_stop"])
         self.assertEqual(body["location"]["mode"], "safety_guard")
         self.assertIn("guardian_notify", body)
-        self.assertTrue(body["guardian_notify"].get("no_guardians"))
+        # 有綁定但無 push token 時仍算可開通；通知結果可能 failed
+        self.assertFalse(body["guardian_notify"].get("no_guardians"))
 
         stop, stop_code = alive_app.stop_location_sharing(
             self.data_file, {"line_user_id": "U1"}
@@ -48,6 +86,10 @@ class SafetyGuardTests(unittest.TestCase):
 
     def test_until_stop_rejected_and_refresh_only(self):
         # until_stop is no longer offered; timed session + refresh_only still works.
+        state = alive_app.load_state(self.data_file)
+        profile = alive_app.get_profile(state, "U2")
+        _add_bound_guardian(profile)
+        alive_app.save_state(self.data_file, state)
         alive_app.update_location(
             self.data_file,
             {
@@ -90,10 +132,13 @@ class SafetyGuardTests(unittest.TestCase):
         state = alive_app.load_state(self.data_file)
         free_user = alive_app.get_profile(state, "free_user")
         free_user["plan"] = "free"
+        _add_bound_guardian(free_user, "U_g_free")
         p399 = alive_app.get_profile(state, "u399")
         p399["plan"] = "paid_399"
+        _add_bound_guardian(p399, "U_g_399")
         p799 = alive_app.get_profile(state, "u799")
         p799["plan"] = "paid_799"
+        _add_bound_guardian(p799, "U_g_799")
         alive_app.save_state(self.data_file, state)
 
         self.assertEqual(alive_app.allowed_safety_guard_hours(free_user), [1])
@@ -192,6 +237,7 @@ class SafetyGuardTests(unittest.TestCase):
         friend["friends"] = ["owner"]
         friend["history"] = [datetime.now().date().isoformat()]
         friend["last_check_in"] = datetime.now().isoformat(timespec="seconds")
+        _add_bound_guardian(friend, "U_friend_guard")
         alive_app.save_state(self.data_file, state)
 
         alive_app.update_location(

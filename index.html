@@ -1295,12 +1295,20 @@
       margin: 0 0 10px;
       padding: 10px 12px;
       border-radius: 8px;
-      background: color-mix(in srgb, #ecfdf5 70%, var(--input));
+      background: color-mix(in srgb, var(--input) 92%, #e2e8f0);
       font-size: 14px;
       line-height: 1.45;
+      font-weight: 700;
+    }
+    .safety-guard-status[data-active="true"] {
+      background: #ecfdf5;
+      color: #14532d;
+      border: 2px solid #22c55e;
     }
     .safety-guard-status[data-active="false"] {
       background: color-mix(in srgb, var(--input) 92%, #e2e8f0);
+      color: inherit;
+      border: 0;
     }
     .friend-location-actions.safety-guard-actions {
       grid-template-columns: 1fr;
@@ -3609,8 +3617,8 @@
           </article>
           <article class="member-role-card" aria-label="緊急聯絡人說明">
             <h4>☎️ 緊急聯絡人（Emergency Contact）</h4>
-            <p><span class="role-label">用途</span>　真正緊急時才聯絡（119 前／SOS 才通知，平時不收每日提醒）。</p>
-            <p><span class="role-label">會收到</span>　真正緊急時才聯絡（119 前／SOS 才通知，平時不收每日提醒）。</p>
+            <p><span class="role-label">用途</span>　電話備援：緊急時可手動撥打（不會自動群發）。</p>
+            <p><span class="role-label">會收到</span>　不會自動推播；與守護人的 LINE 通知分開。</p>
             <p><span class="role-label">免費版建議</span>　2 位（爸媽，或配偶＋好友）。可先填姓名與電話。</p>
           </article>
         </div>
@@ -3676,7 +3684,7 @@
         <div class="member-data-section" id="memberEmergencySection">
           <h3>☎️ 緊急聯絡人（Emergency Contact）</h3>
           <div class="member-role-bind-intro" aria-label="緊急聯絡人說明">
-            <p><strong>用途</strong>：真正緊急時才聯絡（119 前／SOS 才通知，平時不收每日提醒）。</p>
+            <p><strong>用途</strong>：電話備援，緊急時可手動撥打（不會自動群發簡訊／推播）。</p>
             <p><strong>免費版建議</strong>：2 位（爸媽，或配偶＋好友）。可先填姓名與電話。</p>
           </div>
           <div class="member-quota-line" id="memberEmergencyQuotaLine">緊急聯絡人：0 位（建議 2 位）</div>
@@ -3744,7 +3752,7 @@
 
         <div class="member-data-section sos-section" id="sosSection" hidden>
           <h3>SOS 緊急求助</h3>
-          <div class="helper">所有方案都可使用。連續按 3 次後，會通知已綁定的守護人（含位置）。</div>
+          <div class="helper">所有方案都可使用。連續按 3 次後，會以 LINE 通知已綁定的守護人（含位置）。緊急聯絡人為電話備援，請自行撥打。</div>
           <button class="sos-btn" id="sosBtn" type="button">開啟 SOS 緊急求助</button>
         </div>
 
@@ -3805,10 +3813,10 @@
           <div class="plan-price">NT$199 <small>／月</small></div>
           <div class="plan-card-note">適合日常平安簽到與安全守護定位。</div>
           <ul>
-            <li>4 位緊急聯絡人、4 位好友定位</li>
+            <li>4 位守護人、4 位好友定位</li>
             <li>每日簽到提醒 1 次</li>
             <li>安全守護（單次定位）</li>
-            <li>LINE 通知 2 位核心守護人</li>
+            <li>LINE 通知最多 2 位守護人</li>
           </ul>
           <button class="price-btn" type="button" data-plan="199-month">選擇 199 月費</button>
         </article>
@@ -3818,10 +3826,10 @@
           <div class="annual-saving-banner">年繳現省 NT$708</div>
           <div class="plan-card-note"><s>月付一年 NT$2,388</s>，平均每月 NT$140。</div>
           <ul>
-            <li>6 位緊急聯絡人、6 位好友定位</li>
+            <li>6 位守護人、6 位好友定位</li>
             <li>每日簽到提醒 2 次</li>
             <li>安全守護（單次定位）</li>
-            <li>LINE 通知 2 位核心守護人</li>
+            <li>LINE 通知最多 2 位守護人</li>
           </ul>
           <button class="price-btn" type="button" data-plan="199-year">選擇 199 年費</button>
         </article>
@@ -3830,10 +3838,10 @@
           <div class="plan-price">NT$399 <small>／月</small></div>
           <div class="plan-card-note">適合日常出行，需要在時段內分享平安與位置。</div>
           <ul>
-            <li>15 位緊急聯絡人、15 位好友定位</li>
+            <li>15 位守護人、15 位好友定位</li>
             <li>每日簽到提醒 2 次</li>
             <li>安全守護定位</li>
-            <li>LINE 通知 2 位核心守護人</li>
+            <li>LINE 通知最多 2 位守護人</li>
           </ul>
           <button class="price-btn" type="button" data-plan="399-month">選擇 399 月費</button>
         </article>
@@ -3843,10 +3851,10 @@
           <div class="annual-saving-banner">年繳現省 NT$1,108</div>
           <div class="plan-card-note"><s>月付一年 NT$4,788</s>，平均每月約 NT$307。</div>
           <ul>
-            <li>25 位緊急聯絡人、25 位好友定位</li>
+            <li>25 位守護人、25 位好友定位</li>
             <li>每日簽到提醒 3 次</li>
             <li>安全守護定位</li>
-            <li>LINE 通知 3 位核心守護人</li>
+            <li>LINE 通知最多 3 位守護人</li>
           </ul>
           <button class="price-btn" type="button" data-plan="399-year">選擇 399 年費</button>
         </article>
@@ -3855,10 +3863,10 @@
           <div class="plan-price">NT$799 <small>／月</small></div>
           <div class="plan-card-note">解鎖更完整守護（基本 SOS／1 位守護人通知免費版已含）。</div>
           <ul>
-            <li>最多 5 位核心守護人共同守護</li>
+            <li>最多 5 位守護人共同守護</li>
             <li>自訂早中晚提醒、1 小時安全守護</li>
             <li>未回報多階段提醒、平安月報</li>
-            <li>家庭群組管理（最多 1 群）</li>
+            <li>家庭群組管理（最多 1 群，僅安全事件）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="799-month">選擇 799 月費</button>
         </article>
@@ -3868,10 +3876,10 @@
           <div class="annual-saving-banner">年繳現省 NT$2,388</div>
           <div class="plan-card-note"><s>月付一年 NT$9,588</s>，平均每月 NT$600。</div>
           <ul>
-            <li>最多 5 位核心守護人共同守護</li>
+            <li>最多 5 位守護人共同守護</li>
             <li>自訂早中晚提醒、1 小時安全守護</li>
             <li>未回報多階段提醒、平安年報</li>
-            <li>家庭群組管理（最多 3 群）</li>
+            <li>家庭群組管理（最多 3 群，僅安全事件）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="799-year">選擇 799 年費</button>
           <div class="annual-proof">799 解鎖更完整守護；SOS／1 位守護人通知免費版已含。</div>
@@ -3890,7 +3898,7 @@
           <div class="price-head"><strong>完成 1 位綁定</strong><span>二選一獎勵</span></div>
           <ul>
             <li>選項 A：免費延長 7 天</li>
-            <li>選項 B：多 1 位緊急聯絡人名額 30 天</li>
+            <li>選項 B：多 1 位守護人名額 30 天</li>
             <li>聯絡人需完成 LINE 綁定，獎勵才會生效</li>
           </ul>
           <button class="price-btn" id="shareContactInviteBtn" type="button">一鍵邀請守護人</button>
@@ -3902,12 +3910,12 @@
       <div class="settings-title">♡ 緊急聯絡人</div>
       <div class="contact-card contact-primary">
         <div class="price-head"><strong>真緊急才聯絡</strong><span>建議 2 位</span></div>
-        <div class="helper">緊急聯絡人平時不會收到每日未報平安提醒；僅在 SOS／真正緊急時才通知。與「守護人」不同，請分開設定。</div>
-        <div class="helper" id="guardianRequirementStatus">守護人請用上方「一鍵邀請」完成 LINE 綁定；這裡專放緊急聯絡人電話資料。</div>
+        <div class="helper">緊急聯絡人是電話備援（手動撥打），不會自動推播。與「守護人」不同：守護人需 LINE 綁定，才會收到逾期未報平安、SOS、安全守護通知。</div>
+        <div class="helper" id="guardianRequirementStatus">守護人請用「一鍵邀請」完成 LINE 綁定；這裡專放緊急聯絡人的電話備援資料。</div>
         <button class="price-btn" id="addEmergencyContactBtn" type="button">新增緊急聯絡人</button>
       </div>
       <div class="contact-card">
-        <div class="helper">免費建議先放 2 位。若要用 LINE 通知對方，請改走「守護人 → 一鍵邀請」。</div>
+        <div class="helper">免費建議先放 2 位電話備援。若要用 LINE 自動通知，請改走「守護人 → 一鍵邀請」。</div>
         <div class="contact-list" id="contactList"></div>
       </div>
     </section>
@@ -3919,6 +3927,7 @@
         <div class="settings-title">開啟安全守護</div>
         <p class="helper">開始前請先選擇時長，再分享位置給指定家人。需要更新時再按「更新目前位置」。</p>
         <div class="safety-guard-status" id="safetyGuardStatus" data-active="false">目前未開啟安全守護</div>
+        <div class="mvp-guard-feedback" id="safetyGuardFeedback" role="status" aria-live="polite" hidden></div>
         <div class="safety-guard-duration" id="safetyGuardDuration" role="radiogroup" aria-label="安全守護時段">
           <label><input type="radio" name="safetyGuardDuration" value="1" checked> 1 小時</label>
           <label hidden><input type="radio" name="safetyGuardDuration" value="3"> 3 小時</label>
@@ -4813,7 +4822,13 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const allowed = Array.isArray(data.allowed_hours) ? data.allowed_hours.join("／") : "";
-        const base = data.error || "開啟安全守護失敗";
+        const code = String(data.error_code || "").trim();
+        const base = data.message || data.error || "開啟安全守護失敗";
+        if (code === "guardian_required" || String(base).includes("還沒完成綁定守護人")) {
+          const err = new Error(base);
+          err.code = "guardian_required";
+          throw err;
+        }
         throw new Error(allowed ? `${base}（目前方案可用：${allowed} 小時）` : base);
       }
       return data;
@@ -5011,10 +5026,10 @@
 
     function memberPlanBenefits(plan) {
       return {
-        paid_199: { cycle: "199 平安版｜月費方案", contacts: 4, locations: 4, detail: "每日提醒 1 次、安全守護單次定位、LINE 通知 2 位核心守護人。" },
-        paid_199_year: { cycle: "199 平安版｜年費方案", contacts: 6, locations: 6, detail: "每日提醒 2 次、安全守護單次定位、LINE 通知 2 位核心守護人。" },
-        paid_399: { cycle: "399 安心版｜月費方案", contacts: 15, locations: 15, detail: "每日提醒 2 次、安全守護定位、LINE 通知 2 位核心守護人。" },
-        paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、安全守護定位、LINE 通知 3 位核心守護人。" },
+        paid_199: { cycle: "199 平安版｜月費方案", contacts: 4, locations: 4, detail: "每日提醒 1 次、安全守護單次定位、LINE 通知最多 2 位守護人。" },
+        paid_199_year: { cycle: "199 平安版｜年費方案", contacts: 6, locations: 6, detail: "每日提醒 2 次、安全守護單次定位、LINE 通知最多 2 位守護人。" },
+        paid_399: { cycle: "399 安心版｜月費方案", contacts: 15, locations: 15, detail: "每日提醒 2 次、安全守護定位、LINE 通知最多 2 位守護人。" },
+        paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、安全守護定位、LINE 通知最多 3 位守護人。" },
         paid_799: { cycle: "799 守護版｜月費進階", contacts: 25, locations: 25, detail: "更完整守護：多人共守、早中晚提醒、1 小時安全守護、多階段未回報提醒、平安紀錄、1 個守護群。" },
         paid_799_year: { cycle: "799 守護版｜年費進階", contacts: 50, locations: 50, detail: "更完整守護：多人共守、早中晚提醒、1 小時安全守護、多階段未回報提醒、平安紀錄、3 個守護群。" },
         free: { cycle: "基本守護｜免費方案", contacts: 1, locations: 1, detail: "1 位守護人可收通知、SOS、基本簽到與 LINE 提醒。799 進階才解鎖多人共守與守護群。" },
@@ -5328,7 +5343,7 @@
       const quotaLine = $("memberGuardianQuotaLine");
       if (quotaLine) quotaLine.textContent = `目前：${totalCount} / ${limit}（${planQuotaLabel(memberPlan)}）`;
       const emergencyQuota = $("memberEmergencyQuotaLine");
-      if (emergencyQuota) emergencyQuota.textContent = `緊急緊急緊急聯絡人：${emergencies.length} 位（建議 2 位）`;
+      if (emergencyQuota) emergencyQuota.textContent = `緊急聯絡人：${emergencies.length} 位（建議 2 位）`;
       const coreLine = $("memberCoreGeneralLine");
       if (coreLine) coreLine.textContent = `核心守護人 ${shownCore} 位／一般守護人 ${shownGeneral} 位`;
       $("memberBillingPlan").textContent = planLabel(memberPlan);
@@ -6092,17 +6107,19 @@
     }
 
     function setSafetyGuardFeedback(message, tone) {
-      const el = $("mvpGuardFeedback");
-      if (!el) return;
-      if (!message) {
-        el.hidden = true;
-        el.textContent = "";
-        el.removeAttribute("data-tone");
-        return;
-      }
-      el.hidden = false;
-      el.textContent = message;
-      el.dataset.tone = tone || "info";
+      ["mvpGuardFeedback", "safetyGuardFeedback"].forEach((id) => {
+        const el = $(id);
+        if (!el) return;
+        if (!message) {
+          el.hidden = true;
+          el.textContent = "";
+          el.removeAttribute("data-tone");
+          return;
+        }
+        el.hidden = false;
+        el.textContent = message;
+        el.dataset.tone = tone || "info";
+      });
     }
 
     function updateSafetyGuardStartLabels() {
@@ -6136,9 +6153,15 @@
 
     function formatSafetyGuardStatus(guard) {
       if (!guard || !guard.active) return "目前未開啟安全守護";
-      const city = guard.city ? `・${guard.city}` : "";
+      const parts = ["🟢 安全守護中"];
       const remain = remainingGuardText(guard);
-      return `🟢 安全守護中${city}${remain ? `｜${remain}` : ""}`;
+      if (remain) parts.push(remain);
+      if (guard.city) parts.push(String(guard.city));
+      const notified = Number(guard.notified_count);
+      if (Number.isFinite(notified) && notified > 0) {
+        parts.push(`已通知 ${notified} 位守護人`);
+      }
+      return parts.join("｜");
     }
 
     function renderSafetyGuardUi(guard) {
@@ -6149,6 +6172,7 @@
       const mvpStatus = $("mvpGuardStatus");
       const mvpStart = $("mvpGuardStartBtn");
       const mvpStop = $("mvpGuardStopBtn");
+      const cardTitle = document.querySelector("#safetyGuardCard > .settings-title");
       if (statusEl) {
         statusEl.dataset.active = active ? "true" : "false";
         statusEl.textContent = formatSafetyGuardStatus(guard);
@@ -6160,6 +6184,7 @@
       }
       if (mvpStart) mvpStart.hidden = active;
       if (mvpStop) mvpStop.hidden = !active;
+      if (cardTitle) cardTitle.textContent = active ? "安全守護進行中" : "開啟安全守護";
       if (active && guard && guard.duration_hours) {
         safetyGuardDurationInputs().forEach((input) => {
           if (String(input.value) === String(guard.duration_hours) && !input.disabled) {
@@ -6172,6 +6197,30 @@
 
     function readSafetyGuardFromStatus(status) {
       return (status && status.safety_guard) || { active: false };
+    }
+
+    function guideBindGuardianForSafetyGuard() {
+      const copy = "還沒完成綁定守護人，無法使用此功能";
+      setSafetyGuardFeedback(`${copy}。請先一鍵邀請家人完成 LINE 綁定。`, "err");
+      const goInvite = confirm(`${copy}\n\n按「確定」前往一鍵邀請／綁定守護人。`);
+      if (!goInvite) return false;
+      const memberExpanded = document.body.classList.contains("member-expanded");
+      const memberTab = document.querySelector('.tab-btn[data-tab="member"].active, #memberSection:not([hidden])');
+      if (memberExpanded || memberTab) {
+        openShareInvitePage("member");
+        return false;
+      }
+      const params = new URLSearchParams();
+      params.set("return", "/?open=guard");
+      params.set("open", "guard");
+      location.assign(`/liff/share-invite.html?${params.toString()}`);
+      return false;
+    }
+
+    function requireBoundGuardianForSafetyGuard() {
+      if (hasLineBoundGuardian()) return true;
+      guideBindGuardianForSafetyGuard();
+      return false;
     }
 
     function getCurrentPositionPromise(options = {}, hardTimeoutMs = 15000) {
@@ -6390,6 +6439,8 @@
       };
       try {
         if (!lineUserId) throw new Error("請先從 LINE 裡開啟，完成會員綁定。");
+        // 未綁定 LINE 守護人：先提醒並引導邀請，不開定位、不靜默
+        if (!requireBoundGuardianForSafetyGuard()) return;
         if (!navigator.geolocation) throw new Error("這台裝置不支援定位。");
         const duration = selectedSafetyGuardDuration();
         setBusy(true, "正在取得定位…");
@@ -6398,19 +6449,32 @@
         setBusy(true, "開啟中…");
         const city = inferTaiwanCounty(position.coords.latitude, position.coords.longitude);
         const data = await apiUpdateLocation(position, city, { duration });
-        const guard = data.safety_guard || {
-          active: true,
-          city,
-          duration_hours: Number(duration) || 1,
+        const notify = data.guardian_notify || {};
+        const notifiedCount = Number(notify.sent) || 0;
+        const guard = {
+          ...(data.safety_guard || {
+            active: true,
+            city,
+            duration_hours: Number(duration) || 1,
+          }),
+          notified_count: notifiedCount,
         };
         if (currentStatusData) currentStatusData.safety_guard = guard;
         renderSafetyGuardUi(guard);
         await refreshFriendLocations().catch(() => {});
-        const msg = formatGuardianNotifyMessage(data.guardian_notify, duration, city);
-        setSafetyGuardFeedback(msg, data.guardian_notify && data.guardian_notify.failed && !data.guardian_notify.sent ? "err" : "ok");
+        const msg = formatGuardianNotifyMessage(notify, duration, city);
+        setSafetyGuardFeedback(msg, notify.failed && !notify.sent ? "err" : "ok");
         alert(msg);
       } catch (error) {
+        if (error && error.code === "guardian_required") {
+          guideBindGuardianForSafetyGuard();
+          return;
+        }
         const message = (error && error.message) || "開啟安全守護失敗。";
+        if (String(message).includes("還沒完成綁定守護人")) {
+          guideBindGuardianForSafetyGuard();
+          return;
+        }
         setSafetyGuardFeedback(message, "err");
         alert(message);
       } finally {
