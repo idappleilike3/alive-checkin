@@ -190,14 +190,14 @@ def get_active_guardian_groups(state: Dict[str, Any], profile: Dict[str, Any]) -
 # ============================================================================
 
 PLAN_LIMITS_FALLBACK = {
-    "free":                {"contact_limit": 1,  "core_guardian_alert_limit": 1, "channels": ["line"],         "guardian_group_limit": 0, "sos_enabled": True},
-    "trial":               {"contact_limit": 1,  "core_guardian_alert_limit": 1, "channels": ["line"],         "guardian_group_limit": 0, "sos_enabled": True},
-    "paid_199":            {"contact_limit": 4,  "core_guardian_alert_limit": 2, "channels": ["line"],         "guardian_group_limit": 0, "sos_enabled": True},
-    "paid_199_year":       {"contact_limit": 6,  "core_guardian_alert_limit": 2, "channels": ["line"],         "guardian_group_limit": 0, "sos_enabled": True},
-    "paid_399":            {"contact_limit": 15, "core_guardian_alert_limit": 2, "channels": ["line"],         "guardian_group_limit": 0, "sos_enabled": True},
-    "paid_399_year":       {"contact_limit": 25, "core_guardian_alert_limit": 3, "channels": ["line"],         "guardian_group_limit": 0, "sos_enabled": True},
-    "paid_799":            {"contact_limit": 25, "core_guardian_alert_limit": 5, "channels": ["line", "sms"],   "guardian_group_limit": 1, "sos_enabled": True},
-    "paid_799_year":       {"contact_limit": 50, "core_guardian_alert_limit": 5, "channels": ["line", "sms"],   "guardian_group_limit": 3, "sos_enabled": True},
+    "free":                {"contact_limit": 3,  "emergency_contact_limit": 2,  "core_guardian_alert_limit": 1,  "channels": ["line"], "guardian_group_limit": 0, "sos_enabled": True},
+    "trial":               {"contact_limit": 3,  "emergency_contact_limit": 2,  "core_guardian_alert_limit": 1,  "channels": ["line"], "guardian_group_limit": 0, "sos_enabled": True},
+    "paid_199":            {"contact_limit": 6,  "emergency_contact_limit": 4,  "core_guardian_alert_limit": 2,  "channels": ["line"], "guardian_group_limit": 0, "sos_enabled": True},
+    "paid_199_year":       {"contact_limit": 13, "emergency_contact_limit": 10, "core_guardian_alert_limit": 3,  "channels": ["line"], "guardian_group_limit": 0, "sos_enabled": True},
+    "paid_399":            {"contact_limit": 20, "emergency_contact_limit": 15, "core_guardian_alert_limit": 5,  "channels": ["line"], "guardian_group_limit": 0, "sos_enabled": True},
+    "paid_399_year":       {"contact_limit": 32, "emergency_contact_limit": 25, "core_guardian_alert_limit": 7,  "channels": ["line"], "guardian_group_limit": 0, "sos_enabled": True},
+    "paid_799":            {"contact_limit": 45, "emergency_contact_limit": 35, "core_guardian_alert_limit": 10, "channels": ["line"], "guardian_group_limit": 1, "sos_enabled": True},
+    "paid_799_year":       {"contact_limit": 65, "emergency_contact_limit": 50, "core_guardian_alert_limit": 15, "channels": ["line"], "guardian_group_limit": 3, "sos_enabled": True},
 }
 
 

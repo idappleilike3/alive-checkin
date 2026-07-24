@@ -191,26 +191,141 @@ DEFAULT_STATE = {
 }
 
 PLAN_LIMITS = {
-    # 產品政策：SOS／基本 1 位守護人通知＝全方案開放；799 解鎖「更完整守護」
-    # safety_guard_hours：免費／試用僅 1 小時；399＝1/3；799＝1/3/6/8
-    "free": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "core_guardian_alert_limit": 1, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0, "safety_guard_hours": [1]},
-    "trial": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "core_guardian_alert_limit": 1, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0, "safety_guard_hours": [1]},
-    "paid_199": {"contact_limit": 4, "friend_location_limit": 4, "daily_reminders": 2, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 2, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0, "safety_guard_hours": [1]},
-    "paid_199_year": {"contact_limit": 6, "friend_location_limit": 6, "daily_reminders": 2, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 2, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0, "safety_guard_hours": [1]},
-    "paid_399": {"contact_limit": 15, "friend_location_limit": 15, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 2, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0, "safety_guard_hours": [1, 3]},
-    "paid_399_year": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0, "realtime_trial_days": 30, "safety_guard_hours": [1, 3]},
-    "paid_799": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 5, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 1, "safety_guard_hours": [1, 3, 6, 8]},
-    "paid_799_year": {"contact_limit": 50, "friend_location_limit": 50, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 5, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 3, "safety_guard_hours": [1, 3, 6, 8]},
+    # 最終方案總覽（2026-07）：
+    # core_guardian_alert_limit＝核心守護人；emergency_contact_limit＝緊急聯絡人；
+    # contact_limit＝兩者合計（相容舊欄位）；daily_reminders＝LINE 私聊預警／日；
+    # 不賣簡訊／免提／好友地圖／軌跡；safety_guard_hours：免/199＝1；399＝1/3；799＝1/3/6/8
+    "free": {
+        "contact_limit": 3,
+        "emergency_contact_limit": 2,
+        "friend_location_limit": 0,
+        "daily_reminders": 1,
+        "channels": ["line"],
+        "core_guardian_alert_limit": 1,
+        "realtime_tracking": False,
+        "trajectory_days": 0,
+        "offline_sync_days": 0,
+        "sos_enabled": True,
+        "guardian_group_limit": 0,
+        "safety_guard_hours": [1],
+    },
+    "trial": {
+        "contact_limit": 3,
+        "emergency_contact_limit": 2,
+        "friend_location_limit": 0,
+        "daily_reminders": 1,
+        "channels": ["line"],
+        "core_guardian_alert_limit": 1,
+        "realtime_tracking": False,
+        "trajectory_days": 0,
+        "offline_sync_days": 0,
+        "sos_enabled": True,
+        "guardian_group_limit": 0,
+        "safety_guard_hours": [1],
+    },
+    "paid_199": {
+        "contact_limit": 6,
+        "emergency_contact_limit": 4,
+        "friend_location_limit": 0,
+        "daily_reminders": 1,
+        "channels": ["line"],
+        "location_mode": "snapshot_24h",
+        "core_guardian_alert_limit": 2,
+        "realtime_tracking": False,
+        "trajectory_days": 0,
+        "offline_sync_days": 0,
+        "sos_enabled": True,
+        "guardian_group_limit": 0,
+        "safety_guard_hours": [1],
+    },
+    "paid_199_year": {
+        "contact_limit": 13,
+        "emergency_contact_limit": 10,
+        "friend_location_limit": 0,
+        "daily_reminders": 2,
+        "channels": ["line"],
+        "location_mode": "snapshot_24h",
+        "core_guardian_alert_limit": 3,
+        "realtime_tracking": False,
+        "trajectory_days": 0,
+        "offline_sync_days": 0,
+        "sos_enabled": True,
+        "guardian_group_limit": 0,
+        "safety_guard_hours": [1],
+    },
+    "paid_399": {
+        "contact_limit": 20,
+        "emergency_contact_limit": 15,
+        "friend_location_limit": 0,
+        "daily_reminders": 2,
+        "channels": ["line"],
+        "location_mode": "realtime",
+        "core_guardian_alert_limit": 5,
+        "realtime_tracking": False,
+        "trajectory_days": 0,
+        "offline_sync_days": 0,
+        "sos_enabled": True,
+        "guardian_group_limit": 0,
+        "safety_guard_hours": [1, 3],
+    },
+    "paid_399_year": {
+        "contact_limit": 32,
+        "emergency_contact_limit": 25,
+        "friend_location_limit": 0,
+        "daily_reminders": 3,
+        "channels": ["line"],
+        "location_mode": "realtime",
+        "core_guardian_alert_limit": 7,
+        "realtime_tracking": False,
+        "trajectory_days": 0,
+        "offline_sync_days": 0,
+        "sos_enabled": True,
+        "guardian_group_limit": 0,
+        "realtime_trial_days": 30,
+        "safety_guard_hours": [1, 3],
+    },
+    "paid_799": {
+        "contact_limit": 45,
+        "emergency_contact_limit": 35,
+        "friend_location_limit": 0,
+        "daily_reminders": 3,
+        "channels": ["line"],
+        "location_mode": "full_guard",
+        "core_guardian_alert_limit": 10,
+        "realtime_tracking": False,
+        "trajectory_days": 0,
+        "offline_sync_days": 0,
+        "sos_enabled": True,
+        "guardian_group_limit": 1,
+        "guardian_group_member_limit": 50,
+        "safety_guard_hours": [1, 3, 6, 8],
+    },
+    "paid_799_year": {
+        "contact_limit": 65,
+        "emergency_contact_limit": 50,
+        "friend_location_limit": 0,
+        "daily_reminders": 3,
+        "channels": ["line"],
+        "location_mode": "full_guard",
+        "core_guardian_alert_limit": 15,
+        "realtime_tracking": False,
+        "trajectory_days": 0,
+        "offline_sync_days": 0,
+        "sos_enabled": True,
+        "guardian_group_limit": 3,
+        "guardian_group_member_limit": 50,
+        "safety_guard_hours": [1, 3, 6, 8],
+    },
 }
 
 PAYMENT_PRODUCTS = {
-    # 產品政策：SOS 全方案開放；799 賣「更完整守護」（多位守護人／家人共守／守護群等）
-    "paid_199": {"amount": 199, "billing_cycle": "monthly", "duration_days": 30, "display_name": "199 平安版(月)", "tagline": "每天提醒自己簽到,讓自己安心"},
-    "paid_199_year": {"amount": 1680, "billing_cycle": "yearly", "duration_days": 365, "display_name": "199 平安版(年)", "tagline": "每天提醒自己簽到,讓自己安心"},
-    "paid_399": {"amount": 399, "billing_cycle": "monthly", "duration_days": 30, "display_name": "399 安心版(月)", "tagline": "讓家人隨時知道你在哪,即時追蹤定位"},
-    "paid_399_year": {"amount": 3680, "billing_cycle": "yearly", "duration_days": 365, "display_name": "399 安心版(年)", "tagline": "讓家人隨時知道你在哪,即時追蹤定位"},
-    "paid_799": {"amount": 799, "billing_cycle": "monthly", "duration_days": 30, "display_name": "799 守護版(月)", "tagline": "更完整守護：最多 5 位守護人＋家人共同守護＋守護群"},
-    "paid_799_year": {"amount": 7200, "billing_cycle": "yearly", "duration_days": 365, "display_name": "799 守護版(年)", "tagline": "更完整守護：最多 5 位守護人＋家人共同守護＋最多 3 個守護群"},
+    # 產品政策：SOS 全方案開放；799 賣「更完整守護」（更多核心／緊急、早中晚、守護群等）
+    "paid_199": {"amount": 199, "billing_cycle": "monthly", "duration_days": 30, "display_name": "199 平安版(月)", "tagline": "2 位核心守護人＋1 小時安全守護"},
+    "paid_199_year": {"amount": 1680, "billing_cycle": "yearly", "duration_days": 365, "display_name": "199 平安版(年)", "tagline": "3 位核心守護人＋每日 2 次 LINE 預警"},
+    "paid_399": {"amount": 399, "billing_cycle": "monthly", "duration_days": 30, "display_name": "399 安心版(月)", "tagline": "5 位核心守護人＋安全守護 1／3 小時"},
+    "paid_399_year": {"amount": 3680, "billing_cycle": "yearly", "duration_days": 365, "display_name": "399 安心版(年)", "tagline": "7 位核心守護人＋安全守護 1／3 小時"},
+    "paid_799": {"amount": 799, "billing_cycle": "monthly", "duration_days": 30, "display_name": "799 守護版(月)", "tagline": "更完整守護：10 位核心＋早中晚＋守護群"},
+    "paid_799_year": {"amount": 7200, "billing_cycle": "yearly", "duration_days": 426, "display_name": "799 守護版(年)", "tagline": "付 9 享 14 月：15 位核心＋最多 3 個守護群"},
 }
 
 RICH_MENU_COMMANDS = [
@@ -1930,10 +2045,11 @@ def build_status(profile, state=None):
         "contacts_retain_until": str(profile.get("contacts_retain_until") or ""),
         "contacts_retain_days_left": contacts_retain_days_left(profile),
         "contact_limit": plan_rules(profile)["contact_limit"],
+        "emergency_contact_limit": int(plan_rules(profile).get("emergency_contact_limit") or 2),
         "daily_reminders": plan_rules(profile)["daily_reminders"],
         "channels": plan_rules(profile)["channels"],
         "location_mode": plan_rules(profile).get("location_mode", "snapshot_24h"),
-        "friend_location_limit": plan_rules(profile).get("friend_location_limit", 1),
+        "friend_location_limit": plan_rules(profile).get("friend_location_limit", 0),
         "realtime_tracking": bool(plan_rules(profile).get("realtime_tracking", False)),
         "trajectory_days": int(plan_rules(profile).get("trajectory_days", 0)),
         "offline_sync_days": int(plan_rules(profile).get("offline_sync_days", 0)),
@@ -1942,6 +2058,7 @@ def build_status(profile, state=None):
         "realtime_trial_days": int(plan_rules(profile).get("realtime_trial_days", 0)),
         "core_guardian_alert_limit": plan_rules(profile).get("core_guardian_alert_limit", 1),
         "guardian_group_limit": plan_rules(profile).get("guardian_group_limit", 0),
+        "guardian_group_member_limit": int(plan_rules(profile).get("guardian_group_member_limit") or 0),
         "safety_guard_hours": allowed_safety_guard_hours(profile),
         "guardian_group_ids": profile.get("guardian_group_ids", []),
         "guardian_groups": guardian_groups,
@@ -2806,7 +2923,36 @@ def add_single_contact(data_file, line_user_id, contact_payload):
     if not profile:
         return {"error": "user not registered", "line_user_id": line_user_id}, 404
     existing = profile.get("contacts") or []
-    limit = plan_rules(profile)["contact_limit"]
+    rules = plan_rules(profile)
+    limit = int(rules.get("contact_limit") or 1)
+    core_limit = int(rules.get("core_guardian_alert_limit") or 1)
+    emergency_limit = int(rules.get("emergency_contact_limit") or 2)
+    role_hint = resolve_contact_role(contact_payload or {})
+    guardians = [c for c in existing if resolve_contact_role(c) == "guardian"]
+    emergencies = [c for c in existing if resolve_contact_role(c) == "emergency"]
+    if role_hint == "emergency":
+        if len(emergencies) >= emergency_limit:
+            return {
+                "error": "contact_limit_exceeded",
+                "code": "contact_limit",
+                "contact_limit": emergency_limit,
+                "current_count": len(emergencies),
+                "message": (
+                    f"緊急聯絡人已達方案上限 {emergency_limit} 位。"
+                    f"升級可新增更多緊急聯絡人。"
+                ),
+            }, 400
+    elif len(guardians) >= core_limit:
+        return {
+            "error": "contact_limit_exceeded",
+            "code": "contact_limit",
+            "contact_limit": core_limit,
+            "current_count": len(guardians),
+            "message": (
+                f"你已經有 {len(guardians)} 位核心守護人囉（目前方案上限 {core_limit} 位）。"
+                f"升級可新增更多守護人。"
+            ),
+        }, 400
     if len(existing) >= limit:
         return {
             "error": "contact_limit_exceeded",
@@ -2814,8 +2960,8 @@ def add_single_contact(data_file, line_user_id, contact_payload):
             "contact_limit": limit,
             "current_count": len(existing),
             "message": (
-                f"你已經有 {len(existing)} 位守護人囉（目前方案上限 {limit} 位）。"
-                f"升級可新增更多守護人。"
+                f"聯絡人名額已滿（目前方案上限 {limit} 位）。"
+                f"升級可新增更多聯絡人。"
             ),
         }, 400
     ok, errors, cleaned = validate_contact_payload(contact_payload, existing=existing)
@@ -3472,8 +3618,11 @@ def bind_emergency_contact(data_file, payload, config=None):
         unbound_slot["accepted_at"] = accepted_at
         existing = unbound_slot
     else:
-        limit = int(plan_rules(inviter)["contact_limit"] or 1)
-        if len(contacts) >= limit:
+        core_limit = int(plan_rules(inviter).get("core_guardian_alert_limit") or 1)
+        guardian_count = sum(
+            1 for c in contacts if resolve_contact_role(c) == "guardian"
+        )
+        if guardian_count >= core_limit:
             # 已是這位邀請人的守護人：當成功／已綁定，不要 400 英文錯誤
             if already_guarding:
                 ensure_onboarding_completed_flag(inviter)
@@ -3496,7 +3645,7 @@ def bind_emergency_contact(data_file, payload, config=None):
                 "ok": False,
                 "error": CONTACT_LIMIT_MESSAGE,
                 "code": "contact_limit",
-                "contact_limit": limit,
+                "contact_limit": core_limit,
                 "message": CONTACT_LIMIT_MESSAGE,
             }, 400
         contacts.append(
@@ -6941,7 +7090,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725nc",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725pl",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -7263,7 +7412,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725nc",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725pl",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),

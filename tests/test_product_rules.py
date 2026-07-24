@@ -19,22 +19,28 @@ class ProductRulesTests(unittest.TestCase):
     def test_paid_plan_limits_match_public_pricing(self):
         plans = load_plan_limits()
 
+        # contact_limit, daily_reminders, trajectory_days, group_limit,
+        # core_guardian_alert_limit, emergency_contact_limit
         expected = {
-            "paid_199": (4, 2, 0, 0),
-            "paid_199_year": (6, 2, 0, 0),
-            "paid_399": (15, 2, 0, 0),
-            "paid_399_year": (25, 2, 0, 0),
-            "paid_799": (25, 3, 0, 1),
-            "paid_799_year": (50, 3, 0, 3),
+            "paid_199": (6, 1, 0, 0, 2, 4),
+            "paid_199_year": (13, 2, 0, 0, 3, 10),
+            "paid_399": (20, 2, 0, 0, 5, 15),
+            "paid_399_year": (32, 3, 0, 0, 7, 25),
+            "paid_799": (45, 3, 0, 1, 10, 35),
+            "paid_799_year": (65, 3, 0, 3, 15, 50),
         }
         for plan, values in expected.items():
-            contact_limit, reminders, trajectory_days, group_limit = values
+            contact_limit, reminders, trajectory_days, group_limit, core_limit, emergency_limit = values
             with self.subTest(plan=plan):
                 self.assertEqual(plans[plan]["contact_limit"], contact_limit)
-                self.assertEqual(plans[plan]["friend_location_limit"], contact_limit)
+                self.assertEqual(plans[plan]["friend_location_limit"], 0)
                 self.assertEqual(plans[plan]["daily_reminders"], reminders)
                 self.assertEqual(plans[plan]["trajectory_days"], trajectory_days)
                 self.assertEqual(plans[plan]["guardian_group_limit"], group_limit)
+                self.assertEqual(plans[plan]["core_guardian_alert_limit"], core_limit)
+                self.assertEqual(plans[plan]["emergency_contact_limit"], emergency_limit)
+                self.assertEqual(plans[plan]["channels"], ["line"])
+                self.assertNotIn("sms", plans[plan]["channels"])
 
     def test_removed_reminder_settings_do_not_hide_guardian_or_location_tools(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -45,8 +51,10 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn('href="tel:1966"', page)
         self.assertNotIn('data-tab="settings"', page)
         self.assertIn('id="shareContactInviteBtn"', page)
-        self.assertIn('id="shareFriendInviteBtn"', page)
         self.assertIn('id="shareLocationBtn"', page)
+        self.assertNotIn('id="shareFriendInviteBtn"', page)
+        self.assertNotIn('aria-label="好友地圖"', page)
+        self.assertIn('aria-label="安全守護"', page)
         self.assertIn("place-items: start center;", page)
         self.assertIn(".check-btn.danger {", page)
         self.assertIn("color: #fff !important;", page)
@@ -113,7 +121,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("個資全自主管理", pricing)
         self.assertIn("守護群最多 1 群", pricing)
         self.assertIn("守護群最多 3 群", pricing)
-        self.assertIn("SOS 緊急求助也不鎖 799", pricing)
+        self.assertIn("SOS 緊急求助", pricing)
         self.assertNotIn('class="disabled">SOS 緊急求救', pricing)
 
     def test_pricing_has_one_home_entry_and_correct_line_guardian_limits(self):
@@ -124,11 +132,23 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('id="pricingPageLink"', page)
         self.assertIn("查看完整方案與價目", page)
         self.assertIn(
-            "<tr><td>守護人 LINE 預警</td><td>1 位</td><td>2 位</td><td>2 位</td><td>2 位</td><td>3 位</td><td>5 位</td><td>5 位</td></tr>",
+            "<tr><td>核心守護人</td><td>1</td><td>2</td><td>3</td><td>5</td><td>7</td><td>10</td><td>15</td></tr>",
+            pricing,
+        )
+        self.assertIn(
+            "<tr><td>緊急聯絡人</td><td>2</td><td>4</td><td>10</td><td>15</td><td>25</td><td>35</td><td>50</td></tr>",
+            pricing,
+        )
+        self.assertIn(
+            "<tr><td>LINE 私聊預警／日</td><td>1 次</td><td>1 次</td><td>2 次</td><td>2 次</td><td>3 次</td><td>3 次</td><td>3 次</td></tr>",
             pricing,
         )
         self.assertNotIn("簡訊預警", pricing)
         self.assertNotIn("稍後開放", pricing)
+        self.assertNotIn("免提", pricing)
+        self.assertNotIn("好友地圖", pricing)
+        self.assertNotIn("軌跡", pricing)
+        self.assertNotIn("全管道", pricing)
         self.assertIn("<tr><td>SOS</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td></tr>", pricing)
         self.assertNotIn("長照專線 1966", pricing)
 
@@ -137,10 +157,12 @@ class ProductRulesTests(unittest.TestCase):
         for plan in ("free", "trial"):
             with self.subTest(plan=plan):
                 self.assertTrue(plans[plan]["sos_enabled"])
-                self.assertEqual(plans[plan]["contact_limit"], 1)
                 self.assertEqual(plans[plan]["core_guardian_alert_limit"], 1)
-        self.assertEqual(plans["paid_799"]["core_guardian_alert_limit"], 5)
-        self.assertEqual(plans["paid_799_year"]["core_guardian_alert_limit"], 5)
+                self.assertEqual(plans[plan]["emergency_contact_limit"], 2)
+                self.assertEqual(plans[plan]["contact_limit"], 3)
+                self.assertEqual(plans[plan]["friend_location_limit"], 0)
+        self.assertEqual(plans["paid_799"]["core_guardian_alert_limit"], 10)
+        self.assertEqual(plans["paid_799_year"]["core_guardian_alert_limit"], 15)
 
     def test_guardian_group_navigation_opens_line_setup_guide(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -556,6 +578,11 @@ class ProductRulesTests(unittest.TestCase):
 
     def test_friend_location_invite_uses_single_share_url(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
+        # 好友地圖 UI 已下架；若仍保留後端邀請函式，分享網址必須單一且不走剪貼簿備援
+        if "async function shareFriendInvite" not in page:
+            self.assertNotIn('id="shareFriendInviteBtn"', page)
+            self.assertNotIn('aria-label="好友地圖"', page)
+            return
         friend_invite_block = page[
             page.index("async function shareFriendInvite")
             : page.index("function maybePrefillFriendInvite")
@@ -568,6 +595,8 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("tryWebShareOrClipboard", friend_invite_block)
         self.assertNotIn("複製連結貼到 LINE", friend_invite_block)
         self.assertNotIn("url: inviteUrl", friend_invite_block)
+        self.assertNotIn('id="shareFriendInviteBtn"', page)
+        self.assertNotIn('aria-label="好友地圖"', page)
 
     def test_calendar_note_modal_scrolls_on_mobile_and_confirms_save(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
