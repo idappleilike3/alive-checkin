@@ -452,7 +452,7 @@
               <td>4 位</td>
               <td>1 次</td>
               <td>24 小時快照定位</td>
-              <td>LINE，通知 3 位核心守護人</td>
+              <td>LINE，通知 2 位核心守護人（含 SOS）</td>
               <td>-</td>
             </tr>
             <tr class="tier-199 billing-year" data-plan-tier="199" data-billing-cycle="year">
@@ -463,7 +463,7 @@
               <td>6 位</td>
               <td>2 次</td>
               <td>安全守護分享位置</td>
-              <td>LINE，通知 3 位核心守護人</td>
+              <td>LINE，通知 2 位核心守護人（含 SOS）</td>
               <td class="gift">年繳現省 NT$708</td>
             </tr>
             <tr class="hot-plan tier-399 billing-month" data-plan-tier="399" data-billing-cycle="month">
@@ -474,7 +474,7 @@
               <td>15 位</td>
               <td>2 次</td>
               <td>安全守護分享位置</td>
-              <td>LINE，通知 3 位核心守護人</td>
+              <td>LINE，通知 2 位核心守護人（含 SOS）</td>
               <td>-</td>
             </tr>
             <tr class="hot-plan tier-399 billing-year" data-plan-tier="399" data-billing-cycle="year">
@@ -485,7 +485,7 @@
               <td>25 位</td>
               <td>3 次</td>
               <td>30 天即時追蹤體驗</td>
-              <td>LINE，通知 3 位核心守護人</td>
+              <td>LINE，通知 3 位核心守護人（含 SOS）</td>
               <td class="gift">年繳現省 NT$1,108 + 30 天即時追蹤體驗</td>
             </tr>
             <tr class="tier-799 billing-month" data-plan-tier="799" data-billing-cycle="month">
@@ -495,8 +495,8 @@
               <td>25 位</td>
               <td>25 位</td>
               <td>3 次</td>
-              <td>家庭守護，一鍵 SOS，1 個守護群</td>
-              <td>LINE＋簡訊，通知 3 位核心守護人</td>
+              <td>更完整守護：5 核心共守、1 守護群</td>
+              <td>LINE＋簡訊，通知 5 位核心守護人</td>
               <td>-</td>
             </tr>
             <tr class="tier-799 billing-year" data-plan-tier="799" data-billing-cycle="year">
@@ -506,7 +506,7 @@
               <td>50 位</td>
               <td>50 位</td>
               <td>3 次</td>
-              <td>一鍵 SOS，3 個守護群</td>
+              <td>更完整守護：5 核心共守、3 守護群</td>
               <td>LINE＋簡訊，通知 5 位核心守護人</td>
               <td class="gift">年繳現省 NT$2,388</td>
             </tr>
@@ -807,6 +807,24 @@
       await refresh();
     }
 
+    async function setCoreGuardian(lineUserId, contactId, contactLineId, makeCore) {
+      const res = await fetch(`/api/admin/set-core-guardian?password=${apiPassword()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          line_user_id: lineUserId,
+          contact_id: contactId || undefined,
+          contact_line_user_id: contactLineId || undefined,
+          is_primary: makeCore
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      $("message").textContent = res.ok
+        ? `已${makeCore ? "設為核心" : "改為一般"}守護人：${(data.updated_contact && data.updated_contact.name) || contactLineId || contactId}`
+        : (data.error || data.message || "核心守護人更新失敗。");
+      await refresh();
+    }
+
     function formatBoundGuardiansCell(user) {
       const bound = Array.isArray(user.bound_guardians) && user.bound_guardians.length
         ? user.bound_guardians
@@ -823,15 +841,20 @@
       if (!bound.length) {
         return `<div><span class="badge warn">已綁定 0 位</span><br><small>尚未 LINE 綁定</small></div>`;
       }
+      const ownerId = user.line_user_id || "";
       const lines = bound.map((c, i) => {
         const name = c.name || "未命名";
         const rel = c.relationship ? `／${c.relationship}` : "";
         const gid = c.line_user_id || c.line_id || "-";
+        const cid = c.id || "";
         const role = c.role || (c.is_primary ? "核心" : "一般");
         const st = c.binding_status || "accepted";
-        return `<div><strong>${i + 1}. ${name}${rel}（${role}）</strong><br><small>LINE ID：${gid}</small> <span class="badge ${st === "accepted" ? "ok" : "warn"}">${st === "accepted" ? "已綁定" : st}</span></div>`;
+        const isCore = Boolean(c.is_primary);
+        const btnLabel = isCore ? "改一般" : "設核心";
+        const btn = `<button type="button" class="plan-select" style="margin-top:4px;padding:2px 8px;font-size:12px;" onclick="setCoreGuardian('${ownerId}', '${cid}', '${gid}', ${isCore ? "false" : "true"})">${btnLabel}</button>`;
+        return `<div><strong>${i + 1}. ${name}${rel}（${role}）</strong><br><small>LINE ID：${gid}</small> <span class="badge ${st === "accepted" ? "ok" : "warn"}">${st === "accepted" ? "已綁定" : st}</span><br>${btn}</div>`;
       });
-      return `<div style="display:grid;gap:6px;min-width:180px;"><span class="badge ok">已綁定 ${count} 位</span><small>核心 ${core}／一般 ${general}</small>${lines.join("")}</div>`;
+      return `<div style="display:grid;gap:6px;min-width:180px;"><span class="badge ok">已綁定 ${count} 位</span><small>核心 ${core}／一般 ${general}（可點按鈕變更）</small>${lines.join("")}</div>`;
     }
 
     async function refresh() {

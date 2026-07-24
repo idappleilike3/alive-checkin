@@ -2971,6 +2971,70 @@
     }
     .member-limit-banner strong { color: #9a3412; font-size: 1.02rem; }
     .member-limit-banner p { margin: 0; color: #9a3412; line-height: 1.45; }
+    .member-role-intro {
+      margin: 0 0 14px;
+      padding: 16px 16px 14px;
+      border-radius: 16px;
+      border: 1.5px solid #bbf7d0;
+      background: linear-gradient(165deg, #f0fdf4 0%, #ecfdf5 55%, #fff 100%);
+      display: grid;
+      gap: 12px;
+    }
+    .member-role-intro[hidden] { display: none; }
+    .member-role-intro-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .member-role-intro-head strong {
+      font-size: 1.05rem;
+      color: #14532d;
+      line-height: 1.35;
+    }
+    .member-role-intro-head span {
+      display: block;
+      margin-top: 4px;
+      font-size: 0.86rem;
+      font-weight: 600;
+      color: #3f6212;
+      line-height: 1.45;
+    }
+    .member-role-intro-dismiss {
+      flex-shrink: 0;
+      border: 0;
+      background: transparent;
+      color: #64748b;
+      font-size: 0.85rem;
+      font-weight: 700;
+      padding: 4px 6px;
+      cursor: pointer;
+    }
+    .member-role-card {
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.88);
+      border: 1px solid #d1fae5;
+      display: grid;
+      gap: 6px;
+    }
+    .member-role-card h4 {
+      margin: 0;
+      font-size: 1rem;
+      color: #166534;
+      font-weight: 900;
+    }
+    .member-role-card p {
+      margin: 0;
+      font-size: 0.9rem;
+      color: #334155;
+      line-height: 1.55;
+    }
+    .member-role-card .role-label {
+      color: #64748b;
+      font-weight: 700;
+      font-size: 0.82rem;
+    }
     .member-guardian-manage-row {
       align-items: flex-start;
     }
@@ -3425,6 +3489,27 @@
           <button class="member-upgrade-btn" id="memberUpgradeBtn" type="button">立即升級 <span aria-hidden="true">→</span></button>
         </div>
 
+        <div class="member-role-intro" id="memberRoleIntro" hidden>
+          <div class="member-role-intro-head">
+            <div>
+              <strong>免費體驗小教室</strong>
+              <span>先分清楚兩種角色，設定才不會搞混。</span>
+            </div>
+            <button class="member-role-intro-dismiss" id="memberRoleIntroDismiss" type="button" aria-label="關閉介紹">知道了</button>
+          </div>
+          <article class="member-role-card" aria-label="守護人說明">
+            <h4>👨‍👩‍👧 守護人（Guardian）</h4>
+            <p><span class="role-label">用途</span>　平常每天守護你的人。</p>
+            <p><span class="role-label">會收到</span>　未報平安通知、SOS、安全守護、可查看平安狀態（若有授權）。</p>
+            <p><span class="role-label">免費版建議</span>　1 位守護人（配偶／父母／子女足夠）。</p>
+          </article>
+          <article class="member-role-card" aria-label="緊急聯絡人說明">
+            <h4>☎️ 緊急聯絡人（Emergency Contact）</h4>
+            <p><span class="role-label">用途</span>　真正緊急時才聯絡（119 前／SOS 才通知，平時不收每日提醒）。</p>
+            <p><span class="role-label">免費版建議</span>　2 位（爸媽，或配偶＋好友）。</p>
+          </article>
+        </div>
+
         <div class="member-data-section">
           <h3>個人資料與守護額度</h3>
           <div class="member-data-list">
@@ -3509,7 +3594,7 @@
 
         <div class="member-data-section sos-section" id="sosSection" hidden>
           <h3>SOS 緊急求助</h3>
-          <div class="helper">有效的 799 守護版會員，可連續按 3 次通知核心守護人。</div>
+          <div class="helper">所有方案都可使用。連續按 3 次後，會通知已綁定的守護人（含位置）。</div>
           <button class="sos-btn" id="sosBtn" type="button">開啟 SOS 緊急求助</button>
         </div>
 
@@ -3618,12 +3703,12 @@
         <article class="price-card plan-card tier-799 billing-month premium-month-card" data-plan-tier="799" data-billing-cycle="month">
           <div class="price-head"><strong>799 守護版</strong><span class="plan-cycle-badge">月費方案</span></div>
           <div class="plan-price">NT$799 <small>／月</small></div>
-          <div class="plan-card-note">適合家庭守護與需要守護群警報的會員。</div>
+          <div class="plan-card-note">解鎖更完整守護（基本 SOS／1 位守護人通知免費版已含）。</div>
           <ul>
-            <li>25 位緊急聯絡人、25 位好友定位</li>
-            <li>每日簽到提醒 3 次</li>
-            <li>一鍵 SOS、LINE 通知 3 位核心守護人</li>
-            <li>最多建立 1 個守護群</li>
+            <li>最多 5 位核心守護人共同守護</li>
+            <li>自訂早中晚提醒、1 小時安全守護</li>
+            <li>未回報多階段提醒、平安月報</li>
+            <li>家庭群組管理（最多 1 群）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="799-month">選擇 799 月費</button>
         </article>
@@ -3633,13 +3718,13 @@
           <div class="annual-saving-banner">年繳現省 NT$2,388</div>
           <div class="plan-card-note"><s>月付一年 NT$9,588</s>，平均每月 NT$600。</div>
           <ul>
-            <li>50 位緊急聯絡人、50 位好友定位</li>
-            <li>每日簽到提醒 3 次</li>
-            <li>一鍵 SOS、LINE 通知 5 位核心守護人</li>
-            <li>最多建立 3 個守護群</li>
+            <li>最多 5 位核心守護人共同守護</li>
+            <li>自訂早中晚提醒、1 小時安全守護</li>
+            <li>未回報多階段提醒、平安年報</li>
+            <li>家庭群組管理（最多 3 群）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="799-year">選擇 799 年費</button>
-          <div class="annual-proof">適合需要多人家庭守護與守護群通知的會員。</div>
+          <div class="annual-proof">799 解鎖更完整守護；SOS／1 位守護人通知免費版已含。</div>
         </article>
       </div>
       <div class="payment-order-notice" id="paymentOrderNotice" role="status" aria-live="polite" hidden></div>
@@ -4731,10 +4816,10 @@
         paid_199_year: { cycle: "199 平安版｜年費方案", contacts: 6, locations: 6, detail: "每日提醒 2 次、安全守護單次定位、LINE 通知 2 位核心守護人。" },
         paid_399: { cycle: "399 安心版｜月費方案", contacts: 15, locations: 15, detail: "每日提醒 2 次、安全守護定位、LINE 通知 2 位核心守護人。" },
         paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、安全守護定位、LINE 通知 3 位核心守護人。" },
-        paid_799: { cycle: "799 守護版｜月費方案", contacts: 25, locations: 25, detail: "每日提醒 3 次、一鍵 SOS、LINE 通知 3 位核心守護人、1 個守護群。" },
-        paid_799_year: { cycle: "799 守護版｜年費方案", contacts: 50, locations: 50, detail: "每日提醒 3 次、一鍵 SOS、LINE 通知 5 位核心守護人、3 個守護群。" },
-        free: { cycle: "基本守護｜免費方案", contacts: 1, locations: 1, detail: "基本簽到與 LINE 提醒。" },
-        trial: { cycle: "安心體驗", contacts: 1, locations: 1, detail: "試用期間可使用基本簽到與 LINE 提醒。" }
+        paid_799: { cycle: "799 守護版｜月費進階", contacts: 25, locations: 25, detail: "更完整守護：多人共守、早中晚提醒、1 小時安全守護、多階段未回報提醒、平安紀錄、1 個守護群。" },
+        paid_799_year: { cycle: "799 守護版｜年費進階", contacts: 50, locations: 50, detail: "更完整守護：多人共守、早中晚提醒、1 小時安全守護、多階段未回報提醒、平安紀錄、3 個守護群。" },
+        free: { cycle: "基本守護｜免費方案", contacts: 1, locations: 1, detail: "1 位守護人可收通知、SOS、基本簽到與 LINE 提醒。799 進階才解鎖多人共守與守護群。" },
+        trial: { cycle: "安心體驗", contacts: 1, locations: 1, detail: "試用可體驗 1 位守護人通知與 SOS。799 進階才解鎖多人共守、早中晚提醒與守護群。" }
       }[plan] || { cycle: "尚未選擇方案", contacts: 1, locations: 1, detail: "請先選擇適合你的守護方案。" };
     }
 
@@ -4907,6 +4992,48 @@
         `; }).join("")
         : `<div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護群</strong></div>`;
       renderGuardianDetailsEditor();
+      renderMemberRoleIntro({ autoExpand: false });
+    }
+
+    const MEMBER_ROLE_INTRO_KEY = "member_role_intro_dismissed";
+
+    function isMemberRoleIntroDismissed() {
+      try {
+        return localStorage.getItem(MEMBER_ROLE_INTRO_KEY) === "1";
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function dismissMemberRoleIntro() {
+      try {
+        localStorage.setItem(MEMBER_ROLE_INTRO_KEY, "1");
+      } catch (_) {}
+      const card = $("memberRoleIntro");
+      if (card) card.hidden = true;
+    }
+
+    function shouldShowMemberRoleIntro(status) {
+      if (isMemberRoleIntroDismissed()) return false;
+      const plan = String((status && status.plan) || "trial");
+      const isFreeOrTrial = plan === "trial" || plan === "free" || !String(plan).startsWith("paid_");
+      const lineBound = Boolean(lineUserId || (status && (status.line_user_id || status.display_name)));
+      const boundCount = contactData.filter((contact) => isContactBound(contact)).length;
+      // 免費／試用，或註冊＋綁定完成後第一次進會員中心
+      return isFreeOrTrial || (lineBound && boundCount > 0);
+    }
+
+    function renderMemberRoleIntro(options = {}) {
+      const card = $("memberRoleIntro");
+      if (!card) return false;
+      const status = currentStatusData || {};
+      const show = shouldShowMemberRoleIntro(status);
+      card.hidden = !show;
+      if (show && options.autoExpand) {
+        setMemberCenterExpanded(true);
+        if (typeof showTab === "function") showTab("member");
+      }
+      return show;
     }
 
     function is799Plan(plan) {
@@ -5109,32 +5236,40 @@
     }
 
     function hasLineBoundGuardian(contacts) {
-      const list = Array.isArray(contacts) ? contacts : currentGuardianContacts();
-      if (list.some((c) => {
+      const selfId = String(lineUserId || (currentStatusData && currentStatusData.line_user_id) || "").trim();
+      const isOtherBound = (c) => {
         if (!c) return false;
+        const lid = String(c.line_id || c.line_user_id || "").trim();
+        // 本人 ID 寫進聯絡人 = 表單污染，不算 LINE 守護人綁定
+        if (lid && selfId && lid === selfId) return false;
         return (
           c.binding_status === "accepted"
           || c.consent_status === "accepted"
-          || Boolean(String(c.line_id || c.line_user_id || "").trim())
+          || Boolean(lid)
         );
-      })) return true;
-      // status API 備援：contacts 尚未灌入時仍可用 bound_guardian_count
+      };
+      const list = Array.isArray(contacts) ? contacts : currentGuardianContacts();
+      if (list.some(isOtherBound)) return true;
       const statusCount = Number(currentStatusData && currentStatusData.bound_guardian_count);
       if (Number.isFinite(statusCount) && statusCount > 0) return true;
       const statusContacts = (currentStatusData && currentStatusData.contacts) || [];
-      return statusContacts.some((c) => {
-        if (!c) return false;
-        return (
-          c.binding_status === "accepted"
-          || c.consent_status === "accepted"
-          || Boolean(String(c.line_id || c.line_user_id || "").trim())
-        );
-      });
+      return statusContacts.some(isOtherBound);
+    }
+
+    function hasAnyGuardianOrContact(contacts) {
+      // ≥1 LINE 守護人 或 ≥1 聯絡人資料 → 首頁／報平安／安全守護不再催「未綁定／一鍵邀請」
+      if (hasLineBoundGuardian(contacts)) return true;
+      const list = Array.isArray(contacts) ? contacts : currentGuardianContacts();
+      if (list.length > 0) return true;
+      const status = currentStatusData || {};
+      if (Number(status.contact_count || 0) > 0) return true;
+      if (Number(status.bound_guardian_count || 0) > 0) return true;
+      if (Array.isArray(status.contacts) && status.contacts.length > 0) return true;
+      return false;
     }
 
     function hasHomeSetupComplete(contacts) {
-      // 只要有 ≥1 位 LINE 綁定守護人，一般登入就進首頁，不再顯示重新綁定／onboarding 邀請卡
-      // （invite_from 受邀深連結仍可另走綁定流程）
+      // 只要有 ≥1 位「他人」LINE 綁定守護人，一般登入就進首頁
       return hasLineBoundGuardian(contacts);
     }
 
@@ -5276,6 +5411,11 @@
             alert(bindResult?.message || "你已經是守護人了，請把邀請轉傳給其他好友");
           } else {
             alert(bindResult?.message || "綁定完成！你已成為對方的守護人。對方也會收到「綁定完成」通知。");
+            try {
+              await refreshContacts();
+            } catch (_) {}
+            // 邀請方／本人進會員中心時，若尚未關閉介紹卡則帶一下免費體驗說明
+            renderMemberRoleIntro({ autoExpand: false });
           }
         }
         return bindResult;
@@ -7275,16 +7415,18 @@
         const homeReady = hasHomeSetupComplete(contactsNow);
         const hasGuardians = (
           homeReady
+          || hasAnyGuardianOrContact(contactsNow)
           || onboardingState.hasGuardian
           || Number(onboardingState.data?.guardian_count || 0) > 0
           || Number(status.bound_guardian_count || 0) > 0
+          || Number(status.contact_count || 0) > 0
           || contactsNow.length > 0
         );
-        // ≥1 LINE 綁定守護人（或伺服器 setup_completed）→ 直接進首頁／功能，不再彈重新綁定／邀請
+        // ≥1 LINE 綁定 或 ≥1 聯絡人 → 直接進首頁／功能，不再彈「未綁定／一鍵邀請」
         const setupDone = homeReady || onboardingState.done || hasGuardians;
         const wantsInviteShare = wantsShareInvite;
-        syncInviteUiForBoundState(homeReady);
-        if (homeReady && !inviteeMode) {
+        syncInviteUiForBoundState(homeReady || hasGuardians);
+        if ((homeReady || hasGuardians) && !inviteeMode) {
           clearShareFirstLocalFlags();
           closeGuardianPrompt();
           closeInviteAcceptPrompt();
@@ -7298,7 +7440,6 @@
           if (typeof showTab === "function") {
             showTab(getAppParam("friend_invite") ? "member" : "home");
           }
-          // 受邀綁定他人：即使自己已有守護人／聯絡人，仍要能「同意成為守護人」
           maybeShowInviteAcceptPrompt();
           maybePrefillFriendInvite();
           if (!homeReady) await maybeShowGuardianComplete();
@@ -7307,25 +7448,14 @@
           clearShareFirstLocalFlags();
           location.replace("/liff/share-invite.html");
           return;
-        } else if (homeReady) {
-          // 已綁 ≥1 守護人：直接進功能／首頁，絕不 showOnboarding／share-invite
+        } else if (homeReady || hasGuardians || setupDone) {
+          // 已有 ≥1 LINE 守護人或 ≥1 聯絡人：絕不 showOnboarding／share-invite
           clearShareFirstLocalFlags();
           if (typeof showTab === "function") showTab("home");
-        } else if (setupDone) {
-          // 有聯絡人資料但尚未 LINE 綁定：進首頁並說明需邀請綁定
-          clearShareFirstLocalFlags();
-          if (typeof showTab === "function") showTab("home");
-          maybeShowGuardianPrompt();
-          await maybeShowGuardianComplete();
-          if (isCheckinOpen || isGuardOpen || forceOnboarding) {
-            await showOnboarding();
-          }
         } else {
-          // 首次使用者（0 位守護人）：顯示分享→填寫→提醒流程
           await showOnboarding();
         }
-        // Deep link：已綁定直達功能；報平安／安全守護不導分享頁
-        if (homeReady && forceOnboarding && !wantsInviteShare) {
+        if ((homeReady || hasGuardians) && forceOnboarding && !wantsInviteShare) {
           if (typeof showTab === "function") showTab("home");
         } else if (openAction === "member" && !forceOnboarding && typeof showTab === "function") {
           showTab("member");
@@ -7337,16 +7467,15 @@
           if (typeof showTab === "function") showTab("home");
           openSosModal();
         } else if (isGuardOpen) {
-          // 已綁定：直接開安全守護／定位；未綁定且 onboarding 已開時不要蓋住說明
           const onboardingOpen = $("onboardingModal") && !$("onboardingModal").hidden;
-          if (homeReady || !onboardingOpen) {
+          if (homeReady || hasGuardians || !onboardingOpen) {
             openMvpGuardPanel();
           }
         } else if (openAction === "call" || openAction === "family") {
           openMvpCallPanel();
         } else if (isCheckinOpen && typeof showTab === "function") {
           showTab("home");
-          if (openAction === "checkin" && homeReady) {
+          if (openAction === "checkin" && (homeReady || hasGuardians)) {
             setTimeout(() => {
               if (currentStatusData && currentStatusData.is_today_checked) {
                 syncCheckBtn(currentStatusData);
@@ -7390,8 +7519,11 @@
       // 首頁不顯示舊守護人區塊
       const guardianSection = $("guardianSection");
       if (guardianSection) guardianSection.hidden = true;
-      // 會員中心預設展開，方便編輯／刪除守護人
-      if (tabName === "member") setMemberCenterExpanded(true);
+      // 會員中心預設展開，方便編輯／刪除守護人；免費體驗介紹只顯示到按「知道了」
+      if (tabName === "member") {
+        setMemberCenterExpanded(true);
+        renderMemberRoleIntro({ autoExpand: false });
+      }
       if (tabName === "history") setCalendarExpanded(true);
       // 更新 nav active
       document.querySelectorAll(".nav-item").forEach(n => {
@@ -7567,7 +7699,7 @@
 
     const SOS_HOLD_DURATION_MS = 3000;
 
-    // SOS FAB：所有人可開啟，只有有效 799 會員可長按通知守護人。
+    // SOS FAB：所有方案皆可開啟並通知家人（不鎖 799）。
     function bindSosFab() {
       const fab = $("sosFab");
       const modal = $("sosConfirmModal");
@@ -7749,6 +7881,10 @@
     $("memberCenterToggleBtn").addEventListener("click", () => {
       setMemberCenterExpanded($("memberCenterToggleBtn").getAttribute("aria-expanded") !== "true");
     });
+    const memberRoleIntroDismiss = $("memberRoleIntroDismiss");
+    if (memberRoleIntroDismiss) {
+      memberRoleIntroDismiss.addEventListener("click", dismissMemberRoleIntro);
+    }
     $("exportMyDataBtn").addEventListener("click", exportMyData);
     $("deleteCheckinHistoryBtn").addEventListener("click", deleteCheckinHistory);
     $("deleteAccountBtn").addEventListener("click", deleteAccountAndData);

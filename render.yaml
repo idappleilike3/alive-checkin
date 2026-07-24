@@ -26,7 +26,7 @@ services:
       - key: REQUIRE_LIFF_AUTH
         value: "1"
       - key: DEPLOY_VERSION
-        value: W250724ar
+        value: W250724as
       # Open admin (no password). Public URL is insecure — owner requested.
       - key: ALLOW_OPEN_ADMIN
         value: "true"

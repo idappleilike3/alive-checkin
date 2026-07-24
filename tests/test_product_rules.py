@@ -113,6 +113,8 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("個資全自主管理", pricing)
         self.assertIn("守護群最多 1 群", pricing)
         self.assertIn("守護群最多 3 群", pricing)
+        self.assertIn("SOS 緊急求助也不鎖 799", pricing)
+        self.assertNotIn('class="disabled">SOS 緊急求救', pricing)
 
     def test_pricing_has_one_home_entry_and_correct_line_guardian_limits(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -122,10 +124,21 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('id="pricingPageLink"', page)
         self.assertIn("查看完整方案與價目", page)
         self.assertIn(
-            "<tr><td>核心守護人 LINE 預警</td><td>2 位</td><td>2 位</td><td>2 位</td><td>3 位</td><td>3 位</td><td>5 位</td></tr>",
+            "<tr><td>核心守護人 LINE 預警</td><td>1 位</td><td>2 位</td><td>2 位</td><td>2 位</td><td>3 位</td><td>5 位</td><td>5 位</td></tr>",
             pricing,
         )
+        self.assertIn("<tr><td>SOS</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td></tr>", pricing)
         self.assertNotIn("長照專線 1966", pricing)
+
+    def test_free_and_trial_include_sos_and_one_core_guardian(self):
+        plans = load_plan_limits()
+        for plan in ("free", "trial"):
+            with self.subTest(plan=plan):
+                self.assertTrue(plans[plan]["sos_enabled"])
+                self.assertEqual(plans[plan]["contact_limit"], 1)
+                self.assertEqual(plans[plan]["core_guardian_alert_limit"], 1)
+        self.assertEqual(plans["paid_799"]["core_guardian_alert_limit"], 5)
+        self.assertEqual(plans["paid_799_year"]["core_guardian_alert_limit"], 5)
 
     def test_guardian_group_navigation_opens_line_setup_guide(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

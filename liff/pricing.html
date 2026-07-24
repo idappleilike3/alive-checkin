@@ -1,229 +1,157 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>選擇方案 - 今天還在嗎</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>每日平安｜方案與價目</title>
 <style>
-  /* 內嵌 CSS,不使用外部框架,確保頁面 ≤ 500KB + 載入快 */
-  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  :root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --text: #f8fafc;
+    --muted: #94a3b8;
+    --accent: #F39C12;
+    --ok: #2ECC71;
+    --line: rgba(255,255,255,0.08);
+  }
+  * { box-sizing: border-box; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", "Segoe UI", sans-serif;
-    background: #f4fbf7;
+    margin: 0;
+    font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    background: linear-gradient(180deg, #0b1220 0%, #1a2740 100%);
+    color: var(--text);
     min-height: 100vh;
-    color: #132a22;
-    -webkit-font-smoothing: antialiased;
-    line-height: 1.6;
   }
-  .container {
-    max-width: 480px;
-    margin: 0 auto;
-    padding: 24px 16px 80px;
+  .container { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  .header { text-align: center; margin-bottom: 28px; }
+  .logo { font-size: 42px; }
+  h1 { margin: 8px 0 6px; font-size: 26px; }
+  .header p { margin: 0; color: var(--muted); }
+  .policy {
+    background: rgba(46, 204, 113, 0.12);
+    border: 1px solid rgba(46, 204, 113, 0.35);
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin-bottom: 20px;
+    line-height: 1.55;
   }
-  /* 頁首 */
-  .header {
-    text-align: center;
-    padding: 32px 0 24px;
-  }
-  .logo {
-    font-size: 56px;
-    margin-bottom: 16px;
-  }
-  .header h1 {
-    font-size: 28px;
-    font-weight: 700;
-    margin-bottom: 12px;
-    color: #087f5b;
-  }
-  .header p {
-    font-size: 17px;
-    color: #34594b;
-    font-weight: 700;
-  }
-  /* 方案卡片 */
+  .policy strong { color: var(--ok); }
   .plans-grid {
     display: grid;
-    gap: 16px;
-    margin-top: 24px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px;
   }
   .plan-card {
-    background: #ffffff;
-    border: 2px solid #b9decf;
-    border-radius: 8px;
-    padding: 22px;
-    position: relative;
-    transition: transform 0.2s;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 18px 16px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
-  .plan-card:active { transform: scale(0.98); }
-  .plan-card.featured {
-    background: #fffaf0;
-    border: 3px solid #e9a321;
-  }
-  .plan-card.recommended {
-    background: #fffdf5;
-    border: 3px solid #d39b16;
-    box-shadow: 0 12px 28px rgba(117, 79, 5, 0.18);
-  }
+  .plan-card.featured { border-color: rgba(243, 156, 18, 0.55); box-shadow: 0 0 0 1px rgba(243,156,18,0.18); }
+  .plan-card.recommended { border-color: rgba(46, 204, 113, 0.55); }
   .plan-badge {
-    position: absolute;
-    top: -12px;
-    right: 16px;
-    padding: 4px 12px;
-    border-radius: 12px;
+    align-self: flex-start;
+    background: rgba(243,156,18,0.18);
+    color: var(--accent);
     font-size: 12px;
     font-weight: 700;
-    background: #F39C12;
-    color: #402b00;
+    padding: 4px 8px;
+    border-radius: 999px;
   }
-  .plan-badge.recommended {
-    background: #2ECC71;
-  }
-  .plan-name {
-    font-size: 24px;
-    font-weight: 700;
-    color: #087f5b;
-    margin-bottom: 8px;
-  }
-  .plan-price {
-    font-size: 30px;
-    font-weight: 700;
-    color: #102820;
-    margin-bottom: 4px;
-  }
-  .plan-cycle {
-    font-size: 16px;
-    color: #49685d;
-    margin-bottom: 4px;
-  }
-  .plan-savings {
-    font-size: 16px;
-    color: #9a5d00;
-    margin-bottom: 16px;
-    font-weight: 600;
-  }
-  .plan-features {
-    list-style: none;
-    margin: 16px 0;
-  }
+  .plan-badge.recommended { background: rgba(46,204,113,0.18); color: var(--ok); }
+  .plan-name { font-size: 18px; font-weight: 800; }
+  .plan-price { font-size: 28px; font-weight: 800; color: var(--accent); }
+  .plan-cycle, .plan-savings { color: var(--muted); font-size: 13px; }
+  .plan-features { list-style: none; padding: 0; margin: 8px 0 12px; display: grid; gap: 8px; flex: 1; }
   .plan-features li {
-    padding: 7px 0;
-    font-size: 16px;
-    color: #243d34;
-    font-weight: 650;
+    padding-left: 22px;
+    position: relative;
+    color: #e2e8f0;
+    font-size: 14px;
+    line-height: 1.4;
   }
   .plan-features li::before {
-    content: "✓ ";
-    color: #2ECC71;
-    font-weight: 700;
-    margin-right: 8px;
+    content: "✓";
+    position: absolute;
+    left: 0;
+    color: var(--ok);
+    font-weight: 800;
   }
-  .plan-features li.disabled {
-    color: #768b83;
-  }
-  .plan-features li.disabled::before {
-    content: "✗ ";
-    color: #888;
-  }
+  .plan-features li.disabled { color: #64748b; }
+  .plan-features li.disabled::before { content: "–"; color: #64748b; }
   .cta-button {
     display: block;
-    width: 100%;
-    padding: 14px;
-    margin-top: 16px;
-    background: #F39C12;
-    color: #241800;
-    border: none;
-    border-radius: 12px;
-    font-size: 18px;
-    font-weight: 700;
-    cursor: pointer;
     text-align: center;
     text-decoration: none;
-  }
-  .cta-button:active { opacity: 0.8; }
-  .cta-button.green { background: #2ECC71; }
-  /* 頁尾提醒 */
-  .footer-notes {
-    margin-top: 32px;
-    padding: 20px;
-    background: #ffffff;
-    border: 1px solid #cde6dc;
+    background: linear-gradient(135deg, #F39C12, #e67e22);
+    color: #111;
+    font-weight: 800;
     border-radius: 12px;
-    font-size: 13px;
-    line-height: 1.8;
+    padding: 12px 14px;
   }
-  .footer-notes p {
-    margin-bottom: 8px;
-    color: #34594b;
-  }
-  .footer-notes .warning {
-    color: #E74C3C;
-    font-weight: 600;
-  }
-  .footer-notes .tip {
-    color: #F39C12;
-  }
-  .footer-notes .emergency {
-    margin-top: 16px;
-    padding-top: 16px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    color: #E74C3C;
-    font-weight: 700;
-  }
-  /* 比較表(可摺疊) */
   .compare-toggle {
+    margin: 28px auto 12px;
     display: block;
-    width: 100%;
-    margin-top: 24px;
-    padding: 12px;
     background: transparent;
-    color: #F39C12;
-    border: 1px solid #F39C12;
-    border-radius: 8px;
-    font-size: 14px;
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 10px 16px;
     cursor: pointer;
   }
   .compare-table {
-    display: none;
-    margin-top: 16px;
-    padding: 16px;
-    background: #ffffff;
-    border: 1px solid #cde6dc;
-    border-radius: 12px;
     overflow-x: auto;
+    background: var(--card);
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    padding: 8px;
   }
-  .compare-table.show { display: block; }
-  .compare-table table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 14px;
-  }
+  .compare-table table { width: 100%; border-collapse: collapse; min-width: 720px; font-size: 13px; }
   .compare-table th, .compare-table td {
     padding: 8px 4px;
     text-align: center;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   }
-  .compare-table th {
-    color: #F39C12;
-    font-weight: 700;
-  }
+  .compare-table th { color: #F39C12; font-weight: 700; }
   .compare-table td.yes { color: #2ECC71; }
   .compare-table td.no { color: #888; }
+  .footer-notes { margin-top: 24px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+  .footer-notes .warning { color: #fbbf24; }
+  .footer-notes .emergency { color: #f87171; }
 </style>
 </head>
 <body>
 <div class="container">
 
-  <!-- 頁首 -->
   <header class="header">
     <div class="logo">🛡️</div>
     <h1>選擇最適合您的守護方案</h1>
-    <p>陪您守護家人,也守護自己</p>
+    <p>陪您守護家人，也守護自己</p>
   </header>
 
-  <!-- 方案卡片 -->
+  <div class="policy">
+    <strong>基本守護全方案開放：</strong>免費／試用即可新增 1 位守護人並收到通知，SOS 緊急求助也不鎖 799。
+    <br>⭐ <strong>799 進階</strong>解鎖的是「更完整守護」：最多 5 位核心共守、多位緊急聯絡人、家人共同守護、早中晚提醒、1 小時安全守護、多階段未回報提醒、平安紀錄與家庭群組。
+  </div>
+
   <div class="plans-grid">
 
-    <!-- 199 月 -->
+    <div class="plan-card">
+      <div class="plan-name">免費／試用</div>
+      <div class="plan-price">NT$0</div>
+      <div class="plan-cycle">基本守護</div>
+      <ul class="plan-features">
+        <li>新增 1 位守護人（可收通知）</li>
+        <li>SOS 緊急求助</li>
+        <li>每日簽到提醒 1 次</li>
+        <li class="disabled">多位核心共守／守護群</li>
+      </ul>
+      <a href="/" class="cta-button">先用免費開始 →</a>
+    </div>
+
     <div class="plan-card">
       <div class="plan-name">199 平安版(月)</div>
       <div class="plan-price">NT$199</div>
@@ -233,14 +161,12 @@
         <li>每日簽到提醒 1 次</li>
         <li>LINE 通知最多 2 位核心守護人</li>
         <li>安全守護（單次定位）</li>
-        <li>自訂簽到週期</li>
+        <li>含 SOS 緊急求助</li>
         <li class="disabled">簡訊預警（稍後開放）</li>
-        <li class="disabled">SOS 緊急求救</li>
       </ul>
       <a href="#" class="cta-button" data-plan="paid_199" data-cycle="monthly">立即購買 →</a>
     </div>
 
-    <!-- 199 年 -->
     <div class="plan-card">
       <div class="plan-name">199 平安版(年)</div>
       <div class="plan-price">NT$1,680</div>
@@ -251,14 +177,12 @@
         <li>每日簽到提醒 2 次</li>
         <li>LINE 通知最多 2 位核心守護人</li>
         <li>安全守護（單次定位）</li>
-        <li>自訂簽到週期</li>
+        <li>含 SOS 緊急求助</li>
         <li class="disabled">簡訊預警（稍後開放）</li>
-        <li class="disabled">SOS 緊急求救</li>
       </ul>
       <a href="#" class="cta-button" data-plan="paid_199_year" data-cycle="yearly">立即購買 →</a>
     </div>
 
-    <!-- 399 月 -->
     <div class="plan-card">
       <div class="plan-name">399 安心版(月)</div>
       <div class="plan-price">NT$399</div>
@@ -269,13 +193,12 @@
         <li>LINE 通知最多 2 位核心守護人</li>
         <li>安全守護定位</li>
         <li>好友平安狀態更新（雙方同意）</li>
+        <li>含 SOS 緊急求助</li>
         <li class="disabled">簡訊預警（稍後開放）</li>
-        <li class="disabled">SOS 緊急求救</li>
       </ul>
       <a href="#" class="cta-button" data-plan="paid_399" data-cycle="monthly">立即購買 →</a>
     </div>
 
-    <!-- 399 年 -->
     <div class="plan-card featured">
       <span class="plan-badge">受歡迎</span>
       <div class="plan-name">399 安心版(年)</div>
@@ -288,31 +211,29 @@
         <li>LINE 通知最多 3 位核心守護人</li>
         <li>安全守護定位</li>
         <li>好友平安狀態更新（雙方同意）</li>
+        <li>含 SOS 緊急求助</li>
         <li class="disabled">簡訊預警（稍後開放）</li>
-        <li class="disabled">SOS 緊急求救</li>
       </ul>
       <a href="#" class="cta-button" data-plan="paid_399_year" data-cycle="yearly">立即購買 →</a>
     </div>
 
-    <!-- 799 月 -->
     <div class="plan-card featured">
-      <span class="plan-badge">含 SOS</span>
+      <span class="plan-badge">更完整守護</span>
       <div class="plan-name">799 守護版(月)</div>
       <div class="plan-price">NT$799</div>
       <div class="plan-cycle">每月</div>
       <ul class="plan-features">
-        <li>25 位聯絡人</li>
-        <li>每日簽到提醒 3 次</li>
-        <li>LINE 通知最多 3 位核心守護人</li>
-        <li>一鍵 SOS</li>
+        <li>最多 5 位核心守護人共同守護</li>
+        <li>多位緊急聯絡人／家人共守</li>
+        <li>自訂早中晚提醒</li>
+        <li>1 小時安全守護（位置分享）</li>
+        <li>未回報多階段提醒、平安月報</li>
         <li>守護群最多 1 群</li>
-        <li>安全守護定位</li>
         <li class="disabled">簡訊預警（稍後開放）</li>
       </ul>
       <a href="#" class="cta-button" data-plan="paid_799" data-cycle="monthly">立即購買 →</a>
     </div>
 
-    <!-- 799 年 — 最推薦 -->
     <div class="plan-card recommended">
       <span class="plan-badge recommended">👑 最推薦</span>
       <div class="plan-name">799 守護版(年)</div>
@@ -320,31 +241,27 @@
       <div class="plan-cycle">每年</div>
       <div class="plan-savings">年繳現省 NT$2,388，平均每月 NT$600</div>
       <ul class="plan-features">
-        <li>50 位聯絡人</li>
-        <li>每日簽到提醒 3 次</li>
-        <li>LINE 通知最多 5 位核心守護人</li>
-        <li>一鍵 SOS</li>
+        <li>最多 5 位核心守護人共同守護</li>
+        <li>多位緊急聯絡人／家人共守</li>
+        <li>自訂早中晚提醒、1 小時安全守護</li>
+        <li>未回報多階段提醒、平安年報</li>
         <li>守護群最多 3 群</li>
-        <li>安全守護定位</li>
-        <li>好友平安狀態更新（雙方同意）</li>
         <li class="disabled">簡訊預警（稍後開放）</li>
       </ul>
-      <a href="#" class="cta-button green" data-plan="paid_799_year" data-cycle="yearly">立即購買 →</a>
+      <a href="#" class="cta-button" data-plan="paid_799_year" data-cycle="yearly">立即購買 →</a>
     </div>
-
   </div>
 
-  <!-- 比較表按鈕 -->
-  <button class="compare-toggle" onclick="document.getElementById('compareTable').classList.toggle('show')">
-    📊 查看完整權益比較表(展開/收合)
+  <button class="compare-toggle" type="button" onclick="document.getElementById('compareTable').hidden = !document.getElementById('compareTable').hidden">
+    顯示／隱藏完整比較表
   </button>
 
-  <!-- 比較表 -->
   <div id="compareTable" class="compare-table">
     <table>
       <thead>
         <tr>
           <th>權益</th>
+          <th>免費</th>
           <th>199月</th>
           <th>199年</th>
           <th>399月</th>
@@ -354,38 +271,33 @@
         </tr>
       </thead>
       <tbody>
-        <tr><td>聯絡人</td><td>4</td><td>6</td><td>15</td><td>25</td><td>25</td><td>50</td></tr>
-        <tr><td>每日簽到提醒</td><td>1 次</td><td>2 次</td><td>2 次</td><td>3 次</td><td>3 次</td><td>3 次</td></tr>
-        <tr><td>核心守護人 LINE 預警</td><td>2 位</td><td>2 位</td><td>2 位</td><td>3 位</td><td>3 位</td><td>5 位</td></tr>
-        <tr><td>簡訊預警</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">稍後開放</td><td class="no">稍後開放</td></tr>
-        <tr><td>安全守護（單次定位）</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-        <tr><td>離線同步</td><td class="no">✗</td><td class="no">✗</td><td class="no">尚未開放</td><td class="no">尚未開放</td><td class="no">尚未開放</td><td class="no">尚未開放</td></tr>
-        <tr><td>好友平安狀態更新</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-        <tr><td>SOS</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-        <tr><td>守護群</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓ 1 群</td><td class="yes">✓ 3 群</td></tr>
+        <tr><td>聯絡人／守護人名額</td><td>1</td><td>4</td><td>6</td><td>15</td><td>25</td><td>25</td><td>50</td></tr>
+        <tr><td>每日簽到提醒</td><td>1 次</td><td>1 次</td><td>2 次</td><td>2 次</td><td>3 次</td><td>3 次</td><td>3 次</td></tr>
+        <tr><td>核心守護人 LINE 預警</td><td>1 位</td><td>2 位</td><td>2 位</td><td>2 位</td><td>3 位</td><td>5 位</td><td>5 位</td></tr>
+        <tr><td>簡訊預警</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">稍後開放</td><td class="no">稍後開放</td></tr>
+        <tr><td>安全守護（單次定位）</td><td class="no">基本</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓ 1 小時</td><td class="yes">✓ 1 小時</td></tr>
+        <tr><td>好友平安狀態更新</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td>SOS</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td>守護群</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓ 1 群</td><td class="yes">✓ 3 群</td></tr>
       </tbody>
     </table>
   </div>
 
-  <!-- 頁尾提醒 -->
   <div class="footer-notes">
-    <p class="warning">⚠️ 199 方案提醒:僅發送 LINE 訊息,若聯絡人未讀取,預警等同無效。</p>
-    <p class="tip">💡 升級提醒:補差額即可升級,無需重新設定聯絡人。</p>
-    <p>📞 客服:LINE 留言,4 小時內回覆(09:00-21:00)。</p>
-    <p class="emergency">⚠️ 緊急狀況請撥打 119 / 110 / 112。本服務僅供輔助提醒,不提供緊急救援。</p>
+    <p class="tip">💡 升級提醒：補差額即可升級，無需重新設定聯絡人。</p>
+    <p>📞 客服：LINE 留言，4 小時內回覆（09:00-21:00）。</p>
+    <p class="emergency">⚠️ 緊急狀況請撥打 119 / 110 / 112。本服務僅供輔助提醒，不提供緊急救援。</p>
   </div>
 
 </div>
 
 <script>
-  // LIFF ID 統一從後端 /api/config 拿,不在前端硬編碼
   var liffIdPromise = fetch('/api/config').then(function(r) {
     if (!r.ok) throw new Error('config failed: ' + r.status);
     return r.json();
   }).then(function(c) { return c.liff_id || ''; }).catch(function() { return ''; });
 
-  // CTA 按鈕點擊 → 觸發 LINE Pay / 藍新付款
-  document.querySelectorAll('.cta-button').forEach(function(btn) {
+  document.querySelectorAll('.cta-button[data-plan]').forEach(function(btn) {
     btn.addEventListener('click', async function(e) {
       e.preventDefault();
       var plan = this.getAttribute('data-plan');

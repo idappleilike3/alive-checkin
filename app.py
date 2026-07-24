@@ -154,24 +154,25 @@ DEFAULT_STATE = {
 }
 
 PLAN_LIMITS = {
-    "free": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
-    "trial": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
-    "paid_199": {"contact_limit": 4, "friend_location_limit": 4, "daily_reminders": 2, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
-    "paid_199_year": {"contact_limit": 6, "friend_location_limit": 6, "daily_reminders": 2, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
-    "paid_399": {"contact_limit": 15, "friend_location_limit": 15, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
+    # 產品政策：SOS／基本 1 位守護人通知＝全方案開放；799 解鎖「更完整守護」
+    "free": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "core_guardian_alert_limit": 1, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
+    "trial": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "core_guardian_alert_limit": 1, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
+    "paid_199": {"contact_limit": 4, "friend_location_limit": 4, "daily_reminders": 2, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 2, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
+    "paid_199_year": {"contact_limit": 6, "friend_location_limit": 6, "daily_reminders": 2, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 2, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
+    "paid_399": {"contact_limit": 15, "friend_location_limit": 15, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 2, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
     "paid_399_year": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0, "realtime_trial_days": 30},
-    "paid_799": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 1},
+    "paid_799": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 5, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 1},
     "paid_799_year": {"contact_limit": 50, "friend_location_limit": 50, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 5, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 3},
 }
 
 PAYMENT_PRODUCTS = {
-    # 🔴 v0.5 P0 更新:依蝦董 2026-07-17 最終版 16 章規格
+    # 產品政策：SOS 全方案開放；799 賣「更完整守護」（多位守護人／家人共守／守護群等）
     "paid_199": {"amount": 199, "billing_cycle": "monthly", "duration_days": 30, "display_name": "199 平安版(月)", "tagline": "每天提醒自己簽到,讓自己安心"},
     "paid_199_year": {"amount": 1680, "billing_cycle": "yearly", "duration_days": 365, "display_name": "199 平安版(年)", "tagline": "每天提醒自己簽到,讓自己安心"},
     "paid_399": {"amount": 399, "billing_cycle": "monthly", "duration_days": 30, "display_name": "399 安心版(月)", "tagline": "讓家人隨時知道你在哪,即時追蹤定位"},
     "paid_399_year": {"amount": 3680, "billing_cycle": "yearly", "duration_days": 365, "display_name": "399 安心版(年)", "tagline": "讓家人隨時知道你在哪,即時追蹤定位"},
-    "paid_799": {"amount": 799, "billing_cycle": "monthly", "duration_days": 30, "display_name": "799 守護版(月)", "tagline": "全家守護網絡 + LINE 預警 + SOS 緊急求救"},
-    "paid_799_year": {"amount": 7200, "billing_cycle": "yearly", "duration_days": 365, "display_name": "799 守護版(年)", "tagline": "全家 50 人守護網絡 + LINE 預警 + SOS 緊急求救 + 守護群"},
+    "paid_799": {"amount": 799, "billing_cycle": "monthly", "duration_days": 30, "display_name": "799 守護版(月)", "tagline": "更完整守護：最多 5 位守護人＋家人共同守護＋守護群"},
+    "paid_799_year": {"amount": 7200, "billing_cycle": "yearly", "duration_days": 365, "display_name": "799 守護版(年)", "tagline": "更完整守護：最多 5 位守護人＋家人共同守護＋最多 3 個守護群"},
 }
 
 RICH_MENU_COMMANDS = [
@@ -813,15 +814,21 @@ def get_or_create_interaction_state(profile):
     return profile["interaction_state"]
 
 
-def contact_is_bound_guardian(contact):
-    """對方是否已透過 LINE 綁定／同意成為守護人。"""
+def contact_is_bound_guardian(contact, owner_line_user_id=None):
+    """對方是否已透過 LINE 邀請（invite_from）綁定／同意成為守護人。
+
+    表單新增聯絡人時 payload 常帶本人 line_user_id（僅供 API 認證），
+    不可把「本人 ID 誤寫進聯絡人」當成已綁定守護人。
+    """
     if not isinstance(contact, dict):
         return False
-    return bool(
-        get_contact_line_id(contact)
-        or contact.get("binding_status") == "accepted"
-        or contact.get("consent_status") == "accepted"
-    )
+    lid = get_contact_line_id(contact)
+    owner = str(owner_line_user_id or "").strip()
+    if lid and owner and lid == owner:
+        return False
+    if contact.get("binding_status") == "accepted" or contact.get("consent_status") == "accepted":
+        return bool(lid) and (not owner or lid != owner)
+    return bool(lid)
 
 
 def contact_has_guardian_profile(contact):
@@ -831,10 +838,44 @@ def contact_has_guardian_profile(contact):
     return bool((contact.get("name") or "").strip() and (contact.get("relationship") or "").strip())
 
 
+def scrub_self_line_ids_on_contacts(profile):
+    """清除誤把本人 line_user_id 寫進聯絡人的假綁定（表單 add 污染）。回傳是否有變更。"""
+    if not isinstance(profile, dict):
+        return False
+    owner = str(profile.get("line_user_id") or "").strip()
+    if not owner:
+        return False
+    changed = False
+    for contact in profile.get("contacts") or []:
+        if not isinstance(contact, dict):
+            continue
+        lid = get_contact_line_id(contact)
+        if not lid or lid != owner:
+            continue
+        # 本人 ID 不應出現在守護人 LINE 欄；真正綁定只走 bind_emergency_contact
+        if contact.get("line_user_id"):
+            contact["line_user_id"] = ""
+            changed = True
+        if contact.get("line_id"):
+            contact["line_id"] = ""
+            changed = True
+        if contact.get("binding_status") in ("accepted", "pending"):
+            contact["binding_status"] = "unbound"
+            changed = True
+        if contact.get("consent_status") == "accepted":
+            contact["consent_status"] = "pending"
+            changed = True
+    return changed
+
+
 def profile_has_guardian(profile):
     """使用者是否已有至少 1 位守護人（資料或 LINE 綁定）。"""
     contacts = (profile or {}).get("contacts") or []
-    return any(contact_has_guardian_profile(c) or contact_is_bound_guardian(c) for c in contacts)
+    owner = str((profile or {}).get("line_user_id") or "").strip()
+    return any(
+        contact_has_guardian_profile(c) or contact_is_bound_guardian(c, owner)
+        for c in contacts
+    )
 
 
 def profile_setup_completed(profile):
@@ -1002,6 +1043,8 @@ def compute_streak_days(history, today):
 
 def build_status(profile, state=None):
     profile = {**DEFAULT_PROFILE, **profile}
+    scrub_self_line_ids_on_contacts(profile)
+    owner_id = str(profile.get("line_user_id") or "").strip()
     now = datetime.now()
     last = parse_last_checkin(profile.get("last_check_in"))
     grace_hours = int(profile.get("grace_hours") or 36)
@@ -1060,20 +1103,21 @@ def build_status(profile, state=None):
         "contacts": profile.get("contacts", []),
         "contact_count": len(profile.get("contacts") or []),
         "bound_guardian_count": sum(
-            1 for c in (profile.get("contacts") or []) if contact_is_bound_guardian(c)
+            1 for c in (profile.get("contacts") or []) if contact_is_bound_guardian(c, owner_id)
         ),
         "core_guardian_count": sum(
             1
             for c in (profile.get("contacts") or [])
-            if contact_is_bound_guardian(c) and bool(c.get("is_primary"))
+            if contact_is_bound_guardian(c, owner_id) and bool(c.get("is_primary"))
         ),
         "general_guardian_count": sum(
             1
             for c in (profile.get("contacts") or [])
-            if contact_is_bound_guardian(c) and not bool(c.get("is_primary"))
+            if contact_is_bound_guardian(c, owner_id) and not bool(c.get("is_primary"))
         ),
         "bound_guardians": [
             {
+                "id": str(c.get("id") or "").strip(),
                 "name": str(c.get("name") or "").strip(),
                 "line_user_id": get_contact_line_id(c),
                 "relationship": str(c.get("relationship") or "").strip(),
@@ -1084,7 +1128,7 @@ def build_status(profile, state=None):
                 "role": "核心" if c.get("is_primary") else "一般",
             }
             for c in (profile.get("contacts") or [])
-            if contact_is_bound_guardian(c)
+            if contact_is_bound_guardian(c, owner_id)
         ],
         "profile_contact_count": sum(
             1 for c in (profile.get("contacts") or []) if contact_is_profile_complete(c)
@@ -1115,14 +1159,7 @@ def build_status(profile, state=None):
         "realtime_tracking": bool(plan_rules(profile).get("realtime_tracking", False)),
         "trajectory_days": int(plan_rules(profile).get("trajectory_days", 0)),
         "offline_sync_days": int(plan_rules(profile).get("offline_sync_days", 0)),
-        "sos_enabled": bool(
-            plan_rules(profile).get("sos_enabled", False)
-            and (
-                (profile.get("plan") or "trial") in ("free", "trial")
-                or paid_membership_is_active(profile)
-                or trial_active(profile)
-            )
-        ),
+        "sos_enabled": bool(plan_rules(profile).get("sos_enabled", True)),
         "dedicated_support": bool(plan_rules(profile).get("dedicated_support", False)),
         "realtime_trial_days": int(plan_rules(profile).get("realtime_trial_days", 0)),
         "core_guardian_alert_limit": plan_rules(profile).get("core_guardian_alert_limit", 1),
@@ -1743,13 +1780,13 @@ def validate_contact_payload(contact, existing=None, contact_limit=10):
     if errors:
         return False, errors, None
 
+    # 注意：payload 的 line_user_id 多半是「會員本人」認證欄，不是守護人 LINE。
+    # 表單新增／編輯不可由此寫入 LINE 綁定；真正綁定只走 bind_emergency_contact(invite_from)。
     cleaned = {
         "name": name,
         "relationship": relationship,
         "phone": phone,
         "email": email,
-        "line_user_id": str(contact.get("line_user_id") or "").strip(),
-        "binding_status": str(contact.get("binding_status") or "unbound"),
         "is_primary": bool(contact.get("is_primary", False)),
         "notify_methods": contact.get("notify_methods") or ["line"],
         "available_time": str(contact.get("available_time") or "").strip(),
@@ -1776,6 +1813,8 @@ def complete_guardian_contact(contact):
 def get_contacts(data_file, line_user_id=None):
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
+    if scrub_self_line_ids_on_contacts(profile):
+        save_state(data_file, state)
     return {
         "line_user_id": profile.get("line_user_id"),
         "contacts": profile.get("contacts", []),
@@ -1819,6 +1858,11 @@ def add_single_contact(data_file, line_user_id, contact_payload):
     cleaned["id"] = new_id
     cleaned["created_at"] = now
     cleaned["updated_at"] = now
+    # 表單路徑：绝不写入 LINE 绑定栏（避免把本人 line_user_id 当成守护人）
+    cleaned["line_user_id"] = ""
+    cleaned["line_id"] = ""
+    cleaned["binding_status"] = "unbound"
+    cleaned["consent_status"] = "pending"
     # primary 邏輯:設為主要時自動取消其他
     if cleaned["is_primary"]:
         for c in existing:
@@ -1826,6 +1870,7 @@ def add_single_contact(data_file, line_user_id, contact_payload):
             c["updated_at"] = now
     existing.append(cleaned)
     profile["contacts"] = existing
+    ensure_onboarding_completed_flag(profile)
     save_state(data_file, state)
     return {"contact": cleaned, "contacts": existing, "contact_limit": limit}, 200
 
@@ -1857,6 +1902,27 @@ def update_single_contact(data_file, line_user_id, contact_id, contact_payload):
     cleaned["id"] = contact_id
     cleaned["created_at"] = merged_payload["created_at"]
     cleaned["updated_at"] = now
+    # 保留既有 LINE 邀請綁定欄；表單編輯不可覆寫／不可把本人 ID 寫入
+    prev = existing[idx]
+    for key in (
+        "line_user_id",
+        "line_id",
+        "binding_status",
+        "consent_status",
+        "accepted_at",
+        "invited_by",
+        "notify_methods",
+    ):
+        if key in prev and key not in cleaned:
+            cleaned[key] = prev.get(key)
+        elif key in ("line_user_id", "line_id", "binding_status", "consent_status", "accepted_at", "invited_by"):
+            cleaned[key] = prev.get(key)
+    owner = str(line_user_id or "").strip()
+    if get_contact_line_id(cleaned) == owner:
+        cleaned["line_user_id"] = ""
+        cleaned["line_id"] = ""
+        if cleaned.get("binding_status") == "accepted":
+            cleaned["binding_status"] = "unbound"
     # primary 邏輯
     if cleaned["is_primary"]:
         for i, c in enumerate(existing):
@@ -2097,7 +2163,7 @@ def bind_emergency_contact(data_file, payload, config=None):
             inviter_name = inviter.get("display_name") or "使用者"
             guardian_name = contact_display_name or "守護人"
             # 綁定後重新計算核心／一般人數（primary = 核心）
-            bound_rows = [c for c in contacts if contact_is_bound_guardian(c)]
+            bound_rows = [c for c in contacts if contact_is_bound_guardian(c, inviter_id)]
             core_n = sum(1 for c in bound_rows if c.get("is_primary"))
             # 若尚無 primary，第一位視為核心
             if bound_rows and core_n == 0:
@@ -2827,11 +2893,23 @@ def trigger_sos(data_file, payload, config=None):
         return {"error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
 
     limit = int(rules.get("core_guardian_alert_limit") or 1)
-    contacts = sorted(profile.get("contacts") or [], key=lambda item: int(item.get("priority") or 9999))
-    line_contacts = [
-        contact for contact in contacts
-        if contact.get("line_id") and "line" in (contact.get("notify_methods") or ["line"])
-    ][:limit]
+    # 核心守護人（is_primary）優先收到 SOS；其餘依 priority
+    contacts = sorted(
+        profile.get("contacts") or [],
+        key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
+    )
+    line_contacts = []
+    for contact in contacts:
+        target = contact.get("line_id") or contact.get("line_user_id")
+        if not target:
+            continue
+        if "line" not in (contact.get("notify_methods") or ["line"]):
+            continue
+        row = dict(contact)
+        row["line_id"] = target
+        line_contacts.append(row)
+        if len(line_contacts) >= limit:
+            break
 
     active_group_ids = []
     if rules.get("guardian_group_limit"):
@@ -3004,6 +3082,84 @@ def admin_update_user_plan(data_file, payload):
     status["preserved_contacts"] = len(preserved_contacts)
     status["preserved_friends"] = len(preserved_friends)
     status["preserved_guardian_groups"] = len(preserved_groups)
+    return status, 200
+
+
+def admin_set_core_guardian(data_file, payload):
+    """後台指定／取消核心守護人（is_primary）。可同時指定多位，上限依方案 core_guardian_alert_limit。"""
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if not line_user_id:
+        return {"error": "missing line_user_id"}, 400
+    contact_id = str(payload.get("contact_id") or "").strip()
+    contact_line_id = str(
+        payload.get("contact_line_user_id") or payload.get("guardian_line_user_id") or ""
+    ).strip()
+    if not contact_id and not contact_line_id:
+        return {"error": "missing contact_id or contact_line_user_id"}, 400
+    make_core = payload.get("is_primary")
+    if make_core is None:
+        make_core = True
+    make_core = bool(make_core)
+
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if not profile:
+        return {"error": "member not found"}, 404
+    contacts = list(profile.get("contacts") or [])
+    if not contacts:
+        return {"error": "no contacts"}, 400
+
+    target_idx = None
+    for i, c in enumerate(contacts):
+        cid = str(c.get("id") or "")
+        lid = str(c.get("line_id") or c.get("line_user_id") or "")
+        if contact_id and cid == contact_id:
+            target_idx = i
+            break
+        if contact_line_id and lid == contact_line_id:
+            target_idx = i
+            break
+    if target_idx is None:
+        return {"error": "contact_not_found"}, 404
+
+    limit = int(plan_rules(profile).get("core_guardian_alert_limit") or 1)
+    now = iso_now()
+    if make_core:
+        contacts[target_idx]["is_primary"] = True
+        contacts[target_idx]["updated_at"] = now
+        # 超過方案核心人數時，依 priority 保留較前面的核心
+        core_idxs = [
+            i for i, c in enumerate(contacts)
+            if bool(c.get("is_primary"))
+        ]
+        if len(core_idxs) > limit:
+            core_idxs_sorted = sorted(
+                core_idxs,
+                key=lambda i: int(contacts[i].get("priority") or 9999),
+            )
+            keep = set(core_idxs_sorted[:limit])
+            # 確保剛指定的目標一定留下
+            if target_idx not in keep:
+                keep = set(core_idxs_sorted[: max(0, limit - 1)] + [target_idx])
+                keep = set(list(keep)[:limit])
+            for i, c in enumerate(contacts):
+                if bool(c.get("is_primary")) and i not in keep:
+                    c["is_primary"] = False
+                    c["updated_at"] = now
+    else:
+        contacts[target_idx]["is_primary"] = False
+        contacts[target_idx]["updated_at"] = now
+        # 不可全部沒有核心：若無人是核心，把順位最高者補回
+        if contacts and not any(bool(c.get("is_primary")) for c in contacts):
+            ranked = sorted(range(len(contacts)), key=lambda i: int(contacts[i].get("priority") or 9999))
+            contacts[ranked[0]]["is_primary"] = True
+            contacts[ranked[0]]["updated_at"] = now
+
+    profile["contacts"] = contacts
+    save_state(data_file, state)
+    status = build_status(profile, state)
+    status["ok"] = True
+    status["updated_contact"] = contacts[target_idx]
     return status, 200
 
 
@@ -3462,6 +3618,8 @@ def admin_summary(data_file, config=None):
             guardian_id = get_contact_line_id(contact)
             if not guardian_id:
                 continue
+            if guardian_id == inviter_id:
+                continue
             invite_edges.append(
                 {
                     "inviter_line_user_id": inviter_id,
@@ -3668,7 +3826,10 @@ def send_due_reminders(config):
         )
         rules = plan_rules(profile)
         alert_limit = int(rules.get("core_guardian_alert_limit") or 1)
-        contacts = sorted(profile.get("contacts") or [], key=lambda item: int(item.get("priority") or 9999))
+        contacts = sorted(
+            profile.get("contacts") or [],
+            key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
+        )
         line_contacts = [
             contact for contact in contacts
             if (contact.get("line_id") or contact.get("line_user_id"))
@@ -4060,7 +4221,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724aq",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724as",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -4376,7 +4537,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724aq",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724as",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -4410,6 +4571,10 @@ def create_app(config=None):
             if isinstance(data, dict):
                 data["auto_registered"] = True
             return jsonify(data)
+        dirty = scrub_self_line_ids_on_contacts(profile)
+        dirty = ensure_onboarding_completed_flag(profile) or dirty
+        if dirty:
+            save_state(app.config["DATA_FILE"], state)
         return jsonify(build_status(profile, state))
 
     @app.post("/api/line/register")
@@ -6110,6 +6275,14 @@ def create_app(config=None):
         data, code = admin_update_user_plan(app.config["DATA_FILE"], request.get_json(silent=True) or {})
         return jsonify(data), code
 
+    @app.post("/api/admin/set-core-guardian")
+    def admin_set_core_guardian_api():
+        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
+        if not admin_allowed(app.config, password):
+            return jsonify({"error": "unauthorized"}), 401
+        data, code = admin_set_core_guardian(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        return jsonify(data), code
+
     return app
 
 
@@ -6284,6 +6457,11 @@ class MiniClient:
             if not admin_allowed(self.app.config, params.get("password", "")):
                 return MiniResponse({"error": "unauthorized"}, 401)
             body, code = admin_update_user_plan(self.app.config["DATA_FILE"], payload)
+            return MiniResponse(body, code)
+        if route == "/api/admin/set-core-guardian":
+            if not admin_allowed(self.app.config, params.get("password", "")):
+                return MiniResponse({"error": "unauthorized"}, 401)
+            body, code = admin_set_core_guardian(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
         if route == "/api/admin/support-reply":
             if not admin_allowed(self.app.config, params.get("password", "")):
@@ -6531,6 +6709,11 @@ class MiniApp:
                     if not admin_allowed(config, params.get("password", "")):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = admin_update_user_plan(data_file, payload)
+                    return handler.send_json(data, code)
+                if route == "/api/admin/set-core-guardian":
+                    if not admin_allowed(config, params.get("password", "")):
+                        return handler.send_json({"error": "unauthorized"}, 401)
+                    data, code = admin_set_core_guardian(data_file, payload)
                     return handler.send_json(data, code)
                 handler.send_json({"error": "not found"}, 404)
 
