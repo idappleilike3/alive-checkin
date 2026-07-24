@@ -824,6 +824,12 @@
       font-weight: 750;
       transition: transform 0.16s ease, background 0.16s ease;
     }
+    .action-btn.primary {
+      background: var(--button);
+      color: #fff;
+      border-color: transparent;
+      box-shadow: var(--button-shadow);
+    }
     .action-btn:active { transform: translateY(1px); }
     .plan-strip {
       display: grid;
@@ -1798,9 +1804,9 @@
       font-weight: 800;
     }
     .member-data-actions .action-btn.primary {
-      background: #087f57;
+      background: var(--button);
       color: #fff;
-      border-color: #087f57;
+      border-color: transparent;
     }
     .guardian-group-card {
       display: grid;
@@ -2224,18 +2230,88 @@
     .danger { color: #dc2626; }
     .gray { color: #8a8f98; }
     body.classic {
-      --text: #162033; --muted: #667085; --panel: #f7f8fb; --line: #e3e7ef;
-      --input: #fff; --soft: #eef9f0; --accent: #16a34a; --today: #2563eb;
-      --checked: #22c55e; --button: linear-gradient(135deg,#22c55e,#16a34a);
-      --button-shadow: 0 14px 32px rgba(34,197,94,0.32);
+      --text: #14532d; --muted: #3f6212; --panel: #f0fdf4; --line: #86efac;
+      --input: #ffffff; --soft: #dcfce7; --accent: #15803d; --today: #166534;
+      --checked: #16a34a; --button: linear-gradient(135deg,#22c55e,#15803d);
+      --button-shadow: 0 14px 32px rgba(21,128,61,0.30);
       --glow-a: radial-gradient(circle, rgba(134,239,172,0.55), transparent 62%);
-      --glow-b: radial-gradient(circle, rgba(147,197,253,0.42), transparent 64%);
-      --doodle: #22c55e; --ring: rgba(34,197,94,0.55);
-      --theme-active: #ecfdf5; --badge-bg: #f0fdf4; --badge-text: #166534;
-      --pill: #dcfce7; --pill-text: #166534;
-      background: #e9eef5; color: var(--text);
+      --glow-b: radial-gradient(circle, rgba(74,222,128,0.28), transparent 64%);
+      --doodle: #16a34a; --ring: rgba(22,163,74,0.55);
+      --theme-active: #ecfdf5; --badge-bg: #dcfce7; --badge-text: #14532d;
+      --pill: #bbf7d0; --pill-text: #14532d;
+      background: #e8f5e9; color: var(--text);
     }
-    body.classic .app { background: rgba(255,255,255,0.88); }
+    body.classic .app { background: rgba(255,255,255,0.92); border: 1px solid #bbf7d0; }
+    /* Classic 綠系面板／卡片／主按鈕（與 cute 粉系明確區隔） */
+    body.classic .calendar-box,
+    body.classic .settings[aria-label="會員個人中心"],
+    body.classic .settings[aria-label="緊急聯絡人"] {
+      background: linear-gradient(180deg, #f0fdf4 0%, #ecfdf5 100%);
+      border: 2px solid #86efac;
+      color: #14532d;
+    }
+    body.classic .member-center-toggle { color: #14532d; }
+    body.classic .member-center-toggle span { color: #15803d; }
+    body.classic .member-center-details { border-top-color: #86efac; }
+    body.classic .member-profile-row {
+      background: linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%);
+      border-color: #86efac;
+    }
+    body.classic .member-profile-row strong,
+    body.classic .member-data-section h3,
+    body.classic .member-data-row strong,
+    body.classic .calendar-box strong,
+    body.classic .settings-title {
+      color: #14532d;
+    }
+    body.classic .member-data-section,
+    body.classic .member-data-row,
+    body.classic .member-advanced-note,
+    body.classic .setting-choice,
+    body.classic .guardian-details-form {
+      background: rgba(255, 255, 255, 0.88);
+      border-color: #bbf7d0;
+      color: #14532d;
+    }
+    body.classic .member-data-row + .member-data-row { border-top-color: #bbf7d0; }
+    body.classic .member-upgrade-btn {
+      background: linear-gradient(135deg, #22c55e 0%, #16a34a 48%, #15803d 100%);
+      box-shadow: 0 10px 22px rgba(21, 128, 61, 0.32);
+    }
+    body.classic .member-upgrade-btn:focus-visible {
+      outline: 3px solid rgba(34, 197, 94, 0.35);
+      outline-offset: 2px;
+    }
+    body.classic .action-btn.primary,
+    body.classic .member-data-actions .action-btn.primary,
+    body.classic .guardian-actions .action-btn.primary {
+      background: linear-gradient(135deg, #22c55e, #15803d);
+      color: #fff;
+      border-color: transparent;
+      box-shadow: 0 8px 18px rgba(21, 128, 61, 0.22);
+    }
+    body.classic .plan-toggle {
+      background: linear-gradient(135deg, #166534 0%, #15803d 54%, #22c55e 100%);
+      border-color: #86efac;
+      color: #ffffff;
+      box-shadow: 0 14px 28px rgba(21, 128, 61, 0.24);
+    }
+    body.classic .settings[aria-label="緊急聯絡人"] .contact-primary {
+      background: linear-gradient(135deg, #dcfce7 0%, #f0fdf4 100%);
+      border-color: #22c55e;
+      color: #14532d;
+    }
+    body.classic .settings[aria-label="緊急聯絡人"] .contact-primary .helper {
+      background: #fff;
+      border-color: #bbf7d0;
+      color: #3f6212;
+    }
+    body.classic .settings[aria-label="緊急聯絡人"] .contact-primary .price-btn,
+    body.classic .settings[aria-label="緊急聯絡人"] .scan-qr-btn {
+      background: linear-gradient(135deg, #22c55e 0%, #15803d 100%);
+      color: #ffffff;
+      border-color: transparent;
+    }
     body.neon {
       --text: #ffffff; --muted: #c7e2eb; --panel: #182638; --line: #4dbbd1;
       --input: #1b2a3d; --soft: #20384a; --accent: #67e8f9; --today: #facc15;
@@ -2768,6 +2844,14 @@
       border-color: transparent;
       box-shadow: 0 12px 26px rgba(56, 189, 248, 0.28);
     }
+    body.cute .member-upgrade-btn {
+      background: linear-gradient(135deg, #fb7185, #db2777);
+      box-shadow: 0 10px 22px rgba(219, 39, 119, 0.28);
+    }
+    body.cute .member-upgrade-btn:focus-visible {
+      outline: 3px solid rgba(219, 39, 119, 0.35);
+      outline-offset: 2px;
+    }
     body.cute .calendar-box,
     body.cute .settings[aria-label="會員個人中心"],
     body.cute .settings[aria-label="緊急聯絡人"] {
@@ -2976,6 +3060,31 @@
     .mvp-action.start { background: #2563eb; }
     .mvp-action.stop { background: #6b7280; }
     .mvp-action.primary { background: #16a34a; }
+    .mvp-sos-safe-zone {
+      margin-top: 22px;
+      padding: 16px;
+      border: 2px dashed #f87171;
+      border-radius: 14px;
+      background: #fff7f7;
+    }
+    .mvp-sos-safe-zone h3 {
+      margin: 0 0 8px;
+      color: #991b1b;
+      font-size: 18px;
+      font-weight: 950;
+    }
+    .mvp-sos-safe-zone .helper {
+      margin: 0 0 12px;
+      color: #7f1d1d;
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.55;
+    }
+    .mvp-action.sos-safe {
+      width: 100%;
+      background: #b91c1c;
+      box-shadow: 0 8px 18px rgba(185, 28, 28, 0.28);
+    }
     .mvp-contact-list { display: grid; gap: 10px; margin-top: 8px; }
     .mvp-contact-btn {
       display: flex;
@@ -3292,8 +3401,8 @@
       </div>
       <div class="mvp-reward-card" id="mvpRewardInviteCard" aria-label="綁定守護人獎勵">
         <div>
-          <strong>完成綁定一位，二選一獎勵</strong>
-          <span>免費延長 7 天，或多 1 位守護人名額 30 天</span>
+          <strong>每成功邀請 1 位守護人</strong>
+          <span>免費延長 7 天；方案到期後守護人與聯絡人資料保留 30 天</span>
         </div>
         <button class="mvp-reward-btn share-contact-invite-btn" type="button">一鍵邀請守護人</button>
       </div>
@@ -3336,6 +3445,12 @@
       </div>
       <div class="guardian-group-link-row">
         <button class="guardian-group-help-btn" type="button" onclick="showTab('guardians')">查看守護群教學</button>
+      </div>
+      <!-- SOS：與安全守護分開區塊，需確認後才送出；勿放在會員中心避免誤觸 -->
+      <div class="mvp-sos-safe-zone" id="mvpGuardSosZone" aria-label="SOS 緊急求助（需確認）">
+        <h3>SOS 緊急求助</h3>
+        <p class="helper">此區與上方「安全守護」分開。點擊後會再要求連按確認，才會通知已綁定的守護人。</p>
+        <button class="mvp-action sos-safe" id="mvpGuardSosBtn" type="button">開啟 SOS（需確認）</button>
       </div>
     </section>
 
@@ -3690,10 +3805,15 @@
           <div class="member-limit-banner" id="memberGuardianLimitBanner" hidden>
             <strong id="memberLimitTitle">你已經有 1 位守護人囉</strong>
             <p id="memberLimitBody">免費／試用方案最多 1 位。升級可新增更多守護人。</p>
-            <button class="action-btn primary" id="memberLimitUpgradeBtn" type="button">立即升級</button>
+            <div class="member-limit-actions" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
+              <button class="action-btn primary" id="memberInviteMoreGuardianBtn" type="button">再邀請一位守護人</button>
+              <button class="action-btn" id="memberLimitUpgradeBtn" type="button">立即升級</button>
+            </div>
+            <p class="helper" id="memberInviteRewardHint" style="margin-top:8px;">每成功邀請 1 位新守護人 → 免費延長 7 天；方案到期後守護人與聯絡人資料保留 30 天。</p>
           </div>
-          <div class="member-data-actions">
-            <button class="action-btn primary" id="memberAddGuardianBtn" type="button">➕ 新增守護人</button>
+          <div class="member-data-actions" id="memberGuardianInviteActions">
+            <button class="action-btn primary share-contact-invite-btn" id="memberReinviteGuardianBtn" type="button">一鍵邀請守護人</button>
+            <button class="action-btn" id="memberAddGuardianBtn" type="button">➕ 新增守護人資料</button>
           </div>
         </div>
 
@@ -3790,12 +3910,6 @@
             <span>資料尚未完成時，透過 LINE 提醒我一次</span>
           </label>
           <button class="action-btn" id="saveGuardianDetailsBtn" type="button">儲存守護資料</button>
-        </div>
-
-        <div class="member-data-section sos-section" id="sosSection" hidden>
-          <h3>SOS 緊急求助</h3>
-          <div class="helper">所有方案都可使用。連續按 3 次後，會以 LINE 通知已綁定的守護人（含位置）。緊急聯絡人為電話備援，請自行撥打。</div>
-          <button class="sos-btn" id="sosBtn" type="button">開啟 SOS 緊急求助</button>
         </div>
 
         <div class="member-data-section" id="guardianGroupsSection" hidden>
@@ -3937,11 +4051,11 @@
       <div class="helper">分享邀請給聯絡人後，對方只要用 LINE 同意綁定，就能成為你的守護人。</div>
       <div class="pricing-grid">
         <article class="price-card">
-          <div class="price-head"><strong>完成 1 位綁定</strong><span>二選一獎勵</span></div>
+          <div class="price-head"><strong>邀請守護人</strong><span>成功 +7 天</span></div>
           <ul>
-            <li>選項 A：免費延長 7 天</li>
-            <li>選項 B：多 1 位守護人名額 30 天</li>
-            <li>聯絡人需完成 LINE 綁定，獎勵才會生效</li>
+            <li>每成功邀請 1 位新守護人 → 免費延長 7 天</li>
+            <li>同一人重複綁定不會重複加碼</li>
+            <li>方案到期後，守護人與聯絡人資料保留 30 天</li>
           </ul>
           <button class="price-btn" id="shareContactInviteBtn" type="button">一鍵邀請守護人</button>
         </article>
@@ -5443,17 +5557,47 @@
       const atLimit = totalCount >= limit;
       const limitBanner = $("memberGuardianLimitBanner");
       if (limitBanner) {
-        limitBanner.hidden = !atLimit;
-        if (atLimit) {
+        // 已有 ≥1 位守護人時顯示橫幅（含再邀請），名額未滿也顯示以便再邀拿 +7 天
+        const showBanner = totalCount >= 1;
+        limitBanner.hidden = !showBanner;
+        if (showBanner) {
           const title = $("memberLimitTitle");
           const body = $("memberLimitBody");
           if (title) title.textContent = `你已經有 ${totalCount} 位守護人囉`;
-          if (body) body.textContent = `${planQuotaLabel(memberPlan)}最多 ${limit} 位。升級可新增更多守護人。`;
+          if (body) {
+            body.textContent = atLimit
+              ? `${planQuotaLabel(memberPlan)}最多 ${limit} 位。仍可點「再邀請」了解升級名額；成功邀請也可延長免費天數（需有名額）。`
+              : `${planQuotaLabel(memberPlan)}上限 ${limit} 位。再成功邀請 1 位新守護人可免費延長 7 天。`;
+          }
+          const upgradeBtn = $("memberLimitUpgradeBtn");
+          if (upgradeBtn) upgradeBtn.hidden = !atLimit;
         }
       }
       const addBtn = $("memberAddGuardianBtn");
-      if (addBtn) addBtn.textContent = atLimit ? "➕ 名額已滿（可升級）" : "➕ 新增守護人";
+      if (addBtn) addBtn.textContent = atLimit ? "➕ 名額已滿（可升級）" : "➕ 新增守護人資料";
+      const reinviteBtn = $("memberReinviteGuardianBtn");
+      if (reinviteBtn) {
+        reinviteBtn.hidden = false;
+        reinviteBtn.textContent = totalCount >= 1 ? "再邀請一位守護人" : "一鍵邀請守護人";
+      }
+      const inviteMoreBtn = $("memberInviteMoreGuardianBtn");
+      if (inviteMoreBtn) {
+        inviteMoreBtn.textContent = atLimit ? "再邀請（需升級名額）" : "再邀請一位守護人";
+      }
 
+      $("memberBillingExpiry").textContent =
+        status.plan_expires_text
+        || status.paid_until
+        || (memberPlan === "trial"
+          ? (status.trial_days_text || `試用中｜剩 ${status.trial_days_left ?? 7} 天`)
+          : "尚未設定");
+      if (status.contacts_retain_days_left != null && status.contacts_retain_until) {
+        const retainHint = $("memberInviteRewardHint");
+        if (retainHint && Number(status.contacts_retain_days_left) >= 0) {
+          retainHint.textContent =
+            `方案已到期：守護人與聯絡人資料尚可保留約 ${status.contacts_retain_days_left} 天（之後將軟封存）。每成功邀請 1 位新守護人仍可延長免費使用。`;
+        }
+      }
       $("memberGuardianList").innerHTML = renderContactManageRows(guardians, "尚未綁定守護人");
       const emergencyList = $("memberEmergencyList");
       if (emergencyList) {
@@ -5499,7 +5643,6 @@
 
       const isPaid = String(status.plan || "").startsWith("paid_");
       $("memberUpgradeBtn").hidden = isPaid;
-      $("sosSection").hidden = false;
       renderSosAccess();
       const guardianGroupIds = status.guardian_group_ids || [];
       const guardianGroups = status.guardian_groups || [];
@@ -7012,7 +7155,24 @@
       if (list) list.scrollIntoView({ behavior: "smooth", block: "center" });
     }
 
-    async     function openAddGuardianFromMember() {
+    function inviteMoreGuardiansFromMember() {
+      if (!requireLineMembership("邀請守護人前，請先完成 LINE 登入綁定。")) return;
+      const status = currentStatusData || {};
+      const limit = Number(status.contact_limit || currentContactLimit || 1);
+      const totalCount = contactsByRole("guardian").length;
+      if (totalCount >= limit) {
+        const goUpgrade = confirm(
+          `你已經有 ${totalCount} 位守護人囉（目前方案上限 ${limit} 位）。\n\n` +
+          `升級方案可增加守護人名額；每成功邀請 1 位新守護人也可免費延長 7 天。\n\n` +
+          `按「確定」查看方案與價目。`
+        );
+        if (goUpgrade) openUpgradePlans();
+        return;
+      }
+      openShareInvitePage("member");
+    }
+
+    async function openAddGuardianFromMember() {
       if (!requireLineMembership("新增守護人前，請先完成 LINE 登入綁定。")) return;
       if (typeof showTab === "function") showTab("member");
       setMemberCenterExpanded(true);
@@ -7078,15 +7238,13 @@
     function renderSosAccess() {
       const enabled = hasActiveSosAccess();
       const fab = $("sosFab");
-      const sosSection = $("sosSection");
       const holdButton = $("sosHoldButton");
       const planStatus = $("sosPlanStatus");
       const modalMessage = $("sosModalMessage");
       const upgradeLink = $("sosUpgradeLink");
       const primaryLink = $("sosDialPrimary");
       const primary = primaryContactPhone();
-      if (fab) fab.hidden = true; // MVP 首頁已有緊急求助大按鈕
-      if (sosSection) sosSection.hidden = !enabled;
+      if (fab) fab.hidden = true; // MVP 首頁已有緊急求助大按鈕；安全守護區另有需確認入口
       if (primaryLink) {
         if (primary) {
           primaryLink.href = `tel:${primary.phone}`;
@@ -8499,6 +8657,8 @@
       if (guardBtn) guardBtn.addEventListener("click", openMvpGuardPanel);
       if (callBtn) callBtn.addEventListener("click", openMvpCallPanel);
       if (sosBtn) sosBtn.addEventListener("click", openSosModal);
+      const guardSosBtn = $("mvpGuardSosBtn");
+      if (guardSosBtn) guardSosBtn.addEventListener("click", openSosModal);
       if (guardBack) guardBack.addEventListener("click", showMvpHomeOnly);
       if (callBack) callBack.addEventListener("click", showMvpHomeOnly);
       if (guardStart) guardStart.addEventListener("click", () => {
@@ -8715,6 +8875,14 @@
     $("memberUpgradeBtn").addEventListener("click", openUpgradePlans);
     const memberLimitUpgradeBtn = $("memberLimitUpgradeBtn");
     if (memberLimitUpgradeBtn) memberLimitUpgradeBtn.addEventListener("click", openUpgradePlans);
+    const memberInviteMoreGuardianBtn = $("memberInviteMoreGuardianBtn");
+    if (memberInviteMoreGuardianBtn) {
+      memberInviteMoreGuardianBtn.addEventListener("click", inviteMoreGuardiansFromMember);
+    }
+    const memberReinviteGuardianBtn = $("memberReinviteGuardianBtn");
+    if (memberReinviteGuardianBtn) {
+      memberReinviteGuardianBtn.addEventListener("click", inviteMoreGuardiansFromMember);
+    }
     document.querySelectorAll(".price-btn[data-plan]").forEach((button) => {
       button.addEventListener("click", () => startPlanCheckout(button.dataset.plan, button));
     });
@@ -8754,7 +8922,6 @@
     if (memberShareGuardianBtn) memberShareGuardianBtn.addEventListener("click", shareContactInvite);
     $("guardianDetailsContact").addEventListener("change", populateGuardianDetailsForm);
     $("saveGuardianDetailsBtn").addEventListener("click", saveGuardianDetails);
-    $("sosBtn").addEventListener("click", triggerSos);
     $("guardianGroupsList").addEventListener("click", (event) => {
       const button = event.target.closest(".guardian-group-unbind");
       if (button) unbindGuardianGroup(button.dataset.groupId);

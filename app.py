@@ -3942,6 +3942,10 @@ def admin_update_user_plan(data_file, payload):
     if preserved_reminder_time:
         profile["reminder_time"] = preserved_reminder_time
 
+    # 付費／重新開通試用：取消 30 天軟保留倒數（資料續留）
+    if plan.startswith("paid_") or (plan == "trial" and trial_days_left(profile) > 0):
+        clear_contacts_retain_window(profile)
+
     save_state(data_file, state)
     status = build_status(profile, state)
     status["preserved_contacts"] = len(preserved_contacts)
@@ -4851,8 +4855,11 @@ def cleanup_expired_data(config):
     invite_cutoff = now - timedelta(days=7)
     notification_cutoff = now - timedelta(days=90)
     expired_locations_removed = 0
+    contacts_archived = 0
 
     for profile in state.get("users", {}).values():
+        if soft_archive_contacts_past_retain(profile, now):
+            contacts_archived += 1
         location = profile.get("location") or {}
         if not location:
             continue
@@ -4888,6 +4895,7 @@ def cleanup_expired_data(config):
         "expired_locations_removed": expired_locations_removed,
         "expired_invites_removed": invites_before - len(state["friend_invites"]),
         "old_notification_logs_removed": logs_before - len(state["notification_logs"]),
+        "contacts_archived_users": contacts_archived,
         "orders_removed": 0,
         "plans_downgraded": downgrade_result.get("downgraded", 0),
     }, 200
@@ -5507,7 +5515,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724bn",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724cg",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -5823,7 +5831,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724bn",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724cg",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
