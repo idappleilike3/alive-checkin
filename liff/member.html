@@ -570,8 +570,9 @@ function buildInviteText() {
 }
 
 async function shareGuardianInvite() {
-  // 產品路徑：只進專用 LINE 好友分享頁（shareTargetPicker）
-  location.assign("/liff/share-invite.html");
+  // 產品路徑：只進專用 LINE 好友分享頁；帶 return 回到會員中心
+  const params = new URLSearchParams({ return: "/#member", open: "member" });
+  location.assign(`/liff/share-invite.html?${params.toString()}`);
 }
 
 function openEditor(contactId, preferredRole) {

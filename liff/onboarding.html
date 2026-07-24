@@ -345,8 +345,9 @@ function renderStep() {
       </div>
     `;
     document.getElementById("shareInviteFirstBtn").addEventListener("click", () => {
-      // 產品路徑：只進專用 LINE 好友分享頁（shareTargetPicker）
-      location.assign("/liff/share-invite.html");
+      // 產品路徑：只進專用 LINE 好友分享頁；分享完回首頁
+      const params = new URLSearchParams({ return: "/#home", open: "home" });
+      location.assign(`/liff/share-invite.html?${params.toString()}`);
     });
   } else if (state.currentStep === 3) {
     const count = state.dailyReminders || 1;

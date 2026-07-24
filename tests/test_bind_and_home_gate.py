@@ -113,8 +113,11 @@ class BindAndHomeGateTests(unittest.TestCase):
         init_app = page[page.rindex("async function initApp()") : page.index("// ===== D01")]
         self.assertIn("homeReady || hasGuardians || setupDone", init_app)
         self.assertIn("syncInviteUiForBoundState(homeReady || hasGuardians)", init_app)
-        # 報平安／安全守護不得被 wantsInviteShare 帶走
-        self.assertIn('location.replace("/liff/share-invite.html")', init_app)
+        # 報平安／安全守護不得被 wantsInviteShare 帶走；一鍵邀請才進分享頁
+        self.assertTrue(
+            'location.replace("/liff/share-invite.html")' in init_app
+            or "buildShareInvitePageUrl(" in init_app
+        )
         self.assertIn("僅「一鍵邀請」", init_app)
 
     def test_form_add_does_not_copy_owner_line_id(self):
@@ -379,22 +382,131 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertIn("plan_expires_text", page)
         self.assertIn("方案到期（試用／訂閱）", page)
 
+    def test_reregister_preserves_trial_and_bindings(self):
+        """Re-login must NOT restart trial clock or wipe contacts."""
+        first, code1 = app_module.register_line_user(
+            self.data_file,
+            {"line_user_id": "U-persist", "display_name": "小孟"},
+        )
+        self.assertEqual(code1, 200)
+        started = first.get("trial_started_at")
+        self.assertTrue(started)
+
+        # Bind a guardian then re-register as if LIFF reopened.
+        app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-persist",
+                "contact_line_user_id": "U-guard-1",
+                "contact_display_name": "阿爸",
+            },
+            config={},
+        )
+        # Simulate clock advancing: mutate stored trial to a fixed past value.
+        state = app_module.load_state(self.data_file)
+        state["users"]["U-persist"]["trial_started_at"] = "2026-07-20T10:00:00"
+        state["users"]["U-persist"]["history"] = ["2026-07-21", "2026-07-22"]
+        app_module.save_state(self.data_file, state)
+
+        second, code2 = app_module.register_line_user(
+            self.data_file,
+            {"line_user_id": "U-persist", "display_name": "小孟"},
+        )
+        self.assertEqual(code2, 200)
+        self.assertTrue(second.get("existing_user"))
+        self.assertEqual(second.get("trial_started_at"), "2026-07-20T10:00:00")
+        self.assertEqual(second.get("trial_days_left"), app_module.trial_days_left(
+            {"trial_started_at": "2026-07-20T10:00:00", "plan": "trial"}
+        ))
+        contacts = second.get("contacts") or []
+        self.assertEqual(len(contacts), 1)
+        self.assertEqual(app_module.get_contact_line_id(contacts[0]), "U-guard-1")
+        self.assertIn("2026-07-21", second.get("history") or [])
+
+    def test_save_contacts_merges_binding_fields(self):
+        app_module.register_line_user(
+            self.data_file, {"line_user_id": "U-owner", "display_name": "主人"}
+        )
+        app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-owner",
+                "contact_line_user_id": "U-g1",
+                "contact_display_name": "阿媽",
+            },
+            config={},
+        )
+        state = app_module.load_state(self.data_file)
+        contact = state["users"]["U-owner"]["contacts"][0]
+        contact_id = contact["id"]
+
+        # Client payload omits LINE bind fields (common after form edit).
+        result, code = app_module.save_contacts(
+            self.data_file,
+            {
+                "line_user_id": "U-owner",
+                "contacts": [
+                    {
+                        "id": contact_id,
+                        "name": "阿媽改名",
+                        "relationship": "媽媽",
+                        "phone": "0911111111",
+                        "contact_role": "guardian",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(code, 200)
+        saved = result["contacts"][0]
+        self.assertEqual(saved["name"], "阿媽改名")
+        self.assertEqual(app_module.get_contact_line_id(saved), "U-g1")
+        self.assertEqual(saved.get("binding_status"), "accepted")
+
+
     def test_member_center_list_before_add_markers(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
-        self.assertIn("守護人（Guardian）", page)
-        self.assertIn("緊急聯絡人（Emergency Contact）", page)
+        self.assertIn("核心守護人", page)
         self.assertIn("memberGuardianQuotaLine", page)
         self.assertIn("memberGuardianLimitBanner", page)
         self.assertIn("memberEmergencySection", page)
         self.assertIn("你已經有", page)
-        self.assertIn("核心守護人", page)
-        self.assertIn("➕ 新增守護人", page)
+        self.assertIn("ensureSyncedContactData", page)
+        self.assertIn("contact_role", page)
+        # 不可再用 role（核心／一般）當成 contact_role
+        self.assertIn("不可讀 role", page)
+        self.assertIn("➕ 新增核心守護人", page)
+        self.assertIn("➕ 新增聯絡人", page)
         self.assertIn("名額已滿", page)
+        share = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
+        self.assertIn("完成，返回原位置", share)
+        self.assertIn("goNextStep", share)
+        self.assertIn("resolveReturnUrl", share)
         admin = (ROOT / "admin.html").read_text(encoding="utf-8")
         self.assertIn("membershipCell", admin)
         self.assertIn("免費剩幾天", admin)
         self.assertIn("核心／一般", admin)
         self.assertIn("資料可能因重啟遺失請掛磁碟", admin)
+
+    def test_contact_role_ignores_core_general_role_field(self):
+        """根因：role=核心／一般 被誤當 contact_role → 列表被濾空。"""
+        self.assertEqual(
+            app_module.resolve_contact_role({"role": "一般", "name": "阿媽"}),
+            "guardian",
+        )
+        self.assertEqual(
+            app_module.resolve_contact_role({"role": "核心", "name": "阿爸"}),
+            "guardian",
+        )
+        self.assertEqual(
+            app_module.resolve_contact_role({"contact_role": "emergency", "role": "核心"}),
+            "emergency",
+        )
+        normalized = app_module.normalize_contact(
+            {"name": "阿媽", "relationship": "媽媽", "phone": "0912345678", "role": "一般"},
+            0,
+        )
+        self.assertEqual(normalized["contact_role"], "guardian")
+        self.assertNotIn("role", normalized)
 
 
 if __name__ == "__main__":

@@ -158,14 +158,15 @@ DEFAULT_STATE = {
 
 PLAN_LIMITS = {
     # 產品政策：SOS／基本 1 位守護人通知＝全方案開放；799 解鎖「更完整守護」
-    "free": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "core_guardian_alert_limit": 1, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
-    "trial": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "core_guardian_alert_limit": 1, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
-    "paid_199": {"contact_limit": 4, "friend_location_limit": 4, "daily_reminders": 2, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 2, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
-    "paid_199_year": {"contact_limit": 6, "friend_location_limit": 6, "daily_reminders": 2, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 2, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
-    "paid_399": {"contact_limit": 15, "friend_location_limit": 15, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 2, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0},
-    "paid_399_year": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0, "realtime_trial_days": 30},
-    "paid_799": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 5, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 1},
-    "paid_799_year": {"contact_limit": 50, "friend_location_limit": 50, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 5, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 3},
+    # safety_guard_hours：免費／試用僅 1 小時；399＝1/3；799＝1/3/6/8
+    "free": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "core_guardian_alert_limit": 1, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0, "safety_guard_hours": [1]},
+    "trial": {"contact_limit": 1, "friend_location_limit": 1, "daily_reminders": 1, "channels": ["line"], "core_guardian_alert_limit": 1, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0, "safety_guard_hours": [1]},
+    "paid_199": {"contact_limit": 4, "friend_location_limit": 4, "daily_reminders": 2, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 2, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0, "safety_guard_hours": [1]},
+    "paid_199_year": {"contact_limit": 6, "friend_location_limit": 6, "daily_reminders": 2, "channels": ["line"], "location_mode": "snapshot_24h", "core_guardian_alert_limit": 2, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0, "safety_guard_hours": [1]},
+    "paid_399": {"contact_limit": 15, "friend_location_limit": 15, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 2, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0, "safety_guard_hours": [1, 3]},
+    "paid_399_year": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 2, "channels": ["line"], "location_mode": "realtime", "core_guardian_alert_limit": 3, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 0, "realtime_trial_days": 30, "safety_guard_hours": [1, 3]},
+    "paid_799": {"contact_limit": 25, "friend_location_limit": 25, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 5, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 1, "safety_guard_hours": [1, 3, 6, 8]},
+    "paid_799_year": {"contact_limit": 50, "friend_location_limit": 50, "daily_reminders": 3, "channels": ["line", "sms"], "location_mode": "full_guard", "core_guardian_alert_limit": 5, "realtime_tracking": False, "trajectory_days": 0, "offline_sync_days": 0, "sos_enabled": True, "guardian_group_limit": 3, "safety_guard_hours": [1, 3, 6, 8]},
 }
 
 PAYMENT_PRODUCTS = {
@@ -652,27 +653,58 @@ def _save_state_postgres(state):
         conn.commit()
 
 
+def _state_user_count(state):
+    users = (state or {}).get("users") or {}
+    return len(users) if isinstance(users, dict) else 0
+
+
+def _prefer_richer_state(primary, secondary):
+    """Prefer the snapshot that still has per-user records (avoid empty wipe)."""
+    p_count = _state_user_count(primary)
+    s_count = _state_user_count(secondary)
+    if p_count == 0 and s_count > 0:
+        return secondary
+    if s_count > p_count and p_count == 0:
+        return secondary
+    return primary if primary is not None else secondary
+
+
 def load_state(data_file):
-    """Load state from Postgres (preferred) or SQLite local cache."""
+    """Load state from Postgres (preferred) or SQLite local cache.
+
+    Never let an empty Postgres row / empty local cache clobber the richer side.
+    """
     if database_url():
         try:
             pg_state = _load_state_postgres()
-            if pg_state is not None and (pg_state.get("users") or pg_state.get("orders")):
+            local = None
+            try:
+                local = _load_state_sqlite(data_file)
+            except Exception:
+                local = None
+
+            if pg_state is not None and _state_user_count(pg_state) > 0:
                 # Keep a local mirror for ops/debug; never wipe Postgres on mirror fail.
                 try:
                     _save_state_sqlite(data_file, pg_state)
                 except OSError:
                     pass
                 return pg_state
-            # First boot / empty PG: seed from local SQLite if present
-            local = _load_state_sqlite(data_file)
-            if local.get("users") or local.get("orders") or local.get("guardian_groups"):
+
+            # PG empty / missing: seed from local if it has users (first boot after attach).
+            if local and (
+                _state_user_count(local) > 0
+                or local.get("orders")
+                or local.get("guardian_groups")
+            ):
                 try:
                     _save_state_postgres(local)
                 except Exception:
                     pass
                 return local
+
             if pg_state is not None:
+                # Empty durable row — still authoritative once seeded intentionally.
                 return pg_state
             return _hydrate_state({})
         except Exception:
@@ -682,9 +714,34 @@ def load_state(data_file):
 
 
 def save_state(data_file, state):
-    """Persist state to Postgres when configured; always mirror to SQLite when possible."""
+    """Persist state to Postgres when configured; always mirror to SQLite when possible.
+
+    Guard: refuse to overwrite a richer Postgres snapshot with an empty users dict
+    (common after ephemeral disk wipe + auto-register of a single visitor).
+    """
     if database_url():
         try:
+            existing = None
+            try:
+                existing = _load_state_postgres()
+            except Exception:
+                existing = None
+            if (
+                existing is not None
+                and _state_user_count(existing) > 0
+                and _state_user_count(state) == 0
+            ):
+                # Keep durable users; still allow intentional clears only when callers
+                # pass through delete_account paths that remove one user at a time.
+                merged = _prefer_richer_state(state, existing)
+                if _state_user_count(merged) > 0 and merged is existing:
+                    # Merge any non-user top-level keys from the new write.
+                    for key, value in (state or {}).items():
+                        if key == "users":
+                            continue
+                        if value not in (None, "", [], {}):
+                            existing[key] = value
+                    state = existing
             _save_state_postgres(state)
         except Exception:
             # Still try local write so the request does not silently discard mutations.
@@ -737,16 +794,48 @@ def parse_datetime(value):
         return None
 
 
+# Fields that must survive re-login / upsert and must never be replaced by defaults.
+_PROFILE_PERSIST_KEYS = (
+    "trial_started_at",
+    "contacts",
+    "history",
+    "last_check_in",
+    "friends",
+    "guardian_group_ids",
+    "guarding_for",
+    "guarding_details",
+    "invited_by",
+    "plan",
+    "payment_status",
+    "paid_until",
+    "is_onboarding_completed",
+    "interaction_state",
+    "calendar_notes",
+)
+
+
 def get_profile(state, line_user_id=None):
+    """Load or create per-user profile keyed by line_user_id.
+
+    Existing records are merged (setdefault only). ``trial_started_at`` is set
+    once on first create and never restarted on later visits.
+    """
     if line_user_id:
-        user = state.setdefault("users", {}).setdefault(
+        users = state.setdefault("users", {})
+        is_new = line_user_id not in users
+        user = users.setdefault(
             line_user_id,
             {**DEFAULT_PROFILE, "line_user_id": line_user_id, "display_name": "LINE 使用者"},
         )
         for key, value in DEFAULT_PROFILE.items():
+            # Never clobber persisted collections / trial clock with empty defaults.
+            if key in _PROFILE_PERSIST_KEYS and key in user:
+                continue
             user.setdefault(key, value)
-        if not user.get("trial_started_at"):
-            user["trial_started_at"] = datetime.now().isoformat(timespec="seconds")
+        if is_new or not user.get("trial_started_at"):
+            # First sight of this user: start trial clock once.
+            if not user.get("trial_started_at"):
+                user["trial_started_at"] = datetime.now().isoformat(timespec="seconds")
         user["line_user_id"] = line_user_id
         return user
     return state
@@ -849,6 +938,20 @@ def birthday_occurs_on(birthday, target_date):
 def plan_rules(profile):
     plan = profile.get("plan") or "trial"
     return PLAN_LIMITS.get(plan, PLAN_LIMITS["trial"])
+
+
+def allowed_safety_guard_hours(profile):
+    """依方案回傳可選安全守護時數（小時）。免費／試用僅 1；399＝1/3；799＝1/3/6/8。"""
+    raw = plan_rules(profile).get("safety_guard_hours") or [1]
+    hours = []
+    for item in raw:
+        try:
+            value = int(item)
+        except (TypeError, ValueError):
+            continue
+        if value > 0 and value not in hours:
+            hours.append(value)
+    return hours or [1]
 
 
 def default_reminder_times_for_count(count):
@@ -1313,6 +1416,7 @@ def build_status(profile, state=None):
         "realtime_trial_days": int(plan_rules(profile).get("realtime_trial_days", 0)),
         "core_guardian_alert_limit": plan_rules(profile).get("core_guardian_alert_limit", 1),
         "guardian_group_limit": plan_rules(profile).get("guardian_group_limit", 0),
+        "safety_guard_hours": allowed_safety_guard_hours(profile),
         "guardian_group_ids": profile.get("guardian_group_ids", []),
         "guardian_groups": guardian_groups,
         "is_today_checked": is_today_checked,
@@ -1473,11 +1577,40 @@ def ensure_user_display_name(profile, *, token="", hint="", force_fetch=False) -
 
 
 def register_line_user(data_file, payload):
+    """Upsert LINE user: merge into existing record, never reset trial/bindings."""
     line_user_id = str(payload.get("line_user_id") or "").strip()
     if not line_user_id:
         return {"error": "missing line_user_id"}, 400
     state = load_state(data_file)
+    existing = (state.get("users") or {}).get(line_user_id)
+    preserved = {}
+    if isinstance(existing, dict):
+        for key in _PROFILE_PERSIST_KEYS:
+            if key in existing and existing.get(key) not in (None,):
+                preserved[key] = existing.get(key)
+        # Deep-copy mutable collections so accidental mutation cannot blank them.
+        for key in ("contacts", "history", "friends", "guardian_group_ids", "guarding_for", "guarding_details"):
+            if key in preserved and isinstance(preserved[key], list):
+                preserved[key] = list(preserved[key])
+        if isinstance(preserved.get("calendar_notes"), dict):
+            preserved["calendar_notes"] = dict(preserved["calendar_notes"])
+        if isinstance(preserved.get("interaction_state"), dict):
+            preserved["interaction_state"] = dict(preserved["interaction_state"])
+
     user = get_profile(state, line_user_id)
+    # Re-apply preserved fields after get_profile defaults (merge, don't replace).
+    for key, value in preserved.items():
+        if key == "trial_started_at" and value:
+            user["trial_started_at"] = value
+        elif key in ("contacts", "history", "friends", "guardian_group_ids", "guarding_for", "guarding_details"):
+            if value:
+                user[key] = value
+        elif key in ("calendar_notes", "interaction_state"):
+            if value:
+                user[key] = value
+        elif value not in (None, ""):
+            user[key] = value
+
     token = (
         (payload.get("access_token") if isinstance(payload, dict) else None)
         or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -1491,7 +1624,9 @@ def register_line_user(data_file, payload):
     if picture:
         user["picture_url"] = picture
     save_state(data_file, state)
-    return build_status(user), 200
+    status = build_status(user, state)
+    status["existing_user"] = bool(existing)
+    return status, 200
 
 
 def extract_line_display_name(profile_obj) -> str | None:
@@ -2147,10 +2282,69 @@ def delete_single_contact(data_file, line_user_id, contact_id):
 
 
 
+def _merge_contact_binding_fields(incoming, previous):
+    """Merge LINE bind fields from stored contact when payload omits them."""
+    if not isinstance(incoming, dict):
+        return incoming
+    prev = previous if isinstance(previous, dict) else {}
+    for key in (
+        "line_user_id",
+        "line_id",
+        "binding_status",
+        "consent_status",
+        "accepted_at",
+        "invited_by",
+        "created_at",
+        "is_primary",
+        "contact_role",
+    ):
+        new_val = incoming.get(key)
+        old_val = prev.get(key)
+        if key in ("line_user_id", "line_id"):
+            if not str(new_val or "").strip() and str(old_val or "").strip():
+                incoming[key] = old_val
+        elif key in ("binding_status", "consent_status"):
+            # Don't downgrade accepted → unbound when client omits bind state.
+            if (not new_val or new_val == "unbound" or new_val == "pending") and old_val == "accepted":
+                if key == "binding_status" and not get_contact_line_id(incoming) and get_contact_line_id(prev):
+                    incoming["line_user_id"] = get_contact_line_id(prev)
+                    incoming["line_id"] = get_contact_line_id(prev)
+                incoming[key] = old_val
+            elif not new_val and old_val:
+                incoming[key] = old_val
+        elif not new_val and old_val not in (None, ""):
+            incoming[key] = old_val
+    # Keep both LINE id keys in sync after merge.
+    lid = get_contact_line_id(incoming)
+    if lid:
+        incoming["line_user_id"] = lid
+        incoming["line_id"] = lid
+        if incoming.get("binding_status") in (None, "", "unbound") and prev.get("binding_status") == "accepted":
+            incoming["binding_status"] = "accepted"
+    return incoming
+
+
 def save_contacts(data_file, payload):
+    """Replace contact list but merge bind fields per id — never wipe LINE binds."""
     state = load_state(data_file)
     profile = get_profile(state, payload.get("line_user_id"))
-    contacts = [normalize_contact(contact, index) for index, contact in enumerate(payload.get("contacts") or [])]
+    previous = list(profile.get("contacts") or [])
+    by_id = {str(c.get("id") or ""): c for c in previous if isinstance(c, dict)}
+    by_line = {}
+    for c in previous:
+        if not isinstance(c, dict):
+            continue
+        lid = get_contact_line_id(c)
+        if lid:
+            by_line[lid] = c
+
+    contacts = []
+    for index, contact in enumerate(payload.get("contacts") or []):
+        normalized = normalize_contact(contact, index)
+        prev = by_id.get(str(normalized.get("id") or ""))
+        if not prev:
+            prev = by_line.get(get_contact_line_id(normalized))
+        contacts.append(_merge_contact_binding_fields(normalized, prev))
     contacts.sort(key=lambda contact: contact.get("priority", 9999))
     for index, contact in enumerate(contacts):
         contact["priority"] = index + 1
@@ -2840,28 +3034,39 @@ def accept_friend_invite(data_file, payload):
     }, 200
 
 
-def _parse_safety_guard_duration(payload):
-    """Parse duration for 安全守護: 1h / 3h / 6h / until_stop. Returns (hours|None, until_stop)."""
+def _parse_safety_guard_duration(payload, allowed_hours=None):
+    """Parse duration for 安全守護 by plan.
+
+    Allowed windows: 1 / 3 / 6 / 8 hours (plan-gated). until_stop is no longer offered.
+    Returns (hours, until_stop=False) or raises ValueError for unauthorized duration.
+    """
+    allowed = [int(h) for h in (allowed_hours or [1, 3, 6, 8]) if int(h) > 0]
+    if not allowed:
+        allowed = [1]
+    allowed_set = set(allowed)
+    known = {1, 3, 6, 8}
     raw = payload.get("duration")
     if raw is None or raw == "":
         raw = payload.get("share_hours")
     text = str(raw or "").strip().lower().replace(" ", "")
     if text in ("until_stop", "until-stop", "untilstop", "stop", "manual"):
-        return None, True
+        raise ValueError("until_stop is not available; choose a timed duration for your plan")
     try:
         hours = int(float(text.replace("h", "").replace("hr", "").replace("小時", "") or 0))
     except (TypeError, ValueError):
         hours = 0
-    if hours in (1, 3, 6):
+    if hours in allowed_set:
         return hours, False
-    # Legacy callers may still send 24; clamp to allowed windows (no continuous trail).
+    # Explicit known option outside this plan → entitlement error (do not silently upgrade/downgrade).
+    if hours in known and hours not in allowed_set:
+        raise ValueError(f"duration {hours}h is not available on this plan")
     if hours > 0:
-        if hours <= 1:
-            return 1, False
-        if hours <= 3:
-            return 3, False
-        return 6, False
-    return 1, False
+        # Legacy callers (e.g. 24): clamp down to the largest allowed window that fits.
+        candidates = [h for h in allowed if h <= hours]
+        if candidates:
+            return max(candidates), False
+        return min(allowed), False
+    return min(allowed), False
 
 
 def _location_session_active(location, now=None):
@@ -2962,7 +3167,21 @@ def update_location(data_file, payload):
             "safety_guard": safety_guard_snapshot(profile, now),
         }, 200
 
-    duration_hours, until_stop = _parse_safety_guard_duration(payload)
+    allowed_hours = allowed_safety_guard_hours(profile)
+    try:
+        duration_hours, until_stop = _parse_safety_guard_duration(payload, allowed_hours)
+    except ValueError as exc:
+        return {
+            "error": str(exc),
+            "allowed_hours": allowed_hours,
+            "safety_guard_hours": allowed_hours,
+        }, 403
+    if duration_hours not in set(allowed_hours):
+        return {
+            "error": "duration not allowed for this plan",
+            "allowed_hours": allowed_hours,
+            "safety_guard_hours": allowed_hours,
+        }, 403
     started_at = (
         existing.get("started_at")
         if _location_session_active(existing, now)
@@ -4439,7 +4658,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724au",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724av",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -4755,7 +4974,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724au",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724av",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),

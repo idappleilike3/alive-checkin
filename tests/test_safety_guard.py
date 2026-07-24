@@ -17,6 +17,10 @@ class SafetyGuardTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_start_timed_session_and_stop(self):
+        state = alive_app.load_state(self.data_file)
+        profile = alive_app.get_profile(state, "U1")
+        profile["plan"] = "paid_399"
+        alive_app.save_state(self.data_file, state)
         body, code = alive_app.update_location(
             self.data_file,
             {
@@ -40,8 +44,19 @@ class SafetyGuardTests(unittest.TestCase):
         self.assertFalse(stop["safety_guard"]["active"])
         self.assertTrue(stop["safety_guard"]["ended_at"])
 
-    def test_until_stop_and_refresh_only(self):
+    def test_until_stop_rejected_and_refresh_only(self):
+        # until_stop is no longer offered; timed session + refresh_only still works.
         alive_app.update_location(
+            self.data_file,
+            {
+                "line_user_id": "U2",
+                "latitude": 24.15,
+                "longitude": 120.67,
+                "city": "台中市",
+                "duration": 1,
+            },
+        )
+        rejected, rejected_code = alive_app.update_location(
             self.data_file,
             {
                 "line_user_id": "U2",
@@ -51,6 +66,9 @@ class SafetyGuardTests(unittest.TestCase):
                 "duration": "until_stop",
             },
         )
+        self.assertEqual(rejected_code, 403)
+        self.assertIn("allowed_hours", rejected)
+
         refreshed, code = alive_app.update_location(
             self.data_file,
             {
@@ -63,8 +81,61 @@ class SafetyGuardTests(unittest.TestCase):
         )
         self.assertEqual(code, 200)
         self.assertTrue(refreshed["safety_guard"]["active"])
-        self.assertTrue(refreshed["safety_guard"]["until_stop"])
+        self.assertFalse(refreshed["safety_guard"]["until_stop"])
         self.assertEqual(refreshed["location"]["latitude"], 24.16)
+
+    def test_plan_gated_safety_guard_hours(self):
+        state = alive_app.load_state(self.data_file)
+        free_user = alive_app.get_profile(state, "free_user")
+        free_user["plan"] = "free"
+        p399 = alive_app.get_profile(state, "u399")
+        p399["plan"] = "paid_399"
+        p799 = alive_app.get_profile(state, "u799")
+        p799["plan"] = "paid_799"
+        alive_app.save_state(self.data_file, state)
+
+        self.assertEqual(alive_app.allowed_safety_guard_hours(free_user), [1])
+        self.assertEqual(alive_app.allowed_safety_guard_hours(p399), [1, 3])
+        self.assertEqual(alive_app.allowed_safety_guard_hours(p799), [1, 3, 6, 8])
+
+        denied, code = alive_app.update_location(
+            self.data_file,
+            {
+                "line_user_id": "free_user",
+                "latitude": 25.0,
+                "longitude": 121.5,
+                "city": "台北市",
+                "duration": 3,
+            },
+        )
+        self.assertEqual(code, 403)
+        self.assertEqual(denied["allowed_hours"], [1])
+
+        ok8, code8 = alive_app.update_location(
+            self.data_file,
+            {
+                "line_user_id": "u799",
+                "latitude": 25.0,
+                "longitude": 121.5,
+                "city": "台北市",
+                "duration": 8,
+            },
+        )
+        self.assertEqual(code8, 200)
+        self.assertEqual(ok8["safety_guard"]["duration_hours"], 8)
+
+        denied399, code399 = alive_app.update_location(
+            self.data_file,
+            {
+                "line_user_id": "u399",
+                "latitude": 25.0,
+                "longitude": 121.5,
+                "city": "台北市",
+                "duration": 8,
+            },
+        )
+        self.assertEqual(code399, 403)
+        self.assertEqual(denied399["allowed_hours"], [1, 3])
 
     def test_friend_can_see_active_safety_status(self):
         state = alive_app.load_state(self.data_file)

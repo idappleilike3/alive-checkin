@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="alive-deploy" content="W250724a">
+  <meta name="alive-deploy" content="W250724av">
   <title>邀請</title>
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
@@ -13,8 +13,8 @@
       min-height: 100dvh;
       background: #f0fdf4;
       overscroll-behavior: none;
+      font-family: "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
     }
-    /* 全螢幕隱形可點層：無教學文案 */
     #tapLayer {
       position: fixed;
       inset: 0;
@@ -28,38 +28,75 @@
       z-index: 2;
     }
     #tapLayer:disabled { pointer-events: none; }
-    #retry {
-      display: none;
+    #actions {
       position: fixed;
       left: 50%;
       bottom: max(28px, env(safe-area-inset-bottom));
       transform: translateX(-50%);
       z-index: 3;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      width: min(92vw, 360px);
+    }
+    #actions.is-visible { display: flex; }
+    #actions button {
       border: 0;
       border-radius: 999px;
       padding: 14px 28px;
-      background: #15803d;
-      color: #fff;
+      width: 100%;
       font-size: 18px;
       font-weight: 800;
-      font-family: "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
       -webkit-tap-highlight-color: rgba(0,0,0,0.08);
       touch-action: manipulation;
+      cursor: pointer;
     }
+    #retry {
+      background: #15803d;
+      color: #fff;
+    }
+    #doneHome {
+      background: #0f766e;
+      color: #fff;
+    }
+    #hint {
+      display: none;
+      position: fixed;
+      left: 50%;
+      top: 42%;
+      transform: translate(-50%, -50%);
+      z-index: 1;
+      width: min(88vw, 340px);
+      text-align: center;
+      color: #14532d;
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1.6;
+      pointer-events: none;
+    }
+    #hint.is-visible { display: block; }
   </style>
 </head>
 <body>
   <button id="tapLayer" type="button" aria-label="再試一次" disabled></button>
-  <button id="retry" type="button">再試一次</button>
+  <p id="hint">分享完成後，請按下方按鈕回到原本頁面。</p>
+  <div id="actions">
+    <button id="retry" type="button">再分享一次</button>
+    <button id="doneHome" type="button">完成，返回原位置</button>
+  </div>
 
   <script>
-    // W250724a：修好 R/share 返回後自動再開的迴圈；分享文加上加入官方帳號說明
-    // 流程：init → login → 首次自動 line.me/R/share；返回／取消只顯示「再試一次」
-    // 受邀者連結：line.me/R/app?invite_from=（避開 liff.line.me/? → 400）
+    // W250724av：分享成功／按完成鈕 → 跳回原位置（return / open / #home|#member）
     const LIFF_ID = "2010674803-rK98c0lo";
     const AUTO_SHARE_KEY = "alive_share_invite_auto_v1";
+    const DONE_KEY = "alive_share_invite_done_v1";
+    const RETURN_KEY = "alive_share_invite_return_v1";
     const tapLayer = document.getElementById("tapLayer");
     const retryBtn = document.getElementById("retry");
+    const doneHomeBtn = document.getElementById("doneHome");
+    const actions = document.getElementById("actions");
+    const hint = document.getElementById("hint");
 
     let inviteText = "";
     let myUserId = "";
@@ -97,6 +134,62 @@
       return window.location.origin + window.location.pathname + (query ? ("?" + query) : "");
     }
 
+    function rememberReturnTarget(raw) {
+      const safe = sanitizeReturnPath(raw);
+      if (!safe) return;
+      try { sessionStorage.setItem(RETURN_KEY, safe); } catch (_) {}
+    }
+
+    function sanitizeReturnPath(raw) {
+      let text = String(raw || "").trim();
+      if (!text) return "";
+      try { text = decodeURIComponent(text); } catch (_) {}
+      text = text.trim();
+      if (!text) return "";
+      // Absolute same-origin URL → path+hash
+      if (/^https?:\/\//i.test(text)) {
+        try {
+          const u = new URL(text);
+          if (u.origin !== window.location.origin) return "";
+          return (u.pathname || "/") + (u.search || "") + (u.hash || "");
+        } catch (_) {
+          return "";
+        }
+      }
+      // Only relative in-app paths
+      if (text.startsWith("//") || text.includes("://")) return "";
+      if (text.charAt(0) === "#") return "/" + text;
+      if (text.charAt(0) !== "/") text = "/" + text;
+      return text;
+    }
+
+    function resolveReturnUrl() {
+      const params = new URLSearchParams(window.location.search || "");
+      const fromQuery = sanitizeReturnPath(params.get("return") || params.get("back") || "");
+      if (fromQuery) {
+        rememberReturnTarget(fromQuery);
+        return window.location.origin + fromQuery;
+      }
+      const open = String(params.get("open") || "").trim().toLowerCase();
+      if (open === "member" || open === "guardians") {
+        rememberReturnTarget("/#member");
+        return window.location.origin + "/#member";
+      }
+      if (open === "home" || open === "guard" || open === "checkin") {
+        rememberReturnTarget("/#home");
+        return window.location.origin + "/#home";
+      }
+      try {
+        const stored = sanitizeReturnPath(sessionStorage.getItem(RETURN_KEY) || "");
+        if (stored) return window.location.origin + stored;
+      } catch (_) {}
+      return window.location.origin + "/#home";
+    }
+
+    function homeUrl() {
+      return window.location.origin + "/#home";
+    }
+
     function markAutoShareTried() {
       try { sessionStorage.setItem(AUTO_SHARE_KEY, "1"); } catch (_) {}
     }
@@ -105,14 +198,42 @@
       try { return sessionStorage.getItem(AUTO_SHARE_KEY) === "1"; } catch (_) { return false; }
     }
 
-    function showRetry() {
-      retryBtn.style.display = "block";
+    function markShareDone() {
+      try { sessionStorage.setItem(DONE_KEY, "1"); } catch (_) {}
+    }
+
+    function goNextStep() {
+      markShareDone();
+      const target = resolveReturnUrl();
+      try {
+        if (window.liff && typeof liff.isInClient === "function" && liff.isInClient()) {
+          try {
+            if (typeof liff.openWindow === "function") {
+              liff.openWindow({ url: target, external: false });
+            }
+          } catch (_) {}
+          setTimeout(function () {
+            try {
+              if (typeof liff.closeWindow === "function") liff.closeWindow();
+            } catch (_) {}
+            window.location.replace(target);
+          }, 250);
+          return;
+        }
+      } catch (_) {}
+      window.location.replace(target);
+    }
+
+    function showPostShareUi() {
+      actions.classList.add("is-visible");
+      hint.classList.add("is-visible");
       tapLayer.disabled = false;
       ready = true;
     }
 
-    function hideRetry() {
-      retryBtn.style.display = "none";
+    function hidePostShareUi() {
+      actions.classList.remove("is-visible");
+      hint.classList.remove("is-visible");
     }
 
     function alertFail(msg) {
@@ -123,7 +244,6 @@
       if (!inviteText) inviteText = buildInviteText(myUserId);
       const shareUrl = buildNativeShareUrl(inviteText);
       try {
-        // LIFF 內用 openWindow 較穩；location.href 常白屏或返回後重載再卡迴圈
         if (
           window.liff &&
           typeof liff.openWindow === "function" &&
@@ -148,9 +268,11 @@
         if (typeof liff.isApiAvailable === "function" && !liff.isApiAvailable("shareTargetPicker")) return false;
         const result = await liff.shareTargetPicker([{ type: "text", text: inviteText }]);
         if (result) {
-          try { if (typeof liff.closeWindow === "function") liff.closeWindow(); } catch (_) {}
+          goNextStep();
           return true;
         }
+        // 使用者取消：仍顯示完成／返回，不要卡在邀請頁
+        showPostShareUi();
         return false;
       } catch (error) {
         alertFail((error && error.message) ? error.message : error);
@@ -163,15 +285,16 @@
       if (!inviteText) inviteText = buildInviteText(myUserId);
       sharing = true;
       tapLayer.disabled = true;
-      hideRetry();
+      hidePostShareUi();
       try {
         if (openNativeShare()) {
-          // openWindow 不會離開本頁：立刻給再試，避免空白卡住
-          showRetry();
+          // openWindow 不會離開本頁：立刻給「完成／返回原位置」
+          markAutoShareTried();
+          showPostShareUi();
           return;
         }
         const ok = await tryShareTargetPicker();
-        if (!ok) showRetry();
+        if (!ok) showPostShareUi();
       } finally {
         sharing = false;
         if (!shareBlocked) tapLayer.disabled = false;
@@ -188,6 +311,7 @@
 
     async function initializeLiff() {
       inviteText = buildInviteText("");
+      resolveReturnUrl();
       try {
         if (!window.liff) throw new Error("LIFF SDK 未載入");
         await liff.init({ liffId: LIFF_ID });
@@ -198,7 +322,7 @@
           } catch (_) {
             try { liff.login(); } catch (e2) {
               alertFail(e2 && e2.message ? e2.message : e2);
-              showRetry();
+              showPostShareUi();
             }
           }
           return;
@@ -218,36 +342,43 @@
           shareBlocked = true;
           alertFail("這是別人的邀請連結，請回官方帳號完成綁定");
           tapLayer.disabled = true;
+          showPostShareUi();
           return;
         }
 
         ready = true;
 
-        // bfcache／分享取消返回：不要再自動跳 R/share，否則會卡在連結迴圈
+        // 已分享過／從 R/share 返回：直接給下一步，不要再自動開分享迴圈
         if (hasAutoShareTried()) {
-          showRetry();
+          showPostShareUi();
           return;
         }
 
         markAutoShareTried();
         openNativeShare();
-        // openWindow 後本頁仍在：馬上可再點；若真的導走，返回時走上面 hasAutoShareTried
-        showRetry();
+        showPostShareUi();
       } catch (error) {
         alertFail((error && error.message) ? error.message : error);
-        showRetry();
+        showPostShareUi();
       }
     }
 
     window.addEventListener("pageshow", function (event) {
       if (event && event.persisted && !shareBlocked) {
         markAutoShareTried();
-        showRetry();
+        showPostShareUi();
       }
     });
 
     tapLayer.addEventListener("click", onRetry);
     retryBtn.addEventListener("click", onRetry);
+    doneHomeBtn.addEventListener("click", function (event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      goNextStep();
+    });
     initializeLiff();
   </script>
 </body>

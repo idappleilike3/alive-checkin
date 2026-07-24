@@ -210,11 +210,10 @@ class ProductRulesTests(unittest.TestCase):
         member = (ROOT / "liff" / "member.html").read_text(encoding="utf-8")
 
         self.assertIn('id="memberRoleIntro"', page)
-        self.assertIn("守護人（Guardian）", page)
-        self.assertIn("緊急聯絡人（Emergency Contact）", page)
+        self.assertIn("核心守護人", page)
+        self.assertIn("聯絡人", page)
         self.assertIn("member_role_intro_dismissed", page)
-        self.assertIn("平常每天守護你的人", page)
-        self.assertIn("真正緊急時才聯絡", page)
+        self.assertIn("平常守護你的人", page)
         self.assertIn('id="memberRoleIntro"', member)
         self.assertIn("免費體驗小教室", member)
         self.assertIn("memberEmergencySection", page)
@@ -295,14 +294,18 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("setTimeout(() => shareContactInvite()", page)
         init_app = page[page.rindex("async function initApp()") : page.index("// ===== D01")]
         self.assertIn("wantsShareInvite", init_app)
-        # 一鍵邀請：改導專用分享頁，禁止首頁後自動 shareTargetPicker
-        self.assertIn('location.replace("/liff/share-invite.html")', init_app)
+        # 一鍵邀請：改導專用分享頁（可帶 return），禁止首頁後自動 shareTargetPicker
+        self.assertTrue(
+            'location.replace("/liff/share-invite.html")' in init_app
+            or "buildShareInvitePageUrl(" in init_app
+        )
         self.assertNotIn("shared = await tryLineShareTargetPicker(text)", init_app)
         self.assertIn('showTab("home")', init_app)
         # 守護人一鍵邀請改導專用分享頁，不再走 SPA 複製連結備援
-        self.assertIn('location.assign("/liff/share-invite.html")', page)
+        self.assertIn("openShareInvitePage", page)
+        self.assertIn("buildShareInvitePageUrl", page)
         page_share_fn = page[page.index("async function shareContactInvite()") : page.index("function fillShareInviteSurfaces")]
-        self.assertIn('location.assign("/liff/share-invite.html")', page_share_fn)
+        self.assertIn("openShareInvitePage", page_share_fn)
         self.assertNotIn("tryWebShareOrClipboard", page_share_fn)
         self.assertNotIn("openShareInviteFallbackModal", page_share_fn)
         self.assertNotIn('id="copyInviteBtn"', page)
@@ -327,7 +330,8 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("請點下面大按鈕", page)
         self.assertNotIn("準備好了，請點大按鈕", page)
         self.assertNotIn("開啟 LINE 好友選擇", page)
-        self.assertIn(">再試一次<", page)
+        self.assertIn(">再分享一次<", page)
+        self.assertIn("完成，返回原位置", page)
         self.assertNotIn("await shareNow()", page)
         self.assertNotIn("autoShareOnce", page)
         init_fn = page[page.index("async function initializeLiff()") :]
@@ -336,7 +340,10 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("clipboard", page)
         self.assertIn("https://line.me/R/app/\" + LIFF_ID + \"?invite_from=", page)
         self.assertIn('const LIFF_ID = "2010674803-rK98c0lo"', page)
-        self.assertIn("W250724a", page)
+        self.assertIn("W250724av", page)
+        self.assertIn("resolveReturnUrl", page)
+        self.assertIn("完成，返回原位置", page)
+        self.assertIn('params.get("return")', page)
 
     def test_liff_links_use_query_params_for_android_compatibility(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
