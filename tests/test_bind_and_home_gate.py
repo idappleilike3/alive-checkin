@@ -1,6 +1,7 @@
 """Bind persistence fields + home gate helpers."""
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -199,6 +200,43 @@ class BindAndHomeGateTests(unittest.TestCase):
             resolved = app_module.resolve_data_file(target)
             self.assertEqual(resolved, target)
 
+    def test_persistence_info_marks_postgres_durable(self):
+        old = os.environ.get("DATABASE_URL")
+        os.environ["DATABASE_URL"] = "postgresql://user:pass@localhost/db"
+        try:
+            info = app_module.persistence_info("/opt/render/project/src/data/state.json")
+            self.assertTrue(info["durable"])
+            self.assertEqual(info["backend"], "postgres")
+            self.assertEqual(info["ephemeral_warning"], "")
+        finally:
+            if old is None:
+                os.environ.pop("DATABASE_URL", None)
+            else:
+                os.environ["DATABASE_URL"] = old
+
+    def test_bind_writes_guarding_details_on_invitee(self):
+        result, code = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-inviter",
+                "contact_line_user_id": "U-guardian",
+                "contact_display_name": "阿媽",
+            },
+            config={},
+        )
+        self.assertEqual(code, 200)
+        state = app_module.load_state(self.data_file)
+        guardian = state["users"]["U-guardian"]
+        self.assertEqual(guardian.get("invited_by"), "U-inviter")
+        details = guardian.get("guarding_details") or []
+        self.assertEqual(len(details), 1)
+        self.assertEqual(details[0]["line_user_id"], "U-inviter")
+        status = app_module.build_status(guardian)
+        self.assertEqual(status["guarding_details"][0]["line_user_id"], "U-inviter")
+        contact = result["contact"]
+        self.assertEqual(contact.get("contact_role"), "guardian")
+        self.assertEqual(contact.get("relationship"), "守護人")
+
 
     def test_duplicate_bind_returns_already_bound_not_limit_error(self):
         pushed = []
@@ -343,9 +381,11 @@ class BindAndHomeGateTests(unittest.TestCase):
 
     def test_member_center_list_before_add_markers(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
-        self.assertIn("目前守護人", page)
+        self.assertIn("守護人（Guardian）", page)
+        self.assertIn("緊急聯絡人（Emergency Contact）", page)
         self.assertIn("memberGuardianQuotaLine", page)
         self.assertIn("memberGuardianLimitBanner", page)
+        self.assertIn("memberEmergencySection", page)
         self.assertIn("你已經有", page)
         self.assertIn("核心守護人", page)
         self.assertIn("➕ 新增守護人", page)
@@ -354,6 +394,7 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertIn("membershipCell", admin)
         self.assertIn("免費剩幾天", admin)
         self.assertIn("核心／一般", admin)
+        self.assertIn("資料可能因重啟遺失請掛磁碟", admin)
 
 
 if __name__ == "__main__":

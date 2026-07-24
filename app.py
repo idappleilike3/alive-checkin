@@ -1174,6 +1174,22 @@ def build_status(profile, state=None):
     profile = {**DEFAULT_PROFILE, **profile}
     scrub_self_line_ids_on_contacts(profile)
     owner_id = str(profile.get("line_user_id") or "").strip()
+    # 正規化 contacts：補 contact_role，並去掉會與「核心／一般」混淆的 role 欄
+    normalized_contacts = []
+    for i, raw in enumerate(profile.get("contacts") or []):
+        if not isinstance(raw, dict):
+            continue
+        row = normalize_contact(raw, i)
+        for key, value in raw.items():
+            if key == "role":
+                continue
+            if key not in row and value not in (None, ""):
+                row[key] = value
+        row["contact_role"] = resolve_contact_role(
+            {"contact_role": raw.get("contact_role") or row.get("contact_role")}
+        )
+        normalized_contacts.append(row)
+    profile["contacts"] = normalized_contacts
     now = datetime.now()
     last = parse_last_checkin(profile.get("last_check_in"))
     grace_hours = int(profile.get("grace_hours") or 36)
@@ -1252,9 +1268,12 @@ def build_status(profile, state=None):
                 "relationship": str(c.get("relationship") or "").strip(),
                 "binding_status": str(c.get("binding_status") or "").strip() or "accepted",
                 "phone": str(c.get("phone") or "").strip(),
+                "email": str(c.get("email") or "").strip(),
                 "is_primary": bool(c.get("is_primary")),
                 "accepted_at": str(c.get("accepted_at") or c.get("created_at") or "").strip(),
+                # role = 核心／一般層級；contact_role = 守護人／緊急聯絡人（勿混用）
                 "role": "核心" if c.get("is_primary") else "一般",
+                "contact_role": resolve_contact_role(c),
             }
             for c in (profile.get("contacts") or [])
             if contact_is_bound_guardian(c, owner_id)
@@ -1810,6 +1829,26 @@ def send_renewal_reminders(config):
     return {"sent": sent, "skipped": skipped}, 200
 
 
+def resolve_contact_role(contact):
+    """守護人 vs 緊急聯絡人。
+
+    只用 ``contact_role``（或明確的 type / kind）。
+    **不可**讀 ``role``：該欄在 bound_guardians 表示「核心／一般」層級，
+    若誤當成 contact_role 會把守護人列濾空，出現 count≥1 但列表空白。
+    """
+    if not isinstance(contact, dict):
+        return "guardian"
+    raw = str(
+        contact.get("contact_role")
+        or contact.get("type")
+        or contact.get("kind")
+        or ""
+    ).strip().lower()
+    if raw in ("emergency", "emergency_contact", "聯絡人", "緊急聯絡人"):
+        return "emergency"
+    return "guardian"
+
+
 def normalize_contact(contact, index):
     """正規化守護人聯絡人資料,包含穩定 id 與時間戳。
 
@@ -1819,6 +1858,7 @@ def normalize_contact(contact, index):
     - binding_status: unbound / pending / accepted / declined
     - line_user_id 跟 line_id 同義(新欄位優先)
     - created_at 與 updated_at 為 ISO 8601 字串
+    - contact_role: guardian（核心守護人）| emergency（聯絡人）
     """
     methods = contact.get("notify_methods") or contact.get("methods") or ["line"]
     if isinstance(methods, str):
@@ -1831,8 +1871,7 @@ def normalize_contact(contact, index):
         or contact.get("line_id")
         or ""
     ).strip()
-    role_raw = str(contact.get("contact_role") or contact.get("role") or "guardian").strip().lower()
-    contact_role = "emergency" if role_raw in ("emergency", "emergency_contact", "緊急聯絡人") else "guardian"
+    contact_role = resolve_contact_role(contact)
     return {
         "id": contact_id,
         "name": str(contact.get("name") or "").strip(),
@@ -1852,6 +1891,7 @@ def normalize_contact(contact, index):
         "note": str(contact.get("note") or "").strip(),
         "created_at": str(contact.get("created_at") or ""),
         "updated_at": str(contact.get("updated_at") or ""),
+        "accepted_at": str(contact.get("accepted_at") or "").strip(),
         "invited_by": str(contact.get("invited_by") or "").strip(),
     }
 
@@ -1915,15 +1955,13 @@ def validate_contact_payload(contact, existing=None, contact_limit=10):
 
     # 注意：payload 的 line_user_id 多半是「會員本人」認證欄，不是守護人 LINE。
     # 表單新增／編輯不可由此寫入 LINE 綁定；真正綁定只走 bind_emergency_contact(invite_from)。
-    role_raw = str(contact.get("contact_role") or contact.get("role") or "guardian").strip().lower()
-    contact_role = "emergency" if role_raw in ("emergency", "emergency_contact", "緊急聯絡人") else "guardian"
     cleaned = {
         "name": name,
         "relationship": relationship,
         "phone": phone,
         "email": email,
         "is_primary": bool(contact.get("is_primary", False)),
-        "contact_role": contact_role,
+        "contact_role": resolve_contact_role(contact),
         "notify_methods": contact.get("notify_methods") or ["line"],
         "available_time": str(contact.get("available_time") or "").strip(),
         "note": str(contact.get("note") or "").strip(),
@@ -1951,12 +1989,33 @@ def get_contacts(data_file, line_user_id=None):
     profile = get_profile(state, line_user_id)
     if scrub_self_line_ids_on_contacts(profile):
         save_state(data_file, state)
+    raw_contacts = list(profile.get("contacts") or [])
+    contacts = []
+    changed = False
+    for index, contact in enumerate(raw_contacts):
+        if not isinstance(contact, dict):
+            continue
+        normalized = normalize_contact(contact, index)
+        for key, value in contact.items():
+            if key in ("role",):
+                continue  # 核心／一般，不可寫回混淆 contact_role
+            if key not in normalized and value not in (None, ""):
+                normalized[key] = value
+        normalized["contact_role"] = resolve_contact_role(
+            {"contact_role": contact.get("contact_role") or normalized.get("contact_role")}
+        )
+        if contact.get("contact_role") != normalized["contact_role"] or "contact_role" not in contact:
+            changed = True
+        contacts.append(normalized)
+    if changed:
+        profile["contacts"] = contacts
+        save_state(data_file, state)
     return {
         "line_user_id": profile.get("line_user_id"),
-        "contacts": profile.get("contacts", []),
+        "contacts": contacts,
         "contact_limit": plan_rules(profile)["contact_limit"],
         "plan": profile.get("plan", "trial"),
-        "guardian_details_complete": any(complete_guardian_contact(contact) for contact in (profile.get("contacts") or [])),
+        "guardian_details_complete": any(complete_guardian_contact(contact) for contact in contacts),
         "guardian_details_reminder_enabled": bool(profile.get("guardian_details_reminder_enabled", True)),
     }
 
@@ -4380,7 +4439,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724at",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724au",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -4696,7 +4755,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724at",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724au",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),

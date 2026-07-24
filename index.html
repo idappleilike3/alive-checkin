@@ -4892,22 +4892,92 @@
 
     function isContactBound(contact) {
       if (!contact) return false;
+      const selfId = String(lineUserId || (currentStatusData && currentStatusData.line_user_id) || "").trim();
+      const lid = String(contact.line_id || contact.line_user_id || "").trim();
+      // 本人 ID 寫進聯絡人 = 表單污染，不算已綁定
+      if (lid && selfId && lid === selfId) return false;
       return Boolean(
         contact.binding_status === "accepted"
         || contact.consent_status === "accepted"
-        || contact.line_id
-        || contact.line_user_id
+        || lid
       );
     }
 
     function contactRoleOf(contact) {
-      const raw = String(contact?.contact_role || contact?.role || "guardian").trim().toLowerCase();
-      if (raw === "emergency" || raw === "emergency_contact" || raw === "緊急聯絡人") return "emergency";
+      // 只用 contact_role。不可讀 role（那是「核心／一般」層級，讀錯會把守護人列濾空）
+      const raw = String(
+        contact?.contact_role || contact?.type || contact?.kind || "guardian"
+      ).trim().toLowerCase();
+      if (raw === "emergency" || raw === "emergency_contact" || raw === "聯絡人" || raw === "緊急聯絡人") {
+        return "emergency";
+      }
       return "guardian";
     }
 
     function contactsByRole(role) {
-      return (contactData || []).filter((c) => contactRoleOf(c) === role);
+      return (ensureSyncedContactData() || []).filter((c) => contactRoleOf(c) === role);
+    }
+
+    function ensureSyncedContactData() {
+      const status = currentStatusData || {};
+      let list = Array.isArray(contactData) ? contactData.slice() : [];
+      const statusContacts = Array.isArray(status.contacts) ? status.contacts : [];
+      const boundGuardians = Array.isArray(status.bound_guardians) ? status.bound_guardians : [];
+
+      // contacts API 空、但 status 有資料時，用 status 補齊（修 count≥1 列表空白）
+      if (!list.length && statusContacts.length) {
+        list = statusContacts.slice();
+      }
+      if (!list.length && boundGuardians.length) {
+        list = boundGuardians.map((g) => ({
+          id: g.id || (`line-${g.line_user_id || ""}`),
+          name: g.name || "",
+          relationship: g.relationship || "",
+          phone: g.phone || "",
+          email: g.email || "",
+          line_user_id: g.line_user_id || "",
+          line_id: g.line_user_id || g.line_id || "",
+          binding_status: g.binding_status || "accepted",
+          consent_status: "accepted",
+          is_primary: Boolean(g.is_primary),
+          accepted_at: g.accepted_at || "",
+          contact_role: "guardian",
+        }));
+      }
+
+      // 用 bound_guardians 補齊姓名／電話／LINE（對方綁定後寫入的資料）
+      if (boundGuardians.length && list.length) {
+        const byId = new Map();
+        const byLine = new Map();
+        boundGuardians.forEach((g) => {
+          if (g && g.id) byId.set(String(g.id), g);
+          const lid = String(g.line_user_id || g.line_id || "").trim();
+          if (lid) byLine.set(lid, g);
+        });
+        list = list.map((c) => {
+          const lid = String(c.line_user_id || c.line_id || "").trim();
+          const match = (c.id && byId.get(String(c.id))) || (lid && byLine.get(lid));
+          if (!match) return { ...c, contact_role: contactRoleOf(c) };
+          return {
+            ...c,
+            name: c.name || match.name || "",
+            relationship: c.relationship || match.relationship || "",
+            phone: c.phone || match.phone || "",
+            email: c.email || match.email || "",
+            line_user_id: c.line_user_id || match.line_user_id || "",
+            line_id: c.line_id || match.line_user_id || match.line_id || "",
+            binding_status: c.binding_status || match.binding_status || "accepted",
+            is_primary: c.is_primary != null ? c.is_primary : match.is_primary,
+            accepted_at: c.accepted_at || match.accepted_at || "",
+            contact_role: contactRoleOf(c),
+          };
+        });
+      } else {
+        list = list.map((c) => ({ ...c, contact_role: contactRoleOf(c) }));
+      }
+
+      contactData = list;
+      return contactData;
     }
 
     function openShareInviteForContact() {
@@ -4921,7 +4991,7 @@
       return list.map((contact, index) => {
         const cid = escapeHtml(contact.id || "");
         const bound = isContactBound(contact);
-        const role = contact.is_primary || (index === 0 && !list.some((c) => c.is_primary))
+        const tier = contact.is_primary || (index === 0 && !list.some((c) => c.is_primary))
           ? "核心"
           : "一般";
         const added = formatGuardianAddedAt(contact);
@@ -4936,12 +5006,13 @@
           <div class="member-guardian-manage-row" data-id="${cid}">
             <div class="member-guardian-manage-meta">
               <span class="guardian-manage-name">👤 ${escapeHtml(contact.name || "未命名")}</span>
-              <span>${escapeHtml(contact.relationship || "關係未設定")} ／ ${escapeHtml(contact.phone || contact.email || "未填電話")} ／ ${role}${contact.is_primary ? "／主要" : ""}</span>
+              <span>${escapeHtml(contact.relationship || "關係未設定")} ／ ${escapeHtml(contact.phone || contact.email || "未填電話")} ／ ${tier}${contact.is_primary ? "／主要" : ""}</span>
               ${statusHtml}
               ${lid ? `<small>LINE ID：${escapeHtml(lid)}</small>` : ""}
               ${added ? `<small>新增日期：${escapeHtml(added)}</small>` : ""}
             </div>
-            <div class="member-guardian-manage-actions">
+            <div class="member-guardian-manage-actions${bound ? "" : " has-invite"}">
+              ${bound ? "" : `<button class="action-btn member-invite-guardian" type="button" data-id="${cid}" aria-label="一鍵邀請">一鍵邀請</button>`}
               <button class="action-btn member-edit-guardian" type="button" data-id="${cid}" aria-label="編輯">編輯</button>
               <button class="action-btn danger-action member-delete-guardian" type="button" data-id="${cid}" aria-label="刪除">刪除</button>
             </div>
