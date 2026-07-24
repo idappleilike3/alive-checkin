@@ -703,12 +703,16 @@
     function expiryText(user) {
       if (user.plan_expires_text) return user.plan_expires_text;
       const label = user.plan_type_label || planLabel(user.plan);
-      if (user.plan_expires_at) {
-        const raw = String(user.plan_expires_at);
+      const expires = user.plan_expires_at || user.trial_end || user.paid_until || user.next_billing_date;
+      if (expires) {
+        const raw = String(expires);
         const d = formatDate(raw);
-        return `${label}｜到期 ${d && d !== "-" ? d : raw.slice(0, 10)}`;
+        const ymd = (d && d !== "從未簽到" && d !== "-") ? d.slice(0, 10).replace(/-/g, "/") : raw.slice(0, 10).replace(/-/g, "/");
+        if (user.plan === "trial" && user.trial_days_left != null) {
+          return `${label}｜到期 ${ymd}（剩 ${user.trial_days_left} 天）`;
+        }
+        return `${label}｜到期 ${ymd}`;
       }
-      if (user.paid_until) return `${label}｜到期 ${formatDate(user.paid_until)}`;
       if (user.plan === "trial") {
         const days = Number(user.trial_days_left || 0);
         return `${label}｜${days > 0 ? `剩 ${days} 天` : "已結束"}`;
@@ -719,7 +723,13 @@
 
     function memberNameCell(user) {
       const name = String(user.display_name || "").trim() || "未取得暱稱";
-      const missing = user.display_name_missing || name.startsWith("未取得暱稱") || name === "LINE 使用者";
+      const compact = name.replace(/\s+/g, "");
+      const missing = Boolean(
+        user.display_name_missing
+        || name.startsWith("未取得暱稱")
+        || name === "LINE 使用者"
+        || compact === "LINE使用者"
+      );
       return `<div style="min-width:110px;">
         <strong style="${missing ? "color:#9a3412" : ""}">${name}</strong>
         ${missing ? `<br><small style="color:#9a3412">請重新開啟 LIFF／加好友以同步暱稱</small>` : ""}
