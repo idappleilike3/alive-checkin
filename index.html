@@ -552,9 +552,9 @@
     .member-center-details { padding-top: 14px; border-top: 2px solid #f9a8d4; }
     .member-center-details[hidden] { display: none; }
     .member-profile-row {
-      display: grid;
-      grid-template-columns: 54px minmax(0, 1fr) auto;
-      gap: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 14px;
       align-items: center;
       padding: 14px;
       border: 1px solid #fbcfe8;
@@ -563,6 +563,7 @@
     }
     .member-avatar,
     .member-avatar-img {
+      flex: 0 0 54px;
       width: 54px;
       height: 54px;
       display: grid;
@@ -573,7 +574,15 @@
       font-weight: 900;
       object-fit: cover;
     }
-    .member-avatar-img[hidden] { display: none; }
+    .member-avatar-img[hidden],
+    .member-avatar[hidden] { display: none !important; }
+    .member-profile-info {
+      flex: 1 1 200px;
+      min-width: min(100%, 200px);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
     .inline-error {
       background: #fee2e2;
       color: #991b1b;
@@ -616,15 +625,25 @@
       font-size: 15px;
       line-height: 1.65;
     }
-    .member-profile-row strong,
-    .member-profile-row small { display: block; }
-    .member-profile-row strong { color: #5b1535; font-size: 20px; }
-    .member-profile-row small { margin-top: 3px; color: #8a3f5f; font-size: 15px; line-height: 1.45; }
+    .member-profile-row strong { display: block; color: #5b1535; font-size: 20px; line-height: 1.3; }
+    .member-profile-date,
+    .member-profile-plan {
+      display: block;
+      margin: 0;
+      color: #8a3f5f;
+      font-size: 15px;
+      line-height: 1.45;
+      word-break: keep-all;
+      overflow-wrap: normal;
+      white-space: nowrap;
+    }
     .member-upgrade-btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
+      flex: 0 0 auto;
+      margin-left: auto;
       min-height: 52px;
       padding: 14px 20px;
       border: 0;
@@ -2180,10 +2199,17 @@
       .check-btn { width: 168px; height: 168px; font-size: 23px; }
       .setting-row { grid-template-columns: 1fr; }
       .plan-strip, .contact-grid { grid-template-columns: 1fr; }
-      .member-profile-row { grid-template-columns: 44px minmax(0, 1fr); }
+      .member-avatar,
+      .member-avatar-img {
+        flex-basis: 44px;
+        width: 44px;
+        height: 44px;
+      }
+      .member-profile-info { flex: 1 1 calc(100% - 58px); min-width: 0; }
       .member-upgrade-btn {
-        grid-column: 1 / -1;
+        flex: 1 1 100%;
         width: 100%;
+        margin-left: 0;
         min-height: 54px;
         font-size: 18px;
         padding: 14px 18px;
@@ -3324,10 +3350,10 @@
         <div class="member-profile-row">
           <img class="member-avatar-img" id="userPicture" src="" alt="" hidden>
           <div class="member-avatar" id="memberAvatar">我</div>
-          <div>
+          <div class="member-profile-info">
             <strong id="memberDisplayName">LINE 會員</strong>
-            <small id="todayDateText" class="helper"></small>
-            <small><span id="memberPlanText">安心體驗</span>｜<span id="memberExpiryText">尚未設定到期日</span></small>
+            <small id="todayDateText" class="member-profile-date">今天：載入中</small>
+            <small class="member-profile-plan"><span id="memberPlanText">安心體驗</span>｜<span id="memberExpiryText">尚未設定到期日</span></small>
           </div>
           <button class="member-upgrade-btn" id="memberUpgradeBtn" type="button">立即升級 <span aria-hidden="true">→</span></button>
         </div>
@@ -6045,15 +6071,26 @@
         userAvatar.textContent = (data.display_name || "?").trim().slice(0, 1) || "?";
       }
 
-      // 今天日期(Asia/Taipei)
+      // 今天日期(Asia/Taipei) → 今天：2026/07/24（週五）
       try {
-        $("todayDateText").textContent = "今天: " + new Intl.DateTimeFormat("zh-TW", {
+        const now = new Date();
+        const parts = new Intl.DateTimeFormat("zh-TW", {
           timeZone: "Asia/Taipei",
-          year: "numeric", month: "2-digit", day: "2-digit",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
           weekday: "short"
-        }).format(new Date());
+        }).formatToParts(now);
+        const pick = (type) => (parts.find((part) => part.type === type) || {}).value || "";
+        const year = pick("year");
+        const month = pick("month");
+        const day = pick("day");
+        let weekday = pick("weekday") || "";
+        weekday = weekday.replace(/^星期/, "週");
+        if (weekday && !weekday.startsWith("週")) weekday = "週" + weekday;
+        $("todayDateText").textContent = `今天：${year}/${month}/${day}（${weekday}）`;
       } catch (e) {
-        $("todayDateText").textContent = "今天: " + new Date().toLocaleDateString("zh-TW");
+        $("todayDateText").textContent = "今天：" + new Date().toLocaleDateString("zh-TW");
       }
 
       // 連續簽到天數:優先用後端 streak_days
