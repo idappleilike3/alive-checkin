@@ -46,10 +46,12 @@ class GuardianGroupJoinTests(unittest.TestCase):
         self.assertIn("JoinEvent", source)
         self.assertIn("@handler.add(JoinEvent)", source)
         self.assertIn("guardian_group_intro_flex", source)
+        self.assertIn("guardian_group_member_joined_flex", source)
+        self.assertIn("guardian_group_setup_nudge_text", source)
         self.assertIn("JoinEvent reply intro failed", source)
         self.assertIn("JoinEvent push intro failed", source)
 
-    def test_intro_flex_omits_empty_owner_box_when_unbound(self):
+    def test_intro_flex_is_concise_official_style(self):
         from guardian_group_flex import guardian_group_intro_flex
 
         intro = guardian_group_intro_flex({"bound": False})
@@ -57,18 +59,61 @@ class GuardianGroupJoinTests(unittest.TestCase):
             if block.get("type") == "box":
                 self.assertTrue(block.get("contents"), "LINE rejects empty Flex boxes")
 
-        # 主 CTA 必須是可點的「綁定守護群」
-        footer_btns = intro["footer"]["contents"]
-        primary = footer_btns[0]
-        self.assertEqual(primary["action"]["label"], "綁定守護群")
-        self.assertEqual(primary["action"]["text"], "綁定守護群")
-
-        # 文案需含用途／資格／上限／怎麼用
         body_text = str(intro["body"])
-        self.assertIn("用途", body_text)
-        self.assertIn("資格", body_text)
-        self.assertIn("50", body_text)
-        self.assertIn("怎麼用", body_text)
+        self.assertIn("一個群組，一起守護重要的人", body_text)
+        self.assertIn("超過提醒時間仍未報平安", body_text)
+        self.assertIn("發出 SOS 緊急求助", body_text)
+        self.assertIn("今日守護宣言", body_text)
+        # 不再用長文牆講資格／上限
+        self.assertNotIn("用途", body_text)
+        self.assertNotIn("資格", body_text)
+        self.assertNotIn("怎麼用", body_text)
+
+        footer_btns = intro["footer"]["contents"]
+        labels = [b["action"]["label"] for b in footer_btns]
+        self.assertEqual(labels[0], "綁定守護群")
+        self.assertIn("🟢 查看守護群", labels)
+        self.assertIn("➕ 邀請守護人", labels)
+        self.assertIn("⚙️ 群組設定", labels)
+
+        # 已綁定：不顯示綁定 CTA
+        bound = guardian_group_intro_flex({"bound": True, "is_owner": True, "is_active": True})
+        bound_labels = [b["action"]["label"] for b in bound["footer"]["contents"]]
+        self.assertNotIn("綁定守護群", bound_labels)
+
+    def test_bind_confirm_and_member_joined_cards(self):
+        from guardian_group_flex import (
+            guardian_group_bind_confirm_flex,
+            guardian_group_member_joined_flex,
+            guardian_group_setup_nudge_text,
+        )
+
+        info = guardian_group_bind_confirm_flex(
+            {
+                "display_name": "阿明",
+                "guardian_count": 1,
+                "guardian_limit": 5,
+                "reminder_time": "09:00",
+            }
+        )
+        body = str(info["body"])
+        self.assertIn("阿明", body)
+        self.assertIn("1 / 5 位", body)
+        self.assertIn("09:00", body)
+        self.assertIn("正常守護中", body)
+        footer_labels = [b["action"]["label"] for b in info["footer"]["contents"]]
+        self.assertEqual(footer_labels[0], "➕ 新增守護人")
+        self.assertEqual(footer_labels[1], "⏰ 修改提醒")
+
+        member = guardian_group_member_joined_flex("小美")
+        member_text = str(member["body"])
+        self.assertIn("小美 邀請您成為守護人", member_text)
+        self.assertIn("最安心的依靠", member_text)
+
+        nudge = guardian_group_setup_nudge_text(1, 5)
+        self.assertIn("守護群已建立成功", nudge)
+        self.assertIn("目前 1/5 位", nudge)
+        self.assertIn("設定每日提醒時間", nudge)
 
 
 if __name__ == "__main__":

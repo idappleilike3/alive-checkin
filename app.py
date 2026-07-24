@@ -52,6 +52,8 @@ try:
         guardian_group_status_flex,
         guardian_group_bind_confirm_flex,
         guardian_group_bind_fail_flex,
+        guardian_group_member_joined_flex,
+        guardian_group_setup_nudge_text,
         guardian_group_user_guide_flex,
         guardian_group_admin_setup_flex,
         welcome_flex,
@@ -68,6 +70,8 @@ except Exception:
     guardian_group_status_flex = None
     guardian_group_bind_confirm_flex = None
     guardian_group_bind_fail_flex = None
+    guardian_group_member_joined_flex = None
+    guardian_group_setup_nudge_text = None
     guardian_group_user_guide_flex = None
     guardian_group_admin_setup_flex = None
     welcome_flex = None
@@ -2710,9 +2714,13 @@ def bind_emergency_contact(data_file, payload, config=None):
                 f"之後若你未準時報平安或發出 SOS，系統會通知對方。"
             )
             guardian_notice = (
-                f"❤️ 你已接受邀請成為 {inviter_name} 的守護人\n\n"
-                f"對方未準時報平安或緊急求助時，你會收到 LINE 通知。\n"
-                f"若要邀請其他好友一起守護，請把邀請連結轉傳給他們。"
+                f"❤️ {inviter_name} 邀請您成為守護人\n"
+                "您已加入「每日平安」守護群。\n"
+                "未來若對方：\n"
+                "⚠️ 超過提醒時間仍未報平安\n"
+                "🚨 發出 SOS 緊急求助\n"
+                "系統將第一時間通知您。\n"
+                "謝謝您願意成為對方最安心的依靠。"
             )
             for line_user_id, message, who in (
                 (inviter_id, inviter_notice, "inviter"),
@@ -3237,7 +3245,90 @@ def safety_guard_snapshot(profile, now=None):
     }
 
 
-def update_location(data_file, payload):
+def notify_safety_guard_started(state, profile, line_user_id, duration_hours, config=None):
+    """Notify bound LINE guardians that 安全守護 started. Mutates notification_logs on state.
+
+    Returns a small status dict for the LIFF UI (sent / failed / no_guardians).
+    Never raises — caller already started the guard session.
+    """
+    location = profile.get("location") or {}
+    name = (profile.get("display_name") or "").strip() or "你的親友"
+    city = str(location.get("city") or "").strip()
+    hours = int(duration_hours or 1)
+    place = f"（{city}）" if city else ""
+    map_url = ""
+    try:
+        lat = location.get("latitude")
+        lng = location.get("longitude")
+        if lat is not None and lng is not None:
+            map_url = f"https://www.google.com/maps?q={lat},{lng}"
+    except (TypeError, ValueError):
+        map_url = ""
+    message = (
+        f"🛡️【安全守護】{name} 已開啟安全守護（{hours} 小時）\n"
+        f"目前大致位置{place}"
+        + (f"：\n{map_url}" if map_url else "：已分享定位")
+        + "\n時間到會自動結束；若對方提前結束，你就不會再看到這次分享。"
+    )
+
+    contacts = sorted(
+        profile.get("contacts") or [],
+        key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
+    )
+    targets = []
+    for contact in contacts:
+        target = get_contact_line_id(contact)
+        if not target or target == line_user_id:
+            continue
+        if not contact_is_bound_guardian(contact, line_user_id):
+            continue
+        if "line" not in (contact.get("notify_methods") or ["line"]):
+            continue
+        targets.append(target)
+
+    if not targets:
+        return {
+            "sent": 0,
+            "failed": 0,
+            "no_guardians": True,
+            "message": "尚未綁定可通知的守護人",
+        }
+
+    token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not token:
+        return {
+            "sent": 0,
+            "failed": len(targets),
+            "no_guardians": False,
+            "message": "系統暫時無法推播 LINE",
+        }
+
+    sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
+    sent = 0
+    failed = 0
+    for target in targets:
+        try:
+            result = sender(token, target, message)
+            append_notification_log(
+                state, "safety_guard", target, "sent", message, json.dumps(result, ensure_ascii=False)
+            )
+            sent += 1
+        except Exception as exc:
+            append_notification_log(state, "safety_guard", target, "failed", message, str(exc))
+            failed += 1
+    return {
+        "sent": sent,
+        "failed": failed,
+        "no_guardians": False,
+        "message": (
+            f"已通知 {sent} 位守護人"
+            if sent and not failed
+            else (f"已通知 {sent} 位，{failed} 位失敗" if sent else "守護人通知失敗")
+        ),
+    }
+
+
+def update_location(data_file, payload, config=None):
     """Start or refresh 安全守護: one location snapshot within a timed session (not continuous track)."""
     line_user_id = str(payload.get("line_user_id") or "").strip()
     if not line_user_id:
@@ -3256,10 +3347,11 @@ def update_location(data_file, payload):
     existing = dict(profile.get("location") or {})
     refresh_only = bool(payload.get("refresh_only"))
     city = str(payload.get("city") or "").strip()
+    was_active = _location_session_active(existing, now)
 
     if refresh_only:
         # Update last known coords; keep an active session as-is, do not invent a new share window.
-        if _location_session_active(existing, now):
+        if was_active:
             existing.update(
                 {
                     "latitude": round(latitude, 6),
@@ -3307,7 +3399,7 @@ def update_location(data_file, payload):
         }, 403
     started_at = (
         existing.get("started_at")
-        if _location_session_active(existing, now)
+        if was_active
         else now.isoformat(timespec="seconds")
     )
     if until_stop:
@@ -3329,11 +3421,16 @@ def update_location(data_file, payload):
         "active": True,
         "mode": "safety_guard",
     }
+    # Notify guardians when starting (or restarting) a timed session — not on silent refresh.
+    guardian_notify = notify_safety_guard_started(
+        state, profile, line_user_id, duration_hours, config=config
+    )
     save_state(data_file, state)
     return {
         "ok": True,
         "location": profile["location"],
         "safety_guard": safety_guard_snapshot(profile, now),
+        "guardian_notify": guardian_notify,
     }, 200
 
 
@@ -5202,7 +5299,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724sr",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724ax",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -5518,7 +5615,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724sr",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724ax",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -5874,21 +5971,65 @@ def create_app(config=None):
         def _guardian_intro_messages(owner_info, hint_text=None):
             """進群歡迎：短文字 + Flex（雙保險，避免 Flex 被拒時整段消失）。"""
             tip = hint_text or (
-                "歡迎加入每日平安守護群。\n"
-                "用途：沒簽到時會在群裡提醒。\n"
-                "資格：799 月費 1 群／年費 3 群。\n"
-                "上限：每群 50 人，超額會自動請出。\n"
-                "請管理員點「綁定守護群」完成設定。"
+                "🛡️ 歡迎加入「每日平安」守護群\n"
+                "平時不打擾，只在需要時通知大家。"
             )
             messages = [TextSendMessage(text=tip)]
             if FlexSendMessage is not None and guardian_group_intro_flex is not None:
                 messages.append(
                     FlexSendMessage(
-                        alt_text="❤️ 每日平安｜歡迎加入守護群｜請點綁定守護群",
+                        alt_text="🛡️ 歡迎加入「每日平安」守護群",
                         contents=guardian_group_intro_flex(owner_info),
                     )
                 )
             return messages
+
+        def _enrich_bind_result_for_flex(result, line_user_id):
+            """補上資訊卡需要的管理人／守護人數／提醒時間。"""
+            enriched = dict(result or {})
+            try:
+                state = load_state(app.config["DATA_FILE"])
+                profile = get_profile(state, line_user_id) or {}
+                rules = plan_rules(profile)
+                times = reminder_times_for_profile(profile) or ["09:00"]
+                contacts = profile.get("contacts") or []
+                guardian_count = sum(
+                    1 for c in contacts if contact_is_bound_guardian(c, line_user_id)
+                )
+                if guardian_count <= 0:
+                    guardian_count = sum(
+                        1 for c in contacts if contact_has_guardian_profile(c)
+                    )
+                enriched.setdefault(
+                    "display_name",
+                    (profile.get("display_name") or "").strip() or "管理員",
+                )
+                enriched.setdefault("guardian_count", guardian_count)
+                enriched.setdefault(
+                    "guardian_limit",
+                    int(rules.get("core_guardian_alert_limit") or 5),
+                )
+                enriched.setdefault("reminder_time", str(times[0] if times else "09:00"))
+                enriched.setdefault("reminder_times", list(times))
+            except Exception as exc:
+                app.logger.exception("enrich bind result failed: %s", exc)
+                enriched.setdefault("display_name", "管理員")
+                enriched.setdefault("guardian_count", 0)
+                enriched.setdefault("guardian_limit", 5)
+                enriched.setdefault("reminder_time", "09:00")
+            return enriched
+
+        def _owner_display_name(owner_info):
+            owner_id = (owner_info or {}).get("owner_id")
+            if not owner_id:
+                return "家人"
+            try:
+                state = load_state(app.config["DATA_FILE"])
+                profile = state.get("users", {}).get(owner_id, {}) or {}
+                name = (profile.get("display_name") or "").strip()
+                return name or "家人"
+            except Exception:
+                return "家人"
 
         def _load_group_owner_info(group_id, line_user_id=None):
             owner_info = {
@@ -6033,17 +6174,28 @@ def create_app(config=None):
                         app.logger.exception("MemberJoined intro push failed: %s", exc)
                 elif new_ids:
                     try:
-                        line_bot_api.push_message(
-                            group_id,
-                            TextSendMessage(
-                                text=(
-                                    "歡迎加入每日平安守護群。\n"
-                                    "記得每天報平安；若超過時間還沒簽到，系統會在這個群提醒家人。"
+                        inviter_name = _owner_display_name(owner_info)
+                        member_msgs = []
+                        if FlexSendMessage is not None and guardian_group_member_joined_flex is not None:
+                            member_msgs.append(
+                                FlexSendMessage(
+                                    alt_text=f"❤️ {inviter_name} 邀請您成為守護人",
+                                    contents=guardian_group_member_joined_flex(inviter_name),
                                 )
-                            ),
-                        )
+                            )
+                        else:
+                            member_msgs.append(
+                                TextSendMessage(
+                                    text=(
+                                        f"❤️ {inviter_name} 邀請您成為守護人\n"
+                                        "您已加入「每日平安」守護群。\n"
+                                        "對方逾時未報平安或發出 SOS 時，系統會第一時間通知您。"
+                                    )
+                                )
+                            )
+                        line_bot_api.push_message(group_id, member_msgs)
                     except Exception as exc:
-                        app.logger.exception("MemberJoined welcome text failed: %s", exc)
+                        app.logger.exception("MemberJoined welcome flex failed: %s", exc)
 
                 result, code = enforce_group_member_limit(group_id, dict(app.config))
                 if code != 200 or not result.get("enforced"):
@@ -6244,13 +6396,28 @@ def create_app(config=None):
                     )
                     if FlexSendMessage is not None and guardian_group_bind_confirm_flex is not None:
                         if code == 200:
-                            line_bot_api.reply_message(
-                                event.reply_token,
+                            enriched = _enrich_bind_result_for_flex(result, line_user_id)
+                            success_msgs = [
                                 FlexSendMessage(
-                                    alt_text="✅ 我已完成守護群設定",
-                                    contents=guardian_group_bind_confirm_flex(result),
-                                ),
-                            )
+                                    alt_text="📋 守護群資訊",
+                                    contents=guardian_group_bind_confirm_flex(enriched),
+                                )
+                            ]
+                            # 綁定成功後不要停在資訊卡：再 nudge 完成守護人／提醒設定
+                            if not result.get("already_bound"):
+                                nudge = (
+                                    guardian_group_setup_nudge_text(
+                                        enriched.get("guardian_count", 0),
+                                        enriched.get("guardian_limit", 5),
+                                    )
+                                    if guardian_group_setup_nudge_text is not None
+                                    else (
+                                        "🎉 守護群已建立成功！\n"
+                                        "建議再完成：新增守護人、設定每日提醒時間。"
+                                    )
+                                )
+                                success_msgs.append(TextSendMessage(text=nudge))
+                            line_bot_api.reply_message(event.reply_token, success_msgs)
                         else:
                             reason = result.get(
                                 "reply_text",
@@ -6271,6 +6438,16 @@ def create_app(config=None):
                                 f"目前已綁定 {result.get('guardian_group_count', 1)}/"
                                 f"{result.get('guardian_group_limit', 3)} 個群組。"
                             )
+                            if not result.get("already_bound") and guardian_group_setup_nudge_text is not None:
+                                enriched = _enrich_bind_result_for_flex(result, line_user_id)
+                                reply_text = (
+                                    reply_text
+                                    + "\n\n"
+                                    + guardian_group_setup_nudge_text(
+                                        enriched.get("guardian_count", 0),
+                                        enriched.get("guardian_limit", 5),
+                                    )
+                                )
                         elif result.get("should_leave"):
                             reply_text = (
                                 "這個群組目前無法啟用守護功能。守護群限有效的 799 月費或年費會員建立；月費最多 1 群，年費最多 3 群。\n"
@@ -6283,8 +6460,8 @@ def create_app(config=None):
                         line_bot_api.leave_group(group_id)
                     return
 
-                # 2) 守護群狀態
-                if stripped in ("守護群狀態", "群狀態", "狀態"):
+                # 2) 守護群狀態（含「查看守護群」按鈕別名）
+                if stripped in ("守護群狀態", "群狀態", "狀態", "查看守護群"):
                     state = load_state(app.config["DATA_FILE"])
                     profile = get_profile(state, line_user_id) or {}
                     if FlexSendMessage is not None and guardian_group_status_flex is not None:
@@ -6325,8 +6502,8 @@ def create_app(config=None):
                         )
                     return
 
-                # 4) 管理員設定 / 怎麼設管理員
-                if stripped in ("管理員設定", "設管理員", "怎麼設管理員", "6步驟"):
+                # 4) 管理員設定 / 怎麼設管理員 / 群組設定
+                if stripped in ("管理員設定", "設管理員", "怎麼設管理員", "6步驟", "群組設定"):
                     if FlexSendMessage is not None and guardian_group_admin_setup_flex is not None:
                         line_bot_api.reply_message(
                             event.reply_token,
@@ -6908,7 +7085,11 @@ def create_app(config=None):
 
     @app.post("/api/location/update")
     def location_update_api():
-        data, code = update_location(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        data, code = update_location(
+            app.config["DATA_FILE"],
+            request.get_json(silent=True) or {},
+            app.config,
+        )
         return jsonify(data), code
 
     @app.post("/api/location/stop")
@@ -7444,7 +7625,7 @@ class MiniClient:
             body, code = accept_friend_invite(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
         if route == "/api/location/update":
-            body, code = update_location(self.app.config["DATA_FILE"], payload)
+            body, code = update_location(self.app.config["DATA_FILE"], payload, self.app.config)
             return MiniResponse(body, code)
         if route == "/api/location/stop":
             body, code = stop_location_sharing(self.app.config["DATA_FILE"], payload)
@@ -7705,7 +7886,7 @@ class MiniApp:
                     data, code = accept_friend_invite(data_file, payload)
                     return handler.send_json(data, code)
                 if route == "/api/location/update":
-                    data, code = update_location(data_file, payload)
+                    data, code = update_location(data_file, payload, config)
                     return handler.send_json(data, code)
                 if route == "/api/location/stop":
                     data, code = stop_location_sharing(data_file, payload)

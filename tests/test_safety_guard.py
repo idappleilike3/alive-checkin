@@ -36,6 +36,8 @@ class SafetyGuardTests(unittest.TestCase):
         self.assertEqual(body["safety_guard"]["duration_hours"], 3)
         self.assertFalse(body["safety_guard"]["until_stop"])
         self.assertEqual(body["location"]["mode"], "safety_guard")
+        self.assertIn("guardian_notify", body)
+        self.assertTrue(body["guardian_notify"].get("no_guardians"))
 
         stop, stop_code = alive_app.stop_location_sharing(
             self.data_file, {"line_user_id": "U1"}
@@ -136,6 +138,51 @@ class SafetyGuardTests(unittest.TestCase):
         )
         self.assertEqual(code399, 403)
         self.assertEqual(denied399["allowed_hours"], [1, 3])
+
+    def test_safety_guard_notifies_bound_guardians(self):
+        sent = []
+
+        def fake_sender(token, target, message):
+            sent.append({"target": target, "message": message})
+            return {"ok": True, "status": 200}
+
+        state = alive_app.load_state(self.data_file)
+        owner = alive_app.get_profile(state, "owner_sg")
+        owner["plan"] = "free"
+        owner["display_name"] = "小明"
+        owner["contacts"] = [
+            {
+                "name": "媽媽",
+                "relationship": "媽媽",
+                "line_user_id": "U_mom",
+                "binding_status": "accepted",
+                "notify_methods": ["line"],
+                "is_primary": True,
+            }
+        ]
+        alive_app.save_state(self.data_file, state)
+
+        body, code = alive_app.update_location(
+            self.data_file,
+            {
+                "line_user_id": "owner_sg",
+                "latitude": 25.04,
+                "longitude": 121.56,
+                "city": "台北市",
+                "duration": 1,
+            },
+            {"LINE_CHANNEL_ACCESS_TOKEN": "test-token", "LINE_PUSH_SENDER": fake_sender},
+        )
+        self.assertEqual(code, 200)
+        self.assertTrue(body["safety_guard"]["active"])
+        self.assertEqual(body["guardian_notify"]["sent"], 1)
+        self.assertEqual(body["guardian_notify"]["failed"], 0)
+        self.assertFalse(body["guardian_notify"]["no_guardians"])
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]["target"], "U_mom")
+        self.assertIn("安全守護", sent[0]["message"])
+        self.assertIn("1 小時", sent[0]["message"])
+        self.assertIn("台北市", sent[0]["message"])
 
     def test_friend_can_see_active_safety_status(self):
         state = alive_app.load_state(self.data_file)

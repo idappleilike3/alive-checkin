@@ -1,18 +1,21 @@
 """守護群 / 歡迎 Flex Message 構建器。
 
 主要 Flex:
-1. guardian_group_intro_flex()       — 進群自我介紹(一鍵綁定守護群)
+1. guardian_group_intro_flex()       — 進群歡迎（Apple/LINE 官方風格，短文＋三鈕）
 2. guardian_group_status_flex()      — 守護群狀態查詢
-3. guardian_group_bind_confirm_flex  — 綁定完成(主標：我已綁定守護群)
-4. guardian_group_user_guide_flex()  — 使用說明(給群成員)
-5. guardian_group_admin_setup_flex() — 管理員設定 6 步驟
-6. welcome_flex()                   — 加好友歡迎(7 天免費體驗 + 綁定守護人)
+3. guardian_group_bind_confirm_flex  — 綁定成功：守護群資訊卡
+4. guardian_group_member_joined_flex — 家人首次進群／成為守護人（情感卡）
+5. guardian_group_user_guide_flex()  — 使用說明(給群成員)
+6. guardian_group_admin_setup_flex() — 管理員設定 6 步驟
+7. welcome_flex()                   — 加好友歡迎(7 天免費體驗 + 綁定守護人)
 
 設計原則:
+- 進群歡迎宜短：像官方帳號首次加入，不要長文牆
 - 老人/長者閱讀:字級只用 xxl(20-24px) / lg(16-18px) / md(14px),禁 sm/xs 字級
 - 顏色:綠(#06C755 LINE 綠 / #00B900 深綠)
 - 對使用者文案不使用 BOT 字眼
 - footer 小按鈕用 height=sm；主 CTA 用 primary md
+- 守護群只通知安全事件（報平安／逾時／SOS），不塞生日生活提醒
 """
 
 from __future__ import annotations
@@ -229,45 +232,49 @@ def _group_quick_actions():
 
 
 # ───────────────────────────────────────────────────────────
-# 1. 自我介紹(Intro)
+# 1. 進群歡迎（短文，官方帳號風格）
 # ───────────────────────────────────────────────────────────
 
-def _intro_info_row(title: str, desc: str):
-    """進群歡迎卡：用途／資格／上限等資訊列（長輩好讀）。"""
+def _body_line(text: str, *, weight: str = "regular", color: str = GRAY, size: str = "lg", margin: str | None = None):
+    node = {
+        "type": "text",
+        "text": text,
+        "size": size,
+        "weight": weight,
+        "color": color,
+        "wrap": True,
+    }
+    if margin:
+        node["margin"] = margin
+    return node
+
+
+def _ceremonial_oath_block():
+    """可選溫暖區塊：今日守護宣言。"""
     return {
         "type": "box",
         "layout": "vertical",
         "spacing": "xs",
-        "paddingTop": "sm",
-        "paddingBottom": "sm",
+        "margin": "md",
+        "paddingAll": "md",
+        "backgroundColor": "#F7FBF8",
+        "cornerRadius": "md",
         "contents": [
-            {
-                "type": "text",
-                "text": title,
-                "size": "lg",
-                "weight": "bold",
-                "color": GREEN_DARK,
-                "wrap": True,
-            },
-            {
-                "type": "text",
-                "text": desc,
-                "size": "lg",
-                "color": GRAY,
-                "wrap": True,
-            },
+            _body_line("────────────────", color=GRAY_LIGHT, size="md"),
+            _body_line("🛡️ 今日守護宣言", weight="bold", color=GREEN_DARK, size="lg"),
+            _body_line("願我們都能平安回家", color=GRAY, size="md"),
+            _body_line("也願重要的人", color=GRAY, size="md"),
+            _body_line("每天都有人牽掛 ❤️", color=GRAY, size="md"),
+            _body_line("────────────────", color=GRAY_LIGHT, size="md"),
         ],
     }
 
 
-def guardian_group_intro_flex(owner_info: dict | None = None):
-    """進群自我介紹 Flex：說明用途／資格／上限，並請管理員點「綁定守護群」。
+def guardian_group_intro_flex(owner_info: dict | None = None, *, include_oath: bool = True):
+    """進群歡迎 Flex（短、暖、像 LINE／Apple 官方首次加入）。
 
-    設計重點:
-    - 清楚分段：用途、資格、50 人上限、狀態（可點選）、怎麼用
-    - 主 CTA：「綁定守護群」(message → 觸發既有 keyword handler)
-    - footer：狀態／管理員設定可點選；另附群內常用按鈕
-    - 不使用 BOT 字眼
+    只說明「這個群何時會通知」，不塞資格／上限長文。
+    未綁定時保留主 CTA「綁定守護群」；已綁定則直接三顆常用鈕。
 
     owner_info 結構: {
         "bound": bool,
@@ -279,83 +286,34 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
     }
     """
     already_bound = bool(owner_info and owner_info.get("bound"))
-    primary_bind = {
-        "type": "button",
-        "action": {
-            "type": "message",
-            "label": "綁定守護群",
-            "text": "綁定守護群",
-        },
-        "style": "primary",
-        "color": GREEN_DARK,
-        "height": "md",
-    }
-    if already_bound:
-        primary_bind = {
-            "type": "button",
-            "action": {
-                "type": "message",
-                "label": "我已完成守護群設定",
-                "text": "守護群狀態",
-            },
-            "style": "primary",
-            "color": GREEN_DARK,
-            "height": "md",
-        }
 
-    # LINE Flex 禁止空 contents box；未綁定時不可塞空區塊，否則整張卡被 API 拒收
     body_contents = [
-        {
-            "type": "box",
-            "layout": "vertical",
-            "spacing": "xs",
-            "backgroundColor": "#E8F8EE",
-            "cornerRadius": "md",
-            "paddingAll": "md",
-            "borderColor": GREEN_DARK,
-            "borderWidth": "1px",
-            "contents": [
-                {
-                    "type": "text",
-                    "text": "歡迎加入「每日平安」守護群",
-                    "size": "xl",
-                    "weight": "bold",
-                    "color": GREEN_DARK,
-                    "wrap": True,
-                },
-                {
-                    "type": "text",
-                    "text": "這個群用來互相關心、收到家人的平安訊息。平常不吵，有狀況才提醒。",
-                    "size": "lg",
-                    "color": GRAY,
-                    "wrap": True,
-                },
-            ],
-        },
-        _intro_info_row(
-            "用途",
-            "當你沒簽到、或需要幫忙時，系統會在這個群發提醒，讓家人一起知道。",
-        ),
-        _intro_info_row(
-            "資格",
-            "799 守護版：月費可開 1 群，年費可開 3 群。請由方案本人完成綁定。",
-        ),
-        _intro_info_row(
-            "人數上限",
-            "每群最多 50 人；超過上限時，系統會自動請出新加入的成員。",
-        ),
-        _intro_info_row(
-            "狀態與設定",
-            "管理員可點下方「守護群狀態」「管理員設定」查看與調整；群內明細預設只有管理員看得到。",
-        ),
-        _intro_info_row(
-            "怎麼用",
-            "進群後請先點「綁定守護群」完成設定。成功後會顯示「我已完成守護群設定」。",
-        ),
+        _body_line("❤️ 一個群組，一起守護重要的人。", weight="bold", color="#1a1a1a", size="lg"),
+        _body_line("這裡只會在以下情況通知大家：", color=GRAY, size="lg", margin="md"),
+        _body_line("❤️ 今日已報平安（可選擇是否通知）", color=GRAY, size="lg", margin="sm"),
+        _body_line("⚠️ 超過提醒時間仍未報平安", color=GRAY, size="lg"),
+        _body_line("🚨 發出 SOS 緊急求助", color=GRAY, size="lg"),
+        _body_line("平時不打擾，只在需要時通知。", color=GRAY, size="lg", margin="md"),
+        _body_line("感謝您一起守護彼此的平安。", color=GRAY, size="lg"),
     ]
+    if include_oath:
+        body_contents.append(_ceremonial_oath_block())
     owner_block = _owner_status_block(owner_info)
     if owner_block:
         body_contents.append(owner_block)
+
+    footer_contents = []
+    if not already_bound:
+        footer_contents.append(
+            _postback_button("綁定守護群", "綁定守護群", style="primary", color=GREEN_DARK, height="md")
+        )
+    footer_contents.extend(
+        [
+            _postback_button("🟢 查看守護群", "守護群狀態", style="primary", color=GREEN_DARK, height="md"),
+            _postback_button("➕ 邀請守護人", "邀請守護人", style="secondary", color=GREEN_DARK, height="md"),
+            _postback_button("⚙️ 群組設定", "管理員設定", style="secondary", color=GRAY, height="md"),
+        ]
+    )
 
     return {
         "type": "bubble",
@@ -371,19 +329,11 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
             "contents": [
                 {
                     "type": "text",
-                    "text": "❤️ 每日平安",
+                    "text": "🛡️ 歡迎加入「每日平安」守護群",
                     "color": "#FFFFFF",
-                    "size": "xxl",
+                    "size": "xl",
                     "weight": "bold",
                     "align": "center",
-                },
-                {
-                    "type": "text",
-                    "text": "守護群歡迎你",
-                    "color": "#FFFFFF",
-                    "size": "lg",
-                    "align": "center",
-                    "margin": "sm",
                     "wrap": True,
                 },
             ],
@@ -391,9 +341,8 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
         "body": {
             "type": "box",
             "layout": "vertical",
-            "spacing": "md",
-            "paddingTop": "lg",
-            "paddingBottom": "md",
+            "spacing": "none",
+            "paddingAll": "lg",
             "contents": body_contents,
         },
         "footer": {
@@ -402,16 +351,7 @@ def guardian_group_intro_flex(owner_info: dict | None = None):
             "spacing": "sm",
             "paddingAll": "md",
             "backgroundColor": "#FAFAFA",
-            "contents": [
-                primary_bind,
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "sm",
-                    "contents": _footer_buttons(("status", "admin")),
-                },
-                *_group_quick_actions(),
-            ],
+            "contents": footer_contents,
         },
     }
 
@@ -621,20 +561,63 @@ def guardian_group_status_flex(profile: dict, state: dict):
 
 
 # ───────────────────────────────────────────────────────────
-# 3. 綁定守護群確認(大綠色按鈕 + 結果)
+# 3. 綁定成功：守護群資訊卡 + 後續設定 nudge
 # ───────────────────────────────────────────────────────────
 
-def guardian_group_bind_confirm_flex(result: dict):
-    """「綁定守護群」完成後的 Flex。成功主標固定為「我已完成守護群設定」。"""
-    already = result.get("already_bound")
-    count = result.get("guardian_group_count", 1)
-    limit = result.get("guardian_group_limit", 1)
+def _info_row(emoji_label: str, value: str):
+    return {
+        "type": "box",
+        "layout": "horizontal",
+        "spacing": "sm",
+        "paddingTop": "sm",
+        "paddingBottom": "sm",
+        "contents": [
+            {
+                "type": "text",
+                "text": emoji_label,
+                "size": "lg",
+                "color": GRAY,
+                "flex": 0,
+                "wrap": True,
+            },
+            {
+                "type": "text",
+                "text": value,
+                "size": "lg",
+                "weight": "bold",
+                "color": "#1a1a1a",
+                "flex": 1,
+                "wrap": True,
+            },
+        ],
+    }
 
-    head_text = "我已完成守護群設定"
-    if already:
-        body_text = f"此群已是你的守護群,目前已綁定 {count}/{limit} 個,無需重複操作"
-    else:
-        body_text = f"綁定成功,目前已綁定 {count}/{limit} 個守護群。逾期未簽到與需要幫忙提醒會在此群發送"
+
+def guardian_group_setup_nudge_text(guardian_count: int = 0, guardian_limit: int = 5) -> str:
+    """綁定成功後第二則文字：提醒再完成 2 個設定。"""
+    count = max(0, int(guardian_count or 0))
+    limit = max(1, int(guardian_limit or 5))
+    return (
+        "🎉 守護群已建立成功！\n"
+        "建議再完成 2 個設定，讓守護更完整：\n"
+        f"✅ 新增守護人（目前 {count}/{limit} 位）\n"
+        "✅ 設定每日提醒時間\n"
+        "完成後，系統就會開始每天守護您與家人的平安 ❤️"
+    )
+
+
+def guardian_group_bind_confirm_flex(result: dict):
+    """綁定／建立成功後的「守護群資訊」卡（第二張）。"""
+    already = result.get("already_bound")
+    display_name = (result.get("display_name") or result.get("owner_display_name") or "管理員").strip() or "管理員"
+    guardian_count = int(result.get("guardian_count") or 0)
+    guardian_limit = int(result.get("guardian_limit") or result.get("core_guardian_alert_limit") or 5)
+    reminder = (
+        result.get("reminder_time")
+        or (result.get("reminder_times") or [None])[0]
+        or "09:00"
+    )
+    status_label = "🟢 正常守護中" if not already else "🟢 正常守護中（已綁定）"
 
     return {
         "type": "bubble",
@@ -650,7 +633,7 @@ def guardian_group_bind_confirm_flex(result: dict):
             "contents": [
                 {
                     "type": "text",
-                    "text": f"✅ {head_text}",
+                    "text": "📋 守護群資訊",
                     "color": "#FFFFFF",
                     "size": "xxl",
                     "weight": "bold",
@@ -662,40 +645,13 @@ def guardian_group_bind_confirm_flex(result: dict):
         "body": {
             "type": "box",
             "layout": "vertical",
-            "spacing": "md",
+            "spacing": "xs",
             "paddingAll": "lg",
             "contents": [
-                {
-                    "type": "box",
-                    "layout": "vertical",
-                    "spacing": "xs",
-                    "backgroundColor": GREEN_SOFT,
-                    "cornerRadius": "md",
-                    "paddingAll": "md",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": body_text,
-                            "size": "lg",
-                            "color": GRAY,
-                            "wrap": True,
-                        },
-                    ],
-                },
-                {
-                    "type": "text",
-                    "text": "接下來建議:",
-                    "size": "md",
-                    "color": GRAY_LIGHT,
-                    "margin": "md",
-                },
-                {
-                    "type": "text",
-                    "text": "• 把「每日平安」設為此群管理員(必做)\n• 邀請長輩/家人加入此群\n• 設定每日簽到時間",
-                    "size": "md",
-                    "color": GRAY,
-                    "wrap": True,
-                },
+                _info_row("👑 管理人", display_name),
+                _info_row("👥 守護人", f"{guardian_count} / {guardian_limit} 位"),
+                _info_row("🕘 每日提醒", str(reminder)),
+                _info_row("📍 群組狀態", status_label),
             ],
         },
         "footer": {
@@ -705,16 +661,48 @@ def guardian_group_bind_confirm_flex(result: dict):
             "paddingAll": "md",
             "backgroundColor": "#FAFAFA",
             "contents": [
-                _postback_button("守護群狀態", "守護群狀態", style="primary", color=GREEN_DARK, height="md"),
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "sm",
-                    "contents": [
-                        _postback_button("使用說明", "使用說明", style="link", color=GRAY, height="sm"),
-                        _postback_button("管理員設定", "管理員設定", style="link", color=GRAY, height="sm"),
-                    ],
-                },
+                _postback_button("➕ 新增守護人", "邀請守護人", style="primary", color=GREEN_DARK, height="md"),
+                _uri_button(
+                    "⏰ 修改提醒",
+                    liff_entry_url(open_action="member"),
+                    style="secondary",
+                    color=GREEN_DARK,
+                    height="md",
+                ),
+            ],
+        },
+    }
+
+
+def guardian_group_member_joined_flex(inviter_display_name: str | None = None):
+    """家人首次被邀請／加入守護群（情感卡）。"""
+    name = (inviter_display_name or "").strip() or "家人"
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "paddingAll": "lg",
+            "contents": [
+                _body_line(f"❤️ {name} 邀請您成為守護人", weight="bold", color="#1a1a1a", size="xl"),
+                _body_line("您已加入「每日平安」守護群。", color=GRAY, size="lg", margin="md"),
+                _body_line("未來若對方：", color=GRAY, size="lg", margin="md"),
+                _body_line("⚠️ 超過提醒時間仍未報平安", color=GRAY, size="lg"),
+                _body_line("🚨 發出 SOS 緊急求助", color=GRAY, size="lg"),
+                _body_line("系統將第一時間通知您。", color=GRAY, size="lg", margin="md"),
+                _body_line("謝謝您願意成為對方最安心的依靠。", weight="bold", color=GREEN_DARK, size="lg", margin="md"),
+            ],
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "paddingAll": "md",
+            "backgroundColor": "#FAFAFA",
+            "contents": [
+                _postback_button("🟢 查看守護群", "守護群狀態", style="primary", color=GREEN_DARK, height="md"),
             ],
         },
     }

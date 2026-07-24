@@ -1258,6 +1258,39 @@
     }
     .mvp-guard-duration label[hidden] { display: none !important; }
     .mvp-guard-duration input { accent-color: #079455; }
+    .mvp-guard-feedback {
+      margin: 0 0 12px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: #eff6ff;
+      color: #1e3a8a;
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.45;
+    }
+    .mvp-guard-feedback[data-tone="ok"] {
+      background: #ecfdf5;
+      color: #14532d;
+    }
+    .mvp-guard-feedback[data-tone="err"] {
+      background: #fef2f2;
+      color: #991b1b;
+    }
+    .mvp-guard-upgrade {
+      margin: 4px 0 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: #fffbeb;
+      color: #78350f;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .mvp-guard-upgrade-link {
+      color: #b45309;
+      font-weight: 800;
+      text-decoration: underline;
+      margin-left: 4px;
+    }
     .safety-guard-status {
       margin: 0 0 10px;
       padding: 10px 12px;
@@ -3229,15 +3262,22 @@
       <h2>🛡️ 安全守護</h2>
       <p class="mvp-panel-lead">適合外出、夜歸、看診或短時間需要家人知道位置時使用。先選時長再開始，時間到會自動停止，也可提前結束。</p>
       <div class="mvp-guard-status" id="mvpGuardStatus" data-active="false">目前未開啟安全守護</div>
+      <div class="mvp-guard-feedback" id="mvpGuardFeedback" role="status" aria-live="polite" hidden></div>
       <div class="mvp-guard-duration" id="mvpGuardDuration" role="radiogroup" aria-label="安全守護時長">
-        <label><input type="radio" name="safetyGuardDuration" value="1" checked> 1 小時</label>
-        <label hidden><input type="radio" name="safetyGuardDuration" value="3"> 3 小時</label>
-        <label hidden><input type="radio" name="safetyGuardDuration" value="6"> 6 小時</label>
-        <label hidden><input type="radio" name="safetyGuardDuration" value="8"> 8 小時</label>
+        <label><input type="radio" name="mvpSafetyGuardDuration" value="1" checked> 1 小時</label>
+        <label hidden><input type="radio" name="mvpSafetyGuardDuration" value="3"> 3 小時</label>
+        <label hidden><input type="radio" name="mvpSafetyGuardDuration" value="6"> 6 小時</label>
+        <label hidden><input type="radio" name="mvpSafetyGuardDuration" value="8"> 8 小時</label>
       </div>
+      <p class="mvp-guard-upgrade" id="mvpGuardUpgradeHint" hidden>
+        升級方案可享更長安全守護定位時間分享：
+        <strong>399</strong> 可選 1／3 小時，
+        <strong>799</strong> 可選 1／3／6／8 小時。
+        <a class="mvp-guard-upgrade-link" href="https://alive-checkin.onrender.com/liff/pricing.html">查看方案</a>
+      </p>
       <div class="mvp-panel-actions">
         <button class="mvp-action start" id="mvpGuardStartBtn" type="button">開始安全守護（1 小時）</button>
-        <button class="mvp-action stop" id="mvpGuardStopBtn" type="button">提前結束</button>
+        <button class="mvp-action stop" id="mvpGuardStopBtn" type="button" hidden>提前結束</button>
       </div>
       <div class="contact-card contact-primary" id="mvpGuardInviteCard" style="margin-top:14px;">
         <div class="price-head"><strong>邀請家人一起守護</strong><span>推薦</span></div>
@@ -3885,6 +3925,12 @@
           <label hidden><input type="radio" name="safetyGuardDuration" value="6"> 6 小時</label>
           <label hidden><input type="radio" name="safetyGuardDuration" value="8"> 8 小時</label>
         </div>
+        <p class="mvp-guard-upgrade" id="safetyGuardUpgradeHint" hidden>
+          升級方案可享更長安全守護定位時間分享：
+          <strong>399</strong> 可選 1／3 小時，
+          <strong>799</strong> 可選 1／3／6／8 小時。
+          <a class="mvp-guard-upgrade-link" href="https://alive-checkin.onrender.com/liff/pricing.html">查看方案</a>
+        </p>
         <div class="friend-location-actions safety-guard-actions" id="safetyGuardActions" data-active="false">
           <button class="share-location-btn" id="shareLocationBtn" type="button">開啟安全守護</button>
           <button class="refresh-location-btn" id="refreshLocationBtn" type="button">更新目前位置</button>
@@ -4757,15 +4803,19 @@
       if (opts.refreshOnly) {
         body.refresh_only = true;
       } else {
-        body.duration = opts.duration || selectedSafetyGuardDuration();
+        body.duration = Number(opts.duration || selectedSafetyGuardDuration()) || 1;
       }
       const res = await fetch("/api/location/update", {
         method: "POST",
         headers: await authHeaders(),
         body: JSON.stringify(body)
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "location failed");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const allowed = Array.isArray(data.allowed_hours) ? data.allowed_hours.join("／") : "";
+        const base = data.error || "開啟安全守護失敗";
+        throw new Error(allowed ? `${base}（目前方案可用：${allowed} 小時）` : base);
+      }
       return data;
     }
 
@@ -5988,40 +6038,81 @@
       return [1];
     }
 
+    function safetyGuardDurationInputs() {
+      return [
+        ...document.querySelectorAll('input[name="mvpSafetyGuardDuration"]'),
+        ...document.querySelectorAll('input[name="safetyGuardDuration"]'),
+      ];
+    }
+
     function syncSafetyGuardDurationOptions(status) {
       const allowed = allowedSafetyGuardHours(status || currentStatusData);
       const allowedSet = new Set(allowed.map(String));
-      document.querySelectorAll('input[name="safetyGuardDuration"]').forEach((input) => {
+      safetyGuardDurationInputs().forEach((input) => {
         const label = input.closest("label");
         const ok = allowedSet.has(String(input.value));
         if (label) label.hidden = !ok;
         input.disabled = !ok;
         if (!ok) input.checked = false;
       });
-      const checked = document.querySelector('input[name="safetyGuardDuration"]:checked');
-      if (!checked) {
+      const ensureChecked = (name) => {
+        const checked = document.querySelector(`input[name="${name}"]:checked:not(:disabled)`);
+        if (checked) return;
         const fallback = String(allowed[0] || 1);
-        const radio = document.querySelector(`input[name="safetyGuardDuration"][value="${fallback}"]`);
+        const radio = document.querySelector(`input[name="${name}"][value="${fallback}"]:not(:disabled)`);
         if (radio) radio.checked = true;
-      }
+      };
+      ensureChecked("mvpSafetyGuardDuration");
+      ensureChecked("safetyGuardDuration");
       updateSafetyGuardStartLabels();
+      updateSafetyGuardUpgradeHint(status || currentStatusData);
     }
 
     function selectedSafetyGuardDuration() {
-      const checked = document.querySelector('input[name="safetyGuardDuration"]:checked:not(:disabled)');
-      if (checked) return checked.value;
+      const mvpPanel = $("mvpGuardPanel");
+      const preferMvp = mvpPanel && !mvpPanel.hidden;
+      const names = preferMvp
+        ? ["mvpSafetyGuardDuration", "safetyGuardDuration"]
+        : ["safetyGuardDuration", "mvpSafetyGuardDuration"];
+      for (const name of names) {
+        const checked = document.querySelector(`input[name="${name}"]:checked:not(:disabled)`);
+        if (checked) return checked.value;
+      }
       const allowed = allowedSafetyGuardHours(currentStatusData);
       return String(allowed[0] || 1);
+    }
+
+    function updateSafetyGuardUpgradeHint(status) {
+      const allowed = allowedSafetyGuardHours(status || currentStatusData);
+      const show = !allowed.includes(8);
+      ["mvpGuardUpgradeHint", "safetyGuardUpgradeHint"].forEach((id) => {
+        const el = $(id);
+        if (el) el.hidden = !show;
+      });
+    }
+
+    function setSafetyGuardFeedback(message, tone) {
+      const el = $("mvpGuardFeedback");
+      if (!el) return;
+      if (!message) {
+        el.hidden = true;
+        el.textContent = "";
+        el.removeAttribute("data-tone");
+        return;
+      }
+      el.hidden = false;
+      el.textContent = message;
+      el.dataset.tone = tone || "info";
     }
 
     function updateSafetyGuardStartLabels() {
       const hours = selectedSafetyGuardDuration();
       const mvpStart = $("mvpGuardStartBtn");
-      if (mvpStart && !mvpStart.hidden) {
+      if (mvpStart && !mvpStart.hidden && !mvpStart.disabled) {
         mvpStart.textContent = `開始安全守護（${hours} 小時）`;
       }
       const shareBtn = $("shareLocationBtn");
-      if (shareBtn) {
+      if (shareBtn && !shareBtn.disabled) {
         shareBtn.textContent = `開啟安全守護（${hours} 小時）`;
       }
     }
@@ -6070,11 +6161,10 @@
       if (mvpStart) mvpStart.hidden = active;
       if (mvpStop) mvpStop.hidden = !active;
       if (active && guard && guard.duration_hours) {
-        const radios = document.querySelectorAll(
-          `input[name="safetyGuardDuration"][value="${guard.duration_hours}"]`
-        );
-        radios.forEach((radio) => {
-          if (!radio.disabled) radio.checked = true;
+        safetyGuardDurationInputs().forEach((input) => {
+          if (String(input.value) === String(guard.duration_hours) && !input.disabled) {
+            input.checked = true;
+          }
         });
       }
       updateSafetyGuardStartLabels();
@@ -6082,6 +6172,67 @@
 
     function readSafetyGuardFromStatus(status) {
       return (status && status.safety_guard) || { active: false };
+    }
+
+    function getCurrentPositionPromise(options = {}, hardTimeoutMs = 15000) {
+      return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(new Error("這台裝置不支援定位。"));
+          return;
+        }
+        let done = false;
+        const timer = setTimeout(() => {
+          if (done) return;
+          done = true;
+          reject(new Error("定位逾時，請確認已允許位置權限後再試。"));
+        }, hardTimeoutMs);
+        const geoOpts = {
+          enableHighAccuracy: true,
+          timeout: Math.min(Number(options.timeout) || 12000, hardTimeoutMs - 800),
+          maximumAge: options.maximumAge == null ? 60000 : options.maximumAge,
+        };
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            resolve(pos);
+          },
+          (err) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            const code = err && err.code;
+            if (code === 1) {
+              reject(new Error("需要您同意分享位置，才能開啟安全守護。請到系統設定允許位置權限後再試。"));
+            } else if (code === 2) {
+              reject(new Error("目前無法取得位置，請確認定位服務已開啟。"));
+            } else if (code === 3) {
+              reject(new Error("定位逾時，請移到訊號較佳處再試。"));
+            } else {
+              reject(new Error("無法取得位置，請稍後再試。"));
+            }
+          },
+          geoOpts
+        );
+      });
+    }
+
+    function formatGuardianNotifyMessage(notify, hours, city) {
+      const h = Number(hours) || 1;
+      const place = city ? `（${city}）` : "";
+      const base = `安全守護已開啟 ${h} 小時${place}。`;
+      if (!notify) return `${base}請確認守護人是否已綁定 LINE。`;
+      if (notify.no_guardians) {
+        return `${base}\n尚未綁定可通知的守護人，對方還收不到訊息。請先「一鍵邀請守護人」。`;
+      }
+      if (notify.sent > 0 && !notify.failed) {
+        return `${base}\n已通知 ${notify.sent} 位守護人（含大致位置）。`;
+      }
+      if (notify.sent > 0 && notify.failed > 0) {
+        return `${base}\n已通知 ${notify.sent} 位守護人，另有 ${notify.failed} 位通知失敗。`;
+      }
+      return `${base}\n守護已開始，但守護人通知失敗，請稍後再試或直接告訴家人。`;
     }
 
     async function shareFriendInvite() {
@@ -6221,27 +6372,50 @@
     }
 
     async function shareMyLocation() {
+      const mvpStart = $("mvpGuardStartBtn");
+      const shareBtn = $("shareLocationBtn");
+      const startLabel = mvpStart ? mvpStart.textContent : "";
+      const shareLabel = shareBtn ? shareBtn.textContent : "";
+      const setBusy = (busy, label) => {
+        if (mvpStart) {
+          mvpStart.disabled = busy;
+          if (busy) mvpStart.textContent = label || "定位中…";
+          else if (!mvpStart.hidden) mvpStart.textContent = startLabel || `開始安全守護（${selectedSafetyGuardDuration()} 小時）`;
+        }
+        if (shareBtn) {
+          shareBtn.disabled = busy;
+          if (busy) shareBtn.textContent = label || "定位中…";
+          else shareBtn.textContent = shareLabel || `開啟安全守護（${selectedSafetyGuardDuration()} 小時）`;
+        }
+      };
       try {
         if (!lineUserId) throw new Error("請先從 LINE 裡開啟，完成會員綁定。");
         if (!navigator.geolocation) throw new Error("這台裝置不支援定位。");
         const duration = selectedSafetyGuardDuration();
-        navigator.geolocation.getCurrentPosition(
-          async (position) => {
-            try {
-              const city = inferTaiwanCounty(position.coords.latitude, position.coords.longitude);
-              const data = await apiUpdateLocation(position, city, { duration });
-              renderSafetyGuardUi(data.safety_guard || { active: true, city, duration_hours: Number(duration) || 1 });
-              await refreshFriendLocations();
-              alert(`已開啟安全守護（${city}）。${duration} 小時後自動結束。`);
-            } catch (error) {
-              alert(error.message || "開啟安全守護失敗。");
-            }
-          },
-          () => alert("需要您同意分享位置，才能開啟安全守護。"),
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-        );
+        setBusy(true, "正在取得定位…");
+        setSafetyGuardFeedback(`正在開啟安全守護（${duration} 小時）…請允許位置權限`, "info");
+        const position = await getCurrentPositionPromise({ timeout: 12000, maximumAge: 60000 }, 15000);
+        setBusy(true, "開啟中…");
+        const city = inferTaiwanCounty(position.coords.latitude, position.coords.longitude);
+        const data = await apiUpdateLocation(position, city, { duration });
+        const guard = data.safety_guard || {
+          active: true,
+          city,
+          duration_hours: Number(duration) || 1,
+        };
+        if (currentStatusData) currentStatusData.safety_guard = guard;
+        renderSafetyGuardUi(guard);
+        await refreshFriendLocations().catch(() => {});
+        const msg = formatGuardianNotifyMessage(data.guardian_notify, duration, city);
+        setSafetyGuardFeedback(msg, data.guardian_notify && data.guardian_notify.failed && !data.guardian_notify.sent ? "err" : "ok");
+        alert(msg);
       } catch (error) {
-        alert(error.message || "開啟安全守護失敗。");
+        const message = (error && error.message) || "開啟安全守護失敗。";
+        setSafetyGuardFeedback(message, "err");
+        alert(message);
+      } finally {
+        setBusy(false);
+        updateSafetyGuardStartLabels();
       }
     }
 
@@ -6249,23 +6423,18 @@
       try {
         if (!lineUserId) throw new Error("請先從 LINE 裡開啟，完成會員綁定。");
         if (!navigator.geolocation) throw new Error("這台裝置不支援定位。");
-        navigator.geolocation.getCurrentPosition(
-          async (position) => {
-            try {
-              const city = inferTaiwanCounty(position.coords.latitude, position.coords.longitude);
-              const data = await apiUpdateLocation(position, city, { refreshOnly: true });
-              renderSafetyGuardUi(data.safety_guard);
-              await refreshFriendLocations();
-              alert(`已更新目前位置（${city}）。`);
-            } catch (error) {
-              alert(error.message || "更新位置失敗。");
-            }
-          },
-          () => alert("需要您同意分享位置，才能更新位置。"),
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-        );
+        setSafetyGuardFeedback("正在更新目前位置…", "info");
+        const position = await getCurrentPositionPromise({ timeout: 12000, maximumAge: 0 }, 15000);
+        const city = inferTaiwanCounty(position.coords.latitude, position.coords.longitude);
+        const data = await apiUpdateLocation(position, city, { refreshOnly: true });
+        renderSafetyGuardUi(data.safety_guard);
+        await refreshFriendLocations().catch(() => {});
+        setSafetyGuardFeedback(`已更新目前位置（${city}）。`, "ok");
+        alert(`已更新目前位置（${city}）。`);
       } catch (error) {
-        alert(error.message || "更新位置失敗。");
+        const message = (error && error.message) || "更新位置失敗。";
+        setSafetyGuardFeedback(message, "err");
+        alert(message);
       }
     }
 
@@ -6273,11 +6442,15 @@
       try {
         if (!lineUserId) throw new Error("請先從 LINE 裡開啟，完成會員綁定。");
         const data = await apiStopLocation();
+        if (currentStatusData) currentStatusData.safety_guard = data.safety_guard || { active: false };
         renderSafetyGuardUi(data.safety_guard || { active: false });
-        await refreshFriendLocations();
+        await refreshFriendLocations().catch(() => {});
+        setSafetyGuardFeedback("已停止安全守護。", "info");
         alert("已停止安全守護。");
       } catch (error) {
-        alert(error.message || "停止安全守護失敗。");
+        const message = (error && error.message) || "停止安全守護失敗。";
+        setSafetyGuardFeedback(message, "err");
+        alert(message);
       }
     }
 
@@ -8168,8 +8341,16 @@
       });
       if (guardStop) guardStop.addEventListener("click", stopLocationSharing);
       if (saveContact) saveContact.addEventListener("click", saveMvpContact);
-      document.querySelectorAll('input[name="safetyGuardDuration"]').forEach((input) => {
-        input.addEventListener("change", updateSafetyGuardStartLabels);
+      safetyGuardDurationInputs().forEach((input) => {
+        input.addEventListener("change", () => {
+          // Keep MVP / member pickers in sync without sharing one radio group.
+          const value = String(input.value);
+          safetyGuardDurationInputs().forEach((other) => {
+            if (other === input || other.disabled) return;
+            if (String(other.value) === value) other.checked = true;
+          });
+          updateSafetyGuardStartLabels();
+        });
       });
     }
 
