@@ -4950,9 +4950,34 @@
     }
 
     function maybeShowGuardianPrompt() {
+      // 已有守護人＋聯絡人：登入首頁不再催「守護綁定／邀請」
+      if (hasHomeSetupComplete(currentGuardianContacts())) return;
       if (localStorage.getItem("guardian_prompt_seen") === "1") return;
-      $("guardianPrompt").hidden = false;
+      const prompt = $("guardianPrompt");
+      if (!prompt) return;
+      prompt.hidden = false;
       localStorage.setItem("guardian_prompt_seen", "1");
+    }
+
+    function hasHomeSetupComplete(contacts) {
+      const list = Array.isArray(contacts) ? contacts : currentGuardianContacts();
+      const hasBoundGuardian = list.some((c) => {
+        if (!c) return false;
+        return (
+          c.binding_status === "accepted"
+          || c.consent_status === "accepted"
+          || Boolean(String(c.line_id || c.line_user_id || "").trim())
+        );
+      });
+      const hasContactProfile = list.some((c) => {
+        if (!c) return false;
+        const name = String(c.name || "").trim();
+        const phone = String(c.phone || "").trim();
+        const email = String(c.email || "").trim();
+        return Boolean(name && (phone || email));
+      });
+      // 同一筆可同時滿足「已綁守護人」＋「聯絡人資料」
+      return hasBoundGuardian && hasContactProfile;
     }
 
     function closeGuardianPrompt() {
@@ -5100,10 +5125,11 @@
       if (bindDone || bindInFlight) return;
       const inviteFrom = getAppParam("invite_from");
       if (!inviteFrom || inviteFrom === lineUserId) return;
+      // 僅在網址真的帶邀請參數時顯示「同意成為守護人」；一般登入不跳
       const modal = $("inviteAcceptPrompt");
+      if (!modal) return;
       modal.hidden = false;
       document.body.classList.add("invite-modal-open");
-      // iOS LIFF: ensure button is in view and not under chrome
       try {
         requestAnimationFrame(() => {
           const btn = $("acceptGuardianInviteBtn");
@@ -5543,12 +5569,11 @@
         const inviteFrom = String(getAppParam("invite_from") || "").trim();
         if (inviteFrom && inviteFrom !== lineUserId) {
           console.log("成功抓到邀請人 ID:", inviteFrom);
-          // 不在 init 自動 bind+alert：與「同意成為守護人」雙路徑會讓 Android 連彈兩次確認。
-          // 只顯示同意視窗；綁定統一走 completeGuardianBindOnce（bindDone + 清 URL）。
+          // 不在 init 自動 bind+alert；只顯示同意視窗
           maybeShowInviteAcceptPrompt();
         } else if (!inviteFrom && !isInviteeDeepLink()) {
           console.log("這是一般登入，網址沒有邀請人參數");
-          maybeShowGuardianPrompt();
+          // 等 contacts 載入後再決定是否催守護綁定（見 initApp）
         }
         return true;
       } catch (error) {
@@ -7043,21 +7068,34 @@
         const forceOnboarding = openAction === "onboarding" || openAction === "guardian" || openAction === "bind" || isOnboardingInvite;
         const inviteeMode = isInviteeDeepLink();
         const onboardingState = await fetchOnboardingState();
+        const contactsNow = currentGuardianContacts();
+        const homeReady = hasHomeSetupComplete(contactsNow);
         const hasGuardians = (
           onboardingState.hasGuardian
           || Number(onboardingState.data?.guardian_count || 0) > 0
-          || currentGuardianContacts().length > 0
+          || contactsNow.length > 0
         );
-        const setupDone = onboardingState.done || hasGuardians;
+        // 已有 ≥1 守護人（LINE 綁定）且 ≥1 聯絡人資料 → 直接進首頁，不再彈邀請／綁定
+        const setupDone = homeReady || onboardingState.done || hasGuardians;
         const wantsInviteShare = wantsShareInvite;
+        if (homeReady && !inviteeMode) {
+          clearShareFirstLocalFlags();
+          closeGuardianPrompt();
+          closeInviteAcceptPrompt();
+          const completeModal = $("guardianCompleteModal");
+          if (completeModal) completeModal.hidden = true;
+          const onboardingModal = $("onboardingModal");
+          if (onboardingModal) onboardingModal.hidden = true;
+        }
         if (inviteeMode) {
           clearShareFirstLocalFlags();
           if (typeof showTab === "function") {
             showTab(getAppParam("friend_invite") ? "member" : "home");
           }
+          // 受邀綁定他人：即使自己已有守護人／聯絡人，仍要能「同意成為守護人」
           maybeShowInviteAcceptPrompt();
           maybePrefillFriendInvite();
-          await maybeShowGuardianComplete();
+          if (!homeReady) await maybeShowGuardianComplete();
         } else if (wantsInviteShare) {
           // 降級穩定：不經首頁、不自動 shareTargetPicker → 專用分享頁（點擊才分享）
           clearShareFirstLocalFlags();
@@ -7066,7 +7104,10 @@
         } else if (setupDone) {
           clearShareFirstLocalFlags();
           if (typeof showTab === "function") showTab("home");
-          await maybeShowGuardianComplete();
+          if (!homeReady) {
+            maybeShowGuardianPrompt();
+            await maybeShowGuardianComplete();
+          }
         } else {
           // 首次使用者：顯示分享→填寫→提醒流程
           await showOnboarding();
@@ -7361,6 +7402,7 @@
     // 守護群完成度提示卡
     async function maybeShowGuardianComplete() {
       if (!lineUserId) return;
+      if (hasHomeSetupComplete(currentGuardianContacts())) return;
       try {
         const r = await fetch(`/api/interaction-state?line_user_id=${encodeURIComponent(lineUserId)}`);
         if (r.status !== 200) return;

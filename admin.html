@@ -346,7 +346,8 @@
 
     <section class="panel">
       <div class="auth-bar" id="authBar" aria-label="後台操作">
-        <p class="auth-hint" style="grid-column:1/-1;margin:0;">目前為<strong>免密碼開放後台</strong>（公開網址任何人都能看，之後若要上鎖再設 <code>ADMIN_PASSWORD</code>）。</p>
+      <p class="auth-hint" style="grid-column:1/-1;margin:0;">目前為<strong>免密碼開放後台</strong>（公開網址任何人都能看，之後若要上鎖再設 <code>ADMIN_PASSWORD</code>）。</p>
+        <p class="note" id="persistenceNote" style="grid-column:1/-1;margin:0;color:#9a3412;" hidden></p>
         <button id="refreshBtn" type="button">刷新資料</button>
         <p class="auth-status" id="authStatus" role="status" aria-live="polite">正在載入後台資料…</p>
         <!-- 保留隱藏欄位，舊書籤／腳本若帶 password 參數也不會壞 -->
@@ -367,6 +368,7 @@
         <div class="stat"><strong id="warningUsers">0</strong><span>快到時間</span></div>
         <div class="stat"><strong id="overdueUsers">0</strong><span>已逾期</span></div>
         <div class="stat"><strong id="guardianGroups">0</strong><span>守護群</span></div>
+        <div class="stat"><strong id="boundGuardians">0</strong><span>已綁守護人</span></div>
         <div class="stat"><strong id="paidRevenue">NT$0</strong><span>已付款營收</span></div>
         <div class="stat"><strong id="paidOrders">0</strong><span>已付款訂單</span></div>
         <div class="stat"><strong id="pendingOrders">0</strong><span>待付款訂單</span></div>
@@ -579,6 +581,14 @@
     </section>
 
     <section class="panel" style="margin-top: 16px;">
+      <h2 style="margin: 0 0 8px;">邀請綁定關係（誰邀請誰）</h2>
+      <p class="note">依邀請人 contacts 的 LINE 綁定列出；每個人分享連結都帶自己的 <code>invite_from</code>。</p>
+      <div class="reward-list" id="inviteEdgeList">
+        <div class="reward-item"><span>尚未載入</span><span></span><span></span></div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top: 16px;">
       <h2 style="margin: 0 0 8px;">綁定獎勵紀錄</h2>
       <div class="reward-list" id="rewardList">
         <div class="reward-item"><span>尚未載入</span><span></span><span></span></div>
@@ -761,6 +771,19 @@
       $("warningUsers").textContent = data.warning_users;
       $("overdueUsers").textContent = data.overdue_users;
       $("guardianGroups").textContent = data.guardian_group_count || 0;
+      if ($("boundGuardians")) $("boundGuardians").textContent = data.bound_guardian_total || 0;
+      const persistNote = $("persistenceNote");
+      if (persistNote) {
+        const persist = data.persistence || {};
+        if (persist.ephemeral_warning) {
+          persistNote.hidden = false;
+          persistNote.textContent = `⚠️ 資料儲存：${persist.data_file || "?"}（暫存磁碟）— ${persist.ephemeral_warning}`;
+        } else {
+          persistNote.hidden = false;
+          persistNote.style.color = "#166534";
+          persistNote.textContent = `✅ 持久化磁碟：${persist.data_file || persist.db_path || "ok"}`;
+        }
+      }
       $("paidRevenue").textContent = `NT$${Number(data.paid_revenue || 0).toLocaleString("zh-TW")}`;
       $("paidOrders").textContent = data.paid_order_count || 0;
       $("pendingOrders").textContent = data.pending_order_count || 0;
@@ -793,7 +816,7 @@
             <td><span class="badge ${user.payment_status === "active" ? "ok" : user.payment_status === "expired" ? "bad" : "warn"}">${paymentLabel(user.payment_status)}</span></td>
             <td>${expiryText(user)}</td>
             <td>${trialText(user)}</td>
-            <td>${(user.contacts || []).length}/${user.contact_limit || 1}</td>
+            <td>${user.bound_guardian_count || 0} 綁定／${(user.contacts || []).length}/${user.contact_limit || 1}</td>
             <td>${(user.guardian_group_ids || []).length}/${user.guardian_group_limit || 0}</td>
             <td>${user.grace_hours} 小時</td>
             <td>${user.reminder_time}</td>
@@ -833,16 +856,33 @@
           <div class="reward-item">
             <div>
               <strong>邀請人</strong><br>
-              <small>${reward.inviter_line_user_id || "-"}</small>
+              <small>${reward.inviter_display_name || ""} ${reward.inviter_line_user_id || "-"}</small>
             </div>
             <div>
               <strong>綁定聯絡人</strong><br>
-              <small>${reward.contact_line_user_id || "-"}</small>
+              <small>${reward.contact_display_name || ""} ${reward.contact_line_user_id || "-"}</small>
             </div>
-            <span class="badge ${reward.status === "available" ? "ok" : ""}">${reward.status === "available" ? "可領取" : reward.status || "-"}</span>
+            <span class="badge ok">${reward.status || "available"}</span>
           </div>
         `).join("")
         : `<div class="reward-item"><span>還沒有綁定獎勵紀錄</span><span></span><span></span></div>`;
+      if ($("inviteEdgeList")) {
+        $("inviteEdgeList").innerHTML = (data.invite_edges || []).length
+          ? data.invite_edges.map((edge) => `
+            <div class="reward-item">
+              <div>
+                <strong>邀請人（被守護）</strong><br>
+                <small>${edge.inviter_display_name || ""} ${edge.inviter_line_user_id || "-"}</small>
+              </div>
+              <div>
+                <strong>守護人</strong><br>
+                <small>${edge.guardian_display_name || ""} ${edge.guardian_line_user_id || "-"}</small>
+              </div>
+              <span class="badge ${edge.binding_status === "accepted" ? "ok" : "warn"}">${edge.binding_status || "-"}</span>
+            </div>
+          `).join("")
+          : `<div class="reward-item"><span>尚無 LINE 邀請綁定關係</span><span></span><span></span></div>`;
+      }
       const ticketRes = await fetch(`/api/admin/support-tickets?password=${apiPassword()}`);
       const ticketData = ticketRes.ok ? await ticketRes.json() : { tickets: [] };
       $("supportList").innerHTML = (ticketData.tickets || []).length

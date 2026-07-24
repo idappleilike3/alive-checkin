@@ -402,6 +402,79 @@ def _resolve_db_path(data_file):
     return text
 
 
+def resolve_data_file(explicit=None):
+    """Pick durable state path when a mounted disk is available.
+
+    Render free plan local disk is ephemeral. Prefer:
+    1) explicit DATA_FILE / argument
+    2) ``/var/data/state.json`` when that mount exists and is writable
+    3) repo-local ``data/state.json`` (ephemeral on free Render)
+    """
+    candidates = []
+    if explicit:
+        candidates.append(str(explicit).strip())
+    env_path = (os.environ.get("DATA_FILE") or "").strip()
+    if env_path:
+        candidates.append(env_path)
+    candidates.append("/var/data/state.json")
+    candidates.append(str(Path(__file__).resolve().parent / "data" / "state.json"))
+
+    seen = set()
+    for raw in candidates:
+        if not raw or raw in seen:
+            continue
+        seen.add(raw)
+        path = Path(raw)
+        parent = path.parent
+        try:
+            if parent.exists() and os.access(parent, os.W_OK):
+                return str(path)
+            # Allow creating repo-local data/ ; do not mkdir /var/data without mount
+            if str(parent) in {".", "data"} or str(parent).endswith(os.sep + "data") or parent.name == "data":
+                if not str(parent).startswith("/var/"):
+                    parent.mkdir(parents=True, exist_ok=True)
+                    if os.access(parent, os.W_OK):
+                        return str(path)
+        except OSError:
+            continue
+    return str(Path(__file__).resolve().parent / "data" / "state.json")
+
+
+def persistence_info(data_file):
+    """Describe whether the active state path looks durable (mounted disk)."""
+    path = str(data_file or "")
+    db_path = _resolve_db_path(path)
+    durable = path.startswith("/var/data") or bool(os.environ.get("RENDER_DISK_MOUNT_PATH"))
+    return {
+        "data_file": path,
+        "db_path": db_path,
+        "durable": durable,
+        "ephemeral_warning": (
+            ""
+            if durable
+            else "Render free disk is ephemeral: redeploy/restart may wipe bindings. "
+            "Attach a Persistent Disk at /var/data and set DATA_FILE=/var/data/state.json."
+        ),
+    }
+
+
+def get_contact_line_id(contact):
+    """LINE user id on a contact (supports legacy line_id + line_user_id)."""
+    if not isinstance(contact, dict):
+        return ""
+    return str(contact.get("line_user_id") or contact.get("line_id") or "").strip()
+
+
+def contact_is_profile_complete(contact):
+    """聯絡人基本資料：姓名 +（手機或信箱）."""
+    if not isinstance(contact, dict):
+        return False
+    name = str(contact.get("name") or "").strip()
+    phone = str(contact.get("phone") or "").strip()
+    email = str(contact.get("email") or "").strip()
+    return bool(name and (phone or email))
+
+
 def _ensure_db(db_path):
     """Create the SQLite database and kv_store table if missing."""
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -745,8 +818,7 @@ def contact_is_bound_guardian(contact):
     if not isinstance(contact, dict):
         return False
     return bool(
-        contact.get("line_user_id")
-        or contact.get("line_id")
+        get_contact_line_id(contact)
         or contact.get("binding_status") == "accepted"
         or contact.get("consent_status") == "accepted"
     )
@@ -939,6 +1011,15 @@ def build_status(profile, state=None):
         "alert_channels": profile.get("alert_channels", ["line"]),
         "attach_location_on_alert": bool(profile.get("attach_location_on_alert", False)),
         "contacts": profile.get("contacts", []),
+        "contact_count": len(profile.get("contacts") or []),
+        "bound_guardian_count": sum(
+            1 for c in (profile.get("contacts") or []) if contact_is_bound_guardian(c)
+        ),
+        "profile_contact_count": sum(
+            1 for c in (profile.get("contacts") or []) if contact_is_profile_complete(c)
+        ),
+        "guarding_for": list(profile.get("guarding_for") or []),
+        "invited_by": str(profile.get("invited_by") or "").strip(),
         "contact_capacity_reminder_enabled": bool(profile.get("contact_capacity_reminder_enabled", False)),
         "guardian_details_reminder_enabled": bool(profile.get("guardian_details_reminder_enabled", True)),
         "guardian_details_complete": any(complete_guardian_contact(contact) for contact in (profile.get("contacts") or [])),
@@ -1368,7 +1449,9 @@ def normalize_contact(contact, index):
         "relationship": str(contact.get("relationship") or "").strip(),
         "phone": str(contact.get("phone") or "").strip(),
         "email": str(contact.get("email") or "").strip(),
+        # Keep both keys so bind / SOS / admin all see the same LINE id
         "line_user_id": line_user_id,
+        "line_id": line_user_id,
         "binding_status": str(contact.get("binding_status") or ("accepted" if line_user_id else "unbound")),
         "is_primary": is_primary,
         "notify_methods": methods,
@@ -1378,6 +1461,7 @@ def normalize_contact(contact, index):
         "note": str(contact.get("note") or "").strip(),
         "created_at": str(contact.get("created_at") or ""),
         "updated_at": str(contact.get("updated_at") or ""),
+        "invited_by": str(contact.get("invited_by") or "").strip(),
     }
 
 
@@ -1613,23 +1697,34 @@ def bind_emergency_contact(data_file, payload, config=None):
     contact_user["display_name"] = contact_display_name or contact_user.get("display_name") or "LINE 聯絡人"
 
     contacts = list(inviter.get("contacts") or [])
-    existing = next((contact for contact in contacts if contact.get("line_id") == contact_line_user_id), None)
+    existing = next(
+        (
+            contact
+            for contact in contacts
+            if get_contact_line_id(contact) == contact_line_user_id
+        ),
+        None,
+    )
     already_bound = bool(existing)
     already_accepted = bool(
         existing
         and (
             existing.get("consent_status") == "accepted"
             or existing.get("binding_status") == "accepted"
+            or bool(get_contact_line_id(existing))
         )
     )
 
+    accepted_at = datetime.now().isoformat(timespec="seconds")
     # LIFF 點擊授權即視為守護人本人同意綁定（不需再回「同意」）
     if existing:
         existing["name"] = existing.get("name") or contact_display_name or "LINE 聯絡人"
         existing["line_id"] = contact_line_user_id
+        existing["line_user_id"] = contact_line_user_id
         existing["consent_status"] = "accepted"
         existing["binding_status"] = "accepted"
-        existing["accepted_at"] = datetime.now().isoformat(timespec="seconds")
+        existing["accepted_at"] = accepted_at
+        existing["invited_by"] = inviter_id
         existing["notify_methods"] = list(dict.fromkeys([*(existing.get("notify_methods") or []), "line"]))
     else:
         limit = plan_rules(inviter)["contact_limit"]
@@ -1642,30 +1737,54 @@ def bind_emergency_contact(data_file, payload, config=None):
                 "relationship": "受邀緊急聯絡人",
                 "phone": "",
                 "line_id": contact_line_user_id,
+                "line_user_id": contact_line_user_id,
                 "email": "",
                 "available_time": "",
                 "notify_methods": ["line"],
                 "priority": len(contacts) + 1,
                 "consent_status": "accepted",
                 "binding_status": "accepted",
-                "accepted_at": datetime.now().isoformat(timespec="seconds"),
+                "accepted_at": accepted_at,
+                "invited_by": inviter_id,
                 "note": "LINE 一鍵授權綁定",
             }
         )
-        inviter["contacts"] = contacts
+    # Always write back so shallow-list mutations + new rows both persist
+    inviter["contacts"] = contacts
+
+    # Reverse index on invitee: who they guard (admin + home can show 邀請人)
+    guarding = list(contact_user.get("guarding_for") or [])
+    if inviter_id not in guarding:
+        guarding.append(inviter_id)
+    contact_user["guarding_for"] = guarding
+    contact_user["invited_by"] = inviter_id
+    ensure_onboarding_completed_flag(inviter)
 
     rewards = state.setdefault("contact_rewards", [])
-    reward = next((item for item in rewards if item.get("inviter_line_user_id") == inviter_id), None)
+    reward = next(
+        (
+            item
+            for item in rewards
+            if item.get("inviter_line_user_id") == inviter_id
+            and item.get("contact_line_user_id") == contact_line_user_id
+        ),
+        None,
+    )
     if not reward:
         reward = {
-            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "created_at": accepted_at,
             "inviter_line_user_id": inviter_id,
             "contact_line_user_id": contact_line_user_id,
+            "inviter_display_name": inviter.get("display_name") or "",
+            "contact_display_name": contact_display_name or "",
             "status": "available",
             "reward_options": ["trial_7_days", "extra_contact_30_days"],
             "selected_reward": "",
         }
         rewards.append(reward)
+    else:
+        reward["inviter_display_name"] = inviter.get("display_name") or reward.get("inviter_display_name") or ""
+        reward["contact_display_name"] = contact_display_name or reward.get("contact_display_name") or ""
 
     sent = 0
     if config and not already_accepted:
@@ -1704,15 +1823,20 @@ def bind_emergency_contact(data_file, payload, config=None):
                     append_notification_log(state, "binding_complete", line_user_id, "failed", message, str(exc))
 
     save_state(data_file, state)
+    bound_contact = next(
+        (contact for contact in contacts if get_contact_line_id(contact) == contact_line_user_id),
+        None,
+    )
     return {
         "bound": True,
         "already_bound": already_bound,
         "binding_complete": not already_accepted,
-        "contact": next((contact for contact in contacts if contact.get("line_id") == contact_line_user_id), None),
+        "contact": bound_contact,
         "reward": reward,
         "consent_request_sent": sent,
         "test_messages_sent": sent,  # 向下相容
         "inviter_notified": sent > 0,
+        "persistence": persistence_info(data_file),
     }, 200
 
 
@@ -2988,8 +3112,26 @@ def cron_allowed(config, secret):
 def admin_summary(data_file):
     state = load_state(data_file)
     users = []
+    invite_edges = []
     for user in state.get("users", {}).values():
-        users.append(build_status(user))
+        status = build_status(user, state)
+        users.append(status)
+        inviter_id = status.get("line_user_id") or ""
+        inviter_name = status.get("display_name") or ""
+        for contact in status.get("contacts") or []:
+            guardian_id = get_contact_line_id(contact)
+            if not guardian_id:
+                continue
+            invite_edges.append(
+                {
+                    "inviter_line_user_id": inviter_id,
+                    "inviter_display_name": inviter_name,
+                    "guardian_line_user_id": guardian_id,
+                    "guardian_display_name": contact.get("name") or "",
+                    "binding_status": contact.get("binding_status") or "",
+                    "accepted_at": contact.get("accepted_at") or contact.get("updated_at") or "",
+                }
+            )
     users.sort(key=lambda item: (not item["is_overdue"], item.get("display_name") or ""))
     guardian_groups = list(state.get("guardian_groups", {}).values())
     guardian_groups.sort(key=lambda item: item.get("created_at", ""), reverse=True)
@@ -3020,6 +3162,7 @@ def admin_summary(data_file):
         county_rows.values(),
         key=lambda item: (-item["revenue"], -item["members"], item["county"]),
     )
+    persist = persistence_info(data_file)
     return {
         "total_users": len(users),
         "overdue_users": sum(1 for user in users if user["is_overdue"]),
@@ -3027,6 +3170,8 @@ def admin_summary(data_file):
         "checked_today": sum(1 for user in users if user["is_today_checked"]),
         "guardian_group_count": len(guardian_groups),
         "guardian_groups": guardian_groups,
+        "bound_guardian_total": sum(int(user.get("bound_guardian_count") or 0) for user in users),
+        "invite_edges": list(reversed(invite_edges[-100:])),
         "orders": orders,
         "paid_order_count": len(paid_orders),
         "paid_revenue": sum(int(order.get("amount") or 0) for order in paid_orders),
@@ -3035,6 +3180,7 @@ def admin_summary(data_file):
         "users": users,
         "contact_rewards": list(reversed(state.get("contact_rewards", [])[-20:])),
         "notification_logs": list(reversed(state.get("notification_logs", [])[-20:])),
+        "persistence": persist,
     }
 
 
@@ -3597,7 +3743,7 @@ def create_app(config=None):
     app = Flask(__name__, static_folder=".", static_url_path="")
     app._start_time = datetime.now()  # 2026-07-21 patch 17: 供 /api/bot/status 計算 uptime
     app.config.update(
-        DATA_FILE=os.environ.get("DATA_FILE", str(Path(__file__).resolve().parent / "data" / "state.json")),
+        DATA_FILE=resolve_data_file(os.environ.get("DATA_FILE")),
         ADMIN_PASSWORD=os.environ.get("ADMIN_PASSWORD", ""),
         ALLOW_OPEN_ADMIN=os.environ.get("ALLOW_OPEN_ADMIN", ""),
         ADMIN_OPEN=os.environ.get("ADMIN_OPEN", ""),
@@ -3683,7 +3829,8 @@ def create_app(config=None):
 
     @app.get("/health")
     def health():
-        return jsonify({"ok": True})
+        persist = persistence_info(app.config["DATA_FILE"])
+        return jsonify({"ok": True, "persistence": persist})
 
     @app.get("/admin")
     def admin():
@@ -5776,7 +5923,7 @@ class MiniClient:
 class MiniApp:
     def __init__(self, config=None):
         self.config = {
-            "DATA_FILE": os.environ.get("DATA_FILE", str(Path(__file__).resolve().parent / "data" / "state.json")),
+            "DATA_FILE": resolve_data_file(os.environ.get("DATA_FILE")),
             "ADMIN_PASSWORD": os.environ.get("ADMIN_PASSWORD", ""),
             "ALLOW_OPEN_ADMIN": os.environ.get("ALLOW_OPEN_ADMIN", ""),
             "ADMIN_OPEN": os.environ.get("ADMIN_OPEN", ""),
