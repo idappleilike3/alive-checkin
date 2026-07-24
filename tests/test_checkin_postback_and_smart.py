@@ -182,17 +182,23 @@ class InviteButtonCleanupTests(unittest.TestCase):
             'member-guardian-manage-actions${bound ? "" : " has-invite"}',
             page,
         )
-        # Top share button in member guardian section removed
+        # Top share / re-invite button kept in member guardian section
         member_section = page.split('id="memberGuardianSection"')[1].split('id="memberSmartRemindersSection"')[0]
-        self.assertNotIn("一鍵邀請守護人", member_section)
+        self.assertIn("再邀請一位守護人", member_section)
+        self.assertIn("memberInviteMoreGuardianBtn", member_section)
+        self.assertIn("memberReinviteGuardianBtn", member_section)
+        self.assertIn("inviteMoreGuardiansFromMember", page)
         # Edit / delete kept
         self.assertIn("member-edit-guardian", page)
         self.assertIn("member-delete-guardian", page)
 
-    def test_member_html_keeps_wait_invite_removes_top_share(self):
+    def test_member_html_keeps_wait_invite_and_reinvite(self):
         page = (ROOT / "liff" / "member.html").read_text(encoding="utf-8")
         self.assertIn("等待 LINE 綁定", page)
         self.assertIn("one-tap-invite-btn", page)
+        self.assertIn("reinviteGuardianBtn", page)
+        self.assertIn("再邀請一位守護人", page)
+        self.assertIn("免費延長 7 天", page)
         self.assertNotIn("shareInviteBtn", page)
         self.assertIn("智能提醒", page)
 

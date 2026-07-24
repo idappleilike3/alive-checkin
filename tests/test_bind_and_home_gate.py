@@ -265,11 +265,16 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertFalse(first["already_bound"])
         self.assertEqual(first["contact"]["picture_url"], "https://example.com/avatar.jpg")
         self.assertEqual(len(pushed), 2)
-        self.assertIn("守護人綁定完成", pushed[0][1])
+        self.assertTrue(
+            "感謝邀請成功" in pushed[0][1] or "守護人綁定完成" in pushed[0][1],
+            pushed[0][1],
+        )
         self.assertIn("你已接受邀請", pushed[1][1])
         self.assertTrue(first.get("inviter_notified"))
         self.assertTrue(first.get("guardian_notified"))
         self.assertTrue(first.get("binding_complete"))
+        self.assertTrue(first.get("invite_reward_applied"))
+        self.assertEqual(first.get("trial_bonus_days"), 7)
 
         second, code2 = app_module.bind_emergency_contact(
             self.data_file,
@@ -422,9 +427,18 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(code2, 200)
         self.assertTrue(second.get("existing_user"))
         self.assertEqual(second.get("trial_started_at"), "2026-07-20T10:00:00")
-        self.assertEqual(second.get("trial_days_left"), app_module.trial_days_left(
-            {"trial_started_at": "2026-07-20T10:00:00", "plan": "trial"}
-        ))
+        # Bind already applied +7 invite bonus; days_left must include trial_bonus_days
+        self.assertEqual(
+            second.get("trial_days_left"),
+            app_module.trial_days_left(
+                {
+                    "trial_started_at": "2026-07-20T10:00:00",
+                    "plan": "trial",
+                    "trial_bonus_days": second.get("trial_bonus_days") or 0,
+                }
+            ),
+        )
+        self.assertEqual(int(second.get("trial_bonus_days") or 0), 7)
         contacts = second.get("contacts") or []
         self.assertEqual(len(contacts), 1)
         self.assertEqual(app_module.get_contact_line_id(contacts[0]), "U-guard-1")

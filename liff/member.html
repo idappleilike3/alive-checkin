@@ -296,11 +296,13 @@
 <div class="card">
   <h2>👨‍👩‍👧 守護人（Guardian）</h2>
   <p class="hint"><strong>用途</strong>：平常每天守護你的人。<strong>會收到</strong>：未報平安／SOS／安全守護。<strong>免費建議</strong>：1 位，請用一鍵邀請完成 LINE 綁定。</p>
+  <p class="hint">每成功邀請 1 位新守護人 → 免費延長 7 天；方案到期後守護人與聯絡人資料保留 30 天。</p>
   <div id="guardianList">
     <div class="empty">載入中...</div>
   </div>
   <div class="contact-actions">
-    <button class="btn btn-primary" type="button" id="addGuardianBtn">＋ 新增守護人</button>
+    <button class="btn btn-primary" type="button" id="reinviteGuardianBtn">再邀請一位守護人</button>
+    <button class="btn" type="button" id="addGuardianBtn">＋ 新增守護人資料</button>
   </div>
   <p class="hint" id="shareHint" style="display:none;color:#006400;"></p>
 </div>
@@ -684,6 +686,23 @@ function buildInviteText() {
 }
 
 async function shareGuardianInvite() {
+  const guardians = (state.guardians || []).filter((g) => contactRoleOf(g) === "guardian");
+  const plan = String(state.plan || "trial");
+  const limit =
+    plan === "paid_799_year" ? 50 :
+    plan === "paid_799" ? 25 :
+    plan === "paid_399_year" ? 25 :
+    plan === "paid_399" ? 15 :
+    plan === "paid_199_year" ? 6 :
+    plan === "paid_199" ? 4 : 1;
+  if (guardians.length >= limit) {
+    const go = confirm(
+      `你已經有 ${guardians.length} 位守護人囉（目前方案上限 ${limit} 位）。\n\n` +
+      `升級可增加守護人名額。按「確定」查看方案。`
+    );
+    if (go) location.href = "./pricing.html";
+    return;
+  }
   // 產品路徑：只進專用 LINE 好友分享頁；帶 return 回到會員中心
   const params = new URLSearchParams({ return: "/#member", open: "member" });
   location.assign(`/liff/share-invite.html?${params.toString()}`);
@@ -800,6 +819,10 @@ if (roleIntroDismiss) roleIntroDismiss.addEventListener("click", dismissRoleIntr
 document.getElementById("addGuardianBtn").addEventListener("click", () => {
   openEditor(null, "guardian");
 });
+const reinviteGuardianBtn = document.getElementById("reinviteGuardianBtn");
+if (reinviteGuardianBtn) {
+  reinviteGuardianBtn.addEventListener("click", () => shareGuardianInvite());
+}
 const addSmartBtn = document.getElementById("addSmartReminderBtn");
 if (addSmartBtn) addSmartBtn.addEventListener("click", () => editSmartReminder(null));
 const addEmergencyBtn = document.getElementById("addEmergencyBtn");

@@ -167,7 +167,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("本服務不是報警系統", page)
         self.assertIn('id="mvpSosBtn"', page)
         self.assertIn("openSosModal", page)
-        self.assertIn('sosSection.hidden = !enabled;', page)
+        self.assertIn("function renderSosAccess()", page)
         self.assertNotIn('id="sosConfirmSend"', page)
 
     def test_sos_plan_access_matches_public_benefits(self):
@@ -185,7 +185,8 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("每日平安", page)
         self.assertIn("每天 10 秒，報個平安", page)
         self.assertIn("平常不打擾，有事才通知守護人", page)
-        self.assertIn("完成綁定一位，二選一獎勵", page)
+        self.assertIn("每成功邀請 1 位守護人", page)
+        self.assertIn("免費延長 7 天；方案到期後守護人與聯絡人資料保留 30 天", page)
         self.assertIn('id="mvpSafeBtn"', page)
         self.assertIn('id="mvpGuardBtn"', page)
         self.assertIn('name="mvpSafetyGuardDuration"', page)
@@ -358,7 +359,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("clipboard", page)
         self.assertIn("https://line.me/R/app/\" + LIFF_ID + \"?invite_from=", page)
         self.assertIn('const LIFF_ID = "2010674803-rK98c0lo"', page)
-        self.assertIn("W250724bn", page)
+        self.assertIn("W250724ir", page)
         self.assertIn("resolveReturnUrl", page)
         self.assertIn("appPublicOrigin", page)
         self.assertIn("完成，返回原位置", page)
