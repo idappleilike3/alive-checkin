@@ -29,6 +29,7 @@ try:
         MemberJoinedEvent,
         FlexSendMessage,
         FollowEvent,
+        PostbackEvent,
     )
 except ModuleNotFoundError:
     LineBotApi = None
@@ -42,6 +43,7 @@ except ModuleNotFoundError:
     MemberJoinedEvent = None
     FlexSendMessage = None
     FollowEvent = None
+    PostbackEvent = None
 
 # 守護群 Flex 構建器(2026-07-21 patch 11)
 try:
@@ -132,6 +134,9 @@ DEFAULT_PROFILE = {
     "location": {},
     "guardian_group_ids": [],
     "calendar_notes": {},
+    "smart_reminders": [],
+    "smart_reminder_sent_keys": [],
+    "smart_reminder_defaults": {"notify_private": True, "notify_group": False},
     "guarding_for": [],
     "invited_by": "",
     "guarding_details": [],
@@ -307,6 +312,15 @@ def line_plan_message():
 def line_auto_reply_text(text, status=None):
     text = (text or "").strip()
     if any(keyword in text for keyword in CHECKIN_KEYWORDS):
+        if status and status.get("is_today_checked"):
+            next_text = status.get("next_reminder_text") or status.get("next_reminder_label") or ""
+            if status.get("already_checked_today") or status.get("is_duplicate"):
+                base = "今天已經報過平安了，不用再點一次。"
+            else:
+                base = "今天平安簽到成功。系統已幫你留下紀錄，守護人不用擔心。"
+            if next_text:
+                return f"{base}\n{next_text}"
+            return base
         return "今天平安簽到成功。系統已幫你留下紀錄，守護人不用擔心。"
     if any(keyword in text for keyword in CONTACT_KEYWORDS):
         return (
@@ -755,11 +769,9 @@ def save_state(data_file, state):
     _save_state_sqlite(data_file, state)
 
 
-def today_string():
-    return datetime.now().strftime("%Y-%m-%d")
-
-
-def current_app_time(config):
+def current_app_time(config=None):
+    """App-local now, default Asia/Taipei (naive). Never use bare datetime.now() for calendar days."""
+    config = config or {}
     fixed_now = config.get("CRON_NOW") if config else None
     if fixed_now:
         return fixed_now
@@ -772,13 +784,109 @@ def current_app_time(config):
         return datetime.now()
 
 
+def today_string(config=None):
+    """YYYY-MM-DD in APP_TIMEZONE (Asia/Taipei). Used for history / is_today_checked."""
+    return current_app_time(config).strftime("%Y-%m-%d")
+
+
 def parse_last_checkin(value):
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value)
+        text = str(value).strip().replace("Z", "+00:00")
+        return datetime.fromisoformat(text)
     except ValueError:
         return None
+
+
+def date_string_in_taipei(value):
+    """Calendar date (Asia/Taipei) for a datetime / ISO string.
+
+    Naive timestamps are interpreted as UTC first (Render default), then as
+    already-Taipei local — either matching today counts as checked-in.
+    """
+    dt = parse_last_checkin(value) if not isinstance(value, datetime) else value
+    if not dt:
+        return ""
+    try:
+        tz = ZoneInfo("Asia/Taipei")
+        candidates = []
+        if dt.tzinfo is None:
+            candidates.append(dt.replace(tzinfo=timezone.utc).astimezone(tz))
+            candidates.append(dt.replace(tzinfo=tz))
+        else:
+            candidates.append(dt.astimezone(tz))
+        return candidates[0].strftime("%Y-%m-%d")
+    except Exception:
+        return dt.strftime("%Y-%m-%d")
+
+
+def profile_is_today_checked(profile, config=None, now=None):
+    """True when user already 報平安 for the Taipei calendar day.
+
+    Prefer history[]; also accept last_check_in landing on today in Taipei
+    (covers UTC/Taipei mismatch that caused 鬼打牆 re-prompts).
+    """
+    now = now or current_app_time(config)
+    today = now.strftime("%Y-%m-%d")
+    history = set(profile.get("history") or [])
+    if today in history:
+        return True
+    last = profile.get("last_check_in")
+    if not last:
+        return False
+    dt = parse_last_checkin(last)
+    if not dt:
+        return str(last)[:10] == today
+    try:
+        tz = ZoneInfo("Asia/Taipei")
+        dates = set()
+        if dt.tzinfo is None:
+            dates.add(dt.replace(tzinfo=timezone.utc).astimezone(tz).strftime("%Y-%m-%d"))
+            dates.add(dt.replace(tzinfo=tz).strftime("%Y-%m-%d"))
+            dates.add(dt.strftime("%Y-%m-%d"))
+        else:
+            dates.add(dt.astimezone(tz).strftime("%Y-%m-%d"))
+        return today in dates
+    except Exception:
+        return str(last)[:10] == today
+
+
+def next_checkin_reminder_info(profile, config=None, now=None):
+    """Next daily 報平安 reminder slot after now (or tomorrow first slot if already checked)."""
+    now = now or current_app_time(config)
+    today = now.strftime("%Y-%m-%d")
+    times = reminder_times_for_profile(profile) or ["12:00"]
+    checked = profile_is_today_checked(profile, config=config, now=now)
+
+    def _parse_hm(text):
+        try:
+            hour, minute = [int(part) for part in str(text).split(":", 1)]
+            return hour, minute
+        except Exception:
+            return 12, 0
+
+    if not checked:
+        for slot in times:
+            hour, minute = _parse_hm(slot)
+            candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if candidate > now:
+                return {
+                    "next_reminder_at": candidate.isoformat(timespec="seconds"),
+                    "next_reminder_time": slot,
+                    "next_reminder_text": f"下次提醒 {today} {slot}",
+                    "next_reminder_label": f"今天 {slot}",
+                }
+    # Already checked today, or all of today's slots passed → tomorrow first
+    hour, minute = _parse_hm(times[0])
+    tomorrow = (now + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+    tomorrow_day = tomorrow.strftime("%Y-%m-%d")
+    return {
+        "next_reminder_at": tomorrow.isoformat(timespec="seconds"),
+        "next_reminder_time": times[0],
+        "next_reminder_text": f"下次提醒 {tomorrow_day} {times[0]}",
+        "next_reminder_label": f"明天 {times[0]}",
+    }
 
 
 def parse_datetime(value):
@@ -811,6 +919,9 @@ _PROFILE_PERSIST_KEYS = (
     "is_onboarding_completed",
     "interaction_state",
     "calendar_notes",
+    "smart_reminders",
+    "smart_reminder_sent_keys",
+    "smart_reminder_defaults",
 )
 
 
@@ -1304,7 +1415,12 @@ def build_status(profile, state=None):
     prealert = bool(deadline and alert_at and deadline < now <= alert_at)
     overdue = bool(alert_at and now > alert_at)
     today = today_string()
-    is_today_checked = today in (profile.get("history") or [])
+    is_today_checked = profile_is_today_checked(profile)
+    # Heal history if last_check_in proves today but history missed the Taipei day
+    if is_today_checked and today not in (profile.get("history") or []):
+        history = set(profile.get("history") or [])
+        history.add(today)
+        profile["history"] = sorted(history)
 
     if not last:
         status_text = "還沒有簽到紀錄"
@@ -1323,6 +1439,7 @@ def build_status(profile, state=None):
         status_class = "highlight"
 
     _reminder_times = reminder_times_for_profile(profile) or ["12:00"]
+    _next_reminder = next_checkin_reminder_info(profile)
     guardian_groups = []
     if state is not None:
         groups = state.get("guardian_groups", {}) or {}
@@ -1427,6 +1544,10 @@ def build_status(profile, state=None):
         "alert_at": alert_at.isoformat(timespec="seconds") if alert_at else None,
         "status_text": status_text,
         "status_class": status_class,
+        "next_reminder_at": _next_reminder.get("next_reminder_at") or "",
+        "next_reminder_time": _next_reminder.get("next_reminder_time") or "",
+        "next_reminder_text": _next_reminder.get("next_reminder_text") or "",
+        "next_reminder_label": _next_reminder.get("next_reminder_label") or "",
         "safety_guard": safety_guard_snapshot(profile),
         "membership_label": _membership_label(profile),
         "upgrade_status": _upgrade_status(profile),
@@ -1704,17 +1825,18 @@ def record_checkin(data_file, payload=None):
     payload = payload or {}
     state = load_state(data_file)
     profile = get_profile(state, payload.get("line_user_id"))
-    now = datetime.now()
+    now = current_app_time({})
     today = now.strftime("%Y-%m-%d")
     history = set(profile.get("history") or [])
-    already_checked = today in history
-    if not already_checked:
+    already_checked = profile_is_today_checked(profile, now=now)
+    if today not in history:
         history.add(today)
         profile["history"] = sorted(history)
+    # Persist as Taipei-local naive ISO so [:10] matches today_string()
     profile["last_check_in"] = now.isoformat(timespec="seconds")
     profile["last_warning_cancelled_at"] = None
     save_state(data_file, state)
-    status = build_status(profile)
+    status = build_status(profile, state)
     status["already_checked_today"] = already_checked
     status["is_duplicate"] = already_checked
     return status
@@ -1724,7 +1846,7 @@ def cancel_warning(data_file, payload=None, config=None):
     payload = payload or {}
     state = load_state(data_file)
     profile = get_profile(state, payload.get("line_user_id"))
-    now = datetime.now()
+    now = current_app_time(config or {})
     today = now.strftime("%Y-%m-%d")
     history = set(profile.get("history") or [])
     history.add(today)
@@ -1746,7 +1868,7 @@ def cancel_warning(data_file, payload=None, config=None):
                 except Exception as exc:
                     append_notification_log(state, "warning_cancelled", contact["line_id"], "failed", message, str(exc))
     save_state(data_file, state)
-    return build_status(profile)
+    return build_status(profile, state)
 
 
 def normalized_alert_channels(payload_value):
@@ -3083,12 +3205,12 @@ def _location_session_active(location, now=None):
 
 def safety_guard_snapshot(profile, now=None):
     """Public snapshot of the user's 安全守護 session (single-shot location, not a trail)."""
-    now = now or datetime.now()
+    now = now or current_app_time({})
     location = profile.get("location") or {}
     active = _location_session_active(location, now)
-    today = now.date().isoformat()
+    today = now.strftime("%Y-%m-%d")
     last_check_in = profile.get("last_check_in")
-    is_today_checked = bool(last_check_in and str(last_check_in)[:10] == today)
+    is_today_checked = profile_is_today_checked(profile, now=now)
     if is_today_checked:
         safety_status = "今日已簽到・狀態正常"
     elif last_check_in:
@@ -3111,6 +3233,7 @@ def safety_guard_snapshot(profile, now=None):
         "safety_status": safety_status,
         "is_today_checked": is_today_checked,
         "last_check_in": last_check_in,
+        "today": today,
     }
 
 
@@ -4493,7 +4616,12 @@ def send_checkin_reminders(config):
         if not line_user_id:
             skipped += 1
             continue
-        if today in (user.get("history") or []):
+        if profile_is_today_checked(user, config=config, now=now):
+            # Heal missing Taipei history so later cron/status stay consistent
+            hist = set(user.get("history") or [])
+            if today not in hist:
+                hist.add(today)
+                user["history"] = sorted(hist)
             continue
 
         times = reminder_times_for_profile(user)
@@ -4641,6 +4769,379 @@ def send_birthday_reminders(config):
     return {"sent": sent, "skipped": skipped, "results": results}, 200
 
 
+# === 799 智能提醒（生活提醒：只走 LINE 私訊，預設不進守護群）===
+SMART_REMINDER_CATEGORIES = {
+    "birthday": {"emoji": "🎂", "label": "生日"},
+    "wedding": {"emoji": "💍", "label": "結婚紀念日"},
+    "dating": {"emoji": "💕", "label": "交往紀念日"},
+    "child_birthday": {"emoji": "👶", "label": "小孩生日"},
+    "elder_birthday": {"emoji": "👴", "label": "長輩生日"},
+    "graduation": {"emoji": "🎓", "label": "畢業"},
+    "moving": {"emoji": "🏠", "label": "搬家"},
+    "special": {"emoji": "🎉", "label": "特殊紀念日"},
+    "checkup": {"emoji": "💊", "label": "回診"},
+    "medicine": {"emoji": "💊", "label": "吃藥"},
+    "schedule": {"emoji": "📅", "label": "行程"},
+    "greeting": {"emoji": "❤️", "label": "問候"},
+    "custom": {"emoji": "🗓️", "label": "自訂"},
+}
+
+
+def plan_has_smart_reminders(profile):
+    plan = str((profile or {}).get("plan") or "trial")
+    return plan in {"paid_799", "paid_799_year"} and (
+        str((profile or {}).get("payment_status") or "") == "active" or paid_membership_is_active(profile or {})
+    )
+
+
+def normalize_smart_reminder(raw, index=0):
+    raw = raw if isinstance(raw, dict) else {}
+    category = str(raw.get("category") or "custom").strip().lower()
+    if category not in SMART_REMINDER_CATEGORIES:
+        category = "custom"
+    meta = SMART_REMINDER_CATEGORIES[category]
+    emoji = str(raw.get("emoji") or meta["emoji"]).strip() or meta["emoji"]
+    try:
+        month = int(raw.get("month") or 0)
+        day = int(raw.get("day") or 0)
+    except (TypeError, ValueError):
+        month, day = 0, 0
+    year_raw = raw.get("year")
+    try:
+        year = int(year_raw) if year_raw not in (None, "", 0, "0") else None
+    except (TypeError, ValueError):
+        year = None
+    rid = str(raw.get("id") or "").strip() or f"sr_{secrets.token_hex(6)}"
+    notify_private = True if "notify_private" not in raw else bool(raw.get("notify_private"))
+    notify_group = bool(raw.get("notify_group")) if "notify_group" in raw else False
+    return {
+        "id": rid,
+        "target_name": str(raw.get("target_name") or "").strip() or f"對象{index + 1}",
+        "category": category,
+        "category_label": meta["label"],
+        "emoji": emoji,
+        "month": month if 1 <= month <= 12 else 1,
+        "day": day if 1 <= day <= 31 else 1,
+        "year": year,
+        "note": str(raw.get("note") or "").strip()[:200],
+        "notify_private": notify_private,
+        "notify_group": notify_group,
+        "eve_remind": bool(raw.get("eve_remind", True)),
+        "created_at": str(raw.get("created_at") or datetime.now().isoformat(timespec="seconds")),
+        "updated_at": str(raw.get("updated_at") or ""),
+    }
+
+
+def list_smart_reminders(profile):
+    rows = profile.get("smart_reminders") if isinstance(profile.get("smart_reminders"), list) else []
+    return [normalize_smart_reminder(row, i) for i, row in enumerate(rows)]
+
+
+def smart_reminder_occurs_on(reminder, target_date):
+    try:
+        month = int(reminder.get("month") or 0)
+        day = int(reminder.get("day") or 0)
+    except (TypeError, ValueError):
+        return False
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return False
+    year = reminder.get("year")
+    if year:
+        try:
+            return target_date.year == int(year) and target_date.month == month and target_date.day == day
+        except (TypeError, ValueError):
+            return False
+    # yearly recurrence; skip invalid dates like 2/30
+    try:
+        datetime(target_date.year, month, day)
+    except ValueError:
+        return False
+    return target_date.month == month and target_date.day == day
+
+
+def smart_reminder_canned_wish(reminder):
+    name = reminder.get("target_name") or "對方"
+    cat = reminder.get("category") or "custom"
+    label = reminder.get("category_label") or SMART_REMINDER_CATEGORIES.get(cat, {}).get("label", "日子")
+    templates = {
+        "birthday": f"🎂 {name}，生日快樂！願你今天被溫柔包圍，平安健康每一天 ❤️",
+        "wedding": f"💍 親愛的{name}，結婚紀念日快樂！感謝一路上的陪伴與包容 ❤️",
+        "dating": f"💕 {name}，交往紀念日快樂！謝謝你讓平凡日子變得特別。",
+        "child_birthday": f"👶 親愛的小孩生日快樂！長大的每一步，我們都為你開心。",
+        "elder_birthday": f"👴 {name}生日快樂！願您身體硬朗、每天笑口常開。",
+        "graduation": f"🎓 恭喜{name}畢業！新的旅程開始了，我們為你驕傲。",
+        "moving": f"🏠 新家落成／喬遷愉快！願{name}在新環境一切順利。",
+        "special": f"🎉 今天是特別的日子，祝{name}開心、平安。",
+        "checkup": f"💊 提醒：記得陪／關心{name}回診，帶健保卡與就醫資料。",
+        "medicine": f"💊 提醒：該吃藥／拿藥了，幫{name}確認一次。",
+        "schedule": f"📅 行程提醒：今天與{name}有關的安排，別忘了預留時間。",
+        "greeting": f"❤️ 傳一句問候給{name}：「今天還好嗎？我想你了。」",
+        "custom": f"🗓️ 提醒：今天是你為{name}設定的「{label}」，記得處理一下。",
+    }
+    return templates.get(cat, templates["custom"])
+
+
+def smart_reminder_canned_gift(reminder):
+    name = reminder.get("target_name") or "對方"
+    cat = reminder.get("category") or "custom"
+    if cat in {"birthday", "child_birthday", "elder_birthday"}:
+        return f"🎁 禮物建議：1) 手寫小卡＋喜歡的甜點 2) 實用日常好物 3) 一起吃頓飯。對象：{name}"
+    if cat in {"wedding", "dating"}:
+        return f"🎁 禮物建議：一起回憶照片書、共同喜歡的小旅行，或一頓安靜晚餐。對象：{name}"
+    if cat in {"checkup", "medicine"}:
+        return f"🎁 實用協助：陪診、整理藥單、準備水杯與交通安排。對象：{name}"
+    return f"🎁 建議：一句真心話＋小驚喜（花／甜點／陪伴時間）。對象：{name}"
+
+
+def build_smart_reminder_flex(reminder, *, mode="day"):
+    """mode=day|eve Flex for private LINE push."""
+    name = reminder.get("target_name") or "對方"
+    emoji = reminder.get("emoji") or "🗓️"
+    label = reminder.get("category_label") or "提醒"
+    month = int(reminder.get("month") or 1)
+    day = int(reminder.get("day") or 1)
+    date_text = f"{month}/{day}"
+    rid = reminder.get("id") or ""
+    if mode == "eve":
+        title = f"❤️ 明天是{name}{label}"
+        body = "需要幫你準備一句祝福嗎？"
+        buttons = [
+            {"type": "button", "action": {"type": "postback", "label": "✨每日產生祝福", "data": f"smart:wish:{rid}", "displayText": "幫我產生祝福"}, "style": "primary", "color": "#7C3AED", "height": "sm"},
+            {"type": "button", "action": {"type": "postback", "label": "🎁禮物建議", "data": f"smart:gift:{rid}", "displayText": "禮物建議"}, "style": "secondary", "height": "sm"},
+            {"type": "button", "action": {"type": "postback", "label": "📞明天提醒", "data": f"smart:snooze:{rid}", "displayText": "明天再提醒我"}, "style": "secondary", "height": "sm"},
+        ]
+        alt = f"明天是{name}的{label}"
+    else:
+        if (reminder.get("category") or "") == "birthday":
+            title = f"🎂 今天是{name}的生日"
+            body = f"別忘了送上一句祝福 ❤️\n姓名：{name}\n今天：{date_text}"
+            buttons = [
+                {"type": "button", "action": {"type": "postback", "label": "🎁傳送祝福", "data": f"smart:wish:{rid}", "displayText": "傳送祝福"}, "style": "primary", "color": "#E11D48", "height": "sm"},
+                {"type": "button", "action": {"type": "postback", "label": "🎂已祝福", "data": f"smart:blessed:{rid}", "displayText": "已祝福"}, "style": "secondary", "height": "sm"},
+                {"type": "button", "action": {"type": "postback", "label": "⏰晚點提醒我", "data": f"smart:snooze:{rid}", "displayText": "晚點提醒我"}, "style": "secondary", "height": "sm"},
+            ]
+        elif "父" in name or label in {"特殊紀念日"} and "父" in (reminder.get("note") or ""):
+            title = f"🎉 今天是父親節"
+            body = f"你設定的提醒對象：👨{name}\n記得向他說聲：父親節快樂 ❤️"
+            buttons = [
+                {"type": "button", "action": {"type": "postback", "label": "💌LINE祝福", "data": f"smart:wish:{rid}", "displayText": "LINE祝福"}, "style": "primary", "color": "#2563EB", "height": "sm"},
+                {"type": "button", "action": {"type": "postback", "label": "📞打電話", "data": f"smart:call:{rid}", "displayText": "提醒我打電話"}, "style": "secondary", "height": "sm"},
+                {"type": "button", "action": {"type": "postback", "label": "⏰晚點提醒", "data": f"smart:snooze:{rid}", "displayText": "晚點提醒"}, "style": "secondary", "height": "sm"},
+            ]
+        else:
+            title = f"{emoji} 今天是{name}的{label}"
+            body = f"別忘了關心一下 ❤️\n對象：{name}\n今天：{date_text}"
+            if reminder.get("note"):
+                body += f"\n備註：{reminder.get('note')}"
+            buttons = [
+                {"type": "button", "action": {"type": "postback", "label": "💌傳送祝福", "data": f"smart:wish:{rid}", "displayText": "傳送祝福"}, "style": "primary", "color": "#E11D48", "height": "sm"},
+                {"type": "button", "action": {"type": "postback", "label": "✅已完成", "data": f"smart:blessed:{rid}", "displayText": "已完成"}, "style": "secondary", "height": "sm"},
+                {"type": "button", "action": {"type": "postback", "label": "⏰晚點提醒我", "data": f"smart:snooze:{rid}", "displayText": "晚點提醒我"}, "style": "secondary", "height": "sm"},
+            ]
+        alt = f"今天是{name}的{label}"
+    return {
+        "type": "flex",
+        "altText": alt,
+        "contents": {
+            "type": "bubble",
+            "size": "mega",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "md",
+                "contents": [
+                    {"type": "text", "text": title, "weight": "bold", "size": "xl", "wrap": True},
+                    {"type": "text", "text": body, "size": "md", "color": "#444444", "wrap": True},
+                    {"type": "text", "text": "💬 此提醒只傳到你的 LINE 私訊（不會進守護群）", "size": "xs", "color": "#888888", "wrap": True},
+                ],
+            },
+            "footer": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "contents": buttons,
+            },
+        },
+    }
+
+
+def handle_smart_reminder_postback(data_file, line_user_id, data, config=None):
+    """Handle smart:* postbacks; returns reply text."""
+    parts = str(data or "").split(":")
+    if len(parts) < 3 or parts[0] != "smart":
+        return None
+    action, rid = parts[1], parts[2]
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id)
+    reminder = next((r for r in list_smart_reminders(profile) if r.get("id") == rid), None)
+    if not reminder:
+        return "找不到這筆智能提醒，可能已被刪除。"
+    if action == "wish":
+        return smart_reminder_canned_wish(reminder)
+    if action == "gift":
+        return smart_reminder_canned_gift(reminder)
+    if action == "call":
+        return f"📞 現在就可以撥電話給「{reminder.get('target_name')}」。打完後可回「已完成」。"
+    if action == "blessed":
+        return f"太好了，已幫你記下「已祝福／已完成」：{reminder.get('target_name')}。"
+    if action == "snooze":
+        # Mark a soft snooze key so day cron can re-nudge later same day once
+        keys = set(profile.get("smart_reminder_sent_keys") or [])
+        today = today_string(config)
+        # Remove day key to allow one re-send after 2h via separate snooze marker
+        profile["smart_reminder_snooze"] = {
+            "id": rid,
+            "until": (current_app_time(config) + timedelta(hours=2)).isoformat(timespec="seconds"),
+        }
+        # Keep day key so we don't double-fire immediately; snooze path uses until
+        keys = {k for k in keys if not k.endswith(f":{rid}:day")}
+        profile["smart_reminder_sent_keys"] = sorted(keys)[-120:]
+        save_state(data_file, state)
+        return "好，約 2 小時後再私訊提醒你一次。"
+    return "已收到。"
+
+
+def get_smart_reminders_payload(data_file, line_user_id):
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id)
+    entitled = plan_has_smart_reminders(profile)
+    return {
+        "ok": True,
+        "entitled": entitled,
+        "plan": profile.get("plan") or "trial",
+        "upgrade_hint": None if entitled else "智能提醒為 799 守護版功能，升級後可設定生日／紀念日／回診等生活提醒（僅私訊，不進守護群）。",
+        "reminders": list_smart_reminders(profile) if entitled else [],
+        "defaults": profile.get("smart_reminder_defaults") or {"notify_private": True, "notify_group": False},
+        "categories": [
+            {"id": key, "emoji": meta["emoji"], "label": meta["label"]}
+            for key, meta in SMART_REMINDER_CATEGORIES.items()
+        ],
+    }
+
+
+def save_smart_reminder(data_file, payload):
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if not line_user_id:
+        return {"ok": False, "error": "missing line_user_id"}, 400
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id)
+    if not plan_has_smart_reminders(profile):
+        return {"ok": False, "error": "smart_reminders_require_799", "upgrade_hint": "請升級 799 守護版"}, 403
+    reminder = normalize_smart_reminder(payload, 0)
+    reminder["updated_at"] = current_app_time({}).isoformat(timespec="seconds")
+    rows = list_smart_reminders(profile)
+    replaced = False
+    for i, row in enumerate(rows):
+        if row.get("id") == reminder["id"]:
+            reminder["created_at"] = row.get("created_at") or reminder["created_at"]
+            rows[i] = reminder
+            replaced = True
+            break
+    if not replaced:
+        if len(rows) >= 40:
+            return {"ok": False, "error": "smart_reminder_limit"}, 400
+        rows.append(reminder)
+    profile["smart_reminders"] = rows
+    if isinstance(payload.get("defaults"), dict):
+        defaults = profile.get("smart_reminder_defaults") or {}
+        defaults["notify_private"] = bool(payload["defaults"].get("notify_private", True))
+        defaults["notify_group"] = bool(payload["defaults"].get("notify_group", False))
+        profile["smart_reminder_defaults"] = defaults
+    save_state(data_file, state)
+    return {"ok": True, "reminder": reminder, "reminders": rows}, 200
+
+
+def delete_smart_reminder(data_file, line_user_id, reminder_id):
+    line_user_id = str(line_user_id or "").strip()
+    reminder_id = str(reminder_id or "").strip()
+    if not line_user_id or not reminder_id:
+        return {"ok": False, "error": "missing id"}, 400
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id)
+    if not plan_has_smart_reminders(profile):
+        return {"ok": False, "error": "smart_reminders_require_799"}, 403
+    rows = [r for r in list_smart_reminders(profile) if r.get("id") != reminder_id]
+    profile["smart_reminders"] = rows
+    save_state(data_file, state)
+    return {"ok": True, "reminders": rows}, 200
+
+
+def send_smart_reminders(config):
+    """Push due smart reminders via LINE private message (never guardian group by default)."""
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not token:
+        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
+
+    data_file = config["DATA_FILE"]
+    state = load_state(data_file)
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    now = current_app_time(config)
+    today_date = now.date()
+    tomorrow = today_date + timedelta(days=1)
+    today_key = today_date.strftime("%Y-%m-%d")
+    sent = 0
+    skipped = 0
+    results = []
+    # Morning day-of window ~09:00; eve window ~20:00
+    day_window = now.hour >= 9
+    eve_window = now.hour >= 20
+
+    for user in state.get("users", {}).values():
+        line_user_id = user.get("line_user_id")
+        if not line_user_id or not plan_has_smart_reminders(user):
+            skipped += 1
+            continue
+        sent_keys = set(user.get("smart_reminder_sent_keys") or [])
+        snooze = user.get("smart_reminder_snooze") or {}
+        for reminder in list_smart_reminders(user):
+            rid = reminder.get("id")
+            # Day-of
+            if day_window and smart_reminder_occurs_on(reminder, today_date):
+                key = f"{today_key}:{rid}:day"
+                snooze_until = parse_datetime(snooze.get("until")) if snooze.get("id") == rid else None
+                if key in sent_keys and not (snooze_until and now >= snooze_until):
+                    continue
+                if snooze_until and now < snooze_until:
+                    continue
+                if not reminder.get("notify_private", True):
+                    continue
+                message = build_smart_reminder_flex(reminder, mode="day")
+                try:
+                    result = sender(token, line_user_id, message)
+                    sent_keys.add(key)
+                    if snooze.get("id") == rid:
+                        user["smart_reminder_snooze"] = {}
+                    append_notification_log(state, "smart_reminder", line_user_id, "sent", message.get("altText"), json.dumps(result, ensure_ascii=False))
+                    sent += 1
+                    results.append({"line_user_id": line_user_id, "id": rid, "mode": "day"})
+                except Exception as exc:
+                    append_notification_log(state, "smart_reminder", line_user_id, "failed", message.get("altText"), str(exc))
+                    skipped += 1
+                    results.append({"line_user_id": line_user_id, "id": rid, "error": str(exc)})
+            # Eve (night before)
+            if eve_window and reminder.get("eve_remind", True) and smart_reminder_occurs_on(reminder, tomorrow):
+                key = f"{today_key}:{rid}:eve"
+                if key in sent_keys:
+                    continue
+                if not reminder.get("notify_private", True):
+                    continue
+                message = build_smart_reminder_flex(reminder, mode="eve")
+                try:
+                    result = sender(token, line_user_id, message)
+                    sent_keys.add(key)
+                    append_notification_log(state, "smart_reminder", line_user_id, "sent", message.get("altText"), json.dumps(result, ensure_ascii=False))
+                    sent += 1
+                    results.append({"line_user_id": line_user_id, "id": rid, "mode": "eve"})
+                except Exception as exc:
+                    append_notification_log(state, "smart_reminder", line_user_id, "failed", message.get("altText"), str(exc))
+                    skipped += 1
+                    results.append({"line_user_id": line_user_id, "id": rid, "error": str(exc)})
+        user["smart_reminder_sent_keys"] = sorted(sent_keys)[-120:]
+
+    save_state(data_file, state)
+    return {"sent": sent, "skipped": skipped, "results": results}, 200
+
+
 def app_config(config):
     token = (
         config.get("LINE_CHANNEL_ACCESS_TOKEN")
@@ -4658,7 +5159,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724aw",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724sr",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -4974,7 +5475,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724aw",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250724sr",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
@@ -5010,6 +5511,13 @@ def create_app(config=None):
             return jsonify(data)
         dirty = scrub_self_line_ids_on_contacts(profile)
         dirty = ensure_onboarding_completed_flag(profile) or dirty
+        # Heal Taipei-day history if last_check_in already proves today (鬼打牆根因之一)
+        today = today_string()
+        if profile_is_today_checked(profile) and today not in set(profile.get("history") or []):
+            hist = set(profile.get("history") or [])
+            hist.add(today)
+            profile["history"] = sorted(hist)
+            dirty = True
         if dirty:
             save_state(app.config["DATA_FILE"], state)
         return jsonify(build_status(profile, state))
@@ -5515,6 +6023,23 @@ def create_app(config=None):
                 line_bot_api.push_message(group_id, TextSendMessage(text="\n".join(msg_lines)))
             except Exception:
                 pass
+
+        if PostbackEvent is not None:
+            @handler.add(PostbackEvent)
+            def handle_postback(event):
+                line_user_id = getattr(event.source, "user_id", None)
+                data = ""
+                try:
+                    data = str(getattr(event.postback, "data", "") or "")
+                except Exception:
+                    data = ""
+                if not line_user_id or not data.startswith("smart:"):
+                    return
+                reply = handle_smart_reminder_postback(
+                    app.config["DATA_FILE"], line_user_id, data, app.config
+                )
+                if reply:
+                    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
         @handler.add(MessageEvent, message=TextMessage)
         def handle_text_message(event):
@@ -6580,6 +7105,43 @@ def create_app(config=None):
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = send_birthday_reminders(app.config)
+        return jsonify(data), code
+
+    @app.route("/api/cron/smart-reminders", methods=["GET", "POST"])
+    def cron_smart_reminders_api():
+        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        if not cron_allowed(app.config, secret):
+            return jsonify({"error": "unauthorized"}), 401
+        data, code = send_smart_reminders(app.config)
+        return jsonify(data), code
+
+    @app.get("/api/smart-reminders")
+    def smart_reminders_get():
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
+        return jsonify(get_smart_reminders_payload(app.config["DATA_FILE"], line_user_id))
+
+    @app.post("/api/smart-reminders")
+    def smart_reminders_post():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = save_smart_reminder(app.config["DATA_FILE"], payload)
+        return jsonify(data), code
+
+    @app.delete("/api/smart-reminders/<reminder_id>")
+    def smart_reminders_delete(reminder_id):
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            # Also accept JSON body for clients that send line_user_id there
+            payload = request.get_json(silent=True) or {}
+            line_user_id, err = _authenticated_line_user(payload)
+            if err:
+                return jsonify(err[0]), err[1]
+        data, code = delete_smart_reminder(app.config["DATA_FILE"], line_user_id, reminder_id)
         return jsonify(data), code
 
     @app.route("/api/cron/membership-expiry", methods=["GET", "POST"])

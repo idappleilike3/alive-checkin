@@ -3560,16 +3560,16 @@
             </div>
             <button class="member-role-intro-dismiss" id="memberRoleIntroDismiss" type="button" aria-label="關閉介紹">知道了</button>
           </div>
-          <article class="member-role-card" aria-label="核心守護人說明">
-            <h4>👨‍👩‍👧 核心守護人</h4>
-            <p><span class="role-label">用途</span>　平常守護你的人；重要狀況才會發訊息給他們。</p>
-            <p><span class="role-label">會收到</span>　未報平安、SOS、安全守護等重要通知。</p>
-            <p><span class="role-label">免費版建議</span>　1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。</p>
+          <article class="member-role-card" aria-label="守護人說明">
+            <h4>👨‍👩‍👧 守護人（Guardian）</h4>
+            <p><span class="role-label">用途</span>　平常每天守護你的人。</p>
+            <p><span class="role-label">會收到</span>　未報平安通知、SOS、安全守護、可查看平安狀態（若有授權）。</p>
+            <p><span class="role-label">免費版建議</span>　1 位守護人（配偶／父母／子女足夠）。</p>
           </article>
-          <article class="member-role-card" aria-label="聯絡人說明">
-            <h4>☎️ 聯絡人</h4>
-            <p><span class="role-label">用途</span>　較輕的聯絡名單；主要以 LINE 訊息通知。</p>
-            <p><span class="role-label">會收到</span>　較輕的 LINE 通知（平時不收每日未報平安提醒）。</p>
+          <article class="member-role-card" aria-label="緊急聯絡人說明">
+            <h4>☎️ 緊急聯絡人（Emergency Contact）</h4>
+            <p><span class="role-label">用途</span>　真正緊急時才聯絡（119 前／SOS 才通知，平時不收每日提醒）。</p>
+            <p><span class="role-label">會收到</span>　真正緊急時才聯絡（119 前／SOS 才通知，平時不收每日提醒）。</p>
             <p><span class="role-label">免費版建議</span>　2 位（爸媽，或配偶＋好友）。可先填姓名與電話。</p>
           </article>
         </div>
@@ -3584,11 +3584,11 @@
         </div>
 
         <div class="member-data-section" id="memberGuardianSection">
-          <h3>👨‍👩‍👧 核心守護人</h3>
-          <div class="member-role-bind-intro" aria-label="核心守護人說明">
-            <p><strong>用途</strong>：平常守護你的人；重要狀況才會發訊息給他們。</p>
-            <p><strong>會收到</strong>：未報平安、SOS、安全守護等重要通知。</p>
-            <p><strong>免費版建議</strong>：1 位。尚未綁定時，姓名旁會有「一鍵邀請」。</p>
+          <h3>👨‍👩‍👧 守護人（Guardian）</h3>
+          <div class="member-role-bind-intro" aria-label="守護人說明">
+            <p><strong>用途</strong>：平常每天守護你的人。</p>
+            <p><strong>會收到</strong>：未報平安通知、SOS、安全守護、可查看平安狀態（若有授權）。</p>
+            <p><strong>免費版建議</strong>：1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。</p>
           </div>
           <div class="member-quota-line" id="memberGuardianQuotaLine">目前：0 / 1（免費方案）</div>
           <div class="member-core-line" id="memberCoreGeneralLine">核心守護人 0 位／一般守護人 0 位</div>
@@ -3602,23 +3602,48 @@
             <button class="action-btn primary" id="memberLimitUpgradeBtn" type="button">立即升級</button>
           </div>
           <div class="member-data-actions">
-            <button class="action-btn primary" id="memberAddGuardianBtn" type="button">➕ 新增核心守護人</button>
-            <button class="action-btn share-contact-invite-btn" type="button">一鍵邀請守護人</button>
+            <button class="action-btn primary" id="memberAddGuardianBtn" type="button">➕ 新增守護人</button>
+          </div>
+        </div>
+
+        <div class="member-data-section" id="memberSmartRemindersSection">
+          <h3>智能提醒</h3>
+          <p class="helper" id="smartReminderHint">799 守護版：生日／紀念日／回診等生活提醒，預設只傳到 LINE 私訊（不進守護群）。</p>
+          <div id="smartReminderUpgrade" class="member-limit-banner" hidden>
+            <strong>智能提醒為 799 功能</strong>
+            <p>免費／399 僅可看說明。升級 799 後可新增提醒，系統會在到期日早上私訊你。</p>
+            <button class="action-btn primary" id="smartReminderUpgradeBtn" type="button">查看 799 方案</button>
+          </div>
+          <div id="smartReminderControls" hidden>
+            <div class="member-data-list" id="smartReminderList">
+              <div class="member-data-row"><span>目前狀態</span><strong>尚未新增提醒</strong></div>
+            </div>
+            <label class="check-row" style="display:flex;gap:8px;align-items:center;margin:8px 0;">
+              <input type="checkbox" id="smartReminderNotifyPrivate" checked disabled>
+              <span>☑ 私訊提醒（預設，建議）</span>
+            </label>
+            <label class="check-row" style="display:flex;gap:8px;align-items:center;margin:8px 0;">
+              <input type="checkbox" id="smartReminderNotifyGroup">
+              <span>☐ 群組提醒（選用；預設關閉，為隱私仍建議私訊）</span>
+            </label>
+            <div class="member-data-actions">
+              <button class="action-btn primary" id="smartReminderAddBtn" type="button">＋新增提醒</button>
+            </div>
           </div>
         </div>
 
         <div class="member-data-section" id="memberEmergencySection">
-          <h3>☎️ 聯絡人</h3>
-          <div class="member-role-bind-intro" aria-label="聯絡人說明">
-            <p><strong>用途</strong>：較輕的聯絡名單；主要以 LINE 訊息通知。</p>
-            <p><strong>免費版建議</strong>：2 位。可先填姓名與電話，平時不收每日未報平安提醒。</p>
+          <h3>☎️ 緊急聯絡人（Emergency Contact）</h3>
+          <div class="member-role-bind-intro" aria-label="緊急聯絡人說明">
+            <p><strong>用途</strong>：真正緊急時才聯絡（119 前／SOS 才通知，平時不收每日提醒）。</p>
+            <p><strong>免費版建議</strong>：2 位（爸媽，或配偶＋好友）。可先填姓名與電話。</p>
           </div>
-          <div class="member-quota-line" id="memberEmergencyQuotaLine">聯絡人：0 位（建議 2 位）</div>
+          <div class="member-quota-line" id="memberEmergencyQuotaLine">緊急聯絡人：0 位（建議 2 位）</div>
           <div class="member-data-list" id="memberEmergencyList">
-            <div class="member-data-row"><span>目前狀態</span><strong>尚未新增聯絡人</strong></div>
+            <div class="member-data-row"><span>目前狀態</span><strong>尚未新增緊急聯絡人</strong></div>
           </div>
           <div class="member-data-actions">
-            <button class="action-btn primary" id="memberAddEmergencyBtn" type="button">➕ 新增聯絡人</button>
+            <button class="action-btn primary" id="memberAddEmergencyBtn" type="button">➕ 新增緊急聯絡人</button>
           </div>
         </div>
 
@@ -5043,8 +5068,7 @@
               ${lid ? `<small>LINE ID：${escapeHtml(lid)}</small>` : ""}
               ${added ? `<small>新增日期：${escapeHtml(added)}</small>` : ""}
             </div>
-            <div class="member-guardian-manage-actions${bound ? "" : " has-invite"}">
-              ${bound ? "" : `<button class="action-btn member-invite-guardian" type="button" data-id="${cid}" aria-label="一鍵邀請">一鍵邀請</button>`}
+            <div class="member-guardian-manage-actions">
               <button class="action-btn member-edit-guardian" type="button" data-id="${cid}" aria-label="編輯">編輯</button>
               <button class="action-btn danger-action member-delete-guardian" type="button" data-id="${cid}" aria-label="刪除">刪除</button>
             </div>
@@ -5090,7 +5114,7 @@
       const quotaLine = $("memberGuardianQuotaLine");
       if (quotaLine) quotaLine.textContent = `目前：${totalCount} / ${limit}（${planQuotaLabel(memberPlan)}）`;
       const emergencyQuota = $("memberEmergencyQuotaLine");
-      if (emergencyQuota) emergencyQuota.textContent = `緊急緊急聯絡人：${emergencies.length} 位（建議 2 位）`;
+      if (emergencyQuota) emergencyQuota.textContent = `緊急緊急緊急聯絡人：${emergencies.length} 位（建議 2 位）`;
       const coreLine = $("memberCoreGeneralLine");
       if (coreLine) coreLine.textContent = `核心守護人 ${shownCore} 位／一般守護人 ${shownGeneral} 位`;
       $("memberBillingPlan").textContent = planLabel(memberPlan);
@@ -5124,7 +5148,7 @@
         }
       }
       const addBtn = $("memberAddGuardianBtn");
-      if (addBtn) addBtn.textContent = atLimit ? "➕ 名額已滿（可升級）" : "➕ 新增核心守護人";
+      if (addBtn) addBtn.textContent = atLimit ? "➕ 名額已滿（可升級）" : "➕ 新增守護人";
 
       $("memberGuardianList").innerHTML = renderContactManageRows(guardians, "尚未綁定守護人");
       const emergencyList = $("memberEmergencyList");
