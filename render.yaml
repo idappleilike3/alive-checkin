@@ -2,10 +2,15 @@ services:
   - type: web
     name: alive-checkin
     env: python
-    plan: free
+    # Persistent Disk requires a paid instance (Starter+). Free cannot attach disks.
+    plan: starter
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
     healthCheckPath: /health
+    disk:
+      name: alive-checkin-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
@@ -15,15 +20,13 @@ services:
         value: https://alive-checkin.onrender.com/
       - key: APP_TIMEZONE
         value: Asia/Taipei
-      # SQLite path (auto-migrates state.json → state.db). For true persistence,
-      # upgrade plan and attach a disk mounted at /var/data, then set:
-      # DATA_FILE=/var/data/state.json
+      # SQLite lives on the Persistent Disk (state.json → state.db sibling).
       - key: DATA_FILE
-        value: data/state.json
+        value: /var/data/state.json
       - key: REQUIRE_LIFF_AUTH
         value: "1"
       - key: DEPLOY_VERSION
-        value: W250724ap
+        value: W250724aq
       # Open admin (no password). Public URL is insecure — owner requested.
       - key: ALLOW_OPEN_ADMIN
         value: "true"
@@ -45,12 +48,7 @@ services:
         sync: false
       - key: NEWEBPAY_STAGE
         value: sandbox
-      # IMPORTANT (free plan): local disk is ephemeral. Process restart / redeploy
-      # wipes SQLite under data/ → users_total becomes 0 and LIFF shows
-      #「尚未建立帳號」until follow/register recreates the row. For production,
-      # upgrade and attach a persistent disk at /var/data, then set:
-      #   DATA_FILE=/var/data/state.json
-      # Also never wipe Render Environment Variables — LINE token/secret/LIFF_ID
+      # Never wipe Render Environment Variables — LINE token/secret/LIFF_ID
       # missing makes /callback return 503 and messaging die.
   - type: cron
     name: alive-checkin-contact-reminders
