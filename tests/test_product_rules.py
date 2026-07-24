@@ -404,6 +404,15 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("liff.line.me/", landing)
         self.assertIn("formatLiffError", page)
         self.assertIn("detail: formatLiffError(error)", page)
+        # Android 雙重確認：綁定成功只 alert 一次，並清掉 invite_from
+        self.assertIn("let bindDone = false", page)
+        self.assertIn("function clearInviteFromUrl", page)
+        self.assertIn("async function completeGuardianBindOnce", page)
+        self.assertIn("history.replaceState", page)
+        self.assertIn("completeGuardianBindOnce(inviteFrom)", page)
+        init_liff = page[page.index("async function initializeLiff()") : page.index("async function initLine()")]
+        self.assertNotIn("apiBindEmergencyContact(inviteFrom)", init_liff)
+        self.assertIn("maybeShowInviteAcceptPrompt()", init_liff)
 
     def test_guardian_group_intro_has_large_four_button_actions(self):
         flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")

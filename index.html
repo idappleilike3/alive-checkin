@@ -1970,12 +1970,19 @@
       place-items: center;
       align-content: center;
       overflow-y: auto;
+      pointer-events: auto;
     }
     #inviteAcceptPrompt .guardian-modal {
       position: relative;
       z-index: 1;
       margin: 12px auto;
       padding-bottom: max(18px, env(safe-area-inset-bottom, 0px));
+      pointer-events: auto;
+    }
+    #inviteAcceptPrompt .agree-btn {
+      pointer-events: auto;
+      -webkit-user-select: none;
+      user-select: none;
     }
     .warning-modal {
       border: 0;
@@ -3785,6 +3792,9 @@
     let qrScanTimer = null;
     let pendingFriendInviteCode = "";
     let lineDisplayName = "";
+    /** Once-guard: Android LIFF 上成功後勿重複 alert／重複 bind（自動綁定 + 同意按鈕／雙擊／URL 殘留）。 */
+    let bindDone = false;
+    let bindInFlight = false;
     let contactData = [];
     let currentContactLimit = 1;
     let currentStatusData = null;
@@ -5007,7 +5017,61 @@
       window.location.href = "liff/pricing.html";
     }
 
+    /** 綁定成功後立刻清掉 invite_from，避免 reload／返回／二次 init 再綁一次。 */
+    function clearInviteFromUrl() {
+      try {
+        const url = new URL(window.location.href);
+        let changed = false;
+        ["invite_from", "from"].forEach((key) => {
+          if (url.searchParams.has(key)) {
+            url.searchParams.delete(key);
+            changed = true;
+          }
+        });
+        const rawHash = String(url.hash || "").replace(/^#/, "");
+        if (rawHash && rawHash.includes("=")) {
+          const hp = new URLSearchParams(rawHash);
+          ["invite_from", "from"].forEach((key) => {
+            if (hp.has(key)) {
+              hp.delete(key);
+              changed = true;
+            }
+          });
+          const nextHash = hp.toString();
+          url.hash = nextHash ? `#${nextHash}` : "";
+        }
+        if (changed) {
+          history.replaceState(null, "", url.pathname + (url.search || "") + (url.hash || ""));
+        }
+      } catch (_) {}
+    }
+
+    /**
+     * 守護人邀請綁定只跑一次：成功後設 bindDone、清 URL、只 alert 一次。
+     * 擋住 Android 雙擊、自動綁定 + 同意按鈕雙路徑、URL 殘留重入。
+     */
+    async function completeGuardianBindOnce(inviteFromRaw) {
+      const inviteFrom = sanitizeInviteUserId(inviteFromRaw || getAppParam("invite_from"));
+      if (bindDone) return { bound: true, skipped: true };
+      if (bindInFlight) return { bound: false, skipped: true, inFlight: true };
+      if (!inviteFrom || inviteFrom === lineUserId) return null;
+      bindInFlight = true;
+      try {
+        const bindResult = await apiBindEmergencyContact(inviteFrom);
+        if (bindResult?.bound) {
+          bindDone = true;
+          clearInviteFromUrl();
+          closeInviteAcceptPrompt();
+          alert("綁定完成！你已成為對方的守護人。對方也會收到「綁定完成」通知。");
+        }
+        return bindResult;
+      } finally {
+        bindInFlight = false;
+      }
+    }
+
     function maybeShowInviteAcceptPrompt() {
+      if (bindDone || bindInFlight) return;
       const inviteFrom = getAppParam("invite_from");
       if (!inviteFrom || inviteFrom === lineUserId) return;
       const modal = $("inviteAcceptPrompt");
@@ -5035,6 +5099,7 @@
     }
 
     async function acceptGuardianInviteFromPrompt() {
+      if (bindDone || bindInFlight) return;
       const inviteFrom = getAppParam("invite_from");
       if (!inviteFrom) return closeInviteAcceptPrompt();
       if (!lineUserId && window.liff && !liff.isLoggedIn()) {
@@ -5052,17 +5117,14 @@
         btn.textContent = "綁定中…";
       }
       try {
-        const bindResult = await apiBindEmergencyContact(inviteFrom);
-        if (bindResult?.bound) {
-          closeInviteAcceptPrompt();
-          alert("綁定完成！你已成為對方的守護人。對方也會收到「綁定完成」通知。");
-          return;
-        }
+        const bindResult = await completeGuardianBindOnce(inviteFrom);
+        if (bindResult?.skipped) return;
+        if (bindResult?.bound) return;
         alert(bindResult?.error || "綁定尚未完成，請再試一次。若仍失敗，請請對方重新分享邀請連結。");
       } catch (error) {
         alert((error && error.message) ? error.message : "綁定失敗，請稍後再試。");
       } finally {
-        if (btn && !$("inviteAcceptPrompt").hidden) {
+        if (btn && !$("inviteAcceptPrompt").hidden && !bindDone) {
           btn.disabled = false;
           btn.textContent = "同意成為守護人";
         }
@@ -5452,24 +5514,12 @@
           })
         });
 
-        const urlParams = new URLSearchParams(window.location.search);
-        const inviteFrom = String(
-          urlParams.get("invite_from") || getAppParam("invite_from") || ""
-        ).trim();
+        const inviteFrom = String(getAppParam("invite_from") || "").trim();
         if (inviteFrom && inviteFrom !== lineUserId) {
           console.log("成功抓到邀請人 ID:", inviteFrom);
-          try {
-            const bindResult = await apiBindEmergencyContact(inviteFrom);
-            if (bindResult?.bound) {
-              closeInviteAcceptPrompt();
-              alert("綁定完成！你已成為對方的緊急聯絡人。對方也會收到「綁定完成」通知。");
-            } else {
-              maybeShowInviteAcceptPrompt();
-            }
-          } catch (bindErr) {
-            console.error("auto bind failed:", bindErr);
-            maybeShowInviteAcceptPrompt();
-          }
+          // 不在 init 自動 bind+alert：與「同意成為守護人」雙路徑會讓 Android 連彈兩次確認。
+          // 只顯示同意視窗；綁定統一走 completeGuardianBindOnce（bindDone + 清 URL）。
+          maybeShowInviteAcceptPrompt();
         } else if (!inviteFrom && !isInviteeDeepLink()) {
           console.log("這是一般登入，網址沒有邀請人參數");
           maybeShowGuardianPrompt();
