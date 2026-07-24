@@ -1015,6 +1015,16 @@ def build_status(profile, state=None):
         "bound_guardian_count": sum(
             1 for c in (profile.get("contacts") or []) if contact_is_bound_guardian(c)
         ),
+        "core_guardian_count": sum(
+            1
+            for c in (profile.get("contacts") or [])
+            if contact_is_bound_guardian(c) and bool(c.get("is_primary"))
+        ),
+        "general_guardian_count": sum(
+            1
+            for c in (profile.get("contacts") or [])
+            if contact_is_bound_guardian(c) and not bool(c.get("is_primary"))
+        ),
         "bound_guardians": [
             {
                 "name": str(c.get("name") or "").strip(),
@@ -1022,6 +1032,9 @@ def build_status(profile, state=None):
                 "relationship": str(c.get("relationship") or "").strip(),
                 "binding_status": str(c.get("binding_status") or "").strip() or "accepted",
                 "phone": str(c.get("phone") or "").strip(),
+                "is_primary": bool(c.get("is_primary")),
+                "accepted_at": str(c.get("accepted_at") or c.get("created_at") or "").strip(),
+                "role": "核心" if c.get("is_primary") else "一般",
             }
             for c in (profile.get("contacts") or [])
             if contact_is_bound_guardian(c)
@@ -1078,7 +1091,71 @@ def build_status(profile, state=None):
         "status_text": status_text,
         "status_class": status_class,
         "safety_guard": safety_guard_snapshot(profile),
+        "membership_label": _membership_label(profile),
+        "upgrade_status": _upgrade_status(profile),
+        "trial_days_text": _trial_days_text(profile),
     }
+
+
+def _membership_label(profile):
+    plan = str(profile.get("plan") or "trial")
+    labels = {
+        "trial": "免費試用",
+        "free": "免費方案",
+        "paid_199": "已升級 199 月費",
+        "paid_199_year": "已升級 199 年費",
+        "paid_399": "已升級 399 月費",
+        "paid_399_year": "已升級 399 年費",
+        "paid_799": "已升級 799 月費",
+        "paid_799_year": "已升級 799 年費",
+    }
+    return labels.get(plan, plan)
+
+
+def _trial_days_text(profile):
+    plan = str(profile.get("plan") or "trial")
+    if plan == "trial":
+        days = trial_days_left(profile)
+        return f"免費剩 {days} 天" if days > 0 else "試用已結束"
+    if plan == "free":
+        return "免費方案（無試用倒數）"
+    return "已升級（非試用）"
+
+
+def _upgrade_status(profile):
+    plan = str(profile.get("plan") or "trial")
+    payment = str(profile.get("payment_status") or "")
+    if plan.startswith("paid"):
+        active = payment == "active" or paid_membership_is_active(profile)
+        return f"{_membership_label(profile)}｜{'使用中' if active else paymentLabel_zh(payment)}"
+    if plan == "trial":
+        days = trial_days_left(profile)
+        return f"試用中｜免費剩 {days} 天" if days > 0 else "試用已結束｜尚未升級"
+    if plan == "free":
+        return "免費方案｜尚未升級"
+    return _membership_label(profile)
+
+
+def paymentLabel_zh(status):
+    return {
+        "trial": "試用中",
+        "free": "免費",
+        "active": "已付款",
+        "pending": "待付款",
+        "expired": "已到期",
+        "failed": "付款失敗",
+        "cancelled": "已取消",
+    }.get(status, status or "未付費")
+
+
+def paid_membership_is_active(profile):
+    if profile.get("payment_status") != "active":
+        return False
+    paid_until = str(profile.get("paid_until") or "").strip()
+    if not paid_until:
+        return True
+    expires_at = parse_datetime(paid_until)
+    return bool(expires_at and expires_at >= datetime.now())
 
 
 def register_line_user(data_file, payload):
@@ -1587,9 +1664,13 @@ def add_single_contact(data_file, line_user_id, contact_payload):
     if len(existing) >= limit:
         return {
             "error": "contact_limit_exceeded",
+            "code": "contact_limit",
             "contact_limit": limit,
             "current_count": len(existing),
-            "message": f"目前方案最多 {limit} 位聯絡人,請升級方案或刪除現有聯絡人"
+            "message": (
+                f"你已經有 {len(existing)} 位守護人囉（目前方案上限 {limit} 位）。"
+                f"升級可新增更多守護人。"
+            ),
         }, 400
     ok, errors, cleaned = validate_contact_payload(contact_payload, existing=existing)
     if not ok:
@@ -1681,7 +1762,15 @@ def save_contacts(data_file, payload):
         contact["priority"] = index + 1
     limit = plan_rules(profile)["contact_limit"]
     if len(contacts) > limit:
-        return {"error": f"contact_limit exceeded: {limit}", "contact_limit": limit}, 400
+        return {
+            "error": "contact_limit_exceeded",
+            "code": "contact_limit",
+            "contact_limit": limit,
+            "message": (
+                f"你已經有 {limit} 位守護人囉（目前方案上限）。"
+                f"升級可新增更多守護人。"
+            ),
+        }, 400
     if payload.get("require_complete_guardian") and profile.get("plan") in {"paid_799", "paid_799_year"}:
         if not any(complete_guardian_contact(contact) for contact in contacts):
             return {
@@ -1693,14 +1782,18 @@ def save_contacts(data_file, payload):
     return get_contacts(data_file, payload.get("line_user_id")), 200
 
 
+ALREADY_BOUND_MESSAGE = "你已經是守護人了，請把邀請轉傳給其他好友"
+CONTACT_LIMIT_MESSAGE = "對方的守護人名額已滿，請請對方升級方案後再邀請你"
+
+
 def bind_emergency_contact(data_file, payload, config=None):
     inviter_id = str(payload.get("inviter_line_user_id") or "").strip()
     contact_line_user_id = str(payload.get("contact_line_user_id") or "").strip()
     contact_display_name = str(payload.get("contact_display_name") or "LINE 聯絡人").strip()
     if not inviter_id or not contact_line_user_id:
-        return {"error": "missing inviter_line_user_id or contact_line_user_id"}, 400
+        return {"ok": False, "error": "缺少邀請人或守護人資料", "code": "missing_ids"}, 400
     if inviter_id == contact_line_user_id:
-        return {"error": "cannot bind yourself"}, 400
+        return {"ok": False, "error": "不能綁定自己成為守護人", "code": "self_bind"}, 400
 
     state = load_state(data_file)
     inviter = get_profile(state, inviter_id)
@@ -1708,6 +1801,9 @@ def bind_emergency_contact(data_file, payload, config=None):
     contact_user["display_name"] = contact_display_name or contact_user.get("display_name") or "LINE 聯絡人"
 
     contacts = list(inviter.get("contacts") or [])
+    guarding = list(contact_user.get("guarding_for") or [])
+    already_guarding = inviter_id in guarding
+
     existing = next(
         (
             contact
@@ -1716,15 +1812,25 @@ def bind_emergency_contact(data_file, payload, config=None):
         ),
         None,
     )
-    already_bound = bool(existing)
+    # 名額已滿時：優先把 LINE 綁到尚未綁定的聯絡人資料列（避免 Android 看到 contact_limit exceeded）
+    unbound_slot = None
+    if not existing:
+        unbound_slot = next(
+            (contact for contact in contacts if not get_contact_line_id(contact)),
+            None,
+        )
+
+    already_bound = bool(existing) or already_guarding
     already_accepted = bool(
         existing
         and (
             existing.get("consent_status") == "accepted"
             or existing.get("binding_status") == "accepted"
-            or bool(get_contact_line_id(existing))
         )
     )
+    # 反向索引已存在＝先前綁過，視為已完成（勿再當新綁定狂推）
+    if already_guarding and not existing and not unbound_slot:
+        already_accepted = True
 
     accepted_at = datetime.now().isoformat(timespec="seconds")
     # LIFF 點擊授權即視為守護人本人同意綁定（不需再回「同意」）
@@ -1734,13 +1840,50 @@ def bind_emergency_contact(data_file, payload, config=None):
         existing["line_user_id"] = contact_line_user_id
         existing["consent_status"] = "accepted"
         existing["binding_status"] = "accepted"
-        existing["accepted_at"] = accepted_at
+        existing["accepted_at"] = existing.get("accepted_at") or accepted_at
         existing["invited_by"] = inviter_id
         existing["notify_methods"] = list(dict.fromkeys([*(existing.get("notify_methods") or []), "line"]))
+    elif unbound_slot is not None:
+        # 合併到既有未綁 LINE 的聯絡人列（常見：邀請人先填資料再分享邀請）
+        unbound_slot["name"] = unbound_slot.get("name") or contact_display_name or "LINE 聯絡人"
+        unbound_slot["line_id"] = contact_line_user_id
+        unbound_slot["line_user_id"] = contact_line_user_id
+        unbound_slot["consent_status"] = "accepted"
+        unbound_slot["binding_status"] = "accepted"
+        unbound_slot["accepted_at"] = accepted_at
+        unbound_slot["invited_by"] = inviter_id
+        unbound_slot["notify_methods"] = list(
+            dict.fromkeys([*(unbound_slot.get("notify_methods") or []), "line"])
+        )
+        existing = unbound_slot
+        already_bound = True
     else:
-        limit = plan_rules(inviter)["contact_limit"]
+        limit = int(plan_rules(inviter)["contact_limit"] or 1)
         if len(contacts) >= limit:
-            return {"error": f"contact_limit exceeded: {limit}", "contact_limit": limit}, 400
+            # 已是這位邀請人的守護人：當成功／已綁定，不要 400 英文錯誤
+            if already_guarding:
+                ensure_onboarding_completed_flag(inviter)
+                save_state(data_file, state)
+                return {
+                    "ok": True,
+                    "bound": True,
+                    "already_bound": True,
+                    "binding_complete": False,
+                    "message": ALREADY_BOUND_MESSAGE,
+                    "contact": None,
+                    "reward": None,
+                    "consent_request_sent": 0,
+                    "test_messages_sent": 0,
+                    "inviter_notified": False,
+                    "persistence": persistence_info(data_file),
+                }, 200
+            return {
+                "ok": False,
+                "error": CONTACT_LIMIT_MESSAGE,
+                "code": "contact_limit",
+                "contact_limit": limit,
+                "message": CONTACT_LIMIT_MESSAGE,
+            }, 400
         contacts.append(
             {
                 "id": f"line-{contact_line_user_id}",
@@ -1761,10 +1904,12 @@ def bind_emergency_contact(data_file, payload, config=None):
             }
         )
     # Always write back so shallow-list mutations + new rows both persist
+    # 首位守護人自動設為核心（is_primary）
+    if contacts and not any(bool(c.get("is_primary")) for c in contacts):
+        contacts[0]["is_primary"] = True
     inviter["contacts"] = contacts
 
     # Reverse index on invitee: who they guard (admin + home can show 邀請人)
-    guarding = list(contact_user.get("guarding_for") or [])
     if inviter_id not in guarding:
         guarding.append(inviter_id)
     contact_user["guarding_for"] = guarding
@@ -1797,28 +1942,49 @@ def bind_emergency_contact(data_file, payload, config=None):
         reward["inviter_display_name"] = inviter.get("display_name") or reward.get("inviter_display_name") or ""
         reward["contact_display_name"] = contact_display_name or reward.get("contact_display_name") or ""
 
+    inviter_notified = False
+    guardian_notified = False
     sent = 0
     if config and not already_accepted:
-        token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-        sender = config.get("LINE_PUSH_SENDER") or line_push_message
-        if token:
+        token = (
+            (config.get("LINE_CHANNEL_ACCESS_TOKEN") if hasattr(config, "get") else None)
+            or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+        )
+        sender = (config.get("LINE_PUSH_SENDER") if hasattr(config, "get") else None) or line_push_message
+        if not token:
+            append_notification_log(
+                state,
+                "binding_complete",
+                inviter_id,
+                "failed",
+                "綁定完成通知未送出",
+                "LINE_CHANNEL_ACCESS_TOKEN missing",
+            )
+        else:
             inviter_name = inviter.get("display_name") or "使用者"
             guardian_name = contact_display_name or "守護人"
+            # 綁定後重新計算核心／一般人數（primary = 核心）
+            bound_rows = [c for c in contacts if contact_is_bound_guardian(c)]
+            core_n = sum(1 for c in bound_rows if c.get("is_primary"))
+            # 若尚無 primary，第一位視為核心
+            if bound_rows and core_n == 0:
+                core_n = 1
+            general_n = max(0, len(bound_rows) - core_n)
             inviter_notice = (
-                f"✅ 綁定完成\n\n"
+                f"🎉 守護人綁定完成\n\n"
                 f"{guardian_name} 已成為你的守護人。\n"
+                f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n"
                 f"之後若你未準時報平安或發出 SOS，系統會通知對方。"
             )
             guardian_notice = (
-                f"✅ 綁定完成\n\n"
-                f"你已成為 {inviter_name} 的守護人。\n"
-                f"對方未準時報平安或緊急求助時，你會收到 LINE 通知。"
+                f"❤️ 你已接受邀請成為 {inviter_name} 的守護人\n\n"
+                f"對方未準時報平安或緊急求助時，你會收到 LINE 通知。\n"
+                f"若要邀請其他好友一起守護，請把邀請連結轉傳給他們。"
             )
-            messages = [
-                (inviter_id, inviter_notice),
-                (contact_line_user_id, guardian_notice),
-            ]
-            for line_user_id, message in messages:
+            for line_user_id, message, who in (
+                (inviter_id, inviter_notice, "inviter"),
+                (contact_line_user_id, guardian_notice, "guardian"),
+            ):
                 try:
                     result = sender(token, line_user_id, message)
                     append_notification_log(
@@ -1830,35 +1996,35 @@ def bind_emergency_contact(data_file, payload, config=None):
                         json.dumps(result, ensure_ascii=False),
                     )
                     sent += 1
+                    if who == "inviter":
+                        inviter_notified = True
+                    else:
+                        guardian_notified = True
                 except Exception as exc:
-                    append_notification_log(state, "binding_complete", line_user_id, "failed", message, str(exc))
+                    append_notification_log(
+                        state, "binding_complete", line_user_id, "failed", message, str(exc)
+                    )
 
     save_state(data_file, state)
     bound_contact = next(
         (contact for contact in contacts if get_contact_line_id(contact) == contact_line_user_id),
         None,
     )
+    was_duplicate = bool(already_accepted)
     return {
+        "ok": True,
         "bound": True,
-        "already_bound": already_bound,
-        "binding_complete": not already_accepted,
+        "already_bound": bool(existing) or was_duplicate or already_guarding,
+        "binding_complete": not was_duplicate,
+        "message": ALREADY_BOUND_MESSAGE if was_duplicate else "綁定完成",
         "contact": bound_contact,
         "reward": reward,
         "consent_request_sent": sent,
         "test_messages_sent": sent,  # 向下相容
-        "inviter_notified": sent > 0,
+        "inviter_notified": inviter_notified,
+        "guardian_notified": guardian_notified,
         "persistence": persistence_info(data_file),
     }, 200
-
-
-def paid_membership_is_active(profile):
-    if profile.get("payment_status") != "active":
-        return False
-    paid_until = str(profile.get("paid_until") or "").strip()
-    if not paid_until:
-        return True
-    expires_at = parse_datetime(paid_until)
-    return bool(expires_at and expires_at >= datetime.now())
 
 
 # ============================================================

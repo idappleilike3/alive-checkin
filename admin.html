@@ -523,12 +523,12 @@
               <th>狀態</th>
               <th>今日</th>
               <th>上次簽到</th>
-              <th>方案</th>
+              <th>方案／升級狀態</th>
               <th>付款</th>
               <th>方案到期</th>
-              <th>試用剩餘</th>
-              <th>LINE 守護人綁定</th>
-              <th>聯絡人名額</th>
+              <th>免費剩幾天</th>
+              <th>已綁定守護人（含 LINE ID）</th>
+              <th>核心／一般／名額</th>
               <th>守護群</th>
               <th>寬限</th>
               <th>提醒</th>
@@ -677,14 +677,14 @@
 
     function planLabel(plan) {
       return {
-        trial: "試用",
-        free: "免費",
-        paid_199: "199 活著價",
-        paid_199_year: "199 活著價年費",
-        paid_399: "399 安心版",
-        paid_399_year: "399 安心版年費",
-        paid_799: "799 守護版",
-        paid_799_year: "799 守護版年費"
+        trial: "試用（免費）",
+        free: "免費方案",
+        paid_199: "已升級 199 月費",
+        paid_199_year: "已升級 199 年費",
+        paid_399: "已升級 399 月費",
+        paid_399_year: "已升級 399 年費",
+        paid_799: "已升級 799 月費",
+        paid_799_year: "已升級 799 年費"
       }[plan] || "試用";
     }
 
@@ -692,7 +692,7 @@
       return {
         trial: "試用中",
         free: "免費",
-        active: "已付款",
+        active: "已付款／使用中",
         pending: "待付款",
         expired: "已到期",
         failed: "付款失敗",
@@ -708,9 +708,28 @@
     }
 
     function trialText(user) {
-      if (user.plan !== "trial") return "-";
-      const days = Number(user.trial_days_left || 0);
-      return days > 0 ? `${days} 天` : "已結束";
+      if (user.trial_days_text) return user.trial_days_text;
+      if (user.plan === "trial") {
+        const days = Number(user.trial_days_left || 0);
+        return days > 0 ? `免費剩 ${days} 天` : "試用已結束";
+      }
+      if (user.plan === "free") return "免費方案（無試用倒數）";
+      return "已升級（非試用）";
+    }
+
+    function membershipCell(user) {
+      const label = user.membership_label || planLabel(user.plan);
+      const upgrade = user.upgrade_status || `${label}｜${paymentLabel(user.payment_status)}`;
+      const trial = trialText(user);
+      const tone = String(user.plan || "").startsWith("paid")
+        ? "ok"
+        : (user.plan === "trial" && Number(user.trial_days_left || 0) > 0 ? "warn" : "bad");
+      return `<div style="display:grid;gap:4px;min-width:150px;">
+        <strong>${label}</strong>
+        <span class="badge ${tone}">${trial}</span>
+        <small>${upgrade}</small>
+        <small>付款：${paymentLabel(user.payment_status)}｜到期：${expiryText(user)}</small>
+      </div>`;
     }
 
     function logKindLabel(kind) {
@@ -765,17 +784,25 @@
         : (user.contacts || []).filter((c) =>
             (c && (c.line_id || c.line_user_id || c.binding_status === "accepted" || c.consent_status === "accepted"))
           );
+      const count = user.bound_guardian_count != null ? user.bound_guardian_count : bound.length;
+      const core = user.core_guardian_count != null
+        ? user.core_guardian_count
+        : bound.filter((c) => c.is_primary).length;
+      const general = user.general_guardian_count != null
+        ? user.general_guardian_count
+        : Math.max(0, count - core);
       if (!bound.length) {
-        return `<span class="badge warn">尚未 LINE 綁定</span>`;
+        return `<div><span class="badge warn">已綁定 0 位</span><br><small>尚未 LINE 綁定</small></div>`;
       }
-      const lines = bound.map((c) => {
+      const lines = bound.map((c, i) => {
         const name = c.name || "未命名";
         const rel = c.relationship ? `／${c.relationship}` : "";
         const gid = c.line_user_id || c.line_id || "-";
+        const role = c.role || (c.is_primary ? "核心" : "一般");
         const st = c.binding_status || "accepted";
-        return `<div><strong>${name}${rel}</strong><br><small>${gid}</small> <span class="badge ${st === "accepted" ? "ok" : "warn"}">${st}</span></div>`;
+        return `<div><strong>${i + 1}. ${name}${rel}（${role}）</strong><br><small>LINE ID：${gid}</small> <span class="badge ${st === "accepted" ? "ok" : "warn"}">${st === "accepted" ? "已綁定" : st}</span></div>`;
       });
-      return `<div style="display:grid;gap:6px;min-width:160px;">${lines.join("")}</div>`;
+      return `<div style="display:grid;gap:6px;min-width:180px;"><span class="badge ok">已綁定 ${count} 位</span><small>核心 ${core}／一般 ${general}</small>${lines.join("")}</div>`;
     }
 
     async function refresh() {
@@ -832,7 +859,8 @@
             <td>${user.is_today_checked ? "已簽到 ♡" : "還沒"}</td>
             <td>${formatDate(user.last_check_in)}</td>
             <td>
-              <select class="plan-select" onchange="updatePlan('${user.line_user_id}', this.value)">
+              ${membershipCell(user)}
+              <select class="plan-select" style="margin-top:6px;" onchange="updatePlan('${user.line_user_id}', this.value)">
                 ${["trial", "free", "paid_199", "paid_199_year", "paid_399", "paid_399_year", "paid_799", "paid_799_year"].map((plan) =>
                   `<option value="${plan}" ${user.plan === plan ? "selected" : ""}>${planLabel(plan)}</option>`
                 ).join("")}
@@ -840,9 +868,9 @@
             </td>
             <td><span class="badge ${user.payment_status === "active" ? "ok" : user.payment_status === "expired" ? "bad" : "warn"}">${paymentLabel(user.payment_status)}</span></td>
             <td>${expiryText(user)}</td>
-            <td>${trialText(user)}</td>
+            <td><strong>${trialText(user)}</strong></td>
             <td>${formatBoundGuardiansCell(user)}</td>
-            <td>${user.bound_guardian_count || 0} 綁定／${(user.contacts || []).length}/${user.contact_limit || 1}</td>
+            <td>核心 ${user.core_guardian_count || 0}／一般 ${user.general_guardian_count || 0}<br>已綁 ${user.bound_guardian_count || 0}／名額 ${(user.contacts || []).length}/${user.contact_limit || 1}</td>
             <td>${(user.guardian_group_ids || []).length}/${user.guardian_group_limit || 0}</td>
             <td>${user.grace_hours} 小時</td>
             <td>${user.reminder_time}</td>

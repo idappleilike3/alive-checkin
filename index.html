@@ -2917,6 +2917,68 @@
     body.mvp-focus-home .note,
     body.mvp-focus-home #modeNote { display: none !important; }
     body.mvp-focus-home .bottom-nav { opacity: 0.92; }
+    .mvp-bound-summary {
+      margin: 14px 0 0;
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: linear-gradient(180deg, #ecfdf5 0%, #f0fdf4 100%);
+      border: 1px solid #86efac;
+      text-align: left;
+    }
+    .mvp-bound-summary strong {
+      display: block;
+      font-size: 1.05rem;
+      color: #166534;
+      margin-bottom: 8px;
+    }
+    .mvp-bound-list {
+      display: grid;
+      gap: 6px;
+      font-size: 0.92rem;
+      color: #14532d;
+    }
+    .mvp-bound-list .bound-row {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.72);
+    }
+    .mvp-bound-list .bound-row small { color: #3f6212; word-break: break-all; }
+    .mvp-bound-hint {
+      margin: 10px 0 0;
+      font-size: 0.86rem;
+      color: #3f6212;
+      line-height: 1.45;
+    }
+    .member-quota-line,
+    .member-core-line {
+      margin: 0 0 8px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #166534;
+    }
+    .member-core-line { font-weight: 600; color: #3f6212; }
+    .member-limit-banner {
+      margin: 12px 0;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: #fff7ed;
+      border: 1px solid #fdba74;
+      display: grid;
+      gap: 8px;
+    }
+    .member-limit-banner strong { color: #9a3412; font-size: 1.02rem; }
+    .member-limit-banner p { margin: 0; color: #9a3412; line-height: 1.45; }
+    .member-guardian-manage-row {
+      align-items: flex-start;
+    }
+    .member-guardian-manage-meta small {
+      display: block;
+      color: #4b5563;
+      margin-top: 2px;
+    }
 
 </style>
 </head>
@@ -3030,6 +3092,11 @@
           <span>免費延長 7 天，或多 1 位守護人名額 30 天</span>
         </div>
         <button class="mvp-reward-btn share-contact-invite-btn" type="button">一鍵邀請守護人</button>
+      </div>
+      <div class="mvp-bound-summary" id="mvpBoundSummary" hidden>
+        <strong id="mvpBoundCountText">已綁定守護人 0 位</strong>
+        <div class="mvp-bound-list" id="mvpBoundList"></div>
+        <p class="mvp-bound-hint">已綁定完成，不用再填聯絡人資料。若要再邀請其他人，請點上方「一鍵邀請守護人」轉傳分享。</p>
       </div>
       <div class="mvp-checkin-banner" id="mvpCheckinBanner" hidden>✅ 今天已完成平安回報</div>
       <p id="inlineError" class="inline-error" hidden></p>
@@ -3367,14 +3434,22 @@
           </div>
         </div>
 
-        <div class="member-data-section">
-          <h3>守護人聯絡人</h3>
-          <div class="helper">依優先順序顯示。完成 LINE 綁定後，系統才能在你未準時簽到或發出 SOS 時通知對方。編輯與刪除請直接在列表操作。</div>
+        <div class="member-data-section" id="memberGuardianSection">
+          <h3>目前守護人</h3>
+          <div class="member-quota-line" id="memberGuardianQuotaLine">目前：0 / 1（免費方案）</div>
+          <div class="member-core-line" id="memberCoreGeneralLine">核心守護人 0 位／一般守護人 0 位</div>
+          <div class="helper">完成 LINE 綁定後，系統才能在你未準時簽到或發出 SOS 時通知對方。已有守護人時會先顯示列表，不會直接跳新增表單。</div>
           <div class="member-data-list" id="memberGuardianList">
             <div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護人</strong></div>
           </div>
+          <div class="member-limit-banner" id="memberGuardianLimitBanner" hidden>
+            <strong id="memberLimitTitle">你已經有 1 位守護人囉</strong>
+            <p id="memberLimitBody">免費／試用方案最多 1 位。升級可新增更多守護人。</p>
+            <button class="action-btn primary" id="memberLimitUpgradeBtn" type="button">立即升級</button>
+          </div>
           <div class="member-data-actions">
-            <button class="action-btn primary" id="memberAddGuardianBtn" type="button">＋ 新增聯絡人</button>
+            <button class="action-btn primary" id="memberAddGuardianBtn" type="button">➕ 新增守護人</button>
+            <button class="action-btn share-contact-invite-btn" type="button">一鍵邀請守護人</button>
           </div>
         </div>
 
@@ -4415,8 +4490,18 @@
           contact_display_name: lineDisplayName || "LINE 聯絡人"
         })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "bind failed");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = data.message || data.error || "";
+        if (String(msg).includes("contact_limit") || data.code === "contact_limit") {
+          const friendly = data.message || "對方的守護人名額已滿，請請對方升級方案後再邀請你";
+          const err = new Error(friendly);
+          err.code = "contact_limit";
+          err.payload = data;
+          throw err;
+        }
+        throw new Error(data.message || data.error || "綁定失敗，請稍後再試");
+      }
       return data;
     }
 
@@ -4610,10 +4695,10 @@
           </div>
         `).join("")
         : `<div class="helper">還沒加入聯絡人。</div>`;
-      const boundCount = contactData.filter((contact) => contact.line_id || contact.consent_status === "accepted").length;
+      const boundCount = contactData.filter((contact) => contact.line_id || contact.line_user_id || contact.consent_status === "accepted" || contact.binding_status === "accepted").length;
       if ($("guardianCircleText")) {
         $("guardianCircleText").textContent = boundCount
-          ? `${boundCount} 位已綁定`
+          ? `已綁定守護人 ${boundCount} 位`
           : "尚未綁定";
       }
       if ($("guardianRequirementStatus")) {
@@ -4621,7 +4706,30 @@
           ? `已完成 ${boundCount} 位 LINE 綁定。系統會依「優先 1、2、3」順序聯絡守護人。`
           : "尚未完成 LINE 綁定。請至少邀請 1 位守護人，系統每天會提醒一次。";
       }
+      renderHomeBoundSummary(contactData);
       renderMemberCenter();
+    }
+
+    function renderHomeBoundSummary(contacts) {
+      const box = $("mvpBoundSummary");
+      const countEl = $("mvpBoundCountText");
+      const listEl = $("mvpBoundList");
+      if (!box || !countEl || !listEl) return;
+      const bound = (contacts || []).filter((c) =>
+        c && (c.binding_status === "accepted" || c.consent_status === "accepted" || c.line_id || c.line_user_id)
+      );
+      if (!bound.length) {
+        box.hidden = true;
+        listEl.innerHTML = "";
+        countEl.textContent = "已綁定守護人 0 位";
+        return;
+      }
+      box.hidden = false;
+      countEl.textContent = `已綁定守護人 ${bound.length} 位`;
+      listEl.innerHTML = bound.map((c, index) => {
+        const lid = String(c.line_user_id || c.line_id || "").trim() || "（尚無 LINE ID）";
+        return `<div class="bound-row"><span>${index + 1}. ${escapeHtml(c.name || "未命名守護人")}${c.relationship ? `｜${escapeHtml(c.relationship)}` : ""}</span><small>LINE ID：${escapeHtml(lid)}</small></div>`;
+      }).join("");
     }
 
     function moveContact(index, direction) {
@@ -4645,22 +4753,63 @@
       }[plan] || { cycle: "尚未選擇方案", contacts: 1, locations: 1, detail: "請先選擇適合你的守護方案。" };
     }
 
+    function planQuotaLabel(plan) {
+      const p = plan || "trial";
+      if (p === "trial") return "試用方案";
+      if (p === "free") return "免費方案";
+      if (String(p).startsWith("paid_199")) return "199 方案";
+      if (String(p).startsWith("paid_399")) return "399 方案";
+      if (String(p).startsWith("paid_799")) return "799 方案";
+      return "目前方案";
+    }
+
+    function isContactBound(contact) {
+      if (!contact) return false;
+      return Boolean(
+        contact.binding_status === "accepted"
+        || contact.consent_status === "accepted"
+        || contact.line_id
+        || contact.line_user_id
+      );
+    }
+
+    function formatGuardianAddedAt(contact) {
+      const raw = String(contact?.accepted_at || contact?.created_at || contact?.updated_at || "").trim();
+      if (!raw) return "";
+      try {
+        const d = new Date(raw);
+        if (Number.isNaN(d.getTime())) return raw.slice(0, 10);
+        return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+      } catch (_) {
+        return raw.slice(0, 10);
+      }
+    }
+
     function renderMemberCenter() {
       const status = currentStatusData || {};
       const displayName = lineDisplayName || status.display_name || "LINE 會員";
       const memberPlan = status.plan || "trial";
+      const limit = Number(status.contact_limit || currentContactLimit || 1);
+      const totalCount = contactData.length;
+      const boundCount = contactData.filter((contact) => isContactBound(contact)).length;
+      const realCore = contactData.filter((c) => isContactBound(c) && c.is_primary).length;
+      const shownCore = realCore > 0 ? realCore : (boundCount > 0 ? 1 : 0);
+      const shownGeneral = Math.max(0, boundCount - shownCore);
       $("memberDisplayName").textContent = displayName;
       $("memberAvatar").textContent = displayName.trim().slice(0, 1) || "我";
       $("memberPlanText").textContent = planLabel(memberPlan);
       $("memberExpiryText").textContent = status.paid_until
         ? `使用期限 ${status.paid_until}`
         : memberPlan === "trial"
-          ? "尚未升級"
+          ? (status.trial_days_text || `免費剩 ${status.trial_days_left ?? 7} 天`)
           : "尚未設定到期日";
-      const boundCount = contactData.filter((contact) => contact.line_id || contact.consent_status === "accepted").length;
       $("memberLineAccount").textContent = lineUserId || status.line_user_id ? "LINE 已綁定" : "尚未綁定 LINE";
       $("memberContactEmail").textContent = status.contact_email || "尚未填寫";
-      $("memberGuardianQuota").textContent = `${boundCount}/${status.contact_limit || currentContactLimit || 1} 位`;
+      $("memberGuardianQuota").textContent = `目前：${totalCount} / ${limit}（${planQuotaLabel(memberPlan)}）`;
+      const quotaLine = $("memberGuardianQuotaLine");
+      if (quotaLine) quotaLine.textContent = `目前：${totalCount} / ${limit}（${planQuotaLabel(memberPlan)}）`;
+      const coreLine = $("memberCoreGeneralLine");
+      if (coreLine) coreLine.textContent = `核心守護人 ${shownCore} 位／一般守護人 ${shownGeneral} 位`;
       $("memberBillingPlan").textContent = planLabel(memberPlan);
       $("memberBillingCycle").textContent = {
         monthly: "月繳",
@@ -4687,16 +4836,37 @@
           ? "已收到申請；待藍新定期定額完成授權後才會開始每月扣款。"
           : "目前尚未啟用自動續扣。";
 
+      const atLimit = totalCount >= limit;
+      const limitBanner = $("memberGuardianLimitBanner");
+      if (limitBanner) {
+        limitBanner.hidden = !atLimit;
+        if (atLimit) {
+          const title = $("memberLimitTitle");
+          const body = $("memberLimitBody");
+          if (title) title.textContent = `你已經有 ${totalCount} 位守護人囉`;
+          if (body) body.textContent = `${planQuotaLabel(memberPlan)}最多 ${limit} 位。升級可新增更多守護人。`;
+        }
+      }
+      const addBtn = $("memberAddGuardianBtn");
+      if (addBtn) addBtn.textContent = atLimit ? "➕ 名額已滿（可升級）" : "➕ 新增守護人";
+
       $("memberGuardianList").innerHTML = contactData.length
         ? contactData.map((contact, index) => {
           const cid = escapeHtml(contact.id || "");
-          const bound = contact.line_id || contact.line_user_id || contact.consent_status === "accepted" || contact.binding_status === "accepted";
+          const bound = isContactBound(contact);
+          const role = contact.is_primary || (index === 0 && !contactData.some((c) => c.is_primary))
+            ? "核心"
+            : "一般";
+          const added = formatGuardianAddedAt(contact);
+          const lid = String(contact.line_user_id || contact.line_id || "").trim();
           return `
           <div class="member-guardian-manage-row" data-id="${cid}">
             <div class="member-guardian-manage-meta">
-              <span class="guardian-manage-name">${index + 1}. ${escapeHtml(contact.name || "未命名守護人")}${contact.is_primary ? " ⭐ 主要" : ""}</span>
-              <span>${escapeHtml(contact.relationship || "關係未設定")} · ${escapeHtml(contact.phone || contact.email || "尚未留下聯絡方式")}</span>
-              <strong class="${bound ? "guardian-bind-ok" : "guardian-bind-pending"}">${bound ? "LINE 已綁定" : "等待 LINE 授權"}</strong>
+              <span class="guardian-manage-name">👤 ${escapeHtml(contact.name || "未命名守護人")}</span>
+              <span>${escapeHtml(contact.relationship || "關係未設定")} ／ ${escapeHtml(contact.phone || contact.email || "未填電話")} ／ ${role}${contact.is_primary ? "／主要" : ""}</span>
+              <strong class="${bound ? "guardian-bind-ok" : "guardian-bind-pending"}">${bound ? "✓ 已驗證（LINE 已綁定）" : "等待接受"}</strong>
+              ${lid ? `<small>LINE ID：${escapeHtml(lid)}</small>` : ""}
+              ${added ? `<small>新增日期：${escapeHtml(added)}</small>` : ""}
             </div>
             <div class="member-guardian-manage-actions">
               <button class="action-btn member-edit-guardian" type="button" data-id="${cid}" aria-label="編輯守護人">編輯</button>
@@ -4861,7 +5031,7 @@
 
     function addContact() {
       if (contactData.length >= currentContactLimit) {
-        alert(`目前方案最多 ${currentContactLimit} 位緊急聯絡人。`);
+        alert(`你已經有 ${contactData.length} 位守護人囉。升級可新增更多守護人。`);
         return;
       }
       const contact = {
@@ -5098,22 +5268,37 @@
     /**
      * 守護人邀請綁定只跑一次：成功後設 bindDone、清 URL、只 alert 一次。
      * 擋住 Android 雙擊、自動綁定 + 同意按鈕雙路徑、URL 殘留重入。
+     * 已綁定／名額已滿：友善中文，不顯示英文 contact_limit exceeded。
      */
     async function completeGuardianBindOnce(inviteFromRaw) {
       const inviteFrom = sanitizeInviteUserId(inviteFromRaw || getAppParam("invite_from"));
-      if (bindDone) return { bound: true, skipped: true };
+      if (bindDone) return { bound: true, already_bound: true, skipped: true };
       if (bindInFlight) return { bound: false, skipped: true, inFlight: true };
       if (!inviteFrom || inviteFrom === lineUserId) return null;
       bindInFlight = true;
       try {
         const bindResult = await apiBindEmergencyContact(inviteFrom);
-        if (bindResult?.bound) {
+        if (bindResult?.bound || bindResult?.already_bound || bindResult?.ok) {
           bindDone = true;
           clearInviteFromUrl();
           closeInviteAcceptPrompt();
-          alert("綁定完成！你已成為對方的守護人。對方也會收到「綁定完成」通知。");
+          if (bindResult?.already_bound && bindResult?.binding_complete === false) {
+            alert(bindResult?.message || "你已經是守護人了，請把邀請轉傳給其他好友");
+          } else {
+            alert(bindResult?.message || "綁定完成！你已成為對方的守護人。對方也會收到「綁定完成」通知。");
+          }
         }
         return bindResult;
+      } catch (error) {
+        const msg = (error && error.message) ? String(error.message) : "";
+        if (msg.includes("已經是守護人") || msg.includes("名額已滿") || error?.code === "contact_limit") {
+          bindDone = true;
+          clearInviteFromUrl();
+          closeInviteAcceptPrompt();
+          alert(msg.includes("名額已滿") ? msg : "你已經是守護人了，請把邀請轉傳給其他好友");
+          return { bound: true, already_bound: true, ok: true, message: msg };
+        }
+        throw error;
       } finally {
         bindInFlight = false;
       }
@@ -5905,7 +6090,27 @@
       if (!requireLineMembership("新增守護人前，請先完成 LINE 登入綁定。")) return;
       if (typeof showTab === "function") showTab("member");
       setMemberCenterExpanded(true);
-      // 已註冊會員：直接填寫資料；一鍵分享改由「一鍵分享邀請守護人」按鈕手動觸發
+      const status = currentStatusData || {};
+      const limit = Number(status.contact_limit || currentContactLimit || 1);
+      const totalCount = (contactData || []).length;
+      // 已有守護人：先停在列表；名額滿時不開空白新增表單
+      if (totalCount >= limit) {
+        const banner = $("memberGuardianLimitBanner");
+        if (banner) {
+          banner.hidden = false;
+          const title = $("memberLimitTitle");
+          const body = $("memberLimitBody");
+          if (title) title.textContent = `你已經有 ${totalCount} 位守護人囉`;
+          if (body) {
+            body.textContent = `${planQuotaLabel(status.plan || "trial")}最多 ${limit} 位。升級可新增更多守護人。`;
+          }
+          banner.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+        const list = $("memberGuardianList");
+        if (list) list.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+      // 有名額才開新增表單；已有列表時仍可新增下一位
       openGuardianEditor(null);
     }
 
@@ -6562,6 +6767,7 @@
                 ${c.is_primary ? '<span class="badge primary">主要</span>' : ""}
               </div>
               <small>${escapeHtml(c.relationship || "關係未設定")}</small>
+              <small>LINE ID：${escapeHtml(String(c.line_user_id || c.line_id || "").trim() || "尚未綁定")}</small>
               <small>${escapeHtml(c.phone || c.email || "尚未留下聯絡方式")}</small>
               <small class="${statusClass}">${statusText}</small>
             </div>
@@ -6572,8 +6778,12 @@
       }
 
       if (countEl) {
-        countEl.textContent = `目前 ${contacts ? contacts.length : 0} / ${contactLimit || "?"} 位`;
+        const boundN = (contacts || []).filter((c) =>
+          c && (c.binding_status === "accepted" || c.consent_status === "accepted" || c.line_id || c.line_user_id)
+        ).length;
+        countEl.textContent = `已綁定守護人 ${boundN} 位｜目前 ${contacts ? contacts.length : 0} / ${contactLimit || "?"} 位`;
       }
+      renderHomeBoundSummary(contacts || contactData);
       // 守護人載入後同步刷新會員中心列表（含編輯／刪除）
       if (typeof renderMemberCenter === "function" && currentStatusData) {
         renderMemberCenter();
@@ -7451,10 +7661,17 @@
         } catch (e) { console.warn(e); }
         modal.hidden = true;
         if (pref === "now") {
-          // 已註冊後的補滿名額：直接進表單，不再強制一鍵分享
+          // 已有守護人時先看列表，不要直接跳空白新增表單
           if (typeof showTab === "function") showTab("member");
           setMemberCenterExpanded(true);
-          if (typeof openGuardianEditor === "function") openGuardianEditor(null);
+          const list = $("memberGuardianList");
+          if (list) list.scrollIntoView({ behavior: "smooth", block: "center" });
+          const status = currentStatusData || {};
+          const limit = Number(status.contact_limit || currentContactLimit || 1);
+          if ((contactData || []).length < limit && typeof openGuardianEditor === "function") {
+            // 仍有名額才允許新增
+            openGuardianEditor(null);
+          }
         }
       };
       now.addEventListener("click", () => sendPreference("now"));
@@ -7512,6 +7729,8 @@
     $("refreshLocationBtn").addEventListener("click", refreshSafetyGuardLocation);
     $("stopLocationBtn").addEventListener("click", stopLocationSharing);
     $("memberUpgradeBtn").addEventListener("click", openUpgradePlans);
+    const memberLimitUpgradeBtn = $("memberLimitUpgradeBtn");
+    if (memberLimitUpgradeBtn) memberLimitUpgradeBtn.addEventListener("click", openUpgradePlans);
     document.querySelectorAll(".price-btn[data-plan]").forEach((button) => {
       button.addEventListener("click", () => startPlanCheckout(button.dataset.plan, button));
     });
