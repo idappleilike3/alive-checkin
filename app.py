@@ -4021,6 +4021,46 @@ def refresh_guardian_group_member_snapshot(data_file, group_id, token=None):
     return group
 
 
+def refresh_all_guardian_groups_count(data_file, token=None):
+    """排程器用：刷新所有 active 守護群的成員數快照（每 5 分鐘跑一次）。
+
+    - 跳過非 active 的群
+    - 個別群 API 失敗不會中斷其他群
+    - 寫入 member_count_at_bind / member_ids_at_bind / member_count_updated_at
+    """
+    access_token = token or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not access_token:
+        return
+    try:
+        state = load_state(data_file)
+    except Exception:
+        return
+    groups = state.get("guardian_groups") or {}
+    updated = False
+    for gid, group in list(groups.items()):
+        if not isinstance(group, dict) or group.get("status") != "active":
+            continue
+        try:
+            mc = get_group_member_count(access_token, gid)
+            if mc is not None:
+                group["member_count_at_bind"] = mc
+                group["member_count_updated_at"] = datetime.now().isoformat(timespec="seconds")
+                updated = True
+            ids = get_group_member_ids(access_token, gid)
+            if ids is not None:
+                group["member_ids_at_bind"] = ids
+                updated = True
+            if updated:
+                groups[gid] = group
+        except Exception:
+            continue
+    if updated:
+        state["guardian_groups"] = groups
+        try:
+            save_state(data_file, state)
+        except Exception:
+            pass
+
 
 def kick_group_member(token, group_id, user_id):
     """踢 userId 出 group(bot 必須是 admin)。失敗:回 None / HTTPError code。"""
@@ -10386,6 +10426,11 @@ def _start_internal_scheduler(flask_app):
                     send_renewal_reminders(config)
                     send_birthday_reminders(config)
                     send_smart_reminders(config)
+                    # 守護群人數即時刷新(每 5 分鐘)
+                    refresh_all_guardian_groups_count(
+                        config.get("DATA_FILE", "data/state.json"),
+                        token=config.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
+                    )
             except Exception as exc:
                 try:
                     flask_app.logger.exception("internal scheduler error: %s", exc)
