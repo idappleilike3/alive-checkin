@@ -7,7 +7,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
-from functools import wraps
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -5743,6 +5742,52 @@ def record_admin_login_failure(client_key, now=None):
     ADMIN_LOGIN_ATTEMPTS[client_key] = recent[-5:]
 
 
+_ADMIN_AUDIT_SENSITIVE_KEY_PARTS = (
+    "password",
+    "passwd",
+    "token",
+    "secret",
+    "csrf",
+    "authorization",
+    "cookie",
+    "email",
+    "phone",
+    "mobile",
+    "address",
+    "lineuserid",
+    "userid",
+    "displayname",
+    "fullname",
+    "latitude",
+    "longitude",
+    "location",
+    "ipaddress",
+    "remoteaddr",
+)
+
+
+def _sanitize_admin_audit_metadata(value):
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            compact_key = re.sub(r"[^a-z0-9]", "", str(key).casefold())
+            if (
+                compact_key in {"name", "username"}
+                or any(
+                    part in compact_key
+                    for part in _ADMIN_AUDIT_SENSITIVE_KEY_PARTS
+                )
+            ):
+                continue
+            cleaned[str(key)] = _sanitize_admin_audit_metadata(item)
+        return cleaned
+    if isinstance(value, (list, tuple, set)):
+        return [_sanitize_admin_audit_metadata(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
 def append_admin_audit(data_file, action, status, metadata=None):
     state = load_state(data_file)
     logs = list(state.get("admin_audit_logs") or [])
@@ -5750,7 +5795,7 @@ def append_admin_audit(data_file, action, status, metadata=None):
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "action": str(action),
         "status": str(status),
-        "metadata": dict(metadata or {}),
+        "metadata": _sanitize_admin_audit_metadata(dict(metadata or {})),
     })
     state["admin_audit_logs"] = logs[-200:]
     save_state(data_file, state)
@@ -7491,6 +7536,7 @@ def create_app(config=None):
         DATA_FILE=resolve_data_file(os.environ.get("DATA_FILE")),
         ADMIN_PASSWORD=os.environ.get("ADMIN_PASSWORD", ""),
         ADMIN_SESSION_SECRET=os.environ.get("ADMIN_SESSION_SECRET", ""),
+        TRUST_PROXY_HEADERS=os.environ.get("TRUST_PROXY_HEADERS", ""),
         ALLOW_OPEN_ADMIN=os.environ.get("ALLOW_OPEN_ADMIN", ""),
         ADMIN_OPEN=os.environ.get("ADMIN_OPEN", ""),
         PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
@@ -7559,8 +7605,26 @@ def create_app(config=None):
         )
         return jsonify(data), code
 
+    def _admin_login_transport_secure():
+        if app.config.get("TESTING") is True:
+            return True
+        if request.is_secure:
+            return True
+        if str(request.remote_addr or "") in {"127.0.0.1", "::1"}:
+            return True
+        trusted_proxy = (
+            _env_flag_on("RENDER", app.config)
+            or _env_flag_on("TRUST_PROXY_HEADERS", app.config)
+        )
+        forwarded_proto = str(
+            request.headers.get("X-Forwarded-Proto") or ""
+        ).split(",", 1)[0].strip().lower()
+        return trusted_proxy and forwarded_proto == "https"
+
     @app.post("/api/admin/login")
     def admin_login_api():
+        if not _admin_login_transport_secure():
+            return jsonify({"error": "https_required"}), 400
         if not admin_security_ready(app.config):
             return jsonify({"error": "admin_not_configured"}), 503
         payload = request.get_json(silent=True) or {}
@@ -7595,10 +7659,11 @@ def create_app(config=None):
 
     @app.post("/api/admin/logout")
     def admin_logout_api():
-        authenticated = session.get("admin_authenticated") is True
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         session.clear()
-        if authenticated:
-            append_admin_audit(app.config["DATA_FILE"], "session.logout", "success")
+        append_admin_audit(app.config["DATA_FILE"], "session.logout", "success")
         return jsonify({"ok": True})
 
     def _authenticated_line_user(payload=None, *, use_args=False):
@@ -9523,9 +9588,9 @@ def create_app(config=None):
     @app.get("/api/bot/guardian-groups")
     def bot_guardian_groups_api():
         """2026-07-21 patch 22: 返回所有守護群清單(供 bot_admin.html)。"""
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard()
+        if denied:
+            return denied
 
         state = load_state(app.config["DATA_FILE"])
         groups = state.get("guardian_groups", {})
@@ -9547,9 +9612,9 @@ def create_app(config=None):
     @app.get("/api/bot/sos-pending")
     def bot_sos_pending_api():
         """2026-07-21 patch 22: 返回所有 SOS 預約狀態。"""
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard()
+        if denied:
+            return denied
 
         state = load_state(app.config["DATA_FILE"])
         pending = state.get("sos_pending", {})
@@ -9572,9 +9637,9 @@ def create_app(config=None):
     @app.get("/api/bot/recent-events")
     def bot_recent_events_api():
         """2026-07-21 patch 22: 返回最近的 webhook 事件(使用 notification_log)。"""
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard()
+        if denied:
+            return denied
 
         state = load_state(app.config["DATA_FILE"])
         log = state.get("notification_log", [])
