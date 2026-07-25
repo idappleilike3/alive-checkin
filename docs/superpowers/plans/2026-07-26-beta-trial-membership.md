@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 取消邀請延長與永久免費方案，加入一次性 14 天正式體驗、40 人 21 天封閉測試後台，以及到期 30 天聯絡人清理。
+**Goal:** 取消邀請延長與永久免費方案，加入一次性 14 天正式體驗、40 人 21 天封閉測試後台，以及到期暫停與 12 個月未登入清理。
 
 **Architecture:** 保留內部 `free` 作為相容的未訂閱狀態，以 `membership_source` 區分正式試用、過渡試用、封閉測試、付款與到期。封測沿用現有方案權益，但以獨立欄位與稽核紀錄標示，不建立假訂單。所有時間流程由既有單一 Cron tick 冪等執行。
 
@@ -16,7 +16,7 @@
 - 新會員正式體驗固定 14 天且只能領取一次。
 - 封閉測試固定 21 天；A 10 人、B399 20 人、B799 10 人。
 - `free` 只作內部未訂閱相容狀態，UI 不得宣傳永久免費方案。
-- 到期聯絡人保留 30 天，第 31 天移除並通知雙方。
+- 到期後守護關係暫停但不立即刪除；無有效方案且 12 個月未登入，經 30 天與 7 天預告後才清除。
 - 每個任務先看見測試正確失敗，再做最小修正。
 
 ---
@@ -106,6 +106,7 @@ git commit -m "feat(membership): add one-time fourteen-day trial"
 - [ ] **Step 1: Write failing backend tests**
 
 Cover correct 21-day dates, tier mapping, `membership_source=beta`, no order creation, cohort caps, duplicate idempotency, revoke behavior, admin session/CSRF and audit entries.
+另覆蓋第二批釋出節奏：第一天最多啟用 10 人；完成健康檢查後，第二天才可開放其餘 20 人。
 
 - [ ] **Step 2: Verify RED**
 
@@ -201,7 +202,7 @@ git commit -m "feat(admin): show beta cohort progress"
 
 ---
 
-### Task 4: 體驗提醒、到期與 30 天聯絡人移除
+### Task 4: 體驗提醒、到期暫停與 12 個月未登入清理
 
 **Files:**
 - Modify: `app.py`
@@ -211,12 +212,13 @@ git commit -m "feat(admin): show beta cohort progress"
 
 **Interfaces:**
 - Produces: `send_trial_milestone_notices(data_file=None, now=None) -> dict`
-- Produces: `remove_expired_contacts(data_file=None, now=None) -> dict`
+- Produces: `pause_expired_memberships(data_file=None, now=None) -> dict`
+- Produces: `cleanup_long_inactive_contacts(data_file=None, now=None) -> dict`
 - Consumes: existing `run_cron_tick()` daily membership slot
 
 - [ ] **Step 1: Write failing timeline tests**
 
-Cover notices at day 7/12/14, no duplicate notice, expiry stops scheduled check-in/guardian notifications, day 21/28 retention notices, renewal before day 31 preserving contacts, day 31 removing active contacts and notifying both sides once.
+Cover notices at day 7/12/14, no duplicate notice, expiry pausing scheduled check-in/guardian notifications and paid location, basic SOS remaining available, renewal restoring contacts, and no immediate deletion. Cover no-active-plan plus 12 months without login, 30-day/7-day pre-notices, user/guardian/contact deletion requests, and idempotent cleanup.
 
 - [ ] **Step 2: Verify RED**
 
@@ -224,11 +226,11 @@ Cover notices at day 7/12/14, no duplicate notice, expiry stops scheduled check-
 python -m unittest tests.test_membership_retention_policy tests.test_scheduler_tick tests.test_invite_reward_retain -v
 ```
 
-Expected: milestone notices and bilateral removal are missing.
+Expected: milestone notices, paused relationship state and long-inactivity cleanup are missing.
 
 - [ ] **Step 3: Implement idempotent timeline processing**
 
-Persist sent milestone keys on each profile. On removal, delete active contact details rather than keeping complete PII indefinitely in `contacts_archived`; retain only minimal audit metadata such as relationship IDs, removal reason and timestamp.
+Persist sent milestone keys on each profile. Expiry changes relationships to paused and renewal restores them. Only explicit deletion grounds or the 12-month inactivity policy may remove personal data; retain only minimal audit metadata such as relationship IDs, removal reason and timestamp.
 
 - [ ] **Step 4: Verify GREEN and full regression**
 
@@ -300,4 +302,127 @@ Expected: zero unexpected failures. Any remaining failure must be listed by exac
 ```powershell
 git add admin.html liff/pricing.html faq.html guardian_group_flex.py assets/welcome_message.json README.md tests
 git commit -m "docs(membership): publish trial and beta policy"
+```
+
+---
+
+### Task 6: 399 體驗權益、一次守護群流程與測試限額
+
+**Files:**
+- Modify: `app.py`
+- Modify: `guardian_group_flex.py`
+- Modify: `liff/index.html`
+- Create: `tests/test_trial_entitlements.py`
+
+**Interfaces:**
+- Produces: `effective_entitlement_plan(profile, now=None) -> str`
+- Produces: `claim_trial_group_test(profile, group_id, now=None) -> dict`
+- Produces: `consume_labeled_test_action(profile, action, now=None) -> dict`
+- Preserves: real SOS safety behavior
+
+- [ ] **Step 1: Write failing entitlement tests**
+
+Cover active public/transition trial receiving 399 core entitlements, trial not receiving normal 799 rights, one labeled guardian-group test notification, second group-test refusal, and daily/cooldown limits for explicit SOS/location/push test actions.
+
+- [ ] **Step 2: Verify RED**
+
+```powershell
+python -m unittest tests.test_trial_entitlements -v
+```
+
+Expected: trial still inherits the legacy free entitlement and has no one-time group-test ledger.
+
+- [ ] **Step 3: Implement minimum entitlement overlay**
+
+Keep `plan="trial"` for membership state and return `paid_399` only from `effective_entitlement_plan()` while the trial is active. The one-time 799 flow may bind one test group and send one message beginning with「這是測試通知」; it must not unlock normal 799 schedules or ongoing group notifications.
+
+Explicit test actions use:
+
+- SOS test: at most 2 per day, at least 10 minutes apart.
+- Location test: at most 2 per day, at least 10 minutes apart.
+- Push test: at most 2 per day, at least 10 minutes apart.
+
+These limits apply only to labeled test actions. Existing real SOS protections and emergency access remain unchanged.
+
+- [ ] **Step 4: Verify GREEN and safety regression**
+
+```powershell
+python -m unittest tests.test_trial_entitlements tests.test_sos_rules tests.test_safety_guard -v
+```
+
+Expected: all pass.
+
+- [ ] **Step 5: Commit**
+
+```powershell
+git add app.py guardian_group_flex.py liff/index.html tests/test_trial_entitlements.py
+git commit -m "feat(trial): grant bounded 399 experience"
+```
+
+---
+
+### Task 7: 上線量化門檻與第二批分段開放
+
+**Files:**
+- Modify: `app.py`
+- Modify: `admin.html`
+- Create: `tests/test_launch_readiness.py`
+- Create: `tests/admin_launch_readiness_ui.test.mjs`
+
+**Interfaces:**
+- Produces: `launch_readiness_snapshot(state, now=None) -> dict`
+- Produces: `beta_release_allowed(state, requested_count, now=None) -> tuple[bool, str]`
+- Produces: `GET /api/admin/launch-readiness`
+
+- [ ] **Step 1: Write failing metrics tests**
+
+Create state fixtures for check-in success, expected reminder dispatches, duplicate alerts, SOS test outcomes, guardian binding attempts, payment/cancel/expiry cases and push failure logs. Assert the exact launch thresholds from the spec.
+
+- [ ] **Step 2: Verify RED**
+
+```powershell
+python -m unittest tests.test_launch_readiness -v
+```
+
+Expected: readiness snapshot and staged-release guard do not exist.
+
+- [ ] **Step 3: Implement metrics and hard gate**
+
+Return at least:
+
+```python
+{
+    "checkin_success_rate": 0.99,
+    "missed_required_reminders": 0,
+    "duplicate_alerts": 0,
+    "sos_test_success_rate": 1.0,
+    "guardian_bind_success_rate": 0.95,
+    "payment_flow_passed": True,
+    "expiry_flow_passed": True,
+    "push_failures": [],
+    "critical_notification_miss": False,
+    "ready": True,
+}
+```
+
+The second batch may release only 10 people initially. The remaining 20 require a later calendar day, no critical notification miss, and all current readiness gates passing. A critical miss immediately blocks further activation.
+
+- [ ] **Step 4: Add the protected admin panel**
+
+Display every metric, its target, pass/fail state, the latest push failure reason, and a clear「停止新增測試者」banner when blocked. Use existing session/CSRF protections.
+
+- [ ] **Step 5: Verify backend and UI behavior**
+
+```powershell
+python -m unittest tests.test_launch_readiness tests.test_beta_cohort_admin -v
+node --test tests/admin_launch_readiness_ui.test.mjs tests/admin_auth_ui.test.mjs
+```
+
+Expected: all pass, including a simulated notification miss blocking the next 20 users.
+
+- [ ] **Step 6: Commit**
+
+```powershell
+git add app.py admin.html tests/test_launch_readiness.py tests/admin_launch_readiness_ui.test.mjs
+git commit -m "feat(admin): gate beta rollout on readiness"
 ```
