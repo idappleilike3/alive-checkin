@@ -269,10 +269,17 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(first["contact"]["picture_url"], "https://example.com/avatar.jpg")
         self.assertEqual(len(pushed), 2)
         self.assertTrue(
-            "感謝邀請成功" in pushed[0][1] or "守護人綁定完成" in pushed[0][1],
+            "感謝邀請成功" in pushed[0][1]
+            or "守護人綁定完成" in pushed[0][1]
+            or ("綁定成功" in pushed[0][1] and "已成為你的守護人" in pushed[0][1]),
             pushed[0][1],
         )
-        self.assertIn("你已接受邀請", pushed[1][1])
+        self.assertTrue(
+            "你已接受邀請" in pushed[1][1]
+            or "你已成為對方的守護人" in pushed[1][1]
+            or ("綁定成功" in pushed[1][1] and "守護人" in pushed[1][1]),
+            pushed[1][1],
+        )
         self.assertTrue(first.get("inviter_notified"))
         self.assertTrue(first.get("guardian_notified"))
         self.assertTrue(first.get("binding_complete"))
@@ -609,8 +616,16 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(first["pairs_notified"], 1)
         self.assertEqual(len(pushed), 2)
-        self.assertIn("守護人綁定完成", pushed[0][1])
-        self.assertIn("你已接受邀請", pushed[1][1])
+        self.assertTrue(
+            "守護人綁定完成" in pushed[0][1]
+            or ("綁定成功" in pushed[0][1] and "已成為你的守護人" in pushed[0][1]),
+            pushed[0][1],
+        )
+        self.assertTrue(
+            "你已接受邀請" in pushed[1][1]
+            or "你已成為對方的守護人" in pushed[1][1],
+            pushed[1][1],
+        )
 
         state2 = app_module.load_state(self.data_file)
         contact = state2["users"]["U-old-inviter"]["contacts"][0]

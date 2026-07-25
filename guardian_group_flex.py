@@ -290,10 +290,10 @@ def guardian_group_intro_flex(owner_info: dict | None = None, *, include_oath: b
 
     body_contents = [
         _body_line("❤️ 一個群組，一起守護重要的人。", weight="bold", color="#1a1a1a", size="lg"),
-        _body_line("這裡只會在以下情況通知大家：", color=GRAY, size="lg", margin="md"),
-        _body_line("⚠️ 超過提醒時間仍未報平安（預設只私訊核心守護人）", color=GRAY, size="lg", margin="sm"),
-        _body_line("📊 今日已報／未報摘要（選用，預設關閉）", color=GRAY, size="lg"),
-        _body_line("🚨 發出 SOS 緊急求助（群組通知須另行開啟）", color=GRAY, size="lg"),
+        _body_line("這裡只處理安全事件通知（報平安相關／SOS）。", color=GRAY, size="lg", margin="md"),
+        _body_line("個人私訊通知需先完成「一鍵邀請」綁定。", color=GRAY, size="lg"),
+        _body_line("⚠️ 逾時未報平安：依會員設定 24／48／72 小時後，私訊核心守護人", color=GRAY, size="lg", margin="sm"),
+        _body_line("📊 群組摘要／群組 SOS：選用，預設關閉", color=GRAY, size="lg"),
         _body_line("生日／生活提醒不會發到群組。", color=GRAY, size="lg", margin="md"),
         _body_line("平時不打擾，只在需要時通知。", color=GRAY, size="lg"),
         _body_line("感謝您一起守護彼此的平安。", color=GRAY, size="lg"),
@@ -745,9 +745,10 @@ def guardian_group_member_joined_flex(inviter_display_name: str | None = None):
             "paddingAll": "lg",
             "contents": [
                 _body_line(f"❤️ 歡迎加入 {name} 的守護群", weight="bold", color="#1a1a1a", size="xl"),
-                _body_line("您已加入「每日平安」LINE 守護群。", color=GRAY, size="lg", margin="md"),
+                _body_line("您已加入「每日平安」LINE 守護群（安全事件用）。", color=GRAY, size="lg", margin="md"),
+                _body_line("個人私訊通知需先完成「一鍵邀請」綁定。", color=GRAY, size="lg"),
                 _body_line("未來若對方：", color=GRAY, size="lg", margin="md"),
-                _body_line("⚠️ 超過提醒時間仍未報平安（預設私訊核心守護人）", color=GRAY, size="lg"),
+                _body_line("⚠️ 逾時未報平安（依對方設定 24／48／72 小時，預設私訊核心守護人）", color=GRAY, size="lg"),
                 _body_line("🚨 發出 SOS 緊急求助", color=GRAY, size="lg"),
                 _body_line("群組通知為選用；生日／生活提醒不會發到群組。", color=GRAY, size="lg", margin="md"),
                 _body_line(

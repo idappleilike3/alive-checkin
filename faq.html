@@ -28,6 +28,18 @@
     }
     h1 { font-size: clamp(40px, 10vw, 54px); font-weight: 950; color: #be185d; line-height: 1.2; }
     .hero p { margin-top: 12px; font-size: clamp(22px, 5.6vw, 28px); font-weight: 900; color: #7c2d12; }
+    .intro {
+      margin: 18px 0;
+      padding: 22px;
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.96);
+      border: 2px solid #86efac;
+      box-shadow: 0 12px 28px rgba(6, 95, 70, 0.08);
+    }
+    .intro h2 { font-size: clamp(26px, 6.4vw, 32px); font-weight: 950; color: #065f46; margin-bottom: 10px; }
+    .intro p, .intro li { font-size: clamp(20px, 5vw, 24px); font-weight: 820; color: #14532d; }
+    .intro ul { margin: 10px 0 0 24px; }
+    .intro li + li { margin-top: 8px; }
     .actions { display: grid; gap: 12px; margin: 18px 0; grid-template-columns: repeat(3, 1fr); }
     a.btn {
       display: grid;
@@ -71,8 +83,21 @@
   <main>
     <section class="hero">
       <h1>常見問題</h1>
-      <p>家人測試、守護人綁定、方案與安全說明都在這裡</p>
+      <p>報平安、守護人、逾時通知與安全功能說明</p>
     </section>
+
+    <section class="intro" aria-label="每日平安是什麼">
+      <h2>每日平安在做什麼？</h2>
+      <p>幫你每天報一次平安。若超過你設定的時間還沒報，或按下 SOS／開啟安全守護，系統會用 <strong>LINE 私訊</strong>通知已綁定的核心守護人。不自動簡訊、不自動撥電話。</p>
+      <ul>
+        <li><strong>核心守護人</strong>：完成 LINE 綁定後，可收逾時未報平安、SOS、安全守護等通知。</li>
+        <li><strong>緊急聯絡人</strong>：電話備援（手動撥打），平時不收每日未報提醒，也不會自動推播。</li>
+        <li><strong>逾時未報平安</strong>：可在會員中心選 <strong>24／48／72 小時</strong>（預設 48）。滿設定時數後通知；另有約 15 分鐘可取消預警緩衝。</li>
+        <li><strong>守護群</strong>（799）：群組只收安全事件；個人私訊仍需「一鍵邀請」綁定。群組通知為選用、預設關閉。</li>
+        <li><strong>邀請加碼</strong>：每成功邀請 1 位新守護人綁定，免費延長 7 天。</li>
+      </ul>
+    </section>
+
     <nav class="actions" aria-label="問與答快速操作">
       <a class="btn home" href="https://liff.line.me/2010674803-rK98c0lo/?open=home">回到首頁</a>
       <a class="btn price" href="https://alive-checkin.onrender.com/liff/pricing.html">立即升級守護</a>
@@ -80,6 +105,18 @@
     </nav>
 
     <section class="faq-list" aria-label="常見問題">
+      <article>
+        <h2>未報平安多久會通知家人？</h2>
+        <p>在「會員中心 → 每日提醒／逾時設定」選擇 <strong>24 小時、48 小時或 72 小時</strong>（新會員預設 48）。從上次報平安起算，滿你選的時數後會通知核心守護人；系統另保留約 15 分鐘緩衝，方便你一鍵取消誤報。</p>
+        <p>對外說明可簡記為「滿 N 小時後通知」。</p>
+      </article>
+      <article>
+        <h2>核心守護人 vs 緊急聯絡人？</h2>
+        <ul>
+          <li><strong>核心守護人</strong>：需加入官方帳號並完成邀請綁定，才有合法 LINE 通知通道。會收到逾時未報、SOS、安全守護等重要通知。</li>
+          <li><strong>緊急聯絡人</strong>：留下姓名與電話當備援；不會自動簡訊或自動撥號。</li>
+        </ul>
+      </article>
       <article>
         <h2>各方案差在哪裡？</h2>
         <p>全方案都有 SOS、可綁核心守護人，以及 1 小時安全守護起跳。差別主要在核心／緊急聯絡人名額、每日 LINE 私聊預警次數，以及安全守護可選時長（免費／199＝1 小時；399＝1／3；799＝1／3／6／8）。799 另含早中晚、多階段未回報、智慧提醒與守護群（僅安全事件）。</p>
@@ -94,26 +131,12 @@
       </article>
       <article>
         <h2>一鍵邀請守護人是什麼？</h2>
-        <p>使用者按下按鈕後，會直接開啟 LINE 分享，把綁定邀請傳給家人。對方不用另外註冊帳號，點同意後就能成為核心守護人。每成功邀請 1 位可免費延長 7 天。</p>
+        <p>使用者按下按鈕後，會直接開啟 LINE 分享，把綁定邀請傳給家人。對方不用另外註冊帳號，點同意後就能成為核心守護人。每成功邀請 1 位可免費延長 7 天。綁定成功後，雙方都會收到確認私訊（對方是誰、何時會通知）。</p>
       </article>
       <article>
         <h2>SOS 每個人都可以用嗎？</h2>
-        <p>可以。SOS／需要幫忙不依方案價格分級，所有會員都能使用。連續按 3 次才會通知家人，避免誤觸。</p>
+        <p>可以。SOS／需要幫忙不依方案價格分級，所有會員都能使用。連續按 3 次才會通知家人，避免誤觸。通知走 LINE 私訊給已綁定核心守護人；沒有自動簡訊或自動撥電話。</p>
         <div class="warn">有立即危險請先撥打 119 或 110，再使用系統通知守護人。</div>
-      </article>
-      <article>
-        <h2>守護群怎麼綁定？</h2>
-        <ul>
-          <li>在 LINE 建立家人群組</li>
-          <li>把「每日平安」官方帳號邀進群</li>
-          <li>由會員本人或管理員點「點我綁定守護群」</li>
-          <li>看到「我已完成守護群設定」就完成</li>
-        </ul>
-        <p>799 月費最多 1 群、年費最多 3 群；每群約 50 人上限，群組只收安全事件通知。</p>
-      </article>
-      <article>
-        <h2>定位會不會一直被追蹤？</h2>
-        <p>不會。安全守護是使用者主動開啟的時段內定位分享，可隨時停止。本服務不提供軌跡重播或好友地圖追蹤。</p>
       </article>
       <article>
         <h2>安全守護怎麼用？守護人收得到通知嗎？</h2>
@@ -122,7 +145,17 @@
           <li>選擇時長 → 點「開始安全守護」→ 允許位置權限</li>
           <li>畫面會顯示「已通知幾位守護人」；若為 0 會說明原因（例如未綁定、未加好友、封鎖）</li>
         </ul>
-        <p>只有「守護人」會收到 LINE 推播；緊急聯絡人僅作電話備援，不會自動推播。</p>
+        <p>只有「守護人」會收到 LINE 推播；緊急聯絡人僅作電話備援，不會自動推播。安全守護是主動開啟的時段內定位分享，可隨時停止；不提供軌跡重播或好友地圖追蹤。</p>
+      </article>
+      <article>
+        <h2>守護群怎麼綁定？群組會吵嗎？</h2>
+        <ul>
+          <li>在 LINE 建立家人群組</li>
+          <li>把「每日平安」官方帳號邀進群</li>
+          <li>由會員本人或管理員點「點我綁定守護群」</li>
+          <li>看到「我已完成守護群設定」就完成</li>
+        </ul>
+        <p>799 月費最多 1 群、年費最多 3 群；每群約 50 人上限。群組只收安全事件；逾時／SOS 預設仍私訊核心守護人，群組通知需另行開啟。進群 ≠ 已綁定個人守護人。</p>
       </article>
       <article>
         <h2>可以中途升級嗎？要重設資料嗎？</h2>

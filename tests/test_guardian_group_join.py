@@ -61,8 +61,9 @@ class GuardianGroupJoinTests(unittest.TestCase):
 
         body_text = str(intro["body"])
         self.assertIn("一個群組，一起守護重要的人", body_text)
-        self.assertIn("超過提醒時間仍未報平安", body_text)
-        self.assertIn("發出 SOS 緊急求助", body_text)
+        self.assertIn("逾時未報平安", body_text)
+        self.assertIn("24／48／72", body_text)
+        self.assertIn("安全事件", body_text)
         self.assertIn("今日守護宣言", body_text)
         # 不再用長文牆講資格／上限
         self.assertNotIn("用途", body_text)

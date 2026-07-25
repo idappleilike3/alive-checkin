@@ -4101,7 +4101,7 @@
         </div>
 
         <div class="member-data-section" id="memberDailyReminderSection">
-          <h3>每日提醒</h3>
+          <h3>每日提醒與逾時設定</h3>
           <p class="helper" id="dailyReminderPlanHint">依方案設定每日提醒次數與時段。</p>
           <label class="daily-remind-toggle-row" for="dailyCheckinReminderEnabled">
             <input type="checkbox" id="dailyCheckinReminderEnabled" checked>
@@ -4113,9 +4113,15 @@
             <button class="daily-remind-count-btn" type="button" data-count="3" aria-pressed="false">三次</button>
           </div>
           <div id="memberDailyReminderSlots"></div>
+          <p class="helper" id="graceHoursHint" style="margin-top:14px;">逾時未報平安多久通知核心守護人？（預設 48 小時；滿設定時數後通知，另約 15 分鐘可取消預警）</p>
+          <div class="daily-remind-count-row" id="memberGraceHoursRow" role="radiogroup" aria-label="逾時未報平安時數">
+            <button class="daily-remind-count-btn grace-hours-btn" type="button" data-hours="24" aria-pressed="false">24 小時</button>
+            <button class="daily-remind-count-btn grace-hours-btn" type="button" data-hours="48" aria-pressed="true">48 小時</button>
+            <button class="daily-remind-count-btn grace-hours-btn" type="button" data-hours="72" aria-pressed="false">72 小時</button>
+          </div>
           <div class="member-data-actions" style="margin-top:10px;">
             <button class="action-btn" id="memberDailyReminderDefaultsBtn" type="button">使用方案預設時間</button>
-            <button class="action-btn primary" id="saveDailyReminderBtn" type="button">儲存每日提醒</button>
+            <button class="action-btn primary" id="saveDailyReminderBtn" type="button">儲存提醒與逾時設定</button>
           </div>
         </div>
 
@@ -4513,7 +4519,7 @@
       last_check_in: null,
       history: [],
       contact_email: "",
-      grace_hours: 36,
+      grace_hours: 48,
       reminder_time: "12:00",
       reminder_times: ["12:00"],
       contact_capacity_reminder_enabled: false,
@@ -4792,7 +4798,7 @@
 
     function buildLocalStatus(state) {
       const last = state.last_check_in ? new Date(state.last_check_in) : null;
-      const grace = Number(state.grace_hours || 36);
+      const grace = Number(state.grace_hours || 48);
       const deadline = last ? new Date(last.getTime() + grace * 3600000) : null;
       const remaining = deadline ? Math.max(0, deadline.getTime() - Date.now()) : 0;
       const isOverdue = Boolean(deadline && Date.now() > deadline.getTime());
@@ -5632,6 +5638,7 @@
     let smartReminderCache = { entitled: false, reminders: [], categories: [] };
     let smartReminderEditingId = null;
     let selectedDailyReminderCount = null;
+    let selectedGraceHours = null;
 
     function planIs799(plan) {
       return plan === "paid_799" || plan === "paid_799_year";
@@ -6259,6 +6266,33 @@
       });
     }
 
+    function normalizeGraceHoursClient(value) {
+      const allowed = [24, 48, 72];
+      const n = Number(value);
+      if (allowed.includes(n)) return n;
+      if (!Number.isFinite(n)) return 48;
+      return allowed.reduce((best, h) => {
+        const d = Math.abs(h - n);
+        const bd = Math.abs(best - n);
+        if (d < bd) return h;
+        if (d === bd && Math.abs(h - 48) < Math.abs(best - 48)) return h;
+        return best;
+      }, 48);
+    }
+
+    function renderGraceHoursButtons(status) {
+      const chosen = selectedGraceHours != null
+        ? normalizeGraceHoursClient(selectedGraceHours)
+        : normalizeGraceHoursClient((status || {}).grace_hours || 48);
+      selectedGraceHours = chosen;
+      const row = $("memberGraceHoursRow");
+      if (!row) return;
+      row.querySelectorAll(".grace-hours-btn").forEach((btn) => {
+        const h = Number(btn.dataset.hours) || 48;
+        btn.setAttribute("aria-pressed", h === chosen ? "true" : "false");
+      });
+    }
+
     function renderMemberDailyReminderUi() {
       const status = currentStatusData || {};
       const maxCount = planMaxDailyReminderCount(status);
@@ -6270,6 +6304,7 @@
       const toggle = $("dailyCheckinReminderEnabled");
       if (toggle) toggle.checked = status.daily_checkin_reminder_enabled !== false;
       renderDailyReminderCountButtons(status);
+      renderGraceHoursButtons(status);
       const host = $("memberDailyReminderSlots");
       if (!host) return;
       const times = (Array.isArray(status.reminder_times) && status.reminder_times.length
@@ -6301,10 +6336,14 @@
         if (el && el.value) times.push(el.value);
       }
       const reminderTimes = times.length ? times.slice(0, count) : defaultTimesForDailyCount(count);
+      const graceHours = normalizeGraceHoursClient(
+        selectedGraceHours != null ? selectedGraceHours : (status.grace_hours || 48)
+      );
       try {
         const saved = await apiSaveSettings({
           contact_email: status.contact_email || "",
-          grace_hours: status.grace_hours || 36,
+          grace_hours: graceHours,
+          warning_cancel_minutes: status.warning_cancel_minutes || 15,
           reminder_time: reminderTimes[0],
           reminder_times: reminderTimes,
           daily_checkin_reminder_enabled: enabled,
@@ -6312,10 +6351,15 @@
           guardian_details_reminder_enabled: status.guardian_details_reminder_enabled !== false
         });
         selectedDailyReminderCount = reminderTimes.length;
+        selectedGraceHours = normalizeGraceHoursClient(saved.grace_hours || graceHours);
         renderStatus(saved);
-        showInlineSuccess(enabled ? `每日提醒已儲存（每天 ${reminderTimes.length} 次）` : "已關閉每日提醒");
+        showInlineSuccess(
+          enabled
+            ? `已儲存：每日提醒 ${reminderTimes.length} 次／逾時 ${selectedGraceHours} 小時`
+            : `已關閉每日提醒；逾時通知仍為 ${selectedGraceHours} 小時`
+        );
       } catch (err) {
-        alert(err.message || "每日提醒儲存失敗");
+        alert(err.message || "提醒與逾時設定儲存失敗");
       }
     }
 
@@ -8764,7 +8808,7 @@
               const status = currentStatusData || {};
               const savedStatus = await apiSaveSettings({
                 contact_email: status.contact_email || "",
-                grace_hours: status.grace_hours || 36,
+                grace_hours: status.grace_hours || 48,
                 reminder_time: status.reminder_time || "12:00",
                 reminder_times: status.reminder_times || [status.reminder_time || "12:00"],
                 contact_capacity_reminder_enabled: Boolean(status.contact_capacity_reminder_enabled),
@@ -9780,6 +9824,16 @@
         for (let i = 0; i < next; i++) merged.push(existing[i] || defaults[i] || "12:00");
         if (currentStatusData) currentStatusData.reminder_times = merged;
         renderMemberDailyReminderUi();
+      });
+    }
+    const graceHoursRow = $("memberGraceHoursRow");
+    if (graceHoursRow) {
+      graceHoursRow.addEventListener("click", (event) => {
+        const btn = event.target.closest(".grace-hours-btn");
+        if (!btn) return;
+        selectedGraceHours = normalizeGraceHoursClient(btn.dataset.hours || 48);
+        if (currentStatusData) currentStatusData.grace_hours = selectedGraceHours;
+        renderGraceHoursButtons(currentStatusData || {});
       });
     }
     const dailyDefaultsBtn = $("memberDailyReminderDefaultsBtn");

@@ -109,7 +109,7 @@ LINE 推播提醒可由後台按鈕手動送出，也可由 Render Cron Job 自�
 
 - `GET /api/status`：取得目前狀態
 - `POST /api/checkin`：完成簽到
-- `POST /api/settings`：儲存聯絡人、寬限時間、提醒時間
+- `POST /api/settings`：儲存聯絡人、逾時未報平安時數（`grace_hours`：24／48／72，預設 48）、提醒時間；`warning_cancel_minutes` 預設 15（滿 N 小時後短暫可取消緩衝）
 - `GET /api/contacts`：取得緊急聯絡人
 - `POST /api/contacts`：儲存緊急聯絡人，會依方案限制數量
 - `POST /api/friends/invite`：產生好友邀請碼

@@ -341,7 +341,7 @@
 
 <!-- 每日提醒時間設定 -->
 <div class="card">
-  <h2>⏰ 每日提醒</h2>
+  <h2>⏰ 每日提醒與逾時設定</h2>
   <p class="hint" id="reminderHint">依方案設定每日提醒次數與時段。</p>
   <label class="check-row"><input type="checkbox" id="dailyCheckinReminderEnabled" checked> 開啟每日提醒</label>
   <div class="btn-row" id="reminderCountRow" style="margin:8px 0 12px;gap:8px;">
@@ -350,6 +350,12 @@
     <button class="btn" type="button" data-count="3" id="reminderCount3">三次</button>
   </div>
   <div id="reminderSlots"></div>
+  <p class="hint" id="graceHoursHint">逾時未報平安多久通知？（預設 48 小時；滿設定時數後通知）</p>
+  <div class="btn-row" id="graceHoursRow" style="margin:8px 0 12px;gap:8px;" role="radiogroup" aria-label="逾時未報平安時數">
+    <button class="btn grace-hours-btn" type="button" data-hours="24" aria-pressed="false">24 小時</button>
+    <button class="btn grace-hours-btn" type="button" data-hours="48" aria-pressed="true">48 小時</button>
+    <button class="btn grace-hours-btn" type="button" data-hours="72" aria-pressed="false">72 小時</button>
+  </div>
   <button class="btn" type="button" id="useDefaultsBtn">使用方案預設時間</button>
   <div class="status-saved" id="statusSaved">✅ 已儲存!</div>
   <button class="btn btn-primary" id="saveBtn" onclick="saveReminder()">儲存設定</button>
@@ -453,6 +459,7 @@ let state = {
   dailyReminders: 1,
   chosenReminderCount: null,
   dailyCheckinReminderEnabled: true,
+  graceHours: 48,
   guardians: [],
   editId: null,
   plan: "trial",
@@ -563,6 +570,7 @@ async function init() {
       const d = await r1.json();
       state.dailyReminders = Number(d.daily_reminders) || 1;
       state.dailyCheckinReminderEnabled = d.daily_checkin_reminder_enabled !== false;
+      state.graceHours = [24, 48, 72].includes(Number(d.grace_hours)) ? Number(d.grace_hours) : 48;
       const dailyToggle = document.getElementById("dailyCheckinReminderEnabled");
       if (dailyToggle) dailyToggle.checked = state.dailyCheckinReminderEnabled;
       state.reminderTimes = (d.reminder_times && d.reminder_times.length)
@@ -571,10 +579,11 @@ async function init() {
       document.getElementById("planName").textContent = d.plan || "尚未訂閱";
       state.plan = d.plan || "trial";
       document.getElementById("planDetail").textContent = d.plan
-        ? `每日提醒 ${state.dailyReminders} 次`
+        ? `每日提醒 ${state.dailyReminders} 次／逾時 ${state.graceHours} 小時`
         : "免費／試用可綁 1 位守護人；799 進階解鎖多人共守與守護群";
       document.getElementById("reminderHint").textContent =
         `本方案每日可設定 ${state.dailyReminders} 個提醒時段。未自訂時預設：${(d.default_reminder_times || defaultTimesForCount(state.dailyReminders)).join("、")}`;
+      renderGraceHoursButtons();
     }
 
     await refreshGuardians();
@@ -584,6 +593,16 @@ async function init() {
   } catch (err) {
     console.error(err);
   }
+}
+
+function renderGraceHoursButtons() {
+  const chosen = [24, 48, 72].includes(Number(state.graceHours)) ? Number(state.graceHours) : 48;
+  state.graceHours = chosen;
+  document.querySelectorAll("#graceHoursRow .grace-hours-btn").forEach((btn) => {
+    const h = Number(btn.dataset.hours) || 48;
+    btn.setAttribute("aria-pressed", h === chosen ? "true" : "false");
+    btn.style.outline = h === chosen ? "3px solid #0a8f61" : "";
+  });
 }
 
 async function refreshSmartReminders() {
@@ -951,6 +970,13 @@ document.getElementById("reminderCountRow")?.addEventListener("click", (event) =
   state.reminderTimes = Array.from({ length: next }, (_, i) => existing[i] || defaults[i] || "12:00");
   renderReminderSlots(state.reminderTimes);
 });
+document.getElementById("graceHoursRow")?.addEventListener("click", (event) => {
+  const btn = event.target.closest(".grace-hours-btn");
+  if (!btn) return;
+  const h = Number(btn.dataset.hours) || 48;
+  state.graceHours = [24, 48, 72].includes(h) ? h : 48;
+  renderGraceHoursButtons();
+});
 const srCancelBtn = document.getElementById("srCancelBtn");
 if (srCancelBtn) {
   srCancelBtn.addEventListener("click", () => {
@@ -1010,13 +1036,16 @@ async function saveReminder() {
         line_user_id: state.lineUserId,
         reminder_times: times,
         reminder_time: times[0],
-        daily_checkin_reminder_enabled: Boolean(document.getElementById("dailyCheckinReminderEnabled")?.checked)
+        daily_checkin_reminder_enabled: Boolean(document.getElementById("dailyCheckinReminderEnabled")?.checked),
+        grace_hours: [24, 48, 72].includes(Number(state.graceHours)) ? Number(state.graceHours) : 48
       })
     });
     if (res.ok) {
       const data = await res.json();
       state.reminderTimes = data.reminder_times || times;
       state.chosenReminderCount = (state.reminderTimes || []).length;
+      if (data.grace_hours != null) state.graceHours = Number(data.grace_hours) || state.graceHours;
+      renderGraceHoursButtons();
       const status = document.getElementById("statusSaved");
       status.style.display = "block";
       setTimeout(() => status.style.display = "none", 3000);

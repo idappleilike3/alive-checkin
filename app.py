@@ -109,16 +109,35 @@ except Exception:  # pragma: no cover
     holidays_tw = None
 
 
+# 逾時未報平安：會員可選 24／48／72 小時（取代舊固定 36h 主流程）
+ALLOWED_GRACE_HOURS = (24, 48, 72)
+DEFAULT_GRACE_HOURS = 48
+# 滿 N 小時後另有短暫可取消預警緩衝（分鐘）；通知實際在 deadline + 此值之後
+DEFAULT_WARNING_CANCEL_MINUTES = 15
+
+
+def normalize_grace_hours(value, default=DEFAULT_GRACE_HOURS):
+    """Clamp／對齊到允許的 24／48／72；舊值（如 36）就近對齊。"""
+    try:
+        hours = int(value)
+    except (TypeError, ValueError):
+        return int(default)
+    if hours in ALLOWED_GRACE_HOURS:
+        return hours
+    # 就近；並列時偏向產品預設 48
+    return min(ALLOWED_GRACE_HOURS, key=lambda h: (abs(h - hours), abs(h - int(default))))
+
+
 DEFAULT_PROFILE = {
     "last_check_in": None,
     "history": [],
     "contact_email": "",
-    "grace_hours": 36,
+    "grace_hours": DEFAULT_GRACE_HOURS,
     "reminder_time": "12:00",
     "reminder_times": ["12:00"],
     "checkin_mode": "manual",
     "auto_checkin_on_open": False,
-    "warning_cancel_minutes": 15,
+    "warning_cancel_minutes": DEFAULT_WARNING_CANCEL_MINUTES,
     "alert_channels": ["line"],
     "attach_location_on_alert": False,
     "contacts": [],
@@ -522,12 +541,13 @@ def line_auto_reply_text(text, status=None):
         pricing_url = line_liff_url("pricing")
         return (
             "常見問題：\n"
+            "「每日平安」幫你每日報平安；逾時未報或 SOS 時，用 LINE 私訊通知已綁定的核心守護人。\n\n"
+            "Q：未報平安多久會通知？\n"
+            "A：可在會員中心選 24／48／72 小時（預設 48）。滿設定時數後通知；另有約 15 分鐘可取消預警緩衝。\n\n"
+            "Q：核心守護人跟緊急聯絡人差在哪？\n"
+            "A：核心＝可收 LINE 通知；緊急聯絡人＝電話備援，不會自動推播／簡訊。\n\n"
             "Q：守護人一定要註冊嗎？\n"
-            "A：不用，對方點 LINE 授權同意後即可接收提醒。\n\n"
-            "Q：定位會一直被追蹤嗎？\n"
-            "A：預設是 24 小時快照分享；即時追蹤需使用者自行開啟。\n\n"
-            "Q：真的緊急怎麼辦？\n"
-            "A：若有立即危險，請優先撥打 119。\n\n"
+            "A：不用，對方加入官方帳號並點邀請同意即可。\n\n"
             f"完整問與答：{faq_url}\n"
             f"查看方案：{pricing_url}"
         )
@@ -1941,8 +1961,10 @@ def build_status(profile, state=None):
     profile["contacts"] = normalized_contacts
     now = datetime.now()
     last = parse_last_checkin(profile.get("last_check_in"))
-    grace_hours = int(profile.get("grace_hours") or 36)
-    warning_cancel_minutes = int(profile.get("warning_cancel_minutes") or 15)
+    grace_hours = normalize_grace_hours(profile.get("grace_hours"))
+    warning_cancel_minutes = int(
+        profile.get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
+    )
     deadline = last + timedelta(hours=grace_hours) if last else None
     alert_at = deadline + timedelta(minutes=warning_cancel_minutes) if deadline else None
     remaining_ms = max(0, int((deadline - now).total_seconds() * 1000)) if deadline else 0
@@ -2001,6 +2023,7 @@ def build_status(profile, state=None):
         "history": sorted(set(profile.get("history") or [])),
         "contact_email": profile.get("contact_email", ""),
         "grace_hours": grace_hours,
+        "allowed_grace_hours": list(ALLOWED_GRACE_HOURS),
         "reminder_time": _reminder_times[0],
         "reminder_times": _reminder_times,
         "daily_checkin_reminder_enabled": bool(profile.get("daily_checkin_reminder_enabled", True)),
@@ -2448,7 +2471,10 @@ def save_settings_for_profile(data_file, payload):
     state = load_state(data_file)
     profile = get_profile(state, payload.get("line_user_id"))
     profile["contact_email"] = str(payload.get("contact_email", "")).strip()
-    profile["grace_hours"] = max(1, min(168, int(payload.get("grace_hours") or 36)))
+    if "grace_hours" in payload:
+        profile["grace_hours"] = normalize_grace_hours(payload.get("grace_hours"))
+    else:
+        profile["grace_hours"] = normalize_grace_hours(profile.get("grace_hours"))
     if "reminder_times" in payload:
         apply_reminder_times_to_profile(profile, times=payload.get("reminder_times"))
     elif "reminder_time" in payload:
@@ -2456,7 +2482,10 @@ def save_settings_for_profile(data_file, payload):
     checkin_mode = str(payload.get("checkin_mode") or profile.get("checkin_mode") or "manual")
     profile["checkin_mode"] = checkin_mode if checkin_mode in {"manual", "voice", "auto_open"} else "manual"
     profile["auto_checkin_on_open"] = bool(payload.get("auto_checkin_on_open", False))
-    profile["warning_cancel_minutes"] = max(1, min(60, int(payload.get("warning_cancel_minutes") or 15)))
+    profile["warning_cancel_minutes"] = max(
+        1,
+        min(60, int(payload.get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES)),
+    )
     profile["alert_channels"] = normalized_alert_channels(payload.get("alert_channels"))
     profile["attach_location_on_alert"] = bool(payload.get("attach_location_on_alert", False))
     if "contact_capacity_reminder_enabled" in payload:
@@ -3338,26 +3367,28 @@ def build_bind_success_notices(inviter, contacts, inviter_id, guardian_name, *, 
     general_n = max(0, len(bound_rows) - core_n)
     if invite_reward_applied:
         inviter_notice = (
+            "✅ 綁定成功\n\n"
             "感謝邀請成功，已為您延長 7 天免費使用\n\n"
-            f"{guardian_name} 已成為你的守護人。\n"
+            f"對方：{guardian_name}（已成為你的守護人）\n"
             f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n"
-            f"免費使用剩餘約 {trial_days_left(inviter)} 天（含邀請加碼）。"
+            f"免費使用剩餘約 {trial_days_left(inviter)} 天（含邀請加碼）。\n\n"
+            "之後若你逾時未報平安或發出 SOS，系統會透過 LINE 私訊通知對方。"
         )
     else:
         inviter_notice = (
-            f"🎉 守護人綁定完成\n\n"
-            f"{guardian_name} 已成為你的守護人。\n"
-            f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n"
-            f"之後若你未準時報平安或發出 SOS，系統會通知對方。"
+            "✅ 綁定成功\n\n"
+            f"對方：{guardian_name}（已成為你的守護人）\n"
+            f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n\n"
+            "之後若你逾時未報平安或發出 SOS，系統會透過 LINE 私訊通知對方。"
         )
     guardian_notice = (
         f"✅ 綁定成功\n\n"
-        f"你已接受邀請，成為「{inviter_name}」的守護人。\n"
-        f"未來若對方：\n"
-        f"⚠️ 超過提醒時間仍未報平安\n"
-        f"🚨 發出 SOS 緊急求助\n"
-        f"系統將第一時間通知您。\n"
-        f"謝謝您願意成為對方最安心的依靠。"
+        f"對方：{inviter_name}\n"
+        f"你已成為對方的守護人。\n\n"
+        f"之後會在以下情況透過 LINE 私訊通知你：\n"
+        f"⚠️ 對方逾時未報平安（依對方設定的 24／48／72 小時）\n"
+        f"🚨 對方發出 SOS 緊急求助\n\n"
+        f"謝謝你願意成為對方最安心的依靠。"
     )
     return inviter_notice, guardian_notice
 
@@ -3378,11 +3409,15 @@ def pair_already_dual_bind_notified(state, inviter_id, guardian_id):
         uid = str(log.get("line_user_id") or "").strip()
         msg = str(log.get("message") or "")
         if uid == inviter_id and (
-            "守護人綁定完成" in msg or "感謝邀請成功" in msg
+            "守護人綁定完成" in msg
+            or "感謝邀請成功" in msg
+            or ("綁定成功" in msg and "已成為你的守護人" in msg)
         ):
             inviter_ok = True
         if uid == guardian_id and (
-            "你已接受邀請" in msg or "綁定成功" in msg
+            "你已接受邀請" in msg
+            or "你已成為對方的守護人" in msg
+            or ("綁定成功" in msg and "守護人" in msg)
         ):
             guardian_ok = True
         if inviter_ok and guardian_ok:
@@ -7319,7 +7354,7 @@ def app_config(config):
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725sg",
+        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gh",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -7511,6 +7546,10 @@ def create_app(config=None):
         setup_done = profile_setup_completed(profile)
         times = reminder_times_for_profile(profile) if profile else default_reminder_times_for_count(1)
         daily_reminders = int(plan_rules(profile).get("daily_reminders") or 1) if profile else 1
+        grace = normalize_grace_hours((profile or {}).get("grace_hours"))
+        warn_m = int(
+            (profile or {}).get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
+        )
         return jsonify({
             "ok": True,
             "line_user_id": line_user_id,
@@ -7521,6 +7560,9 @@ def create_app(config=None):
             "daily_reminders": daily_reminders,
             "daily_checkin_reminder_enabled": bool(profile.get("daily_checkin_reminder_enabled", True)) if profile else True,
             "default_reminder_times": default_reminder_times_for_count(daily_reminders),
+            "grace_hours": grace,
+            "warning_cancel_minutes": warn_m,
+            "allowed_grace_hours": list(ALLOWED_GRACE_HOURS),
             "plan": profile.get("plan"),
             "is_onboarding_completed": setup_done,
             "setup_completed": setup_done,
@@ -7553,6 +7595,10 @@ def create_app(config=None):
             times = apply_reminder_times_to_profile(profile, single=reminder_time)
         if "daily_checkin_reminder_enabled" in data:
             profile["daily_checkin_reminder_enabled"] = bool(data.get("daily_checkin_reminder_enabled"))
+        if "grace_hours" in data:
+            profile["grace_hours"] = normalize_grace_hours(data.get("grace_hours"))
+        else:
+            profile["grace_hours"] = normalize_grace_hours(profile.get("grace_hours"))
         save_state(app.config["DATA_FILE"], state)
         return jsonify({
             "ok": True,
@@ -7560,6 +7606,11 @@ def create_app(config=None):
             "reminder_times": times,
             "daily_reminders": max_count,
             "daily_checkin_reminder_enabled": bool(profile.get("daily_checkin_reminder_enabled", True)),
+            "grace_hours": normalize_grace_hours(profile.get("grace_hours")),
+            "warning_cancel_minutes": int(
+                profile.get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
+            ),
+            "allowed_grace_hours": list(ALLOWED_GRACE_HOURS),
         })
 
     @app.get("/liff/guardian")
@@ -7641,7 +7692,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725sg",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gh",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),

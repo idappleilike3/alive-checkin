@@ -560,7 +560,7 @@ class ProductRulesTests(unittest.TestCase):
 
         self.assertIn("def _group_quick_actions", flex)
         self.assertIn("一個群組，一起守護重要的人", flex)
-        self.assertIn("超過提醒時間仍未報平安", flex)
+        self.assertIn("逾時未報平安", flex)
         self.assertIn("發出 SOS 緊急求助", flex)
         self.assertIn("今日守護宣言", flex)
         self.assertIn("綁定守護群", flex)
