@@ -155,10 +155,11 @@ DEFAULT_PROFILE = {
     "guardian_details_reminder_enabled": True,
     "guardian_details_reminder_sent_at": "",
     "plan": "trial",
-    "membership_source": "public_trial",
+    "membership_source": "",
     "trial_started_at": None,
     "trial_end": None,
     "trial_policy_version": "",
+    "trial_notice_days_sent": [],
     # 舊版相容欄位；新政策固定為 0，邀請不再延長體驗。
     "trial_bonus_days": 0,
     "payment_status": "trial",
@@ -1350,6 +1351,7 @@ _PROFILE_PERSIST_KEYS = (
     "trial_started_at",
     "trial_end",
     "trial_policy_version",
+    "trial_notice_days_sent",
     "trial_bonus_days",
     "plan_expired_at",
     "contacts_retain_until",
@@ -1799,10 +1801,53 @@ def ensure_membership_trial(profile, now=None, source="public_trial"):
         timespec="seconds"
     )
     profile["trial_policy_version"] = TRIAL_POLICY_VERSION
+    profile["trial_notice_days_sent"] = []
     profile["trial_bonus_days"] = 0
     profile["plan"] = "trial"
     profile["payment_status"] = "trial"
+    clear_contacts_retain_window(profile)
     return True
+
+
+def migrate_existing_free_members(config):
+    """Cron 可重跑遷移：同一時間批次給 legacy free 一次過渡體驗。"""
+    data_file = config["DATA_FILE"]
+    state = load_state(data_file)
+    now = current_app_time(config)
+    migrated = []
+    paid_sources_normalized = 0
+    changed = False
+    for profile in (state.get("users") or {}).values():
+        plan = str(profile.get("plan") or "")
+        source = str(profile.get("membership_source") or "")
+        if plan.startswith("paid_"):
+            if source != "beta":
+                normalized = False
+                if source != "paid":
+                    profile["membership_source"] = "paid"
+                    normalized = True
+                if profile.get("trial_policy_version") != TRIAL_POLICY_VERSION:
+                    # 既有付費會員不可在未來到期後被誤判為 legacy free 再領一次。
+                    profile["trial_policy_version"] = TRIAL_POLICY_VERSION
+                    profile["trial_bonus_days"] = 0
+                    normalized = True
+                if normalized:
+                    paid_sources_normalized += 1
+                    changed = True
+            continue
+        if plan != "free":
+            continue
+        if ensure_membership_trial(profile, now=now, source="transition_trial"):
+            migrated.append(str(profile.get("line_user_id") or ""))
+            changed = True
+    if changed:
+        save_state(data_file, state)
+    return {
+        "migrated": len(migrated),
+        "line_user_ids": migrated,
+        "paid_sources_normalized": paid_sources_normalized,
+        "migration_time": now.isoformat(timespec="seconds"),
+    }, 200
 
 
 def membership_access_active(profile, now=None):
@@ -2674,6 +2719,9 @@ def confirm_payment_order(data_file, payload, config=None):
     order["paid_at"] = now.isoformat(timespec="seconds")
     order["transaction_id"] = str(payload.get("transaction_id") or "").strip()
     profile["plan"] = order["plan"]
+    profile["membership_source"] = "paid"
+    profile["trial_policy_version"] = TRIAL_POLICY_VERSION
+    profile["trial_bonus_days"] = 0
     profile["payment_status"] = "active"
     profile["paid_until"] = paid_until.isoformat(timespec="seconds")
     profile["billing_cycle"] = product["billing_cycle"]
@@ -2716,6 +2764,7 @@ def apply_expired_plan_downgrades(config):
         # 試用到期 → free，資料保留 30 天
         if plan == "trial" and trial_days_left(profile) <= 0:
             profile["plan"] = "free"
+            profile["membership_source"] = "expired"
             profile["payment_status"] = "expired"
             profile["billing_cycle"] = ""
             profile["contacts"] = preserved_contacts
@@ -2744,6 +2793,7 @@ def apply_expired_plan_downgrades(config):
         # 已過期：只降方案，保留所有綁定，並開始 30 天軟保留
         if profile.get("payment_status") == "active" or paid_until:
             profile["plan"] = "free"
+            profile["membership_source"] = "expired"
             profile["payment_status"] = "expired"
             profile["billing_cycle"] = ""
             profile["auto_renew_enabled"] = False
@@ -5473,6 +5523,14 @@ def admin_update_user_plan(data_file, payload):
     preserved_reminder_time = profile.get("reminder_time")
 
     profile["plan"] = plan
+    if plan.startswith("paid_"):
+        profile["membership_source"] = "paid"
+        profile["trial_policy_version"] = TRIAL_POLICY_VERSION
+        profile["trial_bonus_days"] = 0
+    elif plan == "free":
+        profile["membership_source"] = "expired"
+    elif plan == "trial" and not str(profile.get("membership_source") or ""):
+        profile["membership_source"] = "public_trial"
     profile["payment_status"] = str(
         payload.get("payment_status") or ("trial" if plan == "trial" else "active")
     )
@@ -7859,6 +7917,12 @@ def cleanup_expired_sos(config):
 def run_cron_tick(config):
     now = current_app_time(config)
     results = {}
+
+    migration_data, migration_code = migrate_existing_free_members(config)
+    results["membership_transition_migration"] = {
+        "status": migration_code,
+        "result": migration_data,
+    }
 
     always = {
         "checkin_reminders": send_checkin_reminders,

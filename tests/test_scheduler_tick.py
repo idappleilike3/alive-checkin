@@ -196,6 +196,36 @@ class SchedulerTickTests(unittest.TestCase):
             state = alive_app.load_state(data_file)
             self.assertNotIn("U-old", state.get("sos_pending", {}))
 
+    def test_tick_migrates_existing_free_members_without_login(self):
+        with tempfile.TemporaryDirectory() as temp:
+            data_file = str(Path(temp) / "state.json")
+            state = alive_app.load_state(data_file)
+            profile = alive_app.get_profile(state, "U-legacy-free")
+            profile["plan"] = "free"
+            profile["payment_status"] = "expired"
+            profile["membership_source"] = "expired"
+            profile.pop("trial_policy_version", None)
+            profile.pop("trial_end", None)
+            alive_app.save_state(data_file, state)
+
+            result, code = alive_app.run_cron_tick(
+                {
+                    "DATA_FILE": data_file,
+                    "LINE_CHANNEL_ACCESS_TOKEN": "",
+                    "CRON_NOW": datetime(2026, 7, 26, 15, 0),
+                }
+            )
+
+            self.assertEqual(code, 200)
+            self.assertEqual(
+                result["tasks"]["membership_transition_migration"]["result"]["migrated"],
+                1,
+            )
+            migrated = alive_app.load_state(data_file)["users"]["U-legacy-free"]
+            self.assertEqual(migrated["plan"], "trial")
+            self.assertEqual(migrated["membership_source"], "transition_trial")
+            self.assertEqual(migrated["trial_started_at"], "2026-07-26T15:00:00")
+
 
 if __name__ == "__main__":
     unittest.main()

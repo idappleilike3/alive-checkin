@@ -297,7 +297,10 @@ class PushDeliveryPolicyTests(unittest.TestCase):
 
             self.assertEqual(code, 200)
             self.assertTrue(result["system_error"])
-            self.assertEqual(list(result["tasks"]), ["checkin_reminders"])
+            self.assertEqual(
+                list(result["tasks"]),
+                ["membership_transition_migration", "checkin_reminders"],
+            )
             self.assertEqual(calls, ["U1"])
 
     def test_follow_reactivates_previously_blocked_line_recipient(self):
