@@ -1016,7 +1016,7 @@ In `line-rich-menu-config.json`:
 
 ```json
 {
-  "bounds": { "x": 833, "y": 0, "width": 833, "height": 843 },
+  "bounds": { "x": 1667, "y": 0, "width": 833, "height": 843 },
   "action": {
     "type": "uri",
     "label": "需要幫忙",
