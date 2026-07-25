@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 取消邀請延長與永久免費方案，加入一次性 14 天正式體驗、40 人 21 天封閉測試後台，以及到期暫停與 12 個月未登入清理。
+**Goal:** 取消邀請延長與永久免費方案，加入一次性 14 天正式體驗、40 人 21 天封閉測試後台，以及到期暫停與依申請解除／刪除流程。
 
 **Architecture:** 保留內部 `free` 作為相容的未訂閱狀態，以 `membership_source` 區分正式試用、過渡試用、封閉測試、付款與到期。封測沿用現有方案權益，但以獨立欄位與稽核紀錄標示，不建立假訂單。所有時間流程由既有單一 Cron tick 冪等執行。
 
@@ -16,7 +16,7 @@
 - 新會員正式體驗固定 14 天且只能領取一次。
 - 封閉測試固定 21 天；A 10 人、B399 20 人、B799 10 人。
 - `free` 只作內部未訂閱相容狀態，UI 不得宣傳永久免費方案。
-- 到期後守護關係暫停但不立即刪除；無有效方案且 12 個月未登入，經 30 天與 7 天預告後才清除。
+- 到期後守護關係暫停但不自動刪除；會員或關係人可申請解除／刪除，會員刪除帳號時清除個資，法令或帳務紀錄除外。
 - 每個任務先看見測試正確失敗，再做最小修正。
 
 ---
@@ -202,10 +202,12 @@ git commit -m "feat(admin): show beta cohort progress"
 
 ---
 
-### Task 4: 體驗提醒、到期暫停與 12 個月未登入清理
+### Task 4: 體驗提醒、到期暫停與隱私權申請
 
 **Files:**
 - Modify: `app.py`
+- Modify: `liff/index.html`
+- Modify: `privacy.html`
 - Modify: `tests/test_scheduler_tick.py`
 - Modify: `tests/test_invite_reward_retain.py`
 - Create: `tests/test_membership_retention_policy.py`
@@ -213,12 +215,12 @@ git commit -m "feat(admin): show beta cohort progress"
 **Interfaces:**
 - Produces: `send_trial_milestone_notices(data_file=None, now=None) -> dict`
 - Produces: `pause_expired_memberships(data_file=None, now=None) -> dict`
-- Produces: `cleanup_long_inactive_contacts(data_file=None, now=None) -> dict`
+- Produces: `process_verified_privacy_request(data_file, line_user_id, request_type) -> dict`
 - Consumes: existing `run_cron_tick()` daily membership slot
 
 - [ ] **Step 1: Write failing timeline tests**
 
-Cover notices at day 7/12/14, no duplicate notice, expiry pausing scheduled check-in/guardian notifications and paid location, basic SOS remaining available, renewal restoring contacts, and no immediate deletion. Cover no-active-plan plus 12 months without login, 30-day/7-day pre-notices, user/guardian/contact deletion requests, and idempotent cleanup.
+Cover notices at day 7/12/14, no duplicate notice, expiry pausing scheduled check-in/guardian notifications and paid location, basic SOS remaining available, renewal restoring contacts, and no automatic deletion. Cover verified member/guardian/contact deletion or unlink requests, account deletion with accounting-record exceptions, and idempotent processing.
 
 - [ ] **Step 2: Verify RED**
 
@@ -230,7 +232,9 @@ Expected: milestone notices, paused relationship state and long-inactivity clean
 
 - [ ] **Step 3: Implement idempotent timeline processing**
 
-Persist sent milestone keys on each profile. Expiry changes relationships to paused and renewal restores them. Only explicit deletion grounds or the 12-month inactivity policy may remove personal data; retain only minimal audit metadata such as relationship IDs, removal reason and timestamp.
+Persist sent milestone keys on each profile. Expiry changes relationships to paused and renewal restores them. Only a verified request, invalid collection, or legal requirement may remove personal data; retain only minimal audit metadata required by law or accounting.
+
+Remove the member-center「我的資料管理」section and its three direct buttons. Show the verified privacy-request contact path instead; do not remove the protected backend capability needed to fulfill legal requests.
 
 - [ ] **Step 4: Verify GREEN and full regression**
 
