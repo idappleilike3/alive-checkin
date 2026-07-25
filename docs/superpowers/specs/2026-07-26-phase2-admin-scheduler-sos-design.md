@@ -46,7 +46,7 @@
 
 - 關閉 `_start_internal_scheduler()`，Web service 不再自行開背景執行緒。
 - 新增單一 `POST /api/cron/tick` 入口，由既有 `CRON_SECRET` 驗證。
-- `tick` 每次依台北時間執行：
+- `tick` 每次依台北時間判斷，只執行當下到期的工作：
   - 每日報平安提醒
   - 逾期未報平安通知
   - 生日提醒
@@ -55,6 +55,7 @@
   - 聯絡資料提醒
   - 守護群人數刷新
   - 到期 SOS 與必要資料清理
+- 生日提醒固定於台北時間 09:00 執行；聯絡資料提醒固定於 09:05，避免同一分鐘連續推播。
 - `render.yaml` 只保留一個共用 Cron Job，每 5 分鐘呼叫一次 `/api/cron/tick`。
 - 既有細分 cron API 暫時保留，方便管理者手動重跑與相容舊設定，但 Render Blueprint 不再建立六個付費 Cron Job。
 
@@ -78,7 +79,7 @@
 
 ### 4.1 單一入口
 
-- 唯一正式入口為 LIFF：`https://liff.line.me/2010674803-rK98c0lo/?open=sos`。
+- 唯一正式入口為 LIFF：`https://liff.line.me/2010674803-rK98c0lo?open=sos`。
 - LINE 圖文選單「需要幫忙」改為 URI action，直接開啟這個入口。
 - LIFF 首頁的 SOS 浮動按鈕與安全守護頁的 SOS 按鈕呼叫同一個 `openSosFlow()`。
 - 使用者在聊天室輸入「需要幫忙」「SOS」「緊急求助」時，Bot 回覆同一張入口卡，卡片主按鈕也開啟同一個 LIFF SOS 畫面。
