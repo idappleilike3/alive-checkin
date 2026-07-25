@@ -7,16 +7,18 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 try:
-    from flask import Flask, Response, jsonify, redirect, request, send_from_directory
+    from flask import Flask, Response, jsonify, redirect, request, send_from_directory, session
 except ModuleNotFoundError:
     Flask = None
     Response = None
     redirect = None
+    session = None
 
 try:
     from linebot import LineBotApi, WebhookHandler
@@ -5685,47 +5687,73 @@ def _env_flag_on(name, config=None):
 
 
 def admin_open_mode(config=None):
-    """Open admin (no password) when ALLOW_OPEN_ADMIN/ADMIN_OPEN is on, or ADMIN_PASSWORD is empty.
-
-    WARNING: public URL with open admin is insecure — intentional for owner convenience.
-    """
-    cfg = config or {}
-    if _env_flag_on("ALLOW_OPEN_ADMIN", cfg) or _env_flag_on("ADMIN_OPEN", cfg):
-        return True
-    expected = _normalize_admin_password(
-        os.environ.get("ADMIN_PASSWORD") or cfg.get("ADMIN_PASSWORD", "")
-    )
-    return not expected
+    """Legacy compatibility hook; secure admin never permits open mode."""
+    return False
 
 
 def admin_allowed(config, password):
-    if admin_open_mode(config):
-        return True
-    expected = _normalize_admin_password(
-        os.environ.get("ADMIN_PASSWORD") or config.get("ADMIN_PASSWORD", "")
-    )
-    got = _normalize_admin_password(password)
-    if not expected:
-        return False
-    # compare_digest raises (→ HTTP 500) when lengths differ on some Python builds
-    if len(expected) != len(got):
-        return False
-    return secrets.compare_digest(expected, got)
+    return admin_password_matches(config, password)
 
 
 def admin_auth_error_payload(config, password):
     """Return (payload, http_status) when auth fails; None when allowed."""
-    if admin_open_mode(config):
-        return None
-    expected = _normalize_admin_password(
-        os.environ.get("ADMIN_PASSWORD") or config.get("ADMIN_PASSWORD", "")
-    )
-    if not expected:
-        # Should not reach here (empty password ⇒ open mode); keep safe fallback.
-        return None
+    if not admin_security_ready(config):
+        return {"error": "admin_not_configured"}, 503
     if not admin_allowed(config, password):
         return {"error": "unauthorized"}, 401
     return None
+
+
+def admin_security_ready(config):
+    password = _normalize_admin_password(config.get("ADMIN_PASSWORD", ""))
+    session_secret = str(config.get("ADMIN_SESSION_SECRET") or "").strip()
+    return bool(password and len(session_secret) >= 32)
+
+
+def admin_password_matches(config, candidate):
+    if not admin_security_ready(config):
+        return False
+    expected = _normalize_admin_password(config.get("ADMIN_PASSWORD", ""))
+    got = _normalize_admin_password(candidate)
+    return bool(got) and secrets.compare_digest(expected, got)
+
+
+ADMIN_LOGIN_ATTEMPTS = {}
+
+
+def _admin_login_attempts(client_key, now=None):
+    now = now or datetime.now()
+    cutoff = now - timedelta(minutes=10)
+    recent = [
+        value for value in ADMIN_LOGIN_ATTEMPTS.get(client_key, [])
+        if value >= cutoff
+    ]
+    ADMIN_LOGIN_ATTEMPTS[client_key] = recent
+    return recent
+
+
+def admin_login_rate_limited(client_key, now=None):
+    return len(_admin_login_attempts(client_key, now)) >= 5
+
+
+def record_admin_login_failure(client_key, now=None):
+    now = now or datetime.now()
+    recent = _admin_login_attempts(client_key, now)
+    recent.append(now)
+    ADMIN_LOGIN_ATTEMPTS[client_key] = recent[-5:]
+
+
+def append_admin_audit(data_file, action, status, metadata=None):
+    state = load_state(data_file)
+    logs = list(state.get("admin_audit_logs") or [])
+    logs.append({
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "action": str(action),
+        "status": str(status),
+        "metadata": dict(metadata or {}),
+    })
+    state["admin_audit_logs"] = logs[-200:]
+    save_state(data_file, state)
 
 
 def _line_channel_access_token(config=None):
@@ -7462,8 +7490,13 @@ def create_app(config=None):
     app.config.update(
         DATA_FILE=resolve_data_file(os.environ.get("DATA_FILE")),
         ADMIN_PASSWORD=os.environ.get("ADMIN_PASSWORD", ""),
+        ADMIN_SESSION_SECRET=os.environ.get("ADMIN_SESSION_SECRET", ""),
         ALLOW_OPEN_ADMIN=os.environ.get("ALLOW_OPEN_ADMIN", ""),
         ADMIN_OPEN=os.environ.get("ADMIN_OPEN", ""),
+        PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SECURE=True,
+        SESSION_COOKIE_SAMESITE="Strict",
         LINE_CHANNEL_ACCESS_TOKEN=(
             os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
             or os.environ.get("CHANNEL_ACCESS_TOKEN")
@@ -7500,6 +7533,73 @@ def create_app(config=None):
     )
     if config:
         app.config.update(config)
+    app.secret_key = (
+        app.config.get("ADMIN_SESSION_SECRET")
+        or secrets.token_hex(32)
+    )
+
+    def _admin_guard(*, write=False):
+        if not admin_security_ready(app.config):
+            return jsonify({"error": "admin_not_configured"}), 503
+        if session.get("admin_authenticated") is not True:
+            return jsonify({"error": "unauthorized"}), 401
+        if write:
+            expected = str(session.get("admin_csrf") or "")
+            provided = str(request.headers.get("X-CSRF-Token") or "")
+            if not expected or not secrets.compare_digest(expected, provided):
+                return jsonify({"error": "csrf_required"}), 403
+        return None
+
+    def _admin_mutation_response(action, data, code=200):
+        append_admin_audit(
+            app.config["DATA_FILE"],
+            action,
+            "success" if code < 400 else "failed",
+            {"http_status": code},
+        )
+        return jsonify(data), code
+
+    @app.post("/api/admin/login")
+    def admin_login_api():
+        if not admin_security_ready(app.config):
+            return jsonify({"error": "admin_not_configured"}), 503
+        payload = request.get_json(silent=True) or {}
+        client_key = str(request.remote_addr or "unknown")
+        if admin_login_rate_limited(client_key):
+            return jsonify({"error": "too_many_attempts"}), 429
+        if not admin_password_matches(app.config, payload.get("password")):
+            record_admin_login_failure(client_key)
+            append_admin_audit(app.config["DATA_FILE"], "session.login", "failed")
+            return jsonify({"error": "invalid_credentials"}), 401
+        ADMIN_LOGIN_ATTEMPTS.pop(client_key, None)
+        session.clear()
+        session.permanent = True
+        session["admin_authenticated"] = True
+        session["admin_csrf"] = secrets.token_urlsafe(32)
+        append_admin_audit(app.config["DATA_FILE"], "session.login", "success")
+        return jsonify({
+            "ok": True,
+            "csrf_token": session["admin_csrf"],
+            "expires_in": 8 * 60 * 60,
+        })
+
+    @app.get("/api/admin/session")
+    def admin_session_api():
+        if not admin_security_ready(app.config):
+            return jsonify({"authenticated": False, "error": "admin_not_configured"}), 503
+        authenticated = session.get("admin_authenticated") is True
+        return jsonify({
+            "authenticated": authenticated,
+            "csrf_token": session.get("admin_csrf") if authenticated else None,
+        }), (200 if authenticated else 401)
+
+    @app.post("/api/admin/logout")
+    def admin_logout_api():
+        authenticated = session.get("admin_authenticated") is True
+        session.clear()
+        if authenticated:
+            append_admin_audit(app.config["DATA_FILE"], "session.logout", "success")
+        return jsonify({"ok": True})
 
     def _authenticated_line_user(payload=None, *, use_args=False):
         """Resolve LINE user from verified id_token when required."""
@@ -9534,90 +9634,88 @@ def create_app(config=None):
 
     @app.get("/api/admin/summary")
     def admin_summary_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        denied = admin_auth_error_payload(app.config, password)
+        denied = _admin_guard()
         if denied:
-            payload, code = denied
-            return jsonify(payload), code
+            return denied
         return jsonify(admin_summary(app.config["DATA_FILE"], app.config))
 
     @app.get("/api/admin/support-tickets")
     def admin_support_tickets_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard()
+        if denied:
+            return denied
         return jsonify(admin_support_tickets(app.config["DATA_FILE"]))
 
     @app.get("/api/admin/backups")
     def admin_backups_list_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard()
+        if denied:
+            return denied
         return jsonify(list_admin_backups(app.config["DATA_FILE"]))
 
     @app.post("/api/admin/backups")
     def admin_backups_create_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = create_admin_backup(app.config["DATA_FILE"])
-        return jsonify(data), code
+        return _admin_mutation_response("backup.create", data, code)
 
     @app.get("/api/admin/backups/<backup_id>")
     def admin_backups_download_api(backup_id):
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard()
+        if denied:
+            return denied
         data, code = read_admin_backup(app.config["DATA_FILE"], backup_id)
         return jsonify(data), code
 
     @app.post("/api/admin/support-reply")
     def admin_support_reply_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = admin_reply_support_ticket(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
-        return jsonify(data), code
+        return _admin_mutation_response("support.reply", data, code)
 
     @app.post("/api/admin/send-reminders")
     def send_reminders_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = send_due_reminders(app.config)
-        return jsonify(data), code
+        return _admin_mutation_response("reminder.send", data, code)
 
     @app.post("/api/admin/send-contact-reminders")
     def send_contact_reminders_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = send_missing_contact_reminders(app.config)
-        return jsonify(data), code
+        return _admin_mutation_response("contact_reminder.send", data, code)
 
     @app.post("/api/admin/send-renewal-reminders")
     def send_renewal_reminders_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = send_renewal_reminders(app.config)
-        return jsonify(data), code
+        return _admin_mutation_response("renewal_reminder.send", data, code)
 
     @app.post("/api/admin/send-birthday-reminders")
     def send_birthday_reminders_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = send_birthday_reminders(app.config)
-        return jsonify(data), code
+        return _admin_mutation_response("birthday_reminder.send", data, code)
 
     @app.post("/api/admin/payments/confirm")
     def admin_payment_confirm_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = confirm_payment_order(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
-        return jsonify(data), code
+        return _admin_mutation_response("payment.confirm", data, code)
 
     @app.route("/api/cron/contact-reminders", methods=["GET", "POST"])
     def cron_contact_reminders_api():
@@ -9753,18 +9851,18 @@ def create_app(config=None):
     @app.get("/api/admin/rich-menu")
     def admin_rich_menu_inspect_api():
         """查詢目前預設圖文選單（含一鍵邀請 URI）。不回傳 token。"""
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard()
+        if denied:
+            return denied
         data, code = inspect_default_rich_menu(app.config)
         return jsonify(data), code
 
     @app.post("/api/admin/rich-menu/deploy")
     def admin_rich_menu_deploy_api():
         """用 Render 上的 LINE_CHANNEL_ACCESS_TOKEN 上傳並設為預設圖文選單。"""
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = deploy_default_rich_menu(app.config)
         if data.get("ok"):
             app.logger.info(
@@ -9778,27 +9876,39 @@ def create_app(config=None):
                 data.get("step"),
                 data.get("http"),
             )
-        return jsonify(data), code
+        return _admin_mutation_response("rich_menu.deploy", data, code)
 
     @app.post("/api/admin/push-welcome")
     def admin_push_welcome_api():
         """管理員補推歡迎 Flex（需已加好友）。body: {line_user_id, display_name?}"""
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         if LineBotApi is None or FlexSendMessage is None or welcome_flex is None:
-            return jsonify({"ok": False, "error": "line sdk or welcome_flex unavailable"}), 503
+            return _admin_mutation_response(
+                "welcome.push",
+                {"ok": False, "error": "line sdk or welcome_flex unavailable"},
+                503,
+            )
         payload = request.get_json(silent=True) or {}
         line_user_id = str(payload.get("line_user_id") or "").strip()
         if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+            return _admin_mutation_response(
+                "welcome.push",
+                {"ok": False, "error": "missing line_user_id"},
+                400,
+            )
         token = (
             app.config.get("LINE_CHANNEL_ACCESS_TOKEN")
             or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
             or ""
         ).strip()
         if not token:
-            return jsonify({"ok": False, "error": "LINE_CHANNEL_ACCESS_TOKEN not set"}), 503
+            return _admin_mutation_response(
+                "welcome.push",
+                {"ok": False, "error": "LINE_CHANNEL_ACCESS_TOKEN not set"},
+                503,
+            )
         line_bot_api = LineBotApi(token)
         hint = str(payload.get("display_name") or "").strip() or None
         resolved = resolve_welcome_display_name(
@@ -9836,13 +9946,14 @@ def create_app(config=None):
                 line_user_id[:8],
                 resolved or "",
             )
-            return jsonify(
+            return _admin_mutation_response(
+                "welcome.push",
                 {
                     "ok": True,
                     "line_user_id": line_user_id,
                     "display_name": resolved,
                     "greeting": greeting,
-                }
+                },
             )
         except LineBotApiError as exc:
             detail = str(exc)
@@ -9851,26 +9962,34 @@ def create_app(config=None):
             except Exception:
                 pass
             app.logger.exception("admin push-welcome LINE error: %s", detail)
-            return jsonify({"ok": False, "error": "line_api_error", "detail": str(detail)}), 502
+            return _admin_mutation_response(
+                "welcome.push",
+                {"ok": False, "error": "line_api_error", "detail": str(detail)},
+                502,
+            )
         except Exception as exc:
             app.logger.exception("admin push-welcome failed: %s", exc)
-            return jsonify({"ok": False, "error": str(exc)}), 500
+            return _admin_mutation_response(
+                "welcome.push",
+                {"ok": False, "error": str(exc)},
+                500,
+            )
 
     @app.post("/api/admin/user-plan")
     def admin_user_plan_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = admin_update_user_plan(app.config["DATA_FILE"], request.get_json(silent=True) or {})
-        return jsonify(data), code
+        return _admin_mutation_response("user_plan.update", data, code)
 
     @app.post("/api/admin/set-core-guardian")
     def admin_set_core_guardian_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = admin_set_core_guardian(app.config["DATA_FILE"], request.get_json(silent=True) or {})
-        return jsonify(data), code
+        return _admin_mutation_response("core_guardian.set", data, code)
 
     return app
 
@@ -9890,6 +10009,8 @@ class MiniClient:
 
     def get(self, path):
         route, _, query = path.partition("?")
+        if route == "/api/admin" or route.startswith("/api/admin/"):
+            return MiniResponse({"error": "admin_not_configured"}, 503)
         params = dict(urllib.parse.parse_qsl(query))
         if route == "/api/config":
             return MiniResponse(app_config(self.app.config))
@@ -9944,6 +10065,8 @@ class MiniClient:
 
     def post(self, path, data=None, content_type=None):
         route, _, query = path.partition("?")
+        if route == "/api/admin" or route.startswith("/api/admin/"):
+            return MiniResponse({"error": "admin_not_configured"}, 503)
         params = dict(urllib.parse.parse_qsl(query))
         payload = {}
         if data and content_type == "application/json":
@@ -10101,6 +10224,7 @@ class MiniApp:
         self.config = {
             "DATA_FILE": resolve_data_file(os.environ.get("DATA_FILE")),
             "ADMIN_PASSWORD": os.environ.get("ADMIN_PASSWORD", ""),
+            "ADMIN_SESSION_SECRET": os.environ.get("ADMIN_SESSION_SECRET", ""),
             "ALLOW_OPEN_ADMIN": os.environ.get("ALLOW_OPEN_ADMIN", ""),
             "ADMIN_OPEN": os.environ.get("ADMIN_OPEN", ""),
             "LINE_CHANNEL_ACCESS_TOKEN": os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
@@ -10151,6 +10275,8 @@ class MiniApp:
 
             def do_GET(handler):
                 route = handler.route()
+                if route == "/api/admin" or route.startswith("/api/admin/"):
+                    return handler.send_json({"error": "admin_not_configured"}, 503)
                 params = handler.query()
                 if route == "/api/config":
                     return handler.send_json(app_config(config))
@@ -10268,6 +10394,8 @@ class MiniApp:
 
             def do_POST(handler):
                 route = handler.route()
+                if route == "/api/admin" or route.startswith("/api/admin/"):
+                    return handler.send_json({"error": "admin_not_configured"}, 503)
                 params = handler.query()
                 payload = handler.read_payload()
                 if route == "/api/line/register":
