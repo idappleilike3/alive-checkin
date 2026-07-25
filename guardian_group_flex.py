@@ -1164,8 +1164,8 @@ def welcome_greeting_text(display_name: str | None = None) -> str:
     """歡迎標題：有真實暱稱就寫名；否則不寫「您」，避免看起來像沒寫誰。"""
     name = (display_name or "").strip()
     if name and name not in _WELCOME_PLACEHOLDER_NAMES:
-        return f"👋 {name} 您好，歡迎加入「每日平安」"
-    return "👋 您好，歡迎加入「每日平安」"
+        return f"👋 {name} 您好,歡迎加入每日平安"
+    return "👋 您好,歡迎加入每日平安"
 
 
 def welcome_flex(display_name: str | None = None):
@@ -1221,17 +1221,8 @@ def welcome_flex(display_name: str | None = None):
                             "type": "text",
                             "text": greeting,
                             "weight": "bold",
-                            "size": "md",
+                            "size": "xxl",
                             "color": text_dark,
-                            "wrap": True,
-                            "align": "start",
-                        },
-                        {
-                            "type": "text",
-                            "text": "每日平安",
-                            "weight": "bold",
-                            "size": "xl",
-                            "color": pink_accent,
                             "wrap": True,
                             "align": "start",
                         },
@@ -1265,7 +1256,7 @@ def welcome_flex(display_name: str | None = None):
                             "type": "text",
                             "text": "每天 10 秒，報個平安",
                             "weight": "bold",
-                            "size": "xl",
+                            "size": "xxl",
                             "color": pink_accent,
                             "wrap": True,
                             "align": "center",
@@ -1274,7 +1265,7 @@ def welcome_flex(display_name: str | None = None):
                             "type": "text",
                             "text": "平常不打擾，有事才通知守護人",
                             "weight": "bold",
-                            "size": "lg",
+                            "size": "xxl",
                             "color": text_dark,
                             "wrap": True,
                             "align": "center",
