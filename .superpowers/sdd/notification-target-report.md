@@ -28,15 +28,28 @@ Added
 `GraceHoursTests.test_status_uses_supplied_now_and_waits_through_cancel_window`.
 
 - RED: `TypeError: build_status() got an unexpected keyword argument 'now'`.
-- GREEN: the test proves 48h14m is pre-alert and 48h16m is overdue using one
-  supplied clock.
+- Review RED: at exactly 48h15m the status was still pre-alert.
+- GREEN: the test proves 48h14m is pre-alert, while exactly 48h15m and 48h16m
+  are overdue using one supplied clock.
+
+Added
+`OverdueAlertTests.test_due_reminders_take_one_clock_sample_for_selection_and_delivery`.
+
+- RED: `send_due_reminders()` called `admin_summary()` before taking its own
+  clock sample and did not pass `now`; nested status helpers also sampled time
+  independently.
+- GREEN: the overdue sender samples once at entry and calls
+  `admin_summary(data_file, config, now=now)`. Status reminder and safety-roster
+  calculations receive the same explicit timestamp.
 
 Production fix:
 
 - `build_status(profile, state=None, now=None)` uses one app-local clock for
   deadline, calendar day, and today's check-in status.
-- `admin_summary()` computes the app clock once from its config and passes it
-  to every status calculation.
+- `send_due_reminders()` computes the app clock once at entry and explicitly
+  passes it through `admin_summary(..., now=now)` to every status calculation.
+- The exact boundary is `deadline < now < alert_at` for pre-alert and
+  `now >= alert_at` for overdue.
 
 The three existing target assertions were not weakened or removed. Their stale
 fixtures now use a last check-in three days earlier so they exercise actual
@@ -44,15 +57,15 @@ overdue target collection.
 
 ## Verification
 
-Focused requested tests plus the new boundary test: 4/4 passed.
+Three requested tests, exact boundary, and single-clock test: 5/5 passed.
 
 Notification channel, commercial overdue, scheduler tick, reminder slots,
-Task 4 push-delivery policy, and grace-hour suites: 52/52 passed.
+Task 4 push-delivery policy, and grace-hour suites: 53/53 passed.
 
 Complete Python suite:
 
-- 202 tests run
-- 199 passed
+- 203 tests run
+- 200 passed
 - 3 failed
 - Failure count decreased from 6 to 3; no new failure appeared.
 

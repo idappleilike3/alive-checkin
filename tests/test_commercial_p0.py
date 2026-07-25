@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 import app as alive_app
 import line_auth
@@ -82,6 +83,51 @@ class ExpiryDowngradeTests(unittest.TestCase):
 
 
 class OverdueAlertTests(unittest.TestCase):
+    def test_due_reminders_take_one_clock_sample_for_selection_and_delivery(self):
+        pushes = []
+        now = datetime(2026, 7, 26, 12, 1)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_file = str(Path(tmp) / "state.json")
+            state = alive_app.load_state(data_file)
+            state["users"]["U-clock"] = {
+                **alive_app.DEFAULT_PROFILE,
+                "line_user_id": "U-clock",
+                "display_name": "阿明",
+                "plan": "paid_799",
+                "payment_status": "active",
+                "paid_until": (now + timedelta(days=10)).isoformat(timespec="seconds"),
+                "last_check_in": (now - timedelta(days=3)).isoformat(timespec="seconds"),
+                "history": [],
+            }
+            alive_app.save_state(data_file, state)
+
+            config = {
+                "DATA_FILE": data_file,
+                "LINE_CHANNEL_ACCESS_TOKEN": "token",
+                "LINE_PUSH_SENDER": lambda token, target, message: (
+                    pushes.append(target) or {"ok": True}
+                ),
+                "CRON_NOW": now,
+            }
+            summary = {
+                "users": [{"line_user_id": "U-clock", "is_overdue": True}]
+            }
+            with mock.patch.object(
+                alive_app, "current_app_time", return_value=now
+            ) as clock, mock.patch.object(
+                alive_app, "admin_summary", return_value=summary
+            ) as summary_builder:
+                result, code = alive_app.send_due_reminders(
+                    config
+                )
+
+            self.assertEqual(code, 200)
+            self.assertEqual(clock.call_count, 1)
+            summary_builder.assert_called_once_with(data_file, config, now=now)
+            self.assertIn("U-clock", pushes)
+            self.assertEqual(result["sent"], 1)
+
     def test_overdue_defaults_to_private_not_group(self):
         pushes = []
 

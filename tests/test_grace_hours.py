@@ -25,6 +25,13 @@ class GraceHoursTests(unittest.TestCase):
         self.assertFalse(prealert["is_overdue"])
 
         profile["last_check_in"] = (
+            now - timedelta(hours=48, minutes=15)
+        ).isoformat(timespec="seconds")
+        boundary = app_module.build_status(profile, now=now)
+        self.assertFalse(boundary["is_prealert"])
+        self.assertTrue(boundary["is_overdue"])
+
+        profile["last_check_in"] = (
             now - timedelta(hours=48, minutes=16)
         ).isoformat(timespec="seconds")
         overdue = app_module.build_status(profile, now=now)

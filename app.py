@@ -2064,8 +2064,8 @@ def build_status(profile, state=None, now=None):
     alert_at = deadline + timedelta(minutes=warning_cancel_minutes) if deadline else None
     remaining_ms = max(0, int((deadline - now).total_seconds() * 1000)) if deadline else 0
     cancel_remaining_ms = max(0, int((alert_at - now).total_seconds() * 1000)) if alert_at and now > deadline else 0
-    prealert = bool(deadline and alert_at and deadline < now <= alert_at)
-    overdue = bool(alert_at and now > alert_at)
+    prealert = bool(deadline and alert_at and deadline < now < alert_at)
+    overdue = bool(alert_at and now >= alert_at)
     today = now.strftime("%Y-%m-%d")
     is_today_checked = profile_is_today_checked(profile, now=now)
     # Heal history if last_check_in proves today but history missed the Taipei day
@@ -2091,7 +2091,7 @@ def build_status(profile, state=None, now=None):
         status_class = "highlight"
 
     _reminder_times = reminder_times_for_profile(profile) or ["12:00"]
-    _next_reminder = next_checkin_reminder_info(profile)
+    _next_reminder = next_checkin_reminder_info(profile, now=now)
     guardian_groups = []
     today_safety_roster = None
     if state is not None:
@@ -2106,7 +2106,9 @@ def build_status(profile, state=None, now=None):
                 row["preferences"] = normalize_guardian_group_preferences(group.get("preferences"))
                 guardian_groups.append(row)
         if guardian_groups or plan_includes_guardian_group(profile):
-            today_safety_roster = build_owner_today_safety_roster(state, profile)
+            today_safety_roster = build_owner_today_safety_roster(
+                state, profile, now=now
+            )
 
     return {
         "ok": True,
@@ -4561,9 +4563,9 @@ def _member_checked_today(profile, today):
     return any(str(item.get("date", "")) == today for item in history if isinstance(item, dict))
 
 
-def build_owner_today_safety_roster(state, profile, config=None):
+def build_owner_today_safety_roster(state, profile, config=None, now=None):
     """管理員用：今天誰已報／尚未報平安（私訊／LIFF；不依賴群組提醒開關）。"""
-    now = current_app_time(config or {})
+    now = now or current_app_time(config or {})
     today = now.strftime("%Y-%m-%d")
     users = (state or {}).get("users") or {}
     owner_id = str((profile or {}).get("line_user_id") or "").strip()
@@ -6143,9 +6145,9 @@ def cron_allowed(config, secret):
     return secrets.compare_digest(expected, provided)
 
 
-def admin_summary(data_file, config=None):
+def admin_summary(data_file, config=None, now=None):
     state = load_state(data_file)
-    status_now = current_app_time(config or {})
+    status_now = now or current_app_time(config or {})
     token = ""
     if config is not None and hasattr(config, "get"):
         token = str(config.get("LINE_CHANNEL_ACCESS_TOKEN") or "").strip()
@@ -6477,10 +6479,10 @@ def send_due_reminders(config):
     if not token:
         return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
 
-    summary = admin_summary(config["DATA_FILE"], config)
+    now = current_app_time(config)
+    summary = admin_summary(config["DATA_FILE"], config, now=now)
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
     state = load_state(config["DATA_FILE"])
-    now = current_app_time(config)
     today = now.strftime("%Y-%m-%d")
     sent = 0
     skipped = 0
