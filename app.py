@@ -155,8 +155,11 @@ DEFAULT_PROFILE = {
     "guardian_details_reminder_enabled": True,
     "guardian_details_reminder_sent_at": "",
     "plan": "trial",
+    "membership_source": "public_trial",
     "trial_started_at": None,
-    # 每成功邀請 1 位「新的」守護人綁定 → +7；不重複計算同一人
+    "trial_end": None,
+    "trial_policy_version": "",
+    # 舊版相容欄位；新政策固定為 0，邀請不再延長體驗。
     "trial_bonus_days": 0,
     "payment_status": "trial",
     "paid_until": "",
@@ -190,9 +193,9 @@ DEFAULT_PROFILE = {
 EXPIRY_REMIND_WITHIN_DAYS = 3
 WEEKDAY_SHORT_ZH = ("一", "二", "三", "四", "五", "六", "日")
 
-# 試用基準 7 天；每成功邀請 1 位新守護人再 +7（無上限，同一人只算一次）
-TRIAL_BASE_DAYS = 7
-INVITE_REWARD_DAYS = 7
+# 正式新會員與既有 free 過渡會員皆為一次性 14 天體驗。
+PUBLIC_TRIAL_DAYS = 14
+TRIAL_POLICY_VERSION = "2026-07-no-invite-reward-v1"
 # 方案／試用到期後，守護人＋緊急連絡人資料再保留天數（之後軟封存）
 CONTACTS_RETAIN_DAYS = 30
 
@@ -1343,7 +1346,10 @@ def parse_datetime(value):
 
 # Fields that must survive re-login / upsert and must never be replaced by defaults.
 _PROFILE_PERSIST_KEYS = (
+    "membership_source",
     "trial_started_at",
+    "trial_end",
+    "trial_policy_version",
     "trial_bonus_days",
     "plan_expired_at",
     "contacts_retain_until",
@@ -1390,6 +1396,8 @@ def get_profile(state, line_user_id=None):
             # First sight of this user: start trial clock once.
             if not user.get("trial_started_at"):
                 user["trial_started_at"] = datetime.now().isoformat(timespec="seconds")
+        if is_new:
+            ensure_membership_trial(user, source="public_trial")
         user["line_user_id"] = line_user_id
         return user
     return state
@@ -1766,28 +1774,70 @@ def should_show_guardian_prompt(profile, contact_count):
 
 
 def trial_bonus_days(profile):
-    try:
-        return max(0, int(profile.get("trial_bonus_days") or 0))
-    except (TypeError, ValueError):
-        return 0
+    """舊版相容欄位；邀請核心守護人不再增加體驗天數。"""
+    return 0
 
 
 def trial_total_days(profile):
-    """試用總天數＝基準 7 ＋邀請加碼（每位新守護人 +7）。"""
-    return TRIAL_BASE_DAYS + trial_bonus_days(profile)
+    """公開或過渡體驗固定 14 天，不因邀請延長。"""
+    return PUBLIC_TRIAL_DAYS
 
 
-def trial_days_left(profile):
+def ensure_membership_trial(profile, now=None, source="public_trial"):
+    """給予目前政策的一次性 14 天體驗；同一版本永不重啟。"""
+    if not isinstance(profile, dict):
+        return False
+    if profile.get("trial_policy_version") == TRIAL_POLICY_VERSION:
+        return False
+    plan = str(profile.get("plan") or "trial")
+    if plan.startswith("paid_"):
+        return False
+    now = now or current_app_time({})
+    profile["membership_source"] = source
+    profile["trial_started_at"] = now.isoformat(timespec="seconds")
+    profile["trial_end"] = (now + timedelta(days=PUBLIC_TRIAL_DAYS)).isoformat(
+        timespec="seconds"
+    )
+    profile["trial_policy_version"] = TRIAL_POLICY_VERSION
+    profile["trial_bonus_days"] = 0
+    profile["plan"] = "trial"
+    profile["payment_status"] = "trial"
+    return True
+
+
+def membership_access_active(profile, now=None):
+    """會員權益是否有效；free 僅代表未訂閱，SOS 安全政策另行判斷。"""
+    if not isinstance(profile, dict):
+        return False
+    now = now or current_app_time({})
+    plan = str(profile.get("plan") or "free")
+    if plan == "trial":
+        trial_end = parse_datetime(profile.get("trial_end"))
+        if trial_end:
+            return now < trial_end
+        started_at = parse_datetime(profile.get("trial_started_at"))
+        return bool(started_at and now < started_at + timedelta(days=PUBLIC_TRIAL_DAYS))
+    if plan.startswith("paid_"):
+        paid_until = parse_datetime(profile.get("paid_until"))
+        return paid_until is None or now < paid_until
+    return False
+
+
+def trial_days_left(profile, now=None):
+    trial_end = parse_datetime(profile.get("trial_end"))
+    if trial_end:
+        remaining_seconds = (trial_end - (now or current_app_time({}))).total_seconds()
+        return max(0, int((remaining_seconds + 86399) // 86400))
     started_at = parse_datetime(profile.get("trial_started_at"))
     total = trial_total_days(profile)
     if not started_at:
         return total
-    elapsed_days = (datetime.now() - started_at).days
+    elapsed_days = ((now or current_app_time({})) - started_at).days
     return max(0, total - elapsed_days)
 
 
 def trial_active(profile):
-    return (profile.get("plan") or "trial") == "trial" and trial_days_left(profile) > 0
+    return membership_access_active(profile)
 
 
 def clear_contacts_retain_window(profile):
@@ -1840,42 +1890,17 @@ def soft_archive_contacts_past_retain(profile, now):
 
 
 def apply_invite_trial_reward(inviter, reward, *, accepted_at):
-    """新守護人綁定成功：邀請人免費延長 7 天。
-
-    規則：第一次邀請只標記不送天數（讓使用者體驗完整的 7 天基礎試用），
-          第二次起的邀請每位 +7 天；同一位被邀請人只算一次。
-    """
+    """記錄守護人綁定，但不提供任何體驗天數獎勵。"""
     if not isinstance(inviter, dict) or not isinstance(reward, dict):
         return False
-    if reward.get("status") == "applied" and reward.get("selected_reward") == "trial_7_days":
+    if reward.get("status") == "not_applicable":
         return False
-
-    # 累計成功邀請的次數（用 inviter 身上的計數器，不受 trial_bonus_days 影響）
-    accepted_count = int(inviter.get("invite_accepted_count") or 0) + 1
-    inviter["invite_accepted_count"] = accepted_count
-
-    # 第一次邀請不送天數，僅標記已生效
-    if accepted_count == 1:
-        reward["selected_reward"] = "trial_7_days"
-        reward["status"] = "applied"
-        reward["applied_at"] = accepted_at
-        reward["reward_days"] = 0
-        reward["skipped_first_invite"] = True
-        return True
-
-    inviter["trial_bonus_days"] = trial_bonus_days(inviter) + INVITE_REWARD_DAYS
-    # 若已因到期落到 free，邀請成功後回到 trial，讓加碼天數立即生效
-    plan = str(inviter.get("plan") or "trial")
-    if plan in ("free", "trial"):
-        inviter["plan"] = "trial"
-        if str(inviter.get("payment_status") or "") in ("expired", "free", ""):
-            inviter["payment_status"] = "trial"
-        clear_contacts_retain_window(inviter)
-    reward["selected_reward"] = "trial_7_days"
-    reward["status"] = "applied"
+    inviter["trial_bonus_days"] = 0
+    reward["selected_reward"] = "none"
+    reward["status"] = "not_applicable"
     reward["applied_at"] = accepted_at
-    reward["reward_days"] = INVITE_REWARD_DAYS
-    return True
+    reward["reward_days"] = 0
+    return False
 
 
 def plan_type_label(profile):
@@ -1899,7 +1924,10 @@ def compute_plan_expires_at(profile):
         return str(profile.get("paid_until") or "").strip()
     if plan == "free":
         return ""
-    # trial：trial_started_at +（7 + 邀請加碼）天
+    trial_end = str(profile.get("trial_end") or "").strip()
+    if trial_end:
+        return trial_end
+    # 舊資料相容：沒有 trial_end 時，以 trial_started_at + 14 天計算。
     started = parse_datetime(profile.get("trial_started_at"))
     if not started:
         started = datetime.now()
@@ -2106,6 +2134,7 @@ def build_status(profile, state=None):
         "guardian_details_reminder_enabled": bool(profile.get("guardian_details_reminder_enabled", True)),
         "guardian_details_complete": any(complete_guardian_contact(contact) for contact in (profile.get("contacts") or [])),
         "plan": profile.get("plan", "trial"),
+        "membership_source": str(profile.get("membership_source") or ""),
         "payment_status": profile.get("payment_status", "trial"),
         "paid_until": profile.get("paid_until", ""),
         "billing_cycle": profile.get("billing_cycle", "trial"),
@@ -2116,6 +2145,7 @@ def build_status(profile, state=None):
         "auto_renew_enabled": bool(profile.get("auto_renew_enabled", False)),
         "auto_renew_status": profile.get("auto_renew_status", "off"),
         "trial_started_at": profile.get("trial_started_at"),
+        "trial_policy_version": str(profile.get("trial_policy_version") or ""),
         "trial_bonus_days": trial_bonus_days(profile),
         "trial_total_days": trial_total_days(profile),
         "trial_days_left": trial_days_left(profile),
@@ -2337,6 +2367,9 @@ def register_line_user(data_file, payload):
                 user[key] = value
         elif value not in (None, ""):
             user[key] = value
+
+    if isinstance(existing, dict) and str(user.get("plan") or "") == "free":
+        ensure_membership_trial(user, source="transition_trial")
 
     token = (
         (payload.get("access_token") if isinstance(payload, dict) else None)
@@ -3447,22 +3480,12 @@ def build_bind_success_notices(inviter, contacts, inviter_id, guardian_name, *, 
     if bound_rows and core_n == 0:
         core_n = 1
     general_n = max(0, len(bound_rows) - core_n)
-    if invite_reward_applied:
-        inviter_notice = (
-            "✅ 綁定成功\n\n"
-            "感謝邀請成功，已為您延長 7 天免費使用\n\n"
-            f"對方：{guardian_name}（已成為你的守護人）\n"
-            f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n"
-            f"免費使用剩餘約 {trial_days_left(inviter)} 天（含邀請加碼）。\n\n"
-            "之後若你逾時未報平安或發出 SOS，系統會透過 LINE 私訊通知對方。"
-        )
-    else:
-        inviter_notice = (
-            "✅ 綁定成功\n\n"
-            f"對方：{guardian_name}（已成為你的守護人）\n"
-            f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n\n"
-            "之後若你逾時未報平安或發出 SOS，系統會透過 LINE 私訊通知對方。"
-        )
+    inviter_notice = (
+        "✅ 綁定成功\n\n"
+        f"對方：{guardian_name}（已成為你的守護人）\n"
+        f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n\n"
+        "之後若你逾時未報平安或發出 SOS，系統會透過 LINE 私訊通知對方。"
+    )
     guardian_notice = (
         f"✅ 綁定成功\n\n"
         f"對方：{inviter_name}\n"
@@ -3890,7 +3913,7 @@ def bind_emergency_contact(data_file, payload, config=None):
             "inviter_display_name": inviter.get("display_name") or "",
             "contact_display_name": contact_display_name or "",
             "status": "available",
-            "reward_options": ["trial_7_days"],
+            "reward_options": [],
             "selected_reward": "",
         }
         rewards.append(reward)

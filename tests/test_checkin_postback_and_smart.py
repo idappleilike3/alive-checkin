@@ -130,7 +130,8 @@ class CheckinPostbackTests(unittest.TestCase):
         state = app.load_state(self.data_file)
         profile = app.get_profile(state, "U_exp")
         profile["plan"] = "trial"
-        profile["trial_started_at"] = (fixed - timedelta(days=6)).isoformat(timespec="seconds")
+        profile["trial_started_at"] = (fixed - timedelta(days=13)).isoformat(timespec="seconds")
+        profile["trial_end"] = (fixed + timedelta(days=1)).isoformat(timespec="seconds")
         profile["trial_bonus_days"] = 0
         app.save_state(self.data_file, state)
 
