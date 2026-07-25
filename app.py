@@ -109,6 +109,11 @@ try:
 except Exception:  # pragma: no cover
     holidays_tw = None
 
+from push_delivery import (
+    push_attempt_allowed,
+    record_push_failure,
+)
+
 
 # 逾時未報平安：會員可選 24／48／72 小時（取代舊固定 36h 主流程）
 ALLOWED_GRACE_HOURS = (24, 48, 72)
@@ -2715,17 +2720,34 @@ def send_renewal_reminders(config):
         if profile.get("renewal_reminder_sent_for") == paid_until_text:
             skipped += 1
             continue
+        delivery_key = f"renewal:{paid_until_text}"
+        if not push_attempt_allowed(profile, delivery_key):
+            skipped += 1
+            continue
         if profile.get("auto_renew_enabled"):
             message = f"你的守護方案將在 {days_left} 天後續扣。若付款方式有異動，記得先到會員中心確認。"
         else:
             message = f"你的守護方案即將到期，還剩 {days_left} 天。可到會員中心查看方案並續費，避免守護提醒中斷。"
         try:
             sender(token, profile.get("line_user_id"), message)
+            _clear_push_delivery_failure(profile, delivery_key)
             profile["renewal_reminder_sent_for"] = paid_until_text
             append_notification_log(state, "renewal", profile.get("line_user_id"), "sent", message)
             sent += 1
         except Exception as exc:
-            append_notification_log(state, "renewal", profile.get("line_user_id"), "failed", message, str(exc))
+            failure = _record_scheduled_push_failure(
+                state,
+                profile,
+                delivery_key,
+                "renewal",
+                profile.get("line_user_id"),
+                message,
+                exc,
+                now,
+            )
+            skipped += 1
+            if failure["kind"] == "system":
+                break
     save_state(config["DATA_FILE"], state)
     return {"sent": sent, "skipped": skipped}, 200
 
@@ -6288,6 +6310,37 @@ def append_notification_log(state, kind, line_user_id, status, message, detail=N
     state["notification_logs"] = logs[-100:]
 
 
+def _clear_push_delivery_failure(recipient, delivery_key):
+    attempts = dict(recipient.get("push_delivery_attempts") or {})
+    attempts.pop(delivery_key, None)
+    if attempts:
+        recipient["push_delivery_attempts"] = attempts
+    else:
+        recipient.pop("push_delivery_attempts", None)
+
+
+def _record_scheduled_push_failure(
+    state,
+    recipient,
+    delivery_key,
+    kind,
+    line_user_id,
+    message,
+    exc,
+    now,
+):
+    failure = record_push_failure(recipient, delivery_key, exc, now)
+    append_notification_log(
+        state,
+        kind,
+        line_user_id,
+        failure["status"],
+        message,
+        str(exc),
+    )
+    return failure
+
+
 def log_notification(data_file, kind, line_user_id, status, message, detail=None):
     state = load_state(data_file)
     append_notification_log(state, kind, line_user_id, status, message, detail)
@@ -6307,6 +6360,7 @@ def send_due_reminders(config):
     sent = 0
     skipped = 0
     results = []
+    system_error = False
     for user in summary["users"]:
         if not user["is_overdue"]:
             continue
@@ -6316,20 +6370,43 @@ def send_due_reminders(config):
         if profile.get("last_overdue_alert_date") == today:
             skipped += 1
             continue
+        retry_pending = False
         location = profile.get("location") or {}
         location_link = ""
         if profile.get("attach_location_on_alert") and location.get("latitude") and location.get("longitude"):
             location_link = f"\n最後位置：https://www.google.com/maps?q={location['latitude']},{location['longitude']}"
         message = f"❤️ 今天一切都好嗎？\n點一下「我平安」，讓家人放心。{location_link}"
-        try:
-            result = sender(token, user["line_user_id"], message)
-            append_notification_log(state, "overdue", user["line_user_id"], "sent", message, json.dumps(result, ensure_ascii=False))
-            sent += 1
-            results.append({"line_user_id": user["line_user_id"], "result": result})
-        except Exception as exc:
-            append_notification_log(state, "overdue", user["line_user_id"], "failed", message, str(exc))
+        delivery_key = f"overdue:{today}"
+        if profile.get("last_overdue_member_alert_date") == today:
             skipped += 1
-            results.append({"line_user_id": user["line_user_id"], "error": str(exc)})
+        elif not push_attempt_allowed(profile, delivery_key):
+            skipped += 1
+        else:
+            try:
+                result = sender(token, user["line_user_id"], message)
+                _clear_push_delivery_failure(profile, delivery_key)
+                profile["last_overdue_member_alert_date"] = today
+                append_notification_log(state, "overdue", user["line_user_id"], "sent", message, json.dumps(result, ensure_ascii=False))
+                sent += 1
+                results.append({"line_user_id": user["line_user_id"], "result": result})
+            except Exception as exc:
+                failure = _record_scheduled_push_failure(
+                    state,
+                    profile,
+                    delivery_key,
+                    "overdue",
+                    user["line_user_id"],
+                    message,
+                    exc,
+                    now,
+                )
+                retry_pending = retry_pending or failure["retry"]
+                skipped += 1
+                results.append({"line_user_id": user["line_user_id"], "error": str(exc)})
+                if failure["kind"] == "system":
+                    system_error = True
+        if system_error:
+            break
 
         contact_message = (
             f"【需要幫忙】{profile.get('display_name') or '家人'} 超過時間尚未回報平安，請協助確認是否一切都好。"
@@ -6350,15 +6427,37 @@ def send_due_reminders(config):
             ][:alert_limit]
             for contact in line_contacts:
                 target = contact.get("line_id") or contact.get("line_user_id")
+                contact_delivery_key = f"contact_alert:{today}:{target}"
+                if contact.get("last_overdue_contact_alert_date") == today:
+                    skipped += 1
+                    continue
+                if not push_attempt_allowed(contact, contact_delivery_key):
+                    skipped += 1
+                    continue
                 try:
                     result = sender(token, target, contact_message)
+                    _clear_push_delivery_failure(contact, contact_delivery_key)
+                    contact["last_overdue_contact_alert_date"] = today
                     append_notification_log(state, "contact_alert", target, "sent", contact_message, json.dumps(result, ensure_ascii=False))
                     sent += 1
                     results.append({"line_user_id": target, "result": result})
                 except Exception as exc:
-                    append_notification_log(state, "contact_alert", target, "failed", contact_message, str(exc))
+                    failure = _record_scheduled_push_failure(
+                        state,
+                        contact,
+                        contact_delivery_key,
+                        "contact_alert",
+                        target,
+                        contact_message,
+                        exc,
+                        now,
+                    )
+                    retry_pending = retry_pending or failure["retry"]
                     skipped += 1
                     results.append({"line_user_id": target, "error": str(exc)})
+                    if failure["kind"] == "system":
+                        system_error = True
+                        break
                 for method in (contact.get("notify_methods") or ["line"]):
                     if method in {"sms", "phone"}:
                         detail = contact.get("phone") or "missing phone"
@@ -6370,6 +6469,10 @@ def send_due_reminders(config):
                             contact_message,
                             detail,
                         )
+            if system_error:
+                break
+        if system_error:
+            break
 
         group_limit = int(rules.get("guardian_group_limit") or 0)
         if group_limit > 0:
@@ -6385,8 +6488,18 @@ def send_due_reminders(config):
                 f"請群內協助確認。{location_link}"
             )
             for group_id in active_group_ids:
+                group = groups.get(group_id) or {}
+                group_delivery_key = f"overdue_guardian_group:{today}:{group_id}"
+                if group.get("last_overdue_alert_date") == today:
+                    skipped += 1
+                    continue
+                if not push_attempt_allowed(group, group_delivery_key):
+                    skipped += 1
+                    continue
                 try:
                     result = sender(token, group_id, group_message)
+                    _clear_push_delivery_failure(group, group_delivery_key)
+                    group["last_overdue_alert_date"] = today
                     append_notification_log(
                         state,
                         "overdue_guardian_group",
@@ -6398,18 +6511,27 @@ def send_due_reminders(config):
                     sent += 1
                     results.append({"group_id": group_id, "result": result})
                 except Exception as exc:
-                    append_notification_log(
+                    failure = _record_scheduled_push_failure(
                         state,
+                        group,
+                        group_delivery_key,
                         "overdue_guardian_group",
                         group_id,
-                        "failed",
                         group_message,
-                        str(exc),
+                        exc,
+                        now,
                     )
+                    retry_pending = retry_pending or failure["retry"]
                     skipped += 1
                     results.append({"group_id": group_id, "error": str(exc)})
+                    if failure["kind"] == "system":
+                        system_error = True
+                        break
+            if system_error:
+                break
 
-        profile["last_overdue_alert_date"] = today
+        if not retry_pending:
+            profile["last_overdue_alert_date"] = today
 
     save_state(config["DATA_FILE"], state)
     return {"sent": sent, "skipped": skipped, "results": results}, 200
@@ -6507,7 +6629,8 @@ def send_missing_contact_reminders(config):
     state = load_state(config["DATA_FILE"])
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
     public_url = (config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", "")).rstrip("/")
-    today = current_app_time(config).strftime("%Y-%m-%d")
+    now = current_app_time(config)
+    today = now.strftime("%Y-%m-%d")
     sent = 0
     skipped = 0
     results = []
@@ -6524,6 +6647,10 @@ def send_missing_contact_reminders(config):
         if is_799 and not guardian_details_complete:
             if not user.get("guardian_details_reminder_enabled", True) or user.get("guardian_details_reminder_sent_at"):
                 continue
+            delivery_key = f"guardian_details:{today}"
+            if not push_attempt_allowed(user, delivery_key):
+                skipped += 1
+                continue
             link_text = (
                 f"\n前往我的守護資料：{liff_entry_url(open_action='member') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo?open=member'}"
             )
@@ -6533,14 +6660,26 @@ def send_missing_contact_reminders(config):
             )
             try:
                 result = sender(token, line_user_id, message)
-                user["guardian_details_reminder_sent_at"] = current_app_time(config).isoformat(timespec="seconds")
+                _clear_push_delivery_failure(user, delivery_key)
+                user["guardian_details_reminder_sent_at"] = now.isoformat(timespec="seconds")
                 append_notification_log(state, "guardian_details", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
                 sent += 1
                 results.append({"line_user_id": line_user_id, "result": result})
             except Exception as exc:
-                append_notification_log(state, "guardian_details", line_user_id, "failed", message, str(exc))
+                failure = _record_scheduled_push_failure(
+                    state,
+                    user,
+                    delivery_key,
+                    "guardian_details",
+                    line_user_id,
+                    message,
+                    exc,
+                    now,
+                )
                 skipped += 1
                 results.append({"line_user_id": line_user_id, "error": str(exc)})
+                if failure["kind"] == "system":
+                    break
             continue
         if contact_count >= contact_limit or (contact_count > 0 and not reminder_enabled):
             continue
@@ -6560,17 +6699,33 @@ def send_missing_contact_reminders(config):
                 f"你的方案可綁定 {contact_limit} 位守護人，目前已完成 {contact_count}/{contact_limit} 位。"
                 f"若想補齊守護名額，可點下方繼續邀請；也能在提醒設定中關閉這則每日提醒。{link_text}"
             )
+        delivery_key = f"missing_contact:{today}"
+        if not push_attempt_allowed(user, delivery_key):
+            skipped += 1
+            continue
         try:
             result = sender(token, line_user_id, message)
+            _clear_push_delivery_failure(user, delivery_key)
             sent_dates.add(today)
             user["contact_reminder_sent_dates"] = sorted(sent_dates)[-30:]
             append_notification_log(state, "missing_contact", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
             sent += 1
             results.append({"line_user_id": line_user_id, "result": result})
         except Exception as exc:
-            append_notification_log(state, "missing_contact", line_user_id, "failed", message, str(exc))
+            failure = _record_scheduled_push_failure(
+                state,
+                user,
+                delivery_key,
+                "missing_contact",
+                line_user_id,
+                message,
+                exc,
+                now,
+            )
             skipped += 1
             results.append({"line_user_id": line_user_id, "error": str(exc)})
+            if failure["kind"] == "system":
+                break
     save_state(config["DATA_FILE"], state)
     return {"sent": sent, "skipped": skipped, "results": results}, 200
 
@@ -6886,9 +7041,14 @@ def send_checkin_reminders(config):
 
         # 同一五分鐘時間窗只推一次；較早漏掉的時段不補送也不標記。
         target_time = due_unsent[-1]
+        delivery_key = f"checkin:{today}:{target_time}"
+        if not push_attempt_allowed(user, delivery_key):
+            skipped += 1
+            continue
         message = build_daily_checkin_flex(now, target_time=target_time)
         try:
             result = sender(token, line_user_id, message)
+            _clear_push_delivery_failure(user, delivery_key)
             _mark_checkin_reminder_slots(user, today, times, due_unsent)
             append_notification_log(state, "checkin", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
             sent += 1
@@ -6896,8 +7056,12 @@ def send_checkin_reminders(config):
             # 方案即將／已到期：同日最多附帶一次提醒（不洗版）
             if should_offer_expiry_remind(user, now):
                 expiry_msg = build_expiry_remind_flex(user, now)
+                expiry_key = f"expiry_remind:{today}"
+                if not push_attempt_allowed(user, expiry_key):
+                    continue
                 try:
                     expiry_result = sender(token, line_user_id, expiry_msg)
+                    _clear_push_delivery_failure(user, expiry_key)
                     mark_expiry_remind_sent(user, now)
                     append_notification_log(
                         state,
@@ -6908,16 +7072,33 @@ def send_checkin_reminders(config):
                         json.dumps(expiry_result, ensure_ascii=False),
                     )
                 except Exception as expiry_exc:
-                    append_notification_log(
-                        state, "expiry_remind", line_user_id, "failed", expiry_msg, str(expiry_exc)
+                    failure = _record_scheduled_push_failure(
+                        state,
+                        user,
+                        expiry_key,
+                        "expiry_remind",
+                        line_user_id,
+                        expiry_msg,
+                        expiry_exc,
+                        now,
                     )
+                    if failure["kind"] == "system":
+                        break
         except Exception as exc:
-            if _mark_line_push_blocked(user, exc):
-                append_notification_log(state, "checkin", line_user_id, "blocked", message, str(exc))
-            else:
-                append_notification_log(state, "checkin", line_user_id, "failed", message, str(exc))
+            failure = _record_scheduled_push_failure(
+                state,
+                user,
+                delivery_key,
+                "checkin",
+                line_user_id,
+                message,
+                exc,
+                now,
+            )
             skipped += 1
             results.append({"line_user_id": line_user_id, "error": str(exc)})
+            if failure["kind"] == "system":
+                break
 
     save_state(data_file, state)
     return {"sent": sent, "skipped": skipped, "results": results}, 200
@@ -7010,6 +7191,7 @@ def send_birthday_reminders(config):
     results = []
 
     blocked = 0
+    system_error = False
     for user in state.get("users", {}).values():
         line_user_id = user.get("line_user_id")
         if not line_user_id:
@@ -7037,24 +7219,41 @@ def send_birthday_reminders(config):
             sent_key = f"{today_key}:{note_date}:{remind_days}"
             if sent_key in sent_keys:
                 continue
+            delivery_key = f"birthday:{sent_key}"
+            if not push_attempt_allowed(user, delivery_key):
+                skipped += 1
+                continue
             who = birthday.get("birthday_relationship") or birthday.get("birthday_name") or "家人"
             when_text = "今天" if remind_days == 0 else ("明天" if remind_days == 1 else f"{remind_days} 天後")
             message = f"{when_text}是{who}生日，記得跟他說聲生日快樂。也可以順手確認他今天平安。"
             try:
                 result = sender(token, line_user_id, message)
+                _clear_push_delivery_failure(user, delivery_key)
                 sent_keys.add(sent_key)
                 user["birthday_reminder_sent_keys"] = sorted(sent_keys)[-80:]
                 append_notification_log(state, "birthday", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
                 sent += 1
                 results.append({"line_user_id": line_user_id, "birthday": who, "remind_days": remind_days})
             except Exception as exc:
-                if _mark_line_push_blocked(user, exc):
+                failure = _record_scheduled_push_failure(
+                    state,
+                    user,
+                    delivery_key,
+                    "birthday",
+                    line_user_id,
+                    message,
+                    exc,
+                    now,
+                )
+                if failure["status"] == "blocked":
                     blocked += 1
-                    append_notification_log(state, "birthday", line_user_id, "blocked", message, str(exc))
-                else:
-                    append_notification_log(state, "birthday", line_user_id, "failed", message, str(exc))
                 skipped += 1
                 results.append({"line_user_id": line_user_id, "birthday": who, "error": str(exc)})
+                if failure["kind"] == "system":
+                    system_error = True
+                    break
+        if system_error:
+            break
 
     save_state(data_file, state)
     return {"sent": sent, "skipped": skipped, "blocked": blocked, "results": results}, 200
@@ -7438,6 +7637,7 @@ def send_smart_reminders(config):
     now_hm = now.strftime("%H:%M")
     day_window = True  # 改由各筆 remind_time 判斷
     eve_window = now.hour >= 20
+    system_error = False
 
     for user in state.get("users", {}).values():
         line_user_id = user.get("line_user_id")
@@ -7461,9 +7661,14 @@ def send_smart_reminders(config):
                     continue
                 if not reminder.get("notify_private", True):
                     continue
+                delivery_key = f"smart_reminder:{key}"
+                if not push_attempt_allowed(user, delivery_key):
+                    skipped += 1
+                    continue
                 message = build_smart_reminder_flex(reminder, mode="day")
                 try:
                     result = sender(token, line_user_id, message)
+                    _clear_push_delivery_failure(user, delivery_key)
                     sent_keys.add(key)
                     if snooze.get("id") == rid:
                         user["smart_reminder_snooze"] = {}
@@ -7471,9 +7676,23 @@ def send_smart_reminders(config):
                     sent += 1
                     results.append({"line_user_id": line_user_id, "id": rid, "mode": "day"})
                 except Exception as exc:
-                    append_notification_log(state, "smart_reminder", line_user_id, "failed", message.get("altText"), str(exc))
+                    failure = _record_scheduled_push_failure(
+                        state,
+                        user,
+                        delivery_key,
+                        "smart_reminder",
+                        line_user_id,
+                        message.get("altText"),
+                        exc,
+                        now,
+                    )
                     skipped += 1
                     results.append({"line_user_id": line_user_id, "id": rid, "error": str(exc)})
+                    if failure["kind"] == "system":
+                        system_error = True
+                        break
+            if system_error:
+                break
             # Eve (night before)
             if eve_window and reminder.get("eve_remind", True) and smart_reminder_occurs_on(reminder, tomorrow):
                 key = f"{today_key}:{rid}:eve"
@@ -7481,18 +7700,37 @@ def send_smart_reminders(config):
                     continue
                 if not reminder.get("notify_private", True):
                     continue
+                delivery_key = f"smart_reminder:{key}"
+                if not push_attempt_allowed(user, delivery_key):
+                    skipped += 1
+                    continue
                 message = build_smart_reminder_flex(reminder, mode="eve")
                 try:
                     result = sender(token, line_user_id, message)
+                    _clear_push_delivery_failure(user, delivery_key)
                     sent_keys.add(key)
                     append_notification_log(state, "smart_reminder", line_user_id, "sent", message.get("altText"), json.dumps(result, ensure_ascii=False))
                     sent += 1
                     results.append({"line_user_id": line_user_id, "id": rid, "mode": "eve"})
                 except Exception as exc:
-                    append_notification_log(state, "smart_reminder", line_user_id, "failed", message.get("altText"), str(exc))
+                    failure = _record_scheduled_push_failure(
+                        state,
+                        user,
+                        delivery_key,
+                        "smart_reminder",
+                        line_user_id,
+                        message.get("altText"),
+                        exc,
+                        now,
+                    )
                     skipped += 1
                     results.append({"line_user_id": line_user_id, "id": rid, "error": str(exc)})
+                    if failure["kind"] == "system":
+                        system_error = True
+                        break
         user["smart_reminder_sent_keys"] = sorted(sent_keys)[-120:]
+        if system_error:
+            break
 
     save_state(data_file, state)
     return {"sent": sent, "skipped": skipped, "results": results}, 200
