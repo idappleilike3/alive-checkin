@@ -1833,14 +1833,29 @@ def soft_archive_contacts_past_retain(profile, now):
 
 
 def apply_invite_trial_reward(inviter, reward, *, accepted_at):
-    """新守護人綁定成功：邀請人免費延長 7 天（同一人只套用一次）。
+    """新守護人綁定成功：邀請人免費延長 7 天。
 
-    Returns True when bonus was newly applied.
+    規則：第一次邀請只標記不送天數（讓使用者體驗完整的 7 天基礎試用），
+          第二次起的邀請每位 +7 天；同一位被邀請人只算一次。
     """
     if not isinstance(inviter, dict) or not isinstance(reward, dict):
         return False
     if reward.get("status") == "applied" and reward.get("selected_reward") == "trial_7_days":
         return False
+
+    # 累計成功邀請的次數（用 inviter 身上的計數器，不受 trial_bonus_days 影響）
+    accepted_count = int(inviter.get("invite_accepted_count") or 0) + 1
+    inviter["invite_accepted_count"] = accepted_count
+
+    # 第一次邀請不送天數，僅標記已生效
+    if accepted_count == 1:
+        reward["selected_reward"] = "trial_7_days"
+        reward["status"] = "applied"
+        reward["applied_at"] = accepted_at
+        reward["reward_days"] = 0
+        reward["skipped_first_invite"] = True
+        return True
+
     inviter["trial_bonus_days"] = trial_bonus_days(inviter) + INVITE_REWARD_DAYS
     # 若已因到期落到 free，邀請成功後回到 trial，讓加碼天數立即生效
     plan = str(inviter.get("plan") or "trial")
@@ -4748,13 +4763,30 @@ def notify_safety_guard_started(state, profile, line_user_id, duration_hours, co
             targets.append(target)
 
     if not targets:
-        emergency_line = any(
-            resolve_contact_role(c) == "emergency" and contact_is_bound_guardian(c, line_user_id)
-            for c in contacts
+        # 進一步診斷：分辨「完全沒聯絡人」、「只有緊急聯絡人」、「有聯絡人但未走 LINE 綁定」
+        all_contacts = list(profile.get("contacts") or [])
+        has_any_contact = bool(all_contacts)
+        only_emergency = has_any_contact and all(
+            resolve_contact_role(c) == "emergency" for c in all_contacts
         )
-        if emergency_line:
+        # 有「核心守護人」(is_primary) 但還沒拿到對方的 LINE userId
+        core_missing_line = has_any_contact and not any(
+            (get_contact_line_id(c) or "").strip() for c in all_contacts
+        )
+
+        if not has_any_contact:
+            reason = "尚未新增任何守護人。請到「守護人」頁籤新增 1 位家人"
+            reason_code = "no_contacts"
+        elif only_emergency:
             reason = "目前只有緊急聯絡人（電話備援），安全守護需先「一鍵邀請」LINE 守護人"
             reason_code = "emergency_only"
+        elif core_missing_line:
+            reason = (
+                "已新增守護人，但對方尚未完成 LINE 綁定。"
+                "請把 LINE 邀請連結傳給守護人，讓他加入「每日平安」官方帳號並點連結同意，"
+                "完成後下次開啟安全守護就會通知到他"
+            )
+            reason_code = "guardian_not_bound_line"
         else:
             reason = "尚未綁定可通知的守護人。請先一鍵邀請家人完成 LINE 綁定，且對方需加入官方帳號好友"
             reason_code = "no_guardians"
