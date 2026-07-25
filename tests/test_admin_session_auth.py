@@ -6,6 +6,17 @@ import app as alive_app
 
 
 class AdminSessionAuthTests(unittest.TestCase):
+    def test_admin_page_uses_session_not_password_query(self):
+        page = Path("admin.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="adminLoginForm"', page)
+        self.assertIn('id="logoutBtn"', page)
+        self.assertIn("async function adminFetch", page)
+        self.assertIn('"X-CSRF-Token"', page)
+        self.assertNotIn("?password=", page)
+        self.assertNotIn("function apiPassword", page)
+        self.assertNotIn("免密碼開放後台", page)
+
     def make_client(self, **overrides):
         alive_app.ADMIN_LOGIN_ATTEMPTS.clear()
         temp = tempfile.TemporaryDirectory()

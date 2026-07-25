@@ -19,6 +19,11 @@
       padding: 24px;
     }
     .shell { max-width: 1080px; margin: 0 auto; }
+    .login-panel { max-width: 440px; margin: 10vh auto 0; }
+    .login-panel form { display: grid; gap: 12px; }
+    .login-panel label { font-weight: 800; color: #14532d; }
+    .login-panel input { width: 100%; background: #fff; }
+    .login-status { min-height: 1.5em; margin: 0; color: #9f1239; font-weight: 700; }
     .topbar {
       display: flex;
       justify-content: space-between;
@@ -336,22 +341,30 @@
   </style>
 </head>
 <body>
-  <main class="shell">
+  <section class="panel login-panel" id="loginPanel">
+    <form id="adminLoginForm">
+      <h1>每日平安管理後台</h1>
+      <label for="adminPassword">管理密碼</label>
+      <input id="adminPassword" type="password" autocomplete="current-password" required>
+      <button id="loginBtn" type="submit">登入後台</button>
+      <p class="login-status" id="loginStatus" role="status" aria-live="polite"></p>
+    </form>
+  </section>
+
+  <main class="shell" id="adminShell" hidden>
     <div class="topbar">
       <div>
         <h1>後台總覽 ♡</h1>
         <p class="subtitle">看大家有沒有平安簽到，必要時推播提醒。</p>
       </div>
+      <button id="logoutBtn" class="secondary" type="button">登出</button>
     </div>
 
     <section class="panel">
       <div class="auth-bar" id="authBar" aria-label="後台操作">
-      <p class="auth-hint" style="grid-column:1/-1;margin:0;">目前為<strong>免密碼開放後台</strong>（公開網址任何人都能看，之後若要上鎖再設 <code>ADMIN_PASSWORD</code>）。</p>
         <p class="note" id="persistenceNote" style="grid-column:1/-1;margin:0;color:#9a3412;" hidden></p>
         <button id="refreshBtn" type="button">刷新資料</button>
         <p class="auth-status" id="authStatus" role="status" aria-live="polite">正在載入後台資料…</p>
-        <!-- 保留隱藏欄位，舊書籤／腳本若帶 password 參數也不會壞 -->
-        <input id="password" type="hidden" value="" autocomplete="off">
       </div>
       <div class="toolbar">
         <button id="contactRemindBtn" class="info" type="button">提醒填聯絡人</button>
@@ -615,11 +628,37 @@
   <script>
     const $ = (id) => document.getElementById(id);
 
-    // Open admin: no password required. Query param kept empty for API compatibility.
-    function apiPassword() {
-      const el = $("password");
-      const raw = el ? String(el.value || "").trim() : "";
-      return encodeURIComponent(raw);
+    let adminCsrfToken = "";
+
+    function showLogin(message) {
+      adminCsrfToken = "";
+      $("adminShell").hidden = true;
+      $("loginPanel").hidden = false;
+      $("loginStatus").textContent = message;
+    }
+
+    function showDashboard() {
+      $("loginPanel").hidden = true;
+      $("adminShell").hidden = false;
+    }
+
+    async function adminFetch(url, options = {}) {
+      const method = String(options.method || "GET").toUpperCase();
+      const headers = new Headers(options.headers || {});
+      if (!["GET", "HEAD", "OPTIONS"].includes(method) && adminCsrfToken) {
+        headers.set("X-CSRF-Token", adminCsrfToken);
+      }
+      const response = await fetch(url, {
+        ...options,
+        method,
+        headers,
+        credentials: "same-origin"
+      });
+      if (response.status === 401 || response.status === 403) {
+        showLogin("登入已失效，請重新登入。");
+        throw new Error("admin_session_expired");
+      }
+      return response;
     }
 
     function setAuthStatus(text, kind) {
@@ -633,31 +672,22 @@
     }
 
     function authErrorText(data, status) {
-      const code = (data && data.error) || "";
-      if (status === 401 || code === "unauthorized") {
-        return "後台目前需要密碼，但此頁已改為免密碼模式；請確認伺服器已部署 ALLOW_OPEN_ADMIN。";
-      }
       if (!status) {
         return "連線失敗，請稍後再試。";
       }
       return (data && (data.message || data.error)) || `載入失敗（HTTP ${status}）。`;
     }
 
-    function setLoginBusy(busy) {
-      const refreshBtn = $("refreshBtn");
-      if (refreshBtn) refreshBtn.disabled = busy;
-    }
-
-    async function runLoginOrRefresh() {
-      setLoginBusy(true);
-      setAuthStatus("正在載入後台資料…", "is-loading");
+    async function restoreAdminSession() {
       try {
+        const response = await fetch("/api/admin/session", { credentials: "same-origin" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.authenticated) return showLogin("");
+        adminCsrfToken = data.csrf_token || "";
+        showDashboard();
         await refresh();
       } catch (error) {
-        setAuthStatus("讀取失敗，請稍後再按「刷新資料」。", "is-err");
         console.warn(error);
-      } finally {
-        setLoginBusy(false);
       }
     }
 
@@ -778,7 +808,7 @@
         alert("請先輸入回覆內容。");
         return;
       }
-      const res = await fetch(`/api/admin/support-reply?password=${apiPassword()}`, {
+      const res = await adminFetch("/api/admin/support-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticket_id: ticketId, message })
@@ -791,7 +821,7 @@
     }
 
     async function updatePlan(lineUserId, plan) {
-      const res = await fetch(`/api/admin/user-plan?password=${apiPassword()}`, {
+      const res = await adminFetch("/api/admin/user-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -808,7 +838,7 @@
     }
 
     async function setCoreGuardian(lineUserId, contactId, contactLineId, makeCore) {
-      const res = await fetch(`/api/admin/set-core-guardian?password=${apiPassword()}`, {
+      const res = await adminFetch("/api/admin/set-core-guardian", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -877,7 +907,7 @@
 
     async function refresh() {
       setAuthStatus("正在載入後台資料…", "is-loading");
-      const res = await fetch(`/api/admin/summary?password=${apiPassword()}`);
+      const res = await adminFetch("/api/admin/summary");
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setAuthStatus(authErrorText(data, res.status), "is-err");
@@ -1011,7 +1041,7 @@
           `).join("")
           : `<div class="reward-item"><span>尚無 LINE 邀請綁定關係</span><span></span><span></span></div>`;
       }
-      const ticketRes = await fetch(`/api/admin/support-tickets?password=${apiPassword()}`);
+      const ticketRes = await adminFetch("/api/admin/support-tickets");
       const ticketData = ticketRes.ok ? await ticketRes.json() : { tickets: [] };
       $("supportList").innerHTML = (ticketData.tickets || []).length
         ? ticketData.tickets.map((ticket) => `
@@ -1034,7 +1064,7 @@
     }
 
     async function refreshBackups() {
-      const res = await fetch(`/api/admin/backups?password=${apiPassword()}`);
+      const res = await adminFetch("/api/admin/backups");
       const data = res.ok ? await res.json() : { backups: [] };
       $("backupsBody").innerHTML = (data.backups || []).length
         ? data.backups.map((backup) => `
@@ -1049,7 +1079,7 @@
     }
 
     async function createBackup() {
-      const res = await fetch(`/api/admin/backups?password=${apiPassword()}`, { method: "POST" });
+      const res = await adminFetch("/api/admin/backups", { method: "POST" });
       const data = await res.json();
       $("message").textContent = res.ok
         ? `備份 ${data.backup.id} 已完成。`
@@ -1058,7 +1088,7 @@
     }
 
     async function downloadBackup(backupId) {
-      const res = await fetch(`/api/admin/backups/${encodeURIComponent(backupId)}?password=${apiPassword()}`);
+      const res = await adminFetch(`/api/admin/backups/${encodeURIComponent(backupId)}`);
       const data = await res.json();
       if (!res.ok) {
         $("message").textContent = data.error || "備份檔案下載失敗。";
@@ -1076,7 +1106,7 @@
 
     async function sendReminders() {
       if (!confirm("要推播提醒所有逾期使用者嗎？")) return;
-      const res = await fetch(`/api/admin/send-reminders?password=${apiPassword()}`, { method: "POST" });
+      const res = await adminFetch("/api/admin/send-reminders", { method: "POST" });
       const data = await res.json();
       $("message").textContent = res.ok
         ? `已送出 ${data.sent} 則提醒。`
@@ -1086,7 +1116,7 @@
 
     async function sendContactReminders() {
       if (!confirm("要推播提醒未填緊急聯絡人的使用者嗎？")) return;
-      const res = await fetch(`/api/admin/send-contact-reminders?password=${apiPassword()}`, { method: "POST" });
+      const res = await adminFetch("/api/admin/send-contact-reminders", { method: "POST" });
       const data = await res.json();
       $("message").textContent = res.ok
         ? `已送出 ${data.sent} 則緊急聯絡人提醒。`
@@ -1096,7 +1126,7 @@
 
     async function sendRenewalReminders() {
       if (!confirm("要推播提醒 7 天內即將到期的會員嗎？")) return;
-      const res = await fetch(`/api/admin/send-renewal-reminders?password=${apiPassword()}`, { method: "POST" });
+      const res = await adminFetch("/api/admin/send-renewal-reminders", { method: "POST" });
       const data = await res.json();
       $("message").textContent = res.ok
         ? `已送出 ${data.sent} 則續費提醒。`
@@ -1106,7 +1136,7 @@
 
     async function sendBirthdayReminders() {
       if (!confirm("要推播今天符合條件的家人生日提醒嗎？")) return;
-      const res = await fetch(`/api/admin/send-birthday-reminders?password=${apiPassword()}`, { method: "POST" });
+      const res = await adminFetch("/api/admin/send-birthday-reminders", { method: "POST" });
       const data = await res.json();
       $("message").textContent = res.ok
         ? `已送出 ${data.sent} 則生日提醒。`
@@ -1117,7 +1147,7 @@
     async function deployRichMenu() {
       if (!confirm("要用伺服器上的 LINE token 上傳並設為預設圖文選單嗎？")) return;
       $("message").textContent = "圖文選單上傳中…";
-      const res = await fetch(`/api/admin/rich-menu/deploy?password=${apiPassword()}`, { method: "POST" });
+      const res = await adminFetch("/api/admin/rich-menu/deploy", { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.ok) {
         $("message").textContent = `圖文選單已設為預設：${data.richMenuId || ""}（${data.name || ""}）`;
@@ -1128,9 +1158,38 @@
       }
     }
 
-    $("refreshBtn").addEventListener("click", (event) => {
+    $("adminLoginForm").addEventListener("submit", async (event) => {
       event.preventDefault();
-      runLoginOrRefresh();
+      const response = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ password: $("adminPassword").value })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) return showLogin("密碼不正確，請再試一次。");
+      $("adminPassword").value = "";
+      adminCsrfToken = data.csrf_token || "";
+      showDashboard();
+      await refresh();
+    });
+
+    $("logoutBtn").addEventListener("click", async () => {
+      try {
+        await adminFetch("/api/admin/logout", { method: "POST" });
+        showLogin("已安全登出。");
+      } catch (error) {
+        if (error.message !== "admin_session_expired") console.warn(error);
+      }
+    });
+
+    $("refreshBtn").addEventListener("click", async (event) => {
+      event.preventDefault();
+      try {
+        await refresh();
+      } catch (error) {
+        if (error.message !== "admin_session_expired") console.warn(error);
+      }
     });
     $("contactRemindBtn").addEventListener("click", sendContactReminders);
     $("remindBtn").addEventListener("click", sendReminders);
@@ -1138,10 +1197,9 @@
     $("birthdayRemindBtn").addEventListener("click", sendBirthdayReminders);
     $("createBackupBtn").addEventListener("click", createBackup);
     $("richMenuDeployBtn").addEventListener("click", deployRichMenu);
-    // 免密碼：一開頁就載入總覽；綁定後約 20 秒自動刷新，不需手動 hack
     let autoRefreshAdminBusy = false;
     async function autoRefreshAdmin() {
-      if (document.visibilityState !== "visible" || autoRefreshAdminBusy) return;
+      if (document.visibilityState !== "visible" || $("adminShell").hidden || autoRefreshAdminBusy) return;
       autoRefreshAdminBusy = true;
       try {
         await refresh();
@@ -1151,8 +1209,7 @@
         autoRefreshAdminBusy = false;
       }
     }
-    setAuthStatus("正在載入後台資料…", "is-loading");
-    setTimeout(() => { runLoginOrRefresh(); }, 0);
+    setTimeout(restoreAdminSession, 0);
     setInterval(autoRefreshAdmin, 20000);
   </script>
 </body>
