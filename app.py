@@ -6930,9 +6930,14 @@ def send_birthday_reminders(config):
     skipped = 0
     results = []
 
+    blocked = 0
     for user in state.get("users", {}).values():
         line_user_id = user.get("line_user_id")
         if not line_user_id:
+            skipped += 1
+            continue
+        if user.get("line_push_blocked"):
+            blocked += 1
             skipped += 1
             continue
         notes = user.get("calendar_notes") or {}
@@ -6964,12 +6969,16 @@ def send_birthday_reminders(config):
                 sent += 1
                 results.append({"line_user_id": line_user_id, "birthday": who, "remind_days": remind_days})
             except Exception as exc:
-                append_notification_log(state, "birthday", line_user_id, "failed", message, str(exc))
+                if _mark_line_push_blocked(user, exc):
+                    blocked += 1
+                    append_notification_log(state, "birthday", line_user_id, "blocked", message, str(exc))
+                else:
+                    append_notification_log(state, "birthday", line_user_id, "failed", message, str(exc))
                 skipped += 1
                 results.append({"line_user_id": line_user_id, "birthday": who, "error": str(exc)})
 
     save_state(data_file, state)
-    return {"sent": sent, "skipped": skipped, "results": results}, 200
+    return {"sent": sent, "skipped": skipped, "blocked": blocked, "results": results}, 200
 
 
 # === 799 智能提醒（生活提醒：只走 LINE 私訊，預設不進守護群）===
