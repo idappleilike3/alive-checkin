@@ -27,6 +27,7 @@
 - Create: `tests/test_admin_session_auth.py` — 後台登入、session、CSRF、登出與 fail-closed 測試。
 - Create: `tests/test_scheduler_tick.py` — 時間窗、單一 tick、冪等與 Render Blueprint 測試。
 - Create: `tests/test_push_delivery_policy.py` — LINE 錯誤分類與重試上限測試。
+- Create: `tests/test_liff_fast_route.py` — 深層連結先顯示、單次註冊與即時狀態同步測試。
 - Create: `push_delivery.py` — 不依賴 Flask 的推播錯誤分類與狀態紀錄。
 - Modify: `app.py` — 註冊後台 session 路由、cron tick、排程時間窗及共用推播政策。
 - Modify: `admin.html` — 登入畫面、session fetch、CSRF、登出與 401 處理。
@@ -1299,7 +1300,252 @@ git commit -m "feat(welcome): improve senior readability"
 
 ---
 
-### Task 7: 完整驗證、部署文件與正式設定清單
+### Task 7: LIFF 深層連結快速顯示與即時狀態同步
+
+**Files:**
+- Create: `tests/test_liff_fast_route.py`
+- Modify: `index.html:4580-4640`
+- Modify: `index.html:6619-6650`
+- Modify: `index.html:7423-7505`
+- Modify: `index.html:9160-9350`
+- Modify: `index.html:9880-9940`
+
+**Interfaces:**
+- Produces: `requestedAppAction() -> string`
+- Produces: `applyInitialDeepLinkRoute() -> {handled: boolean, redirected: boolean}`
+- Produces: `loadInitialMemberData() -> Promise<{status, contacts, onboarding}>`
+- Preserves: authentication and onboarding permission gates.
+
+- [ ] **Step 1: Write failing fast-route contract tests**
+
+```python
+# tests/test_liff_fast_route.py
+import unittest
+from pathlib import Path
+
+
+class LiffFastRouteTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.page = Path("index.html").read_text(encoding="utf-8")
+
+    def test_deep_link_is_applied_before_liff_network_initialization(self):
+        bootstrap = self.page[
+            self.page.index("async function bootstrapApp()"):
+            self.page.index("appBootstrapPromise = bootstrapApp()")
+        ]
+        self.assertIn("applyInitialDeepLinkRoute()", bootstrap)
+        self.assertLess(
+            bootstrap.index("applyInitialDeepLinkRoute()"),
+            bootstrap.index("await initLine()"),
+        )
+
+    def test_open_and_page_share_one_action_parser(self):
+        self.assertIn("function requestedAppAction()", self.page)
+        self.assertIn('getAppParam("open") || getAppParam("page")', self.page)
+        self.assertIn('"checkin"', self.page)
+        self.assertIn('"guard"', self.page)
+        self.assertIn('"sos"', self.page)
+        self.assertIn('"member"', self.page)
+
+    def test_line_registration_occurs_once_per_bootstrap(self):
+        self.assertEqual(self.page.count('fetch("/api/line/register"'), 1)
+
+    def test_first_status_response_syncs_checkin_button_immediately(self):
+        loader = self.page[
+            self.page.index("async function loadInitialMemberData()"):
+            self.page.index("async function initApp()")
+        ]
+        self.assertIn("renderStatus(status)", loader)
+        self.assertIn("syncCheckBtn(status)", loader)
+
+    def test_background_poll_is_sixty_seconds_not_five(self):
+        self.assertIn("}, 60000);", self.page)
+        self.assertNotIn("}, 5000);", self.page)
+        self.assertIn('document.visibilityState === "visible"', self.page)
+```
+
+- [ ] **Step 2: Run tests and verify RED**
+
+Run:
+
+```powershell
+python -m unittest tests.test_liff_fast_route -v
+```
+
+Expected: FAIL because routing currently happens after LIFF/member requests, registration appears twice and polling is 5 seconds.
+
+- [ ] **Step 3: Add a synchronous initial route**
+
+```javascript
+function requestedAppAction() {
+  return String(getAppParam("open") || getAppParam("page") || "").trim().toLowerCase();
+}
+
+function setInitialRouteLoading(action) {
+  const loadingText = "正在載入你的資料…";
+  document.body.setAttribute("aria-busy", "true");
+  const checkButton = $("checkBtn");
+  const safeButton = $("mvpSafeBtn");
+  const guardButton = $("mvpGuardStartBtn");
+  const sosButton = $("sosHoldButton");
+  if (checkButton) checkButton.disabled = true;
+  if (safeButton) safeButton.disabled = true;
+  if (guardButton) guardButton.disabled = true;
+  if (sosButton) sosButton.disabled = true;
+  if (action === "guard") setSafetyGuardFeedback(loadingText, "info");
+  if (action === "sos" && $("sosFeedback")) $("sosFeedback").textContent = loadingText;
+}
+
+function applyInitialDeepLinkRoute() {
+  const action = requestedAppAction();
+  const publicPages = {
+    help: "help.html",
+    faq: "faq.html",
+    pricing: "liff/pricing.html",
+    plan: "liff/pricing.html",
+    terms: "terms.html",
+    privacy: "privacy.html"
+  };
+  if (publicPages[action]) {
+    location.replace(publicPages[action]);
+    return { handled: true, redirected: true };
+  }
+  if (action === "sos") {
+    showTab("home");
+    openSosFlow();
+  } else if (action === "guard" || action === "safety") {
+    showTab("home");
+    openMvpGuardPanel();
+  } else if (action === "member") {
+    showTab("member");
+  } else if (action === "guardians" || action === "guardian") {
+    showTab("guardians");
+  } else if (action === "checkin") {
+    showTab("home");
+    syncCheckBtn({ loading: true });
+  } else {
+    return { handled: false, redirected: false };
+  }
+  setInitialRouteLoading(action);
+  document.body.dataset.initialRoute = action;
+  return { handled: true, redirected: false };
+}
+```
+
+The loading variants must disable mutation buttons until `lineUserId` and the first status response exist. They may show「正在載入你的資料…」but must not show a fake success state.
+
+- [ ] **Step 4: Make LIFF initialization non-blocking where safe and remove duplicate registration**
+
+Use the fixed deployed ID immediately:
+
+```javascript
+const FIXED_LIFF_ID = "2010674803-rK98c0lo";
+window.__LIFF_ID__ = FIXED_LIFF_ID;
+await liff.init({ liffId: FIXED_LIFF_ID });
+```
+
+Load nonessential config in parallel after init:
+
+```javascript
+const appConfigPromise = fetch("/api/config")
+  .then(response => response.ok ? response.json() : {})
+  .then(config => {
+    appConfig = config || {};
+    return appConfig;
+  })
+  .catch(() => ({}));
+```
+
+Keep exactly one `/api/line/register` call in `initializeLiff()` and delete the duplicate registration block from `initApp()`.
+
+- [ ] **Step 5: Load initial member data in parallel and synchronize immediately**
+
+```javascript
+async function loadInitialMemberData() {
+  const [statusResult, contactsResult, onboardingResult] = await Promise.allSettled([
+    apiGetStatus(),
+    apiGetContacts(lineUserId),
+    fetchOnboardingState()
+  ]);
+
+  if (statusResult.status !== "fulfilled") throw statusResult.reason;
+  const status = statusResult.value;
+  renderStatus(status);
+  syncCheckBtn(status);
+
+  const contactsPayload = contactsResult.status === "fulfilled"
+    ? contactsResult.value
+    : { status: 0, data: {} };
+  if (contactsPayload.status === 200) {
+    contactData = contactsPayload.data.contacts || [];
+    renderGuardians(contactData, contactsPayload.data.contact_limit);
+  }
+
+  const onboarding = onboardingResult.status === "fulfilled"
+    ? onboardingResult.value
+    : { done: false, hasGuardian: false, data: {} };
+
+  document.body.removeAttribute("aria-busy");
+  return { status, contacts: contactData, onboarding };
+}
+```
+
+`initApp()` consumes this result for authorization/onboarding decisions but does not delay the initial visual route. If a requested action is not allowed, replace the loading frame with the existing login/onboarding message.
+
+- [ ] **Step 6: Apply the route before network calls and slow background polling**
+
+```javascript
+async function bootstrapApp() {
+  appBootstrapComplete = false;
+  const initialRoute = applyInitialDeepLinkRoute();
+  if (initialRoute.redirected) return;
+  try {
+    const lineReady = lineUserId ? true : await initLine();
+    if (!useLocalMode && (!lineReady || !lineUserId)) {
+      showLineLoginRequired();
+      return;
+    }
+    await initApp();
+    await refreshCalendarNotes();
+    openRequestedPage();
+  } finally {
+    document.body.removeAttribute("aria-busy");
+    appBootstrapComplete = true;
+  }
+}
+
+setInterval(() => {
+  if (document.visibilityState === "visible" && lineUserId) {
+    refreshStatus().catch(error => console.warn("狀態更新失敗", error));
+  }
+}, 60000);
+```
+
+Keep immediate `refreshStatus()` after check-in, guardian binding, SOS and settings mutations.
+
+- [ ] **Step 7: Run fast-route and related regression tests**
+
+Run:
+
+```powershell
+python -m unittest tests.test_liff_fast_route tests.test_product_rules tests.test_bind_and_home_gate tests.test_checkin_postback_and_smart -v
+python scripts/verify_onboarding_ux.py
+python scripts/verify_mvp_home.py
+```
+
+Expected: every command exits 0; the source contract confirms early routing, one registration and immediate status synchronization.
+
+- [ ] **Step 8: Commit**
+
+```powershell
+git add index.html tests/test_liff_fast_route.py
+git commit -m "perf(liff): show deep links before data loading"
+```
+
+---
+
+### Task 8: 完整驗證、部署文件與正式設定清單
 
 **Files:**
 - Modify: `README.md`
@@ -1382,6 +1628,7 @@ Confirm:
 - `_start_internal_scheduler(app)` is absent.
 - Rich menu「需要幫忙」uses the single LIFF URI.
 - Welcome card only uses「核心守護人」for the guardian role.
+- Deep-link routing is applied before `await initLine()`, LINE registration occurs once, and no 5-second polling remains.
 
 - [ ] **Step 5: Commit documentation and final verification metadata**
 
@@ -1409,5 +1656,6 @@ After the owner confirms they are set:
 6. Disable the six old cron services and confirm there is no duplicate push.
 7. Deploy the LINE rich menu.
 8. Push the welcome card to a test account.
-9. Test a reminder scheduled five minutes ahead.
-10. Test SOS once with location allowed and once with location denied.
+9. Test `open=checkin`、`open=guard`、`open=sos`、`open=member` on iPhone and Android.
+10. Test a reminder scheduled five minutes ahead.
+11. Test SOS once with location allowed and once with location denied.
