@@ -629,6 +629,7 @@
     const $ = (id) => document.getElementById(id);
 
     let adminCsrfToken = "";
+    let adminAuthGeneration = 0;
 
     function showLogin(message) {
       adminCsrfToken = "";
@@ -679,9 +680,11 @@
     }
 
     async function restoreAdminSession() {
+      const generation = adminAuthGeneration;
       try {
         const response = await fetch("/api/admin/session", { credentials: "same-origin" });
         const data = await response.json().catch(() => ({}));
+        if (generation !== adminAuthGeneration) return;
         if (!response.ok || !data.authenticated) return showLogin("");
         adminCsrfToken = data.csrf_token || "";
         showDashboard();
@@ -1160,23 +1163,39 @@
 
     $("adminLoginForm").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const response = await fetch("/api/admin/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ password: $("adminPassword").value })
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) return showLogin("密碼不正確，請再試一次。");
-      $("adminPassword").value = "";
-      adminCsrfToken = data.csrf_token || "";
-      showDashboard();
-      await refresh();
+      adminAuthGeneration += 1;
+      const generation = adminAuthGeneration;
+      const loginBtn = $("loginBtn");
+      loginBtn.disabled = true;
+      $("loginStatus").textContent = "";
+      try {
+        const response = await fetch("/api/admin/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ password: $("adminPassword").value })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (generation !== adminAuthGeneration) return;
+        if (!response.ok) return showLogin("密碼不正確，請再試一次。");
+        $("adminPassword").value = "";
+        adminCsrfToken = data.csrf_token || "";
+        showDashboard();
+        await refresh();
+      } catch (error) {
+        if (generation !== adminAuthGeneration || error.message === "admin_session_expired") return;
+        showLogin("連線失敗，請稍後再試。");
+      } finally {
+        if (generation === adminAuthGeneration) $("loginBtn").disabled = false;
+      }
     });
 
     $("logoutBtn").addEventListener("click", async () => {
+      adminAuthGeneration += 1;
+      const generation = adminAuthGeneration;
       try {
         await adminFetch("/api/admin/logout", { method: "POST" });
+        if (generation !== adminAuthGeneration) return;
         showLogin("已安全登出。");
       } catch (error) {
         if (error.message !== "admin_session_expired") console.warn(error);

@@ -17,6 +17,16 @@ class AdminSessionAuthTests(unittest.TestCase):
         self.assertNotIn("function apiPassword", page)
         self.assertNotIn("免密碼開放後台", page)
 
+    def test_admin_login_ignores_stale_session_restore_and_handles_network_error(self):
+        page = Path("admin.html").read_text(encoding="utf-8")
+
+        self.assertIn("let adminAuthGeneration = 0", page)
+        self.assertIn("const generation = adminAuthGeneration", page)
+        self.assertIn("if (generation !== adminAuthGeneration) return;", page)
+        self.assertIn("adminAuthGeneration += 1;", page)
+        self.assertIn('showLogin("連線失敗，請稍後再試。");', page)
+        self.assertIn('$("loginBtn").disabled = false;', page)
+
     def make_client(self, **overrides):
         alive_app.ADMIN_LOGIN_ATTEMPTS.clear()
         temp = tempfile.TemporaryDirectory()
