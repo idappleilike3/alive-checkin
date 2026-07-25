@@ -14,10 +14,33 @@ from push_delivery import (
 
 class PushDeliveryPolicyTests(unittest.TestCase):
     def test_invalid_target_is_permanent(self):
-        exc = urllib.error.HTTPError("https://api.line.me", 400, "bad", {}, None)
+        exc = urllib.error.HTTPError(
+            "https://api.line.me",
+            400,
+            "Failed to send messages; not a friend",
+            {},
+            None,
+        )
         self.addCleanup(exc.close)
         failure = classify_push_exception(exc)
         self.assertEqual(failure.kind, "permanent")
+
+    def test_generic_bad_request_is_message_error_not_blocked_recipient(self):
+        user = {}
+        exc = urllib.error.HTTPError(
+            "https://api.line.me", 400, "invalid message object", {}, None
+        )
+        self.addCleanup(exc.close)
+
+        failure = classify_push_exception(exc)
+        result = record_push_failure(user, "checkin:2026-07-26:12:00", exc)
+
+        self.assertEqual(failure.kind, "message")
+        self.assertEqual(result["status"], "message_error")
+        self.assertFalse(user.get("line_push_blocked", False))
+        self.assertFalse(
+            push_attempt_allowed(user, "checkin:2026-07-26:12:00")
+        )
 
     def test_auth_failure_is_system_configuration(self):
         exc = urllib.error.HTTPError("https://api.line.me", 401, "bad", {}, None)
@@ -54,7 +77,9 @@ class PushDeliveryPolicyTests(unittest.TestCase):
 
     def test_permanent_failure_marks_user_blocked(self):
         user = {}
-        exc = urllib.error.HTTPError("https://api.line.me", 400, "bad", {}, None)
+        exc = urllib.error.HTTPError(
+            "https://api.line.me", 400, "recipient blocked", {}, None
+        )
         self.addCleanup(exc.close)
         result = record_push_failure(user, "birthday:2026-07-26", exc)
         self.assertEqual(result["status"], "blocked")
@@ -161,7 +186,7 @@ class PushDeliveryPolicyTests(unittest.TestCase):
                                     "kind": "transient",
                                 }
                             },
-                        }
+                        },
                     }
                 },
             )
@@ -181,6 +206,158 @@ class PushDeliveryPolicyTests(unittest.TestCase):
             profile = alive_app.load_state(data_file)["users"]["U1"]
             self.assertNotIn(
                 delivery_key, profile.get("push_delivery_attempts", {})
+            )
+
+    def test_group_daily_summary_failure_is_persisted_and_capped_at_three(self):
+        calls = []
+
+        def timeout_sender(token, group_id, message):
+            calls.append(group_id)
+            raise TimeoutError("LINE timeout")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_file = Path(tmp) / "state.json"
+            alive_app.save_state(
+                data_file,
+                {
+                    "users": {
+                        "U-owner": {
+                            "line_user_id": "U-owner",
+                            "display_name": "阿明",
+                            "history": [],
+                        }
+                    },
+                    "guardian_groups": {
+                        "C-group": {
+                            "owner_line_user_id": "U-owner",
+                            "status": "active",
+                            "preferences": {
+                                "daily_admin_summary": True,
+                            },
+                        }
+                    },
+                },
+            )
+            config = {
+                "DATA_FILE": data_file,
+                "LINE_CHANNEL_ACCESS_TOKEN": "token",
+                "LINE_PUSH_SENDER": timeout_sender,
+                "CRON_NOW": datetime(2026, 7, 26, 21, 0),
+            }
+
+            for _ in range(4):
+                alive_app.send_guardian_group_daily_summaries(config)
+
+            state = alive_app.load_state(data_file)
+            group = state["guardian_groups"]["C-group"]
+            key = "guardian_group_daily_summary:2026-07-26:C-group"
+            failure_logs = [
+                row
+                for row in state.get("notification_logs", [])
+                if row.get("kind") == "guardian_group_daily_summary"
+            ]
+            self.assertEqual(calls, ["C-group", "C-group", "C-group"])
+            self.assertEqual(group["push_delivery_attempts"][key]["count"], 3)
+            self.assertEqual(len(failure_logs), 3)
+
+    def test_system_error_stops_remaining_cron_tick_tasks(self):
+        calls = []
+
+        def auth_failure_sender(token, line_user_id, message):
+            calls.append(line_user_id)
+            exc = RuntimeError("invalid channel access token")
+            exc.status_code = 401
+            raise exc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_file = Path(tmp) / "state.json"
+            alive_app.save_state(
+                data_file,
+                {
+                    "users": {
+                        "U1": {
+                            "line_user_id": "U1",
+                            "plan": "paid_199",
+                            "history": [],
+                            "reminder_times": ["12:00"],
+                        }
+                    }
+                },
+            )
+
+            result, code = alive_app.run_cron_tick(
+                {
+                    "DATA_FILE": data_file,
+                    "LINE_CHANNEL_ACCESS_TOKEN": "bad-token",
+                    "LINE_PUSH_SENDER": auth_failure_sender,
+                    "CRON_NOW": datetime(2026, 7, 26, 12, 0),
+                    "APP_TIMEZONE": "Asia/Taipei",
+                }
+            )
+
+            self.assertEqual(code, 200)
+            self.assertTrue(result["system_error"])
+            self.assertEqual(list(result["tasks"]), ["checkin_reminders"])
+            self.assertEqual(calls, ["U1"])
+
+    def test_follow_reactivates_previously_blocked_line_recipient(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_file = Path(tmp) / "state.json"
+            alive_app.save_state(
+                data_file,
+                {
+                    "users": {
+                        "U1": {
+                            "line_user_id": "U1",
+                            "line_push_blocked": True,
+                            "line_push_blocked_at": "2026-07-25T09:00:00",
+                            "push_delivery_attempts": {
+                                "checkin:2026-07-25:12:00": {
+                                    "count": 3,
+                                    "kind": "permanent",
+                                }
+                            },
+                        },
+                        "U-owner": {
+                            "line_user_id": "U-owner",
+                            "contacts": [
+                                {
+                                    "line_id": "U1",
+                                    "line_push_blocked": True,
+                                    "line_push_blocked_at": "2026-07-25T09:00:00",
+                                    "push_delivery_attempts": {
+                                        "contact_alert:2026-07-25:U1": {
+                                            "count": 1,
+                                            "kind": "permanent",
+                                        }
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                },
+            )
+
+            changed = alive_app.reactivate_line_push_for_follow(data_file, "U1")
+            profile = alive_app.load_state(data_file)["users"]["U1"]
+
+            self.assertTrue(changed)
+            self.assertFalse(profile.get("line_push_blocked", False))
+            self.assertNotIn("line_push_blocked_at", profile)
+            self.assertNotIn("push_delivery_attempts", profile)
+            contact = alive_app.load_state(data_file)["users"]["U-owner"][
+                "contacts"
+            ][0]
+            self.assertFalse(contact.get("line_push_blocked", False))
+            self.assertNotIn("line_push_blocked_at", contact)
+            self.assertNotIn("push_delivery_attempts", contact)
+            app_source = (Path(__file__).resolve().parents[1] / "app.py").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn(
+                "reactivate_line_push_for_follow("
+                "app.config[\"DATA_FILE\"], line_user_id)",
+                app_source,
             )
 
 

@@ -2356,6 +2356,43 @@ def register_line_user(data_file, payload):
     return status, 200
 
 
+def reactivate_line_push_for_follow(data_file, line_user_id):
+    """A new FollowEvent proves this user can receive LINE pushes again."""
+    line_user_id = str(line_user_id or "").strip()
+    if not line_user_id:
+        return False
+    state = load_state(data_file)
+    user = (state.get("users") or {}).get(line_user_id)
+    if not isinstance(user, dict):
+        return False
+    blocked_keys = (
+        "line_push_blocked",
+        "line_push_blocked_at",
+        "push_delivery_attempts",
+    )
+    changed = False
+    for key in blocked_keys:
+        if key in user:
+            user.pop(key, None)
+            changed = True
+    for owner in (state.get("users") or {}).values():
+        if not isinstance(owner, dict):
+            continue
+        for contact in owner.get("contacts") or []:
+            if not isinstance(contact, dict):
+                continue
+            target = contact.get("line_id") or contact.get("line_user_id")
+            if str(target or "").strip() != line_user_id:
+                continue
+            for key in blocked_keys:
+                if key in contact:
+                    contact.pop(key, None)
+                    changed = True
+    if changed:
+        save_state(data_file, state)
+    return changed
+
+
 def extract_line_display_name(profile_obj) -> str | None:
     """從 line-bot-sdk Profile / dict 取出可用的 displayName。"""
     if profile_obj is None:
@@ -2707,6 +2744,7 @@ def send_renewal_reminders(config):
     now = current_app_time(config)
     sent = 0
     skipped = 0
+    system_error = False
     for profile in state.get("users", {}).values():
         if profile.get("payment_status") != "active":
             continue
@@ -2747,9 +2785,14 @@ def send_renewal_reminders(config):
             )
             skipped += 1
             if failure["kind"] == "system":
+                system_error = True
                 break
     save_state(config["DATA_FILE"], state)
-    return {"sent": sent, "skipped": skipped}, 200
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "system_error": system_error,
+    }, 200
 
 
 def resolve_contact_role(contact):
@@ -6534,7 +6577,12 @@ def send_due_reminders(config):
             profile["last_overdue_alert_date"] = today
 
     save_state(config["DATA_FILE"], state)
-    return {"sent": sent, "skipped": skipped, "results": results}, 200
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "results": results,
+        "system_error": system_error,
+    }, 200
 
 
 def send_guardian_group_daily_summaries(config):
@@ -6556,7 +6604,7 @@ def send_guardian_group_daily_summaries(config):
     sent = 0
     skipped = 0
     results = []
-    dirty = False
+    system_error = False
     for group_id, group in list(groups.items()):
         if not isinstance(group, dict) or group.get("status") != "active":
             skipped += 1
@@ -6566,6 +6614,10 @@ def send_guardian_group_daily_summaries(config):
             skipped += 1
             continue
         if group.get("last_daily_summary_date") == today:
+            skipped += 1
+            continue
+        delivery_key = f"guardian_group_daily_summary:{today}:{group_id}"
+        if not push_attempt_allowed(group, delivery_key):
             skipped += 1
             continue
         owner_id = str(group.get("owner_line_user_id") or "").strip()
@@ -6590,6 +6642,7 @@ def send_guardian_group_daily_summaries(config):
         )
         try:
             result = sender(token, group_id, message)
+            _clear_push_delivery_failure(group, delivery_key)
             append_notification_log(
                 state,
                 "guardian_group_daily_summary",
@@ -6600,25 +6653,35 @@ def send_guardian_group_daily_summaries(config):
             )
             group["last_daily_summary_date"] = today
             groups[group_id] = group
-            dirty = True
             sent += 1
             results.append({"group_id": group_id, "result": result})
         except Exception as exc:
-            append_notification_log(
+            failure = _record_scheduled_push_failure(
                 state,
+                group,
+                delivery_key,
                 "guardian_group_daily_summary",
                 group_id,
-                "failed",
                 message,
-                str(exc),
+                exc,
+                now,
             )
+            groups[group_id] = group
             skipped += 1
             results.append({"group_id": group_id, "error": str(exc)})
+            if failure["kind"] == "system":
+                system_error = True
+                break
 
-    if dirty:
-        state["guardian_groups"] = groups
-        save_state(config["DATA_FILE"], state)
-    return {"sent": sent, "skipped": skipped, "results": results, "date": today}, 200
+    state["guardian_groups"] = groups
+    save_state(config["DATA_FILE"], state)
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "results": results,
+        "date": today,
+        "system_error": system_error,
+    }, 200
 
 
 def send_missing_contact_reminders(config):
@@ -6634,6 +6697,7 @@ def send_missing_contact_reminders(config):
     sent = 0
     skipped = 0
     results = []
+    system_error = False
     for user in state.get("users", {}).values():
         line_user_id = user.get("line_user_id")
         if not line_user_id:
@@ -6679,6 +6743,7 @@ def send_missing_contact_reminders(config):
                 skipped += 1
                 results.append({"line_user_id": line_user_id, "error": str(exc)})
                 if failure["kind"] == "system":
+                    system_error = True
                     break
             continue
         if contact_count >= contact_limit or (contact_count > 0 and not reminder_enabled):
@@ -6725,9 +6790,15 @@ def send_missing_contact_reminders(config):
             skipped += 1
             results.append({"line_user_id": line_user_id, "error": str(exc)})
             if failure["kind"] == "system":
+                system_error = True
                 break
     save_state(config["DATA_FILE"], state)
-    return {"sent": sent, "skipped": skipped, "results": results}, 200
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "results": results,
+        "system_error": system_error,
+    }, 200
 
 
 def cleanup_expired_data(config):
@@ -6998,6 +7069,7 @@ def send_checkin_reminders(config):
     sent = 0
     skipped = 0
     results = []
+    system_error = False
 
     for user in state.get("users", {}).values():
         line_user_id = user.get("line_user_id")
@@ -7083,6 +7155,7 @@ def send_checkin_reminders(config):
                         now,
                     )
                     if failure["kind"] == "system":
+                        system_error = True
                         break
         except Exception as exc:
             failure = _record_scheduled_push_failure(
@@ -7098,10 +7171,16 @@ def send_checkin_reminders(config):
             skipped += 1
             results.append({"line_user_id": line_user_id, "error": str(exc)})
             if failure["kind"] == "system":
+                system_error = True
                 break
 
     save_state(data_file, state)
-    return {"sent": sent, "skipped": skipped, "results": results}, 200
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "results": results,
+        "system_error": system_error,
+    }, 200
 
 
 def broadcast_checkin_reminders(config, *, pause_every=20, pause_seconds=1.0):
@@ -7256,7 +7335,13 @@ def send_birthday_reminders(config):
             break
 
     save_state(data_file, state)
-    return {"sent": sent, "skipped": skipped, "blocked": blocked, "results": results}, 200
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "blocked": blocked,
+        "results": results,
+        "system_error": system_error,
+    }, 200
 
 
 # === 799 智能提醒（生活提醒：只走 LINE 私訊，預設不進守護群）===
@@ -7733,7 +7818,12 @@ def send_smart_reminders(config):
             break
 
     save_state(data_file, state)
-    return {"sent": sent, "skipped": skipped, "results": results}, 200
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "results": results,
+        "system_error": system_error,
+    }, 200
 
 
 def cleanup_expired_sos(config):
@@ -7757,6 +7847,14 @@ def run_cron_tick(config):
     for name, task in always.items():
         data, code = task(config)
         results[name] = {"status": code, "result": data}
+        if isinstance(data, dict) and data.get("system_error"):
+            return {
+                "ok": False,
+                "system_error": True,
+                "ran_at": now.isoformat(timespec="seconds"),
+                "timezone": "Asia/Taipei",
+                "tasks": results,
+            }, 200
 
     token = config.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     results["guardian_group_refresh"] = refresh_all_guardian_groups_count(
@@ -7776,6 +7874,14 @@ def run_cron_tick(config):
         name, task = daily[slot]
         data, code = task(config)
         results[name] = {"status": code, "result": data}
+        if isinstance(data, dict) and data.get("system_error"):
+            return {
+                "ok": False,
+                "system_error": True,
+                "ran_at": now.isoformat(timespec="seconds"),
+                "timezone": "Asia/Taipei",
+                "tasks": results,
+            }, 200
 
     return {
         "ok": all(
@@ -7783,6 +7889,7 @@ def run_cron_tick(config):
             for item in results.values()
             if isinstance(item, dict)
         ),
+        "system_error": False,
         "ran_at": now.isoformat(timespec="seconds"),
         "timezone": "Asia/Taipei",
         "tasks": results,
@@ -8794,6 +8901,7 @@ def create_app(config=None):
                             "display_name": display_name or "",
                         },
                     )
+                    reactivate_line_push_for_follow(app.config["DATA_FILE"], line_user_id)
                 except Exception as exc:
                     app.logger.exception("FollowEvent register failed: %s", exc)
             app.logger.info(

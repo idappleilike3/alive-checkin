@@ -23,12 +23,23 @@ def classify_push_exception(exc):
     except (TypeError, ValueError):
         retry_after = None
     text = str(exc or "").lower()
-    if code in {400, 404} or "not a friend" in text or "blocked" in text:
+    permanent_target_markers = (
+        "not a friend",
+        "blocked",
+        "invalid user id",
+        "invalid recipient",
+        "invalid target",
+        "recipient not found",
+        "user not found",
+    )
+    if any(marker in text for marker in permanent_target_markers):
         return PushFailure("permanent", code)
     if code in {401, 403}:
         return PushFailure("system", code)
     if code == 429:
         return PushFailure("rate_limited", code, retry_after)
+    if code in {400, 404}:
+        return PushFailure("message", code)
     return PushFailure("transient", code)
 
 
@@ -36,7 +47,10 @@ def push_attempt_allowed(user, delivery_key):
     if user.get("line_push_blocked"):
         return False
     attempts = user.get("push_delivery_attempts") or {}
-    return int((attempts.get(delivery_key) or {}).get("count") or 0) < 3
+    entry = attempts.get(delivery_key) or {}
+    if entry.get("kind") in {"message", "system"}:
+        return False
+    return int(entry.get("count") or 0) < 3
 
 
 def record_push_failure(user, delivery_key, exc, now=None):
@@ -55,12 +69,14 @@ def record_push_failure(user, delivery_key, exc, now=None):
     attempts[delivery_key] = entry
     user["push_delivery_attempts"] = dict(list(attempts.items())[-120:])
     retry = failure.kind in {"transient", "rate_limited"} and entry["count"] < 3
+    if failure.kind == "system":
+        status = "system_error"
+    elif failure.kind == "message":
+        status = "message_error"
+    else:
+        status = "retrying" if retry else "failed"
     return {
-        "status": (
-            "retrying"
-            if retry
-            else ("system_error" if failure.kind == "system" else "failed")
-        ),
+        "status": status,
         "retry": retry,
         "kind": failure.kind,
         "attempt": entry["count"],
