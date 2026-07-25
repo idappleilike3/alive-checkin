@@ -339,7 +339,10 @@ class ProductRulesTests(unittest.TestCase):
         ]
 
         self.assertIn("async function initializeLiff()", page)
-        self.assertIn("await liff.init({ liffId });", init_line)
+        self.assertIn(
+            'await liff.init({ liffId: FIXED_LIFF_ID });',
+            init_line,
+        )
         self.assertIn("if (!liff.isLoggedIn())", init_line)
         self.assertIn("liff.login();", init_line)
         self.assertNotIn("liff.login({ redirectUri:", init_line)

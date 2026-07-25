@@ -4568,6 +4568,7 @@
     let calendarNotes = {};
     let selectedCalendarDate = "";
     let appConfig = {};
+    let appConfigPromise = Promise.resolve({});
     let appBootstrapPromise = null;
     let appBootstrapComplete = false;
 
@@ -4619,6 +4620,70 @@
 
     function getAppParam(key) {
       return String(readAppParams().get(key) || "").trim();
+    }
+
+    function requestedAppAction() {
+      const action = String(getAppParam("open") || getAppParam("page") || "").trim().toLowerCase();
+      return {
+        profile: "member",
+        guardian: "guardians",
+        safety: "guard",
+        plans: "pricing"
+      }[action] || action;
+    }
+
+    function setInitialRouteLoading(action) {
+      const loadingText = "正在載入你的資料…";
+      document.body.setAttribute("aria-busy", "true");
+      const checkButton = $("checkBtn");
+      const safeButton = $("mvpSafeBtn");
+      const guardButton = $("mvpGuardStartBtn");
+      const sosButton = $("sosHoldButton");
+      if (checkButton) checkButton.disabled = true;
+      if (safeButton) safeButton.disabled = true;
+      if (guardButton) guardButton.disabled = true;
+      if (sosButton) sosButton.disabled = true;
+      if (action === "guard") setSafetyGuardFeedback(loadingText, "info");
+      if (action === "sos" && $("sosFeedback")) $("sosFeedback").textContent = loadingText;
+    }
+
+    function applyInitialDeepLinkRoute() {
+      const action = requestedAppAction();
+      const sectionAction = getAppParam("section");
+      const publicOpenPages = {
+        help: "help.html",
+        faq: "faq.html",
+        pricing: "liff/pricing.html",
+        plan: "liff/pricing.html",
+        terms: "terms.html",
+        privacy: "privacy.html"
+      };
+      if (publicOpenPages[action]) {
+        const section = sectionAction ? `#${encodeURIComponent(sectionAction)}` : "";
+        location.replace(publicOpenPages[action] + section);
+        return { handled: true, redirected: true };
+      }
+      if (action === "sos") {
+        showTab("home");
+        openSosModal();
+      } else if (action === "guard") {
+        showTab("home");
+        openMvpGuardPanel();
+      } else if (action === "member") {
+        showTab("member");
+      } else if (action === "guardians") {
+        showTab("guardians");
+      } else if (action === "status" || action === "history") {
+        showTab("history");
+      } else if (action === "checkin" || action === "home") {
+        showTab("home");
+        if (action === "checkin") syncCheckBtn({ loading: true });
+      } else {
+        return { handled: false, redirected: false };
+      }
+      setInitialRouteLoading(action);
+      document.body.dataset.initialRoute = action;
+      return { handled: true, redirected: false };
     }
 
     /** 建立永久 LIFF 連結；絕不帶入 code=/state= 等 OAuth 殘留參數。 */
@@ -7428,19 +7493,17 @@
       }
       try {
         const FIXED_LIFF_ID = "2010674803-rK98c0lo";
-        let liffId = FIXED_LIFF_ID;
-        try {
-          const configRes = await fetch("/api/config");
-          if (configRes.ok) {
-            const config = await configRes.json();
-            appConfig = config || {};
-            if (config.liff_id) liffId = String(config.liff_id).trim() || FIXED_LIFF_ID;
-          }
-        } catch (_) {}
-        window.__LIFF_ID__ = liffId;
+        window.__LIFF_ID__ = FIXED_LIFF_ID;
 
         // 1) 先 init（不要先判斷 isInClient）
-        await liff.init({ liffId });
+        await liff.init({ liffId: FIXED_LIFF_ID });
+        appConfigPromise = fetch("/api/config")
+          .then((response) => response.ok ? response.json() : {})
+          .then((config) => {
+            appConfig = config || {};
+            return appConfig;
+          })
+          .catch(() => ({}));
 
         // 2) 未登入：絕對不要自己帶 redirectUri
         if (!liff.isLoggedIn()) {
@@ -9164,64 +9227,65 @@
       }
     }
 
+    async function loadInitialMemberData() {
+      const [statusResult, contactsResult, onboardingResult] = await Promise.allSettled([
+        apiGetStatus(),
+        apiGetContacts(lineUserId),
+        fetchOnboardingState()
+      ]);
+
+      if (statusResult.status !== "fulfilled") throw statusResult.reason;
+      const status = statusResult.value;
+      if (status && status.ok === false) {
+        throw new Error(friendlyApiFailure(400, JSON.stringify(status)));
+      }
+      renderStatus(status);
+      syncCheckBtn(status);
+      if ($("mvpSafeBtn")) $("mvpSafeBtn").disabled = false;
+      if ($("mvpGuardStartBtn")) $("mvpGuardStartBtn").disabled = false;
+      renderSosAccess();
+
+      const contactsPayload = contactsResult.status === "fulfilled"
+        ? contactsResult.value
+        : { status: 0, data: {} };
+      if (contactsPayload.status === 200) {
+        contactData = contactsPayload.data.contacts || [];
+        renderGuardians(contactData, contactsPayload.data.contact_limit);
+      } else if (Array.isArray(status.contacts) && status.contacts.length) {
+        contactData = status.contacts;
+        renderGuardians(contactData, status.contact_limit || currentContactLimit);
+      } else {
+        renderMemberCenter();
+      }
+      if ((!Array.isArray(contactData) || !contactData.length)
+          && Array.isArray(status.contacts) && status.contacts.length) {
+        contactData = status.contacts;
+        renderGuardians(contactData, status.contact_limit || currentContactLimit);
+      }
+
+      const onboarding = onboardingResult.status === "fulfilled"
+        ? onboardingResult.value
+        : { done: false, hasGuardian: false, data: {} };
+      document.body.removeAttribute("aria-busy");
+      return { status, contacts: contactData, onboarding };
+    }
+
     // 整合到 initApp:載入守護人 + onboarding 檢查
     async function initApp() {
       const dailyEl = $("dailyStatus");
       if (dailyEl) dailyEl.textContent = "讀取中...";
 
-      // 導覽與基本操作不依賴 LINE 身分，本機預覽也能正常切換。
+      // bootstrap 會先綁一次；此呼叫保留直接執行 initApp 時的導覽能力。
       bindTabEvents();
-      bindSosFab();
-      bindMvpHome();
-      bindGuardianCompletePrompt();
-      bindGuardianEvents();
-
       if (!lineUserId) {
         if (dailyEl) dailyEl.textContent = "請從 LINE 開啟此服務";
         return;
       }
 
       try {
-        const regRes = await fetch("/api/line/register", {
-          method: "POST",
-          headers: await authHeaders(),
-          body: JSON.stringify({
-            line_user_id: lineUserId,
-            display_name: lineDisplayName || ("User " + lineUserId.slice(-4)),
-            picture_url: ""
-          })
-        });
-        if (!regRes.ok) {
-          const regText = await regRes.text().catch(() => "");
-          // 註冊失敗仍嘗試 status（後端可 auto-register）；兩者都失敗再顯示中文錯誤
-          console.warn("line/register failed", regRes.status, regText.slice(0, 120));
-        }
-        const status = await apiGetStatus();
-        if (status && status.ok === false) {
-          showInlineError(friendlyApiFailure(400, JSON.stringify(status)));
-          return;
-        }
-        renderStatus(status);
-
-        // 載入守護人（renderGuardians 會同步刷新會員中心編輯／刪除）
-        const contactsRes = await apiGetContacts(lineUserId);
-        if (contactsRes.status === 200) {
-          contactData = contactsRes.data.contacts || [];
-          renderGuardians(contactData, contactsRes.data.contact_limit);
-        } else if (currentStatusData) {
-          if (Array.isArray(currentStatusData.contacts) && currentStatusData.contacts.length) {
-            contactData = currentStatusData.contacts;
-            renderGuardians(contactData, currentStatusData.contact_limit || currentContactLimit);
-          } else {
-            renderMemberCenter();
-          }
-        }
-        // status 備援：contacts API 空但 status 已有綁定資料時，仍以 status 為準
-        if ((!Array.isArray(contactData) || !contactData.length)
-            && Array.isArray(status.contacts) && status.contacts.length) {
-          contactData = status.contacts;
-          renderGuardians(contactData, status.contact_limit || currentContactLimit);
-        }
+        const initialData = await loadInitialMemberData();
+        const status = initialData.status;
+        const onboardingState = initialData.onboarding;
 
         // C00 Onboarding 檢查（#open=onboarding / 歡迎 CTA）
         // 規則：一鍵分享只在「尚未綁定」強制；已註冊且 ≥1 已綁守護人 → 直接首頁／功能頁
@@ -9229,7 +9293,6 @@
         // 一鍵邀請才走 share-invite（rich menu 直連或 open=share-invite／invite）
         // 受邀者（invite_from / friend_invite）：登入後綁定／加入好友，不要再被逼分享
         const openAction = getAppParam("open") || "";
-        const sectionAction = getAppParam("section") || "";
         const isOnboardingInvite = openAction === "onboarding/invite";
         const wantsShareInvite = (
           openAction === "share-invite"
@@ -9238,28 +9301,8 @@
         );
         const isCheckinOpen = openAction === "checkin" || location.hash === "#home";
         const isGuardOpen = openAction === "guard" || openAction === "safety";
-        const publicOpenPages = {
-          help: "help.html",
-          pricing: "liff/pricing.html",
-          plan: "liff/pricing.html",
-          faq: "faq.html",
-          terms: "terms.html",
-          privacy: "privacy.html"
-          // 注意：share-invite / invite 由下方 wantsInviteShare 改導專用分享頁
-        };
-        // 方案頁：若還帶 open=pricing，立刻硬轉直連頁，避免先渲染首頁
-        if (openAction === "pricing" || openAction === "plan") {
-          location.replace("liff/pricing.html");
-          return;
-        }
-        if (publicOpenPages[openAction]) {
-          const target = publicOpenPages[openAction] + (sectionAction ? "#" + encodeURIComponent(sectionAction) : "");
-          location.replace(target);
-          return;
-        }
         const forceOnboarding = openAction === "onboarding" || openAction === "guardian" || openAction === "bind" || isOnboardingInvite;
         const inviteeMode = isInviteeDeepLink();
-        const onboardingState = await fetchOnboardingState();
         const contactsNow = currentGuardianContacts();
         const homeReady = hasHomeSetupComplete(contactsNow);
         const hasGuardians = (
@@ -9541,6 +9584,8 @@
     }
 
     function bindTabEvents() {
+      if (document.body.dataset.tabEventsBound === "true") return;
+      document.body.dataset.tabEventsBound = "true";
       // 底部 nav 點擊
       document.querySelectorAll(".nav-item").forEach(n => {
         n.addEventListener("click", (e) => {
@@ -9903,6 +9948,14 @@
 
     async function bootstrapApp() {
       appBootstrapComplete = false;
+      // 導覽與基本操作不依賴 LINE 身分；先綁定再套用 deep link，畫面不必等網路。
+      bindTabEvents();
+      bindSosFab();
+      bindMvpHome();
+      bindGuardianCompletePrompt();
+      bindGuardianEvents();
+      const initialRoute = applyInitialDeepLinkRoute();
+      if (initialRoute.redirected) return;
       try {
         const lineReady = lineUserId ? true : await initLine();
         if (!useLocalMode && (!lineReady || !lineUserId)) {
@@ -9915,22 +9968,25 @@
         if (useLocalMode) renderStatus(buildLocalStatus(loadLocalState()));
         await refreshCalendarNotes();
         if (!useLocalMode) {
-          await refreshContacts();
-          await refreshFriendLocations();
+          refreshFriendLocations().catch(() => {});
         }
         openRequestedPage();
       } catch (error) {
         console.warn("頁面初始化失敗", error);
         showLineLoginRequired();
       } finally {
+        document.body.removeAttribute("aria-busy");
+        delete document.body.dataset.initialRoute;
         appBootstrapComplete = true;
       }
     }
 
     appBootstrapPromise = bootstrapApp();
     setInterval(() => {
-      if (lineUserId) refreshStatus().catch((error) => console.warn("狀態更新失敗", error));
-    }, 5000);
+      if (document.visibilityState === "visible" && lineUserId) {
+        refreshStatus().catch((error) => console.warn("狀態更新失敗", error));
+      }
+    }, 60000);
   </script>
 
 
