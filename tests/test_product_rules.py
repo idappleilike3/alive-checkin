@@ -452,7 +452,9 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("open_action=\"onboarding\"", flex)
         self.assertIn("daily-peace-logo.png", flex)
         self.assertIn("歡迎加入「每日平安」", flex)
-        self.assertIn("完成設定即可享 7 天免費安心體驗", flex)
+        self.assertIn("14 天新會員安心體驗", flex)
+        self.assertNotIn("完成設定即可享 7 天免費安心體驗", flex)
+        self.assertNotIn("永久免費", flex)
         self.assertIn("緊急狀況請直接撥打 119 或 110", flex)
         self.assertNotIn("welcome_version", flex)
         self.assertNotIn("版本 W", flex)
@@ -472,6 +474,50 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('"alignItems": "center"', welcome_fn)
         self.assertIn('"size": "xs"', welcome_fn)
         self.assertNotIn('"justifyContent": "center"', welcome_fn)
+
+    def test_welcome_flex_is_left_aligned_large_and_vertical(self):
+        import guardian_group_flex as welcome_flex_module
+
+        def walk(node):
+            if isinstance(node, dict):
+                yield node
+                for value in node.values():
+                    yield from walk(value)
+            elif isinstance(node, list):
+                for value in node:
+                    yield from walk(value)
+
+        bubble = welcome_flex_module.welcome_flex()
+        nodes = list(walk(bubble))
+        texts = [node for node in nodes if node.get("type") == "text"]
+        blob = " ".join(str(node.get("text") or "") for node in texts)
+        self.assertIn("每天 10 秒，報個平安", blob)
+        self.assertIn("核心守護人", blob)
+        self.assertNotIn("新增 1 位守護人", blob)
+        for node in texts:
+            self.assertNotEqual(node.get("align"), "end")
+            self.assertNotEqual(node.get("align"), "center")
+            self.assertTrue(node.get("wrap", False))
+            self.assertNotIn("\n", str(node.get("text") or ""))
+
+        def direct_text(box):
+            return " ".join(
+                str(item.get("text") or "")
+                for item in box.get("contents") or []
+                if isinstance(item, dict)
+            )
+
+        step_boxes = [
+            node
+            for node in nodes
+            if node.get("type") == "box"
+            and (
+                "① 新增 1 位核心守護人" in direct_text(node)
+                or "② 設定每日提醒時間" in direct_text(node)
+            )
+        ]
+        self.assertEqual(len(step_boxes), 2)
+        self.assertTrue(all(node.get("layout") == "vertical" for node in step_boxes))
 
     def test_public_liff_actions_redirect_to_standalone_pages(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

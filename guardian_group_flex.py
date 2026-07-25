@@ -7,7 +7,7 @@
 4. guardian_group_member_joined_flex — 家人首次進群歡迎（進群≠已綁定守護人）
 5. guardian_group_user_guide_flex()  — 使用說明(給群成員)
 6. guardian_group_admin_setup_flex() — 管理員設定 6 步驟（選用；官方帳號踢人時才需要）
-7. welcome_flex()                   — 加好友歡迎(7 天免費體驗 + 綁定守護人)
+7. welcome_flex()                   — 加好友歡迎（14 天新會員安心體驗＋核心守護人）
 
 設計原則:
 - 進群歡迎宜短：像官方帳號首次加入，不要長文牆
@@ -1164,17 +1164,17 @@ def welcome_greeting_text(display_name: str | None = None) -> str:
     """歡迎標題：有真實暱稱就寫名；否則不寫「您」，避免看起來像沒寫誰。"""
     name = (display_name or "").strip()
     if name and name not in _WELCOME_PLACEHOLDER_NAMES:
-        return f"👋 {name} 您好,歡迎加入每日平安"
-    return "👋 您好,歡迎加入每日平安"
+        return f"👋 {name} 您好，歡迎加入「每日平安」"
+    return "👋 您好，歡迎加入「每日平安」"
 
 
 def welcome_flex(display_name: str | None = None):
     """加好友歡迎 Flex（粉白風格，對齊設計稿）：真實暱稱問候 + 兩顆 CTA。
 
-    結構對齊 mockup：
+    結構對齊長輩友善設計稿：
     - Header：左上 Logo + 旁側問候文字（含暱稱）／每日平安
     - Hero：白卡視覺（心＋大字＋手機「我平安」），無第二個 Logo
-    - Body：兩步驟並排、黃底 7 天免費、119/110 免責
+    - Body：兩步驟垂直排列、14 天新會員安心體驗、119／110 免責
     - Footer：立即開始設定 + 查看方案
     """
     greeting = welcome_greeting_text(display_name)
@@ -1240,8 +1240,8 @@ def welcome_flex(display_name: str | None = None):
         "body": {
             "type": "box",
             "layout": "vertical",
-            "spacing": "md",
-            "paddingAll": "lg",
+            "spacing": "lg",
+            "paddingAll": "xl",
             "backgroundColor": pink_bg,
             "contents": [
                 {
@@ -1259,16 +1259,14 @@ def welcome_flex(display_name: str | None = None):
                             "size": "xxl",
                             "color": pink_accent,
                             "wrap": True,
-                            "align": "center",
                         },
                         {
                             "type": "text",
-                            "text": "平常不打擾，有事才通知守護人",
+                            "text": "平常不打擾，有事才通知核心守護人",
                             "weight": "bold",
-                            "size": "xxl",
+                            "size": "xl",
                             "color": text_dark,
                             "wrap": True,
-                            "align": "center",
                         },
                     ],
                 },
@@ -1282,8 +1280,8 @@ def welcome_flex(display_name: str | None = None):
                 },
                 {
                     "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "md",
+                    "layout": "vertical",
+                    "spacing": "lg",
                     "contents": [
                         {
                             "type": "box",
@@ -1292,21 +1290,19 @@ def welcome_flex(display_name: str | None = None):
                             "paddingAll": "md",
                             "backgroundColor": step_bg,
                             "cornerRadius": "xl",
-                            "flex": 1,
                             "contents": [
                                 {
                                     "type": "text",
-                                    "text": "① 新增 1 位守護人",
+                                    "text": "① 新增 1 位核心守護人",
                                     "weight": "bold",
-                                    "size": "lg",
+                                    "size": "xl",
                                     "color": pink_accent,
                                     "wrap": True,
                                 },
                                 {
                                     "type": "text",
                                     "text": "讓重要的人在關鍵時刻收到通知",
-                                    "weight": "bold",
-                                    "size": "md",
+                                    "size": "lg",
                                     "color": GRAY,
                                     "wrap": True,
                                 },
@@ -1319,21 +1315,19 @@ def welcome_flex(display_name: str | None = None):
                             "paddingAll": "md",
                             "backgroundColor": step_bg,
                             "cornerRadius": "xl",
-                            "flex": 1,
                             "contents": [
                                 {
                                     "type": "text",
                                     "text": "② 設定每日提醒時間",
                                     "weight": "bold",
-                                    "size": "lg",
+                                    "size": "xl",
                                     "color": pink_accent,
                                     "wrap": True,
                                 },
                                 {
                                     "type": "text",
-                                    "text": "系統會在您設定的時間提醒您報平安",
-                                    "weight": "bold",
-                                    "size": "md",
+                                    "text": "系統會在你設定的時間提醒你報平安",
+                                    "size": "lg",
                                     "color": GRAY,
                                     "wrap": True,
                                 },
@@ -1351,12 +1345,11 @@ def welcome_flex(display_name: str | None = None):
                     "contents": [
                         {
                             "type": "text",
-                            "text": "🎁 完成設定即可享 7 天免費安心體驗",
+                            "text": "🎁 14 天新會員安心體驗",
                             "weight": "bold",
-                            "size": "lg",
+                            "size": "xl",
                             "color": pink_accent,
                             "wrap": True,
-                            "align": "center",
                         },
                     ],
                 },
