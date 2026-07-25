@@ -1,1 +1,17 @@
+data/
+__pycache__/
+*.pyc
+.env
+*.log
+*.bak
+*.pre-migration
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Render zip
+alive_checkin-render.zip
+secrets/
 .worktrees/
