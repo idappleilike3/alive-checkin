@@ -10353,7 +10353,56 @@ class MiniApp:
         ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 
+# ===== Internal scheduler: 取代外部 cron 服務 =====
+def _start_internal_scheduler(flask_app):
+    """背景執行緒：每 5 分鐘自動跑推播函式，不需要外部 cron 服務。
+
+    各推播函式本身有 smart 邏輯（檢查 sent_slots / 使用者設定時間），
+    所以 5 分鐘跑一次也不會重複發，只會在使用者設定的「整點」發。
+    可用 env var ENABLE_INTERNAL_SCHEDULER=0 關掉。
+    """
+    import threading
+    import time
+
+    if os.environ.get("ENABLE_INTERNAL_SCHEDULER", "1") in ("0", "false", "False", "no", "NO"):
+        try:
+            flask_app.logger.info("Internal scheduler disabled by env var")
+        except Exception:
+            pass
+        return
+
+    def _loop():
+        time.sleep(30)  # 給 app 一點啟動時間
+        while True:
+            try:
+                with flask_app.app_context():
+                    config = {
+                        "LINE_CHANNEL_ACCESS_TOKEN": os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
+                        "DATA_FILE": flask_app.config.get("DATA_FILE", "data/state.json"),
+                        "APP_PUBLIC_URL": os.environ.get("APP_PUBLIC_URL", ""),
+                    }
+                    send_checkin_reminders(config)
+                    send_due_reminders(config)
+                    send_renewal_reminders(config)
+                    send_birthday_reminders(config)
+                    send_smart_reminders(config)
+            except Exception as exc:
+                try:
+                    flask_app.logger.exception("internal scheduler error: %s", exc)
+                except Exception:
+                    pass
+            time.sleep(300)  # 5 分鐘
+
+    t = threading.Thread(target=_loop, daemon=True, name="internal-scheduler")
+    t.start()
+    try:
+        flask_app.logger.info("Internal scheduler started (5-min interval)")
+    except Exception:
+        pass
+
+
 app = create_app()
+_start_internal_scheduler(app)
 
 
 if __name__ == "__main__":
