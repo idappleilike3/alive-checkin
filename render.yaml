@@ -25,6 +25,8 @@ services:
         value: /var/data/state.json
       - key: REQUIRE_LIFF_AUTH
         value: "1"
+      - key: ENABLE_INTERNAL_SCHEDULER
+        value: "0"
       - key: DEPLOY_VERSION
         value: W250725gh
       # Prefer Postgres kv_store when DATABASE_URL is set (survives Free redeploys).
@@ -32,9 +34,11 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: ALLOW_OPEN_ADMIN
-        value: "true"
+        value: "false"
       - key: ADMIN_PASSWORD
-        value: ""
+        sync: false
+      - key: ADMIN_SESSION_SECRET
+        sync: false
       - key: LINE_CHANNEL_ACCESS_TOKEN
         sync: false
       - key: LINE_CHANNEL_SECRET
@@ -54,66 +58,11 @@ services:
       # Never wipe Render Environment Variables — LINE token/secret/LIFF_ID
       # missing makes /callback return 503 and messaging die.
   - type: cron
-    name: alive-checkin-contact-reminders
+    name: alive-checkin-scheduler
     env: python
-    schedule: "0 1 * * *"
+    schedule: "*/5 * * * *"
     buildCommand: pip install -r requirements.txt
-    startCommand: python cron_ping.py /api/cron/contact-reminders
-    envVars:
-      - key: APP_PUBLIC_URL
-        value: https://alive-checkin.onrender.com/
-      - key: CRON_SECRET
-        sync: false
-  - type: cron
-    name: alive-checkin-checkin-reminders
-    env: python
-    schedule: "*/15 * * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python cron_ping.py /api/cron/checkin-reminders
-    envVars:
-      - key: APP_PUBLIC_URL
-        value: https://alive-checkin.onrender.com/
-      - key: CRON_SECRET
-        sync: false
-  - type: cron
-    name: alive-checkin-overdue-alerts
-    env: python
-    schedule: "*/15 * * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python cron_ping.py /api/cron/overdue-alerts
-    envVars:
-      - key: APP_PUBLIC_URL
-        value: https://alive-checkin.onrender.com/
-      - key: CRON_SECRET
-        sync: false
-  - type: cron
-    name: alive-checkin-renewal-reminders
-    env: python
-    schedule: "0 2 * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python cron_ping.py /api/cron/renewal-reminders
-    envVars:
-      - key: APP_PUBLIC_URL
-        value: https://alive-checkin.onrender.com/
-      - key: CRON_SECRET
-        sync: false
-  - type: cron
-    name: alive-checkin-membership-expiry
-    env: python
-    schedule: "15 2 * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python cron_ping.py /api/cron/membership-expiry
-    envVars:
-      - key: APP_PUBLIC_URL
-        value: https://alive-checkin.onrender.com/
-      - key: CRON_SECRET
-        sync: false
-  - type: cron
-    name: alive-checkin-data-cleanup
-    env: python
-    schedule: "30 18 * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python cron_ping.py /api/cron/data-cleanup
+    startCommand: python cron_ping.py /api/cron/tick
     envVars:
       - key: APP_PUBLIC_URL
         value: https://alive-checkin.onrender.com/

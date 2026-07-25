@@ -6629,12 +6629,14 @@ def cleanup_expired_data(config):
     }, 200
 
 
-def reminder_time_due(reminder_time, now):
+def reminder_time_in_window(reminder_time, now, late_minutes=4):
     try:
         hour, minute = [int(part) for part in str(reminder_time or "12:00").split(":", 1)]
-    except ValueError:
+    except (TypeError, ValueError):
         hour, minute = 12, 0
-    return (now.hour, now.minute) >= (hour, minute)
+    scheduled = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    delta = now - scheduled
+    return timedelta(0) <= delta <= timedelta(minutes=int(late_minutes), seconds=59)
 
 
 def build_daily_checkin_flex(now, target_time=""):
@@ -6874,11 +6876,15 @@ def send_checkin_reminders(config):
         if today in legacy_dates and not sent_today:
             continue
 
-        due_unsent = [t for t in times if reminder_time_due(t, now) and t not in sent_today]
+        due_unsent = [
+            t
+            for t in times
+            if reminder_time_in_window(t, now, late_minutes=4) and t not in sent_today
+        ]
         if not due_unsent:
             continue
 
-        # 補跑時只推一次(取最晚已到點的時段),並把所有已到點未送時段標為已處理
+        # 同一五分鐘時間窗只推一次；較早漏掉的時段不補送也不標記。
         target_time = due_unsent[-1]
         message = build_daily_checkin_flex(now, target_time=target_time)
         try:
@@ -7490,6 +7496,59 @@ def send_smart_reminders(config):
 
     save_state(data_file, state)
     return {"sent": sent, "skipped": skipped, "results": results}, 200
+
+
+def cleanup_expired_sos(config):
+    state = load_state(config["DATA_FILE"])
+    removed = sos_flow.sos_purge_old(state, keep_minutes=60) if sos_flow else []
+    save_state(config["DATA_FILE"], state)
+    return {"removed": len(removed)}, 200
+
+
+def run_cron_tick(config):
+    now = current_app_time(config)
+    results = {}
+
+    always = {
+        "checkin_reminders": send_checkin_reminders,
+        "overdue_alerts": send_due_reminders,
+        "guardian_group_daily_summaries": send_guardian_group_daily_summaries,
+        "smart_reminders": send_smart_reminders,
+        "sos_cleanup": cleanup_expired_sos,
+    }
+    for name, task in always.items():
+        data, code = task(config)
+        results[name] = {"status": code, "result": data}
+
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    results["guardian_group_refresh"] = refresh_all_guardian_groups_count(
+        config["DATA_FILE"],
+        token=token,
+    )
+
+    daily = {
+        "09:00": ("birthday_reminders", send_birthday_reminders),
+        "09:05": ("contact_reminders", send_missing_contact_reminders),
+        "10:00": ("renewal_reminders", send_renewal_reminders),
+        "10:15": ("membership_expiry", apply_expired_plan_downgrades),
+        "02:30": ("data_cleanup", cleanup_expired_data),
+    }
+    slot = now.strftime("%H:%M")
+    if slot in daily:
+        name, task = daily[slot]
+        data, code = task(config)
+        results[name] = {"status": code, "result": data}
+
+    return {
+        "ok": all(
+            item.get("status", 200) < 500
+            for item in results.values()
+            if isinstance(item, dict)
+        ),
+        "ran_at": now.isoformat(timespec="seconds"),
+        "timezone": "Asia/Taipei",
+        "tasks": results,
+    }, 200
 
 
 def app_config(config):
@@ -9782,9 +9841,17 @@ def create_app(config=None):
         data, code = confirm_payment_order(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
         return _admin_mutation_response("payment.confirm", data, code)
 
+    @app.post("/api/cron/tick")
+    def cron_tick_api():
+        secret = request.headers.get("X-Cron-Secret", "")
+        if not cron_allowed(app.config, secret):
+            return jsonify({"error": "unauthorized"}), 401
+        data, code = run_cron_tick(app.config)
+        return jsonify(data), code
+
     @app.route("/api/cron/contact-reminders", methods=["GET", "POST"])
     def cron_contact_reminders_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = send_missing_contact_reminders(app.config)
@@ -9792,7 +9859,7 @@ def create_app(config=None):
 
     @app.route("/api/cron/checkin-reminders", methods=["GET", "POST"])
     def cron_checkin_reminders_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         # ?mode=broadcast 或 force=1 → 重新推播給全部已註冊會員（含今日已簽到）
@@ -9807,7 +9874,7 @@ def create_app(config=None):
     @app.route("/api/cron/checkin-broadcast", methods=["GET", "POST"])
     def cron_checkin_broadcast_api():
         """重新推播專用：對有 line_user_id 的會員送新版每日平安 Flex。"""
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = broadcast_checkin_reminders(app.config)
@@ -9815,7 +9882,7 @@ def create_app(config=None):
 
     @app.route("/api/cron/overdue-alerts", methods=["GET", "POST"])
     def cron_overdue_alerts_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = send_due_reminders(app.config)
@@ -9827,7 +9894,7 @@ def create_app(config=None):
 
     @app.route("/api/cron/renewal-reminders", methods=["GET", "POST"])
     def cron_renewal_reminders_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = send_renewal_reminders(app.config)
@@ -9835,7 +9902,7 @@ def create_app(config=None):
 
     @app.route("/api/cron/birthday-reminders", methods=["GET", "POST"])
     def cron_birthday_reminders_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = send_birthday_reminders(app.config)
@@ -9843,7 +9910,7 @@ def create_app(config=None):
 
     @app.route("/api/cron/smart-reminders", methods=["GET", "POST"])
     def cron_smart_reminders_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = send_smart_reminders(app.config)
@@ -9880,7 +9947,7 @@ def create_app(config=None):
 
     @app.route("/api/cron/membership-expiry", methods=["GET", "POST"])
     def cron_membership_expiry_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = apply_expired_plan_downgrades(app.config)
@@ -9888,7 +9955,7 @@ def create_app(config=None):
 
     @app.route("/api/cron/data-cleanup", methods=["GET", "POST"])
     def cron_data_cleanup_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = cleanup_expired_data(app.config)
@@ -9897,7 +9964,7 @@ def create_app(config=None):
     @app.route("/api/cron/backfill-bind-notify", methods=["GET", "POST"])
     def cron_backfill_bind_notify_api():
         """One-shot: 補發歷史已綁定雙方的綁定成功 LINE（冪等 bind_notify_sent_at）。"""
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         payload = request.get_json(silent=True) or {}
@@ -10128,11 +10195,17 @@ class MiniClient:
             return MiniResponse({"ok": True, "safety_guard": safety_guard_snapshot(profile)})
         return MiniResponse({"error": "not found"}, 404)
 
-    def post(self, path, data=None, content_type=None):
+    def post(self, path, data=None, content_type=None, headers=None):
         route, _, query = path.partition("?")
         if route == "/api/admin" or route.startswith("/api/admin/"):
             return MiniResponse({"error": "admin_not_configured"}, 503)
         params = dict(urllib.parse.parse_qsl(query))
+        headers = headers or {}
+        cron_secret = (
+            headers.get("X-Cron-Secret")
+            or headers.get("x-cron-secret")
+            or ""
+        )
         payload = {}
         if data and content_type == "application/json":
             payload = json.loads(data)
@@ -10215,15 +10288,18 @@ class MiniClient:
                 return MiniResponse({"error": "unauthorized"}, 401)
             body, code = create_admin_backup(self.app.config["DATA_FILE"])
             return MiniResponse(body, code)
+        if route == "/api/cron/tick":
+            if not cron_allowed(self.app.config, cron_secret):
+                return MiniResponse({"error": "unauthorized"}, 401)
+            body, code = run_cron_tick(self.app.config)
+            return MiniResponse(body, code)
         if route == "/api/cron/contact-reminders":
-            secret = params.get("secret", "")
-            if not cron_allowed(self.app.config, secret):
+            if not cron_allowed(self.app.config, cron_secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
             body, code = send_missing_contact_reminders(self.app.config)
             return MiniResponse(body, code)
         if route == "/api/cron/checkin-reminders":
-            secret = params.get("secret", "")
-            if not cron_allowed(self.app.config, secret):
+            if not cron_allowed(self.app.config, cron_secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
             mode = str(params.get("mode", "") or "").strip().lower()
             force = str(params.get("force", "") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -10233,26 +10309,22 @@ class MiniClient:
                 body, code = send_checkin_reminders(self.app.config)
             return MiniResponse(body, code)
         if route == "/api/cron/checkin-broadcast":
-            secret = params.get("secret", "")
-            if not cron_allowed(self.app.config, secret):
+            if not cron_allowed(self.app.config, cron_secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
             body, code = broadcast_checkin_reminders(self.app.config)
             return MiniResponse(body, code)
         if route == "/api/cron/renewal-reminders":
-            secret = params.get("secret", "")
-            if not cron_allowed(self.app.config, secret):
+            if not cron_allowed(self.app.config, cron_secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
             body, code = send_renewal_reminders(self.app.config)
             return MiniResponse(body, code)
         if route == "/api/cron/data-cleanup":
-            secret = params.get("secret", "")
-            if not cron_allowed(self.app.config, secret):
+            if not cron_allowed(self.app.config, cron_secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
             body, code = cleanup_expired_data(self.app.config)
             return MiniResponse(body, code)
         if route == "/api/cron/backfill-bind-notify":
-            secret = params.get("secret", "")
-            if not cron_allowed(self.app.config, secret):
+            if not cron_allowed(self.app.config, cron_secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
             dry_run = str(params.get("dry_run") or payload.get("dry_run") or "").strip().lower() in {
                 "1",
@@ -10335,6 +10407,9 @@ class MiniApp:
             def query(handler):
                 return dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(handler.path).query))
 
+            def cron_secret(handler):
+                return handler.headers.get("X-Cron-Secret", "")
+
             def route(handler):
                 return urllib.parse.urlsplit(handler.path).path
 
@@ -10394,12 +10469,12 @@ class MiniApp:
                         "safety_guard": safety_guard_snapshot(get_profile(load_state(data_file), line_user_id)),
                     })
                 if route == "/api/cron/contact-reminders":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = send_missing_contact_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/checkin-reminders":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     mode = str(params.get("mode", "") or "").strip().lower()
                     force = str(params.get("force", "") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -10409,17 +10484,17 @@ class MiniApp:
                         data, code = send_checkin_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/checkin-broadcast":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = broadcast_checkin_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/data-cleanup":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = cleanup_expired_data(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/backfill-bind-notify":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     dry_run = str(params.get("dry_run") or "").strip().lower() in {
                         "1",
@@ -10537,13 +10612,18 @@ class MiniApp:
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = confirm_payment_order(data_file, payload, config)
                     return handler.send_json(data, code)
+                if route == "/api/cron/tick":
+                    if not cron_allowed(config, handler.cron_secret()):
+                        return handler.send_json({"error": "unauthorized"}, 401)
+                    data, code = run_cron_tick(config)
+                    return handler.send_json(data, code)
                 if route == "/api/cron/contact-reminders":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = send_missing_contact_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/checkin-reminders":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     mode = str(params.get("mode", "") or "").strip().lower()
                     force = str(params.get("force", "") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -10553,22 +10633,22 @@ class MiniApp:
                         data, code = send_checkin_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/checkin-broadcast":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = broadcast_checkin_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/renewal-reminders":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = send_renewal_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/data-cleanup":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = cleanup_expired_data(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/backfill-bind-notify":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     dry_run = str(
                         params.get("dry_run") or payload.get("dry_run") or ""
@@ -10596,61 +10676,7 @@ class MiniApp:
         ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 
-# ===== Internal scheduler: 取代外部 cron 服務 =====
-def _start_internal_scheduler(flask_app):
-    """背景執行緒：每 5 分鐘自動跑推播函式，不需要外部 cron 服務。
-
-    各推播函式本身有 smart 邏輯（檢查 sent_slots / 使用者設定時間），
-    所以 5 分鐘跑一次也不會重複發，只會在使用者設定的「整點」發。
-    可用 env var ENABLE_INTERNAL_SCHEDULER=0 關掉。
-    """
-    import threading
-    import time
-
-    if os.environ.get("ENABLE_INTERNAL_SCHEDULER", "1") in ("0", "false", "False", "no", "NO"):
-        try:
-            flask_app.logger.info("Internal scheduler disabled by env var")
-        except Exception:
-            pass
-        return
-
-    def _loop():
-        time.sleep(30)  # 給 app 一點啟動時間
-        while True:
-            try:
-                with flask_app.app_context():
-                    config = {
-                        "LINE_CHANNEL_ACCESS_TOKEN": os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
-                        "DATA_FILE": flask_app.config.get("DATA_FILE", "data/state.json"),
-                        "APP_PUBLIC_URL": os.environ.get("APP_PUBLIC_URL", ""),
-                    }
-                    send_checkin_reminders(config)
-                    send_due_reminders(config)
-                    send_renewal_reminders(config)
-                    send_birthday_reminders(config)
-                    send_smart_reminders(config)
-                    # 守護群人數即時刷新(每 5 分鐘)
-                    refresh_all_guardian_groups_count(
-                        config.get("DATA_FILE", "data/state.json"),
-                        token=config.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
-                    )
-            except Exception as exc:
-                try:
-                    flask_app.logger.exception("internal scheduler error: %s", exc)
-                except Exception:
-                    pass
-            time.sleep(300)  # 5 分鐘
-
-    t = threading.Thread(target=_loop, daemon=True, name="internal-scheduler")
-    t.start()
-    try:
-        flask_app.logger.info("Internal scheduler started (5-min interval)")
-    except Exception:
-        pass
-
-
 app = create_app()
-_start_internal_scheduler(app)
 
 
 if __name__ == "__main__":

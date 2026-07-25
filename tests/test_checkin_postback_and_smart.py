@@ -110,8 +110,8 @@ class CheckinPostbackTests(unittest.TestCase):
         self.assertEqual(data.get("sent", 0), 0)
         self.assertEqual(sent, [])
 
-        # 隔日第一個時段仍會推
-        next_day = datetime(2026, 7, 26, 12, 5, 0)
+        # 隔日進入下一個時段的五分鐘時間窗仍會推
+        next_day = datetime(2026, 7, 26, 12, 4, 0)
         data2, code2 = app.send_checkin_reminders(
             {
                 "DATA_FILE": self.data_file,
@@ -173,11 +173,11 @@ class CheckinPostbackTests(unittest.TestCase):
 
         state = app.load_state(self.data_file)
         profile = app.get_profile(state, "U_push_1")
-        profile["reminder_times"] = ["00:00"]
+        profile["reminder_times"] = ["12:00"]
         profile["history"] = []
         app.save_state(self.data_file, state)
 
-        now = datetime.now().replace(hour=12, minute=0, second=0, microsecond=0)
+        now = datetime(2026, 7, 25, 12, 0, 0)
         config = {
             "DATA_FILE": self.data_file,
             "LINE_CHANNEL_ACCESS_TOKEN": "x",

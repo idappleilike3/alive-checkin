@@ -1,6 +1,5 @@
 import os
 import sys
-import urllib.parse
 import urllib.request
 
 
@@ -11,9 +10,12 @@ def main():
     if not base_url:
         raise SystemExit("APP_PUBLIC_URL is not set")
 
-    query = urllib.parse.urlencode({"secret": cron_secret})
-    url = f"{base_url}{endpoint}?{query}"
-    req = urllib.request.Request(url, method="POST")
+    url = f"{base_url}{endpoint}"
+    req = urllib.request.Request(
+        url,
+        method="POST",
+        headers={"X-Cron-Secret": cron_secret},
+    )
     with urllib.request.urlopen(req, timeout=30) as res:
         print(f"{endpoint} -> {res.status}")
         print(res.read().decode("utf-8"))

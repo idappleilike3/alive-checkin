@@ -256,11 +256,11 @@ class BearerHeaderTests(unittest.TestCase):
 
 
 class DeployCronTests(unittest.TestCase):
-    def test_render_declares_overdue_and_auth(self):
+    def test_render_declares_single_scheduler_and_auth(self):
         render = (Path(__file__).resolve().parents[1] / "render.yaml").read_text(encoding="utf-8")
-        self.assertIn("alive-checkin-overdue-alerts", render)
-        self.assertIn("/api/cron/overdue-alerts", render)
-        self.assertIn("alive-checkin-membership-expiry", render)
+        self.assertEqual(render.count("- type: cron"), 1)
+        self.assertIn("alive-checkin-scheduler", render)
+        self.assertIn("/api/cron/tick", render)
         self.assertIn("REQUIRE_LIFF_AUTH", render)
 
 
