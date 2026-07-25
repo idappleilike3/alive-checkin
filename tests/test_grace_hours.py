@@ -3,12 +3,34 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import app as app_module
 
 
 class GraceHoursTests(unittest.TestCase):
+    def test_status_uses_supplied_now_and_waits_through_cancel_window(self):
+        now = datetime(2099, 1, 2, 12, 0)
+        profile = {
+            **app_module.DEFAULT_PROFILE,
+            "line_user_id": "U-clock",
+            "last_check_in": (now - timedelta(hours=48, minutes=14)).isoformat(
+                timespec="seconds"
+            ),
+        }
+
+        prealert = app_module.build_status(profile, now=now)
+        self.assertTrue(prealert["is_prealert"])
+        self.assertFalse(prealert["is_overdue"])
+
+        profile["last_check_in"] = (
+            now - timedelta(hours=48, minutes=16)
+        ).isoformat(timespec="seconds")
+        overdue = app_module.build_status(profile, now=now)
+        self.assertFalse(overdue["is_prealert"])
+        self.assertTrue(overdue["is_overdue"])
+
     def test_normalize_allowed_and_legacy(self):
         self.assertEqual(app_module.normalize_grace_hours(24), 24)
         self.assertEqual(app_module.normalize_grace_hours(48), 48)

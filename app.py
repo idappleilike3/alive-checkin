@@ -2031,7 +2031,7 @@ def compute_streak_days(history, today):
     return streak
 
 
-def build_status(profile, state=None):
+def build_status(profile, state=None, now=None):
     profile = {**DEFAULT_PROFILE, **profile}
     scrub_self_line_ids_on_contacts(profile)
     owner_id = str(profile.get("line_user_id") or "").strip()
@@ -2054,7 +2054,7 @@ def build_status(profile, state=None):
             enrich_contact_peer_display_name(state, row)
         normalized_contacts.append(row)
     profile["contacts"] = normalized_contacts
-    now = datetime.now()
+    now = now or current_app_time({})
     last = parse_last_checkin(profile.get("last_check_in"))
     grace_hours = normalize_grace_hours(profile.get("grace_hours"))
     warning_cancel_minutes = int(
@@ -2066,8 +2066,8 @@ def build_status(profile, state=None):
     cancel_remaining_ms = max(0, int((alert_at - now).total_seconds() * 1000)) if alert_at and now > deadline else 0
     prealert = bool(deadline and alert_at and deadline < now <= alert_at)
     overdue = bool(alert_at and now > alert_at)
-    today = today_string()
-    is_today_checked = profile_is_today_checked(profile)
+    today = now.strftime("%Y-%m-%d")
+    is_today_checked = profile_is_today_checked(profile, now=now)
     # Heal history if last_check_in proves today but history missed the Taipei day
     if is_today_checked and today not in (profile.get("history") or []):
         history = set(profile.get("history") or [])
@@ -6145,6 +6145,7 @@ def cron_allowed(config, secret):
 
 def admin_summary(data_file, config=None):
     state = load_state(data_file)
+    status_now = current_app_time(config or {})
     token = ""
     if config is not None and hasattr(config, "get"):
         token = str(config.get("LINE_CHANNEL_ACCESS_TOKEN") or "").strip()
@@ -6170,7 +6171,7 @@ def admin_summary(data_file, config=None):
     users = []
     invite_edges = []
     for user in state.get("users", {}).values():
-        status = build_status(user, state)
+        status = build_status(user, state, now=status_now)
         # 後台顯示名稱：絕不空白；仍是佔位時至少附短 ID 方便辨識
         name = str(status.get("display_name") or "").strip()
         if is_placeholder_display_name(name):
