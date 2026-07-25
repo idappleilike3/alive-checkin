@@ -420,8 +420,9 @@ def public_page_url(path=""):
 
 
 def pricing_direct_url():
-    """方案頁直連（勿走 LIFF Endpoint 首頁再 client redirect，會很慢）。"""
-    return public_page_url("liff/pricing.html")
+    """方案頁 LIFF 直連（避免跳出 LINE 開瀏覽器，跟其他按鈕一致）。"""
+    liff_id = (os.environ.get("LIFF_ID") or "2010674803-rK98c0lo").strip() or "2010674803-rK98c0lo"
+    return f"https://liff.line.me/{liff_id}?open=pricing"
 
 
 def permanent_liff_invite_url(*, invite_from="", friend_invite="", open_action=None):
@@ -8072,7 +8073,7 @@ def create_app(config=None):
             pricing_uri = (
                 pricing_direct_url()
                 if pricing_direct_url
-                else "https://alive-checkin.onrender.com/liff/pricing.html"
+                else "https://liff.line.me/2010674803-rK98c0lo?open=pricing"
             )
             welcome_fallback = (
                 f"{greeting}\n\n"
