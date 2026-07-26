@@ -6536,8 +6536,24 @@ def admin_business_dashboard(data_file, config=None, now=None):
     def configured(name):
         return bool(str(cfg.get(name) or os.environ.get(name, "") or "").strip())
 
+    ga4_measurement_id = str(
+        cfg.get("GA4_MEASUREMENT_ID")
+        or os.environ.get("GA4_MEASUREMENT_ID", "")
+        or "G-7LT14XLHFM"
+    ).strip()
     ga4_property = configured("GA4_PROPERTY_ID")
     ga4_credentials = configured("GA4_SERVICE_ACCOUNT_JSON")
+    line_token = configured("LINE_CHANNEL_ACCESS_TOKEN")
+    line_secret = configured("LINE_CHANNEL_SECRET")
+    liff_id = configured("LIFF_ID")
+    public_url = str(
+        cfg.get("APP_PUBLIC_URL")
+        or os.environ.get("APP_PUBLIC_URL", "")
+        or "https://alive-checkin.onrender.com"
+    ).strip().rstrip("/")
+    wordpress_site = configured("WORDPRESS_SITE_URL")
+    wordpress_user = configured("WORDPRESS_USERNAME")
+    wordpress_password = configured("WORDPRESS_APPLICATION_PASSWORD")
 
     line_budget = line_message_budget_status(state, cfg, generated_at)
 
@@ -6620,11 +6636,29 @@ def admin_business_dashboard(data_file, config=None, now=None):
         },
         "line_budget": line_budget,
         "integrations": {
-            "line": {"configured": configured("LINE_CHANNEL_ACCESS_TOKEN")},
+            "line": {
+                "configured": line_token,
+                "messaging_ready": line_token and line_secret,
+                "token_configured": line_token,
+                "secret_configured": line_secret,
+                "liff_configured": liff_id,
+                "webhook_configured": bool(public_url and line_secret),
+                "webhook_url": f"{public_url}/api/line/webhook" if public_url else "",
+            },
             "ga4": {
+                # Keep the legacy key as report-access status for existing clients.
                 "configured": ga4_property and ga4_credentials,
+                "tracking_configured": bool(re.fullmatch(r"G-[A-Z0-9]+", ga4_measurement_id)),
+                "reporting_configured": ga4_property and ga4_credentials,
+                "measurement_id": ga4_measurement_id,
                 "property_configured": ga4_property,
                 "credentials_configured": ga4_credentials,
+            },
+            "wordpress": {
+                "configured": wordpress_site and wordpress_user and wordpress_password,
+                "site_configured": wordpress_site,
+                "username_configured": wordpress_user,
+                "application_password_configured": wordpress_password,
             },
         },
         "seo": {
@@ -8562,6 +8596,10 @@ def create_app(config=None):
         APP_TIMEZONE=os.environ.get("APP_TIMEZONE", "Asia/Taipei"),
         GA4_PROPERTY_ID=os.environ.get("GA4_PROPERTY_ID", ""),
         GA4_SERVICE_ACCOUNT_JSON=os.environ.get("GA4_SERVICE_ACCOUNT_JSON", ""),
+        GA4_MEASUREMENT_ID=os.environ.get("GA4_MEASUREMENT_ID", "G-7LT14XLHFM"),
+        WORDPRESS_SITE_URL=os.environ.get("WORDPRESS_SITE_URL", ""),
+        WORDPRESS_USERNAME=os.environ.get("WORDPRESS_USERNAME", ""),
+        WORDPRESS_APPLICATION_PASSWORD=os.environ.get("WORDPRESS_APPLICATION_PASSWORD", ""),
         LINE_MONTHLY_MESSAGE_LIMIT=os.environ.get("LINE_MONTHLY_MESSAGE_LIMIT", "200"),
         LINE_MESSAGE_WARNING_PERCENT=os.environ.get("LINE_MESSAGE_WARNING_PERCENT", "80"),
         LINE_MESSAGE_HARD_STOP_PERCENT=os.environ.get("LINE_MESSAGE_HARD_STOP_PERCENT", "100"),
@@ -8727,6 +8765,14 @@ def create_app(config=None):
     def health():
         persist = persistence_info(app.config["DATA_FILE"])
         return jsonify({"ok": True, "persistence": persist})
+
+    @app.get("/robots.txt")
+    def robots_txt():
+        return send_from_directory(app.static_folder, "robots.txt", mimetype="text/plain")
+
+    @app.get("/sitemap.xml")
+    def sitemap_xml():
+        return send_from_directory(app.static_folder, "sitemap.xml", mimetype="application/xml")
 
     @app.get("/admin")
     def admin():
@@ -11090,6 +11136,14 @@ class MiniResponse:
     def get_json(self):
         return self._data
 
+    def get_data(self, as_text=False):
+        if isinstance(self._data, bytes):
+            return self._data.decode("utf-8") if as_text else self._data
+        if isinstance(self._data, str):
+            return self._data if as_text else self._data.encode("utf-8")
+        rendered = json.dumps(self._data, ensure_ascii=False)
+        return rendered if as_text else rendered.encode("utf-8")
+
 
 class MiniClient:
     def __init__(self, app):
@@ -11104,6 +11158,12 @@ class MiniClient:
             return MiniResponse(app_config(self.app.config))
         if route == "/health":
             return MiniResponse({"ok": True})
+        if route in ("/robots.txt", "/sitemap.xml"):
+            filename = route.lstrip("/")
+            path_obj = Path(__file__).resolve().parent / filename
+            if path_obj.exists():
+                return MiniResponse(path_obj.read_text(encoding="utf-8"))
+            return MiniResponse({"error": "not found"}, 404)
         if route in ("/terms", "/privacy"):
             return MiniResponse({"ok": True})
         if route == "/api/status":
