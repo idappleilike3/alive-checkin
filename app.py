@@ -5860,6 +5860,188 @@ def collect_phone_only_contacts(contacts):
     return out
 
 
+def _sos_false_alarm_times(profile, now):
+    times = []
+    for raw in profile.get("sos_false_alarm_at") or []:
+        try:
+            parsed = datetime.fromisoformat(str(raw))
+        except (TypeError, ValueError):
+            continue
+        if parsed <= now and parsed >= now - timedelta(days=7):
+            times.append(parsed)
+    return sorted(times)
+
+
+def sos_abuse_state(profile: dict, now: datetime) -> dict:
+    """Return the graded SOS safety policy without removing emergency access."""
+    false_alarms = _sos_false_alarm_times(profile or {}, now)
+    in_24h = [item for item in false_alarms if item >= now - timedelta(hours=24)]
+    if len(false_alarms) >= 3:
+        expires_at = false_alarms[-1] + timedelta(days=7)
+        if expires_at > now:
+            return {
+                "mode": "restricted",
+                "expires_at": expires_at.isoformat(timespec="seconds"),
+                "reason": "repeated_false_alarm",
+                "false_alarm_count_7d": len(false_alarms),
+                "false_alarm_count_24h": len(in_24h),
+            }
+    if len(in_24h) >= 2:
+        expires_at = in_24h[-1] + timedelta(days=3)
+        if expires_at > now:
+            return {
+                "mode": "observation",
+                "expires_at": expires_at.isoformat(timespec="seconds"),
+                "reason": "two_false_alarms_24h",
+                "false_alarm_count_7d": len(false_alarms),
+                "false_alarm_count_24h": len(in_24h),
+            }
+    return {
+        "mode": "normal",
+        "expires_at": None,
+        "reason": None,
+        "false_alarm_count_7d": len(false_alarms),
+        "false_alarm_count_24h": len(in_24h),
+    }
+
+
+def eligible_sos_retry_recipients(event: dict) -> list[dict]:
+    """Retry only failed recipients; successful deliveries are idempotently excluded."""
+    return [
+        dict(item)
+        for item in (event or {}).get("deliveries") or []
+        if item.get("status") == "failed"
+    ]
+
+
+def cancel_sos_event(data_file, payload, config=None):
+    """Cancel a delivered SOS and notify only its successful original recipients."""
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    event_id = str(payload.get("event_id") or "").strip()
+    if not line_user_id or not event_id:
+        return {"error": "missing line_user_id or event_id"}, 400
+    state = load_state(data_file)
+    event = (state.get("sos_events") or {}).get(event_id)
+    if not event:
+        return {"error": "SOS event not found"}, 404
+    if event.get("owner_line_user_id") != line_user_id:
+        return {"error": "not SOS event owner"}, 403
+    if event.get("status") == "cancelled":
+        return {
+            "ok": True,
+            "event_id": event_id,
+            "status": "cancelled",
+            "cancel_sent": int(event.get("cancel_sent") or 0),
+            "idempotent": True,
+        }, 200
+
+    now = current_app_time(config or {})
+    sent_at = parse_datetime(event.get("sent_at"))
+    if not sent_at or now - sent_at > timedelta(minutes=10):
+        return {"error": "SOS cancellation window expired"}, 409
+
+    profile = (state.get("users") or {}).get(line_user_id) or {}
+    reason = str(payload.get("reason") or "誤觸").strip()[:80]
+    message = (
+        f"✅【SOS 已取消】{profile.get('display_name') or '你的親友'} 已回報目前安全\n"
+        f"原因：{reason}\n原 SOS 紀錄仍會保留供安全查核"
+    )
+    token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
+    cancel_results = []
+    cancel_sent = 0
+    cancel_failed = 0
+    for delivery in event.get("deliveries") or []:
+        if delivery.get("status") != "sent":
+            continue
+        target = delivery.get("target")
+        if not target:
+            continue
+        try:
+            result = sender(token, target, message)
+            cancel_results.append({"kind": delivery.get("kind"), "target": target, "status": "sent"})
+            append_notification_log(
+                state, "sos_cancel", target, "sent", message,
+                json.dumps(result, ensure_ascii=False),
+            )
+            cancel_sent += 1
+        except Exception as exc:
+            cancel_results.append({"kind": delivery.get("kind"), "target": target, "status": "failed"})
+            append_notification_log(state, "sos_cancel", target, "failed", message, str(exc))
+            cancel_failed += 1
+
+    event["status"] = "cancelled"
+    event["cancelled_at"] = now.isoformat(timespec="seconds")
+    event["cancel_reason"] = reason
+    event["cancel_deliveries"] = cancel_results
+    event["cancel_sent"] = cancel_sent
+    event["cancel_failed"] = cancel_failed
+    profile.setdefault("sos_false_alarm_at", []).append(now.isoformat(timespec="seconds"))
+    policy = sos_abuse_state(profile, now)
+    profile["sos_abuse_mode"] = policy["mode"]
+    profile["sos_abuse_expires_at"] = policy["expires_at"]
+    pending = (state.get("sos_pending") or {}).get(line_user_id)
+    if pending and pending.get("event_id") == event_id:
+        pending["stage"] = "cancelled"
+        pending["cancelled_at"] = event["cancelled_at"]
+    save_state(data_file, state)
+    return {
+        "ok": True,
+        "event_id": event_id,
+        "status": "cancelled",
+        "cancel_sent": cancel_sent,
+        "cancel_failed": cancel_failed,
+        "abuse": policy,
+    }, 200
+
+
+def retry_sos_event(data_file, payload, config=None):
+    """Retry only failed original recipients and never duplicate successful delivery."""
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    event_id = str(payload.get("event_id") or "").strip()
+    state = load_state(data_file)
+    event = (state.get("sos_events") or {}).get(event_id)
+    if not line_user_id or not event_id:
+        return {"error": "missing line_user_id or event_id"}, 400
+    if not event:
+        return {"error": "SOS event not found"}, 404
+    if event.get("owner_line_user_id") != line_user_id:
+        return {"error": "not SOS event owner"}, 403
+    if event.get("status") == "cancelled":
+        return {"error": "cancelled SOS cannot be retried"}, 409
+
+    token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
+    message = str(event.get("message") or "🚨【SOS 緊急求助】請立即聯絡本人並確認安全")
+    retried_sent = 0
+    retried_failed = 0
+    for delivery in event.get("deliveries") or []:
+        if delivery.get("status") != "failed":
+            continue
+        target = delivery.get("target")
+        try:
+            if delivery.get("kind") == "group":
+                push_sos_to_guardian_group(token, target, message, sender=sender)
+            else:
+                sender(token, target, message)
+            delivery["status"] = "sent"
+            delivery["retried_at"] = current_app_time(config or {}).isoformat(timespec="seconds")
+            append_notification_log(state, "sos_retry", target, "sent", message, event_id)
+            retried_sent += 1
+        except Exception as exc:
+            delivery["retry_error"] = classify_line_push_error(exc)
+            append_notification_log(state, "sos_retry", target, "failed", message, str(exc))
+            retried_failed += 1
+    event["retry_count"] = int(event.get("retry_count") or 0) + 1
+    save_state(data_file, state)
+    return {
+        "ok": retried_failed == 0,
+        "event_id": event_id,
+        "retried_sent": retried_sent,
+        "retried_failed": retried_failed,
+    }, 200 if retried_sent or not retried_failed else 502
+
+
 def trigger_sos(data_file, payload, config=None):
     """
     🔴 P0 FIX v0.5:加 3 層防護
@@ -5884,6 +6066,21 @@ def trigger_sos(data_file, payload, config=None):
     # === P0 FIX:3 層防護 ===
     now_dt = current_app_time(config or {})
     today_str = now_dt.strftime("%Y-%m-%d")
+    abuse = sos_abuse_state(profile, now_dt)
+    profile["sos_abuse_mode"] = abuse["mode"]
+    profile["sos_abuse_expires_at"] = abuse["expires_at"]
+    if abuse["mode"] == "observation" and (
+        not payload.get("long_confirm") or not str(payload.get("reason") or "").strip()
+    ):
+        save_state(data_file, state)
+        return {
+            "error": "long confirmation required",
+            "abuse_mode": "observation",
+            "expires_at": abuse["expires_at"],
+            "requires_reason": True,
+            "emergency_numbers_available": True,
+            "emergency_numbers": ["119", "110"],
+        }, 428
 
     # 防護 1:每日上限 3 次
     SOS_DAILY_LIMIT = 3
@@ -5938,6 +6135,8 @@ def trigger_sos(data_file, payload, config=None):
         return {"error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
 
     limit = int(rules.get("core_guardian_alert_limit") or 1)
+    if abuse["mode"] == "restricted":
+        limit = 1
     # 核心守護人（is_primary）優先收到 SOS；其餘依 priority
     # 與安全守護相同：只用 contact_is_bound_guardian，排除本人 ID／緊急聯絡人
     contacts = sorted(
@@ -5959,6 +6158,8 @@ def trigger_sos(data_file, payload, config=None):
             methods = ["line"]
         if "line" not in (methods or ["line"]):
             continue
+        if abuse["mode"] == "restricted" and not contact.get("is_primary"):
+            continue
         row = dict(contact)
         row["line_id"] = target
         line_contacts.append(row)
@@ -5966,13 +6167,12 @@ def trigger_sos(data_file, payload, config=None):
             break
 
     active_group_ids = []
-    if rules.get("guardian_group_limit"):
+    if rules.get("guardian_group_limit") and abuse["mode"] != "restricted":
         groups = state.get("guardian_groups", {})
         active_group_ids = [
             group_id for group_id in (profile.get("guardian_group_ids") or [])
             if groups.get(group_id, {}).get("owner_line_user_id") == line_user_id
             and groups.get(group_id, {}).get("status") == "active"
-            and guardian_group_preference(groups.get(group_id), "notify_group_on_overdue")
         ][: int(rules.get("guardian_group_limit") or 0)]
 
     # 個人守護人或守護群任一可送；兩者都沒有才拒絕（方案本身不會自動綁定對象）
@@ -6027,6 +6227,7 @@ def trigger_sos(data_file, payload, config=None):
     group_sent = 0
     group_failed = 0
     results = []
+    deliveries = []
     print(
         f"[sos] trigger user={line_user_id[:8]} line_targets={len(line_contacts)} "
         f"groups={len(active_group_ids)} loc={bool(location_text)} phone_only={len(phone_contacts)}",
@@ -6041,6 +6242,7 @@ def trigger_sos(data_file, payload, config=None):
             if sent_at is None:
                 sent_at = current_app_time(config or {}).isoformat(timespec="seconds")
             results.append({"line_user_id": target, "status": "sent"})
+            deliveries.append({"kind": "guardian", "target": target, "status": "sent"})
             print(f"[sos] push ok target={str(target)[:8]}", flush=True)
         except Exception as exc:
             append_notification_log(state, "sos", target, "failed", message, str(exc))
@@ -6050,6 +6252,7 @@ def trigger_sos(data_file, payload, config=None):
                 "status": "failed",
                 "error_hint": classify_line_push_error(exc),
             })
+            deliveries.append({"kind": "guardian", "target": target, "status": "failed"})
             print(f"[sos] push FAIL target={str(target)[:8]} err={str(exc)[:180]}", flush=True)
 
     for group_id in active_group_ids:
@@ -6080,12 +6283,14 @@ def trigger_sos(data_file, payload, config=None):
                 "status": "sent",
                 "mention": mention_mode,
             })
+            deliveries.append({"kind": "group", "target": group_id, "status": "sent"})
             print(f"[sos] group push ok group={str(group_id)[:8]} mention={mention_mode}", flush=True)
         except Exception as exc:
             append_notification_log(state, "sos_guardian_group", group_id, "failed", message, str(exc))
             failed += 1
             group_failed += 1
             results.append({"group_id": group_id, "status": "failed"})
+            deliveries.append({"kind": "group", "target": group_id, "status": "failed"})
             print(f"[sos] group push FAIL group={str(group_id)[:8]} err={str(exc)[:180]}", flush=True)
 
     profile["last_sos_at"] = current_app_time(config or {}).isoformat(timespec="seconds")
@@ -6093,20 +6298,31 @@ def trigger_sos(data_file, payload, config=None):
     sos_log["count"] = sos_log.get("count", 0) + 1
     profile["sos_daily_log"] = sos_log
     profile["last_sos_event_id"] = sos_event_id
+    state.setdefault("sos_events", {})[sos_event_id] = {
+        "event_id": sos_event_id,
+        "owner_line_user_id": line_user_id,
+        "owner_display_name": profile.get("display_name") or "會員",
+        "status": "sent" if sent else "delivery_failed",
+        "created_at": now_dt.isoformat(timespec="seconds"),
+        "sent_at": sent_at,
+        "deliveries": deliveries,
+        "message": message,
+        "location_attached": bool(location_text),
+        "abuse_mode": abuse["mode"],
+    }
     save_state(data_file, state)
     code = 200 if sent else 502
-    pending = (state.get("sos_pending") or {}).get(line_user_id) or {}
-    cancel_available = (
-        sent > 0
-        and pending.get("stage") == "sent"
-        and pending.get("event_id") == sos_event_id
-    )
+    cancel_available = sent > 0
     if cancel_available:
-        try:
-            pending_sent_at = datetime.fromisoformat(str(pending.get("sent_at") or ""))
-            cancel_available = (now_dt - pending_sent_at).total_seconds() <= 600
-        except (TypeError, ValueError):
-            cancel_available = False
+        state.setdefault("sos_pending", {})[line_user_id] = {
+            "stage": "sent",
+            "tap_count": 3,
+            "first_tap_at": now_dt.isoformat(timespec="seconds"),
+            "last_tap_at": now_dt.isoformat(timespec="seconds"),
+            "sent_at": sent_at,
+            "event_id": sos_event_id,
+        }
+        save_state(data_file, state)
     return {
         "sent": sent,
         "failed": failed,
@@ -6121,6 +6337,10 @@ def trigger_sos(data_file, payload, config=None):
         "sent_at": sent_at,
         "location_updated_at": location.get("updated_at") if location_text else None,
         "cancel_available": cancel_available,
+        "abuse_mode": abuse["mode"],
+        "abuse_expires_at": abuse["expires_at"],
+        "emergency_numbers_available": True,
+        "emergency_numbers": ["119", "110"],
     }, code
 
 
@@ -12151,6 +12371,26 @@ def create_app(config=None):
         data, code = trigger_sos(app.config["DATA_FILE"], payload, app.config)
         return jsonify(data), code
 
+    @app.post("/api/sos/cancel")
+    def sos_cancel_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = cancel_sos_event(app.config["DATA_FILE"], payload, app.config)
+        return jsonify(data), code
+
+    @app.post("/api/sos/retry")
+    def sos_retry_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = retry_sos_event(app.config["DATA_FILE"], payload, app.config)
+        return jsonify(data), code
+
     @app.get("/api/bot/guardian-groups")
     def bot_guardian_groups_api():
         """2026-07-21 patch 22: 返回所有守護群清單(供 bot_admin.html)。"""
@@ -12177,7 +12417,7 @@ def create_app(config=None):
 
     @app.get("/api/bot/sos-pending")
     def bot_sos_pending_api():
-        """2026-07-21 patch 22: 返回所有 SOS 預約狀態。"""
+        """Return SOS progress, delivery events and graded safety restrictions."""
         denied = _admin_guard()
         if denied:
             return denied
@@ -12198,7 +12438,34 @@ def create_app(config=None):
             })
         # active 在前(警告/warning),sent,cancelled 在後
         out.sort(key=lambda x: (x.get("stage", "") not in ("warning_1", "warning_2", "warning_3"), x.get("last_tap_at") or ""))
-        return jsonify({"pending": out, "total": len(out)})
+        events = []
+        for event in (state.get("sos_events") or {}).values():
+            owner = str(event.get("owner_line_user_id") or "")
+            deliveries = event.get("deliveries") or []
+            events.append({
+                "event_id": event.get("event_id"),
+                "owner_id": owner[:6] + "..." + owner[-4:] if owner else None,
+                "owner_display_name": event.get("owner_display_name"),
+                "status": event.get("status"),
+                "sent_at": event.get("sent_at"),
+                "cancelled_at": event.get("cancelled_at"),
+                "sent": sum(1 for item in deliveries if item.get("status") == "sent"),
+                "failed": sum(1 for item in deliveries if item.get("status") == "failed"),
+                "abuse_mode": event.get("abuse_mode") or "normal",
+            })
+        events.sort(key=lambda item: item.get("sent_at") or "", reverse=True)
+        abuse = {"observation": 0, "restricted": 0}
+        for profile in (state.get("users") or {}).values():
+            mode = sos_abuse_state(profile, current_app_time(app.config)).get("mode")
+            if mode in abuse:
+                abuse[mode] += 1
+        return jsonify({
+            "pending": out,
+            "total": len(out),
+            "events": events[:50],
+            "event_total": len(events),
+            "abuse": abuse,
+        })
 
     @app.get("/api/bot/recent-events")
     def bot_recent_events_api():
@@ -12958,6 +13225,12 @@ class MiniClient:
         if route == "/api/sos":
             body, code = trigger_sos(self.app.config["DATA_FILE"], payload, self.app.config)
             return MiniResponse(body, code)
+        if route == "/api/sos/cancel":
+            body, code = cancel_sos_event(self.app.config["DATA_FILE"], payload, self.app.config)
+            return MiniResponse(body, code)
+        if route == "/api/sos/retry":
+            body, code = retry_sos_event(self.app.config["DATA_FILE"], payload, self.app.config)
+            return MiniResponse(body, code)
         if route == "/api/account/delete":
             body, code = delete_account(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
@@ -13341,6 +13614,12 @@ class MiniApp:
                     return handler.send_json(data, code)
                 if route == "/api/sos":
                     data, code = trigger_sos(data_file, payload, config)
+                    return handler.send_json(data, code)
+                if route == "/api/sos/cancel":
+                    data, code = cancel_sos_event(data_file, payload, config)
+                    return handler.send_json(data, code)
+                if route == "/api/sos/retry":
+                    data, code = retry_sos_event(data_file, payload, config)
                     return handler.send_json(data, code)
                 if route == "/api/account/delete":
                     data, code = delete_account(data_file, payload)

@@ -3645,6 +3645,7 @@
           <a class="family" id="sosDialPrimary" href="tel:" hidden>第一聯絡人</a>
         </div>
         <p class="sos-feedback" id="sosFeedback" aria-live="polite"></p>
+        <button class="action-btn" id="sosCancelSentBtn" type="button" hidden>我已安全／取消通知</button>
         <a class="sos-upgrade-link" id="sosUpgradeLink" href="https://alive-checkin.onrender.com/liff/pricing.html">查看守護方案</a>
         <div class="actions">
           <button class="action-btn" id="sosConfirmCancel" type="button">關閉</button>
@@ -5377,6 +5378,26 @@
       const data = await res.json();
       if (!res.ok) {
         const error = new Error(data.error || "sos failed");
+        error.status = res.status;
+        error.details = data;
+        throw error;
+      }
+      return data;
+    }
+
+    async function apiCancelSos(eventId, reason) {
+      const res = await fetch("/api/sos/cancel", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({
+          line_user_id: lineUserId,
+          event_id: eventId,
+          reason: reason || "誤觸"
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const error = new Error(data.error || "sos cancel failed");
         error.status = res.status;
         error.details = data;
         throw error;
@@ -8509,6 +8530,7 @@
     function openSosModal() {
       $("sosConfirmModal").hidden = false;
       $("sosFeedback").textContent = "";
+      $("sosCancelSentBtn").hidden = true;
       renderSosAccess();
     }
 
@@ -8601,10 +8623,34 @@
           sosPayload.longitude = locationMeta.longitude;
           if (locationMeta.city) sosPayload.city = locationMeta.city;
         }
-        const result = await apiTriggerSos(sosPayload);
+        let result;
+        try {
+          result = await apiTriggerSos(sosPayload);
+        } catch (firstError) {
+          if (firstError && firstError.status === 428) {
+            const reason = window.prompt("為了避免誤觸，請簡短填寫目前需要的協助，再確認送出");
+            if (!reason || !reason.trim()) {
+              feedback.textContent = "尚未送出。若有立即危險，請先撥打 119 或 110";
+              label.textContent = "聯絡家人連按3次";
+              return false;
+            }
+            result = await apiTriggerSos({
+              ...sosPayload,
+              long_confirm: true,
+              reason: reason.trim()
+            });
+          } else {
+            throw firstError;
+          }
+        }
         revealSosPhoneDials(result.phone_contacts);
         feedback.textContent = formatSosResultFeedback(result, locationMeta);
         label.textContent = "SOS 已送出";
+        const cancelSentBtn = $("sosCancelSentBtn");
+        if (cancelSentBtn && result.cancel_available && result.event_id) {
+          cancelSentBtn.hidden = false;
+          cancelSentBtn.dataset.eventId = result.event_id;
+        }
         if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
       } catch (error) {
         const details = (error && error.details) || {};
@@ -10157,6 +10203,7 @@
       const holdButton = $("sosHoldButton");
       const holdProgress = $("sosHoldProgress");
       const holdLabel = $("sosHoldLabel");
+      const cancelSentBtn = $("sosCancelSentBtn");
       if (!fab || !modal || !cancelBtn || !holdButton || fab.dataset.bound === "true") return;
       fab.dataset.bound = "true";
       let sosTapCount = 0;
@@ -10193,6 +10240,25 @@
 
       fab.addEventListener("click", openSosFlow);
       cancelBtn.addEventListener("click", () => { resetSosTap(); modal.hidden = true; });
+      if (cancelSentBtn) {
+        cancelSentBtn.addEventListener("click", async () => {
+          const eventId = cancelSentBtn.dataset.eventId || "";
+          if (!eventId) return;
+          const reason = window.prompt("請選填取消原因，例如：誤觸、已由家人聯絡確認", "誤觸") || "誤觸";
+          cancelSentBtn.disabled = true;
+          try {
+            const result = await apiCancelSos(eventId, reason);
+            $("sosFeedback").textContent = `已通知 ${Number(result.cancel_sent) || 0} 位原收件人：目前安全，原 SOS 紀錄會保留`;
+            cancelSentBtn.hidden = true;
+          } catch (error) {
+            $("sosFeedback").textContent = error.status === 409
+              ? "已超過 10 分鐘取消時間；請直接聯絡家人報平安"
+              : "取消通知暫時失敗，請直接聯絡家人報平安";
+          } finally {
+            cancelSentBtn.disabled = false;
+          }
+        });
+      }
       modal.addEventListener("click", (event) => {
         if (event.target === modal) { resetSosTap(); modal.hidden = true; }
       });
