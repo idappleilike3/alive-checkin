@@ -4574,7 +4574,8 @@
   <div class="modal-backdrop" id="smartReminderEditorModal" hidden>
     <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="smartReminderEditorTitle">
       <h2 id="smartReminderEditorTitle">新增智能提醒</h2>
-      <p class="helper">選擇類型、日期與提醒時間。儲存後只會私訊通知你。</p>
+      <p class="helper">選擇類型、日期與提醒時間。預設只通知自己，也可指定一位已綁定核心守護人；不會送到守護群。</p>
+      <p class="helper" id="smartReminderDailyUsage">今日智慧提醒已使用 0／2 則</p>
       <div class="smart-editor-fields">
         <label for="smartReminderName">對象名稱
           <input id="smartReminderName" type="text" maxlength="40" placeholder="例如：媽媽" autocomplete="name">
@@ -4594,6 +4595,11 @@
         </label>
         <label for="smartReminderTime">提醒時間
           <input id="smartReminderTime" type="time" value="09:00">
+        </label>
+        <label for="smartReminderDeliveryTarget">通知對象
+          <select id="smartReminderDeliveryTarget">
+            <option value="private">只通知自己（預設）</option>
+          </select>
         </label>
         <label for="smartReminderNote">備註（選填）
           <input id="smartReminderNote" type="text" maxlength="80" placeholder="可留空">
@@ -6063,9 +6069,11 @@
         smartReminderCache = data || smartReminderCache;
         const entitled = Boolean(data.entitled) || planIs799(plan);
         if (hint) {
-          hint.textContent = entitled
-            ? "生活提醒只傳到 LINE 私訊（預設）。守護群只收安全事件，不會收到生日等提醒。"
-            : "智能提醒為 799 守護版功能。免費／399 僅顯示升級說明。";
+          hint.textContent = data.state === "recovering"
+            ? "帳號資料正在安全恢復，完成後會自動取回既有智慧提醒，不需要重新購買。"
+            : (entitled
+              ? "生活提醒預設只通知自己，也可選一位已綁核心守護人。守護群不會收到生日等生活提醒。"
+              : "智能提醒為 799 守護版功能。免費／399 僅顯示升級說明。");
         }
         if (upgrade) upgrade.hidden = entitled;
         if (controls) controls.hidden = !entitled;
@@ -6077,7 +6085,7 @@
               <div class="member-guardian-manage-meta">
                 <span class="guardian-manage-name">${escapeHtml(r.emoji || "🗓️")} ${escapeHtml(r.target_name || "")}</span>
                 <span>${escapeHtml(r.category_label || r.category || "")} ／ ${escapeHtml(String(r.month || ""))}/${escapeHtml(String(r.day || ""))}${r.remind_time ? ` ／ ${escapeHtml(r.remind_time)}` : ""}</span>
-                <small>私訊</small>
+                <small>${String(r.delivery_target || "private").startsWith("guardian:") ? "核心守護人私訊" : "只通知自己"}</small>
               </div>
               <div class="member-guardian-manage-actions">
                 <button class="action-btn smart-edit-btn" type="button" data-id="${escapeHtml(r.id)}">編輯</button>
@@ -6134,6 +6142,22 @@
       if ($("smartReminderCustomTitle")) $("smartReminderCustomTitle").value = existing ? (existing.custom_title || "") : "";
       if ($("smartReminderNote")) $("smartReminderNote").value = existing ? (existing.note || "") : "";
       if ($("smartReminderTime")) $("smartReminderTime").value = existing && existing.remind_time ? existing.remind_time : "09:00";
+      const targetSelect = $("smartReminderDeliveryTarget");
+      if (targetSelect) {
+        const guardians = smartReminderCache.bound_guardians || [];
+        targetSelect.innerHTML = [
+          '<option value="private">只通知自己（預設）</option>',
+          ...guardians.map((g) => `<option value="guardian:${escapeHtml(g.line_user_id)}">通知核心守護人：${escapeHtml(g.name || "守護人")}</option>`)
+        ].join("");
+        targetSelect.value = existing && existing.delivery_target ? existing.delivery_target : "private";
+        if (!targetSelect.value) targetSelect.value = "private";
+      }
+      const usageEl = $("smartReminderDailyUsage");
+      if (usageEl) {
+        const usage = smartReminderCache.daily_usage || {};
+        const limits = smartReminderCache.daily_limits || { private: 2, guardian: 1 };
+        usageEl.textContent = `今日智慧提醒：自己已使用 ${Number(usage.private) || 0}／${Number(limits.private) || 2} 則；核心守護人 ${Number(usage.guardian) || 0}／${Number(limits.guardian) || 1} 則`;
+      }
       const yearly = $("smartReminderYearly");
       if (yearly) {
         const isYearly = !(existing && existing.year);
@@ -6164,6 +6188,7 @@
       const dateVal = String(($("smartReminderDate") && $("smartReminderDate").value) || "").trim();
       const timeVal = String(($("smartReminderTime") && $("smartReminderTime").value) || "09:00").trim();
       const note = String(($("smartReminderNote") && $("smartReminderNote").value) || "").trim();
+      const deliveryTarget = String(($("smartReminderDeliveryTarget") && $("smartReminderDeliveryTarget").value) || "private");
       const yearly = Boolean($("smartReminderYearly") && $("smartReminderYearly").checked);
       if (!name) {
         alert("請填寫對象名稱");
@@ -6190,6 +6215,7 @@
         yearly,
         remind_time: timeVal || "09:00",
         note,
+        delivery_target: deliveryTarget,
         notify_private: true,
         notify_group: false,
         eve_remind: true,

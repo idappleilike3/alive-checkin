@@ -9718,6 +9718,9 @@ def normalize_smart_reminder(raw, index=0):
     rid = str(raw.get("id") or "").strip() or f"sr_{secrets.token_hex(6)}"
     notify_private = True  # product: 智能提醒只走私訊
     notify_group = False
+    delivery_target = str(raw.get("delivery_target") or "private").strip()
+    if not (delivery_target == "private" or delivery_target.startswith("guardian:")):
+        delivery_target = str(raw.get("delivery_target") or "private").strip()
     return {
         "id": rid,
         "target_name": str(raw.get("target_name") or "").strip() or f"對象{index + 1}",
@@ -9732,6 +9735,7 @@ def normalize_smart_reminder(raw, index=0):
         "note": str(raw.get("note") or "").strip()[:200],
         "notify_private": notify_private,
         "notify_group": notify_group,
+        "delivery_target": delivery_target,
         "eve_remind": bool(raw.get("eve_remind", True)),
         "created_at": str(raw.get("created_at") or datetime.now().isoformat(timespec="seconds")),
         "updated_at": str(raw.get("updated_at") or ""),
@@ -9871,6 +9875,36 @@ def build_smart_reminder_flex(reminder, *, mode="day"):
     }
 
 
+def build_smart_reminder_digest(reminders, *, mode="day"):
+    reminders = list(reminders or [])
+    if len(reminders) == 1:
+        return build_smart_reminder_flex(reminders[0], mode=mode)
+    when = "明天" if mode == "eve" else "今天"
+    lines = [
+        f"{item.get('emoji') or '🗓️'} {item.get('target_name') or '對象'}："
+        f"{item.get('category_label') or '提醒'}"
+        for item in reminders
+    ]
+    return {
+        "type": "flex",
+        "altText": f"{when}有 {len(reminders)} 個提醒",
+        "contents": {
+            "type": "bubble",
+            "size": "mega",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "md",
+                "contents": [
+                    {"type": "text", "text": f"🗓️ {when}有 {len(reminders)} 個提醒", "weight": "bold", "size": "xl", "wrap": True},
+                    {"type": "text", "text": "\n".join(lines), "size": "md", "wrap": True},
+                    {"type": "text", "text": "同一時段已合併成一則，避免重複打擾", "size": "xs", "color": "#888888", "wrap": True},
+                ],
+            },
+        },
+    }
+
+
 def is_checkin_postback(data):
     """Daily push / Flex 「我平安」 postback."""
     text = str(data or "").strip()
@@ -9954,13 +9988,41 @@ def get_smart_reminders_payload(data_file, line_user_id):
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
     entitled = plan_has_smart_reminders(profile)
+    recovering = str(profile.get("account_migration_status") or "").lower() in {
+        "pending", "recovering", "in_progress"
+    }
+    today = datetime.now().strftime("%Y-%m-%d")
+    usage = (profile.get("smart_reminder_daily_usage") or {}).get(today) or {}
+    bound_guardians = []
+    for contact in profile.get("contacts") or []:
+        if not contact_is_bound_guardian(contact, line_user_id):
+            continue
+        guardian_id = get_contact_line_id(contact)
+        if not guardian_id:
+            continue
+        bound_guardians.append({
+            "line_user_id": guardian_id,
+            "name": contact.get("name") or contact.get("display_name") or "核心守護人",
+            "is_primary": bool(contact.get("is_primary")),
+        })
     return {
         "ok": True,
         "entitled": entitled,
+        "state": "entitled" if entitled else ("recovering" if recovering else "upgrade_required"),
         "plan": profile.get("plan") or "trial",
-        "upgrade_hint": None if entitled else "智能提醒為 799 守護版功能，升級後可設定生日／紀念日／回診等生活提醒（僅私訊，不進守護群）。",
+        "upgrade_hint": None if entitled else (
+            "帳號資料正在恢復，完成後會自動取回既有智慧提醒"
+            if recovering else
+            "智能提醒為 799 守護版功能，升級後可設定生日／紀念日／回診等生活提醒（不進守護群）。"
+        ),
         "reminders": list_smart_reminders(profile) if entitled else [],
         "defaults": profile.get("smart_reminder_defaults") or {"notify_private": True, "notify_group": False},
+        "bound_guardians": bound_guardians if entitled else [],
+        "daily_usage": {
+            "private": int(usage.get("private") or 0),
+            "guardian": int(usage.get("guardian") or 0),
+        },
+        "daily_limits": {"private": 2, "guardian": 1},
         "categories": [
             {"id": key, "emoji": meta["emoji"], "label": meta["label"]}
             for key, meta in SMART_REMINDER_CATEGORIES.items()
@@ -9976,6 +10038,20 @@ def save_smart_reminder(data_file, payload):
     profile = get_profile(state, line_user_id)
     if not plan_has_smart_reminders(profile):
         return {"ok": False, "error": "smart_reminders_require_799", "upgrade_hint": "請升級 799 守護版"}, 403
+    delivery_target = str(payload.get("delivery_target") or "private").strip()
+    if delivery_target.startswith("group:"):
+        return {"ok": False, "error": "guardian_group_target_not_allowed"}, 400
+    if delivery_target != "private":
+        if not delivery_target.startswith("guardian:"):
+            return {"ok": False, "error": "invalid_delivery_target"}, 400
+        target_id = delivery_target.split(":", 1)[1]
+        allowed = {
+            get_contact_line_id(contact)
+            for contact in profile.get("contacts") or []
+            if contact_is_bound_guardian(contact, line_user_id)
+        }
+        if target_id not in allowed:
+            return {"ok": False, "error": "guardian_target_not_bound"}, 400
     reminder = normalize_smart_reminder(payload, 0)
     reminder["updated_at"] = current_app_time({}).isoformat(timespec="seconds")
     rows = list_smart_reminders(profile)
@@ -10013,7 +10089,7 @@ def delete_smart_reminder(data_file, line_user_id, reminder_id):
 
 
 def send_smart_reminders(config):
-    """Push due smart reminders via LINE private message (never guardian group by default)."""
+    """Push merged, capped smart reminders to self or one bound core guardian."""
     token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     if not token:
         return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
@@ -10028,9 +10104,7 @@ def send_smart_reminders(config):
     sent = 0
     skipped = 0
     results = []
-    # Day-of：達到使用者設定的 remind_time 後推播（預設 09:00）；eve 仍約 20:00
     now_hm = now.strftime("%H:%M")
-    day_window = True  # 改由各筆 remind_time 判斷
     eve_window = now.hour >= 20
     system_error = False
 
@@ -10041,88 +10115,90 @@ def send_smart_reminders(config):
             continue
         sent_keys = set(user.get("smart_reminder_sent_keys") or [])
         snooze = user.get("smart_reminder_snooze") or {}
+        daily_all = user.setdefault("smart_reminder_daily_usage", {})
+        usage = daily_all.setdefault(today_key, {"private": 0, "guardian": 0})
+        # Keep only a compact rolling window.
+        user["smart_reminder_daily_usage"] = {
+            key: value for key, value in daily_all.items() if key >= (today_date - timedelta(days=7)).isoformat()
+        }
+        bound_guardians = {
+            get_contact_line_id(contact)
+            for contact in user.get("contacts") or []
+            if contact_is_bound_guardian(contact, line_user_id)
+        }
+        due_groups = {}
         for reminder in list_smart_reminders(user):
             rid = reminder.get("id")
             remind_hm = str(reminder.get("remind_time") or "09:00").strip()
             if not REMINDER_TIME_PATTERN.match(remind_hm):
                 remind_hm = "09:00"
-            # Day-of
-            if day_window and now_hm >= remind_hm and smart_reminder_occurs_on(reminder, today_date):
+            target_spec = str(reminder.get("delivery_target") or "private")
+            if target_spec == "private":
+                target_kind, target_id = "private", line_user_id
+            elif target_spec.startswith("guardian:"):
+                target_kind, target_id = "guardian", target_spec.split(":", 1)[1]
+                if target_id not in bound_guardians:
+                    skipped += 1
+                    continue
+            else:
+                skipped += 1
+                continue
+            if now_hm >= remind_hm and smart_reminder_occurs_on(reminder, today_date):
                 key = f"{today_key}:{rid}:day"
                 snooze_until = parse_datetime(snooze.get("until")) if snooze.get("id") == rid else None
                 if key in sent_keys and not (snooze_until and now >= snooze_until):
                     continue
                 if snooze_until and now < snooze_until:
                     continue
-                if not reminder.get("notify_private", True):
-                    continue
-                delivery_key = f"smart_reminder:{key}"
-                if not push_attempt_allowed(user, delivery_key):
-                    skipped += 1
-                    continue
-                message = build_smart_reminder_flex(reminder, mode="day")
-                try:
-                    result = sender(token, line_user_id, message)
-                    _clear_push_delivery_failure(user, delivery_key)
-                    sent_keys.add(key)
-                    if snooze.get("id") == rid:
-                        user["smart_reminder_snooze"] = {}
-                    append_notification_log(state, "smart_reminder", line_user_id, "sent", message.get("altText"), json.dumps(result, ensure_ascii=False))
-                    sent += 1
-                    results.append({"line_user_id": line_user_id, "id": rid, "mode": "day"})
-                except Exception as exc:
-                    failure = _record_scheduled_push_failure(
-                        state,
-                        user,
-                        delivery_key,
-                        "smart_reminder",
-                        line_user_id,
-                        message.get("altText"),
-                        exc,
-                        now,
-                    )
-                    skipped += 1
-                    results.append({"line_user_id": line_user_id, "id": rid, "error": str(exc)})
-                    if failure["kind"] == "system":
-                        system_error = True
-                        break
-            if system_error:
-                break
-            # Eve (night before)
+                due_groups.setdefault(("day", remind_hm, target_kind, target_id), []).append((key, reminder))
             if eve_window and reminder.get("eve_remind", True) and smart_reminder_occurs_on(reminder, tomorrow):
                 key = f"{today_key}:{rid}:eve"
                 if key in sent_keys:
                     continue
-                if not reminder.get("notify_private", True):
-                    continue
-                delivery_key = f"smart_reminder:{key}"
-                if not push_attempt_allowed(user, delivery_key):
-                    skipped += 1
-                    continue
-                message = build_smart_reminder_flex(reminder, mode="eve")
-                try:
-                    result = sender(token, line_user_id, message)
-                    _clear_push_delivery_failure(user, delivery_key)
-                    sent_keys.add(key)
-                    append_notification_log(state, "smart_reminder", line_user_id, "sent", message.get("altText"), json.dumps(result, ensure_ascii=False))
-                    sent += 1
-                    results.append({"line_user_id": line_user_id, "id": rid, "mode": "eve"})
-                except Exception as exc:
-                    failure = _record_scheduled_push_failure(
-                        state,
-                        user,
-                        delivery_key,
-                        "smart_reminder",
-                        line_user_id,
-                        message.get("altText"),
-                        exc,
-                        now,
-                    )
-                    skipped += 1
-                    results.append({"line_user_id": line_user_id, "id": rid, "error": str(exc)})
-                    if failure["kind"] == "system":
-                        system_error = True
-                        break
+                due_groups.setdefault(("eve", "20:00", target_kind, target_id), []).append((key, reminder))
+
+        for (mode, slot, target_kind, target_id), entries in sorted(due_groups.items()):
+            limit = 2 if target_kind == "private" else 1
+            if int(usage.get(target_kind) or 0) >= limit:
+                skipped += len(entries)
+                continue
+            keys = [key for key, _reminder in entries]
+            reminders = [reminder for _key, reminder in entries]
+            delivery_key = f"smart_reminder:{today_key}:{mode}:{slot}:{target_kind}:{target_id}"
+            if not push_attempt_allowed(user, delivery_key):
+                skipped += len(entries)
+                continue
+            message = build_smart_reminder_digest(reminders, mode=mode)
+            try:
+                result = sender(token, target_id, message)
+                _clear_push_delivery_failure(user, delivery_key)
+                sent_keys.update(keys)
+                usage[target_kind] = int(usage.get(target_kind) or 0) + 1
+                if snooze.get("id") in {r.get("id") for r in reminders}:
+                    user["smart_reminder_snooze"] = {}
+                append_notification_log(
+                    state, "smart_reminder", target_id, "sent",
+                    message.get("altText"), json.dumps(result, ensure_ascii=False),
+                )
+                sent += 1
+                results.append({
+                    "line_user_id": line_user_id,
+                    "target": target_kind,
+                    "recipient": target_id,
+                    "ids": [r.get("id") for r in reminders],
+                    "mode": mode,
+                    "merged_count": len(reminders),
+                })
+            except Exception as exc:
+                failure = _record_scheduled_push_failure(
+                    state, user, delivery_key, "smart_reminder", target_id,
+                    message.get("altText"), exc, now,
+                )
+                skipped += len(entries)
+                results.append({"line_user_id": line_user_id, "ids": [r.get("id") for r in reminders], "error": str(exc)})
+                if failure["kind"] == "system":
+                    system_error = True
+                    break
         user["smart_reminder_sent_keys"] = sorted(sent_keys)[-120:]
         if system_error:
             break
