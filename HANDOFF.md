@@ -2,6 +2,35 @@
 
 更新日期：2026-07-26
 
+## LIFF Provider migration：正式上線交接
+
+這次變更已把正式入口與預設值切到新的 LINE Login provider，但 **尚未由本地工作樹執行外部部署或 LINE Console 操作**。PR 合併到 `main` 並確認 Render 部署完成後，指定的 release owner 依以下順序操作與驗收：
+
+1. 在 Render 的 `alive-checkin` Web Service → **Environment**，逐一新增或更新：
+
+   ```text
+   LINE_LOGIN_CHANNEL_ID=2010848330
+   LIFF_ID=2010848330-UAiqPPYD
+   ```
+
+   不要 bulk-clear 或刪除後重建環境變數。既有 `LINE_CHANNEL_ACCESS_TOKEN` 與 `LINE_CHANNEL_SECRET` 是 Messaging API 憑證，必須保留原值，不能以新 LINE Login provider 的值取代。
+2. 儲存後只對這個 service 觸發部署／重啟，等 Render health check 成功；確認 `https://alive-checkin.onrender.com/api/config` 的 `liff_id` 為 `2010848330-UAiqPPYD`。
+3. 用真實 LINE 帳號開啟 `https://liff.line.me/2010848330-UAiqPPYD`，完成授權後確認 `?open=checkin`、`?open=guard` 等 requested `open` route 可到達。
+4. 用會員帳號執行「一鍵邀請」，確認直接開啟 `shareTargetPicker`；讓另一個已加官方帳號好友的帳號完成一次守護人綁定，確認雙方都收到「綁定成功」。
+5. 以該單一已綁定守護人開啟安全守護、允許定位，確認啟動結果或後台紀錄為 `target_count=1`、`sent=1`，且守護人收到位置訊息。
+6. 以正式 Messaging API token 發布 [`line-rich-menu-config.json`](line-rich-menu-config.json)；不要把 token 寫入檔案、git、shell history 或交接文件：
+
+   ```bash
+   read -rsp 'LINE Messaging API token: ' RICH_MENU_TOKEN; printf '\n'
+   LINE_CHANNEL_ACCESS_TOKEN="$RICH_MENU_TOKEN" \
+     /tmp/alive-checkin-sos-venv/bin/python scripts/setup_line_rich_menu.py
+   unset RICH_MENU_TOKEN
+   ```
+
+7. 在舊 LIFF App 的 LINE Developers Console 將 Endpoint URL 改為 `https://alive-checkin.onrender.com/liff/migrate.html`。再打開一條舊連結，確認 handoff 僅保留 `open`、`page`、`invite_from`、`friend_invite`；access token、ID token 與其他不安全參數不得被帶到新連結。
+
+若任一步失敗，停止發布圖文選單或舊端點切換，保留目前 Render 環境變數，記錄失敗帳號／時間／頁面與 Render deploy ID，回到本分支調查。
+
 ## 必須從這裡接續
 
 - Repository：`C:\Users\WIN11\Documents\每日平安1`
@@ -20,17 +49,10 @@ python -m unittest discover -s tests
 
 ## 最新測試基準
 
-- Python 完整測試：203 項
-- 通過：200
-- 剩餘失敗：3
-- 通知修正 focused：53/53
-- 通知修正已經獨立 review Approved
-
-剩餘三項：
-
-1. `test_welcome_flex_new_card_two_ctas`
-2. `test_welcome_flex_omits_placeholder_name`
-3. `test_liff_links_use_query_params_for_android_compatibility`
+- 2026-07-26 LIFF Provider migration 完整 Python 測試：230/230 通過
+- Node 測試：8/8 通過
+- `git diff --check`：通過
+- Legacy ID scan：沒有 production entry 或 fallback；僅 `tests/` fixture 保留舊 provider 值，舊連結 handoff 的安全參數測試名稱為 `test_legacy_handoff_only_forwards_safe_parameters`，另 `liff/migrate.html` 為明確排除的轉移頁面。
 
 ## 已完成並審查
 
