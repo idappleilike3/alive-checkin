@@ -219,7 +219,11 @@ test("current LIFF redeems after auth, removes code immediately, and refreshes m
       },
       loadInitialMemberData: async () => {
         events.push(["loadInitialMemberData"]);
-        return {status: {ok: true}, contacts: [], onboarding: {}};
+        return {
+          status: {ok: true, plan: "paid_399"},
+          contacts: [],
+          onboarding: {},
+        };
       },
     },
   );
@@ -263,6 +267,7 @@ test("current LIFF redeems after auth, removes code immediately, and refreshes m
   assert.match(elements.accountMigrationSummary.innerHTML, /3/);
   assert.match(elements.accountMigrationSummary.innerHTML, /1/);
   assert.match(elements.accountMigrationSummary.innerHTML, /2/);
+  assert.match(elements.accountMigrationSummary.innerHTML, /進階版/);
   assert.doesNotMatch(elements.accountMigrationSummary.innerHTML, /orders|requests|8|5/);
   assert.equal(indexPage.includes("location.reload()"), false);
 });
@@ -333,4 +338,100 @@ test("current migration errors show safe recovery and normal fast route stays un
     elements.accountMigrationSummary.innerHTML,
   ].join(" ");
   assert.doesNotMatch(publicText, /expired-code|current-token|U[0-9a-f]{32}/i);
+});
+
+test("used migration code keeps recovery inside the current LIFF", async () => {
+  const migrationSource = section(
+    indexPage,
+    "let pendingAccountMigrationCode",
+    "function requestedAppAction()",
+  );
+  const elements = {
+    accountMigrationCard: {hidden: true, dataset: {}},
+    accountMigrationTitle: {textContent: ""},
+    accountMigrationMessage: {textContent: ""},
+    accountMigrationSummary: {innerHTML: ""},
+    retryAccountMigrationBtn: {hidden: true, onclick: null},
+    accountMigrationAction: {hidden: true, href: "", textContent: ""},
+  };
+  const sandbox = expose(
+    migrationSource,
+    ["redeemPendingAccountMigration"],
+    {
+      getAppParam: () => "used-code",
+      liff: {getIDToken: () => "current-token"},
+      fetch: async () => ({
+        ok: false,
+        status: 409,
+        json: async () => ({ok: false, error: "used_code"}),
+      }),
+      history: {replaceState() {}},
+      location: {pathname: "/", search: "", hash: ""},
+      window: {location: {href: "https://example.test/"}},
+      document: {getElementById: (id) => elements[id] || null},
+      loadInitialMemberData: async () => ({status: {}, contacts: [], onboarding: {}}),
+    },
+  );
+
+  await sandbox.redeemPendingAccountMigration();
+
+  assert.match(elements.accountMigrationAction.href, /2010848330-UAiqPPYD/);
+  assert.match(elements.accountMigrationAction.href, /open=member/);
+  assert.doesNotMatch(elements.accountMigrationAction.href, /2010674803-rK98c0lo/);
+  assert.match(elements.accountMigrationAction.textContent, /新版|會員/);
+});
+
+test("bootstrap redeems migration before applying a redirecting destination", async () => {
+  const bootstrapSource = section(
+    indexPage,
+    "async function bootstrapApp()",
+    "appBootstrapPromise = bootstrapApp()",
+  );
+  const events = [];
+  const sandbox = expose(bootstrapSource, ["bootstrapApp"], {
+    appBootstrapComplete: false,
+    memberBootstrapState: {},
+    setMemberInteractionLocked() {},
+    bindTabEvents() {},
+    bindSosFab() {},
+    bindMvpHome() {},
+    bindGuardianCompletePrompt() {},
+    bindGuardianEvents() {},
+    getAppParam: (key) => key === "migration_code" ? "single-use-code" : (
+      key === "open" ? "plans" : ""
+    ),
+    applyInitialDeepLinkRoute: () => {
+      events.push("route");
+      return {handled: true, redirected: true};
+    },
+    lineUserId: "",
+    initLine: async () => {
+      events.push("auth");
+      sandbox.lineUserId = "U-current";
+      return true;
+    },
+    useLocalMode: false,
+    redeemPendingAccountMigration: async () => {
+      events.push("redeem");
+      return {attempted: true, succeeded: true, initialData: {}};
+    },
+    initApp: async () => {
+      events.push("member");
+      return true;
+    },
+    showLineLoginRequired() {},
+    document: {body: {removeAttribute() {}, dataset: {}}},
+    console: {warn() {}},
+  });
+
+  await sandbox.bootstrapApp();
+
+  assert.deepEqual(events, ["auth", "redeem", "member", "route"]);
+});
+
+test("migration status card is outside route-hidden application sections", () => {
+  const card = indexPage.indexOf('id="accountMigrationCard"');
+  const firstAppSection = indexPage.indexOf("<section", indexPage.indexOf('<main class="app">'));
+  assert.notEqual(card, -1);
+  assert.ok(card < firstAppSection, "migration card must remain visible while routes hide sections");
 });

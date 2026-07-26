@@ -61,6 +61,12 @@
     const LEGACY_LIFF_ID = "2010674803-rK98c0lo";
     const NEW_LIFF_URL = "https://liff.line.me/2010848330-UAiqPPYD";
     const SAFE_KEYS = ["open", "page", "friend_invite"];
+    const SAFE_ACTIONS = new Set([
+      "home", "checkin", "guard", "safety", "sos", "member", "profile",
+      "guardians", "history", "status", "pricing", "plans", "plan",
+      "help", "faq", "terms", "privacy", "onboarding", "bind",
+      "share-invite", "invite", "onboarding/invite"
+    ]);
     let legacyMigrationBusy = false;
 
     function parseLiffStateParams(params, value) {
@@ -94,13 +100,26 @@
       return /^U[0-9a-f]{32}$/i.test(String(value || "").trim());
     }
 
+    function safeDestinationValue(key, value) {
+      const normalized = String(value || "").trim();
+      if (!normalized || isLineUserId(normalized)) return "";
+      if (key === "open" || key === "page") {
+        const action = normalized.toLowerCase();
+        return SAFE_ACTIONS.has(action) ? action : "";
+      }
+      if (key === "friend_invite") {
+        return /^[A-Z0-9]{6,8}$/i.test(normalized) ? normalized.toUpperCase() : "";
+      }
+      return "";
+    }
+
     function buildCurrentMigrationUrl(migrationCode, search = location.search) {
       const target = new URL(NEW_LIFF_URL);
       target.searchParams.set("migration_code", String(migrationCode || "").trim());
       const source = readSourceParams(search);
       for (const key of SAFE_KEYS) {
-        const value = String(source.get(key) || "").trim();
-        if (value && !isLineUserId(value)) target.searchParams.set(key, value);
+        const value = safeDestinationValue(key, source.get(key));
+        if (value) target.searchParams.set(key, value);
       }
       return target.toString();
     }

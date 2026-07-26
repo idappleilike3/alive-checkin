@@ -66,7 +66,7 @@ class LiffFastRouteTests(unittest.TestCase):
     def test_initial_member_requests_run_in_parallel(self):
         loader = self.section(
             "async function loadInitialMemberData()",
-            "async function initApp(options = {})",
+            "async function initApp()",
         )
         self.assertIn("const statusPromise", loader)
         self.assertIn("const contactsPromise", loader)
@@ -76,7 +76,7 @@ class LiffFastRouteTests(unittest.TestCase):
     def test_first_status_response_syncs_checkin_button_immediately(self):
         loader = self.section(
             "async function loadInitialMemberData()",
-            "async function initApp(options = {})",
+            "async function initApp()",
         )
         self.assertIn("renderStatus(status)", loader)
         self.assertIn("syncCheckBtn(status)", loader)
@@ -84,7 +84,7 @@ class LiffFastRouteTests(unittest.TestCase):
     def test_first_status_response_unlocks_safe_member_actions(self):
         loader = self.section(
             "async function loadInitialMemberData()",
-            "async function initApp(options = {})",
+            "async function initApp()",
         )
         self.assertIn('$("mvpSafeBtn").disabled = false', loader)
         self.assertIn('$("mvpGuardStartBtn").disabled = false', loader)

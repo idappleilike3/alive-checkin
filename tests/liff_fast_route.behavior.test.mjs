@@ -322,3 +322,18 @@ test("legacy handoff never emits an old Provider user ID under an allowlisted ke
     );
   }
 });
+
+test("legacy handoff rejects token-like values hidden in allowlisted keys", () => {
+  for (const [key, sensitive] of [
+    ["open", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJVMTIzIn0.signature"],
+    ["page", "access_token_secret_value"],
+    ["friend_invite", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJVMTIzIn0.signature"],
+    ["friend_invite", "TOO-LONG-INVITE-CODE-SECRET"],
+  ]) {
+    assert.equal(
+      migrationTarget(`?${key}=${encodeURIComponent(sensitive)}`),
+      "https://liff.line.me/2010848330-UAiqPPYD?migration_code=single-use-code",
+      `${key} must reject sensitive or invalid values`,
+    );
+  }
+});

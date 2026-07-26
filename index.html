@@ -3619,6 +3619,14 @@
       <button class="theme-btn" data-theme="cute" type="button">可愛</button>
     </div>
 
+    <div id="accountMigrationCard" class="account-migration-card" role="status" aria-live="polite" hidden>
+      <h2 id="accountMigrationTitle">正在安全搬家</h2>
+      <p id="accountMigrationMessage">請稍候，正在確認你的帳號。</p>
+      <div id="accountMigrationSummary"></div>
+      <button id="retryAccountMigrationBtn" type="button" hidden>再試一次</button>
+      <a id="accountMigrationAction" href="https://liff.line.me/2010848330-UAiqPPYD?open=member" hidden>開啟新版會員中心</a>
+    </div>
+
     <section class="mvp-home" id="mvpHome" aria-label="每日平安首頁">
       <div class="mvp-brand">每日平安</div>
       <p class="mvp-slogan">每天 10 秒，報個平安</p>
@@ -3679,13 +3687,6 @@
       <div class="mvp-checkin-banner" id="mvpCheckinBanner" hidden>✅ 今天已完成平安回報</div>
       <div class="mvp-checkin-banner" id="mvpNextReminderBanner" hidden style="background:#ecfdf3;color:#166534;"></div>
       <p id="inlineError" class="inline-error" hidden></p>
-      <section id="accountMigrationCard" class="account-migration-card" role="status" aria-live="polite" hidden>
-        <h2 id="accountMigrationTitle">正在安全搬家</h2>
-        <p id="accountMigrationMessage">請稍候，正在確認你的帳號。</p>
-        <div id="accountMigrationSummary"></div>
-        <button id="retryAccountMigrationBtn" type="button" hidden>再試一次</button>
-        <a id="accountMigrationAction" href="https://liff.line.me/2010674803-rK98c0lo" hidden>回舊版重新驗證</a>
-      </section>
     </section>
 
     <section class="mvp-panel" id="mvpGuardPanel" aria-label="安全守護面板" hidden>
@@ -4664,6 +4665,7 @@
 
     let pendingAccountMigrationCode = "";
     let accountMigrationInFlight = null;
+    let pendingMigratedMemberData = null;
 
     function accountMigrationElement(id) {
       return document.getElementById(id);
@@ -4683,6 +4685,20 @@
     function safeMigrationCount(value) {
       const count = Number(value);
       return Number.isFinite(count) && count >= 0 ? Math.floor(count) : 0;
+    }
+
+    function safeMigrationPlanLabel(status) {
+      const plan = String(status?.plan || "").trim();
+      return {
+        trial: "安心體驗",
+        free: "免費方案",
+        paid_199: "基礎版",
+        paid_199_year: "基礎版（年繳）",
+        paid_399: "進階版",
+        paid_399_year: "進階版（年繳）",
+        paid_799: "尊榮版",
+        paid_799_year: "尊榮版（年繳）"
+      }[plan] || "原有方案";
     }
 
     function showAccountMigrationState(state, options = {}) {
@@ -4705,8 +4721,8 @@
       }
       if (action) {
         action.hidden = !options.action;
-        action.href = options.actionHref || "https://liff.line.me/2010674803-rK98c0lo";
-        action.textContent = options.actionText || "回舊版重新驗證";
+        action.href = options.actionHref || "https://liff.line.me/2010848330-UAiqPPYD?open=member";
+        action.textContent = options.actionText || "開啟新版會員中心";
       }
     }
 
@@ -4723,9 +4739,10 @@
       if (errorCode === "used_code") {
         showAccountMigrationState("used", {
           title: "搬家連結已使用",
-          message: "這個連結已完成使用。請回到新版首頁查看資料；若資料未出現，再從舊版重新驗證。",
+          message: "這個連結已完成使用，請到新版會員中心查看目前資料。",
           action: true,
-          actionText: "回舊版重新驗證"
+          actionHref: "https://liff.line.me/2010848330-UAiqPPYD?open=member",
+          actionText: "開啟新版會員中心"
         });
         return;
       }
@@ -4766,7 +4783,10 @@
             return { attempted: true, succeeded: false };
           }
           const counts = data.counts || {};
+          const initialData = await loadInitialMemberData();
+          const planLabel = safeMigrationPlanLabel(initialData?.status || {});
           const summary = [
+            `<li>目前方案 ${planLabel}</li>`,
             `<li>平安紀錄 ${safeMigrationCount(counts.checkins)} 筆</li>`,
             `<li>守護聯絡人 ${safeMigrationCount(counts.contacts)} 位</li>`,
             `<li>守護群組 ${safeMigrationCount(counts.groups)} 個</li>`,
@@ -4778,7 +4798,7 @@
             summary: `<ul>${summary}</ul>`
           });
           pendingAccountMigrationCode = "";
-          const initialData = await loadInitialMemberData();
+          pendingMigratedMemberData = initialData;
           return { attempted: true, succeeded: true, initialData };
         } catch (_) {
           showAccountMigrationFailure("");
@@ -9576,7 +9596,7 @@
     }
 
     // 整合到 initApp:載入守護人 + onboarding 檢查
-    async function initApp(options = {}) {
+    async function initApp() {
       const dailyEl = $("dailyStatus");
       if (dailyEl) dailyEl.textContent = "讀取中...";
 
@@ -9588,7 +9608,8 @@
       }
 
       try {
-        const initialData = options.initialData || await loadInitialMemberData();
+        const initialData = pendingMigratedMemberData || await loadInitialMemberData();
+        pendingMigratedMemberData = null;
         const status = initialData.status;
         const onboardingState = initialData.onboarding;
 
@@ -10278,8 +10299,11 @@
       bindMvpHome();
       bindGuardianCompletePrompt();
       bindGuardianEvents();
-      const initialRoute = applyInitialDeepLinkRoute();
-      if (initialRoute.redirected) return;
+      const hasPendingMigration = Boolean(getAppParam("migration_code"));
+      if (!hasPendingMigration) {
+        const initialRoute = applyInitialDeepLinkRoute();
+        if (initialRoute.redirected) return;
+      }
       try {
         const lineReady = lineUserId ? true : await initLine();
         if (!useLocalMode && (!lineReady || !lineUserId)) {
@@ -10289,10 +10313,12 @@
         }
 
         const migration = await redeemPendingAccountMigration();
-        const memberReady = await initApp({
-          initialData: migration.succeeded ? migration.initialData : null
-        });
+        const memberReady = await initApp();
         if (!memberReady) return;
+        if (hasPendingMigration && migration.succeeded) {
+          const migratedRoute = applyInitialDeepLinkRoute();
+          if (migratedRoute.redirected) return;
+        }
         if (useLocalMode) renderStatus(buildLocalStatus(loadLocalState()));
         await refreshCalendarNotes();
         if (!useLocalMode) {
