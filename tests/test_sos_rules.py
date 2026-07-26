@@ -3,7 +3,7 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from app import save_state, sos_user_facing_error, trigger_sos
+from app import current_app_time, load_state, save_state, sos_user_facing_error, trigger_sos
 
 
 class SosRulesTests(unittest.TestCase):
@@ -57,7 +57,7 @@ class SosRulesTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(result["sent"], 1)
 
-    def test_active_799_sends_clear_message_without_fake_cancel_code(self):
+    def test_active_799_does_not_attach_stale_location(self):
         messages = []
         profile = {
             "line_user_id": "U-owner",
@@ -77,7 +77,9 @@ class SosRulesTests(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertEqual(result["sent"], 1)
-        self.assertTrue(result["location_attached"])
+        self.assertFalse(result["location_attached"])
+        self.assertIsNone(result["location_updated_at"])
+        self.assertNotIn("maps?q=", messages[0])
         self.assertNotIn("取消碼", messages[0])
         self.assertIn("本通知不會自動聯絡警消", messages[0])
 
@@ -142,7 +144,9 @@ class SosRulesTests(unittest.TestCase):
         profile = {
             "line_user_id": "U-owner",
             "display_name": "小美",
-            "plan": "free",
+            "plan": "paid_399",
+            "payment_status": "active",
+            "paid_until": (datetime.now() + timedelta(days=30)).isoformat(timespec="seconds"),
             "contacts": [
                 {"line_id": "U-guardian", "priority": 1, "notify_methods": ["line"]},
                 {"name": "阿爸", "phone": "0912345678", "priority": 2},
@@ -168,6 +172,191 @@ class SosRulesTests(unittest.TestCase):
         self.assertEqual(result["phone_only_count"], 1)
         self.assertEqual(result["phone_contacts"][0]["phone"], "0912345678")
         self.assertIn("maps?q=25.04,121.56", messages[0])
+        self.assertTrue(result["sent_at"])
+        self.assertTrue(result["location_updated_at"])
+        self.assertIn("cancel_available", result)
+
+    def test_inline_sos_coords_preserve_active_location_session(self):
+        profile = {
+            "line_user_id": "U-owner",
+            "display_name": "小美",
+            "plan": "free",
+            "contacts": [{"line_id": "U-guardian", "priority": 1, "notify_methods": ["line"]}],
+            "location": {
+                "latitude": 24.0,
+                "longitude": 120.0,
+                "active": True,
+                "sharing": True,
+                "mode": "safety_guard",
+                "started_at": "2026-07-26T09:00:00",
+                "expires_at": "2026-07-26T10:00:00",
+            },
+        }
+        data_file = self.make_data_file(profile)
+
+        result, status = trigger_sos(
+            data_file,
+            {"line_user_id": "U-owner", "latitude": 25.04, "longitude": 121.56},
+            {
+                "LINE_CHANNEL_ACCESS_TOKEN": "test-token",
+                "LINE_PUSH_SENDER": lambda *_args: {"ok": True},
+            },
+        )
+
+        stored = load_state(data_file)["users"]["U-owner"]["location"]
+        self.assertEqual(status, 200)
+        self.assertTrue(result["location_attached"])
+        self.assertEqual(stored["latitude"], 25.04)
+        self.assertTrue(stored["active"])
+        self.assertTrue(stored["sharing"])
+        self.assertEqual(stored["mode"], "safety_guard")
+        self.assertEqual(stored["started_at"], "2026-07-26T09:00:00")
+        self.assertEqual(stored["expires_at"], "2026-07-26T10:00:00")
+
+    def test_sent_at_is_recorded_when_first_push_succeeds(self):
+        success_times = []
+        profile = {
+            "line_user_id": "U-owner",
+            "display_name": "小美",
+            "plan": "free",
+            "contacts": [{"line_id": "U-guardian", "priority": 1, "notify_methods": ["line"]}],
+        }
+        data_file = self.make_data_file(profile)
+
+        def sender(*_args):
+            success_times.append(current_app_time({}).isoformat(timespec="seconds"))
+            return {"ok": True}
+
+        result, status = trigger_sos(
+            data_file,
+            {"line_user_id": "U-owner"},
+            {"LINE_CHANNEL_ACCESS_TOKEN": "test-token", "LINE_PUSH_SENDER": sender},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(result["sent_at"], success_times[0])
+
+    def test_partial_delivery_reports_each_result_without_false_success(self):
+        messages = []
+        profile = {
+            "line_user_id": "U-owner",
+            "display_name": "小美",
+            "plan": "paid_399",
+            "payment_status": "active",
+            "paid_until": (datetime.now() + timedelta(days=30)).isoformat(timespec="seconds"),
+            "contacts": [
+                {
+                    "line_user_id": "U-good",
+                    "binding_status": "accepted",
+                    "contact_role": "guardian",
+                    "is_primary": True,
+                    "priority": 1,
+                    "notify_methods": ["line"],
+                },
+                {
+                    "line_user_id": "U-failed",
+                    "binding_status": "accepted",
+                    "contact_role": "guardian",
+                    "priority": 2,
+                    "notify_methods": ["line"],
+                },
+            ],
+        }
+        data_file = self.make_data_file(profile)
+
+        def sender(_token, target, message):
+            if target == "U-failed":
+                raise RuntimeError("LINE target rejected")
+            messages.append((target, message))
+            return {"ok": True}
+
+        result, status = trigger_sos(
+            data_file,
+            {
+                "line_user_id": "U-owner",
+                "latitude": 25.04,
+                "longitude": 121.56,
+            },
+            {
+                "LINE_CHANNEL_ACCESS_TOKEN": "test-token",
+                "LINE_PUSH_SENDER": sender,
+            },
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(result["failed"], 1)
+        self.assertEqual(len(result["results"]), 2)
+        self.assertEqual(messages[0][0], "U-good")
+        self.assertTrue(result["sent_at"])
+        self.assertTrue(result["location_updated_at"])
+
+    def test_total_delivery_failure_has_no_sent_at(self):
+        profile = {
+            "line_user_id": "U-owner",
+            "display_name": "小美",
+            "plan": "free",
+            "contacts": [{
+                "line_user_id": "U-failed",
+                "binding_status": "accepted",
+                "contact_role": "guardian",
+                "is_primary": True,
+                "priority": 1,
+                "notify_methods": ["line"],
+            }],
+        }
+        data_file = self.make_data_file(profile)
+
+        result, status = trigger_sos(
+            data_file,
+            {"line_user_id": "U-owner"},
+            {
+                "LINE_CHANNEL_ACCESS_TOKEN": "test-token",
+                "LINE_PUSH_SENDER": lambda *_args: (_ for _ in ()).throw(
+                    RuntimeError("LINE target rejected")
+                ),
+            },
+        )
+
+        self.assertEqual(status, 502)
+        self.assertEqual(result["sent"], 0)
+        self.assertIsNone(result["sent_at"])
+
+    def test_stale_pending_record_does_not_offer_cancel_for_new_event(self):
+        profile = {
+            "line_user_id": "U-owner",
+            "display_name": "小美",
+            "plan": "free",
+            "contacts": [{
+                "line_user_id": "U-good",
+                "binding_status": "accepted",
+                "contact_role": "guardian",
+                "is_primary": True,
+                "priority": 1,
+                "notify_methods": ["line"],
+            }],
+        }
+        data_file = self.make_data_file(profile, {
+            "sos_pending": {
+                "U-owner": {
+                    "stage": "sent",
+                    "event_id": "old-event",
+                    "sent_at": (datetime.now() - timedelta(minutes=30)).isoformat(timespec="seconds"),
+                }
+            }
+        })
+
+        result, status = trigger_sos(
+            data_file,
+            {"line_user_id": "U-owner"},
+            {
+                "LINE_CHANNEL_ACCESS_TOKEN": "test-token",
+                "LINE_PUSH_SENDER": lambda *_args: {"ok": True},
+            },
+        )
+
+        self.assertEqual(status, 200)
+        self.assertFalse(result["cancel_available"])
 
     def test_no_line_guardians_still_returns_phone_contacts(self):
         profile = {

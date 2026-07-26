@@ -14,8 +14,9 @@ class BotKeywordHandlerTests(unittest.TestCase):
         self.assertIn('"開始", "歡迎", "說明", "歡迎詞"', source)
         self.assertIn('"需要幫忙"', source)
         self.assertIn('"緊急求助"', source)
-        self.assertIn('"通知家人"', source)
         self.assertIn('"聯絡家人連按3次"', source)
+        self.assertIn('"SOS 確認 2"', source)
+        self.assertIn("legacy_entry_commands", source)
         self.assertIn("sos_emergency_flex", source)
         self.assertIn("_send_welcome", source)
 
@@ -24,17 +25,17 @@ class BotKeywordHandlerTests(unittest.TestCase):
         blob = str(flex)
         self.assertIn("tel:119", blob)
         self.assertIn("tel:110", blob)
-        self.assertIn("聯絡家人連按3次", blob)
+        self.assertIn("開啟需要幫忙", blob)
+        self.assertIn("open=sos", blob)
         self.assertIn("需要幫忙", blob)
-        self.assertNotIn("開啟完整求助頁", blob)
-        self.assertNotIn("通知家人連按3次", blob)
         footer = flex.get("footer", {}).get("contents", [])
         primary_buttons = [
             item for item in footer
             if item.get("type") == "button" and item.get("style") == "primary"
         ]
         self.assertEqual(len(primary_buttons), 1)
-        self.assertEqual(primary_buttons[0]["action"]["label"], "聯絡家人連按3次")
+        self.assertEqual(primary_buttons[0]["action"]["type"], "uri")
+        self.assertEqual(primary_buttons[0]["action"]["label"], "開啟需要幫忙")
 
     def test_sos_no_guardians_flex_has_invite(self):
         flex = sos_flow.sos_no_guardians_flex("https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html")

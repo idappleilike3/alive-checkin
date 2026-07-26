@@ -425,12 +425,11 @@ class ProductRulesTests(unittest.TestCase):
         # 一鍵邀請：直連空白 share-invite（自動 R/share），無教學大按鈕文案頁
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html", rich_menu)
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=share-invite", rich_menu)
-        # 「需要幫忙」必須是 LINE message
-        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo?open=sos", rich_menu)
+        # 「需要幫忙」統一進永久 LIFF SOS 入口，不再在聊天室分三次確認
+        self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=sos", rich_menu)
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=sos", rich_menu)
-        self.assertIn('"type": "message"', rich_menu)
+        self.assertNotIn('"type": "message", "label": "需要幫忙"', rich_menu)
         self.assertIn('"label": "需要幫忙"', rich_menu)
-        self.assertIn('"text": "需要幫忙"', rich_menu)
         self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=help", rich_menu)
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo?open=pricing", rich_menu)
         self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=pricing", rich_menu)
@@ -624,9 +623,35 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("core_guardian_alert_limit", flex)
         self.assertIn('_uri_button("我平安", liff_entry_url(open_action="checkin")', flex)
         self.assertIn('_postback_button("聯絡家人"', flex)
-        self.assertIn('_postback_button("需要幫忙", "需要幫忙"', flex)
-        self.assertNotIn('_uri_button("需要幫忙", liff_entry_url(open_action="sos")', flex)
+        self.assertIn('_uri_button("需要幫忙", liff_entry_url(open_action="sos")', flex)
+        self.assertNotIn('_postback_button("需要幫忙", "需要幫忙"', flex)
         self.assertIn('_postback_button("守護群狀態"', flex)
+
+    def test_all_sos_entry_buttons_share_one_liff_flow(self):
+        rich_menu = (ROOT / "line-rich-menu-config.json").read_text(encoding="utf-8")
+        group_flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
+        sos_flow = (ROOT / "sos_flow.py").read_text(encoding="utf-8")
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        uri = "https://liff.line.me/2010674803-rK98c0lo?open=sos"
+
+        self.assertIn(f'"uri": "{uri}"', rich_menu)
+        self.assertIn('_uri_button("需要幫忙", liff_entry_url(open_action="sos")', group_flex)
+        self.assertIn('"type": "uri"', sos_flow)
+        self.assertIn("function openSosFlow()", page)
+        self.assertIn("startSosLocationLookup()", page)
+        self.assertIn("if (sosTapCount === 1) startSosLocationLookup()", page)
+        self.assertIn("sosLocationDeadlinePromise", page)
+        self.assertIn("Promise.race([sosLocationPromise, sosLocationDeadlinePromise])", page)
+        refresh_block = page[
+            page.index("async function refreshLocationForSos()")
+            : page.index("let sosLocationPromise")
+        ]
+        self.assertNotIn("apiUpdateLocation(", refresh_block)
+        self.assertEqual(page.count("openSosModal();"), 1)
+        self.assertIn("result.sent_at", page)
+        self.assertIn("result.cancel_available", page)
+        self.assertIn("發送時間", page)
+        self.assertNotIn('"type": "message", "label": "需要幫忙"', rich_menu)
 
     def test_friend_location_invite_uses_single_share_url(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
