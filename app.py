@@ -4951,6 +4951,35 @@ def owned_active_guardian_groups(state, profile):
     return out
 
 
+def guardian_group_settings_for_user(data_file, line_user_id):
+    """Return the signed-in member's editable guardian-group settings."""
+    state = load_state(data_file)
+    profile = (state.get("users") or {}).get(str(line_user_id or "").strip())
+    if not profile:
+        return {"error": "user not registered"}, 404
+    groups = []
+    for group in owned_active_guardian_groups(state, profile):
+        groups.append({
+            "group_id": group["group_id"],
+            "group_name": str(group.get("group_name") or "LINE 守護群"),
+            "member_count": group.get("member_count_last_refresh")
+            or group.get("member_count_at_bind"),
+            "status": group.get("status"),
+            "preferences": normalize_guardian_group_preferences(
+                group.get("preferences")
+            ),
+        })
+    return {
+        "ok": True,
+        "plan": profile.get("plan") or "trial",
+        "guardian_group_limit": int(
+            plan_rules(profile).get("guardian_group_limit") or 0
+        ),
+        "guardian_group_count": len(groups),
+        "groups": groups,
+    }, 200
+
+
 def should_notify_private_guardians(state, profile):
     """無守護群 → 永遠私訊；有群 → 任一群勾選私訊即發送（預設勾選）。"""
     owned = owned_active_guardian_groups(state, profile)
@@ -11954,6 +11983,16 @@ def create_app(config=None):
         data, code = update_guardian_group_preferences(app.config["DATA_FILE"], request.get_json(silent=True) or {})
         return jsonify(data), code
 
+    @app.get("/api/guardian-groups/settings")
+    def guardian_groups_settings_api():
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = guardian_group_settings_for_user(
+            app.config["DATA_FILE"], line_user_id
+        )
+        return jsonify(data), code
+
     # ===== 2026-07-20 蝦董 added: 測試頁 endpoints =====
     TEST_USER_PREFIX = "U_TEST_"
 
@@ -12754,6 +12793,16 @@ class MiniClient:
                 allow_missing_profile=True,
             )
             return MiniResponse(body, code)
+        if route == "/api/guardian-groups/settings":
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            body, code = guardian_group_settings_for_user(
+                self.app.config["DATA_FILE"], line_user_id
+            )
+            return MiniResponse(body, code)
         if route == "/api/admin/summary":
             denied = admin_auth_error_payload(self.app.config, params.get("password", ""))
             if denied:
@@ -12885,6 +12934,11 @@ class MiniClient:
             return MiniResponse(body, code)
         if route == "/api/guardian-groups/bind":
             body, code = bind_guardian_group(self.app.config["DATA_FILE"], payload)
+            return MiniResponse(body, code)
+        if route == "/api/guardian-groups/preferences":
+            body, code = update_guardian_group_preferences(
+                self.app.config["DATA_FILE"], payload
+            )
             return MiniResponse(body, code)
         if route == "/api/guardian-groups/unbind":
             body, code = unbind_guardian_group(self.app.config["DATA_FILE"], payload)

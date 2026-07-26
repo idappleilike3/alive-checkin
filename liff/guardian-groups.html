@@ -2,93 +2,282 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>守護群 - 每日平安</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>守護群設定｜每日平安</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --leaf: #087f5b;
+    --leaf-dark: #07543f;
+    --mint: #e9f7f0;
+    --paper: #fbfcfa;
+    --ink: #17352b;
+    --muted: #64766f;
+    --line: #dbe8e2;
+    --amber: #a96600;
+  }
+  * { box-sizing: border-box; }
   body {
+    margin: 0;
+    min-height: 100vh;
+    padding: max(20px, env(safe-area-inset-top)) 16px max(32px, env(safe-area-inset-bottom));
+    color: var(--ink);
+    background:
+      radial-gradient(circle at 100% 0, #d8f5e7 0, transparent 32%),
+      linear-gradient(180deg, #f5fbf8 0%, var(--paper) 52%);
     font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif;
-    background: #F5F5F5;
-    color: #333;
-    padding: 20px;
-    line-height: 1.6;
+    line-height: 1.55;
   }
-  .card {
-    background: #fff;
+  main { width: min(100%, 520px); margin: 0 auto; }
+  .eyebrow { color: var(--leaf); font-size: 13px; font-weight: 800; letter-spacing: .12em; }
+  h1 { margin: 6px 0 8px; color: var(--leaf-dark); font-size: clamp(26px, 8vw, 36px); line-height: 1.18; }
+  .lead { margin: 0 0 18px; color: var(--muted); font-size: 16px; }
+  .summary-strip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+    border: 1px solid #bfe5d2;
     border-radius: 16px;
-    padding: 24px;
-    max-width: 480px;
-    margin: 0 auto 16px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    background: rgba(255,255,255,.86);
   }
-  h1 { font-size: 24px; color: #00B900; margin-bottom: 12px; }
-  h2 { font-size: 18px; color: #555; margin: 16px 0 8px; }
-  .lock-box {
-    background: linear-gradient(135deg, #FFD54F, #FFA000);
-    color: #fff;
-    border-radius: 12px;
-    padding: 16px;
+  .count { color: var(--leaf-dark); font-size: 18px; font-weight: 850; }
+  .status-dot { display: inline-block; width: 9px; height: 9px; margin-right: 7px; border-radius: 50%; background: #22a06b; }
+  .group-card {
+    padding: 18px;
     margin: 12px 0;
-  }
-  .lock-box h3 { margin-bottom: 8px; }
-  .btn {
-    width: 100%;
-    padding: 14px;
-    border-radius: 10px;
-    border: 1px solid #00B900;
+    border: 1px solid var(--line);
+    border-radius: 18px;
     background: #fff;
-    color: #00B900;
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    margin: 8px 0;
+    box-shadow: 0 8px 28px rgba(7,84,63,.07);
   }
-  .btn-primary {
-    background: #00B900;
+  .group-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  .group-name { font-size: 19px; font-weight: 850; }
+  .member-count { color: var(--muted); font-size: 14px; white-space: nowrap; }
+  .setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 58px;
+    padding: 10px 0;
+    border-top: 1px solid #edf2ef;
+  }
+  .setting-copy strong { display: block; font-size: 16px; }
+  .setting-copy small { display: block; color: var(--muted); font-size: 13px; }
+  .switch { position: relative; flex: 0 0 auto; width: 54px; height: 32px; }
+  .switch input { position: absolute; opacity: 0; }
+  .switch span { position: absolute; inset: 0; border-radius: 999px; background: #b9c6c0; transition: .18s; cursor: pointer; }
+  .switch span::after { content: ""; position: absolute; width: 26px; height: 26px; top: 3px; left: 3px; border-radius: 50%; background: white; box-shadow: 0 2px 5px #0002; transition: .18s; }
+  .switch input:checked + span { background: var(--leaf); }
+  .switch input:checked + span::after { transform: translateX(22px); }
+  .switch input:focus-visible + span { outline: 3px solid #f2b84b; outline-offset: 3px; }
+  input[type="time"] {
+    width: 128px;
+    min-height: 48px;
+    padding: 9px 10px;
+    border: 2px solid var(--line);
+    border-radius: 12px;
+    color: var(--ink);
+    background: white;
+    font: inherit;
+    font-size: 17px;
+  }
+  input[type="time"]:focus { border-color: var(--leaf); outline: 3px solid #d8f5e7; }
+  .save-btn, .join-btn {
+    width: 100%;
+    min-height: 52px;
+    margin-top: 14px;
+    border: 0;
+    border-radius: 13px;
     color: #fff;
+    background: var(--leaf);
+    font-size: 17px;
+    font-weight: 850;
+    cursor: pointer;
   }
-  .group-row {
-    border: 1px solid #E0E0E0;
-    border-radius: 10px;
-    padding: 12px;
-    margin: 8px 0;
+  .save-btn:disabled { opacity: .6; cursor: wait; }
+  .join-btn { display: block; padding: 13px; text-align: center; text-decoration: none; }
+  .empty, .error {
+    padding: 22px 18px;
+    border: 1px dashed #b9cec4;
+    border-radius: 18px;
+    background: rgba(255,255,255,.8);
+    text-align: center;
   }
-  .group-row strong { color: #00B900; font-size: 16px; }
+  .empty strong, .error strong { display: block; margin-bottom: 6px; font-size: 18px; }
+  .error { border-color: #e7c393; color: #7a4800; }
+  #saveStatus { min-height: 24px; margin: 10px 2px; color: var(--leaf-dark); font-weight: 750; text-align: center; }
+  .guide {
+    margin-top: 18px;
+    padding: 16px 18px;
+    border-radius: 16px;
+    background: var(--mint);
+    color: var(--leaf-dark);
+  }
+  .guide summary { min-height: 44px; padding-top: 8px; font-weight: 850; cursor: pointer; }
+  .guide ol { margin: 8px 0 4px; padding-left: 22px; }
+  [hidden] { display: none !important; }
+  @media (max-width: 360px) {
+    .setting-row { align-items: flex-start; flex-direction: column; gap: 8px; }
+    input[type="time"] { width: 100%; }
+  }
 </style>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
-<div class="card">
-  <h1>🛡️ 守護群(799 守護版限定)</h1>
-  <p>把「每日平安」官方帳號邀進 LINE 群組，逾期未簽到 / SOS 時會在群裡通知守護人。</p>
+<main>
+  <div class="eyebrow">FAMILY SAFETY CIRCLE</div>
+  <h1>守護群設定</h1>
+  <p class="lead">每天一次整理群內成員的平安狀態。功能預設關閉，由你決定哪些群要收到摘要。</p>
 
-  <div class="lock-box">
-    <h3>📋 守護群資格</h3>
-    <p>• 訂閱 <strong>799 月費或年費</strong></p>
-    <p>• 月費最多 1 個守護群</p>
-    <p>• 年費最多 3 個守護群</p>
-    <p>• 每群最多 50 人</p>
+  <section class="summary-strip" aria-live="polite">
+    <span><span class="status-dot"></span>目前綁定</span>
+    <span class="count" id="groupCount">讀取中</span>
+  </section>
+
+  <div id="loadingState" class="empty"><strong>正在讀取守護群</strong>請稍候</div>
+  <div id="errorState" class="error" hidden><strong>無法讀取設定</strong><span id="errorMessage">請稍後再試</span></div>
+  <section id="groupList" aria-label="守護群設定"></section>
+  <p id="saveStatus" role="status" aria-live="polite"></p>
+
+  <div id="emptyState" class="empty" hidden>
+    <strong>尚未建立守護群</strong>
+    先把「每日平安」加入家人的 LINE 群組，再在群內完成綁定
+    <a class="join-btn" href="https://line.me/R/ti/p/%40042kwqib">先加入每日平安官方帳號</a>
   </div>
 
-  <h2>目前綁定(0/3)</h2>
-  <p style="color:#888;">尚未建立守護群</p>
+  <details class="guide">
+    <summary>查看守護群設定方式</summary>
+    <ol>
+      <li>建立家人 LINE 群組</li>
+      <li>把「每日平安」官方帳號邀進群</li>
+      <li>在群裡輸入「點我綁定守護群」</li>
+      <li>回到此頁開啟每日摘要並選時間</li>
+    </ol>
+  </details>
+</main>
 
-  <a class="btn btn-primary" href="https://line.me/R/ti/p/%40042kwqib">先加入每日平安官方帳號</a>
-</div>
+<script>
+const API_BASE = "";
+const FALLBACK_LIFF_ID = "2010549494-KRb0mn7U";
+const pageState = { lineUserId: "", groups: [] };
 
-<div class="card">
-  <h2>📖 6 步驟教學</h2>
-  <p>1. 在 LINE 主選單「方案」升級 799</p>
-  <p>2. 建一個新 LINE 群,拉家人進來</p>
-  <p>3. 把「每日平安」官方帳號邀進群</p>
-  <p>4. 把「每日平安」設為管理員(必要!)</p>
-  <p>5. 在群裡輸入「點我綁定守護群」</p>
-  <p>6. 完成!每日平安開始守護這個群</p>
-</div>
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[<>&"']/g, (c) => ({
+    "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
 
-<div class="card">
-  <h2>❓ 常見問題</h2>
-  <p><strong>Q: 為什麼要年費?</strong><br>守護群功能較吃資源,需要月費/年費會員才能使用。</p>
-  <p><strong>Q: 每日平安一定要是管理員嗎?</strong><br>對。否則每日平安無法請出超過 50 人的成員。</p>
-</div>
+async function resolveLiffId() {
+  try {
+    const response = await fetch(`${API_BASE}/api/config`);
+    if (response.ok) {
+      const config = await response.json();
+      if (config.liff_id) return config.liff_id;
+    }
+  } catch (_) {}
+  return FALLBACK_LIFF_ID;
+}
+
+function renderGroups() {
+  const list = document.getElementById("groupList");
+  document.getElementById("loadingState").hidden = true;
+  document.getElementById("groupCount").textContent =
+    `${pageState.groups.length}/${pageState.limit || 0} 個群`;
+  document.getElementById("emptyState").hidden = pageState.groups.length > 0;
+  list.innerHTML = pageState.groups.map((group) => {
+    const prefs = group.preferences || {};
+    const id = escapeHtml(group.group_id);
+    return `
+      <article class="group-card" data-group="${id}">
+        <div class="group-head">
+          <div class="group-name">🛡️ ${escapeHtml(group.group_name || "LINE 守護群")}</div>
+          <div class="member-count">${group.member_count == null ? "成員數待同步" : `${escapeHtml(group.member_count)} 位成員`}</div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-copy"><strong>每日摘要</strong><small>整理今天已簽到與尚未簽到成員</small></div>
+          <label class="switch">
+            <input id="summary-${id}" type="checkbox" ${prefs.daily_admin_summary ? "checked" : ""} aria-label="開啟每日摘要">
+            <span aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <label class="setting-copy" for="time-${id}"><strong>摘要時間</strong><small>使用台灣時間，每天最多一則</small></label>
+          <input id="time-${id}" type="time" value="${escapeHtml(prefs.daily_summary_time || "21:00")}">
+        </div>
+        <button class="save-btn" type="button" data-save="${id}">儲存這個群的設定</button>
+      </article>`;
+  }).join("");
+  list.querySelectorAll("[data-save]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.save;
+      saveGroupPreferences(
+        id,
+        document.getElementById(`summary-${id}`).checked,
+        document.getElementById(`time-${id}`).value,
+        button
+      );
+    });
+  });
+}
+
+async function saveGroupPreferences(groupId, enabled, time, button) {
+  const status = document.getElementById("saveStatus");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "儲存中…";
+  }
+  status.textContent = "";
+  try {
+    const response = await fetch(`${API_BASE}/api/guardian-groups/preferences`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        line_user_id: pageState.lineUserId,
+        group_id: groupId,
+        daily_admin_summary: Boolean(enabled),
+        daily_summary_time: time || "21:00",
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.ok === false) throw new Error(data.error || "儲存失敗");
+    status.textContent = `已儲存${enabled ? `，每天 ${time} 發送摘要` : "，每日摘要已關閉"}`;
+  } catch (error) {
+    status.textContent = `沒有儲存：${error.message}`;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "儲存這個群的設定";
+    }
+  }
+}
+
+async function init() {
+  try {
+    await liff.init({ liffId: await resolveLiffId() });
+    if (!liff.isLoggedIn()) {
+      liff.login();
+      return;
+    }
+    pageState.lineUserId = (await liff.getProfile()).userId;
+    const response = await fetch(
+      `${API_BASE}/api/guardian-groups/settings?line_user_id=${encodeURIComponent(pageState.lineUserId)}`
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "讀取失敗");
+    pageState.groups = data.groups || [];
+    pageState.limit = Number(data.guardian_group_limit) || 0;
+    renderGroups();
+  } catch (error) {
+    document.getElementById("loadingState").hidden = true;
+    document.getElementById("errorState").hidden = false;
+    document.getElementById("errorMessage").textContent = error.message || "請稍後再試";
+  }
+}
+
+init();
+</script>
 </body>
 </html>
