@@ -3868,6 +3868,55 @@ def apply_is_primary_to_contact_line(profile, contact_line_user_id, *, make_core
     return True
 
 
+GUARDIAN_INVITE_EXPIRY_DAYS = 7
+PROFILE_COMPLETION_REMINDER_DAYS = (0, 1, 3, 7)
+
+
+def create_guardian_invite(data_file, inviter_line_user_id, payload, now=None):
+    """Persist only the pre-share nickname/relationship; no contact is bound here."""
+    inviter_id = str(inviter_line_user_id or "").strip()
+    if not inviter_id:
+        return {"ok": False, "error": "missing inviter", "code": "missing_ids"}, 400
+    payload = payload if isinstance(payload, dict) else {}
+    display_name = str(payload.get("display_name") or payload.get("contact_display_name") or "親友").strip()
+    relationship = str(payload.get("relationship") or "守護人").strip()
+    now = now or current_app_time({})
+    state = load_state(data_file)
+    get_profile(state, inviter_id)
+    invite = {
+        "id": secrets.token_urlsafe(12),
+        "inviter_line_user_id": inviter_id,
+        "display_name": display_name,
+        "relationship": relationship,
+        "status": "pending",
+        "created_at": now.isoformat(timespec="seconds"),
+        "expires_at": (now + timedelta(days=GUARDIAN_INVITE_EXPIRY_DAYS)).isoformat(timespec="seconds"),
+    }
+    state.setdefault("guardian_invites", []).append(invite)
+    state["guardian_invites"] = state["guardian_invites"][-100:]
+    save_state(data_file, state)
+    return {"ok": True, **invite}, 201
+
+
+def _pending_guardian_invite(state, inviter_id, now=None):
+    now = now or current_app_time({})
+    rows = state.get("guardian_invites") or []
+    for invite in reversed(rows):
+        if not isinstance(invite, dict) or invite.get("inviter_line_user_id") != inviter_id:
+            continue
+        if invite.get("status") != "pending":
+            continue
+        try:
+            expiry = datetime.fromisoformat(str(invite.get("expires_at") or ""))
+        except ValueError:
+            expiry = now
+        if expiry <= now:
+            invite["status"] = "expired"
+            continue
+        return invite
+    return None
+
+
 def invite_bind_preview(data_file, payload):
     """Preview guardian invite: is_reverse_invite + inviter display name for LIFF modal."""
     inviter_id = str(
@@ -3894,6 +3943,7 @@ def invite_bind_preview(data_file, payload):
     inviter_name = str(inviter.get("display_name") or "").strip() or "親友"
     inviter_rules = plan_rules(inviter or {"plan": "trial"})
     invitee_rules = plan_rules(invitee or {"plan": "trial"})
+    pending = _pending_guardian_invite(state, inviter_id)
     return {
         "ok": True,
         "is_reverse_invite": is_reverse,
@@ -3907,6 +3957,10 @@ def invite_bind_preview(data_file, payload):
         "invitee_core_guardian_alert_limit": int(
             invitee_rules.get("core_guardian_alert_limit") or 1
         ),
+        "invite_status": (pending or {}).get("status") or "legacy",
+        "guardian_purpose": "你會收到對方的報平安、逾時未報平安、SOS 與安全守護通知。",
+        "privacy_explanation": "定位只在對方主動求助或啟用安全守護時通知；你可隨時解除綁定，資料只用於守護通知。",
+        "requires_reciprocal_consent": bool(pending),
         "message": (
             f"{inviter_name} 已是你的守護對象／已加入，是否互相設為守護人？"
             if is_reverse
@@ -3928,7 +3982,8 @@ def build_bind_success_notices(inviter, contacts, inviter_id, guardian_name, *, 
         "✅ 綁定成功\n\n"
         f"對方：{guardian_name}（已成為你的守護人）\n"
         f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n\n"
-        "之後若你逾時未報平安或發出 SOS，系統會透過 LINE 私訊通知對方。"
+        "之後若你逾時未報平安或發出 SOS，系統會透過 LINE 私訊通知對方。\n"
+        "請點「完成資料」補齊自己的聯絡資料；LINE 通知已立即啟用。"
     )
     guardian_notice = (
         f"✅ 綁定成功\n\n"
@@ -4158,6 +4213,22 @@ def bind_emergency_contact(data_file, payload, config=None):
         return {"ok": False, "error": "不能綁定自己成為守護人", "code": "self_bind"}, 400
 
     state = load_state(data_file)
+    pending_invite = _pending_guardian_invite(state, inviter_id, current_app_time(config or {}))
+    expired_invite = next(
+        (
+            row for row in (state.get("guardian_invites") or [])
+            if isinstance(row, dict)
+            and row.get("inviter_line_user_id") == inviter_id
+            and row.get("status") == "expired"
+        ),
+        None,
+    )
+    if not pending_invite and expired_invite:
+        save_state(data_file, state)
+        return {"ok": False, "error": "邀請已超過七天，請對方重新分享", "code": "invite_expired"}, 410
+    if pending_invite and not bool(payload.get("recipient_consent")):
+        save_state(data_file, state)
+        return {"ok": False, "error": "請先閱讀說明並同意互相成為核心守護人", "code": "consent_required"}, 409
     # 綁定前偵測反向：綁定後 guarding_for 一定會寫入，不可事後判斷
     is_reverse_invite = detect_reverse_invite(state, inviter_id, contact_line_user_id)
     inviter = get_profile(state, inviter_id)
@@ -4325,6 +4396,47 @@ def bind_emergency_contact(data_file, payload, config=None):
         )
     contact_user["guarding_details"] = details
 
+    # New verified invitations are genuinely reciprocal: validate the other half
+    # before saving either side, then mutate both profiles in this one state write.
+    reciprocal = bool(pending_invite)
+    reciprocal_contact = None
+    if reciprocal:
+        invitee_contacts = list(contact_user.get("contacts") or [])
+        reciprocal_contact = next(
+            (row for row in invitee_contacts if get_contact_line_id(row) == inviter_id), None
+        )
+        if reciprocal_contact is None:
+            invitee_limit = int(plan_rules(contact_user).get("core_guardian_alert_limit") or 1)
+            invitee_guardians = sum(1 for row in invitee_contacts if resolve_contact_role(row) == "guardian")
+            if invitee_guardians >= invitee_limit:
+                return {"ok": False, "error": CONTACT_LIMIT_MESSAGE, "code": "contact_limit", "message": CONTACT_LIMIT_MESSAGE}, 400
+            reciprocal_contact = {
+                "id": f"line-{inviter_id}", "name": inviter_name, "display_name": inviter_name,
+                "line_display_name": inviter_name, "relationship": "守護人", "phone": "", "line_id": inviter_id,
+                "line_user_id": inviter_id, "picture_url": inviter_picture, "email": "", "available_time": "",
+                "notify_methods": ["line"], "priority": len(invitee_contacts) + 1,
+                "consent_status": "accepted", "binding_status": "accepted", "accepted_at": accepted_at,
+                "invited_by": contact_line_user_id, "contact_role": "guardian", "note": "雙方同意核心守護綁定",
+            }
+            invitee_contacts.append(reciprocal_contact)
+        reciprocal_contact["is_primary"] = True
+        for row in invitee_contacts:
+            if row is not reciprocal_contact and get_contact_line_id(row) == inviter_id:
+                row["is_primary"] = True
+        contact_user["contacts"] = invitee_contacts
+        if contact_line_user_id not in (inviter.get("guarding_for") or []):
+            inviter["guarding_for"] = [*(inviter.get("guarding_for") or []), contact_line_user_id]
+        bound_owner = next((row for row in contacts if get_contact_line_id(row) == contact_line_user_id), None)
+        if bound_owner is not None:
+            bound_owner["is_primary"] = True
+        pending_invite["status"] = "accepted"
+        pending_invite["accepted_at"] = accepted_at
+        pending_invite["invitee_line_user_id"] = contact_line_user_id
+        for profile in (inviter, contact_user):
+            profile["profile_completion_required"] = True
+            profile["profile_completion_bound_at"] = accepted_at
+            profile["profile_completion_reminder_days"] = []
+
     # 互綁可選：兩邊互相設為核心（各受方案 core_guardian_alert_limit 約束）
     mutual_core_applied = False
     if is_reverse_invite and mutual_core:
@@ -4464,6 +4576,8 @@ def bind_emergency_contact(data_file, payload, config=None):
             f"互綁完成！你與「{inviter_name}」已互相設為守護人。"
             + ("（已同時設為核心守護人）" if mutual_core_applied else "")
         )
+    owner_notice = {"status": "sent" if inviter_notified else "failed"}
+    invitee_notice = {"status": "sent" if guardian_notified else "failed"}
     return {
         "ok": True,
         "bound": True,
@@ -4472,6 +4586,11 @@ def bind_emergency_contact(data_file, payload, config=None):
         "is_reverse_invite": is_reverse_invite,
         "mutual_core_requested": mutual_core,
         "mutual_core_applied": mutual_core_applied,
+        "reciprocal": reciprocal,
+        "owner_guardian": bound_contact if reciprocal else None,
+        "invitee_guardian": reciprocal_contact if reciprocal else None,
+        "owner_notice": owner_notice,
+        "invitee_notice": invitee_notice,
         "inviter_display_name": inviter_name,
         "message": bind_message,
         "contact": bound_contact,
@@ -9654,6 +9773,43 @@ def cleanup_expired_sos(config):
     return {"removed": len(removed)}, 200
 
 
+def send_profile_completion_reminders(config):
+    """Private, retryable reminders at bind, +24h, day 3, and day 7 only."""
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not token:
+        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
+    state = load_state(config["DATA_FILE"])
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    now = current_app_time(config)
+    sent = skipped = 0
+    results = []
+    for profile in (state.get("users") or {}).values():
+        if not isinstance(profile, dict) or not profile.get("profile_completion_required"):
+            continue
+        try:
+            bound_at = datetime.fromisoformat(str(profile.get("profile_completion_bound_at") or ""))
+        except ValueError:
+            skipped += 1
+            continue
+        elapsed_days = max(0, (now.date() - bound_at.date()).days)
+        already = {int(day) for day in (profile.get("profile_completion_reminder_days") or [])}
+        due = [day for day in PROFILE_COMPLETION_REMINDER_DAYS if day <= elapsed_days and day not in already]
+        for day in due:
+            message = "已完成核心守護綁定。請私訊「每日平安」完成自己的聯絡資料；LINE 通知已可使用，電話聯絡會在資料完成後啟用。"
+            try:
+                result = sender(token, profile.get("line_user_id"), message)
+                append_notification_log(state, "profile_completion", profile.get("line_user_id"), "sent", message, json.dumps(result, ensure_ascii=False))
+                already.add(day)
+                sent += 1
+                results.append({"line_user_id": profile.get("line_user_id"), "day": day, "status": "sent"})
+            except Exception as exc:
+                append_notification_log(state, "profile_completion", profile.get("line_user_id"), "failed", message, str(exc)[:400])
+                results.append({"line_user_id": profile.get("line_user_id"), "day": day, "status": "failed"})
+        profile["profile_completion_reminder_days"] = sorted(already)
+    save_state(config["DATA_FILE"], state)
+    return {"sent": sent, "skipped": skipped, "results": results}, 200
+
+
 def run_cron_tick(config):
     now = current_app_time(config)
     results = {}
@@ -9666,6 +9822,7 @@ def run_cron_tick(config):
 
     always = {
         "checkin_reminders": send_checkin_reminders,
+        "profile_completion_reminders": send_profile_completion_reminders,
         "overdue_alerts": send_due_reminders,
         "guardian_group_daily_summaries": send_guardian_group_daily_summaries,
         "smart_reminders": send_smart_reminders,
@@ -11632,7 +11789,12 @@ def create_app(config=None):
 
     @app.post("/api/emergency-contact/bind")
     def emergency_contact_bind_api():
-        data, code = bind_emergency_contact(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["contact_line_user_id"] = line_user_id
+        data, code = bind_emergency_contact(app.config["DATA_FILE"], payload, app.config)
         return jsonify(data), code
 
     @app.post("/api/guardian-groups/bind")
@@ -12557,6 +12719,10 @@ class MiniClient:
             body, code = save_calendar_note(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
         if route == "/api/emergency-contact/bind":
+            line_user_id, err = authenticated_line_user(payload, args=params, headers=headers, config=self.app.config)
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["contact_line_user_id"] = line_user_id
             body, code = bind_emergency_contact(self.app.config["DATA_FILE"], payload, self.app.config)
             return MiniResponse(body, code)
         if route == "/api/guardian-groups/bind":
@@ -12925,6 +13091,10 @@ class MiniApp:
                     data, code = save_calendar_note(data_file, payload)
                     return handler.send_json(data, code)
                 if route == "/api/emergency-contact/bind":
+                    line_user_id, err = handler.authenticated_user(payload, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    payload["contact_line_user_id"] = line_user_id
                     data, code = bind_emergency_contact(data_file, payload, config)
                     return handler.send_json(data, code)
                 if route == "/api/guardian-groups/bind":

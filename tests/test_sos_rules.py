@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from app import current_app_time, load_state, save_state, sos_user_facing_error, trigger_sos
+import app as app_module
 
 
 class SosRulesTests(unittest.TestCase):
@@ -413,6 +414,36 @@ class SosRulesTests(unittest.TestCase):
         self.assertNotIn("no bound", msg.lower())
         self.assertNotIn("LINE guardians", msg)
         self.assertFalse(msg.endswith("。"))
+
+    def test_profile_completion_reminders_are_private_due_only_and_stop_when_complete(self):
+        data_file = self.make_data_file({
+            "line_user_id": "U-owner",
+            "display_name": "小美",
+            "profile_completion_required": True,
+            "profile_completion_bound_at": "2026-07-01T09:00:00+08:00",
+        })
+        sent = []
+        config = {
+            "DATA_FILE": data_file,
+            "LINE_CHANNEL_ACCESS_TOKEN": "token",
+            "LINE_PUSH_SENDER": lambda _token, target, message: sent.append((target, message)) or {"ok": True},
+            "CRON_NOW": datetime.fromisoformat("2026-07-04T09:00:00"),
+        }
+        result, code = app_module.send_profile_completion_reminders(config)
+        self.assertEqual(code, 200)
+        self.assertEqual(result["sent"], 3)  # catch up bind-time, +24h, and day 3 privately.
+        self.assertEqual({target for target, _message in sent}, {"U-owner"})
+        stored = load_state(data_file)["users"]["U-owner"]
+        self.assertEqual(stored["profile_completion_reminder_days"], [0, 1, 3])
+
+        stored["profile_completion_required"] = False
+        state = load_state(data_file)
+        state["users"]["U-owner"] = stored
+        save_state(data_file, state)
+        config["CRON_NOW"] = datetime.fromisoformat("2026-07-08T09:00:00")
+        stopped, stopped_code = app_module.send_profile_completion_reminders(config)
+        self.assertEqual(stopped_code, 200)
+        self.assertEqual(stopped["sent"], 0)
 
 
 if __name__ == "__main__":

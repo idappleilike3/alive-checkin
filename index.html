@@ -4467,7 +4467,7 @@
     <div class="guardian-modal">
       <div class="line-trust"><span class="line-logo">LINE</span> LINE 官方授權綁定</div>
       <h2 id="inviteAcceptTitle">您收到一位親友的守護邀請</h2>
-      <p id="inviteAcceptBody">點擊同意即可在緊急時接收位置通知，無需下載 APP。您只會收到這位親友的安全守護提醒，不會被公開個人資料。</p>
+      <p id="inviteAcceptBody">請先閱讀：你將收到對方的報平安、逾時未報平安、SOS 與安全守護通知。定位只在對方主動求助或啟用安全守護時通知；你可隨時解除綁定，資料只用於守護通知。登入後，請明確同意雙方互相成為核心守護人。</p>
       <label class="setting-choice mutual-core-option" id="mutualCoreOption" hidden for="mutualCoreCheckbox">
         <input type="checkbox" id="mutualCoreCheckbox">
         <span>同時互相設為核心守護人</span>
@@ -5520,7 +5520,8 @@
         inviter_line_user_id: inviterLineUserId,
         contact_line_user_id: lineUserId,
         contact_display_name: lineDisplayName || "LINE 聯絡人",
-        contact_picture_url: linePictureUrl || (currentStatusData && currentStatusData.picture_url) || ""
+        contact_picture_url: linePictureUrl || (currentStatusData && currentStatusData.picture_url) || "",
+        recipient_consent: true
       };
       if (options && options.mutual_core) {
         body.mutual_core = true;
@@ -7108,7 +7109,7 @@
       const btn = $("acceptGuardianInviteBtn");
       if (titleEl) titleEl.textContent = "您收到一位親友的守護邀請";
       if (bodyEl) {
-        bodyEl.textContent = "點擊同意即可在緊急時接收位置通知，無需下載 APP。您只會收到這位親友的安全守護提醒，不會被公開個人資料。";
+        bodyEl.textContent = "請先閱讀：你將收到對方的報平安、逾時未報平安、SOS 與安全守護通知。定位只在對方主動求助或啟用安全守護時通知；你可隨時解除綁定，資料只用於守護通知。登入後，請明確同意雙方互相成為核心守護人。";
       }
       if (optionEl) optionEl.hidden = true;
       if (checkEl) checkEl.checked = false;
@@ -7141,7 +7142,7 @@
             const btn = $("acceptGuardianInviteBtn");
             if (titleEl) titleEl.textContent = "互相守護邀請";
             if (bodyEl) {
-              bodyEl.textContent = `${name} 已是你的守護對象／已加入，是否互相設為守護人？`;
+              bodyEl.textContent = `${name} 邀請你互相成為核心守護人。你會收到報平安、逾時、SOS 與安全守護通知；定位僅在對方主動求助／啟用安全守護時分享，可隨時解除綁定。`;
             }
             if (optionEl) optionEl.hidden = false;
             if (btn) btn.textContent = "確認互相設為守護人";

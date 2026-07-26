@@ -110,6 +110,94 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(summary["invite_edges"][0]["guardian_line_user_id"], "U-guardian")
         self.assertIn("persistence", summary)
 
+    def test_verified_pending_invite_needs_consent_then_creates_two_core_records(self):
+        """Dropping consent, or either reciprocal record, must keep the member gated."""
+        state = app_module.load_state(self.data_file)
+        app_module.get_profile(state, "U-owner")["display_name"] = "小美"
+        app_module.save_state(self.data_file, state)
+        invite, invite_code = app_module.create_guardian_invite(
+            self.data_file, "U-owner", {"display_name": "阿媽", "relationship": "阿嬤"}
+        )
+        self.assertEqual(invite_code, 201)
+
+        rejected, rejected_code = app_module.bind_emergency_contact(
+            self.data_file,
+            {"inviter_line_user_id": "U-owner", "contact_line_user_id": "U-guardian"},
+            config={},
+        )
+        self.assertEqual(rejected_code, 409)
+        self.assertEqual(rejected["code"], "consent_required")
+        self.assertTrue(app_module.member_access_state(app_module.load_state(self.data_file)["users"]["U-owner"])["guardian_required"])
+
+        result, code = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-owner",
+                "contact_line_user_id": "U-guardian",
+                "recipient_consent": True,
+            },
+            config={},
+        )
+        self.assertEqual(code, 200)
+        self.assertTrue(result["reciprocal"])
+        self.assertEqual(result["owner_guardian"]["line_user_id"], "U-guardian")
+        self.assertEqual(result["invitee_guardian"]["line_user_id"], "U-owner")
+        state = app_module.load_state(self.data_file)
+        owner_row = state["users"]["U-owner"]["contacts"][0]
+        invitee_row = state["users"]["U-guardian"]["contacts"][0]
+        self.assertTrue(owner_row["is_primary"])
+        self.assertTrue(invitee_row["is_primary"])
+        self.assertEqual(invite["status"], "pending")
+        self.assertEqual(state["guardian_invites"][0]["status"], "accepted")
+
+    def test_verified_bind_keeps_both_records_when_one_notice_fails(self):
+        app_module.create_guardian_invite(
+            self.data_file, "U-owner", {"display_name": "阿媽", "relationship": "阿嬤"}
+        )
+
+        def sender(_token, target, _message):
+            if target == "U-guardian":
+                raise RuntimeError("not a friend")
+            return {"ok": True}
+
+        result, code = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-owner",
+                "contact_line_user_id": "U-guardian",
+                "recipient_consent": True,
+            },
+            config={"LINE_CHANNEL_ACCESS_TOKEN": "token", "LINE_PUSH_SENDER": sender},
+        )
+        self.assertEqual(code, 200)
+        self.assertTrue(result["reciprocal"])
+        self.assertEqual(result["owner_notice"]["status"], "sent")
+        self.assertEqual(result["invitee_notice"]["status"], "failed")
+        state = app_module.load_state(self.data_file)
+        self.assertEqual(len(state["users"]["U-owner"]["contacts"]), 1)
+        self.assertEqual(len(state["users"]["U-guardian"]["contacts"]), 1)
+        self.assertEqual(len([row for row in state["notification_logs"] if row["kind"] == "binding_complete"]), 2)
+
+    def test_pending_invite_expires_after_seven_days(self):
+        past = app_module.current_app_time({}) - app_module.timedelta(days=8)
+        app_module.create_guardian_invite(
+            self.data_file,
+            "U-owner",
+            {"display_name": "阿媽", "relationship": "阿嬤"},
+            now=past,
+        )
+        result, code = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-owner",
+                "contact_line_user_id": "U-guardian",
+                "recipient_consent": True,
+            },
+            config={},
+        )
+        self.assertEqual(code, 410)
+        self.assertEqual(result["code"], "invite_expired")
+
     def test_bind_matches_legacy_line_user_id_field(self):
         state = app_module.load_state(self.data_file)
         inviter = app_module.get_profile(state, "U-inviter")
