@@ -121,11 +121,11 @@ git commit -m "feat: gate onboarding by LINE friendship and login"
 
 **Interfaces:**
 - Consumes: `bind_emergency_contact(...)`, authenticated inviter/invitee identities, LINE push sender
-- Produces: binding outcome with `bound_guardian`, `owner_notice`, `guardian_notice`, and retryable notification audit
+- Produces: atomic reciprocal binding outcome with `owner_guardian`, `invitee_guardian`, `owner_notice`, `invitee_notice`, and retryable profile-completion reminders
 
 - [ ] **Step 1: Write failing tests**
 
-Prove that manual contact data cannot finish onboarding before invite consent; the recipient sees the inviter and complete guardian-purpose/privacy explanation before login; accepted LINE identity plus recipient-confirmed contact data creates one bound core guardian; owner and guardian are each notified; one push failure does not undo the binding; a pending invite expires after seven days.
+Prove that manual contact data cannot finish onboarding before invite consent; the recipient sees the inviter and complete guardian-purpose/privacy explanation before login; consent atomically creates reciprocal core-guardian records; either both records persist or neither does; both parties are notified; one push failure does not undo the completed reciprocal binding; a pending invite expires after seven days; incomplete profiles receive private completion reminders at bind time, 24 hours, day 3 and day 7, then stop after completion.
 
 - [ ] **Step 2: Run focused tests and verify RED**
 
@@ -137,11 +137,11 @@ python -m unittest tests.test_bind_and_home_gate tests.test_sos_rules -v
 
 - [ ] **Step 3: Implement minimal verified binding transition**
 
-Store only the inviter-provided display name/relationship before sharing. After the recipient reads the public explanation, joins the OA, logs in and consents, join that authenticated identity to recipient-confirmed contact data, set the canonical core-guardian role/status once, then push separate success notices and append per-recipient delivery logs.
+Store only the inviter-provided display name/relationship before sharing. After the recipient reads the public explanation, joins the OA, logs in and consents to reciprocal guardianship, create both canonical core-guardian records in one atomic state mutation. Push separate success notices with a profile-completion CTA and append per-recipient delivery logs. LINE notification eligibility begins immediately; phone-based contact remains disabled until the person completes their own details.
 
 - [ ] **Step 4: Update onboarding completion UI**
 
-Show inviter prefill/share, public explanation, add-friend, login, consent, recipient details, waiting, and completion states. Display both party names and individual notification results.
+Show inviter prefill/share, public explanation, add-friend, login, reciprocal-consent, waiting, and completion states. Display both party names and individual notification results. Move full personal-data entry to a private LINE CTA and do not make it a prerequisite for LINE notification delivery.
 
 - [ ] **Step 5: Verify GREEN and commit**
 
