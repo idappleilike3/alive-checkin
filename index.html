@@ -4571,6 +4571,12 @@
     let appConfigPromise = Promise.resolve({});
     let appBootstrapPromise = null;
     let appBootstrapComplete = false;
+    let memberBootstrapState = {
+      statusReady: false,
+      dataReady: false,
+      inFlight: null,
+      error: null
+    };
 
     const $ = (id) => document.getElementById(id);
     const DEFAULT_LIFF_ID = "2010674803-rK98c0lo";
@@ -4628,7 +4634,8 @@
         profile: "member",
         guardian: "guardians",
         safety: "guard",
-        plans: "pricing"
+        plans: "pricing",
+        status: "history"
       }[action] || action;
     }
 
@@ -5840,6 +5847,7 @@
     }
 
     async function submitSmartReminderEditor() {
+      if (!requireMemberActionReady("data")) return false;
       const name = String(($("smartReminderName") && $("smartReminderName").value) || "").trim();
       const category = String(($("smartReminderCategory") && $("smartReminderCategory").value) || "birthday").trim();
       const customTitle = String(($("smartReminderCustomTitle") && $("smartReminderCustomTitle").value) || "").trim();
@@ -5900,6 +5908,7 @@
     }
 
     async function deleteSmartReminder(id) {
+      if (!requireMemberActionReady("data")) return false;
       if (!id || !confirm("確定刪除此智能提醒？")) return;
       try {
         const res = await fetch(`/api/smart-reminders/${encodeURIComponent(id)}?line_user_id=${encodeURIComponent(lineUserId)}`, {
@@ -6267,6 +6276,7 @@
       }).join("");
       host.querySelectorAll(".core-set-primary-btn").forEach((btn) => {
         btn.addEventListener("click", async () => {
+          if (!requireMemberActionReady("data")) return;
           const id = btn.dataset.id;
           const idx = contactData.findIndex((c) => String(c.id || "") === String(id));
           if (idx < 0) return;
@@ -6392,6 +6402,7 @@
     }
 
     async function saveMemberDailyReminder() {
+      if (!requireMemberActionReady("data")) return false;
       const status = currentStatusData || {};
       const count = currentChosenDailyReminderCount(status);
       const enabled = Boolean($("dailyCheckinReminderEnabled") && $("dailyCheckinReminderEnabled").checked);
@@ -6682,27 +6693,37 @@
     }
 
     function openRequestedPage() {
-      const page = getAppParam("page");
-      if (!page) return;
-      if (page === "guardian") {
-        goGuardianInvite();
-        return;
-      }
-      if (page === "status") {
+      const action = requestedAppAction();
+      if (!action) return;
+      if (action === "history") {
+        showTab("history");
         setCalendarExpanded(true);
         document.querySelector('[aria-label="簽到月曆"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
-      if (page === "profile") {
+      if (action === "member") {
+        showTab("member");
         setMemberCenterExpanded(true);
         document.querySelector('[aria-label="會員個人中心"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
-      if (page === "sos") {
+      if (action === "guardians") {
+        showTab("guardians");
+        return;
+      }
+      if (action === "guard") {
+        openMvpGuardPanel();
+        return;
+      }
+      if (action === "sos") {
         openSosModal();
         return;
       }
-      if (page === "plans") {
+      if (action === "checkin" || action === "home") {
+        showTab("home");
+        return;
+      }
+      if (action === "pricing") {
         window.location.href = "liff/pricing.html";
       }
     }
@@ -6932,6 +6953,7 @@
     }
 
     async function saveContacts() {
+      if (!requireMemberActionReady("data")) return false;
       try {
         const data = await apiSaveContacts();
         contactData = data.contacts || [];
@@ -7370,6 +7392,7 @@
     }
 
     async function shareMyLocation() {
+      if (!requireMemberActionReady("status")) return false;
       const mvpStart = $("mvpGuardStartBtn");
       const shareBtn = $("shareLocationBtn");
       const startLabel = mvpStart ? mvpStart.textContent : "";
@@ -7438,6 +7461,7 @@
     }
 
     async function refreshSafetyGuardLocation() {
+      if (!requireMemberActionReady("status")) return false;
       try {
         if (!lineUserId) throw new Error("請先從 LINE 裡開啟，完成會員綁定。");
         if (!navigator.geolocation) throw new Error("這台裝置不支援定位。");
@@ -7457,6 +7481,7 @@
     }
 
     async function stopLocationSharing() {
+      if (!requireMemberActionReady("status")) return false;
       try {
         if (!lineUserId) throw new Error("請先從 LINE 裡開啟，完成會員綁定。");
         const data = await apiStopLocation();
@@ -7762,6 +7787,7 @@
     }
 
     async function saveSelectedCalendarNote(contentOverride) {
+      if (!requireMemberActionReady("data")) return false;
       if (!selectedCalendarDate) return;
       const saveButton = $("saveCalendarNoteBtn");
       const content = contentOverride === undefined ? $("calendarNoteInput").value : contentOverride;
@@ -7939,6 +7965,7 @@
     }
 
     async function deleteCheckinHistory() {
+      if (!requireMemberActionReady("data")) return false;
       if (!confirm("確定要刪除全部簽到紀錄嗎？守護人資料會保留。")) return;
       try {
         await apiDeleteCheckinHistory();
@@ -7957,6 +7984,7 @@
     }
 
     async function deleteAccountAndData() {
+      if (!requireMemberActionReady("data")) return false;
       if (!confirm("確定要刪除帳號與全部個人資料嗎？這個動作無法復原。")) return;
       if (!confirm("再次確認：守護人、簽到與位置資料都會刪除。")) return;
       try {
@@ -8001,6 +8029,7 @@
     }
 
     async function openAddGuardianFromMember() {
+      if (!requireMemberActionReady("data")) return false;
       if (!requireLineMembership("新增守護人前，請先完成 LINE 登入綁定。")) return;
       if (typeof showTab === "function") showTab("member");
       setMemberCenterExpanded(true);
@@ -8161,6 +8190,7 @@
     }
 
     async function sendSosAlert() {
+      if (!requireMemberActionReady("status")) return false;
       const button = $("sosHoldButton");
       const label = $("sosHoldLabel");
       const feedback = $("sosFeedback");
@@ -8218,6 +8248,7 @@
     }
 
     async function unbindGuardianGroup(groupId) {
+      if (!requireMemberActionReady("data")) return false;
       if (!groupId || !confirm("確定要解除這個守護群嗎？解除後，群組將不再收到緊急通知。")) return;
       try {
         const result = await apiUnbindGuardianGroup(groupId);
@@ -8493,6 +8524,7 @@
     }
 
     async function doCheckin() {
+      if (!requireMemberActionReady("status")) return false;
       const checkBtn = $("checkBtn");
       if (!checkBtn) return;
       // 防連點：僅在真正送出中阻擋（勿用初始 aria-busy，否則首次點擊會被吃掉）
@@ -8838,6 +8870,7 @@
     }
 
     async function saveGuardian() {
+      if (!requireMemberActionReady("data")) return false;
       const modal = $("guardianEditorModal");
       const editId = modal.dataset.editId;
       const errorEl = $("guardianEditorError");
@@ -8919,6 +8952,7 @@
     }
 
     async function executeDeleteGuardian() {
+      if (!requireMemberActionReady("data")) return false;
       const modal = $("deleteGuardianModal");
       const id = modal.dataset.deleteId;
       if (!id) return;
@@ -9066,6 +9100,7 @@
     }
 
     async function saveOnboardingGuardian() {
+      if (!requireMemberActionReady("data")) return false;
       const errorEl = $("onboardingError");
       const saveBtn = $("onboardingSaveBtn");
       if (!saveBtn) return;
@@ -9152,6 +9187,7 @@
     }
 
     async function saveOnboardingReminder() {
+      if (!requireMemberActionReady("data")) return false;
       const errorEl = $("onboardingReminderError");
       const saveBtn = $("onboardingReminderSaveBtn");
       if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
@@ -9227,27 +9263,112 @@
       }
     }
 
-    async function loadInitialMemberData() {
-      const [statusResult, contactsResult, onboardingResult] = await Promise.allSettled([
-        apiGetStatus(),
-        apiGetContacts(lineUserId),
-        fetchOnboardingState()
-      ]);
+    function setMemberInteractionLocked(locked) {
+      const ids = [
+        "saveDailyReminderBtn", "smartReminderSaveBtn",
+        "deleteCheckinHistoryBtn", "deleteAccountBtn",
+        "saveGuardianBtn", "confirmDeleteGuardianBtn",
+        "memberAddGuardianBtn", "memberAddEmergencyBtn",
+        "onboardingSaveBtn", "onboardingReminderSaveBtn"
+      ];
+      ids.forEach((id) => {
+        const element = $(id);
+        if (!element) return;
+        if (locked) {
+          if (!element.dataset.memberGateLocked) {
+            element.dataset.memberGateLocked = "true";
+            element.dataset.memberGateWasDisabled = element.disabled ? "true" : "false";
+          }
+          element.disabled = true;
+          return;
+        }
+        if (element.dataset.memberGateLocked === "true") {
+          element.disabled = element.dataset.memberGateWasDisabled === "true";
+          delete element.dataset.memberGateLocked;
+          delete element.dataset.memberGateWasDisabled;
+        }
+      });
+    }
 
-      if (statusResult.status !== "fulfilled") throw statusResult.reason;
-      const status = statusResult.value;
+    function showMemberBootstrapPending(message) {
+      showInlineError(message || "會員資料還在載入，請稍候再操作。");
+    }
+
+    function requireMemberActionReady(scope = "status") {
+      if (useLocalMode) return true;
+      if (!lineUserId) {
+        showLineLoginRequired(readSafeDeepLinkParams());
+        return false;
+      }
+      const ready = scope === "data"
+        ? memberBootstrapState.dataReady
+        : memberBootstrapState.statusReady;
+      if (ready) return true;
+      if (memberBootstrapState.error) {
+        showMemberBootstrapError(memberBootstrapState.error);
+      } else {
+        showMemberBootstrapPending("會員資料還在載入，請稍候再操作。");
+      }
+      return false;
+    }
+
+    function showMemberBootstrapError(error) {
+      memberBootstrapState.statusReady = false;
+      memberBootstrapState.dataReady = false;
+      memberBootstrapState.error = error || new Error("member_bootstrap_failed");
+      setMemberInteractionLocked(true);
+      const errBox = $("inlineError");
+      if (!errBox) return;
+      errBox.classList.remove("inline-success");
+      errBox.innerHTML = (
+        "<strong>暫時讀不到會員資料</strong>" +
+        "<div style=\"margin-top:6px;\">請確認網路連線後，再按一次下方按鈕。</div>" +
+        "<button class=\"action-btn primary\" id=\"retryMemberBootstrapBtn\" type=\"button\" " +
+        "style=\"width:100%;margin-top:12px;\">重新載入資料</button>"
+      );
+      errBox.hidden = false;
+      const retryButton = $("retryMemberBootstrapBtn");
+      if (retryButton) retryButton.addEventListener("click", () => retryMemberBootstrap());
+    }
+
+    async function retryMemberBootstrap() {
+      if (memberBootstrapState.inFlight) return memberBootstrapState.inFlight;
+      memberBootstrapState.statusReady = false;
+      memberBootstrapState.dataReady = false;
+      memberBootstrapState.error = null;
+      setMemberInteractionLocked(true);
+      hideInlineError();
+      const task = Promise.resolve().then(() => initApp());
+      memberBootstrapState.inFlight = task;
+      try {
+        return await task;
+      } finally {
+        memberBootstrapState.inFlight = null;
+      }
+    }
+
+    async function loadInitialMemberData() {
+      const statusPromise = Promise.resolve().then(() => apiGetStatus());
+      const contactsPromise = Promise.resolve()
+        .then(() => apiGetContacts(lineUserId))
+        .catch(() => ({ status: 0, data: {} }));
+      const onboardingPromise = Promise.resolve()
+        .then(() => fetchOnboardingState())
+        .catch(() => ({ done: false, hasGuardian: false, data: {} }));
+
+      const status = await statusPromise;
       if (status && status.ok === false) {
         throw new Error(friendlyApiFailure(400, JSON.stringify(status)));
       }
       renderStatus(status);
       syncCheckBtn(status);
+      memberBootstrapState.statusReady = true;
+      memberBootstrapState.error = null;
       if ($("mvpSafeBtn")) $("mvpSafeBtn").disabled = false;
       if ($("mvpGuardStartBtn")) $("mvpGuardStartBtn").disabled = false;
       renderSosAccess();
 
-      const contactsPayload = contactsResult.status === "fulfilled"
-        ? contactsResult.value
-        : { status: 0, data: {} };
+      const contactsPayload = await contactsPromise;
       if (contactsPayload.status === 200) {
         contactData = contactsPayload.data.contacts || [];
         renderGuardians(contactData, contactsPayload.data.contact_limit);
@@ -9263,9 +9384,9 @@
         renderGuardians(contactData, status.contact_limit || currentContactLimit);
       }
 
-      const onboarding = onboardingResult.status === "fulfilled"
-        ? onboardingResult.value
-        : { done: false, hasGuardian: false, data: {} };
+      const onboarding = await onboardingPromise;
+      memberBootstrapState.dataReady = true;
+      setMemberInteractionLocked(false);
       document.body.removeAttribute("aria-busy");
       return { status, contacts: contactData, onboarding };
     }
@@ -9292,7 +9413,7 @@
         // 報平安 open=checkin、安全守護 open=guard：已綁定則直達功能，絕不導 share-invite
         // 一鍵邀請才走 share-invite（rich menu 直連或 open=share-invite／invite）
         // 受邀者（invite_from / friend_invite）：登入後綁定／加入好友，不要再被逼分享
-        const openAction = getAppParam("open") || "";
+        const openAction = requestedAppAction();
         const isOnboardingInvite = openAction === "onboarding/invite";
         const wantsShareInvite = (
           openAction === "share-invite"
@@ -9300,8 +9421,8 @@
           || isOnboardingInvite
         );
         const isCheckinOpen = openAction === "checkin" || location.hash === "#home";
-        const isGuardOpen = openAction === "guard" || openAction === "safety";
-        const forceOnboarding = openAction === "onboarding" || openAction === "guardian" || openAction === "bind" || isOnboardingInvite;
+        const isGuardOpen = openAction === "guard";
+        const forceOnboarding = openAction === "onboarding" || openAction === "bind" || isOnboardingInvite;
         const inviteeMode = isInviteeDeepLink();
         const contactsNow = currentGuardianContacts();
         const homeReady = hasHomeSetupComplete(contactsNow);
@@ -9348,7 +9469,10 @@
         } else if (homeReady || hasGuardians || setupDone) {
           // 已有 ≥1 LINE 守護人或 ≥1 聯絡人：絕不 showOnboarding／share-invite
           clearShareFirstLocalFlags();
-          if (typeof showTab === "function") showTab("home");
+          const preservesRequestedScreen = [
+            "member", "guardians", "history", "sos", "guard", "checkin"
+          ].includes(openAction);
+          if (!preservesRequestedScreen && typeof showTab === "function") showTab("home");
         } else {
           await showOnboarding();
         }
@@ -9360,6 +9484,8 @@
           showTab("home");
         } else if (openAction === "guardians" && !forceOnboarding && typeof showTab === "function") {
           showTab("guardians");
+        } else if (openAction === "history" && !forceOnboarding && typeof showTab === "function") {
+          showTab("history");
         } else if (openAction === "sos") {
           if (typeof showTab === "function") showTab("home");
           openSosModal();
@@ -9383,8 +9509,10 @@
             }, 250);
           }
         }
+        return true;
       } catch (error) {
-        showInlineError("載入狀態失敗：" + (error.message || "請確認服務是否正常"));
+        showMemberBootstrapError(error);
+        return false;
       }
     }
 
@@ -9513,6 +9641,7 @@
     }
 
     async function saveMvpContact() {
+      if (!requireMemberActionReady("data")) return false;
       const name = ($("mvpContactName")?.value || "").trim();
       const relationship = readRelationship("mvpContactRelation", "mvpContactRelationOther");
       const phone = ($("mvpContactPhone")?.value || "").trim();
@@ -9913,6 +10042,10 @@
     $("guardianGroupsList").addEventListener("change", async (event) => {
       const checkbox = event.target.closest(".guardian-group-pref");
       if (!checkbox) return;
+      if (!requireMemberActionReady("data")) {
+        checkbox.checked = !checkbox.checked;
+        return;
+      }
       try {
         await apiSaveGuardianGroupPreferences(checkbox.dataset.groupId, {
           [checkbox.dataset.prefKey]: checkbox.checked
@@ -9948,6 +10081,10 @@
 
     async function bootstrapApp() {
       appBootstrapComplete = false;
+      memberBootstrapState.statusReady = false;
+      memberBootstrapState.dataReady = false;
+      memberBootstrapState.error = null;
+      setMemberInteractionLocked(true);
       // 導覽與基本操作不依賴 LINE 身分；先綁定再套用 deep link，畫面不必等網路。
       bindTabEvents();
       bindSosFab();
@@ -9964,7 +10101,8 @@
           return;
         }
 
-        await initApp();
+        const memberReady = await initApp();
+        if (!memberReady) return;
         if (useLocalMode) renderStatus(buildLocalStatus(loadLocalState()));
         await refreshCalendarNotes();
         if (!useLocalMode) {

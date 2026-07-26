@@ -233,7 +233,7 @@ class ProductRulesTests(unittest.TestCase):
         standalone = (ROOT / "liff" / "sos.html").read_text(encoding="utf-8")
         help_page = (ROOT / "help.html").read_text(encoding="utf-8")
 
-        self.assertIn('page === "sos"', page)
+        self.assertIn('action === "sos"', page)
         self.assertIn("?page=sos", standalone)
         self.assertNotIn("startCountdown()", standalone)
         self.assertNotIn("秒後自動發出", standalone)

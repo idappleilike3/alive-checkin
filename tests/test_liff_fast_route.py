@@ -64,10 +64,10 @@ class LiffFastRouteTests(unittest.TestCase):
             "async function loadInitialMemberData()",
             "async function initApp()",
         )
-        self.assertIn("Promise.allSettled", loader)
-        self.assertIn("apiGetStatus()", loader)
-        self.assertIn("apiGetContacts(lineUserId)", loader)
-        self.assertIn("fetchOnboardingState()", loader)
+        self.assertIn("const statusPromise", loader)
+        self.assertIn("const contactsPromise", loader)
+        self.assertIn("const onboardingPromise", loader)
+        self.assertIn("const status = await statusPromise", loader)
 
     def test_first_status_response_syncs_checkin_button_immediately(self):
         loader = self.section(
