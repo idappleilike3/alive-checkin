@@ -42,12 +42,13 @@ SOS_POST_SEND_CANCEL_MIN = 10
 # ────────────────────────────────────────────────────────────
 
 def sos_emergency_flex(family_tel: str | None = None, family_label: str | None = None, liff_sos_uri: str | None = None):
-    """長者友善入口卡：一個大紅按鈕「聯絡家人連按3次」。
+    """長者友善入口卡：一個大紅按鈕開啟統一 LIFF 求助流程。
 
     119／110 只當說明文字與小型連結，不跟主按鈕搶注意力。
-    family_tel／family_label／liff_sos_uri 保留相容參數，入口卡不再並列多個大按鈕。
+    family_tel／family_label 保留相容參數，入口卡不再於聊天室累計三次點擊。
     """
-    _ = (family_tel, family_label, liff_sos_uri)  # 相容舊呼叫端
+    _ = (family_tel, family_label)  # 相容舊呼叫端
+    uri = liff_sos_uri or "https://liff.line.me/2010674803-rK98c0lo?open=sos"
 
     return {
         "type": "bubble",
@@ -96,7 +97,7 @@ def sos_emergency_flex(family_tel: str | None = None, family_label: str | None =
                 },
                 {
                     "type": "text",
-                    "text": "請只按下方這一個大按鈕，連按 3 次就會通知家人",
+                    "text": "點開下方按鈕後，在求助頁面連按 3 次就會通知家人",
                     "size": "md",
                     "color": GRAY,
                     "wrap": True,
@@ -114,9 +115,9 @@ def sos_emergency_flex(family_tel: str | None = None, family_label: str | None =
                 {
                     "type": "button",
                     "action": {
-                        "type": "message",
-                        "label": "聯絡家人連按3次",
-                        "text": "聯絡家人連按3次",
+                        "type": "uri",
+                        "label": "開啟需要幫忙",
+                        "uri": uri,
                     },
                     "style": "primary",
                     "color": RED,

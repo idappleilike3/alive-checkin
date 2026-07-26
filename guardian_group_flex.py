@@ -215,8 +215,7 @@ def _group_quick_actions():
             _postback_button("聯絡家人", "聯絡家人", style="secondary", color=GREEN_DARK, height="md"),
         ],
         [
-            # 用 message 觸發 Bot 緊急求助 Flex（非只開 LIFF）
-            _postback_button("需要幫忙", "需要幫忙", style="secondary", color=RED_WARN, height="md"),
+            _uri_button("需要幫忙", liff_entry_url(open_action="sos"), style="secondary", color=RED_WARN, height="md"),
             _postback_button("守護群狀態", "守護群狀態", style="secondary", color=GREEN_DARK, height="md"),
         ],
     ]
