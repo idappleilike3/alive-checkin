@@ -8294,7 +8294,7 @@ def create_app(config=None):
             ).strip()
             target = f"https://liff.line.me/{lid}"
             if open_action:
-                target += f"/?open={open_action}"
+                target += f"?open={open_action}"
             elif fragment:
                 target += f"#{fragment.lstrip('#')}"
         if redirect is not None:

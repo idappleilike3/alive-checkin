@@ -103,7 +103,7 @@ LIFF_ID=2010848330-UAiqPPYD
    unset RICH_MENU_TOKEN
    ```
 
-6. 在舊 LIFF App 的 Endpoint URL 設為 `https://alive-checkin.onrender.com/liff/migrate.html`。開啟一個舊 LIFF 連結並確認它只會帶轉 `open`、`page`、`invite_from`、`friend_invite` 等安全參數；不得轉送 access token、ID token 或其他登入憑證。
+6. 在舊 LIFF App 的 Endpoint URL 設為 `https://alive-checkin.onrender.com/liff/migrate.html`。開啟一個舊 LIFF 連結並確認 handoff 解析 `liff.state` 後只會帶轉 `open`、`page`、`friend_invite`；不得轉送 `invite_from`、舊 Provider user ID、access token、ID token 或其他登入憑證。舊版守護人邀請必須由邀請人在新版重新分享，且不得依舊 ID 自動合併帳號。
 
 ## 自動推播
 

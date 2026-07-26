@@ -27,7 +27,7 @@
    unset RICH_MENU_TOKEN
    ```
 
-7. 在舊 LIFF App 的 LINE Developers Console 將 Endpoint URL 改為 `https://alive-checkin.onrender.com/liff/migrate.html`。再打開一條舊連結，確認 handoff 僅保留 `open`、`page`、`invite_from`、`friend_invite`；access token、ID token 與其他不安全參數不得被帶到新連結。
+7. 在舊 LIFF App 的 LINE Developers Console 將 Endpoint URL 改為 `https://alive-checkin.onrender.com/liff/migrate.html`。再打開一條舊連結，確認 handoff 會解析 `liff.state`，但僅保留 `open`、`page`、`friend_invite`；`invite_from`、舊 Provider user ID、access token、ID token 與其他參數都不得被帶到新連結。舊版守護人邀請必須由邀請人在新版重新分享，不得自動合併帳號或沿用舊 ID。
 
 若任一步失敗，停止發布圖文選單或舊端點切換，保留目前 Render 環境變數，記錄失敗帳號／時間／頁面與 Render deploy ID，回到本分支調查。
 
@@ -50,9 +50,9 @@ python -m unittest discover -s tests
 ## 最新測試基準
 
 - 2026-07-26 LIFF Provider migration 完整 Python 測試：230/230 通過
-- Node 測試：8/8 通過
+- Node 測試：11/11 通過
 - `git diff --check`：通過
-- Legacy ID scan：沒有 production entry 或 fallback；僅 `tests/` fixture 保留舊 provider 值，舊連結 handoff 的安全參數測試名稱為 `test_legacy_handoff_only_forwards_safe_parameters`，另 `liff/migrate.html` 為明確排除的轉移頁面。
+- Legacy ID scan：沒有 production entry 或 fallback；僅 `tests/` fixture 保留舊 provider 值。舊連結 handoff 的 Node 行為測試會實際建構目標 URL，覆蓋巢狀 `liff.state`、嚴格 allowlist、捨棄 `invite_from`，以及任何 allowlisted key 都不得帶出 LINE user ID。
 
 ## 已完成並審查
 

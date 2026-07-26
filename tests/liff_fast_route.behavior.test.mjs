@@ -4,6 +4,8 @@ import test from "node:test";
 import vm from "node:vm";
 
 const page = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
+const migrationPage = fs.readFileSync(new URL("../liff/migrate.html", import.meta.url), "utf8");
+const migrationScript = migrationPage.match(/<script>([\s\S]*?)<\/script>/)?.[1];
 
 function section(start, end) {
   const from = page.indexOf(start);
@@ -11,6 +13,23 @@ function section(start, end) {
   assert.notEqual(from, -1, `missing start marker: ${start}`);
   assert.notEqual(to, -1, `missing end marker: ${end}`);
   return page.slice(from, to);
+}
+
+function migrationTarget(search) {
+  assert.ok(migrationScript, "liff/migrate.html script not found");
+  const anchor = {href: ""};
+  vm.runInNewContext(migrationScript, {
+    URL,
+    URLSearchParams,
+    location: {search},
+    document: {
+      querySelector(selector) {
+        assert.equal(selector, "#openNewLiff");
+        return anchor;
+      },
+    },
+  }, {filename: "liff/migrate.html"});
+  return anchor.href;
 }
 
 function functionSource(name) {
@@ -269,4 +288,39 @@ test("status error renders senior-readable retry without page reload", () => {
   listeners.click();
   assert.equal(retries, 1);
   assert.equal(page.includes("location.reload()"), false);
+});
+
+test("legacy handoff parses nested liff.state and drops the old Provider inviter ID", () => {
+  const oldProviderUserId = "U0123456789abcdef0123456789abcdef";
+  const nestedState = encodeURIComponent(
+    `/?open=guard&invite_from=${oldProviderUserId}&friend_invite=ABC1234&access_token=secret`,
+  );
+
+  assert.equal(
+    migrationTarget(`?liff.state=${nestedState}`),
+    "https://liff.line.me/2010848330-UAiqPPYD?open=guard&friend_invite=ABC1234",
+  );
+});
+
+test("legacy handoff forwards only non-identity allowlisted outer parameters", () => {
+  const oldProviderUserId = "Ufedcba9876543210fedcba9876543210";
+
+  assert.equal(
+    migrationTarget(
+      `?page=member&invite_from=${oldProviderUserId}&id_token=secret&unexpected=leak`,
+    ),
+    "https://liff.line.me/2010848330-UAiqPPYD?page=member",
+  );
+});
+
+test("legacy handoff never emits an old Provider user ID under an allowlisted key", () => {
+  const oldProviderUserId = "U0123456789abcdef0123456789abcdef";
+
+  for (const key of ["open", "page", "friend_invite"]) {
+    assert.equal(
+      migrationTarget(`?${key}=${oldProviderUserId}`),
+      "https://liff.line.me/2010848330-UAiqPPYD",
+      `${key} must not carry a legacy LINE user ID`,
+    );
+  }
 });

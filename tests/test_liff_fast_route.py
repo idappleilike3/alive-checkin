@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import app as alive_app
 
@@ -94,17 +95,21 @@ class LiffFastRouteTests(unittest.TestCase):
         self.assertNotIn("}, 5000);", self.page)
         self.assertIn('document.visibilityState === "visible"', self.page)
 
-    def test_legacy_handoff_only_forwards_safe_parameters(self):
-        page = (ROOT / "liff" / "migrate.html").read_text(encoding="utf-8")
-        self.assertIn('const SAFE_KEYS = ["open", "page", "invite_from", "friend_invite"]', page)
-        self.assertIn("2010848330-UAiqPPYD", page)
-        self.assertNotIn("access_token", page)
-        self.assertNotIn("id_token", page)
-
     def test_migration_page_is_served(self):
         response = self.client.get("/liff/migrate.html")
         self.addCleanup(response.close)
         self.assertEqual(response.status_code, 200)
+
+    def test_degraded_liff_embed_redirect_uses_query_without_extra_slash(self):
+        with patch.object(alive_app, "liff_entry_url", None):
+            response = self.client.get("/liff/onboarding")
+        self.addCleanup(response.close)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers["Location"],
+            "https://liff.line.me/2010848330-UAiqPPYD?open=onboarding",
+        )
 
 
 if __name__ == "__main__":
