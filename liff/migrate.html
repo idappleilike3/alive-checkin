@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>每日平安登入服務已更新</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      min-height: 100dvh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: linear-gradient(145deg, #e8f8ee, #f7fcf8);
+      color: #1f2937;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif;
+    }
+    main {
+      width: min(100%, 420px);
+      padding: 32px 24px;
+      text-align: center;
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 12px 36px rgba(22, 101, 52, 0.14);
+    }
+    h1 { margin: 0 0 16px; color: #087f23; font-size: 24px; }
+    p { margin: 0; line-height: 1.7; font-size: 16px; }
+    .handoff-button {
+      display: block;
+      margin-top: 28px;
+      padding: 15px 20px;
+      border-radius: 12px;
+      background: #00b900;
+      color: #fff;
+      font-size: 17px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>每日平安登入服務已更新</h1>
+    <p>請點下方按鈕重新授權；原有資料不會在這一步被刪除。</p>
+    <a id="openNewLiff" class="handoff-button" href="https://liff.line.me/2010848330-UAiqPPYD">重新授權並開啟服務</a>
+  </main>
+  <script>
+    const NEW_LIFF_URL = "https://liff.line.me/2010848330-UAiqPPYD";
+    const SAFE_KEYS = ["open", "page", "invite_from", "friend_invite"];
+    const source = new URLSearchParams(location.search);
+    const target = new URL(NEW_LIFF_URL);
+    for (const key of SAFE_KEYS) {
+      const value = source.get(key);
+      if (value) target.searchParams.set(key, value);
+    }
+    document.querySelector("#openNewLiff").href = target.toString();
+  </script>
+</body>
+</html>

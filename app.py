@@ -8308,6 +8308,11 @@ def create_app(config=None):
         """專用一鍵分享頁（給 LIFF 子路徑直連；不經 SPA home）。"""
         return send_from_directory(app.static_folder, "liff/share-invite.html")
 
+    @app.get("/liff/migrate.html")
+    def liff_migration_handoff_page():
+        """Legacy LIFF handoff that asks users to explicitly reauthorize."""
+        return send_from_directory(app.static_folder, "liff/migrate.html")
+
     # 2026-07-21 patch 24: Onboarding 流程 API
     @app.get("/liff/onboarding")
     def liff_onboarding():

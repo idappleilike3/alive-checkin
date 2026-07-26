@@ -1,6 +1,8 @@
 import unittest
 from pathlib import Path
 
+import app as alive_app
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -9,6 +11,7 @@ class LiffFastRouteTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.page = (ROOT / "index.html").read_text(encoding="utf-8")
+        cls.client = alive_app.create_app({"TESTING": True}).test_client()
 
     def section(self, start, end):
         self.assertIn(start, self.page)
@@ -90,6 +93,18 @@ class LiffFastRouteTests(unittest.TestCase):
         self.assertIn("}, 60000);", self.page)
         self.assertNotIn("}, 5000);", self.page)
         self.assertIn('document.visibilityState === "visible"', self.page)
+
+    def test_legacy_handoff_only_forwards_safe_parameters(self):
+        page = (ROOT / "liff" / "migrate.html").read_text(encoding="utf-8")
+        self.assertIn('const SAFE_KEYS = ["open", "page", "invite_from", "friend_invite"]', page)
+        self.assertIn("2010848330-UAiqPPYD", page)
+        self.assertNotIn("access_token", page)
+        self.assertNotIn("id_token", page)
+
+    def test_migration_page_is_served(self):
+        response = self.client.get("/liff/migrate.html")
+        self.addCleanup(response.close)
+        self.assertEqual(response.status_code, 200)
 
 
 if __name__ == "__main__":
