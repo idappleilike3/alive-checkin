@@ -1206,7 +1206,23 @@ class AtomicRedemptionTests(unittest.TestCase):
                 "line_user_id": self.old_id,
             }],
         }
+        state["users"]["U-guarding-peer"] = {
+            **alive_app.DEFAULT_PROFILE,
+            "line_user_id": "U-guarding-peer",
+            "guarding_for": [self.old_id],
+            "contacts": [{
+                "id": "guarding-contact",
+                "invited_by": self.old_id,
+            }],
+        }
+        for index in range(100):
+            state["users"][f"U-unaffected-{index}"] = {
+                **alive_app.DEFAULT_PROFILE,
+                "line_user_id": f"U-unaffected-{index}",
+                "friends": ["U-someone-else"],
+            }
         peer_before = copy.deepcopy(state["users"]["U-peer"])
+        guarding_peer_before = copy.deepcopy(state["users"]["U-guarding-peer"])
         alive_app.save_state(self.data_file, state)
 
         result, code = self._redeem()
@@ -1216,10 +1232,27 @@ class AtomicRedemptionTests(unittest.TestCase):
         final = alive_app.load_state(self.data_file)
         snapshot = next(iter(final["account_migration_snapshots"].values()))
         self.assertEqual(snapshot["affected_users"]["U-peer"], peer_before)
+        self.assertEqual(
+            snapshot["affected_users"]["U-guarding-peer"],
+            guarding_peer_before,
+        )
+        self.assertEqual(
+            set(snapshot["affected_users"]),
+            {"U-peer", "U-guarding-peer"},
+        )
         restored = copy.deepcopy(final)
-        restored["users"] = copy.deepcopy(snapshot["affected_users"])
+        for user_id, profile in snapshot["affected_users"].items():
+            restored["users"][user_id] = copy.deepcopy(profile)
         self.assertEqual(restored["users"]["U-peer"], peer_before)
+        self.assertEqual(
+            restored["users"]["U-guarding-peer"],
+            guarding_peer_before,
+        )
         self.assertEqual(final["users"]["U-peer"]["friends"], [self.new_id])
+        self.assertEqual(
+            final["users"]["U-guarding-peer"]["guarding_for"],
+            [self.new_id],
+        )
 
     def test_redeem_creates_alias_only_after_reindex_and_user_key_replacement(self):
         state = alive_app.load_state(self.data_file)
@@ -1719,6 +1752,56 @@ class AtomicRedemptionTests(unittest.TestCase):
             len(final["account_migration_audit"]),
             getattr(alive_app, "ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX", 1000),
         )
+
+    def test_over_capacity_cleanup_never_deletes_active_pending_tickets(self):
+        state = alive_app.load_state(self.data_file)
+        active_ids = set(state["account_migration_tickets"])
+        for index in range(3):
+            ticket_id = f"active-{index}"
+            active_ids.add(ticket_id)
+            state["account_migration_tickets"][ticket_id] = {
+                "ticket_id": ticket_id,
+                "code_digest": f"active-digest-{index}",
+                "old_line_user_id": f"U-active-{index}",
+                "created_at": (self.now - timedelta(minutes=index + 1)).isoformat(),
+                "expires_at": (self.now + timedelta(hours=1)).isoformat(),
+                "used_at": "",
+                "status": "pending",
+            }
+        for index in range(5):
+            ticket_id = f"history-{index}"
+            state["account_migration_tickets"][ticket_id] = {
+                "ticket_id": ticket_id,
+                "code_digest": f"history-digest-{index}",
+                "old_line_user_id": f"U-history-{index}",
+                "created_at": (self.now - timedelta(days=index + 1)).isoformat(),
+                "expires_at": (self.now - timedelta(hours=1)).isoformat(),
+                "used_at": self.now.isoformat(),
+                "status": "used",
+            }
+        alive_app.save_state(self.data_file, state)
+
+        with mock.patch.object(
+            alive_app,
+            "ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX",
+            3,
+        ):
+            cleanup, status = alive_app.cleanup_expired_data({
+                **self.config,
+                "CRON_NOW": self.now,
+                "APP_TIMEZONE": "UTC",
+            })
+            retained = alive_app.load_state(self.data_file)
+            result, redeem_status = self._redeem()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(cleanup["migration_tickets_removed"], 5)
+        self.assertTrue(active_ids.issubset(retained["account_migration_tickets"]))
+        self.assertFalse(
+            any(key.startswith("history-") for key in retained["account_migration_tickets"])
+        )
+        self.assertEqual(redeem_status, 200)
+        self.assertTrue(result["ok"])
 
     def test_invalid_redeem_attempts_are_globally_rate_limited(self):
         outcome = None

@@ -6262,7 +6262,8 @@ def purge_account_migration_history(state, now=None):
         days=ACCOUNT_MIGRATION_AUDIT_RETENTION_DAYS
     )
     tickets = state.get("account_migration_tickets") or {}
-    retained_tickets = []
+    active_tickets = []
+    history_tickets = []
     for key, ticket in tickets.items():
         if not isinstance(ticket, dict):
             continue
@@ -6270,14 +6271,20 @@ def purge_account_migration_history(state, now=None):
         expires = _account_migration_datetime(ticket.get("expires_at"))
         status = str(ticket.get("status") or "")
         if status == "pending" and expires and expires > current:
-            retained_tickets.append((key, ticket))
+            active_tickets.append((key, ticket))
         elif created and created >= ticket_cutoff:
-            retained_tickets.append((key, ticket))
-    retained_tickets.sort(
+            history_tickets.append((key, ticket))
+    history_tickets.sort(
         key=lambda item: str(item[1].get("created_at") or ""),
         reverse=True,
     )
-    retained_tickets = retained_tickets[:ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX]
+    history_capacity = max(
+        0,
+        ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX - len(active_tickets),
+    )
+    # Capacity is a write/history bound, never a reason to invalidate an
+    # inherited, unused ticket that has not expired.
+    retained_tickets = active_tickets + history_tickets[:history_capacity]
     state["account_migration_tickets"] = dict(retained_tickets)
 
     audit = [
@@ -7167,6 +7174,21 @@ def _account_migration_snapshot(
     now,
 ):
     users = state.get("users") or {}
+    affected_users = {}
+    for user_id, profile in users.items():
+        if (
+            user_id in {old_line_user_id, new_line_user_id}
+            or not isinstance(profile, dict)
+        ):
+            continue
+        reindexed_probe = copy.deepcopy(profile)
+        if _reindex_migration_record(
+            reindexed_probe,
+            old_line_user_id,
+            new_line_user_id,
+            event_id,
+        ):
+            affected_users[user_id] = copy.deepcopy(profile)
     affected_keys = {
         "guardian_groups",
         "friend_invites",
@@ -7187,7 +7209,7 @@ def _account_migration_snapshot(
             else None
         ),
         "migration_ticket": copy.deepcopy(ticket),
-        "affected_users": copy.deepcopy(dict(users)),
+        "affected_users": affected_users,
         "affected_top_level_records": {
             key: copy.deepcopy(state.get(key))
             for key in sorted(affected_keys)

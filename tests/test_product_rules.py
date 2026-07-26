@@ -1,4 +1,5 @@
 ﻿import ast
+import re
 import unittest
 from pathlib import Path
 
@@ -51,6 +52,15 @@ class ProductRulesTests(unittest.TestCase):
         render = (ROOT / "render.yaml").read_text(encoding="utf-8")
         self.assertIn(f"value: {NEW_LIFF_ID}", render)
         self.assertIn(f"value: {NEW_CHANNEL_ID}", render)
+
+    def test_legacy_migration_page_matches_controlled_server_default(self):
+        source = (ROOT / "liff" / "migrate.html").read_text(encoding="utf-8")
+        match = re.search(r'const LEGACY_LIFF_ID = "([^"]+)";', source)
+        self.assertIsNotNone(match)
+
+        import app as alive_app
+
+        self.assertEqual(match.group(1), alive_app.DEFAULT_LEGACY_LIFF_ID)
 
     def test_paid_plan_limits_match_public_pricing(self):
         plans = load_plan_limits()

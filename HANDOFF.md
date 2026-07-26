@@ -26,6 +26,11 @@
    不要 bulk-clear 或刪除後重建環境變數。既有 `LINE_CHANNEL_ACCESS_TOKEN` 與 `LINE_CHANNEL_SECRET` 是 Messaging API 憑證，必須保留原值，不能以新 LINE Login provider 的值取代。
 4. 後端再次部署／重啟並通過 health check 後，才把舊 LIFF App Endpoint URL
    指向 `https://alive-checkin.onrender.com/liff/migrate.html`。
+
+   技術裁定：舊搬家頁保留啟動前常數，避免在 `liff.init` 前新增一次網路
+   請求而讓救援入口多一個故障點。產品規則測試會鎖定該常數必須與後端
+   `DEFAULT_LEGACY_LIFF_ID` 完全一致；部署驗收仍須確認 `/api/config` 的
+   `legacy_liff_id` 與 LINE Console 舊 LIFF ID 相同。
 5. 先用一位非正式／非生產會員 smoke test：舊 LIFF 產生單次代碼、新 LIFF
    兌換、資料數量與方案合併、舊入口安全導引都必須成功。
 6. 以 session-authenticated 後台的「帳號搬家」卡確認成功／失敗／待處理
