@@ -476,8 +476,12 @@
           <p id="ga4Hint">需要設定 GA4_PROPERTY_ID 與 GA4_SERVICE_ACCOUNT_JSON，設定前不顯示假流量。</p>
         </div>
         <div class="integration-card">
-          <strong id="lineStatus">LINE 設定檢查中</strong>
-          <p>只顯示是否已設定，不會在頁面回傳或顯示 Channel Access Token。</p>
+          <strong id="lineStatus">LINE Bot 串接檢查中</strong>
+          <p id="lineWebhookStatus">正在檢查 Channel、LIFF 與 Webhook；不會顯示任何金鑰。</p>
+        </div>
+        <div class="integration-card">
+          <strong id="wordpressStatus">WordPress 串接：尚未連接</strong>
+          <p id="wordpressHint">尚未建立 WordPress 網站；未來有網站後再設定網址、帳號與 Application Password。</p>
         </div>
       </div>
     </section>
@@ -1102,13 +1106,26 @@
         ? `已達 ${lineBudget.hard_stop_percent || 100}% 硬上限；一般提醒暫停，SOS 與安全事件保留。`
         : `目前硬上限 ${lineBudget.hard_stop_percent || 100}%；達標時停止一般提醒，SOS 與安全事件保留。`;
       const ga4 = integrations.ga4 || {};
-      $("ga4Status").textContent = ga4.configured ? "GA4 已連接" : "GA4 尚未連接";
-      $("ga4Hint").textContent = ga4.configured
-        ? "正式報表憑證已設定；本頁目前先顯示站內可驗證的會員轉換資料。"
-        : "需要設定 GA4_PROPERTY_ID 與 GA4_SERVICE_ACCOUNT_JSON，設定前不顯示假流量。";
-      $("lineStatus").textContent = integrations.line && integrations.line.configured
+      $("ga4Status").textContent = ga4.tracking_configured
+        ? "GA4 流量追蹤已安裝"
+        : "GA4 流量追蹤尚未安裝";
+      $("ga4Hint").textContent = ga4.reporting_configured
+        ? `評估 ID ${ga4.measurement_id || ""} 已追蹤，後台報表讀取憑證也已設定。`
+        : `評估 ID ${ga4.measurement_id || ""} 已開始收集流量；後台讀取 GA4 報表仍需 Service Account JSON。`;
+      const line = integrations.line || {};
+      $("lineStatus").textContent = line.messaging_ready
         ? "LINE 正式通道已設定"
         : "LINE 正式通道尚未設定";
+      $("lineWebhookStatus").textContent = line.webhook_configured
+        ? `Webhook 已設定：${line.webhook_url || ""}；LIFF ${line.liff_configured ? "已設定" : "待設定"}。`
+        : "Webhook 尚未就緒；請確認 Channel Secret 與公開網址。";
+      const wordpress = integrations.wordpress || {};
+      $("wordpressStatus").textContent = wordpress.configured
+        ? "WordPress 串接：已連接"
+        : "WordPress 串接：尚未連接";
+      $("wordpressHint").textContent = wordpress.configured
+        ? "WordPress 網址、帳號與 Application Password 已安全設定。"
+        : "尚未建立 WordPress 網站；有網站後再到 Render 設定連線資料，不需要現在安裝主程式。";
       const seoPages = (data.seo || {}).pages || [];
       $("seoAuditList").innerHTML = seoPages.length
         ? seoPages.map((page) => `
