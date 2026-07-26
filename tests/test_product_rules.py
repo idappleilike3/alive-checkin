@@ -378,7 +378,7 @@ class ProductRulesTests(unittest.TestCase):
         ]
         self.assertIn("apiGetContacts(lineUserId)", refresh_contacts)
 
-    def test_liff_initialization_requires_line_login_before_member_use(self):
+    def test_liff_initialization_requires_official_friend_then_explicit_login_before_member_use(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         init_line = page[
             page.index("async function initializeLiff()") : page.index("const LUNAR_DAY_NAMES")
@@ -389,8 +389,13 @@ class ProductRulesTests(unittest.TestCase):
             'await liff.init({ liffId: FIXED_LIFF_ID });',
             init_line,
         )
-        self.assertIn("if (!liff.isLoggedIn())", init_line)
-        self.assertIn("liff.login();", init_line)
+        self.assertIn("resolveLineEntryGate", init_line)
+        self.assertIn("getFriendship", page)
+        self.assertIn('id="lineEntryGate"', page)
+        self.assertIn('id="lineEntryAddFriend"', page)
+        self.assertIn('id="lineEntryLoginBtn"', page)
+        self.assertNotIn("liff.login();", init_line)
+        self.assertIn("startLineLogin", page)
         self.assertNotIn("liff.login({ redirectUri:", init_line)
         # NEVER gate login behind !isInClient (breaks Android Chrome / OAuth return)
         self.assertNotIn("if (inClient)", init_line)

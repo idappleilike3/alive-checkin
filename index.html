@@ -2090,6 +2090,44 @@
       gap: 12px;
     }
     .onboarding-form[hidden] { display: none !important; }
+    #lineEntryGate {
+      position: fixed;
+      inset: 0;
+      z-index: 120;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(15, 23, 42, 0.62);
+    }
+    #lineEntryGate[hidden] { display: none !important; }
+    .line-entry-card {
+      width: min(100%, 430px);
+      padding: 28px 24px;
+      border: 2px solid #86efac;
+      border-radius: 22px;
+      background: #fff;
+      color: #17324d;
+      text-align: left;
+      box-shadow: 0 22px 56px rgba(15, 23, 42, 0.28);
+    }
+    .line-entry-card h2 { margin-bottom: 12px; font-size: 25px; line-height: 1.4; }
+    .line-entry-card p { margin: 0 0 18px; font-size: 17px; line-height: 1.7; }
+    .line-entry-actions { display: grid; gap: 12px; }
+    .line-entry-actions a,
+    .line-entry-actions button {
+      min-height: 54px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      font: inherit;
+      font-size: 18px;
+      font-weight: 900;
+      text-align: center;
+      cursor: pointer;
+    }
+    .line-entry-actions a { color: #fff; background: #06c755; text-decoration: none; }
+    .line-entry-actions button { border: 2px solid #0b8b54; color: #075f3a; background: #effdf5; }
+    body.line-entry-gated > main > :not(#lineEntryGate) { visibility: hidden; }
     .share-invite-fallback {
       display: grid;
       gap: 10px;
@@ -3626,6 +3664,26 @@
       <button id="retryAccountMigrationBtn" type="button" hidden>再試一次</button>
       <a id="accountMigrationAction" href="https://liff.line.me/2010848330-UAiqPPYD?open=member" hidden>開啟新版會員中心</a>
     </div>
+
+    <section id="lineEntryGate" hidden aria-live="polite">
+      <div class="line-entry-card" role="dialog" aria-modal="true" aria-labelledby="lineEntryTitle">
+        <div id="lineEntryFriendStep">
+          <h2 id="lineEntryTitle">先加入「每日平安」官方帳號好友</h2>
+          <p>加入好友後，我們才能在需要時傳送平安與守護通知。加入完成後，請回到這裡重新確認。</p>
+          <div class="line-entry-actions">
+            <a id="lineEntryAddFriend" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener">加入每日平安官方帳號</a>
+            <button id="lineEntryRecheckFriendBtn" type="button">我已加入，重新確認</button>
+          </div>
+        </div>
+        <div id="lineEntryLoginStep" hidden>
+          <h2>使用 LINE 一鍵登入</h2>
+          <p>已確認你加入官方帳號。請按一下登入，安全帶回你的會員資料與守護設定。</p>
+          <div class="line-entry-actions">
+            <button id="lineEntryLoginBtn" type="button">使用 LINE 一鍵登入</button>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <section class="mvp-home" id="mvpHome" aria-label="每日平安首頁">
       <div class="mvp-brand">每日平安</div>
@@ -7697,10 +7755,68 @@
       return msg || "LIFF 初始化失敗";
     }
 
+    async function resolveLineEntryGate() {
+      if (useLocalMode) return "ready";
+      const sdk = window.liff;
+      if (!sdk || typeof sdk.getFriendship !== "function" || typeof sdk.isLoggedIn !== "function") {
+        throw new Error("LIFF SDK 無法確認官方帳號好友狀態");
+      }
+      const friendship = await sdk.getFriendship();
+      if (!friendship || friendship.friendFlag !== true) return "friend";
+      return sdk.isLoggedIn() ? "ready" : "login";
+    }
+
+    function showLineEntryGate(step) {
+      const gate = $("lineEntryGate");
+      if (!gate) return;
+      const friendStep = $("lineEntryFriendStep");
+      const loginStep = $("lineEntryLoginStep");
+      const isFriendStep = step === "friend";
+      if (friendStep) friendStep.hidden = !isFriendStep;
+      if (loginStep) loginStep.hidden = isFriendStep;
+      gate.hidden = false;
+      document.body.classList.add("line-entry-gated");
+    }
+
+    function hideLineEntryGate() {
+      const gate = $("lineEntryGate");
+      if (gate) gate.hidden = true;
+      document.body.classList.remove("line-entry-gated");
+    }
+
+    async function recheckLineEntryGate() {
+      try {
+        const step = await resolveLineEntryGate();
+        if (step !== "ready") {
+          showLineEntryGate(step);
+          return false;
+        }
+        // A returned add-friend flow must pass a second fresh LIFF check before member work resumes.
+        const lineReady = await initializeLiff();
+        if (!lineReady) return false;
+        return resumeMemberBootstrapAfterLineEntry();
+      } catch (error) {
+        showLineLoginRequired(readSafeDeepLinkParams(), { detail: formatLiffError(error) });
+        return false;
+      }
+    }
+
+    function bindLineEntryGate() {
+      const recheckButton = $("lineEntryRecheckFriendBtn");
+      const loginButton = $("lineEntryLoginBtn");
+      if (recheckButton && recheckButton.dataset.bound !== "true") {
+        recheckButton.dataset.bound = "true";
+        recheckButton.addEventListener("click", () => recheckLineEntryGate());
+      }
+      if (loginButton && loginButton.dataset.bound !== "true") {
+        loginButton.dataset.bound = "true";
+        loginButton.addEventListener("click", () => startLineLogin(readSafeDeepLinkParams()));
+      }
+    }
+
     /**
-     * 標準 LIFF 初始化（使用者指定）：
-     * liff.init({ liffId }) → 未登入則 liff.login()（不帶 redirectUri）→ return
-     * 已登入後才讀 invite_from / friend_invite / open= 並跑業務邏輯。
+     * LIFF 初始化後先確認官方帳號好友，再由使用者明確按鈕決定是否登入。
+     * 只有兩個入口條件都通過，才讀取 profile 或開始會員／搬家業務。
      */
     async function initializeLiff() {
       if (useLocalMode) return true;
@@ -7722,13 +7838,14 @@
           })
           .catch(() => ({}));
 
-        // 2) 未登入：絕對不要自己帶 redirectUri
-        if (!liff.isLoggedIn()) {
-          liff.login();
+        // 2) 官方好友與登入是固定順序；不把加好友網址當成完成證明。
+        const entryStep = await resolveLineEntryGate();
+        if (entryStep !== "ready") {
+          showLineEntryGate(entryStep);
           return false;
         }
 
-        // 3) 只有登入後才讀 deep link、跑守護人邀請業務
+        // 3) 只有好友且登入後才讀 deep link、跑守護人邀請業務
         const profile = await liff.getProfile();
         lineUserId = profile.userId || "";
         lineDisplayName = profile.displayName || "";
@@ -7744,6 +7861,7 @@
             picture_url: linePictureUrl || ""
           })
         });
+        hideLineEntryGate();
 
         const inviteFrom = String(getAppParam("invite_from") || "").trim();
         if (inviteFrom && inviteFrom !== lineUserId) {
@@ -10326,7 +10444,28 @@
 
     setTheme(localStorage.getItem("preferred_theme") || "classic");
     maybePrefillFriendInvite();
+    bindLineEntryGate();
     // 勿在 lineUserId 就緒前顯示同意視窗（會造成「要點兩次」）
+
+    async function resumeMemberBootstrapAfterLineEntry() {
+      const hasPendingMigration = Boolean(getAppParam("migration_code"));
+      const migration = hasPendingMigration
+        ? await redeemPendingAccountMigration()
+        : { attempted: false, succeeded: false };
+      const memberReady = await initApp();
+      if (!memberReady) return false;
+      if (hasPendingMigration && migration.succeeded) {
+        const migratedRoute = applyInitialDeepLinkRoute();
+        if (migratedRoute.redirected) return true;
+      }
+      if (useLocalMode) renderStatus(buildLocalStatus(loadLocalState()));
+      await refreshCalendarNotes();
+      if (!useLocalMode) {
+        refreshFriendLocations().catch(() => {});
+      }
+      openRequestedPage();
+      return true;
+    }
 
     async function bootstrapApp() {
       appBootstrapComplete = false;

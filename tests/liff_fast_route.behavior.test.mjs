@@ -465,3 +465,58 @@ test("legacy handoff rejects token-like values hidden in allowlisted keys", () =
     );
   }
 });
+
+test("LINE entry resolver orders friendship before login and stops non-friends", async () => {
+  const calls = [];
+  const liff = {
+    getFriendship: async () => {
+      calls.push("friendship");
+      return { friendFlag: false };
+    },
+    isLoggedIn: () => {
+      calls.push("login");
+      return true;
+    },
+  };
+  const sandbox = expose(functionSource("resolveLineEntryGate"), ["resolveLineEntryGate"], {
+    useLocalMode: false,
+    window: { liff },
+  });
+
+  assert.equal(await sandbox.resolveLineEntryGate(), "friend");
+  assert.deepEqual(calls, ["friendship"]);
+});
+
+test("LINE entry resolver returns the ordered friend, login, and ready states", async () => {
+  for (const [friendFlag, loggedIn, expected] of [
+    [false, false, "friend"],
+    [true, false, "login"],
+    [true, true, "ready"],
+  ]) {
+    const liff = {
+      getFriendship: async () => ({ friendFlag }),
+      isLoggedIn: () => loggedIn,
+    };
+    const sandbox = expose(functionSource("resolveLineEntryGate"), ["resolveLineEntryGate"], {
+      useLocalMode: false,
+      window: { liff },
+    });
+    assert.equal(await sandbox.resolveLineEntryGate(), expected);
+  }
+});
+
+test("LINE entry rechecks actual friendship after an add-friend return", async () => {
+  let checks = 0;
+  const liff = {
+    getFriendship: async () => ({ friendFlag: ++checks === 1 }),
+    isLoggedIn: () => true,
+  };
+  const sandbox = expose(functionSource("resolveLineEntryGate"), ["resolveLineEntryGate"], {
+    useLocalMode: false,
+    window: { liff },
+  });
+
+  assert.equal(await sandbox.resolveLineEntryGate(), "ready");
+  assert.equal(await sandbox.resolveLineEntryGate(), "friend");
+  assert.equal(checks, 2);
+});
