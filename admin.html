@@ -388,6 +388,10 @@
         <div class="stat"><strong id="paidRevenue">NT$0</strong><span>已付款營收</span></div>
         <div class="stat"><strong id="paidOrders">0</strong><span>已付款訂單</span></div>
         <div class="stat"><strong id="pendingOrders">0</strong><span>待付款訂單</span></div>
+        <div class="stat"><strong id="lineMessagesUsed">0</strong><span>本月 LINE 訊息則數</span></div>
+        <div class="stat"><strong id="lineMessagesProjected">0</strong><span>月底預估則數</span></div>
+        <div class="stat"><strong id="falseAlarmUnits">0</strong><span>SOS 取消通知成本</span></div>
+        <div class="stat"><strong id="lineUsageAlert">正常</strong><span>LINE 額度警示</span></div>
       </div>
 
       <section class="release-status" aria-label="帳號搬家狀態">
@@ -1022,6 +1026,13 @@
       $("paidRevenue").textContent = `NT$${Number(data.paid_revenue || 0).toLocaleString("zh-TW")}`;
       $("paidOrders").textContent = data.paid_order_count || 0;
       $("pendingOrders").textContent = data.pending_order_count || 0;
+      const lineUsage = data.line_message_usage || {};
+      $("lineMessagesUsed").textContent = `${lineUsage.used_units || 0}／${lineUsage.quota || "未設定"}`;
+      $("lineMessagesProjected").textContent = lineUsage.projected_units || 0;
+      $("falseAlarmUnits").textContent = lineUsage.false_alarm_units || 0;
+      $("lineUsageAlert").textContent = lineUsage.alert_level === "critical_90"
+        ? "90% 緊急"
+        : (lineUsage.alert_level === "warning_70" ? "70% 注意" : "正常");
       $("countyStatsBody").innerHTML = (data.county_stats || []).length
         ? data.county_stats.map((row) => `
           <tr>

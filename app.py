@@ -1,7 +1,9 @@
 import copy
+import calendar
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import secrets
@@ -235,6 +237,7 @@ DEFAULT_STATE = {
     **DEFAULT_PROFILE,
     "users": {},
     "notification_logs": [],
+    "line_message_usage": [],
     "friend_invites": {},
     "contact_rewards": [],
     "support_tickets": [],
@@ -4644,6 +4647,15 @@ def bind_emergency_contact(data_file, payload, config=None):
             elif not inviter_notified and not guardian_notified:
                 notify_hint = "雙方 LINE 通知皆未送出；請確認已加入「每日平安」官方帳號好友。"
 
+    if sent:
+        record_line_message_usage(
+            state,
+            category="binding",
+            owner_line_user_id=inviter_id,
+            recipient_count=sent,
+            event_id=str((pending_invite or {}).get("id") or f"{inviter_id}:{contact_line_user_id}:{accepted_at}"),
+            sent_at=parse_datetime(accepted_at) or current_app_time(config or {}),
+        )
     save_state(data_file, state)
     bound_contact = next(
         (contact for contact in contacts if get_contact_line_id(contact) == contact_line_user_id),
@@ -5984,6 +5996,23 @@ def cancel_sos_event(data_file, payload, config=None):
     if pending and pending.get("event_id") == event_id:
         pending["stage"] = "cancelled"
         pending["cancelled_at"] = event["cancelled_at"]
+    cancel_units = 0
+    for item in cancel_results:
+        if item.get("status") != "sent":
+            continue
+        if item.get("kind") == "group":
+            group = (state.get("guardian_groups") or {}).get(item.get("target")) or {}
+            cancel_units += max(1, len(group.get("member_ids_at_bind") or []))
+        else:
+            cancel_units += 1
+    record_line_message_usage(
+        state,
+        category="sos_cancel",
+        owner_line_user_id=line_user_id,
+        recipient_count=cancel_units,
+        event_id=event_id,
+        sent_at=now,
+    )
     save_state(data_file, state)
     return {
         "ok": True,
@@ -6033,6 +6062,14 @@ def retry_sos_event(data_file, payload, config=None):
             append_notification_log(state, "sos_retry", target, "failed", message, str(exc))
             retried_failed += 1
     event["retry_count"] = int(event.get("retry_count") or 0) + 1
+    record_line_message_usage(
+        state,
+        category="sos",
+        owner_line_user_id=line_user_id,
+        recipient_count=retried_sent,
+        event_id=f"{event_id}:retry:{event['retry_count']}",
+        sent_at=current_app_time(config or {}),
+    )
     save_state(data_file, state)
     return {
         "ok": retried_failed == 0,
@@ -6310,6 +6347,23 @@ def trigger_sos(data_file, payload, config=None):
         "location_attached": bool(location_text),
         "abuse_mode": abuse["mode"],
     }
+    sos_units = 0
+    for delivery in deliveries:
+        if delivery.get("status") != "sent":
+            continue
+        if delivery.get("kind") == "group":
+            group = (state.get("guardian_groups") or {}).get(delivery.get("target")) or {}
+            sos_units += max(1, len(group.get("member_ids_at_bind") or []))
+        else:
+            sos_units += 1
+    record_line_message_usage(
+        state,
+        category="sos",
+        owner_line_user_id=line_user_id,
+        recipient_count=sos_units,
+        event_id=sos_event_id,
+        sent_at=now_dt,
+    )
     save_state(data_file, state)
     code = 200 if sent else 502
     cancel_available = sent > 0
@@ -8307,6 +8361,10 @@ def admin_summary(data_file, config=None, now=None):
             "accepted_at": row.get("accepted_at") or "",
             "invitee_line_user_id": row.get("invitee_line_user_id") or "",
         })
+    quota = int((config or {}).get("LINE_MONTHLY_MESSAGE_QUOTA") or os.environ.get("LINE_MONTHLY_MESSAGE_QUOTA") or 200)
+    line_usage = monthly_line_message_usage(
+        state, status_now.strftime("%Y-%m"), quota, status_now
+    )
     return {
         "total_users": len(users),
         "overdue_users": sum(1 for user in users if user["is_overdue"]),
@@ -8329,6 +8387,7 @@ def admin_summary(data_file, config=None, now=None):
         "users": users,
         "contact_rewards": list(reversed(state.get("contact_rewards", [])[-20:])),
         "notification_logs": list(reversed(state.get("notification_logs", [])[-20:])),
+        "line_message_usage": line_usage,
         "display_names_hydrated": hydrated,
         "persistence": persist,
     }
@@ -8608,6 +8667,104 @@ def append_notification_log(state, kind, line_user_id, status, message, detail=N
         }
     )
     state["notification_logs"] = logs[-100:]
+
+
+LINE_MESSAGE_USAGE_CATEGORIES = {
+    "binding",
+    "checkin",
+    "overdue",
+    "sos",
+    "sos_cancel",
+    "smart_reminder",
+    "guardian_summary",
+}
+
+
+def record_line_message_usage(
+    state: dict,
+    *,
+    category: str,
+    owner_line_user_id: str,
+    recipient_count: int,
+    event_id: str,
+    sent_at: datetime,
+) -> dict:
+    """Idempotently record delivered LINE recipient units."""
+    category = str(category or "").strip()
+    if category not in LINE_MESSAGE_USAGE_CATEGORIES:
+        raise ValueError("invalid LINE message usage category")
+    units = max(0, int(recipient_count or 0))
+    if units <= 0:
+        return {"recorded": False, "units": 0}
+    owner = str(owner_line_user_id or "").strip()
+    event_id = str(event_id or "").strip()
+    if not owner or not event_id:
+        raise ValueError("owner_line_user_id and event_id are required")
+    ledger = state.setdefault("line_message_usage", [])
+    key = f"{category}:{event_id}"
+    existing = next((row for row in ledger if row.get("key") == key), None)
+    if existing:
+        return {**existing, "recorded": False, "idempotent": True}
+    row = {
+        "key": key,
+        "category": category,
+        "owner_line_user_id": owner,
+        "recipient_count": units,
+        "units": units,
+        "event_id": event_id,
+        "sent_at": sent_at.isoformat(timespec="seconds"),
+    }
+    ledger.append(row)
+    state["line_message_usage"] = ledger[-10000:]
+    return {**row, "recorded": True, "idempotent": False}
+
+
+def monthly_line_message_usage(state: dict, year_month: str, quota: int, now: datetime) -> dict:
+    """Aggregate delivered recipient units for the requested calendar month."""
+    category_totals = {key: 0 for key in sorted(LINE_MESSAGE_USAGE_CATEGORIES)}
+    member_map = {}
+    rows = []
+    for row in state.get("line_message_usage") or []:
+        if not str(row.get("sent_at") or "").startswith(f"{year_month}-"):
+            continue
+        units = max(0, int(row.get("units") or row.get("recipient_count") or 0))
+        if units <= 0:
+            continue
+        rows.append(row)
+        category = str(row.get("category") or "")
+        if category in category_totals:
+            category_totals[category] += units
+        owner = str(row.get("owner_line_user_id") or "")
+        member_map[owner] = member_map.get(owner, 0) + units
+    used = sum(category_totals.values())
+    try:
+        month_days = calendar.monthrange(now.year, now.month)[1]
+    except Exception:
+        month_days = 30
+    elapsed_days = max(1, now.day)
+    projected = int(math.ceil(used * month_days / elapsed_days))
+    quota = max(0, int(quota or 0))
+    ratio = (used / quota) if quota else 0
+    alert = "critical_90" if quota and ratio >= 0.9 else (
+        "warning_70" if quota and ratio >= 0.7 else "normal"
+    )
+    members = [
+        {"line_user_id": uid[:6] + "..." + uid[-4:] if len(uid) > 10 else uid, "units": units}
+        for uid, units in sorted(member_map.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    return {
+        "year_month": year_month,
+        "quota": quota,
+        "used_units": used,
+        "remaining_units": max(0, quota - used) if quota else None,
+        "usage_percent": round(ratio * 100, 1) if quota else None,
+        "projected_units": projected,
+        "alert_level": alert,
+        "category_totals": category_totals,
+        "member_totals": members,
+        "false_alarm_units": category_totals["sos_cancel"],
+        "records": len(rows),
+    }
 
 
 def _clear_push_delivery_failure(recipient, delivery_key):
@@ -8919,6 +9076,14 @@ def send_guardian_group_daily_summaries(config):
                 "sent",
                 message,
                 json.dumps(result, ensure_ascii=False),
+            )
+            record_line_message_usage(
+                state,
+                category="guardian_summary",
+                owner_line_user_id=group.get("owner_line_user_id") or group_id,
+                recipient_count=max(1, len(member_ids)),
+                event_id=delivery_key,
+                sent_at=now,
             )
             group["last_daily_summary_date"] = today
             groups[group_id] = group
@@ -9430,6 +9595,14 @@ def send_checkin_reminders(config):
             _clear_push_delivery_failure(user, delivery_key)
             _mark_checkin_reminder_slots(user, today, times, due_unsent)
             append_notification_log(state, "checkin", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
+            record_line_message_usage(
+                state,
+                category="checkin",
+                owner_line_user_id=line_user_id,
+                recipient_count=1,
+                event_id=delivery_key,
+                sent_at=now,
+            )
             sent += 1
             results.append({"line_user_id": line_user_id, "reminder_time": target_time, "result": result})
             # 方案即將／已到期：同日最多附帶一次提醒（不洗版）
@@ -10179,6 +10352,14 @@ def send_smart_reminders(config):
                 append_notification_log(
                     state, "smart_reminder", target_id, "sent",
                     message.get("altText"), json.dumps(result, ensure_ascii=False),
+                )
+                record_line_message_usage(
+                    state,
+                    category="smart_reminder",
+                    owner_line_user_id=line_user_id,
+                    recipient_count=1,
+                    event_id=delivery_key,
+                    sent_at=now,
                 )
                 sent += 1
                 results.append({
