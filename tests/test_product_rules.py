@@ -71,7 +71,7 @@ class ProductRulesTests(unittest.TestCase):
             "paid_199": (6, 1, 0, 0, 2, 4),
             "paid_199_year": (13, 2, 0, 0, 3, 10),
             "paid_399": (20, 2, 0, 0, 5, 15),
-            "paid_399_year": (32, 3, 0, 0, 7, 25),
+            "paid_399_year": (32, 2, 0, 0, 7, 25),
             "paid_799": (45, 3, 0, 1, 10, 35),
             "paid_799_year": (65, 3, 0, 3, 15, 50),
         }
@@ -87,6 +87,29 @@ class ProductRulesTests(unittest.TestCase):
                 self.assertEqual(plans[plan]["emergency_contact_limit"], emergency_limit)
                 self.assertEqual(plans[plan]["channels"], ["line"])
                 self.assertNotIn("sms", plans[plan]["channels"])
+
+    def test_399_and_799_reminder_limits_and_public_copy_match_decision(self):
+        plans = load_plan_limits()
+        self.assertEqual(plans["paid_399"]["daily_reminders"], 2)
+        self.assertEqual(plans["paid_399_year"]["daily_reminders"], 2)
+        self.assertEqual(plans["paid_799"]["daily_reminders"], 3)
+        self.assertEqual(plans["paid_799_year"]["daily_reminders"], 3)
+
+        pricing = (ROOT / "liff" / "pricing.html").read_text(encoding="utf-8")
+        member = (ROOT / "liff" / "member.html").read_text(encoding="utf-8")
+        help_page = (ROOT / "help.html").read_text(encoding="utf-8")
+        self.assertIn("399 月費／年費：每日可選 1～2 次", pricing)
+        self.assertIn("799 月費／年費：每日可選 1～3 次", pricing)
+        self.assertIn("預設 12:00、18:00", pricing)
+        self.assertIn("完成今日簽到後，當天剩餘提醒自動停止", pricing)
+        self.assertNotIn("邀請成功每位 +7 天", pricing)
+        self.assertNotIn("方案到期後資料保留 30 天", pricing)
+        self.assertIn('class="guardian-row contact-card', member)
+        self.assertIn("data-contact-toggle", member)
+        self.assertIn('aria-expanded="false"', member)
+        self.assertIn("399 月費／年費每日可選 1～2 次", help_page)
+        self.assertIn("799 月費／年費每日可選 1～3 次", help_page)
+        self.assertIn("當天剩餘提醒就會自動停止", help_page)
 
     def test_removed_reminder_settings_do_not_hide_guardian_or_location_tools(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -186,7 +209,7 @@ class ProductRulesTests(unittest.TestCase):
             pricing,
         )
         self.assertIn(
-            "<tr><td>LINE 私聊預警／日</td><td>1 次</td><td>1 次</td><td>2 次</td><td>2 次</td><td>3 次</td><td>3 次</td><td>3 次</td></tr>",
+            "<tr><td>LINE 私聊預警／日</td><td>1 次</td><td>1 次</td><td>2 次</td><td>1～2 次</td><td>1～2 次</td><td>1～3 次</td><td>1～3 次</td></tr>",
             pricing,
         )
         self.assertNotIn("簡訊預警", pricing)
@@ -253,8 +276,8 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("每日平安", page)
         self.assertIn("每天 10 秒，報個平安", page)
         self.assertIn("平常不打擾，有事才通知守護人", page)
-        self.assertIn("每成功邀請 1 位守護人", page)
-        self.assertIn("免費延長 7 天；方案到期後守護人與聯絡人資料保留 30 天", page)
+        self.assertNotIn("每成功邀請 1 位守護人", page)
+        self.assertNotIn("免費延長 7 天；方案到期後守護人與聯絡人資料保留 30 天", page)
         self.assertIn('id="mvpSafeBtn"', page)
         self.assertIn('id="mvpGuardBtn"', page)
         self.assertIn('name="mvpSafetyGuardDuration"', page)

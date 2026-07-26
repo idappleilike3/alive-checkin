@@ -146,10 +146,9 @@ class InviteRewardRetainTests(unittest.TestCase):
         self.assertEqual(profile.get("contacts"), [])
         self.assertGreaterEqual(len(profile.get("contacts_archived") or []), 1)
 
-    def test_ui_copy_mentions_invite_bonus_and_retain(self):
+    def test_ui_copy_does_not_sell_cancelled_invite_bonus(self):
         page = Path(__file__).resolve().parents[1].joinpath("index.html").read_text(encoding="utf-8")
-        self.assertIn("每成功邀請 1 位守護人", page)
-        self.assertIn("保留 30 天", page)
+        self.assertNotIn("每成功邀請 1 位守護人", page)
         self.assertIn("memberInviteMoreGuardianBtn", page)
         self.assertIn("inviteMoreGuardiansFromMember", page)
 

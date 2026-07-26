@@ -79,6 +79,24 @@
     border-color: #00B900;
     background: #F0F9F4;
   }
+  .contact-card { padding: 0; overflow: hidden; }
+  .contact-card-toggle {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .contact-card-toggle:focus-visible { outline: 3px solid #00B900; outline-offset: -3px; }
+  .contact-card-chevron { color: #00B900; font-size: 20px; transition: transform .18s ease; }
+  .contact-card-toggle[aria-expanded="true"] .contact-card-chevron { transform: rotate(180deg); }
+  .contact-card-body { display: grid; gap: 8px; padding: 0 16px 16px; border-top: 1px solid #E8E8E8; }
+  .contact-card-body[hidden] { display: none; }
   .guardian-name { font-weight: 800; font-size: 18px; color: #00B900; }
   .guardian-detail { font-size: 16px; color: #555; line-height: 1.5; }
   .guardian-actions {
@@ -296,7 +314,7 @@
 <div class="card">
   <h2>👨‍👩‍👧 守護人（Guardian）</h2>
   <p class="hint"><strong>用途</strong>：平常每天守護你的人。<strong>會收到</strong>：未報平安／SOS／安全守護。<strong>免費建議</strong>：1 位，請用一鍵邀請完成 LINE 綁定。</p>
-  <p class="hint">每成功邀請 1 位新守護人 → 免費延長 7 天；方案到期後守護人與聯絡人資料保留 30 天。</p>
+  <p class="hint">守護人必須透過 LINE 登入並同意後，才會完成雙向綁定。</p>
   <div id="guardianList">
     <div class="empty">載入中...</div>
   </div>
@@ -785,17 +803,36 @@ function renderContactList(listEl, items, emptyText) {
           <button class="one-tap-invite-btn" type="button" data-invite="1">一鍵邀請</button>
         </div>`;
     return `
-    <div class="guardian-row ${g.is_primary || i === 0 ? "primary" : ""}">
-      <div class="guardian-row-head">${avatar}<div class="guardian-name">${escape(nick)}${g.is_primary || i === 0 ? " ⭐ 主要" : ""}</div></div>
-      <div class="guardian-detail">${escape(g.relationship || "關係未設定")}</div>
-      <div class="guardian-detail">${escape(g.phone || g.email || "未填聯絡方式")}</div>
-      ${statusHtml}
-      <div class="guardian-actions">
-        <button class="btn btn-edit" type="button" data-edit="${escape(g.id)}">編輯</button>
-        <button class="btn btn-danger" type="button" data-delete="${escape(g.id)}">刪除</button>
+    <div class="guardian-row contact-card ${g.is_primary || i === 0 ? "primary" : ""}">
+      <button class="contact-card-toggle" type="button" data-contact-toggle="${escape(g.id)}" aria-expanded="false">
+        <span class="guardian-row-head">${avatar}<span><span class="guardian-name">${escape(nick)}${g.is_primary || i === 0 ? " ⭐ 主要" : ""}</span><span class="guardian-detail">${escape(g.relationship || "關係未設定")}</span></span></span>
+        <span class="contact-card-chevron" aria-hidden="true">⌄</span>
+      </button>
+      <div class="contact-card-body" data-contact-body="${escape(g.id)}" hidden>
+        <div class="guardian-detail">${escape(g.phone || g.email || "未填聯絡方式")}</div>
+        ${statusHtml}
+        <div class="guardian-actions">
+          <button class="btn btn-edit" type="button" data-edit="${escape(g.id)}">編輯</button>
+          <button class="btn btn-danger" type="button" data-delete="${escape(g.id)}">刪除</button>
+        </div>
       </div>
     </div>`;
   }).join("");
+  listEl.querySelectorAll("[data-contact-toggle]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const opening = btn.getAttribute("aria-expanded") !== "true";
+      listEl.querySelectorAll("[data-contact-toggle]").forEach((other) => {
+        other.setAttribute("aria-expanded", "false");
+        const otherBody = listEl.querySelector(`[data-contact-body="${CSS.escape(other.dataset.contactToggle)}"]`);
+        if (otherBody) otherBody.hidden = true;
+      });
+      if (opening) {
+        btn.setAttribute("aria-expanded", "true");
+        const body = listEl.querySelector(`[data-contact-body="${CSS.escape(btn.dataset.contactToggle)}"]`);
+        if (body) body.hidden = false;
+      }
+    });
+  });
   listEl.querySelectorAll("[data-invite]").forEach((btn) => {
     btn.addEventListener("click", () => shareGuardianInvite());
   });

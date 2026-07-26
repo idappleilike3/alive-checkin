@@ -154,7 +154,7 @@ DEFAULT_PROFILE = {
     "contact_email": "",
     "grace_hours": DEFAULT_GRACE_HOURS,
     "reminder_time": "12:00",
-    "reminder_times": ["12:00"],
+    "reminder_times": ["12:00", "18:00"],
     "checkin_mode": "manual",
     "auto_checkin_on_open": False,
     "warning_cancel_minutes": DEFAULT_WARNING_CANCEL_MINUTES,
@@ -329,7 +329,7 @@ PLAN_LIMITS = {
         "contact_limit": 32,
         "emergency_contact_limit": 25,
         "friend_location_limit": 0,
-        "daily_reminders": 3,
+        "daily_reminders": 2,
         "channels": ["line"],
         "location_mode": "realtime",
         "core_guardian_alert_limit": 7,
@@ -1891,8 +1891,8 @@ def reminder_times_for_profile(profile):
             return normalized
     single = str(profile.get("reminder_time") or "").strip()
     if REMINDER_TIME_PATTERN.match(single):
-        return normalize_reminder_times([single], max_count) or default_reminder_times_for_count(max_count)
-    return default_reminder_times_for_count(max_count)
+        return normalize_reminder_times([single], max_count) or default_reminder_times_for_count(min(max_count, 2))
+    return default_reminder_times_for_count(min(max_count, 2))
 
 
 def apply_reminder_times_to_profile(profile, times=None, single=None):
@@ -1905,7 +1905,7 @@ def apply_reminder_times_to_profile(profile, times=None, single=None):
     else:
         normalized = []
     if not normalized:
-        normalized = default_reminder_times_for_count(max_count)
+        normalized = default_reminder_times_for_count(min(max_count, 2))
     profile["reminder_times"] = normalized
     profile["reminder_time"] = normalized[0]
     return normalized

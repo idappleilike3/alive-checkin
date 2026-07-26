@@ -303,7 +303,7 @@ class InviteButtonCleanupTests(unittest.TestCase):
         self.assertIn("one-tap-invite-btn", page)
         self.assertIn("reinviteGuardianBtn", page)
         self.assertIn("再邀請一位守護人", page)
-        self.assertIn("免費延長 7 天", page)
+        self.assertNotIn("免費延長 7 天", page)
         self.assertNotIn("shareInviteBtn", page)
         self.assertIn("智能提醒", page)
         self.assertIn("smartRemindersPanel", page)
