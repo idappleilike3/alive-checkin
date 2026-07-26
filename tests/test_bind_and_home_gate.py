@@ -348,6 +348,75 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(payload["line_user_id"], "U-owner")
         self.assertEqual(payload["display_name"], "本人")
 
+    def test_miniclient_status_uses_verified_identity_not_requested_member_id(self):
+        state = app_module.load_state(self.data_file)
+        app_module.get_profile(state, "U-owner")["display_name"] = "本人"
+        app_module.get_profile(state, "U-target")["display_name"] = "別人"
+        app_module.save_state(self.data_file, state)
+        app = app_module.MiniApp({
+            "DATA_FILE": self.data_file,
+            "REQUIRE_LIFF_AUTH": "1",
+        })
+
+        with patch.object(
+            app_module, "resolve_line_user_id", return_value=("U-owner", None)
+        ):
+            response = app.test_client().get(
+                "/api/status?line_user_id=U-target",
+                headers={"Authorization": "Bearer verified-test-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["line_user_id"], "U-owner")
+        self.assertEqual(response.get_json()["display_name"], "本人")
+
+    def test_miniclient_status_registers_verified_user_not_supplied_blank_id(self):
+        app = app_module.MiniApp({
+            "DATA_FILE": self.data_file,
+            "REQUIRE_LIFF_AUTH": "1",
+        })
+
+        with patch.object(
+            app_module, "resolve_line_user_id", return_value=("U-owner", None)
+        ):
+            response = app.test_client().get(
+                "/api/status?line_user_id=U-foreign&display_name=Owner",
+                headers={"Authorization": "Bearer verified-test-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["line_user_id"], "U-owner")
+        self.assertTrue(response.get_json()["auto_registered"])
+        state_after = app_module.load_state(self.data_file)
+        self.assertIn("U-owner", state_after["users"])
+        self.assertNotIn("U-foreign", state_after["users"])
+
+    def test_fallback_http_status_uses_verified_identity_not_requested_member_id(self):
+        state = app_module.load_state(self.data_file)
+        app_module.get_profile(state, "U-owner")["display_name"] = "本人"
+        app_module.get_profile(state, "U-target")["display_name"] = "別人"
+        app_module.save_state(self.data_file, state)
+
+        status, payload = self.fallback_http_request(
+            "GET", "/api/status?line_user_id=U-target"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["line_user_id"], "U-owner")
+        self.assertEqual(payload["display_name"], "本人")
+
+    def test_fallback_http_status_registers_verified_user_not_supplied_blank_id(self):
+        status, payload = self.fallback_http_request(
+            "GET", "/api/status?line_user_id=U-foreign&display_name=Owner"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["line_user_id"], "U-owner")
+        self.assertTrue(payload["auto_registered"])
+        state_after = app_module.load_state(self.data_file)
+        self.assertIn("U-owner", state_after["users"])
+        self.assertNotIn("U-foreign", state_after["users"])
+
     def test_fallback_http_reminder_mutates_only_verified_identity(self):
         state = app_module.load_state(self.data_file)
         app_module.get_profile(state, "U-owner")["reminder_times"] = ["12:00"]

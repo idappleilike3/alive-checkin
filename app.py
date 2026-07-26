@@ -9896,6 +9896,39 @@ def checkin_for_user(data_file, line_user_id, payload, config=None):
     return status, 200
 
 
+def status_for_user(data_file, line_user_id, display_name=""):
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if not profile:
+        data, code = register_line_user(
+            data_file,
+            {
+                "line_user_id": line_user_id,
+                "display_name": str(display_name or "").strip() or "LINE 使用者",
+            },
+        )
+        if code != 200:
+            return data, code
+        if isinstance(data, dict):
+            data["auto_registered"] = True
+        return data, 200
+    dirty = scrub_self_line_ids_on_contacts(profile)
+    dirty = ensure_onboarding_completed_flag(profile) or dirty
+    today = today_string()
+    if profile_is_today_checked(profile) and today not in set(profile.get("history") or []):
+        hist = set(profile.get("history") or [])
+        hist.add(today)
+        profile["history"] = sorted(hist)
+        dirty = True
+    before_groups = list(profile.get("guardian_group_ids") or [])
+    sync_owned_guardian_group_ids(state, profile)
+    if list(profile.get("guardian_group_ids") or []) != before_groups:
+        dirty = True
+    if dirty:
+        save_state(data_file, state)
+    return build_status(profile, state), 200
+
+
 def create_app(config=None):
     if Flask is None:
         return MiniApp(config)
@@ -10292,38 +10325,12 @@ def create_app(config=None):
         line_user_id, err = _authenticated_line_user({}, use_args=True)
         if err:
             return jsonify(err[0]), err[1]
-        display_name = (request.args.get("display_name") or "").strip()
-        state = load_state(app.config["DATA_FILE"])
-        profile = state.get("users", {}).get(line_user_id)
-        if not profile:
-            data, code = register_line_user(
-                app.config["DATA_FILE"],
-                {
-                    "line_user_id": line_user_id,
-                    "display_name": display_name or "LINE 使用者",
-                },
-            )
-            if code != 200:
-                return jsonify(data), code
-            if isinstance(data, dict):
-                data["auto_registered"] = True
-            return jsonify(data)
-        dirty = scrub_self_line_ids_on_contacts(profile)
-        dirty = ensure_onboarding_completed_flag(profile) or dirty
-        # Heal Taipei-day history if last_check_in already proves today (鬼打牆根因之一)
-        today = today_string()
-        if profile_is_today_checked(profile) and today not in set(profile.get("history") or []):
-            hist = set(profile.get("history") or [])
-            hist.add(today)
-            profile["history"] = sorted(hist)
-            dirty = True
-        before_groups = list(profile.get("guardian_group_ids") or [])
-        sync_owned_guardian_group_ids(state, profile)
-        if list(profile.get("guardian_group_ids") or []) != before_groups:
-            dirty = True
-        if dirty:
-            save_state(app.config["DATA_FILE"], state)
-        return jsonify(build_status(profile, state))
+        data, code = status_for_user(
+            app.config["DATA_FILE"],
+            line_user_id,
+            request.args.get("display_name"),
+        )
+        return jsonify(data), code
 
     @app.post("/api/line/register")
     def line_register():
@@ -12410,7 +12417,17 @@ class MiniClient:
                 {"Location": f"https://liff.line.me/{liff_id}?open=onboarding"},
             )
         if route == "/api/status":
-            return MiniResponse(self.app.status(params.get("line_user_id")))
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            body, code = status_for_user(
+                self.app.config["DATA_FILE"],
+                line_user_id,
+                params.get("display_name"),
+            )
+            return MiniResponse(body, code)
         if route == "/api/onboarding":
             line_user_id, err = authenticated_line_user(
                 {}, args=params, headers=headers, config=self.app.config
@@ -12740,22 +12757,15 @@ class MiniApp:
                 if route == "/health":
                     return handler.send_json({"ok": True})
                 if route == "/api/status":
-                    line_user_id = (params.get("line_user_id") or "").strip()
-                    if not line_user_id:
-                        return handler.send_json({"ok": False, "error": "missing line_user_id"}, 400)
-                    state = load_state(data_file)
-                    if line_user_id not in state.get("users", {}):
-                        data, code = register_line_user(
-                            data_file,
-                            {
-                                "line_user_id": line_user_id,
-                                "display_name": params.get("display_name") or "LINE 使用者",
-                            },
-                        )
-                        if isinstance(data, dict):
-                            data["auto_registered"] = True
-                        return handler.send_json(data, code)
-                    return handler.send_json(build_status(state["users"][line_user_id], state))
+                    line_user_id, err = handler.authenticated_user(params=params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    data, code = status_for_user(
+                        data_file,
+                        line_user_id,
+                        params.get("display_name"),
+                    )
+                    return handler.send_json(data, code)
                 if route == "/api/onboarding":
                     line_user_id, err = handler.authenticated_user(params=params)
                     if err:
