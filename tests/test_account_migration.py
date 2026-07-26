@@ -1,5 +1,7 @@
+import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -127,6 +129,219 @@ class ProviderVerificationTests(unittest.TestCase):
 
         self.assertEqual(result, "U-server-verified")
         self.assertEqual(calls, [("token", "2010674803")])
+
+
+class TicketLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.data_file = str(Path(self.tempdir.name) / "state.json")
+        self.old_line_user_id = "U0123456789abcdef0123456789abcdef"
+        self.claimed_line_user_id = "Ufedcba9876543210fedcba9876543210"
+        self.config = {
+            "TESTING": True,
+            "DATA_FILE": self.data_file,
+            "LEGACY_LINE_LOGIN_CHANNEL_ID": "2010674803",
+            "LEGACY_LIFF_ID": "2010674803-rK98c0lo",
+            "LINE_LOGIN_CHANNEL_ID": "2010848330",
+            "ACCOUNT_MIGRATION_SECRET": "test-only-secret",
+            "ACCOUNT_MIGRATION_TTL_SECONDS": 600,
+        }
+        state = alive_app.load_state(self.data_file)
+        state["users"][self.old_line_user_id] = {
+            **alive_app.DEFAULT_PROFILE,
+            "line_user_id": self.old_line_user_id,
+            "display_name": "Legacy member",
+        }
+        alive_app.save_state(self.data_file, state)
+
+    def _start(self):
+        app = alive_app.create_app(self.config)
+        with mock.patch.object(
+            alive_app,
+            "verify_line_id_token_for_channel",
+            return_value=self.old_line_user_id,
+        ):
+            return app.test_client().post(
+                "/api/account-migration/start",
+                headers={"Authorization": "Bearer legacy-id-token"},
+                json={"line_user_id": self.claimed_line_user_id},
+            )
+
+    def test_start_returns_random_code_but_stores_only_digest(self):
+        first = self._start()
+        second = self._start()
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.headers.get("Cache-Control"), "no-store")
+        first_body = first.get_json()
+        second_body = second.get_json()
+        self.assertEqual(set(first_body), {"ok", "migration_code", "expires_in"})
+        self.assertTrue(first_body["ok"])
+        self.assertEqual(first_body["expires_in"], 600)
+        self.assertNotEqual(
+            first_body["migration_code"],
+            second_body["migration_code"],
+        )
+
+        state = alive_app.load_state(self.data_file)
+        tickets = list(state["account_migration_tickets"].values())
+        self.assertEqual(len(tickets), 2)
+        self.assertEqual(
+            [ticket["status"] for ticket in tickets],
+            ["expired", "pending"],
+        )
+        self.assertNotEqual(tickets[0]["code_digest"], tickets[1]["code_digest"])
+        serialized = json.dumps(state, ensure_ascii=False)
+        self.assertNotIn(first_body["migration_code"], serialized)
+        self.assertNotIn(second_body["migration_code"], serialized)
+        for ticket in tickets:
+            self.assertNotIn("migration_code", ticket)
+            self.assertEqual(ticket["old_line_user_id"], self.old_line_user_id)
+
+    def test_ticket_expires_after_ten_minutes(self):
+        created_at = datetime(2026, 7, 26, 1, 0, tzinfo=timezone.utc)
+        data, code = alive_app.create_account_migration_ticket(
+            self.data_file,
+            self.old_line_user_id,
+            self.config,
+            now=created_at,
+        )
+        self.assertEqual(code, 200)
+
+        before_expiry = alive_app.account_migration_ticket_status(
+            self.data_file,
+            self.old_line_user_id,
+            self.config,
+            now=created_at + timedelta(seconds=599),
+        )
+        at_expiry = alive_app.account_migration_ticket_status(
+            self.data_file,
+            self.old_line_user_id,
+            self.config,
+            now=created_at + timedelta(seconds=600),
+        )
+
+        self.assertEqual(
+            before_expiry,
+            {"ok": True, "configured": True, "pending": True, "expires_in": 1},
+        )
+        self.assertEqual(
+            at_expiry,
+            {"ok": True, "configured": True, "pending": False, "expires_in": 0},
+        )
+        state = alive_app.load_state(self.data_file)
+        ticket = next(iter(state["account_migration_tickets"].values()))
+        self.assertEqual(ticket["status"], "expired")
+        self.assertNotIn(data["migration_code"], json.dumps(state))
+
+    def test_ticket_cannot_be_redeemed_twice(self):
+        created_at = datetime(2026, 7, 26, 1, 0, tzinfo=timezone.utc)
+        data, _ = alive_app.create_account_migration_ticket(
+            self.data_file,
+            self.old_line_user_id,
+            self.config,
+            now=created_at,
+        )
+        state = alive_app.load_state(self.data_file)
+
+        ticket, error = alive_app.validate_account_migration_ticket(
+            state,
+            data["migration_code"],
+            self.config["ACCOUNT_MIGRATION_SECRET"],
+            now=created_at + timedelta(seconds=1),
+        )
+        self.assertIsNone(error)
+        ticket["status"] = "used"
+        ticket["used_at"] = (created_at + timedelta(seconds=1)).isoformat()
+
+        repeated_ticket, repeated_error = (
+            alive_app.validate_account_migration_ticket(
+                state,
+                data["migration_code"],
+                self.config["ACCOUNT_MIGRATION_SECRET"],
+                now=created_at + timedelta(seconds=2),
+            )
+        )
+        self.assertIsNone(repeated_ticket)
+        self.assertEqual(repeated_error, "used_code")
+
+    def test_ticket_source_must_still_exist(self):
+        created_at = datetime(2026, 7, 26, 1, 0, tzinfo=timezone.utc)
+        data, _ = alive_app.create_account_migration_ticket(
+            self.data_file,
+            self.old_line_user_id,
+            self.config,
+            now=created_at,
+        )
+        state = alive_app.load_state(self.data_file)
+        del state["users"][self.old_line_user_id]
+
+        ticket, error = alive_app.validate_account_migration_ticket(
+            state,
+            data["migration_code"],
+            self.config["ACCOUNT_MIGRATION_SECRET"],
+            now=created_at + timedelta(seconds=1),
+        )
+
+        self.assertIsNone(ticket)
+        self.assertEqual(error, "source_missing")
+
+    def test_raw_code_and_line_ids_are_absent_from_public_status_and_audit(self):
+        start = self._start()
+        raw_code = start.get_json()["migration_code"]
+        app = alive_app.create_app(self.config)
+        with mock.patch.object(
+            alive_app,
+            "verify_line_id_token_for_channel",
+            return_value=self.old_line_user_id,
+        ):
+            response = app.test_client().get(
+                "/api/account-migration/status",
+                headers={"Authorization": "Bearer legacy-id-token"},
+                query_string={
+                    "line_user_id": self.claimed_line_user_id,
+                    "migration_code": raw_code,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+        body = response.get_json()
+        self.assertEqual(set(body), {"ok", "configured", "pending", "expires_in"})
+        self.assertTrue(body["pending"])
+        public_text = response.get_data(as_text=True)
+        self.assertNotIn(raw_code, public_text)
+        self.assertNotIn(self.old_line_user_id, public_text)
+        self.assertNotIn(self.claimed_line_user_id, public_text)
+
+        state = alive_app.load_state(self.data_file)
+        audit_text = json.dumps(
+            state.get("account_migration_audit", []),
+            ensure_ascii=False,
+        )
+        self.assertNotIn(raw_code, audit_text)
+        self.assertNotIn(self.old_line_user_id, audit_text)
+        self.assertNotIn(self.claimed_line_user_id, audit_text)
+
+    def test_start_rejects_missing_or_aliased_source_without_leaking_identity(self):
+        state = alive_app.load_state(self.data_file)
+        del state["users"][self.old_line_user_id]
+        state["account_migration_aliases"][self.old_line_user_id] = {
+            "status": "disabled",
+            "target_line_user_id": self.claimed_line_user_id,
+        }
+        alive_app.save_state(self.data_file, state)
+
+        response = self._start()
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+        self.assertEqual(response.get_json(), {"ok": False, "error": "account_not_found"})
+        response_text = response.get_data(as_text=True)
+        self.assertNotIn(self.old_line_user_id, response_text)
+        self.assertNotIn(self.claimed_line_user_id, response_text)
 
 
 if __name__ == "__main__":

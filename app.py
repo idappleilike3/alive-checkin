@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -227,6 +229,9 @@ DEFAULT_STATE = {
     "backup_exports": [],
     "guardian_groups": {},
     "orders": [],
+    "account_migration_tickets": {},
+    "account_migration_aliases": {},
+    "account_migration_audit": [],
 }
 
 PLAN_LIMITS = {
@@ -795,6 +800,15 @@ def _hydrate_state(saved):
     state["backup_exports"] = state.get("backup_exports") or []
     state["guardian_groups"] = state.get("guardian_groups") or {}
     state["orders"] = state.get("orders") or []
+    state["account_migration_tickets"] = (
+        state.get("account_migration_tickets") or {}
+    )
+    state["account_migration_aliases"] = (
+        state.get("account_migration_aliases") or {}
+    )
+    state["account_migration_audit"] = (
+        state.get("account_migration_audit") or []
+    )
     return state
 
 
@@ -5901,6 +5915,166 @@ def account_migration_ready(config):
     )
 
 
+def _account_migration_now(now=None):
+    value = now or datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _account_migration_datetime(value):
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return _account_migration_now(parsed)
+
+
+def account_migration_code_digest(code, secret):
+    return hmac.new(
+        str(secret or "").encode("utf-8"),
+        str(code or "").encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def validate_account_migration_ticket(state, code, secret, now=None):
+    """Return a pending ticket or a fixed safe error category.
+
+    This helper only validates ticket state. Task 4 performs consumption and
+    profile mutation together inside the atomic persistence boundary.
+    """
+    raw_code = str(code or "").strip()
+    signing_secret = str(secret or "").strip()
+    if not raw_code or not signing_secret:
+        return None, "invalid_code"
+
+    expected_digest = account_migration_code_digest(raw_code, signing_secret)
+    matched = None
+    for ticket in (state.get("account_migration_tickets") or {}).values():
+        candidate = str((ticket or {}).get("code_digest") or "")
+        if secrets.compare_digest(candidate, expected_digest):
+            matched = ticket
+
+    if not isinstance(matched, dict):
+        return None, "invalid_code"
+    status = str(matched.get("status") or "")
+    if status == "used":
+        return None, "used_code"
+    expires_at = _account_migration_datetime(matched.get("expires_at"))
+    if status == "expired" or not expires_at:
+        return None, "expired_code"
+    if _account_migration_now(now) >= expires_at:
+        matched["status"] = "expired"
+        return None, "expired_code"
+    if status != "pending":
+        return None, "invalid_code"
+
+    old_line_user_id = str(matched.get("old_line_user_id") or "")
+    users = state.get("users") or {}
+    aliases = state.get("account_migration_aliases") or {}
+    if old_line_user_id not in users or old_line_user_id in aliases:
+        return None, "source_missing"
+    return matched, None
+
+
+def create_account_migration_ticket(
+    data_file,
+    old_line_user_id,
+    config,
+    now=None,
+):
+    if not account_migration_ready(config):
+        return {"ok": False, "error": "migration_unavailable"}, 503
+
+    verified_old_id = str(old_line_user_id or "").strip()
+    state = load_state(data_file)
+    users = state.get("users") or {}
+    aliases = state.get("account_migration_aliases") or {}
+    if not verified_old_id or verified_old_id not in users or verified_old_id in aliases:
+        return {"ok": False, "error": "account_not_found"}, 404
+
+    current = _account_migration_now(now)
+    current_iso = current.isoformat(timespec="seconds")
+    tickets = state.setdefault("account_migration_tickets", {})
+    for ticket in tickets.values():
+        if (
+            isinstance(ticket, dict)
+            and ticket.get("old_line_user_id") == verified_old_id
+            and ticket.get("status") == "pending"
+        ):
+            ticket["status"] = "expired"
+            ticket["expires_at"] = current_iso
+
+    ttl_seconds = int(config.get("ACCOUNT_MIGRATION_TTL_SECONDS") or 600)
+    raw_code = secrets.token_urlsafe(32)
+    ticket_id = f"amt_{secrets.token_urlsafe(12)}"
+    tickets[ticket_id] = {
+        "ticket_id": ticket_id,
+        "code_digest": account_migration_code_digest(
+            raw_code,
+            config.get("ACCOUNT_MIGRATION_SECRET"),
+        ),
+        "old_line_user_id": verified_old_id,
+        "created_at": current_iso,
+        "expires_at": (
+            current + timedelta(seconds=ttl_seconds)
+        ).isoformat(timespec="seconds"),
+        "used_at": "",
+        "status": "pending",
+    }
+    save_state(data_file, state)
+    return {
+        "ok": True,
+        "migration_code": raw_code,
+        "expires_in": ttl_seconds,
+    }, 200
+
+
+def account_migration_ticket_status(
+    data_file,
+    old_line_user_id,
+    config,
+    now=None,
+):
+    safe_status = {
+        "ok": True,
+        "configured": account_migration_ready(config),
+        "pending": False,
+        "expires_in": 0,
+    }
+    if not safe_status["configured"]:
+        return safe_status
+
+    verified_old_id = str(old_line_user_id or "").strip()
+    state = load_state(data_file)
+    current = _account_migration_now(now)
+    changed = False
+    remaining = 0
+    users = state.get("users") or {}
+    aliases = state.get("account_migration_aliases") or {}
+    source_exists = verified_old_id in users and verified_old_id not in aliases
+    for ticket in (state.get("account_migration_tickets") or {}).values():
+        if (
+            not isinstance(ticket, dict)
+            or ticket.get("old_line_user_id") != verified_old_id
+            or ticket.get("status") != "pending"
+        ):
+            continue
+        expires_at = _account_migration_datetime(ticket.get("expires_at"))
+        if not source_exists or not expires_at or current >= expires_at:
+            ticket["status"] = "expired"
+            changed = True
+            continue
+        remaining = max(remaining, int((expires_at - current).total_seconds()))
+
+    if changed:
+        save_state(data_file, state)
+    safe_status["pending"] = remaining > 0
+    safe_status["expires_in"] = remaining
+    return safe_status
+
+
 def admin_password_matches(config, candidate):
     if not admin_security_ready(config):
         return False
@@ -10201,16 +10375,42 @@ def create_app(config=None):
             return None, ({"ok": False, "error": "invalid_token"}, 401)
         return subject, None
 
+    @app.after_request
+    def _disable_account_migration_response_caching(response):
+        if request.path.startswith("/api/account-migration/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.post("/api/account-migration/start")
     def account_migration_start_api():
         payload = request.get_json(silent=True) or {}
-        _, err = _migration_verified_subject(
+        old_line_user_id, err = _migration_verified_subject(
             payload,
             "LEGACY_LINE_LOGIN_CHANNEL_ID",
         )
         if err:
             return jsonify(err[0]), err[1]
-        return jsonify({"ok": False, "error": "migration_not_implemented"}), 501
+        data, code = create_account_migration_ticket(
+            app.config["DATA_FILE"],
+            old_line_user_id,
+            app.config,
+        )
+        return jsonify(data), code
+
+    @app.get("/api/account-migration/status")
+    def account_migration_status_api():
+        old_line_user_id, err = _migration_verified_subject(
+            {},
+            "LEGACY_LINE_LOGIN_CHANNEL_ID",
+        )
+        if err:
+            return jsonify(err[0]), err[1]
+        data = account_migration_ticket_status(
+            app.config["DATA_FILE"],
+            old_line_user_id,
+            app.config,
+        )
+        return jsonify(data)
 
     @app.post("/api/account-migration/redeem")
     def account_migration_redeem_api():
