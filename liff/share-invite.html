@@ -89,7 +89,7 @@
   <script>
     // W250724bn：分享成功／按完成鈕 → 跳回 endpoint 原位置（勿用 liff.line.me origin）
     const LIFF_ID = "2010848330-UAiqPPYD";
-    const AUTO_SHARE_KEY = "alive_share_invite_auto_v1";
+    const SHARE_REOPEN_MESSAGE = "請從 LINE App 重新開啟「一鍵邀請守護人」再試一次";
     const DONE_KEY = "alive_share_invite_done_v1";
     const RETURN_KEY = "alive_share_invite_return_v1";
     const tapLayer = document.getElementById("tapLayer");
@@ -102,6 +102,7 @@
     let ready = false;
     let sharing = false;
     let shareBlocked = false;
+    let autoShareAttempted = false;
 
     function sanitizeUserId(raw) {
       return String(raw || "").trim().replace(/[^a-zA-Z0-9_-]/g, "");
@@ -185,14 +186,6 @@
       return appPublicOrigin() + resolveReturnPathOnly();
     }
 
-    function markAutoShareTried() {
-      try { sessionStorage.setItem(AUTO_SHARE_KEY, "1"); } catch (_) {}
-    }
-
-    function hasAutoShareTried() {
-      try { return sessionStorage.getItem(AUTO_SHARE_KEY) === "1"; } catch (_) { return false; }
-    }
-
     function markShareDone() {
       try { sessionStorage.setItem(DONE_KEY, "1"); } catch (_) {}
     }
@@ -240,7 +233,7 @@
         }]);
         return Boolean(result);
       } catch (_) {
-        alertFail("請從 LINE App 重新開啟「一鍵邀請守護人」再試一次");
+        alertFail(SHARE_REOPEN_MESSAGE);
         return false;
       }
     }
@@ -278,8 +271,8 @@
           try {
             liff.login({ redirectUri: buildSafeRedirectUri() });
           } catch (_) {
-            try { liff.login(); } catch (e2) {
-              alertFail(e2 && e2.message ? e2.message : e2);
+            try { liff.login(); } catch (_) {
+              alertFail(SHARE_REOPEN_MESSAGE);
               showPostShareUi();
             }
           }
@@ -304,23 +297,22 @@
 
         ready = true;
 
-        // 已分享過／從 R/share 返回：直接給下一步，不要再自動開分享迴圈
-        if (hasAutoShareTried()) {
+        // 同一次文件載入只自動開一次；新的 Flex 邀請載入新頁時會重新自動開啟。
+        if (autoShareAttempted) {
           showPostShareUi();
           return;
         }
 
-        markAutoShareTried();
+        autoShareAttempted = true;
         await openShare();
-      } catch (error) {
-        alertFail((error && error.message) ? error.message : error);
+      } catch (_) {
+        alertFail(SHARE_REOPEN_MESSAGE);
         showPostShareUi();
       }
     }
 
     window.addEventListener("pageshow", function (event) {
       if (event && event.persisted && !shareBlocked) {
-        markAutoShareTried();
         showPostShareUi();
       }
     });
