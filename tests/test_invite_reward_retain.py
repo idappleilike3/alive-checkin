@@ -1,4 +1,4 @@
-"""Invite +7 trial days + 30-day contacts retain after entitlement lapse."""
+"""No invite trial extension + 30-day contacts retain after entitlement lapse."""
 from __future__ import annotations
 
 import tempfile
@@ -17,7 +17,7 @@ class InviteRewardRetainTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_new_guardian_bind_extends_trial_by_seven_days(self):
+    def test_new_guardian_bind_does_not_extend_trial(self):
         app_module.register_line_user(
             self.data_file, {"line_user_id": "U-inv", "display_name": "邀請人"}
         )
@@ -38,16 +38,16 @@ class InviteRewardRetainTests(unittest.TestCase):
             config={},
         )
         self.assertEqual(code, 200)
-        self.assertTrue(result.get("invite_reward_applied"))
-        self.assertEqual(result.get("trial_bonus_days"), 7)
-        self.assertEqual(result.get("trial_days_left"), before + 7)
+        self.assertFalse(result.get("invite_reward_applied"))
+        self.assertEqual(result.get("trial_bonus_days"), 0)
+        self.assertEqual(result.get("trial_days_left"), before)
 
         state = app_module.load_state(self.data_file)
         inv2 = state["users"]["U-inv"]
-        self.assertEqual(inv2.get("trial_bonus_days"), 7)
+        self.assertEqual(app_module.trial_bonus_days(inv2), 0)
         reward = state["contact_rewards"][0]
-        self.assertEqual(reward.get("status"), "applied")
-        self.assertEqual(reward.get("selected_reward"), "trial_7_days")
+        self.assertEqual(reward.get("status"), "not_applicable")
+        self.assertEqual(reward.get("reward_days"), 0)
 
         # Same guardian rebinding must not double-count
         result2, code2 = app_module.bind_emergency_contact(
@@ -62,9 +62,9 @@ class InviteRewardRetainTests(unittest.TestCase):
         self.assertEqual(code2, 200)
         self.assertFalse(result2.get("invite_reward_applied"))
         state = app_module.load_state(self.data_file)
-        self.assertEqual(state["users"]["U-inv"].get("trial_bonus_days"), 7)
+        self.assertEqual(app_module.trial_bonus_days(state["users"]["U-inv"]), 0)
 
-    def test_second_unique_guardian_adds_another_seven(self):
+    def test_second_unique_guardian_also_does_not_extend_trial(self):
         app_module.register_line_user(
             self.data_file, {"line_user_id": "U-inv2", "display_name": "邀請人"}
         )
@@ -95,7 +95,7 @@ class InviteRewardRetainTests(unittest.TestCase):
             config={},
         )
         state = app_module.load_state(self.data_file)
-        self.assertEqual(state["users"]["U-inv2"].get("trial_bonus_days"), 14)
+        self.assertEqual(app_module.trial_bonus_days(state["users"]["U-inv2"]), 0)
 
     def test_trial_expiry_keeps_contacts_thirty_days_then_archives(self):
         app_module.register_line_user(
@@ -114,6 +114,9 @@ class InviteRewardRetainTests(unittest.TestCase):
         profile = state["users"]["U-old"]
         profile["plan"] = "trial"
         profile["trial_started_at"] = (datetime.now() - timedelta(days=40)).isoformat(
+            timespec="seconds"
+        )
+        profile["trial_end"] = (datetime.now() - timedelta(days=26)).isoformat(
             timespec="seconds"
         )
         profile["trial_bonus_days"] = 0

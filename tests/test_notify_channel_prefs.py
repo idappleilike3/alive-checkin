@@ -56,7 +56,7 @@ class NotifyChannelPrefsTests(unittest.TestCase):
                 "plan": "paid_799",
                 "payment_status": "active",
                 "paid_until": (now + timedelta(days=10)).isoformat(timespec="seconds"),
-                "last_check_in": (now - timedelta(days=2)).isoformat(timespec="seconds"),
+                "last_check_in": (now - timedelta(days=3)).isoformat(timespec="seconds"),
                 "history": [],
                 "reminder_time": "08:00",
                 "contacts": [

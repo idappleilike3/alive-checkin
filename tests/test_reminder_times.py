@@ -58,13 +58,13 @@ class ReminderTimesTests(unittest.TestCase):
             }
             alive_app.save_state(data_file, state)
 
-            # 12:30 → 應送出 12:00 時段
+            # 12:04 → 仍在 12:00 時段的五分鐘時間窗內
             config = {
                 "DATA_FILE": data_file,
                 "LINE_CHANNEL_ACCESS_TOKEN": "token",
                 "LINE_PUSH_SENDER": fake_sender,
                 "APP_TIMEZONE": "Asia/Taipei",
-                "CRON_NOW": datetime(2026, 7, 22, 12, 30),
+                "CRON_NOW": datetime(2026, 7, 22, 12, 4),
             }
             result, code = alive_app.send_checkin_reminders(config)
             self.assertEqual(code, 200)
@@ -79,8 +79,8 @@ class ReminderTimesTests(unittest.TestCase):
             self.assertEqual(slots, ["12:00"])
             self.assertNotIn("2026-07-22", reloaded["users"]["U1"].get("checkin_reminder_sent_dates") or [])
 
-            # 18:10 → 應再送 18:00
-            config["CRON_NOW"] = datetime(2026, 7, 22, 18, 10)
+            # 18:04 → 應再送 18:00
+            config["CRON_NOW"] = datetime(2026, 7, 22, 18, 4)
             result2, code2 = alive_app.send_checkin_reminders(config)
             self.assertEqual(code2, 200)
             self.assertEqual(result2["sent"], 1)

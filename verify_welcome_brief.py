@@ -13,31 +13,46 @@ EXPECTED_HOME = "https://liff.line.me/2010674803-rK98c0lo#home"
 
 w = g.welcome_flex()
 ws = json.dumps(w, ensure_ascii=False)
-assert "👋 您 您好，歡迎加入「今天還在嗎」" in ws
-assert "每日平安小助手" in ws
-assert "提醒您報平安" in ws
-assert "仍未報平安" in ws
-assert "1 位守護人綁定" in ws
-assert "🎁 完成設定即享 7 天免費安心體驗" in ws
-assert "🚨 緊急狀況請直接撥打 119，聊天訊息可能因網路延遲" in ws
-assert "立即綁定守護人" in ws
-assert "立即綁定守護人 1 位" not in ws
+assert "👋 您好，歡迎加入「每日平安」" in ws
+assert "每天 10 秒，報個平安" in ws
+assert "平常不打擾，有事才通知核心守護人" in ws
+assert "① 新增 1 位核心守護人" in ws
+assert "② 設定每日提醒時間" in ws
+assert "14 天新會員安心體驗" in ws
+assert "7 天" not in ws
+assert "永久免費" not in ws
+assert "🚨 緊急狀況請直接撥打 119 或 110" in ws
+assert "立即開始設定" in ws
+assert "查看方案" in ws
 assert EXPECTED_BIND in ws
 assert "code=" not in ws and "state=" not in ws
-# single primary CTA only (no secondary 報平安)
-assert '"label": "報平安"' not in ws.replace("提醒您報平安", "").replace("仍未報平安", "")
-assert len(w["footer"]["contents"]) == 1
-assert w["header"]["contents"][0]["size"] == "xxl"
-assert w["body"]["contents"][0]["size"] == "lg"
-# secondary kept minimal
+# Two clear CTAs; no unrelated actions.
+assert len(w["footer"]["contents"]) == 2
 assert "我的會員" not in ws
-assert "查看方案" not in ws
 assert "首次引導" not in ws
 
 assert w["footer"]["contents"][0]["action"]["uri"] == EXPECTED_BIND
+assert w["footer"]["contents"][1]["action"]["uri"] == g.pricing_direct_url()
 
 w2 = g.welcome_flex("小明")
-assert "👋 小明 您好，歡迎加入「今天還在嗎」" in json.dumps(w2, ensure_ascii=False)
+assert "👋 小明 您好，歡迎加入「每日平安」" in json.dumps(w2, ensure_ascii=False)
+
+
+def walk(node):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from walk(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from walk(value)
+
+
+nodes = list(walk(w))
+text_nodes = [node for node in nodes if node.get("type") == "text"]
+assert all(node.get("wrap") is True for node in text_nodes)
+assert all(node.get("align") not in {"center", "end"} for node in text_nodes)
+assert all("\n" not in str(node.get("text") or "") for node in text_nodes)
 
 texts = re.findall(r'"text":\s*"([^"]+)"', ws)
 labels = re.findall(r'"label":\s*"([^"]+)"', ws)
@@ -98,7 +113,6 @@ assert "clearShareFirstLocalFlags" in gate
 
 print("welcome CTA:", w["footer"]["contents"][0]["action"]["label"])
 print("welcome CTA uri:", w["footer"]["contents"][0]["action"]["uri"])
-print("welcome title size:", w["header"]["contents"][0]["size"])
 print("welcome footer buttons:", len(w["footer"]["contents"]))
 print("intro primary label:", intro["footer"]["contents"][0]["action"]["label"])
 print("bind confirm ok")

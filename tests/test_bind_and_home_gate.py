@@ -283,8 +283,8 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertTrue(first.get("inviter_notified"))
         self.assertTrue(first.get("guardian_notified"))
         self.assertTrue(first.get("binding_complete"))
-        self.assertTrue(first.get("invite_reward_applied"))
-        self.assertEqual(first.get("trial_bonus_days"), 7)
+        self.assertFalse(first.get("invite_reward_applied"))
+        self.assertEqual(first.get("trial_bonus_days"), 0)
         self.assertTrue(str(first["contact"].get("bind_notify_sent_at") or "").strip())
         self.assertEqual(first.get("notify_hint") or "", "")
         self.assertEqual(first.get("notify_errors") or [], [])
@@ -452,6 +452,7 @@ class BindAndHomeGateTests(unittest.TestCase):
         # Simulate clock advancing: mutate stored trial to a fixed past value.
         state = app_module.load_state(self.data_file)
         state["users"]["U-persist"]["trial_started_at"] = "2026-07-20T10:00:00"
+        state["users"]["U-persist"]["trial_end"] = "2026-08-03T10:00:00"
         state["users"]["U-persist"]["history"] = ["2026-07-21", "2026-07-22"]
         app_module.save_state(self.data_file, state)
 
@@ -462,18 +463,19 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(code2, 200)
         self.assertTrue(second.get("existing_user"))
         self.assertEqual(second.get("trial_started_at"), "2026-07-20T10:00:00")
-        # Bind already applied +7 invite bonus; days_left must include trial_bonus_days
+        # Re-registration preserves the one-time trial and no invite bonus is added.
         self.assertEqual(
             second.get("trial_days_left"),
             app_module.trial_days_left(
                 {
                     "trial_started_at": "2026-07-20T10:00:00",
+                    "trial_end": "2026-08-03T10:00:00",
                     "plan": "trial",
                     "trial_bonus_days": second.get("trial_bonus_days") or 0,
                 }
             ),
         )
-        self.assertEqual(int(second.get("trial_bonus_days") or 0), 7)
+        self.assertEqual(int(second.get("trial_bonus_days") or 0), 0)
         contacts = second.get("contacts") or []
         self.assertEqual(len(contacts), 1)
         self.assertEqual(app_module.get_contact_line_id(contacts[0]), "U-guard-1")

@@ -11,6 +11,8 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Render zip (UI ио┌В)
+# Render zip
 alive_checkin-render.zip
 secrets/
+.worktrees/
+.superpowers/

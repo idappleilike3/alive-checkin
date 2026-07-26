@@ -12,11 +12,12 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 try:
-    from flask import Flask, Response, jsonify, redirect, request, send_from_directory
+    from flask import Flask, Response, jsonify, redirect, request, send_from_directory, session
 except ModuleNotFoundError:
     Flask = None
     Response = None
     redirect = None
+    session = None
 
 try:
     from linebot import LineBotApi, WebhookHandler
@@ -108,6 +109,11 @@ try:
 except Exception:  # pragma: no cover
     holidays_tw = None
 
+from push_delivery import (
+    push_attempt_allowed,
+    record_push_failure,
+)
+
 
 # 逾時未報平安：會員可選 24／48／72 小時（取代舊固定 36h 主流程）
 ALLOWED_GRACE_HOURS = (24, 48, 72)
@@ -149,8 +155,12 @@ DEFAULT_PROFILE = {
     "guardian_details_reminder_enabled": True,
     "guardian_details_reminder_sent_at": "",
     "plan": "trial",
+    "membership_source": "",
     "trial_started_at": None,
-    # 每成功邀請 1 位「新的」守護人綁定 → +7；不重複計算同一人
+    "trial_end": None,
+    "trial_policy_version": "",
+    "trial_notice_days_sent": [],
+    # 舊版相容欄位；新政策固定為 0，邀請不再延長體驗。
     "trial_bonus_days": 0,
     "payment_status": "trial",
     "paid_until": "",
@@ -184,9 +194,9 @@ DEFAULT_PROFILE = {
 EXPIRY_REMIND_WITHIN_DAYS = 3
 WEEKDAY_SHORT_ZH = ("一", "二", "三", "四", "五", "六", "日")
 
-# 試用基準 7 天；每成功邀請 1 位新守護人再 +7（無上限，同一人只算一次）
-TRIAL_BASE_DAYS = 7
-INVITE_REWARD_DAYS = 7
+# 正式新會員與既有 free 過渡會員皆為一次性 14 天體驗。
+PUBLIC_TRIAL_DAYS = 14
+TRIAL_POLICY_VERSION = "2026-07-no-invite-reward-v1"
 # 方案／試用到期後，守護人＋緊急連絡人資料再保留天數（之後軟封存）
 CONTACTS_RETAIN_DAYS = 30
 
@@ -1337,7 +1347,11 @@ def parse_datetime(value):
 
 # Fields that must survive re-login / upsert and must never be replaced by defaults.
 _PROFILE_PERSIST_KEYS = (
+    "membership_source",
     "trial_started_at",
+    "trial_end",
+    "trial_policy_version",
+    "trial_notice_days_sent",
     "trial_bonus_days",
     "plan_expired_at",
     "contacts_retain_until",
@@ -1384,6 +1398,8 @@ def get_profile(state, line_user_id=None):
             # First sight of this user: start trial clock once.
             if not user.get("trial_started_at"):
                 user["trial_started_at"] = datetime.now().isoformat(timespec="seconds")
+        if is_new:
+            ensure_membership_trial(user, source="public_trial")
         user["line_user_id"] = line_user_id
         return user
     return state
@@ -1760,28 +1776,113 @@ def should_show_guardian_prompt(profile, contact_count):
 
 
 def trial_bonus_days(profile):
-    try:
-        return max(0, int(profile.get("trial_bonus_days") or 0))
-    except (TypeError, ValueError):
-        return 0
+    """舊版相容欄位；邀請核心守護人不再增加體驗天數。"""
+    return 0
 
 
 def trial_total_days(profile):
-    """試用總天數＝基準 7 ＋邀請加碼（每位新守護人 +7）。"""
-    return TRIAL_BASE_DAYS + trial_bonus_days(profile)
+    """公開或過渡體驗固定 14 天，不因邀請延長。"""
+    return PUBLIC_TRIAL_DAYS
 
 
-def trial_days_left(profile):
+def ensure_membership_trial(profile, now=None, source="public_trial"):
+    """給予目前政策的一次性 14 天體驗；同一版本永不重啟。"""
+    if not isinstance(profile, dict):
+        return False
+    if profile.get("trial_policy_version") == TRIAL_POLICY_VERSION:
+        return False
+    plan = str(profile.get("plan") or "trial")
+    if plan.startswith("paid_"):
+        return False
+    now = now or current_app_time({})
+    profile["membership_source"] = source
+    profile["trial_started_at"] = now.isoformat(timespec="seconds")
+    profile["trial_end"] = (now + timedelta(days=PUBLIC_TRIAL_DAYS)).isoformat(
+        timespec="seconds"
+    )
+    profile["trial_policy_version"] = TRIAL_POLICY_VERSION
+    profile["trial_notice_days_sent"] = []
+    profile["trial_bonus_days"] = 0
+    profile["plan"] = "trial"
+    profile["payment_status"] = "trial"
+    clear_contacts_retain_window(profile)
+    return True
+
+
+def migrate_existing_free_members(config):
+    """Cron 可重跑遷移：同一時間批次給 legacy free 一次過渡體驗。"""
+    data_file = config["DATA_FILE"]
+    state = load_state(data_file)
+    now = current_app_time(config)
+    migrated = []
+    paid_sources_normalized = 0
+    changed = False
+    for profile in (state.get("users") or {}).values():
+        plan = str(profile.get("plan") or "")
+        source = str(profile.get("membership_source") or "")
+        if plan.startswith("paid_"):
+            if source != "beta":
+                normalized = False
+                if source != "paid":
+                    profile["membership_source"] = "paid"
+                    normalized = True
+                if profile.get("trial_policy_version") != TRIAL_POLICY_VERSION:
+                    # 既有付費會員不可在未來到期後被誤判為 legacy free 再領一次。
+                    profile["trial_policy_version"] = TRIAL_POLICY_VERSION
+                    profile["trial_bonus_days"] = 0
+                    normalized = True
+                if normalized:
+                    paid_sources_normalized += 1
+                    changed = True
+            continue
+        if plan != "free":
+            continue
+        if ensure_membership_trial(profile, now=now, source="transition_trial"):
+            migrated.append(str(profile.get("line_user_id") or ""))
+            changed = True
+    if changed:
+        save_state(data_file, state)
+    return {
+        "migrated": len(migrated),
+        "line_user_ids": migrated,
+        "paid_sources_normalized": paid_sources_normalized,
+        "migration_time": now.isoformat(timespec="seconds"),
+    }, 200
+
+
+def membership_access_active(profile, now=None):
+    """會員權益是否有效；free 僅代表未訂閱，SOS 安全政策另行判斷。"""
+    if not isinstance(profile, dict):
+        return False
+    now = now or current_app_time({})
+    plan = str(profile.get("plan") or "free")
+    if plan == "trial":
+        trial_end = parse_datetime(profile.get("trial_end"))
+        if trial_end:
+            return now < trial_end
+        started_at = parse_datetime(profile.get("trial_started_at"))
+        return bool(started_at and now < started_at + timedelta(days=PUBLIC_TRIAL_DAYS))
+    if plan.startswith("paid_"):
+        paid_until = parse_datetime(profile.get("paid_until"))
+        return paid_until is None or now < paid_until
+    return False
+
+
+def trial_days_left(profile, now=None):
+    trial_end = parse_datetime(profile.get("trial_end"))
+    if trial_end:
+        remaining_seconds = (trial_end - (now or current_app_time({}))).total_seconds()
+        return max(0, int((remaining_seconds + 86399) // 86400))
     started_at = parse_datetime(profile.get("trial_started_at"))
     total = trial_total_days(profile)
     if not started_at:
         return total
-    elapsed_days = (datetime.now() - started_at).days
+    elapsed_days = ((now or current_app_time({})) - started_at).days
     return max(0, total - elapsed_days)
 
 
 def trial_active(profile):
-    return (profile.get("plan") or "trial") == "trial" and trial_days_left(profile) > 0
+    return membership_access_active(profile)
 
 
 def clear_contacts_retain_window(profile):
@@ -1834,42 +1935,17 @@ def soft_archive_contacts_past_retain(profile, now):
 
 
 def apply_invite_trial_reward(inviter, reward, *, accepted_at):
-    """新守護人綁定成功：邀請人免費延長 7 天。
-
-    規則：第一次邀請只標記不送天數（讓使用者體驗完整的 7 天基礎試用），
-          第二次起的邀請每位 +7 天；同一位被邀請人只算一次。
-    """
+    """記錄守護人綁定，但不提供任何體驗天數獎勵。"""
     if not isinstance(inviter, dict) or not isinstance(reward, dict):
         return False
-    if reward.get("status") == "applied" and reward.get("selected_reward") == "trial_7_days":
+    if reward.get("status") == "not_applicable":
         return False
-
-    # 累計成功邀請的次數（用 inviter 身上的計數器，不受 trial_bonus_days 影響）
-    accepted_count = int(inviter.get("invite_accepted_count") or 0) + 1
-    inviter["invite_accepted_count"] = accepted_count
-
-    # 第一次邀請不送天數，僅標記已生效
-    if accepted_count == 1:
-        reward["selected_reward"] = "trial_7_days"
-        reward["status"] = "applied"
-        reward["applied_at"] = accepted_at
-        reward["reward_days"] = 0
-        reward["skipped_first_invite"] = True
-        return True
-
-    inviter["trial_bonus_days"] = trial_bonus_days(inviter) + INVITE_REWARD_DAYS
-    # 若已因到期落到 free，邀請成功後回到 trial，讓加碼天數立即生效
-    plan = str(inviter.get("plan") or "trial")
-    if plan in ("free", "trial"):
-        inviter["plan"] = "trial"
-        if str(inviter.get("payment_status") or "") in ("expired", "free", ""):
-            inviter["payment_status"] = "trial"
-        clear_contacts_retain_window(inviter)
-    reward["selected_reward"] = "trial_7_days"
-    reward["status"] = "applied"
+    inviter["trial_bonus_days"] = 0
+    reward["selected_reward"] = "none"
+    reward["status"] = "not_applicable"
     reward["applied_at"] = accepted_at
-    reward["reward_days"] = INVITE_REWARD_DAYS
-    return True
+    reward["reward_days"] = 0
+    return False
 
 
 def plan_type_label(profile):
@@ -1893,7 +1969,10 @@ def compute_plan_expires_at(profile):
         return str(profile.get("paid_until") or "").strip()
     if plan == "free":
         return ""
-    # trial：trial_started_at +（7 + 邀請加碼）天
+    trial_end = str(profile.get("trial_end") or "").strip()
+    if trial_end:
+        return trial_end
+    # 舊資料相容：沒有 trial_end 時，以 trial_started_at + 14 天計算。
     started = parse_datetime(profile.get("trial_started_at"))
     if not started:
         started = datetime.now()
@@ -1952,7 +2031,7 @@ def compute_streak_days(history, today):
     return streak
 
 
-def build_status(profile, state=None):
+def build_status(profile, state=None, now=None):
     profile = {**DEFAULT_PROFILE, **profile}
     scrub_self_line_ids_on_contacts(profile)
     owner_id = str(profile.get("line_user_id") or "").strip()
@@ -1975,7 +2054,7 @@ def build_status(profile, state=None):
             enrich_contact_peer_display_name(state, row)
         normalized_contacts.append(row)
     profile["contacts"] = normalized_contacts
-    now = datetime.now()
+    now = now or current_app_time({})
     last = parse_last_checkin(profile.get("last_check_in"))
     grace_hours = normalize_grace_hours(profile.get("grace_hours"))
     warning_cancel_minutes = int(
@@ -1985,10 +2064,10 @@ def build_status(profile, state=None):
     alert_at = deadline + timedelta(minutes=warning_cancel_minutes) if deadline else None
     remaining_ms = max(0, int((deadline - now).total_seconds() * 1000)) if deadline else 0
     cancel_remaining_ms = max(0, int((alert_at - now).total_seconds() * 1000)) if alert_at and now > deadline else 0
-    prealert = bool(deadline and alert_at and deadline < now <= alert_at)
-    overdue = bool(alert_at and now > alert_at)
-    today = today_string()
-    is_today_checked = profile_is_today_checked(profile)
+    prealert = bool(deadline and alert_at and deadline < now < alert_at)
+    overdue = bool(alert_at and now >= alert_at)
+    today = now.strftime("%Y-%m-%d")
+    is_today_checked = profile_is_today_checked(profile, now=now)
     # Heal history if last_check_in proves today but history missed the Taipei day
     if is_today_checked and today not in (profile.get("history") or []):
         history = set(profile.get("history") or [])
@@ -2012,7 +2091,7 @@ def build_status(profile, state=None):
         status_class = "highlight"
 
     _reminder_times = reminder_times_for_profile(profile) or ["12:00"]
-    _next_reminder = next_checkin_reminder_info(profile)
+    _next_reminder = next_checkin_reminder_info(profile, now=now)
     guardian_groups = []
     today_safety_roster = None
     if state is not None:
@@ -2027,7 +2106,9 @@ def build_status(profile, state=None):
                 row["preferences"] = normalize_guardian_group_preferences(group.get("preferences"))
                 guardian_groups.append(row)
         if guardian_groups or plan_includes_guardian_group(profile):
-            today_safety_roster = build_owner_today_safety_roster(state, profile)
+            today_safety_roster = build_owner_today_safety_roster(
+                state, profile, now=now
+            )
 
     return {
         "ok": True,
@@ -2100,6 +2181,7 @@ def build_status(profile, state=None):
         "guardian_details_reminder_enabled": bool(profile.get("guardian_details_reminder_enabled", True)),
         "guardian_details_complete": any(complete_guardian_contact(contact) for contact in (profile.get("contacts") or [])),
         "plan": profile.get("plan", "trial"),
+        "membership_source": str(profile.get("membership_source") or ""),
         "payment_status": profile.get("payment_status", "trial"),
         "paid_until": profile.get("paid_until", ""),
         "billing_cycle": profile.get("billing_cycle", "trial"),
@@ -2110,6 +2192,7 @@ def build_status(profile, state=None):
         "auto_renew_enabled": bool(profile.get("auto_renew_enabled", False)),
         "auto_renew_status": profile.get("auto_renew_status", "off"),
         "trial_started_at": profile.get("trial_started_at"),
+        "trial_policy_version": str(profile.get("trial_policy_version") or ""),
         "trial_bonus_days": trial_bonus_days(profile),
         "trial_total_days": trial_total_days(profile),
         "trial_days_left": trial_days_left(profile),
@@ -2332,6 +2415,9 @@ def register_line_user(data_file, payload):
         elif value not in (None, ""):
             user[key] = value
 
+    if isinstance(existing, dict) and str(user.get("plan") or "") == "free":
+        ensure_membership_trial(user, source="transition_trial")
+
     token = (
         (payload.get("access_token") if isinstance(payload, dict) else None)
         or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -2348,6 +2434,43 @@ def register_line_user(data_file, payload):
     status = build_status(user, state)
     status["existing_user"] = bool(existing)
     return status, 200
+
+
+def reactivate_line_push_for_follow(data_file, line_user_id):
+    """A new FollowEvent proves this user can receive LINE pushes again."""
+    line_user_id = str(line_user_id or "").strip()
+    if not line_user_id:
+        return False
+    state = load_state(data_file)
+    user = (state.get("users") or {}).get(line_user_id)
+    if not isinstance(user, dict):
+        return False
+    blocked_keys = (
+        "line_push_blocked",
+        "line_push_blocked_at",
+        "push_delivery_attempts",
+    )
+    changed = False
+    for key in blocked_keys:
+        if key in user:
+            user.pop(key, None)
+            changed = True
+    for owner in (state.get("users") or {}).values():
+        if not isinstance(owner, dict):
+            continue
+        for contact in owner.get("contacts") or []:
+            if not isinstance(contact, dict):
+                continue
+            target = contact.get("line_id") or contact.get("line_user_id")
+            if str(target or "").strip() != line_user_id:
+                continue
+            for key in blocked_keys:
+                if key in contact:
+                    contact.pop(key, None)
+                    changed = True
+    if changed:
+        save_state(data_file, state)
+    return changed
 
 
 def extract_line_display_name(profile_obj) -> str | None:
@@ -2598,6 +2721,9 @@ def confirm_payment_order(data_file, payload, config=None):
     order["paid_at"] = now.isoformat(timespec="seconds")
     order["transaction_id"] = str(payload.get("transaction_id") or "").strip()
     profile["plan"] = order["plan"]
+    profile["membership_source"] = "paid"
+    profile["trial_policy_version"] = TRIAL_POLICY_VERSION
+    profile["trial_bonus_days"] = 0
     profile["payment_status"] = "active"
     profile["paid_until"] = paid_until.isoformat(timespec="seconds")
     profile["billing_cycle"] = product["billing_cycle"]
@@ -2640,6 +2766,7 @@ def apply_expired_plan_downgrades(config):
         # 試用到期 → free，資料保留 30 天
         if plan == "trial" and trial_days_left(profile) <= 0:
             profile["plan"] = "free"
+            profile["membership_source"] = "expired"
             profile["payment_status"] = "expired"
             profile["billing_cycle"] = ""
             profile["contacts"] = preserved_contacts
@@ -2668,6 +2795,7 @@ def apply_expired_plan_downgrades(config):
         # 已過期：只降方案，保留所有綁定，並開始 30 天軟保留
         if profile.get("payment_status") == "active" or paid_until:
             profile["plan"] = "free"
+            profile["membership_source"] = "expired"
             profile["payment_status"] = "expired"
             profile["billing_cycle"] = ""
             profile["auto_renew_enabled"] = False
@@ -2701,6 +2829,7 @@ def send_renewal_reminders(config):
     now = current_app_time(config)
     sent = 0
     skipped = 0
+    system_error = False
     for profile in state.get("users", {}).values():
         if profile.get("payment_status") != "active":
             continue
@@ -2714,19 +2843,41 @@ def send_renewal_reminders(config):
         if profile.get("renewal_reminder_sent_for") == paid_until_text:
             skipped += 1
             continue
+        delivery_key = f"renewal:{paid_until_text}"
+        if not push_attempt_allowed(profile, delivery_key):
+            skipped += 1
+            continue
         if profile.get("auto_renew_enabled"):
             message = f"你的守護方案將在 {days_left} 天後續扣。若付款方式有異動，記得先到會員中心確認。"
         else:
             message = f"你的守護方案即將到期，還剩 {days_left} 天。可到會員中心查看方案並續費，避免守護提醒中斷。"
         try:
             sender(token, profile.get("line_user_id"), message)
+            _clear_push_delivery_failure(profile, delivery_key)
             profile["renewal_reminder_sent_for"] = paid_until_text
             append_notification_log(state, "renewal", profile.get("line_user_id"), "sent", message)
             sent += 1
         except Exception as exc:
-            append_notification_log(state, "renewal", profile.get("line_user_id"), "failed", message, str(exc))
+            failure = _record_scheduled_push_failure(
+                state,
+                profile,
+                delivery_key,
+                "renewal",
+                profile.get("line_user_id"),
+                message,
+                exc,
+                now,
+            )
+            skipped += 1
+            if failure["kind"] == "system":
+                system_error = True
+                break
     save_state(config["DATA_FILE"], state)
-    return {"sent": sent, "skipped": skipped}, 200
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "system_error": system_error,
+    }, 200
 
 
 def resolve_contact_role(contact):
@@ -3381,22 +3532,12 @@ def build_bind_success_notices(inviter, contacts, inviter_id, guardian_name, *, 
     if bound_rows and core_n == 0:
         core_n = 1
     general_n = max(0, len(bound_rows) - core_n)
-    if invite_reward_applied:
-        inviter_notice = (
-            "✅ 綁定成功\n\n"
-            "感謝邀請成功，已為您延長 7 天免費使用\n\n"
-            f"對方：{guardian_name}（已成為你的守護人）\n"
-            f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n"
-            f"免費使用剩餘約 {trial_days_left(inviter)} 天（含邀請加碼）。\n\n"
-            "之後若你逾時未報平安或發出 SOS，系統會透過 LINE 私訊通知對方。"
-        )
-    else:
-        inviter_notice = (
-            "✅ 綁定成功\n\n"
-            f"對方：{guardian_name}（已成為你的守護人）\n"
-            f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n\n"
-            "之後若你逾時未報平安或發出 SOS，系統會透過 LINE 私訊通知對方。"
-        )
+    inviter_notice = (
+        "✅ 綁定成功\n\n"
+        f"對方：{guardian_name}（已成為你的守護人）\n"
+        f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n\n"
+        "之後若你逾時未報平安或發出 SOS，系統會透過 LINE 私訊通知對方。"
+    )
     guardian_notice = (
         f"✅ 綁定成功\n\n"
         f"對方：{inviter_name}\n"
@@ -3824,7 +3965,7 @@ def bind_emergency_contact(data_file, payload, config=None):
             "inviter_display_name": inviter.get("display_name") or "",
             "contact_display_name": contact_display_name or "",
             "status": "available",
-            "reward_options": ["trial_7_days"],
+            "reward_options": [],
             "selected_reward": "",
         }
         rewards.append(reward)
@@ -4422,9 +4563,9 @@ def _member_checked_today(profile, today):
     return any(str(item.get("date", "")) == today for item in history if isinstance(item, dict))
 
 
-def build_owner_today_safety_roster(state, profile, config=None):
+def build_owner_today_safety_roster(state, profile, config=None, now=None):
     """管理員用：今天誰已報／尚未報平安（私訊／LIFF；不依賴群組提醒開關）。"""
-    now = current_app_time(config or {})
+    now = now or current_app_time(config or {})
     today = now.strftime("%Y-%m-%d")
     users = (state or {}).get("users") or {}
     owner_id = str((profile or {}).get("line_user_id") or "").strip()
@@ -5384,6 +5525,14 @@ def admin_update_user_plan(data_file, payload):
     preserved_reminder_time = profile.get("reminder_time")
 
     profile["plan"] = plan
+    if plan.startswith("paid_"):
+        profile["membership_source"] = "paid"
+        profile["trial_policy_version"] = TRIAL_POLICY_VERSION
+        profile["trial_bonus_days"] = 0
+    elif plan == "free":
+        profile["membership_source"] = "expired"
+    elif plan == "trial" and not str(profile.get("membership_source") or ""):
+        profile["membership_source"] = "public_trial"
     profile["payment_status"] = str(
         payload.get("payment_status") or ("trial" if plan == "trial" else "active")
     )
@@ -5685,47 +5834,119 @@ def _env_flag_on(name, config=None):
 
 
 def admin_open_mode(config=None):
-    """Open admin (no password) when ALLOW_OPEN_ADMIN/ADMIN_OPEN is on, or ADMIN_PASSWORD is empty.
-
-    WARNING: public URL with open admin is insecure — intentional for owner convenience.
-    """
-    cfg = config or {}
-    if _env_flag_on("ALLOW_OPEN_ADMIN", cfg) or _env_flag_on("ADMIN_OPEN", cfg):
-        return True
-    expected = _normalize_admin_password(
-        os.environ.get("ADMIN_PASSWORD") or cfg.get("ADMIN_PASSWORD", "")
-    )
-    return not expected
+    """Legacy compatibility hook; secure admin never permits open mode."""
+    return False
 
 
 def admin_allowed(config, password):
-    if admin_open_mode(config):
-        return True
-    expected = _normalize_admin_password(
-        os.environ.get("ADMIN_PASSWORD") or config.get("ADMIN_PASSWORD", "")
-    )
-    got = _normalize_admin_password(password)
-    if not expected:
-        return False
-    # compare_digest raises (→ HTTP 500) when lengths differ on some Python builds
-    if len(expected) != len(got):
-        return False
-    return secrets.compare_digest(expected, got)
+    return admin_password_matches(config, password)
 
 
 def admin_auth_error_payload(config, password):
     """Return (payload, http_status) when auth fails; None when allowed."""
-    if admin_open_mode(config):
-        return None
-    expected = _normalize_admin_password(
-        os.environ.get("ADMIN_PASSWORD") or config.get("ADMIN_PASSWORD", "")
-    )
-    if not expected:
-        # Should not reach here (empty password ⇒ open mode); keep safe fallback.
-        return None
+    if not admin_security_ready(config):
+        return {"error": "admin_not_configured"}, 503
     if not admin_allowed(config, password):
         return {"error": "unauthorized"}, 401
     return None
+
+
+def admin_security_ready(config):
+    password = _normalize_admin_password(config.get("ADMIN_PASSWORD", ""))
+    session_secret = str(config.get("ADMIN_SESSION_SECRET") or "").strip()
+    return bool(password and len(session_secret) >= 32)
+
+
+def admin_password_matches(config, candidate):
+    if not admin_security_ready(config):
+        return False
+    expected = _normalize_admin_password(config.get("ADMIN_PASSWORD", ""))
+    got = _normalize_admin_password(candidate)
+    return bool(got) and secrets.compare_digest(expected, got)
+
+
+ADMIN_LOGIN_ATTEMPTS = {}
+
+
+def _admin_login_attempts(client_key, now=None):
+    now = now or datetime.now()
+    cutoff = now - timedelta(minutes=10)
+    recent = [
+        value for value in ADMIN_LOGIN_ATTEMPTS.get(client_key, [])
+        if value >= cutoff
+    ]
+    ADMIN_LOGIN_ATTEMPTS[client_key] = recent
+    return recent
+
+
+def admin_login_rate_limited(client_key, now=None):
+    return len(_admin_login_attempts(client_key, now)) >= 5
+
+
+def record_admin_login_failure(client_key, now=None):
+    now = now or datetime.now()
+    recent = _admin_login_attempts(client_key, now)
+    recent.append(now)
+    ADMIN_LOGIN_ATTEMPTS[client_key] = recent[-5:]
+
+
+_ADMIN_AUDIT_SENSITIVE_KEY_PARTS = (
+    "password",
+    "passwd",
+    "token",
+    "secret",
+    "csrf",
+    "authorization",
+    "cookie",
+    "email",
+    "phone",
+    "mobile",
+    "address",
+    "lineuserid",
+    "userid",
+    "displayname",
+    "fullname",
+    "latitude",
+    "longitude",
+    "location",
+    "ipaddress",
+    "remoteaddr",
+)
+
+
+def _sanitize_admin_audit_metadata(value):
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            compact_key = re.sub(r"[^a-z0-9]", "", str(key).casefold())
+            if (
+                compact_key in {"name", "username"}
+                or any(
+                    part in compact_key
+                    for part in _ADMIN_AUDIT_SENSITIVE_KEY_PARTS
+                )
+            ):
+                continue
+            cleaned[str(key)] = _sanitize_admin_audit_metadata(item)
+        return cleaned
+    if isinstance(value, (list, tuple, set)):
+        return [_sanitize_admin_audit_metadata(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def append_admin_audit(data_file, action, status, metadata=None):
+    state = load_state(data_file)
+    logs = list(state.get("admin_audit_logs") or [])
+    logs.append({
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "action": str(action),
+        "status": str(status),
+        "metadata": _sanitize_admin_audit_metadata(dict(metadata or {})),
+    })
+    state["admin_audit_logs"] = logs[-200:]
+    save_state(data_file, state)
 
 
 def _line_channel_access_token(config=None):
@@ -5924,8 +6145,9 @@ def cron_allowed(config, secret):
     return secrets.compare_digest(expected, provided)
 
 
-def admin_summary(data_file, config=None):
+def admin_summary(data_file, config=None, now=None):
     state = load_state(data_file)
+    status_now = now or current_app_time(config or {})
     token = ""
     if config is not None and hasattr(config, "get"):
         token = str(config.get("LINE_CHANNEL_ACCESS_TOKEN") or "").strip()
@@ -5951,7 +6173,7 @@ def admin_summary(data_file, config=None):
     users = []
     invite_edges = []
     for user in state.get("users", {}).values():
-        status = build_status(user, state)
+        status = build_status(user, state, now=status_now)
         # 後台顯示名稱：絕不空白；仍是佔位時至少附短 ID 方便辨識
         name = str(status.get("display_name") or "").strip()
         if is_placeholder_display_name(name):
@@ -6215,6 +6437,37 @@ def append_notification_log(state, kind, line_user_id, status, message, detail=N
     state["notification_logs"] = logs[-100:]
 
 
+def _clear_push_delivery_failure(recipient, delivery_key):
+    attempts = dict(recipient.get("push_delivery_attempts") or {})
+    attempts.pop(delivery_key, None)
+    if attempts:
+        recipient["push_delivery_attempts"] = attempts
+    else:
+        recipient.pop("push_delivery_attempts", None)
+
+
+def _record_scheduled_push_failure(
+    state,
+    recipient,
+    delivery_key,
+    kind,
+    line_user_id,
+    message,
+    exc,
+    now,
+):
+    failure = record_push_failure(recipient, delivery_key, exc, now)
+    append_notification_log(
+        state,
+        kind,
+        line_user_id,
+        failure["status"],
+        message,
+        str(exc),
+    )
+    return failure
+
+
 def log_notification(data_file, kind, line_user_id, status, message, detail=None):
     state = load_state(data_file)
     append_notification_log(state, kind, line_user_id, status, message, detail)
@@ -6226,14 +6479,15 @@ def send_due_reminders(config):
     if not token:
         return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
 
-    summary = admin_summary(config["DATA_FILE"], config)
+    now = current_app_time(config)
+    summary = admin_summary(config["DATA_FILE"], config, now=now)
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
     state = load_state(config["DATA_FILE"])
-    now = current_app_time(config)
     today = now.strftime("%Y-%m-%d")
     sent = 0
     skipped = 0
     results = []
+    system_error = False
     for user in summary["users"]:
         if not user["is_overdue"]:
             continue
@@ -6243,20 +6497,43 @@ def send_due_reminders(config):
         if profile.get("last_overdue_alert_date") == today:
             skipped += 1
             continue
+        retry_pending = False
         location = profile.get("location") or {}
         location_link = ""
         if profile.get("attach_location_on_alert") and location.get("latitude") and location.get("longitude"):
             location_link = f"\n最後位置：https://www.google.com/maps?q={location['latitude']},{location['longitude']}"
         message = f"❤️ 今天一切都好嗎？\n點一下「我平安」，讓家人放心。{location_link}"
-        try:
-            result = sender(token, user["line_user_id"], message)
-            append_notification_log(state, "overdue", user["line_user_id"], "sent", message, json.dumps(result, ensure_ascii=False))
-            sent += 1
-            results.append({"line_user_id": user["line_user_id"], "result": result})
-        except Exception as exc:
-            append_notification_log(state, "overdue", user["line_user_id"], "failed", message, str(exc))
+        delivery_key = f"overdue:{today}"
+        if profile.get("last_overdue_member_alert_date") == today:
             skipped += 1
-            results.append({"line_user_id": user["line_user_id"], "error": str(exc)})
+        elif not push_attempt_allowed(profile, delivery_key):
+            skipped += 1
+        else:
+            try:
+                result = sender(token, user["line_user_id"], message)
+                _clear_push_delivery_failure(profile, delivery_key)
+                profile["last_overdue_member_alert_date"] = today
+                append_notification_log(state, "overdue", user["line_user_id"], "sent", message, json.dumps(result, ensure_ascii=False))
+                sent += 1
+                results.append({"line_user_id": user["line_user_id"], "result": result})
+            except Exception as exc:
+                failure = _record_scheduled_push_failure(
+                    state,
+                    profile,
+                    delivery_key,
+                    "overdue",
+                    user["line_user_id"],
+                    message,
+                    exc,
+                    now,
+                )
+                retry_pending = retry_pending or failure["retry"]
+                skipped += 1
+                results.append({"line_user_id": user["line_user_id"], "error": str(exc)})
+                if failure["kind"] == "system":
+                    system_error = True
+        if system_error:
+            break
 
         contact_message = (
             f"【需要幫忙】{profile.get('display_name') or '家人'} 超過時間尚未回報平安，請協助確認是否一切都好。"
@@ -6277,15 +6554,37 @@ def send_due_reminders(config):
             ][:alert_limit]
             for contact in line_contacts:
                 target = contact.get("line_id") or contact.get("line_user_id")
+                contact_delivery_key = f"contact_alert:{today}:{target}"
+                if contact.get("last_overdue_contact_alert_date") == today:
+                    skipped += 1
+                    continue
+                if not push_attempt_allowed(contact, contact_delivery_key):
+                    skipped += 1
+                    continue
                 try:
                     result = sender(token, target, contact_message)
+                    _clear_push_delivery_failure(contact, contact_delivery_key)
+                    contact["last_overdue_contact_alert_date"] = today
                     append_notification_log(state, "contact_alert", target, "sent", contact_message, json.dumps(result, ensure_ascii=False))
                     sent += 1
                     results.append({"line_user_id": target, "result": result})
                 except Exception as exc:
-                    append_notification_log(state, "contact_alert", target, "failed", contact_message, str(exc))
+                    failure = _record_scheduled_push_failure(
+                        state,
+                        contact,
+                        contact_delivery_key,
+                        "contact_alert",
+                        target,
+                        contact_message,
+                        exc,
+                        now,
+                    )
+                    retry_pending = retry_pending or failure["retry"]
                     skipped += 1
                     results.append({"line_user_id": target, "error": str(exc)})
+                    if failure["kind"] == "system":
+                        system_error = True
+                        break
                 for method in (contact.get("notify_methods") or ["line"]):
                     if method in {"sms", "phone"}:
                         detail = contact.get("phone") or "missing phone"
@@ -6297,6 +6596,10 @@ def send_due_reminders(config):
                             contact_message,
                             detail,
                         )
+            if system_error:
+                break
+        if system_error:
+            break
 
         group_limit = int(rules.get("guardian_group_limit") or 0)
         if group_limit > 0:
@@ -6312,8 +6615,18 @@ def send_due_reminders(config):
                 f"請群內協助確認。{location_link}"
             )
             for group_id in active_group_ids:
+                group = groups.get(group_id) or {}
+                group_delivery_key = f"overdue_guardian_group:{today}:{group_id}"
+                if group.get("last_overdue_alert_date") == today:
+                    skipped += 1
+                    continue
+                if not push_attempt_allowed(group, group_delivery_key):
+                    skipped += 1
+                    continue
                 try:
                     result = sender(token, group_id, group_message)
+                    _clear_push_delivery_failure(group, group_delivery_key)
+                    group["last_overdue_alert_date"] = today
                     append_notification_log(
                         state,
                         "overdue_guardian_group",
@@ -6325,21 +6638,35 @@ def send_due_reminders(config):
                     sent += 1
                     results.append({"group_id": group_id, "result": result})
                 except Exception as exc:
-                    append_notification_log(
+                    failure = _record_scheduled_push_failure(
                         state,
+                        group,
+                        group_delivery_key,
                         "overdue_guardian_group",
                         group_id,
-                        "failed",
                         group_message,
-                        str(exc),
+                        exc,
+                        now,
                     )
+                    retry_pending = retry_pending or failure["retry"]
                     skipped += 1
                     results.append({"group_id": group_id, "error": str(exc)})
+                    if failure["kind"] == "system":
+                        system_error = True
+                        break
+            if system_error:
+                break
 
-        profile["last_overdue_alert_date"] = today
+        if not retry_pending:
+            profile["last_overdue_alert_date"] = today
 
     save_state(config["DATA_FILE"], state)
-    return {"sent": sent, "skipped": skipped, "results": results}, 200
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "results": results,
+        "system_error": system_error,
+    }, 200
 
 
 def send_guardian_group_daily_summaries(config):
@@ -6361,7 +6688,7 @@ def send_guardian_group_daily_summaries(config):
     sent = 0
     skipped = 0
     results = []
-    dirty = False
+    system_error = False
     for group_id, group in list(groups.items()):
         if not isinstance(group, dict) or group.get("status") != "active":
             skipped += 1
@@ -6371,6 +6698,10 @@ def send_guardian_group_daily_summaries(config):
             skipped += 1
             continue
         if group.get("last_daily_summary_date") == today:
+            skipped += 1
+            continue
+        delivery_key = f"guardian_group_daily_summary:{today}:{group_id}"
+        if not push_attempt_allowed(group, delivery_key):
             skipped += 1
             continue
         owner_id = str(group.get("owner_line_user_id") or "").strip()
@@ -6395,6 +6726,7 @@ def send_guardian_group_daily_summaries(config):
         )
         try:
             result = sender(token, group_id, message)
+            _clear_push_delivery_failure(group, delivery_key)
             append_notification_log(
                 state,
                 "guardian_group_daily_summary",
@@ -6405,25 +6737,35 @@ def send_guardian_group_daily_summaries(config):
             )
             group["last_daily_summary_date"] = today
             groups[group_id] = group
-            dirty = True
             sent += 1
             results.append({"group_id": group_id, "result": result})
         except Exception as exc:
-            append_notification_log(
+            failure = _record_scheduled_push_failure(
                 state,
+                group,
+                delivery_key,
                 "guardian_group_daily_summary",
                 group_id,
-                "failed",
                 message,
-                str(exc),
+                exc,
+                now,
             )
+            groups[group_id] = group
             skipped += 1
             results.append({"group_id": group_id, "error": str(exc)})
+            if failure["kind"] == "system":
+                system_error = True
+                break
 
-    if dirty:
-        state["guardian_groups"] = groups
-        save_state(config["DATA_FILE"], state)
-    return {"sent": sent, "skipped": skipped, "results": results, "date": today}, 200
+    state["guardian_groups"] = groups
+    save_state(config["DATA_FILE"], state)
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "results": results,
+        "date": today,
+        "system_error": system_error,
+    }, 200
 
 
 def send_missing_contact_reminders(config):
@@ -6434,10 +6776,12 @@ def send_missing_contact_reminders(config):
     state = load_state(config["DATA_FILE"])
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
     public_url = (config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", "")).rstrip("/")
-    today = current_app_time(config).strftime("%Y-%m-%d")
+    now = current_app_time(config)
+    today = now.strftime("%Y-%m-%d")
     sent = 0
     skipped = 0
     results = []
+    system_error = False
     for user in state.get("users", {}).values():
         line_user_id = user.get("line_user_id")
         if not line_user_id:
@@ -6451,6 +6795,10 @@ def send_missing_contact_reminders(config):
         if is_799 and not guardian_details_complete:
             if not user.get("guardian_details_reminder_enabled", True) or user.get("guardian_details_reminder_sent_at"):
                 continue
+            delivery_key = f"guardian_details:{today}"
+            if not push_attempt_allowed(user, delivery_key):
+                skipped += 1
+                continue
             link_text = (
                 f"\n前往我的守護資料：{liff_entry_url(open_action='member') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo?open=member'}"
             )
@@ -6460,14 +6808,27 @@ def send_missing_contact_reminders(config):
             )
             try:
                 result = sender(token, line_user_id, message)
-                user["guardian_details_reminder_sent_at"] = current_app_time(config).isoformat(timespec="seconds")
+                _clear_push_delivery_failure(user, delivery_key)
+                user["guardian_details_reminder_sent_at"] = now.isoformat(timespec="seconds")
                 append_notification_log(state, "guardian_details", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
                 sent += 1
                 results.append({"line_user_id": line_user_id, "result": result})
             except Exception as exc:
-                append_notification_log(state, "guardian_details", line_user_id, "failed", message, str(exc))
+                failure = _record_scheduled_push_failure(
+                    state,
+                    user,
+                    delivery_key,
+                    "guardian_details",
+                    line_user_id,
+                    message,
+                    exc,
+                    now,
+                )
                 skipped += 1
                 results.append({"line_user_id": line_user_id, "error": str(exc)})
+                if failure["kind"] == "system":
+                    system_error = True
+                    break
             continue
         if contact_count >= contact_limit or (contact_count > 0 and not reminder_enabled):
             continue
@@ -6487,19 +6848,41 @@ def send_missing_contact_reminders(config):
                 f"你的方案可綁定 {contact_limit} 位守護人，目前已完成 {contact_count}/{contact_limit} 位。"
                 f"若想補齊守護名額，可點下方繼續邀請；也能在提醒設定中關閉這則每日提醒。{link_text}"
             )
+        delivery_key = f"missing_contact:{today}"
+        if not push_attempt_allowed(user, delivery_key):
+            skipped += 1
+            continue
         try:
             result = sender(token, line_user_id, message)
+            _clear_push_delivery_failure(user, delivery_key)
             sent_dates.add(today)
             user["contact_reminder_sent_dates"] = sorted(sent_dates)[-30:]
             append_notification_log(state, "missing_contact", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
             sent += 1
             results.append({"line_user_id": line_user_id, "result": result})
         except Exception as exc:
-            append_notification_log(state, "missing_contact", line_user_id, "failed", message, str(exc))
+            failure = _record_scheduled_push_failure(
+                state,
+                user,
+                delivery_key,
+                "missing_contact",
+                line_user_id,
+                message,
+                exc,
+                now,
+            )
             skipped += 1
             results.append({"line_user_id": line_user_id, "error": str(exc)})
+            if failure["kind"] == "system":
+                system_error = True
+                break
     save_state(config["DATA_FILE"], state)
-    return {"sent": sent, "skipped": skipped, "results": results}, 200
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "results": results,
+        "system_error": system_error,
+    }, 200
 
 
 def cleanup_expired_data(config):
@@ -6556,12 +6939,14 @@ def cleanup_expired_data(config):
     }, 200
 
 
-def reminder_time_due(reminder_time, now):
+def reminder_time_in_window(reminder_time, now, late_minutes=4):
     try:
         hour, minute = [int(part) for part in str(reminder_time or "12:00").split(":", 1)]
-    except ValueError:
+    except (TypeError, ValueError):
         hour, minute = 12, 0
-    return (now.hour, now.minute) >= (hour, minute)
+    scheduled = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    delta = now - scheduled
+    return timedelta(0) <= delta <= timedelta(minutes=int(late_minutes), seconds=59)
 
 
 def build_daily_checkin_flex(now, target_time=""):
@@ -6768,6 +7153,7 @@ def send_checkin_reminders(config):
     sent = 0
     skipped = 0
     results = []
+    system_error = False
 
     for user in state.get("users", {}).values():
         line_user_id = user.get("line_user_id")
@@ -6801,15 +7187,24 @@ def send_checkin_reminders(config):
         if today in legacy_dates and not sent_today:
             continue
 
-        due_unsent = [t for t in times if reminder_time_due(t, now) and t not in sent_today]
+        due_unsent = [
+            t
+            for t in times
+            if reminder_time_in_window(t, now, late_minutes=4) and t not in sent_today
+        ]
         if not due_unsent:
             continue
 
-        # 補跑時只推一次(取最晚已到點的時段),並把所有已到點未送時段標為已處理
+        # 同一五分鐘時間窗只推一次；較早漏掉的時段不補送也不標記。
         target_time = due_unsent[-1]
+        delivery_key = f"checkin:{today}:{target_time}"
+        if not push_attempt_allowed(user, delivery_key):
+            skipped += 1
+            continue
         message = build_daily_checkin_flex(now, target_time=target_time)
         try:
             result = sender(token, line_user_id, message)
+            _clear_push_delivery_failure(user, delivery_key)
             _mark_checkin_reminder_slots(user, today, times, due_unsent)
             append_notification_log(state, "checkin", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
             sent += 1
@@ -6817,8 +7212,12 @@ def send_checkin_reminders(config):
             # 方案即將／已到期：同日最多附帶一次提醒（不洗版）
             if should_offer_expiry_remind(user, now):
                 expiry_msg = build_expiry_remind_flex(user, now)
+                expiry_key = f"expiry_remind:{today}"
+                if not push_attempt_allowed(user, expiry_key):
+                    continue
                 try:
                     expiry_result = sender(token, line_user_id, expiry_msg)
+                    _clear_push_delivery_failure(user, expiry_key)
                     mark_expiry_remind_sent(user, now)
                     append_notification_log(
                         state,
@@ -6829,19 +7228,43 @@ def send_checkin_reminders(config):
                         json.dumps(expiry_result, ensure_ascii=False),
                     )
                 except Exception as expiry_exc:
-                    append_notification_log(
-                        state, "expiry_remind", line_user_id, "failed", expiry_msg, str(expiry_exc)
+                    failure = _record_scheduled_push_failure(
+                        state,
+                        user,
+                        expiry_key,
+                        "expiry_remind",
+                        line_user_id,
+                        expiry_msg,
+                        expiry_exc,
+                        now,
                     )
+                    if failure["kind"] == "system":
+                        system_error = True
+                        break
         except Exception as exc:
-            if _mark_line_push_blocked(user, exc):
-                append_notification_log(state, "checkin", line_user_id, "blocked", message, str(exc))
-            else:
-                append_notification_log(state, "checkin", line_user_id, "failed", message, str(exc))
+            failure = _record_scheduled_push_failure(
+                state,
+                user,
+                delivery_key,
+                "checkin",
+                line_user_id,
+                message,
+                exc,
+                now,
+            )
             skipped += 1
             results.append({"line_user_id": line_user_id, "error": str(exc)})
+            if failure["kind"] == "system":
+                system_error = True
+                break
 
     save_state(data_file, state)
-    return {"sent": sent, "skipped": skipped, "results": results}, 200
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "results": results,
+        "system_error": system_error,
+    }, 200
 
 
 def broadcast_checkin_reminders(config, *, pause_every=20, pause_seconds=1.0):
@@ -6931,6 +7354,7 @@ def send_birthday_reminders(config):
     results = []
 
     blocked = 0
+    system_error = False
     for user in state.get("users", {}).values():
         line_user_id = user.get("line_user_id")
         if not line_user_id:
@@ -6958,27 +7382,50 @@ def send_birthday_reminders(config):
             sent_key = f"{today_key}:{note_date}:{remind_days}"
             if sent_key in sent_keys:
                 continue
+            delivery_key = f"birthday:{sent_key}"
+            if not push_attempt_allowed(user, delivery_key):
+                skipped += 1
+                continue
             who = birthday.get("birthday_relationship") or birthday.get("birthday_name") or "家人"
             when_text = "今天" if remind_days == 0 else ("明天" if remind_days == 1 else f"{remind_days} 天後")
             message = f"{when_text}是{who}生日，記得跟他說聲生日快樂。也可以順手確認他今天平安。"
             try:
                 result = sender(token, line_user_id, message)
+                _clear_push_delivery_failure(user, delivery_key)
                 sent_keys.add(sent_key)
                 user["birthday_reminder_sent_keys"] = sorted(sent_keys)[-80:]
                 append_notification_log(state, "birthday", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
                 sent += 1
                 results.append({"line_user_id": line_user_id, "birthday": who, "remind_days": remind_days})
             except Exception as exc:
-                if _mark_line_push_blocked(user, exc):
+                failure = _record_scheduled_push_failure(
+                    state,
+                    user,
+                    delivery_key,
+                    "birthday",
+                    line_user_id,
+                    message,
+                    exc,
+                    now,
+                )
+                if failure["status"] == "blocked":
                     blocked += 1
-                    append_notification_log(state, "birthday", line_user_id, "blocked", message, str(exc))
-                else:
-                    append_notification_log(state, "birthday", line_user_id, "failed", message, str(exc))
                 skipped += 1
                 results.append({"line_user_id": line_user_id, "birthday": who, "error": str(exc)})
+                if failure["kind"] == "system":
+                    system_error = True
+                    break
+        if system_error:
+            break
 
     save_state(data_file, state)
-    return {"sent": sent, "skipped": skipped, "blocked": blocked, "results": results}, 200
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "blocked": blocked,
+        "results": results,
+        "system_error": system_error,
+    }, 200
 
 
 # === 799 智能提醒（生活提醒：只走 LINE 私訊，預設不進守護群）===
@@ -7359,6 +7806,7 @@ def send_smart_reminders(config):
     now_hm = now.strftime("%H:%M")
     day_window = True  # 改由各筆 remind_time 判斷
     eve_window = now.hour >= 20
+    system_error = False
 
     for user in state.get("users", {}).values():
         line_user_id = user.get("line_user_id")
@@ -7382,9 +7830,14 @@ def send_smart_reminders(config):
                     continue
                 if not reminder.get("notify_private", True):
                     continue
+                delivery_key = f"smart_reminder:{key}"
+                if not push_attempt_allowed(user, delivery_key):
+                    skipped += 1
+                    continue
                 message = build_smart_reminder_flex(reminder, mode="day")
                 try:
                     result = sender(token, line_user_id, message)
+                    _clear_push_delivery_failure(user, delivery_key)
                     sent_keys.add(key)
                     if snooze.get("id") == rid:
                         user["smart_reminder_snooze"] = {}
@@ -7392,9 +7845,23 @@ def send_smart_reminders(config):
                     sent += 1
                     results.append({"line_user_id": line_user_id, "id": rid, "mode": "day"})
                 except Exception as exc:
-                    append_notification_log(state, "smart_reminder", line_user_id, "failed", message.get("altText"), str(exc))
+                    failure = _record_scheduled_push_failure(
+                        state,
+                        user,
+                        delivery_key,
+                        "smart_reminder",
+                        line_user_id,
+                        message.get("altText"),
+                        exc,
+                        now,
+                    )
                     skipped += 1
                     results.append({"line_user_id": line_user_id, "id": rid, "error": str(exc)})
+                    if failure["kind"] == "system":
+                        system_error = True
+                        break
+            if system_error:
+                break
             # Eve (night before)
             if eve_window and reminder.get("eve_remind", True) and smart_reminder_occurs_on(reminder, tomorrow):
                 key = f"{today_key}:{rid}:eve"
@@ -7402,21 +7869,121 @@ def send_smart_reminders(config):
                     continue
                 if not reminder.get("notify_private", True):
                     continue
+                delivery_key = f"smart_reminder:{key}"
+                if not push_attempt_allowed(user, delivery_key):
+                    skipped += 1
+                    continue
                 message = build_smart_reminder_flex(reminder, mode="eve")
                 try:
                     result = sender(token, line_user_id, message)
+                    _clear_push_delivery_failure(user, delivery_key)
                     sent_keys.add(key)
                     append_notification_log(state, "smart_reminder", line_user_id, "sent", message.get("altText"), json.dumps(result, ensure_ascii=False))
                     sent += 1
                     results.append({"line_user_id": line_user_id, "id": rid, "mode": "eve"})
                 except Exception as exc:
-                    append_notification_log(state, "smart_reminder", line_user_id, "failed", message.get("altText"), str(exc))
+                    failure = _record_scheduled_push_failure(
+                        state,
+                        user,
+                        delivery_key,
+                        "smart_reminder",
+                        line_user_id,
+                        message.get("altText"),
+                        exc,
+                        now,
+                    )
                     skipped += 1
                     results.append({"line_user_id": line_user_id, "id": rid, "error": str(exc)})
+                    if failure["kind"] == "system":
+                        system_error = True
+                        break
         user["smart_reminder_sent_keys"] = sorted(sent_keys)[-120:]
+        if system_error:
+            break
 
     save_state(data_file, state)
-    return {"sent": sent, "skipped": skipped, "results": results}, 200
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "results": results,
+        "system_error": system_error,
+    }, 200
+
+
+def cleanup_expired_sos(config):
+    state = load_state(config["DATA_FILE"])
+    removed = sos_flow.sos_purge_old(state, keep_minutes=60) if sos_flow else []
+    save_state(config["DATA_FILE"], state)
+    return {"removed": len(removed)}, 200
+
+
+def run_cron_tick(config):
+    now = current_app_time(config)
+    results = {}
+
+    migration_data, migration_code = migrate_existing_free_members(config)
+    results["membership_transition_migration"] = {
+        "status": migration_code,
+        "result": migration_data,
+    }
+
+    always = {
+        "checkin_reminders": send_checkin_reminders,
+        "overdue_alerts": send_due_reminders,
+        "guardian_group_daily_summaries": send_guardian_group_daily_summaries,
+        "smart_reminders": send_smart_reminders,
+        "sos_cleanup": cleanup_expired_sos,
+    }
+    for name, task in always.items():
+        data, code = task(config)
+        results[name] = {"status": code, "result": data}
+        if isinstance(data, dict) and data.get("system_error"):
+            return {
+                "ok": False,
+                "system_error": True,
+                "ran_at": now.isoformat(timespec="seconds"),
+                "timezone": "Asia/Taipei",
+                "tasks": results,
+            }, 200
+
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    results["guardian_group_refresh"] = refresh_all_guardian_groups_count(
+        config["DATA_FILE"],
+        token=token,
+    )
+
+    daily = {
+        "09:00": ("birthday_reminders", send_birthday_reminders),
+        "09:05": ("contact_reminders", send_missing_contact_reminders),
+        "10:00": ("renewal_reminders", send_renewal_reminders),
+        "10:15": ("membership_expiry", apply_expired_plan_downgrades),
+        "02:30": ("data_cleanup", cleanup_expired_data),
+    }
+    slot = now.strftime("%H:%M")
+    if slot in daily:
+        name, task = daily[slot]
+        data, code = task(config)
+        results[name] = {"status": code, "result": data}
+        if isinstance(data, dict) and data.get("system_error"):
+            return {
+                "ok": False,
+                "system_error": True,
+                "ran_at": now.isoformat(timespec="seconds"),
+                "timezone": "Asia/Taipei",
+                "tasks": results,
+            }, 200
+
+    return {
+        "ok": all(
+            item.get("status", 200) < 500
+            for item in results.values()
+            if isinstance(item, dict)
+        ),
+        "system_error": False,
+        "ran_at": now.isoformat(timespec="seconds"),
+        "timezone": "Asia/Taipei",
+        "tasks": results,
+    }, 200
 
 
 def app_config(config):
@@ -7462,8 +8029,14 @@ def create_app(config=None):
     app.config.update(
         DATA_FILE=resolve_data_file(os.environ.get("DATA_FILE")),
         ADMIN_PASSWORD=os.environ.get("ADMIN_PASSWORD", ""),
+        ADMIN_SESSION_SECRET=os.environ.get("ADMIN_SESSION_SECRET", ""),
+        TRUST_PROXY_HEADERS=os.environ.get("TRUST_PROXY_HEADERS", ""),
         ALLOW_OPEN_ADMIN=os.environ.get("ALLOW_OPEN_ADMIN", ""),
         ADMIN_OPEN=os.environ.get("ADMIN_OPEN", ""),
+        PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SECURE=True,
+        SESSION_COOKIE_SAMESITE="Strict",
         LINE_CHANNEL_ACCESS_TOKEN=(
             os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
             or os.environ.get("CHANNEL_ACCESS_TOKEN")
@@ -7500,6 +8073,92 @@ def create_app(config=None):
     )
     if config:
         app.config.update(config)
+    app.secret_key = (
+        app.config.get("ADMIN_SESSION_SECRET")
+        or secrets.token_hex(32)
+    )
+
+    def _admin_guard(*, write=False):
+        if not admin_security_ready(app.config):
+            return jsonify({"error": "admin_not_configured"}), 503
+        if session.get("admin_authenticated") is not True:
+            return jsonify({"error": "unauthorized"}), 401
+        if write:
+            expected = str(session.get("admin_csrf") or "")
+            provided = str(request.headers.get("X-CSRF-Token") or "")
+            if not expected or not secrets.compare_digest(expected, provided):
+                return jsonify({"error": "csrf_required"}), 403
+        return None
+
+    def _admin_mutation_response(action, data, code=200):
+        append_admin_audit(
+            app.config["DATA_FILE"],
+            action,
+            "success" if code < 400 else "failed",
+            {"http_status": code},
+        )
+        return jsonify(data), code
+
+    def _admin_login_transport_secure():
+        if app.config.get("TESTING") is True:
+            return True
+        if request.is_secure:
+            return True
+        if str(request.remote_addr or "") in {"127.0.0.1", "::1"}:
+            return True
+        trusted_proxy = (
+            _env_flag_on("RENDER", app.config)
+            or _env_flag_on("TRUST_PROXY_HEADERS", app.config)
+        )
+        forwarded_proto = str(
+            request.headers.get("X-Forwarded-Proto") or ""
+        ).split(",", 1)[0].strip().lower()
+        return trusted_proxy and forwarded_proto == "https"
+
+    @app.post("/api/admin/login")
+    def admin_login_api():
+        if not _admin_login_transport_secure():
+            return jsonify({"error": "https_required"}), 400
+        if not admin_security_ready(app.config):
+            return jsonify({"error": "admin_not_configured"}), 503
+        payload = request.get_json(silent=True) or {}
+        client_key = str(request.remote_addr or "unknown")
+        if admin_login_rate_limited(client_key):
+            return jsonify({"error": "too_many_attempts"}), 429
+        if not admin_password_matches(app.config, payload.get("password")):
+            record_admin_login_failure(client_key)
+            append_admin_audit(app.config["DATA_FILE"], "session.login", "failed")
+            return jsonify({"error": "invalid_credentials"}), 401
+        ADMIN_LOGIN_ATTEMPTS.pop(client_key, None)
+        session.clear()
+        session.permanent = True
+        session["admin_authenticated"] = True
+        session["admin_csrf"] = secrets.token_urlsafe(32)
+        append_admin_audit(app.config["DATA_FILE"], "session.login", "success")
+        return jsonify({
+            "ok": True,
+            "csrf_token": session["admin_csrf"],
+            "expires_in": 8 * 60 * 60,
+        })
+
+    @app.get("/api/admin/session")
+    def admin_session_api():
+        if not admin_security_ready(app.config):
+            return jsonify({"authenticated": False, "error": "admin_not_configured"}), 503
+        authenticated = session.get("admin_authenticated") is True
+        return jsonify({
+            "authenticated": authenticated,
+            "csrf_token": session.get("admin_csrf") if authenticated else None,
+        }), (200 if authenticated else 401)
+
+    @app.post("/api/admin/logout")
+    def admin_logout_api():
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
+        session.clear()
+        append_admin_audit(app.config["DATA_FILE"], "session.logout", "success")
+        return jsonify({"ok": True})
 
     def _authenticated_line_user(payload=None, *, use_args=False):
         """Resolve LINE user from verified id_token when required."""
@@ -8332,6 +8991,7 @@ def create_app(config=None):
                             "display_name": display_name or "",
                         },
                     )
+                    reactivate_line_push_for_follow(app.config["DATA_FILE"], line_user_id)
                 except Exception as exc:
                     app.logger.exception("FollowEvent register failed: %s", exc)
             app.logger.info(
@@ -9423,9 +10083,9 @@ def create_app(config=None):
     @app.get("/api/bot/guardian-groups")
     def bot_guardian_groups_api():
         """2026-07-21 patch 22: 返回所有守護群清單(供 bot_admin.html)。"""
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard()
+        if denied:
+            return denied
 
         state = load_state(app.config["DATA_FILE"])
         groups = state.get("guardian_groups", {})
@@ -9447,9 +10107,9 @@ def create_app(config=None):
     @app.get("/api/bot/sos-pending")
     def bot_sos_pending_api():
         """2026-07-21 patch 22: 返回所有 SOS 預約狀態。"""
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard()
+        if denied:
+            return denied
 
         state = load_state(app.config["DATA_FILE"])
         pending = state.get("sos_pending", {})
@@ -9472,9 +10132,9 @@ def create_app(config=None):
     @app.get("/api/bot/recent-events")
     def bot_recent_events_api():
         """2026-07-21 patch 22: 返回最近的 webhook 事件(使用 notification_log)。"""
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard()
+        if denied:
+            return denied
 
         state = load_state(app.config["DATA_FILE"])
         log = state.get("notification_log", [])
@@ -9534,94 +10194,100 @@ def create_app(config=None):
 
     @app.get("/api/admin/summary")
     def admin_summary_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        denied = admin_auth_error_payload(app.config, password)
+        denied = _admin_guard()
         if denied:
-            payload, code = denied
-            return jsonify(payload), code
+            return denied
         return jsonify(admin_summary(app.config["DATA_FILE"], app.config))
 
     @app.get("/api/admin/support-tickets")
     def admin_support_tickets_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard()
+        if denied:
+            return denied
         return jsonify(admin_support_tickets(app.config["DATA_FILE"]))
 
     @app.get("/api/admin/backups")
     def admin_backups_list_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard()
+        if denied:
+            return denied
         return jsonify(list_admin_backups(app.config["DATA_FILE"]))
 
     @app.post("/api/admin/backups")
     def admin_backups_create_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = create_admin_backup(app.config["DATA_FILE"])
-        return jsonify(data), code
+        return _admin_mutation_response("backup.create", data, code)
 
     @app.get("/api/admin/backups/<backup_id>")
     def admin_backups_download_api(backup_id):
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard()
+        if denied:
+            return denied
         data, code = read_admin_backup(app.config["DATA_FILE"], backup_id)
         return jsonify(data), code
 
     @app.post("/api/admin/support-reply")
     def admin_support_reply_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = admin_reply_support_ticket(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
-        return jsonify(data), code
+        return _admin_mutation_response("support.reply", data, code)
 
     @app.post("/api/admin/send-reminders")
     def send_reminders_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = send_due_reminders(app.config)
-        return jsonify(data), code
+        return _admin_mutation_response("reminder.send", data, code)
 
     @app.post("/api/admin/send-contact-reminders")
     def send_contact_reminders_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = send_missing_contact_reminders(app.config)
-        return jsonify(data), code
+        return _admin_mutation_response("contact_reminder.send", data, code)
 
     @app.post("/api/admin/send-renewal-reminders")
     def send_renewal_reminders_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = send_renewal_reminders(app.config)
-        return jsonify(data), code
+        return _admin_mutation_response("renewal_reminder.send", data, code)
 
     @app.post("/api/admin/send-birthday-reminders")
     def send_birthday_reminders_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = send_birthday_reminders(app.config)
-        return jsonify(data), code
+        return _admin_mutation_response("birthday_reminder.send", data, code)
 
     @app.post("/api/admin/payments/confirm")
     def admin_payment_confirm_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = confirm_payment_order(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
+        return _admin_mutation_response("payment.confirm", data, code)
+
+    @app.post("/api/cron/tick")
+    def cron_tick_api():
+        secret = request.headers.get("X-Cron-Secret", "")
+        if not cron_allowed(app.config, secret):
+            return jsonify({"error": "unauthorized"}), 401
+        data, code = run_cron_tick(app.config)
         return jsonify(data), code
 
     @app.route("/api/cron/contact-reminders", methods=["GET", "POST"])
     def cron_contact_reminders_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = send_missing_contact_reminders(app.config)
@@ -9629,7 +10295,7 @@ def create_app(config=None):
 
     @app.route("/api/cron/checkin-reminders", methods=["GET", "POST"])
     def cron_checkin_reminders_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         # ?mode=broadcast 或 force=1 → 重新推播給全部已註冊會員（含今日已簽到）
@@ -9644,7 +10310,7 @@ def create_app(config=None):
     @app.route("/api/cron/checkin-broadcast", methods=["GET", "POST"])
     def cron_checkin_broadcast_api():
         """重新推播專用：對有 line_user_id 的會員送新版每日平安 Flex。"""
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = broadcast_checkin_reminders(app.config)
@@ -9652,7 +10318,7 @@ def create_app(config=None):
 
     @app.route("/api/cron/overdue-alerts", methods=["GET", "POST"])
     def cron_overdue_alerts_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = send_due_reminders(app.config)
@@ -9664,7 +10330,7 @@ def create_app(config=None):
 
     @app.route("/api/cron/renewal-reminders", methods=["GET", "POST"])
     def cron_renewal_reminders_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = send_renewal_reminders(app.config)
@@ -9672,7 +10338,7 @@ def create_app(config=None):
 
     @app.route("/api/cron/birthday-reminders", methods=["GET", "POST"])
     def cron_birthday_reminders_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = send_birthday_reminders(app.config)
@@ -9680,7 +10346,7 @@ def create_app(config=None):
 
     @app.route("/api/cron/smart-reminders", methods=["GET", "POST"])
     def cron_smart_reminders_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = send_smart_reminders(app.config)
@@ -9717,7 +10383,7 @@ def create_app(config=None):
 
     @app.route("/api/cron/membership-expiry", methods=["GET", "POST"])
     def cron_membership_expiry_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = apply_expired_plan_downgrades(app.config)
@@ -9725,7 +10391,7 @@ def create_app(config=None):
 
     @app.route("/api/cron/data-cleanup", methods=["GET", "POST"])
     def cron_data_cleanup_api():
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = cleanup_expired_data(app.config)
@@ -9734,7 +10400,7 @@ def create_app(config=None):
     @app.route("/api/cron/backfill-bind-notify", methods=["GET", "POST"])
     def cron_backfill_bind_notify_api():
         """One-shot: 補發歷史已綁定雙方的綁定成功 LINE（冪等 bind_notify_sent_at）。"""
-        secret = request.args.get("secret") or request.headers.get("X-Cron-Secret", "")
+        secret = request.headers.get("X-Cron-Secret", "")
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         payload = request.get_json(silent=True) or {}
@@ -9753,18 +10419,18 @@ def create_app(config=None):
     @app.get("/api/admin/rich-menu")
     def admin_rich_menu_inspect_api():
         """查詢目前預設圖文選單（含一鍵邀請 URI）。不回傳 token。"""
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard()
+        if denied:
+            return denied
         data, code = inspect_default_rich_menu(app.config)
         return jsonify(data), code
 
     @app.post("/api/admin/rich-menu/deploy")
     def admin_rich_menu_deploy_api():
         """用 Render 上的 LINE_CHANNEL_ACCESS_TOKEN 上傳並設為預設圖文選單。"""
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = deploy_default_rich_menu(app.config)
         if data.get("ok"):
             app.logger.info(
@@ -9778,27 +10444,39 @@ def create_app(config=None):
                 data.get("step"),
                 data.get("http"),
             )
-        return jsonify(data), code
+        return _admin_mutation_response("rich_menu.deploy", data, code)
 
     @app.post("/api/admin/push-welcome")
     def admin_push_welcome_api():
         """管理員補推歡迎 Flex（需已加好友）。body: {line_user_id, display_name?}"""
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         if LineBotApi is None or FlexSendMessage is None or welcome_flex is None:
-            return jsonify({"ok": False, "error": "line sdk or welcome_flex unavailable"}), 503
+            return _admin_mutation_response(
+                "welcome.push",
+                {"ok": False, "error": "line sdk or welcome_flex unavailable"},
+                503,
+            )
         payload = request.get_json(silent=True) or {}
         line_user_id = str(payload.get("line_user_id") or "").strip()
         if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+            return _admin_mutation_response(
+                "welcome.push",
+                {"ok": False, "error": "missing line_user_id"},
+                400,
+            )
         token = (
             app.config.get("LINE_CHANNEL_ACCESS_TOKEN")
             or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
             or ""
         ).strip()
         if not token:
-            return jsonify({"ok": False, "error": "LINE_CHANNEL_ACCESS_TOKEN not set"}), 503
+            return _admin_mutation_response(
+                "welcome.push",
+                {"ok": False, "error": "LINE_CHANNEL_ACCESS_TOKEN not set"},
+                503,
+            )
         line_bot_api = LineBotApi(token)
         hint = str(payload.get("display_name") or "").strip() or None
         resolved = resolve_welcome_display_name(
@@ -9836,13 +10514,14 @@ def create_app(config=None):
                 line_user_id[:8],
                 resolved or "",
             )
-            return jsonify(
+            return _admin_mutation_response(
+                "welcome.push",
                 {
                     "ok": True,
                     "line_user_id": line_user_id,
                     "display_name": resolved,
                     "greeting": greeting,
-                }
+                },
             )
         except LineBotApiError as exc:
             detail = str(exc)
@@ -9851,26 +10530,34 @@ def create_app(config=None):
             except Exception:
                 pass
             app.logger.exception("admin push-welcome LINE error: %s", detail)
-            return jsonify({"ok": False, "error": "line_api_error", "detail": str(detail)}), 502
+            return _admin_mutation_response(
+                "welcome.push",
+                {"ok": False, "error": "line_api_error", "detail": str(detail)},
+                502,
+            )
         except Exception as exc:
             app.logger.exception("admin push-welcome failed: %s", exc)
-            return jsonify({"ok": False, "error": str(exc)}), 500
+            return _admin_mutation_response(
+                "welcome.push",
+                {"ok": False, "error": str(exc)},
+                500,
+            )
 
     @app.post("/api/admin/user-plan")
     def admin_user_plan_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = admin_update_user_plan(app.config["DATA_FILE"], request.get_json(silent=True) or {})
-        return jsonify(data), code
+        return _admin_mutation_response("user_plan.update", data, code)
 
     @app.post("/api/admin/set-core-guardian")
     def admin_set_core_guardian_api():
-        password = request.args.get("password") or request.headers.get("X-Admin-Password", "")
-        if not admin_allowed(app.config, password):
-            return jsonify({"error": "unauthorized"}), 401
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
         data, code = admin_set_core_guardian(app.config["DATA_FILE"], request.get_json(silent=True) or {})
-        return jsonify(data), code
+        return _admin_mutation_response("core_guardian.set", data, code)
 
     return app
 
@@ -9890,6 +10577,8 @@ class MiniClient:
 
     def get(self, path):
         route, _, query = path.partition("?")
+        if route == "/api/admin" or route.startswith("/api/admin/"):
+            return MiniResponse({"error": "admin_not_configured"}, 503)
         params = dict(urllib.parse.parse_qsl(query))
         if route == "/api/config":
             return MiniResponse(app_config(self.app.config))
@@ -9942,9 +10631,17 @@ class MiniClient:
             return MiniResponse({"ok": True, "safety_guard": safety_guard_snapshot(profile)})
         return MiniResponse({"error": "not found"}, 404)
 
-    def post(self, path, data=None, content_type=None):
+    def post(self, path, data=None, content_type=None, headers=None):
         route, _, query = path.partition("?")
+        if route == "/api/admin" or route.startswith("/api/admin/"):
+            return MiniResponse({"error": "admin_not_configured"}, 503)
         params = dict(urllib.parse.parse_qsl(query))
+        headers = headers or {}
+        cron_secret = (
+            headers.get("X-Cron-Secret")
+            or headers.get("x-cron-secret")
+            or ""
+        )
         payload = {}
         if data and content_type == "application/json":
             payload = json.loads(data)
@@ -10027,15 +10724,18 @@ class MiniClient:
                 return MiniResponse({"error": "unauthorized"}, 401)
             body, code = create_admin_backup(self.app.config["DATA_FILE"])
             return MiniResponse(body, code)
+        if route == "/api/cron/tick":
+            if not cron_allowed(self.app.config, cron_secret):
+                return MiniResponse({"error": "unauthorized"}, 401)
+            body, code = run_cron_tick(self.app.config)
+            return MiniResponse(body, code)
         if route == "/api/cron/contact-reminders":
-            secret = params.get("secret", "")
-            if not cron_allowed(self.app.config, secret):
+            if not cron_allowed(self.app.config, cron_secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
             body, code = send_missing_contact_reminders(self.app.config)
             return MiniResponse(body, code)
         if route == "/api/cron/checkin-reminders":
-            secret = params.get("secret", "")
-            if not cron_allowed(self.app.config, secret):
+            if not cron_allowed(self.app.config, cron_secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
             mode = str(params.get("mode", "") or "").strip().lower()
             force = str(params.get("force", "") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -10045,26 +10745,22 @@ class MiniClient:
                 body, code = send_checkin_reminders(self.app.config)
             return MiniResponse(body, code)
         if route == "/api/cron/checkin-broadcast":
-            secret = params.get("secret", "")
-            if not cron_allowed(self.app.config, secret):
+            if not cron_allowed(self.app.config, cron_secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
             body, code = broadcast_checkin_reminders(self.app.config)
             return MiniResponse(body, code)
         if route == "/api/cron/renewal-reminders":
-            secret = params.get("secret", "")
-            if not cron_allowed(self.app.config, secret):
+            if not cron_allowed(self.app.config, cron_secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
             body, code = send_renewal_reminders(self.app.config)
             return MiniResponse(body, code)
         if route == "/api/cron/data-cleanup":
-            secret = params.get("secret", "")
-            if not cron_allowed(self.app.config, secret):
+            if not cron_allowed(self.app.config, cron_secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
             body, code = cleanup_expired_data(self.app.config)
             return MiniResponse(body, code)
         if route == "/api/cron/backfill-bind-notify":
-            secret = params.get("secret", "")
-            if not cron_allowed(self.app.config, secret):
+            if not cron_allowed(self.app.config, cron_secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
             dry_run = str(params.get("dry_run") or payload.get("dry_run") or "").strip().lower() in {
                 "1",
@@ -10101,6 +10797,7 @@ class MiniApp:
         self.config = {
             "DATA_FILE": resolve_data_file(os.environ.get("DATA_FILE")),
             "ADMIN_PASSWORD": os.environ.get("ADMIN_PASSWORD", ""),
+            "ADMIN_SESSION_SECRET": os.environ.get("ADMIN_SESSION_SECRET", ""),
             "ALLOW_OPEN_ADMIN": os.environ.get("ALLOW_OPEN_ADMIN", ""),
             "ADMIN_OPEN": os.environ.get("ADMIN_OPEN", ""),
             "LINE_CHANNEL_ACCESS_TOKEN": os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
@@ -10146,11 +10843,16 @@ class MiniApp:
             def query(handler):
                 return dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(handler.path).query))
 
+            def cron_secret(handler):
+                return handler.headers.get("X-Cron-Secret", "")
+
             def route(handler):
                 return urllib.parse.urlsplit(handler.path).path
 
             def do_GET(handler):
                 route = handler.route()
+                if route == "/api/admin" or route.startswith("/api/admin/"):
+                    return handler.send_json({"error": "admin_not_configured"}, 503)
                 params = handler.query()
                 if route == "/api/config":
                     return handler.send_json(app_config(config))
@@ -10203,12 +10905,12 @@ class MiniApp:
                         "safety_guard": safety_guard_snapshot(get_profile(load_state(data_file), line_user_id)),
                     })
                 if route == "/api/cron/contact-reminders":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = send_missing_contact_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/checkin-reminders":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     mode = str(params.get("mode", "") or "").strip().lower()
                     force = str(params.get("force", "") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -10218,17 +10920,17 @@ class MiniApp:
                         data, code = send_checkin_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/checkin-broadcast":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = broadcast_checkin_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/data-cleanup":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = cleanup_expired_data(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/backfill-bind-notify":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     dry_run = str(params.get("dry_run") or "").strip().lower() in {
                         "1",
@@ -10268,6 +10970,8 @@ class MiniApp:
 
             def do_POST(handler):
                 route = handler.route()
+                if route == "/api/admin" or route.startswith("/api/admin/"):
+                    return handler.send_json({"error": "admin_not_configured"}, 503)
                 params = handler.query()
                 payload = handler.read_payload()
                 if route == "/api/line/register":
@@ -10344,13 +11048,18 @@ class MiniApp:
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = confirm_payment_order(data_file, payload, config)
                     return handler.send_json(data, code)
+                if route == "/api/cron/tick":
+                    if not cron_allowed(config, handler.cron_secret()):
+                        return handler.send_json({"error": "unauthorized"}, 401)
+                    data, code = run_cron_tick(config)
+                    return handler.send_json(data, code)
                 if route == "/api/cron/contact-reminders":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = send_missing_contact_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/checkin-reminders":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     mode = str(params.get("mode", "") or "").strip().lower()
                     force = str(params.get("force", "") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -10360,22 +11069,22 @@ class MiniApp:
                         data, code = send_checkin_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/checkin-broadcast":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = broadcast_checkin_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/renewal-reminders":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = send_renewal_reminders(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/data-cleanup":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     data, code = cleanup_expired_data(config)
                     return handler.send_json(data, code)
                 if route == "/api/cron/backfill-bind-notify":
-                    if not cron_allowed(config, params.get("secret", "")):
+                    if not cron_allowed(config, handler.cron_secret()):
                         return handler.send_json({"error": "unauthorized"}, 401)
                     dry_run = str(
                         params.get("dry_run") or payload.get("dry_run") or ""
@@ -10403,61 +11112,7 @@ class MiniApp:
         ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 
-# ===== Internal scheduler: 取代外部 cron 服務 =====
-def _start_internal_scheduler(flask_app):
-    """背景執行緒：每 5 分鐘自動跑推播函式，不需要外部 cron 服務。
-
-    各推播函式本身有 smart 邏輯（檢查 sent_slots / 使用者設定時間），
-    所以 5 分鐘跑一次也不會重複發，只會在使用者設定的「整點」發。
-    可用 env var ENABLE_INTERNAL_SCHEDULER=0 關掉。
-    """
-    import threading
-    import time
-
-    if os.environ.get("ENABLE_INTERNAL_SCHEDULER", "1") in ("0", "false", "False", "no", "NO"):
-        try:
-            flask_app.logger.info("Internal scheduler disabled by env var")
-        except Exception:
-            pass
-        return
-
-    def _loop():
-        time.sleep(30)  # 給 app 一點啟動時間
-        while True:
-            try:
-                with flask_app.app_context():
-                    config = {
-                        "LINE_CHANNEL_ACCESS_TOKEN": os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
-                        "DATA_FILE": flask_app.config.get("DATA_FILE", "data/state.json"),
-                        "APP_PUBLIC_URL": os.environ.get("APP_PUBLIC_URL", ""),
-                    }
-                    send_checkin_reminders(config)
-                    send_due_reminders(config)
-                    send_renewal_reminders(config)
-                    send_birthday_reminders(config)
-                    send_smart_reminders(config)
-                    # 守護群人數即時刷新(每 5 分鐘)
-                    refresh_all_guardian_groups_count(
-                        config.get("DATA_FILE", "data/state.json"),
-                        token=config.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
-                    )
-            except Exception as exc:
-                try:
-                    flask_app.logger.exception("internal scheduler error: %s", exc)
-                except Exception:
-                    pass
-            time.sleep(300)  # 5 分鐘
-
-    t = threading.Thread(target=_loop, daemon=True, name="internal-scheduler")
-    t.start()
-    try:
-        flask_app.logger.info("Internal scheduler started (5-min interval)")
-    except Exception:
-        pass
-
-
 app = create_app()
-_start_internal_scheduler(app)
 
 
 if __name__ == "__main__":
