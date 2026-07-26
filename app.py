@@ -5357,21 +5357,24 @@ def trigger_sos(data_file, payload, config=None):
             "has_bound_guardian": profile_has_bound_line_guardian(profile),
         }, 400
 
-    # Prefer fresh coords from this SOS request; fall back to last known profile location.
-    location = dict(profile.get("location") or {})
+    # SOS only attaches coordinates obtained for this exact request.  A denied or
+    # timed-out lookup must never silently disclose a stale stored location.
+    location = {}
     try:
         req_lat = payload.get("latitude")
         req_lng = payload.get("longitude")
         if req_lat is not None and req_lng is not None:
             location["latitude"] = float(req_lat)
             location["longitude"] = float(req_lng)
-            city = str(payload.get("city") or location.get("city") or "").strip()
+            city = str(payload.get("city") or "").strip()
             if city:
                 location["city"] = city
             location["updated_at"] = now_dt.isoformat(timespec="seconds")
-            profile["location"] = location
+            stored_location = dict(profile.get("location") or {})
+            stored_location.update(location)
+            profile["location"] = stored_location
     except (TypeError, ValueError):
-        location = dict(profile.get("location") or {})
+        location = {}
 
     location_text = ""
     if location.get("latitude") is not None and location.get("longitude") is not None:
@@ -5391,6 +5394,7 @@ def trigger_sos(data_file, payload, config=None):
 
     sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
     sent = 0
+    sent_at = None
     failed = 0
     group_sent = 0
     group_failed = 0
@@ -5406,6 +5410,8 @@ def trigger_sos(data_file, payload, config=None):
             result = sender(token, target, message)
             append_notification_log(state, "sos", target, "sent", message, json.dumps(result, ensure_ascii=False))
             sent += 1
+            if sent_at is None:
+                sent_at = current_app_time(config or {}).isoformat(timespec="seconds")
             results.append({"line_user_id": target, "status": "sent"})
             print(f"[sos] push ok target={str(target)[:8]}", flush=True)
         except Exception as exc:
@@ -5438,6 +5444,8 @@ def trigger_sos(data_file, payload, config=None):
                 json.dumps({"result": result, "mention": mention_mode}, ensure_ascii=False),
             )
             sent += 1
+            if sent_at is None:
+                sent_at = current_app_time(config or {}).isoformat(timespec="seconds")
             group_sent += 1
             results.append({
                 "group_id": group_id,
@@ -5459,6 +5467,18 @@ def trigger_sos(data_file, payload, config=None):
     profile["last_sos_event_id"] = sos_event_id
     save_state(data_file, state)
     code = 200 if sent else 502
+    pending = (state.get("sos_pending") or {}).get(line_user_id) or {}
+    cancel_available = (
+        sent > 0
+        and pending.get("stage") == "sent"
+        and pending.get("event_id") == sos_event_id
+    )
+    if cancel_available:
+        try:
+            pending_sent_at = datetime.fromisoformat(str(pending.get("sent_at") or ""))
+            cancel_available = (now_dt - pending_sent_at).total_seconds() <= 600
+        except (TypeError, ValueError):
+            cancel_available = False
     return {
         "sent": sent,
         "failed": failed,
@@ -5470,6 +5490,9 @@ def trigger_sos(data_file, payload, config=None):
         "phone_only_count": len(phone_contacts),
         "phone_contacts": phone_contacts[:5],
         "event_id": sos_event_id,
+        "sent_at": sent_at,
+        "location_updated_at": location.get("updated_at") if location_text else None,
+        "cancel_available": cancel_available,
     }, code
 
 
@@ -8538,11 +8561,10 @@ def create_app(config=None):
         handler = WebhookHandler(secret)
 
         def _sos_handle(line_bot_api, line_user_id, command, reply_token=None, group_id=None):
-            """需要幫忙：先回緊急求助 Flex；通知家人走 3 連按。
+            """需要幫忙：回覆統一 LIFF 求助入口。
 
             command:
               - '需要幫忙' / 'SOS' / 'sos' / '緊急求助' : 入口卡（撥打 + 通知家人）
-              - '通知家人' : 3 連按累計
               - '取消需要幫忙' / 'SOS 取消' : 取消 pending
             """
             state = load_state(app.config["DATA_FILE"])
@@ -8577,7 +8599,9 @@ def create_app(config=None):
                     app.logger.exception("sos push_message failed: %s", exc)
 
             entry_commands = ("需要幫忙", "SOS", "sos", "緊急求助")
-            notify_commands = (
+            # 已送到聊天室的舊 Flex 按鈕無法回收；保留其文字命令，
+            # 但一律只回新版 LIFF 入口，不再啟動舊的聊天狀態機。
+            legacy_entry_commands = (
                 "通知家人",
                 "聯絡家人連按3次",
                 "需要幫忙確認",
@@ -8595,13 +8619,7 @@ def create_app(config=None):
                 return
 
             # 入口卡：一律回緊急 Flex（不擋方案；實際通知再檢查）
-            pending = sos_flow.sos_get_pending(state, line_user_id) if line_user_id else None
-            pending_active = bool(
-                pending
-                and pending.get("stage") not in ("cancelled", "sent")
-                and int(pending.get("tap_count") or 0) > 0
-            )
-            if command in entry_commands and not pending_active:
+            if command in entry_commands or command in legacy_entry_commands:
                 family_tel = None
                 family_label = None
                 if profile:
@@ -8631,84 +8649,9 @@ def create_app(config=None):
                 )
                 return
 
-            if command not in notify_commands and command not in entry_commands:
+            if command not in entry_commands and command not in legacy_entry_commands:
                 reply(None, "請傳送「需要幫忙」開啟求助選項")
                 return
-
-            # === 通知家人：SOS 不依價格分級，全員可用 ===
-            rules = plan_rules(profile) if profile else PLAN_LIMITS.get("trial", {})
-            sos_enabled = bool(rules.get("sos_enabled", True))
-
-            if not sos_enabled:
-                liff_sos = (
-                    liff_entry_url(open_action="sos")
-                    if liff_entry_url
-                    else "https://liff.line.me/2010674803-rK98c0lo?open=sos"
-                )
-                reply(
-                    sos_flow.sos_emergency_flex(liff_sos_uri=liff_sos),
-                    "目前可先打電話求助；系統暫時無法通知家人，請稍後再試",
-                )
-                return
-
-            # 記錄一次點選（3 連按）
-            result = sos_flow.sos_tap(state, line_user_id)
-            entry = result.get("entry", {})
-            action = result.get("action")
-            tap_count = entry.get("tap_count", 1)
-
-            if action == "sent":
-                reply(sos_flow.sos_sent_flex(), "🚨 已通知家人需要幫忙")
-                save_state(app.config["DATA_FILE"], state)
-                return
-
-            if tap_count >= 3:
-                try:
-                    res, code = trigger_sos(
-                        app.config["DATA_FILE"],
-                        {"line_user_id": line_user_id, "via": "3tap"},
-                        app.config,
-                    )
-                    if code >= 400:
-                        sos_flow.sos_cancel_pending(state, line_user_id)
-                        err = (res or {}).get("error") if isinstance(res, dict) else "send failed"
-                        app.logger.error("trigger_sos failed code=%s err=%s", code, err)
-                        if "no bound line guardians" in str(err).lower():
-                            # 已有 ≥1 LINE 綁定守護人：绝不再推「邀請家人加入」
-                            already_bound = bool(
-                                (isinstance(res, dict) and res.get("has_bound_guardian"))
-                                or (profile and profile_has_bound_line_guardian(profile))
-                            )
-                            if already_bound:
-                                reply(
-                                    None,
-                                    "你已綁定守護人，系統暫時通知失敗；有危險請先打 119 或 110，並直接聯絡親友",
-                                )
-                            else:
-                                invite_uri = (
-                                    share_invite_liff_url()
-                                    if share_invite_liff_url
-                                    else "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html"
-                                )
-                                reply(
-                                    sos_flow.sos_no_guardians_flex(invite_uri),
-                                    sos_user_facing_error(err),
-                                )
-                        else:
-                            reply(None, sos_user_facing_error(err))
-                    else:
-                        event_id = res.get("event_id") if isinstance(res, dict) else None
-                        sos_flow.sos_mark_sent(state, line_user_id, event_id)
-                        reply(sos_flow.sos_sent_flex(), "🚨 已通知家人需要幫忙")
-                except Exception as exc:
-                    app.logger.exception("trigger_sos exception")
-                    sos_flow.sos_cancel_pending(state, line_user_id)
-                    reply(None, sos_user_facing_error(exc))
-                save_state(app.config["DATA_FILE"], state)
-                return
-
-            reply(sos_flow.sos_warning_flex(tap_count), f"🚨 需要幫忙 ({tap_count}/3)")
-            save_state(app.config["DATA_FILE"], state)
 
         def _send_welcome(line_bot_api, reply_token=None, line_user_id=None, display_name=None, trigger=None):
             """Follow / 關鍵字共用：送 welcome_flex，失敗寫 log 並 push fallback。"""
@@ -9235,7 +9178,7 @@ def create_app(config=None):
                 )
                 return
 
-            # 需要幫忙 / 緊急求助 / 通知家人（3 連按）
+            # 需要幫忙／緊急求助：聊天室只回統一 LIFF 入口
             if sos_flow is not None and stripped in (
                 "需要幫忙",
                 "SOS",

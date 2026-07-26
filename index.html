@@ -4672,7 +4672,7 @@
       }
       if (action === "sos") {
         showTab("home");
-        openSosModal();
+        openSosFlow();
       } else if (action === "guard") {
         showTab("home");
         openMvpGuardPanel();
@@ -6716,7 +6716,7 @@
         return;
       }
       if (action === "sos") {
-        openSosModal();
+        openSosFlow();
         return;
       }
       if (action === "checkin" || action === "home") {
@@ -8075,11 +8075,6 @@
         const latitude = position.coords.latitude;
         const longitude = position.coords.longitude;
         const city = inferTaiwanCounty(latitude, longitude);
-        try {
-          await apiUpdateLocation(latitude, longitude, city, { refreshOnly: true });
-        } catch (error) {
-          console.warn("sos location persist failed", error);
-        }
         return { ok: true, latitude, longitude, city };
       } catch (error) {
         console.warn("sos geolocation failed/timeout", error);
@@ -8088,6 +8083,20 @@
           reason: String((error && error.message) || "timeout"),
         };
       }
+    }
+
+    let sosLocationPromise = null;
+    let sosLocationDeadlinePromise = null;
+
+    function startSosLocationLookup() {
+      if (!sosLocationPromise) {
+        sosLocationPromise = refreshLocationForSos();
+        sosLocationDeadlinePromise = new Promise((resolve) => setTimeout(
+          () => resolve({ ok: false, reason: "hard_timeout" }),
+          8000
+        ));
+      }
+      return Promise.race([sosLocationPromise, sosLocationDeadlinePromise]);
     }
 
     function hasActiveSosAccess() {
@@ -8148,8 +8157,12 @@
       renderSosAccess();
     }
 
-    function triggerSos() {
+    function openSosFlow() {
       openSosModal();
+    }
+
+    function triggerSos() {
+      openSosFlow();
     }
 
     function formatSosResultFeedback(result, locationMeta) {
@@ -8173,6 +8186,14 @@
       if (phoneOnly > 0) {
         msg += `。另有 ${phoneOnly} 位僅有電話的緊急聯絡人，請用下方撥號聯絡（無法自動 LINE 通知）`;
       }
+      const sentAt = result && result.sent_at
+        ? new Date(result.sent_at).toLocaleTimeString("zh-TW", {
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "";
+      if (sentAt) msg += `。發送時間 ${sentAt}`;
+      if (result && result.cancel_available) msg += "。10 分鐘內可取消通知";
       return msg;
     }
 
@@ -8189,7 +8210,7 @@
       primaryLink.hidden = false;
     }
 
-    async function sendSosAlert() {
+    async function sendSosAlert(locationPromise) {
       if (!requireMemberActionReady("status")) return false;
       const button = $("sosHoldButton");
       const label = $("sosHoldLabel");
@@ -8209,7 +8230,7 @@
       feedback.textContent = "請稍候（逾時會改送不含即時位置的 SOS）";
       let locationMeta = { ok: false };
       try {
-        locationMeta = await refreshLocationForSos();
+        locationMeta = await (locationPromise || startSosLocationLookup());
         if (!locationMeta.ok) {
           feedback.textContent = "定位逾時或未授權，改送不含即時位置的 SOS…";
         }
@@ -8243,6 +8264,8 @@
         }
         label.textContent = "聯絡家人連按3次";
       } finally {
+        sosLocationPromise = null;
+        sosLocationDeadlinePromise = null;
         button.disabled = !hasActiveSosAccess();
       }
     }
@@ -9488,7 +9511,7 @@
           showTab("history");
         } else if (openAction === "sos") {
           if (typeof showTab === "function") showTab("home");
-          openSosModal();
+          openSosFlow();
         } else if (isGuardOpen) {
           const onboardingOpen = $("onboardingModal") && !$("onboardingModal").hidden;
           if (homeReady || hasGuardians || !onboardingOpen) {
@@ -9758,6 +9781,8 @@
         if (sosTapTimer) clearTimeout(sosTapTimer);
         sosTapTimer = null;
         sosTapCount = 0;
+        sosLocationPromise = null;
+        sosLocationDeadlinePromise = null;
         holdProgress.style.transition = "none";
         holdProgress.style.width = "0";
         holdLabel.textContent = "聯絡家人連按3次";
@@ -9766,6 +9791,7 @@
         if (holdButton.disabled) return;
         event.preventDefault();
         sosTapCount += 1;
+        if (sosTapCount === 1) startSosLocationLookup();
         holdProgress.style.transition = "width 160ms ease";
         holdProgress.style.width = `${Math.min(100, sosTapCount * 34)}%`;
         holdLabel.textContent = `已按 ${sosTapCount}/3 次`;
@@ -9775,12 +9801,12 @@
         if (sosTapCount >= 3) {
           if (sosTapTimer) clearTimeout(sosTapTimer);
           sosTapTimer = null;
-          await sendSosAlert();
+          await sendSosAlert(startSosLocationLookup());
           setTimeout(resetSosTap, 1200);
         }
       };
 
-      fab.addEventListener("click", openSosModal);
+      fab.addEventListener("click", openSosFlow);
       cancelBtn.addEventListener("click", () => { resetSosTap(); modal.hidden = true; });
       modal.addEventListener("click", (event) => {
         if (event.target === modal) { resetSosTap(); modal.hidden = true; }
