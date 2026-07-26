@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import os
+import http.client
+import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -20,6 +23,57 @@ class BindAndHomeGateTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def fallback_http_request(self, method, path, *, payload=None, authenticated_user="U-owner"):
+        """Exercise the real MiniApp.run BaseHTTPRequestHandler over a socket."""
+        real_server_class = app_module.ThreadingHTTPServer
+        ready = threading.Event()
+        holder = {}
+
+        class RecordingServer(real_server_class):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                holder["server"] = self
+                ready.set()
+
+        app = app_module.MiniApp({
+            "DATA_FILE": self.data_file,
+            "REQUIRE_LIFF_AUTH": "1",
+        })
+        with (
+            patch.object(app_module, "ThreadingHTTPServer", RecordingServer),
+            patch.object(
+                app_module,
+                "resolve_line_user_id",
+                return_value=(authenticated_user, None),
+            ),
+        ):
+            thread = threading.Thread(
+                target=app.run,
+                kwargs={"host": "127.0.0.1", "port": 0},
+                daemon=True,
+            )
+            thread.start()
+            self.assertTrue(ready.wait(2), "fallback HTTP server did not start")
+            server = holder["server"]
+            connection = http.client.HTTPConnection(
+                server.server_address[0], server.server_address[1], timeout=2
+            )
+            body = json.dumps(payload or {}, ensure_ascii=False) if payload is not None else None
+            headers = {"Authorization": "Bearer verified-test-token"}
+            if body is not None:
+                headers["Content-Type"] = "application/json"
+            try:
+                connection.request(method, path, body=body, headers=headers)
+                response = connection.getresponse()
+                raw = response.read().decode("utf-8")
+                result = (response.status, json.loads(raw) if raw else {})
+            finally:
+                connection.close()
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+        return result
 
     def test_bind_writes_line_user_id_and_invite_edge(self):
         result, code = app_module.bind_emergency_contact(
@@ -269,10 +323,104 @@ class BindAndHomeGateTests(unittest.TestCase):
                 data='{"line_user_id":"U-target","reminder_times":["13:00"]}',
                 content_type="application/json",
             )
+            reminder = client.post(
+                "/api/onboarding/reminder",
+                data='{"line_user_id":"U-target","reminder_times":["14:00"],"grace_hours":72}',
+                content_type="application/json",
+            )
         self.assertEqual(complete.status_code, 200)
+        self.assertEqual(reminder.status_code, 200)
+        state_after = app_module.load_state(self.data_file)
+        self.assertEqual(state_after["users"]["U-owner"]["reminder_times"], ["14:00"])
+        self.assertEqual(state_after["users"]["U-owner"]["grace_hours"], 72)
+        self.assertEqual(state_after["users"]["U-target"]["reminder_times"], ["12:00"])
+
+    def test_fallback_http_onboarding_read_uses_verified_identity(self):
+        state = app_module.load_state(self.data_file)
+        app_module.get_profile(state, "U-owner")["display_name"] = "本人"
+        app_module.get_profile(state, "U-target")["display_name"] = "別人"
+        app_module.save_state(self.data_file, state)
+
+        status, payload = self.fallback_http_request(
+            "GET", "/api/onboarding?line_user_id=U-target"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["line_user_id"], "U-owner")
+        self.assertEqual(payload["display_name"], "本人")
+
+    def test_fallback_http_reminder_mutates_only_verified_identity(self):
+        state = app_module.load_state(self.data_file)
+        app_module.get_profile(state, "U-owner")["reminder_times"] = ["12:00"]
+        app_module.get_profile(state, "U-target")["reminder_times"] = ["12:00"]
+        app_module.save_state(self.data_file, state)
+
+        status, payload = self.fallback_http_request(
+            "POST",
+            "/api/onboarding/reminder",
+            payload={
+                "line_user_id": "U-target",
+                "reminder_times": ["14:00"],
+                "grace_hours": 72,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["reminder_times"], ["14:00"])
+        state_after = app_module.load_state(self.data_file)
+        self.assertEqual(state_after["users"]["U-owner"]["reminder_times"], ["14:00"])
+        self.assertEqual(state_after["users"]["U-owner"]["grace_hours"], 72)
+        self.assertEqual(state_after["users"]["U-target"]["reminder_times"], ["12:00"])
+
+    def test_fallback_http_onboarding_completion_mutates_only_verified_identity(self):
+        state = app_module.load_state(self.data_file)
+        owner = app_module.get_profile(state, "U-owner")
+        owner["contacts"] = [{
+            "contact_role": "guardian",
+            "line_user_id": "U-guardian",
+            "binding_status": "accepted",
+            "notify_methods": ["line"],
+        }]
+        owner["reminder_times"] = ["12:00"]
+        target = app_module.get_profile(state, "U-target")
+        target["reminder_times"] = ["12:00"]
+        app_module.save_state(self.data_file, state)
+
+        status, payload = self.fallback_http_request(
+            "POST",
+            "/api/onboarding/complete",
+            payload={"line_user_id": "U-target", "reminder_times": ["13:00"]},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["home_ready"])
         state_after = app_module.load_state(self.data_file)
         self.assertEqual(state_after["users"]["U-owner"]["reminder_times"], ["13:00"])
-        self.assertEqual(state_after["users"]["U-target"]["reminder_times"], ["12:00"])
+        self.assertFalse(state_after["users"]["U-target"].get("is_onboarding_completed", False))
+
+    def test_fallback_http_checkin_rejects_verified_unbound_member(self):
+        state = app_module.load_state(self.data_file)
+        owner = app_module.get_profile(state, "U-owner")
+        owner["contacts"] = [{
+            "contact_role": "guardian",
+            "line_user_id": "U-unbound-guardian",
+            "binding_status": "unbound",
+            "notify_methods": ["line"],
+        }]
+        target = app_module.get_profile(state, "U-target")
+        target["contacts"] = [{
+            "contact_role": "guardian",
+            "line_user_id": "U-target-guardian",
+            "binding_status": "accepted",
+            "notify_methods": ["line"],
+        }]
+        app_module.save_state(self.data_file, state)
+
+        status, payload = self.fallback_http_request(
+            "POST", "/api/checkin", payload={"line_user_id": "U-target"}
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"], "guardian_required")
+        state_after = app_module.load_state(self.data_file)
+        self.assertEqual(state_after["users"]["U-owner"]["history"], [])
+        self.assertEqual(state_after["users"]["U-target"]["history"], [])
 
     def test_checkin_rejects_unbound_contact_even_when_it_has_a_foreign_line_id(self):
         app = app_module.create_app({"DATA_FILE": self.data_file, "REQUIRE_LIFF_AUTH": "0"})

@@ -9780,6 +9780,122 @@ def authenticated_line_user(payload=None, *, args=None, headers=None, config=Non
     )
 
 
+def update_onboarding_reminder(data_file, line_user_id, payload):
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id)
+    max_count = int(plan_rules(profile).get("daily_reminders") or 1)
+    if "reminder_times" in payload:
+        raw = payload.get("reminder_times")
+        if not isinstance(raw, list) or not raw:
+            return {"ok": False, "error": "reminder_times must be a non-empty list"}, 400
+        normalized = normalize_reminder_times(raw, max_count)
+        if not normalized:
+            return {"ok": False, "error": "invalid reminder_times format, use HH:MM"}, 400
+        times = apply_reminder_times_to_profile(profile, times=normalized)
+    else:
+        reminder_time = (payload.get("reminder_time") or "").strip()
+        if not REMINDER_TIME_PATTERN.match(reminder_time):
+            return {"ok": False, "error": "invalid reminder_time format, use HH:MM"}, 400
+        times = apply_reminder_times_to_profile(profile, single=reminder_time)
+    if "daily_checkin_reminder_enabled" in payload:
+        profile["daily_checkin_reminder_enabled"] = bool(
+            payload.get("daily_checkin_reminder_enabled")
+        )
+    if "grace_hours" in payload:
+        profile["grace_hours"] = normalize_grace_hours(payload.get("grace_hours"))
+    else:
+        profile["grace_hours"] = normalize_grace_hours(profile.get("grace_hours"))
+    save_state(data_file, state)
+    return {
+        "ok": True,
+        "reminder_time": times[0],
+        "reminder_times": times,
+        "daily_reminders": max_count,
+        "daily_checkin_reminder_enabled": bool(
+            profile.get("daily_checkin_reminder_enabled", True)
+        ),
+        "grace_hours": normalize_grace_hours(profile.get("grace_hours")),
+        "warning_cancel_minutes": int(
+            profile.get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
+        ),
+        "allowed_grace_hours": list(ALLOWED_GRACE_HOURS),
+    }, 200
+
+
+def complete_onboarding_for_user(data_file, line_user_id, payload):
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if not profile:
+        return {"ok": False, "error": "user not registered"}, 404
+    access = member_access_state(profile)
+    if access["guardian_required"]:
+        return {
+            "ok": False,
+            "error": "guardian_required",
+            "message": "必須先完成至少 1 位可接收 LINE 通知的核心守護人綁定",
+            **access,
+        }, 400
+    profile["is_onboarding_completed"] = True
+    if "reminder_times" in payload or payload.get("reminder_time"):
+        apply_reminder_times_to_profile(
+            profile,
+            times=payload.get("reminder_times"),
+            single=payload.get("reminder_time"),
+        )
+    else:
+        apply_reminder_times_to_profile(profile)
+    istate = get_or_create_interaction_state(profile)
+    istate["onboarding_completed"] = True
+    if "add_first_guardian" not in istate["completed_steps"]:
+        istate["completed_steps"].append("add_first_guardian")
+    if "set_reminder_time" not in istate["completed_steps"]:
+        istate["completed_steps"].append("set_reminder_time")
+    if not istate.get("pending_steps"):
+        istate["pending_steps"] = [
+            "explore_app",
+            "read_help",
+            "add_more_guardians_if_paid",
+        ]
+    istate["last_interaction_at"] = datetime.now().isoformat(timespec="seconds")
+    save_state(data_file, state)
+    times = reminder_times_for_profile(profile)
+    return {
+        "ok": True,
+        **member_access_state(profile),
+        "is_onboarding_completed": True,
+        "setup_completed": True,
+        "reminder_time": times[0],
+        "reminder_times": times,
+        "interaction_state": istate,
+    }, 200
+
+
+def checkin_for_user(data_file, line_user_id, payload, config=None):
+    payload = dict(payload or {})
+    payload["line_user_id"] = line_user_id
+    state = load_state(data_file)
+    if line_user_id not in state.get("users", {}):
+        register_line_user(
+            data_file,
+            {
+                "line_user_id": line_user_id,
+                "display_name": str(payload.get("display_name") or "LINE 使用者"),
+            },
+        )
+        state = load_state(data_file)
+    access = member_access_state(state.get("users", {}).get(line_user_id))
+    if access["guardian_required"]:
+        return {
+            "ok": False,
+            "error": "guardian_required",
+            "message": "必須先完成至少 1 位可接收 LINE 通知的核心守護人綁定",
+            **access,
+        }, 400
+    status = record_checkin(data_file, payload)
+    status["ok"] = True
+    return status, 200
+
+
 def create_app(config=None):
     if Flask is None:
         return MiniApp(config)
@@ -10071,46 +10187,13 @@ def create_app(config=None):
     def onboarding_reminder_api():
         """設定使用者每日提醒時間(支援單一或多時段)。"""
         data = request.get_json(silent=True) or {}
-        line_user_id = (data.get("line_user_id") or "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
-        state = load_state(app.config["DATA_FILE"])
-        profile = get_profile(state, line_user_id)
-        max_count = int(plan_rules(profile).get("daily_reminders") or 1)
-        if "reminder_times" in data:
-            raw = data.get("reminder_times")
-            if not isinstance(raw, list) or not raw:
-                return jsonify({"ok": False, "error": "reminder_times must be a non-empty list"}), 400
-            normalized = normalize_reminder_times(raw, max_count)
-            if not normalized:
-                return jsonify({"ok": False, "error": "invalid reminder_times format, use HH:MM"}), 400
-            times = apply_reminder_times_to_profile(profile, times=normalized)
-            if "daily_checkin_reminder_enabled" in data:
-                profile["daily_checkin_reminder_enabled"] = bool(data.get("daily_checkin_reminder_enabled"))
-        else:
-            reminder_time = (data.get("reminder_time") or "").strip()
-            if not REMINDER_TIME_PATTERN.match(reminder_time):
-                return jsonify({"ok": False, "error": "invalid reminder_time format, use HH:MM"}), 400
-            times = apply_reminder_times_to_profile(profile, single=reminder_time)
-        if "daily_checkin_reminder_enabled" in data:
-            profile["daily_checkin_reminder_enabled"] = bool(data.get("daily_checkin_reminder_enabled"))
-        if "grace_hours" in data:
-            profile["grace_hours"] = normalize_grace_hours(data.get("grace_hours"))
-        else:
-            profile["grace_hours"] = normalize_grace_hours(profile.get("grace_hours"))
-        save_state(app.config["DATA_FILE"], state)
-        return jsonify({
-            "ok": True,
-            "reminder_time": times[0],
-            "reminder_times": times,
-            "daily_reminders": max_count,
-            "daily_checkin_reminder_enabled": bool(profile.get("daily_checkin_reminder_enabled", True)),
-            "grace_hours": normalize_grace_hours(profile.get("grace_hours")),
-            "warning_cancel_minutes": int(
-                profile.get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
-            ),
-            "allowed_grace_hours": list(ALLOWED_GRACE_HOURS),
-        })
+        line_user_id, err = _authenticated_line_user(data)
+        if err:
+            return jsonify(err[0]), err[1]
+        result, code = update_onboarding_reminder(
+            app.config["DATA_FILE"], line_user_id, data
+        )
+        return jsonify(result), code
 
     @app.get("/liff/guardian")
     def liff_guardian():
@@ -10258,29 +10341,10 @@ def create_app(config=None):
         line_user_id, err = _authenticated_line_user(payload)
         if err:
             return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        state = load_state(app.config["DATA_FILE"])
-        if line_user_id not in state.get("users", {}):
-            # 與 /api/status 相同：已驗證身分即可補註冊，避免 wipe 後無法簽到
-            register_line_user(
-                app.config["DATA_FILE"],
-                {
-                    "line_user_id": line_user_id,
-                    "display_name": str(payload.get("display_name") or "LINE 使用者"),
-                },
-            )
-            state = load_state(app.config["DATA_FILE"])
-        access = member_access_state(state.get("users", {}).get(line_user_id))
-        if access["guardian_required"]:
-            return jsonify({
-                "ok": False,
-                "error": "guardian_required",
-                "message": "必須先完成至少 1 位可接收 LINE 通知的核心守護人綁定",
-                **access,
-            }), 400
-        status = record_checkin(app.config["DATA_FILE"], payload)
-        status["ok"] = True
-        return jsonify(status)
+        result, code = checkin_for_user(
+            app.config["DATA_FILE"], line_user_id, payload, app.config
+        )
+        return jsonify(result), code
 
     @app.post("/callback")
     def line_callback():
@@ -11542,50 +11606,10 @@ def create_app(config=None):
         line_user_id, err = _authenticated_line_user(payload)
         if err:
             return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        state = load_state(app.config["DATA_FILE"])
-        profile = state.get("users", {}).get(line_user_id)
-        if not profile:
-            return jsonify({"ok": False, "error": "user not registered"}), 404
-        access = member_access_state(profile)
-        if access["guardian_required"]:
-            return jsonify({
-                "ok": False,
-                "error": "guardian_required",
-                "message": "必須先完成至少 1 位可接收 LINE 通知的核心守護人綁定",
-                **access,
-            }), 400
-        profile["is_onboarding_completed"] = True
-        # 儲存提醒時段(多時段優先;未提供則套用方案預設)
-        if "reminder_times" in payload or payload.get("reminder_time"):
-            apply_reminder_times_to_profile(
-                profile,
-                times=payload.get("reminder_times"),
-                single=payload.get("reminder_time"),
-            )
-        else:
-            apply_reminder_times_to_profile(profile)
-        # 初始化互動狀態,標記完成步驟
-        istate = get_or_create_interaction_state(profile)
-        istate["onboarding_completed"] = True
-        if "add_first_guardian" not in istate["completed_steps"]:
-            istate["completed_steps"].append("add_first_guardian")
-        if "set_reminder_time" not in istate["completed_steps"]:
-            istate["completed_steps"].append("set_reminder_time")
-        if not istate.get("pending_steps"):
-            istate["pending_steps"] = ["explore_app", "read_help", "add_more_guardians_if_paid"]
-        istate["last_interaction_at"] = datetime.now().isoformat(timespec="seconds")
-        save_state(app.config["DATA_FILE"], state)
-        times = reminder_times_for_profile(profile)
-        return jsonify({
-            "ok": True,
-            **member_access_state(profile),
-            "is_onboarding_completed": True,
-            "setup_completed": True,
-            "reminder_time": times[0],
-            "reminder_times": times,
-            "interaction_state": istate,
-        }), 200
+        result, code = complete_onboarding_for_user(
+            app.config["DATA_FILE"], line_user_id, payload
+        )
+        return jsonify(result), code
 
     @app.get("/api/emergency-contact/invite-preview")
     def emergency_contact_invite_preview_api():
@@ -12475,73 +12499,30 @@ class MiniClient:
             )
             if err:
                 return MiniResponse(err[0], err[1])
-            payload["line_user_id"] = line_user_id
-            state = load_state(self.app.config["DATA_FILE"])
-            if line_user_id not in state.get("users", {}):
-                register_line_user(
-                    self.app.config["DATA_FILE"],
-                    {"line_user_id": line_user_id, "display_name": payload.get("display_name") or "LINE 使用者"},
-                )
-                state = load_state(self.app.config["DATA_FILE"])
-            access = member_access_state(state.get("users", {}).get(line_user_id))
-            if access["guardian_required"]:
-                return MiniResponse({
-                    "ok": False,
-                    "error": "guardian_required",
-                    "message": "必須先完成至少 1 位可接收 LINE 通知的核心守護人綁定",
-                    **access,
-                }, 400)
-            result = record_checkin(self.app.config["DATA_FILE"], payload)
-            result["ok"] = True
-            return MiniResponse(result)
+            result, code = checkin_for_user(
+                self.app.config["DATA_FILE"], line_user_id, payload, self.app.config
+            )
+            return MiniResponse(result, code)
+        if route == "/api/onboarding/reminder":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            result, code = update_onboarding_reminder(
+                self.app.config["DATA_FILE"], line_user_id, payload
+            )
+            return MiniResponse(result, code)
         if route == "/api/onboarding/complete":
             line_user_id, err = authenticated_line_user(
                 payload, args=params, headers=headers, config=self.app.config
             )
             if err:
                 return MiniResponse(err[0], err[1])
-            payload["line_user_id"] = line_user_id
-            state = load_state(self.app.config["DATA_FILE"])
-            profile = state.get("users", {}).get(line_user_id)
-            if not profile:
-                return MiniResponse({"ok": False, "error": "user not registered"}, 404)
-            access = member_access_state(profile)
-            if access["guardian_required"]:
-                return MiniResponse({
-                    "ok": False,
-                    "error": "guardian_required",
-                    "message": "必須先完成至少 1 位可接收 LINE 通知的核心守護人綁定",
-                    **access,
-                }, 400)
-            profile["is_onboarding_completed"] = True
-            if "reminder_times" in payload or payload.get("reminder_time"):
-                apply_reminder_times_to_profile(
-                    profile,
-                    times=payload.get("reminder_times"),
-                    single=payload.get("reminder_time"),
-                )
-            else:
-                apply_reminder_times_to_profile(profile)
-            istate = get_or_create_interaction_state(profile)
-            istate["onboarding_completed"] = True
-            if "add_first_guardian" not in istate["completed_steps"]:
-                istate["completed_steps"].append("add_first_guardian")
-            if "set_reminder_time" not in istate["completed_steps"]:
-                istate["completed_steps"].append("set_reminder_time")
-            if not istate.get("pending_steps"):
-                istate["pending_steps"] = ["explore_app", "read_help", "add_more_guardians_if_paid"]
-            istate["last_interaction_at"] = datetime.now().isoformat(timespec="seconds")
-            save_state(self.app.config["DATA_FILE"], state)
-            times = reminder_times_for_profile(profile)
-            return MiniResponse({
-                "ok": True,
-                **member_access_state(profile),
-                "is_onboarding_completed": True,
-                "setup_completed": True,
-                "reminder_time": times[0],
-                "reminder_times": times,
-                "interaction_state": istate,
-            })
+            result, code = complete_onboarding_for_user(
+                self.app.config["DATA_FILE"], line_user_id, payload
+            )
+            return MiniResponse(result, code)
         if route == "/api/warning/cancel":
             return MiniResponse(cancel_warning(self.app.config["DATA_FILE"], payload, self.app.config))
         if route == "/api/settings":
@@ -12741,6 +12722,14 @@ class MiniApp:
             def route(handler):
                 return urllib.parse.urlsplit(handler.path).path
 
+            def authenticated_user(handler, payload=None, params=None):
+                return authenticated_line_user(
+                    payload or {},
+                    args=params or {},
+                    headers=dict(handler.headers.items()),
+                    config=config,
+                )
+
             def do_GET(handler):
                 route = handler.route()
                 if route == "/api/admin" or route.startswith("/api/admin/"):
@@ -12768,12 +12757,18 @@ class MiniApp:
                         return handler.send_json(data, code)
                     return handler.send_json(build_status(state["users"][line_user_id], state))
                 if route == "/api/onboarding":
-                    data, code = onboarding_status_payload(data_file, params.get("line_user_id"))
+                    line_user_id, err = handler.authenticated_user(params=params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    data, code = onboarding_status_payload(data_file, line_user_id)
                     return handler.send_json(data, code)
                 if route == "/api/onboarding/state":
+                    line_user_id, err = handler.authenticated_user(params=params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
                     data, code = onboarding_status_payload(
                         data_file,
-                        params.get("line_user_id"),
+                        line_user_id,
                         allow_missing_profile=True,
                     )
                     return handler.send_json(data, code)
@@ -12880,7 +12875,29 @@ class MiniApp:
                     data, code = register_line_user(data_file, payload)
                     return handler.send_json(data, code)
                 if route == "/api/checkin":
-                    return handler.send_json(record_checkin(data_file, payload))
+                    line_user_id, err = handler.authenticated_user(payload, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    data, code = checkin_for_user(
+                        data_file, line_user_id, payload, config
+                    )
+                    return handler.send_json(data, code)
+                if route == "/api/onboarding/reminder":
+                    line_user_id, err = handler.authenticated_user(payload, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    data, code = update_onboarding_reminder(
+                        data_file, line_user_id, payload
+                    )
+                    return handler.send_json(data, code)
+                if route == "/api/onboarding/complete":
+                    line_user_id, err = handler.authenticated_user(payload, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    data, code = complete_onboarding_for_user(
+                        data_file, line_user_id, payload
+                    )
+                    return handler.send_json(data, code)
                 if route == "/api/warning/cancel":
                     return handler.send_json(cancel_warning(data_file, payload, config))
                 if route == "/api/settings":
