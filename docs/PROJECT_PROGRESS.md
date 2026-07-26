@@ -6,6 +6,7 @@ tags:
   - 開發進度
   - task-3
   - task-4
+  - task-5
 status: in-progress
 branch: agent/liff-provider-migration
 ---
@@ -21,7 +22,7 @@ branch: agent/liff-provider-migration
 |---|---|---|
 | 規格 | ✅ 已核對 | [[superpowers/specs/2026-07-26-member-guardian-sos-recovery-design]] |
 | 程式 | 🔄 修正中 | `agent/liff-provider-migration` |
-| 自動化測試 | 🟡 開發分支通過 | Python 355／355、Node 35／35 |
+| 自動化測試 | 🟡 開發分支通過 | Python 363／363、Node 35／35 |
 | LINE 實機 | ❌ 尚未完成 | 需兩個真實 LINE 帳號、iPhone 與 Android |
 | 合併主線 | ❌ 尚未完成 | 未合併 |
 | 正式部署 | ❌ 尚未完成 | 未取得部署同意 |
@@ -55,7 +56,6 @@ branch: agent/liff-provider-migration
 ### 🟡 已實作但未上線
 
 - Task 4 守護群摘要與設定（本機 2026-07-27 全量回歸通過，等待真 LINE 群組及 PostgreSQL 實機）
-- Task 5 SOS 統一流程及濫用限制
 - Task 6 智慧提醒及 LINE 用量統計
 
 ### ❌ 尚未完成
@@ -80,7 +80,7 @@ branch: agent/liff-provider-migration
 |---|---|
 | Task 4 聚焦 Python | 37／37 通過 |
 | Task 4 LIFF 行為測試 | 1／1 通過 |
-| 全量 Python | 355／355 通過 |
+| 全量 Python | 363／363 通過 |
 | Node 行為測試 | 35／35 通過 |
 | `git diff --check` | 通過 |
 
@@ -121,6 +121,41 @@ branch: agent/liff-provider-migration
 
 > [!caution] 尚存低風險
 > 若首次推播已成功但程序在寫入結算前中斷，且租約回收前後群成員剛好改變，LINE 仍會透過 Retry Key 防止重複投遞，但重跑結算使用的成員數可能與首次投遞快照有少量差異；正式成本帳單對照時需驗證。
+
+## Task 5｜SOS 緊急求助
+
+> [!warning] 🟡 本機程式與測試通過
+> 尚未完成真實 LINE 雙帳號、守護群、iPhone／Android、正式 PostgreSQL 與實際訊息帳單驗收，因此尚未正式上線。
+
+### ✅ 本機已完成
+
+- 所有方案保留基本 SOS，不因方案到期移除緊急入口
+- 三次確認後才送出，定位拒絕或逾時仍可送出不含位置的 SOS
+- 只通知目前仍維持雙向關係的核心守護人，排除一般守護人、緊急聯絡人與單向殘留
+- 取得交易保留後重新讀取最新守護人與守護群狀態
+- 同時觸發只建立一個 SOS 事件，不重複推播或計費
+- 每筆原始通知保存並重用穩定 LINE Retry Key
+- 送出者收到結果確認；API 與畫面只顯示安全名稱，不回傳完整 LINE／群組 ID
+- 取消與重試共用事件級交易租約，互相排斥
+- 取消只通知原成功收件人；部分失敗保留可重試狀態且畫面不誤報全數成功
+- 重試只處理原失敗收件人，並重用原始 Retry Key
+- 群組原始通知、取消與重試依實際群成員數記錄 LINE 訊息成本
+- 兩次／24 小時進入三天觀察；三次／7 天限制一般擴散七天
+- 限制期間仍顯示 110／119，並保留一位主要核心守護人備援
+- 未綁核心守護人時仍開啟含 110／119 的緊急畫面
+- SOS 事件先持久化 outbox，再對外推播並原子結算；中斷恢復重用原 Retry Key
+- 送出者確認也納入 outbox，且不能掩蓋所有守護對象通知失敗
+- 取消與過期的事件租約會正確釋放，狀態未知的 pending 收件人不會收到取消通知
+- 群組原始、重試與取消成本沿用投遞當下的收件人數快照
+- 最終獨立複審：Critical 0、Important 0、Minor 0
+
+### 🔄 外部驗收
+
+- 真實 LINE 雙帳號及守護群的原始通知、部分失敗、取消與重試
+- LINE Retry Key 重複接受回應與實際不重送
+- iPhone／Android 三次確認、定位拒絕、119／110 與取消畫面
+- 正式 PostgreSQL 多程序同時觸發、取消及重試
+- LINE Message API 實際用量與成本台帳對照
 
 > [!info] 依賴環境
 > 專案正式 runtime 為 Python 3.11。本工作區只有 Python 3.12；`aiohttp==3.8.4` 無 Python 3.12 wheel，因此本地回歸使用已安裝 Flask 的 Python 3.12 測試環境。正式部署前仍須在 Python 3.11 完整安裝 `requirements.txt` 再驗收。

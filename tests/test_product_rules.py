@@ -283,6 +283,14 @@ class ProductRulesTests(unittest.TestCase):
                 self.assertEqual(plans[plan]["trajectory_days"], 0)
                 self.assertFalse(plans[plan]["realtime_tracking"])
 
+    def test_sos_result_ui_lists_safe_guardian_and_group_names(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("function formatSosRecipientNames(result)", page)
+        self.assertIn("result.guardians", page)
+        self.assertIn("result.groups", page)
+        self.assertIn("通知明細", page)
+
     def test_mvp_home_has_exactly_four_primary_actions(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("每日平安", page)
@@ -758,7 +766,26 @@ class ProductRulesTests(unittest.TestCase):
             : page.index("let sosLocationPromise")
         ]
         self.assertNotIn("apiUpdateLocation(", refresh_block)
-        self.assertEqual(page.count("openSosModal();"), 1)
+        route_block = page[
+            page.index("function openRequestedPage()")
+            : page.index("function clearInviteFromUrl()")
+        ]
+        self.assertIn('if (action === "sos")', route_block)
+        self.assertIn("openSosFlow();", route_block)
+        self.assertNotIn('showTab("home");\n        openSosFlow();', route_block)
+        bootstrap_sos = page[
+            page.index('} else if (openAction === "sos") {')
+            : page.index("} else if (isGuardOpen)", page.index('} else if (openAction === "sos") {'))
+        ]
+        self.assertNotIn('showTab("home")', bootstrap_sos)
+        self.assertIn("openSosFlow();", bootstrap_sos)
+        bind_block = page[
+            page.index("function bindMvpHome()")
+            : page.index("function bindTabEvents()")
+        ]
+        self.assertIn('sosBtn.addEventListener("click", openSosFlow)', bind_block)
+        self.assertIn('guardSosBtn.addEventListener("click", openSosFlow)', bind_block)
+        self.assertNotIn('addEventListener("click", openSosModal)', bind_block)
         self.assertIn("result.sent_at", page)
         self.assertIn("result.cancel_available", page)
         self.assertIn("發送時間", page)

@@ -8618,7 +8618,12 @@
 
     function openSosFlow() {
       if (currentStatusData && currentStatusData.guardian_required === true) {
-        showOnboarding();
+        $("sosConfirmModal").hidden = false;
+        renderSosAccess();
+        const holdButton = $("sosHoldButton");
+        if (holdButton) holdButton.disabled = true;
+        $("sosFeedback").textContent =
+          "尚未綁定可通知的核心守護人，系統不能代你推播；有立即危險請先撥 119 或 110";
         return false;
       }
       openSosModal();
@@ -8641,11 +8646,11 @@
         : "（這次沒附上即時位置，請用電話告訴家人你在哪）";
       let msg = "";
       if (sent > 0 && failed === 0) {
-        msg = `已通知 ${sent} 位 LINE 守護人${locHint}`;
+        msg = `已通知 ${sent} 個守護對象${locHint}`;
       } else if (sent > 0 && failed > 0) {
-        msg = `已通知 ${sent} 位 LINE 守護人，另有 ${failed} 位推播失敗${locHint}`;
+        msg = `已通知 ${sent} 個守護對象，另有 ${failed} 個推播失敗${locHint}`;
       } else {
-        msg = "系統未能推播給 LINE 守護人";
+        msg = "系統未能推播給守護對象";
       }
       if (phoneOnly > 0) {
         msg += `。另有 ${phoneOnly} 位僅有電話的緊急聯絡人，請用下方撥號聯絡（無法自動 LINE 通知）`;
@@ -8658,7 +8663,22 @@
         : "";
       if (sentAt) msg += `。發送時間 ${sentAt}`;
       if (result && result.cancel_available) msg += "。10 分鐘內可取消通知";
+      const recipientNames = formatSosRecipientNames(result);
+      if (recipientNames) msg += `。通知明細：${recipientNames}`;
       return msg;
+    }
+
+    function formatSosRecipientNames(result) {
+      const rows = [
+        ...(Array.isArray(result && result.guardians) ? result.guardians : []),
+        ...(Array.isArray(result && result.groups) ? result.groups : []),
+      ];
+      return rows
+        .map((row) => {
+          const name = String(row && row.name || "守護對象").trim();
+          return `${name}：${row && row.status === "sent" ? "已通知" : "通知失敗"}`;
+        })
+        .join("、");
     }
 
     function revealSosPhoneDials(phoneContacts) {
@@ -10023,7 +10043,6 @@
         } else if (openAction === "history" && !forceOnboarding && typeof showTab === "function") {
           showTab("history");
         } else if (openAction === "sos") {
-          if (typeof showTab === "function") showTab("home");
           openSosFlow();
         } else if (isGuardOpen) {
           const onboardingOpen = $("onboardingModal") && !$("onboardingModal").hidden;
@@ -10225,9 +10244,9 @@
       if (safeBtn) safeBtn.addEventListener("click", () => doCheckin());
       if (guardBtn) guardBtn.addEventListener("click", openMvpGuardPanel);
       if (callBtn) callBtn.addEventListener("click", openMvpCallPanel);
-      if (sosBtn) sosBtn.addEventListener("click", openSosModal);
+      if (sosBtn) sosBtn.addEventListener("click", openSosFlow);
       const guardSosBtn = $("mvpGuardSosBtn");
-      if (guardSosBtn) guardSosBtn.addEventListener("click", openSosModal);
+      if (guardSosBtn) guardSosBtn.addEventListener("click", openSosFlow);
       if (guardBack) guardBack.addEventListener("click", showMvpHomeOnly);
       if (callBack) callBack.addEventListener("click", showMvpHomeOnly);
       if (guardStart) guardStart.addEventListener("click", () => {
@@ -10330,12 +10349,19 @@
           cancelSentBtn.disabled = true;
           try {
             const result = await apiCancelSos(eventId, reason);
-            $("sosFeedback").textContent = `已通知 ${Number(result.cancel_sent) || 0} 位原收件人：目前安全，原 SOS 紀錄會保留`;
-            cancelSentBtn.hidden = true;
+            const cancelFailed = Number(result.cancel_failed) || 0;
+            $("sosFeedback").textContent = cancelFailed > 0
+              ? `已通知 ${Number(result.cancel_sent) || 0} 位，另有 ${cancelFailed} 位取消通知失敗，請直接聯絡對方`
+              : `已通知 ${Number(result.cancel_sent) || 0} 位原收件人：目前安全，原 SOS 紀錄會保留`;
+            cancelSentBtn.hidden = cancelFailed === 0;
           } catch (error) {
-            $("sosFeedback").textContent = error.status === 409
-              ? "已超過 10 分鐘取消時間；請直接聯絡家人報平安"
-              : "取消通知暫時失敗，請直接聯絡家人報平安";
+            const details = (error && error.details) || {};
+            const failed = Number(details.cancel_failed) || 0;
+            $("sosFeedback").textContent = failed > 0
+              ? `已有 ${Number(details.cancel_sent) || 0} 位收到取消，但 ${failed} 位仍失敗；請直接聯絡對方，稍後可再按一次重試`
+              : error.status === 409
+                ? "取消處理中或已超過 10 分鐘；請直接聯絡家人報平安"
+                : "取消通知暫時失敗，請直接聯絡家人報平安";
           } finally {
             cancelSentBtn.disabled = false;
           }
