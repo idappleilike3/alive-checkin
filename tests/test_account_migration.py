@@ -1,3 +1,4 @@
+import copy
 import json
 import tempfile
 import unittest
@@ -216,12 +217,14 @@ class TicketLifecycleTests(unittest.TestCase):
             self.config,
             now=created_at + timedelta(seconds=599),
         )
+        state_before_expired_status = alive_app.load_state(self.data_file)
         at_expiry = alive_app.account_migration_ticket_status(
             self.data_file,
             self.old_line_user_id,
             self.config,
             now=created_at + timedelta(seconds=600),
         )
+        state_after_expired_status = alive_app.load_state(self.data_file)
 
         self.assertEqual(
             before_expiry,
@@ -231,10 +234,18 @@ class TicketLifecycleTests(unittest.TestCase):
             at_expiry,
             {"ok": True, "configured": True, "pending": False, "expires_in": 0},
         )
-        state = alive_app.load_state(self.data_file)
-        ticket = next(iter(state["account_migration_tickets"].values()))
-        self.assertEqual(ticket["status"], "expired")
-        self.assertNotIn(data["migration_code"], json.dumps(state))
+        self.assertEqual(
+            state_after_expired_status,
+            state_before_expired_status,
+        )
+        ticket = next(
+            iter(state_after_expired_status["account_migration_tickets"].values())
+        )
+        self.assertEqual(ticket["status"], "pending")
+        self.assertNotIn(
+            data["migration_code"],
+            json.dumps(state_after_expired_status),
+        )
 
     def test_ticket_cannot_be_redeemed_twice(self):
         created_at = datetime(2026, 7, 26, 1, 0, tzinfo=timezone.utc)
@@ -255,6 +266,7 @@ class TicketLifecycleTests(unittest.TestCase):
         self.assertIsNone(error)
         ticket["status"] = "used"
         ticket["used_at"] = (created_at + timedelta(seconds=1)).isoformat()
+        state_before_repeated_validation = copy.deepcopy(state)
 
         repeated_ticket, repeated_error = (
             alive_app.validate_account_migration_ticket(
@@ -266,6 +278,7 @@ class TicketLifecycleTests(unittest.TestCase):
         )
         self.assertIsNone(repeated_ticket)
         self.assertEqual(repeated_error, "used_code")
+        self.assertEqual(state, state_before_repeated_validation)
 
     def test_ticket_source_must_still_exist(self):
         created_at = datetime(2026, 7, 26, 1, 0, tzinfo=timezone.utc)
@@ -277,6 +290,7 @@ class TicketLifecycleTests(unittest.TestCase):
         )
         state = alive_app.load_state(self.data_file)
         del state["users"][self.old_line_user_id]
+        state_before_validation = copy.deepcopy(state)
 
         ticket, error = alive_app.validate_account_migration_ticket(
             state,
@@ -287,6 +301,82 @@ class TicketLifecycleTests(unittest.TestCase):
 
         self.assertIsNone(ticket)
         self.assertEqual(error, "source_missing")
+        self.assertEqual(state, state_before_validation)
+
+    def test_ticket_alias_validation_leaves_state_unchanged(self):
+        created_at = datetime(2026, 7, 26, 1, 0, tzinfo=timezone.utc)
+        data, _ = alive_app.create_account_migration_ticket(
+            self.data_file,
+            self.old_line_user_id,
+            self.config,
+            now=created_at,
+        )
+        state = alive_app.load_state(self.data_file)
+        state["account_migration_aliases"][self.old_line_user_id] = {
+            "status": "disabled",
+            "target_line_user_id": self.claimed_line_user_id,
+        }
+        state_before_validation = copy.deepcopy(state)
+
+        ticket, error = alive_app.validate_account_migration_ticket(
+            state,
+            data["migration_code"],
+            self.config["ACCOUNT_MIGRATION_SECRET"],
+            now=created_at + timedelta(seconds=1),
+        )
+
+        self.assertIsNone(ticket)
+        self.assertEqual(error, "source_missing")
+        self.assertEqual(state, state_before_validation)
+
+    def test_status_is_read_only_for_missing_and_aliased_sources(self):
+        created_at = datetime(2026, 7, 26, 1, 0, tzinfo=timezone.utc)
+        for source_state in ("missing", "aliased"):
+            with self.subTest(source_state=source_state):
+                data_file = str(
+                    Path(self.tempdir.name) / f"{source_state}-state.json"
+                )
+                state = alive_app.load_state(data_file)
+                state["users"][self.old_line_user_id] = {
+                    **alive_app.DEFAULT_PROFILE,
+                    "line_user_id": self.old_line_user_id,
+                }
+                alive_app.save_state(data_file, state)
+                alive_app.create_account_migration_ticket(
+                    data_file,
+                    self.old_line_user_id,
+                    self.config,
+                    now=created_at,
+                )
+                state = alive_app.load_state(data_file)
+                if source_state == "missing":
+                    del state["users"][self.old_line_user_id]
+                else:
+                    state["account_migration_aliases"][self.old_line_user_id] = {
+                        "status": "disabled",
+                        "target_line_user_id": self.claimed_line_user_id,
+                    }
+                alive_app.save_state(data_file, state)
+                state_before_status = alive_app.load_state(data_file)
+
+                status = alive_app.account_migration_ticket_status(
+                    data_file,
+                    self.old_line_user_id,
+                    self.config,
+                    now=created_at + timedelta(seconds=1),
+                )
+                state_after_status = alive_app.load_state(data_file)
+
+                self.assertEqual(
+                    status,
+                    {
+                        "ok": True,
+                        "configured": True,
+                        "pending": False,
+                        "expires_in": 0,
+                    },
+                )
+                self.assertEqual(state_after_status, state_before_status)
 
     def test_raw_code_and_line_ids_are_absent_from_public_status_and_audit(self):
         start = self._start()

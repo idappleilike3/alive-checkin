@@ -5965,7 +5965,6 @@ def validate_account_migration_ticket(state, code, secret, now=None):
     if status == "expired" or not expires_at:
         return None, "expired_code"
     if _account_migration_now(now) >= expires_at:
-        matched["status"] = "expired"
         return None, "expired_code"
     if status != "pending":
         return None, "invalid_code"
@@ -6049,7 +6048,6 @@ def account_migration_ticket_status(
     verified_old_id = str(old_line_user_id or "").strip()
     state = load_state(data_file)
     current = _account_migration_now(now)
-    changed = False
     remaining = 0
     users = state.get("users") or {}
     aliases = state.get("account_migration_aliases") or {}
@@ -6063,13 +6061,9 @@ def account_migration_ticket_status(
             continue
         expires_at = _account_migration_datetime(ticket.get("expires_at"))
         if not source_exists or not expires_at or current >= expires_at:
-            ticket["status"] = "expired"
-            changed = True
             continue
         remaining = max(remaining, int((expires_at - current).total_seconds()))
 
-    if changed:
-        save_state(data_file, state)
     safe_status["pending"] = remaining > 0
     safe_status["expires_in"] = remaining
     return safe_status
