@@ -434,5 +434,514 @@ class TicketLifecycleTests(unittest.TestCase):
         self.assertNotIn(self.claimed_line_user_id, response_text)
 
 
+class ProfileMergeTests(unittest.TestCase):
+    def setUp(self):
+        self.old_id = "U-legacy-provider"
+        self.new_id = "U-current-provider"
+        self.event_id = "migration-event-001"
+        self.now = datetime(2026, 7, 26, 2, 0, tzinfo=timezone.utc)
+
+    def test_blank_new_profile_is_replaced_by_complete_old_profile(self):
+        old_profile = {
+            **alive_app.DEFAULT_PROFILE,
+            "line_user_id": self.old_id,
+            "display_name": "Legacy member",
+            "history": ["2026-07-24", "2026-07-25"],
+            "contacts": [{"id": "contact-1", "name": "Alice"}],
+            "smart_reminders": [{"id": "reminder-1", "title": "Medication"}],
+            "calendar_notes": {
+                "2026-07-25": {"id": "note-1", "content": "Doctor"}
+            },
+            "friends": ["U-friend-1"],
+            "guardian_group_ids": ["group-1"],
+            "contact_email": "legacy@example.invalid",
+        }
+        new_profile = {
+            **alive_app.DEFAULT_PROFILE,
+            "line_user_id": self.new_id,
+            "display_name": "LINE 使用者",
+        }
+
+        merged = alive_app.merge_migration_profiles(
+            old_profile,
+            new_profile,
+            now=self.now,
+        )
+
+        self.assertEqual(merged["line_user_id"], self.new_id)
+        self.assertEqual(merged["display_name"], "Legacy member")
+        self.assertEqual(merged["history"], ["2026-07-24", "2026-07-25"])
+        self.assertEqual([row["id"] for row in merged["contacts"]], ["contact-1"])
+        self.assertEqual(
+            [row["id"] for row in merged["smart_reminders"]],
+            ["reminder-1"],
+        )
+        self.assertEqual(
+            merged["calendar_notes"]["2026-07-25"]["content"],
+            "Doctor",
+        )
+        self.assertEqual(merged["friends"], ["U-friend-1"])
+        self.assertEqual(merged["guardian_group_ids"], ["group-1"])
+        self.assertEqual(merged["contact_email"], "legacy@example.invalid")
+
+    def test_nonblank_profiles_merge_without_duplicate_business_ids(self):
+        old_profile = {
+            **alive_app.DEFAULT_PROFILE,
+            "line_user_id": self.old_id,
+            "display_name": "Legacy member",
+            "history": ["2026-07-24T23:30:00+00:00", "2026-07-26"],
+            "contacts": [
+                {
+                    "id": "contact-shared",
+                    "name": "Legacy name",
+                    "updated_at": "2026-07-20T00:00:00+00:00",
+                },
+                {"name": "Same visible name", "phone": "0900-old"},
+            ],
+            "smart_reminders": [
+                {
+                    "id": "reminder-shared",
+                    "title": "Legacy title",
+                    "updated_at": "2026-07-20T00:00:00+00:00",
+                }
+            ],
+            "calendar_notes": {
+                "note-shared": {
+                    "id": "note-shared",
+                    "content": "Legacy note",
+                    "updated_at": "2026-07-20T00:00:00+00:00",
+                }
+            },
+            "friends": ["U-friend-1"],
+            "guardian_group_ids": ["group-1"],
+        }
+        new_profile = {
+            **alive_app.DEFAULT_PROFILE,
+            "line_user_id": self.new_id,
+            "display_name": "Current member",
+            "history": ["2026-07-25", "2026-07-26"],
+            "contacts": [
+                {
+                    "id": "contact-shared",
+                    "name": "Current name",
+                    "updated_at": "2026-07-25T00:00:00+00:00",
+                },
+                {"name": "Same visible name", "phone": "0900-new"},
+            ],
+            "smart_reminders": [
+                {
+                    "id": "reminder-shared",
+                    "title": "Current title",
+                    "updated_at": "2026-07-25T00:00:00+00:00",
+                }
+            ],
+            "calendar_notes": {
+                "note-shared": {
+                    "id": "note-shared",
+                    "content": "Current note",
+                    "updated_at": "2026-07-25T00:00:00+00:00",
+                }
+            },
+            "friends": ["U-friend-1", "U-friend-2"],
+            "guardian_group_ids": ["group-1", "group-2"],
+        }
+
+        merged = alive_app.merge_migration_profiles(
+            old_profile,
+            new_profile,
+            now=self.now,
+        )
+
+        self.assertEqual(merged["history"], ["2026-07-25", "2026-07-26"])
+        shared_contacts = [
+            row for row in merged["contacts"] if row["id"] == "contact-shared"
+        ]
+        self.assertEqual(len(shared_contacts), 1)
+        self.assertEqual(shared_contacts[0]["name"], "Current name")
+        unnamed_contacts = [
+            row for row in merged["contacts"] if row["name"] == "Same visible name"
+        ]
+        self.assertEqual(len(unnamed_contacts), 2)
+        self.assertEqual(len({row["id"] for row in unnamed_contacts}), 2)
+        self.assertEqual(
+            merged["smart_reminders"][0]["title"],
+            "Current title",
+        )
+        self.assertEqual(
+            merged["calendar_notes"]["note-shared"]["content"],
+            "Current note",
+        )
+        self.assertEqual(merged["friends"], ["U-friend-1", "U-friend-2"])
+        self.assertEqual(merged["guardian_group_ids"], ["group-1", "group-2"])
+
+    def test_newer_preferences_win_but_higher_active_entitlement_is_preserved(self):
+        old_profile = {
+            **alive_app.DEFAULT_PROFILE,
+            "line_user_id": self.old_id,
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": "2026-08-26T00:00:00+00:00",
+            "preferences": {
+                "updated_at": "2026-07-20T00:00:00+00:00",
+                "reminder_time": "09:00",
+            },
+        }
+        new_profile = {
+            **alive_app.DEFAULT_PROFILE,
+            "line_user_id": self.new_id,
+            "plan": "paid_199_year",
+            "payment_status": "active",
+            "paid_until": "2027-07-26T00:00:00+00:00",
+            "preferences": {
+                "updated_at": "2026-07-25T00:00:00+00:00",
+                "reminder_time": "18:00",
+            },
+        }
+
+        merged = alive_app.merge_migration_profiles(
+            old_profile,
+            new_profile,
+            now=self.now,
+        )
+        self.assertEqual(merged["plan"], "paid_799")
+        self.assertEqual(
+            merged["paid_until"],
+            "2026-08-26T00:00:00+00:00",
+        )
+        self.assertEqual(merged["preferences"]["reminder_time"], "18:00")
+
+        same_rank = alive_app.merge_migration_profiles(
+            {
+                **old_profile,
+                "plan": "paid_399",
+                "paid_until": "2026-08-26T00:00:00+00:00",
+            },
+            {
+                **new_profile,
+                "plan": "paid_399_year",
+                "paid_until": "2026-09-26T00:00:00+00:00",
+            },
+            now=self.now,
+        )
+        self.assertEqual(same_rank["plan"], "paid_399_year")
+        self.assertEqual(
+            same_rank["paid_until"],
+            "2026-09-26T00:00:00+00:00",
+        )
+
+    def test_expired_location_is_not_moved(self):
+        old_profile = {
+            **alive_app.DEFAULT_PROFILE,
+            "line_user_id": self.old_id,
+            "location": {
+                "active": True,
+                "sharing": True,
+                "expires_at": "2026-07-26T01:59:59+00:00",
+                "latitude": 25.0,
+                "longitude": 121.5,
+            },
+        }
+        new_profile = {
+            **alive_app.DEFAULT_PROFILE,
+            "line_user_id": self.new_id,
+            "location": {},
+        }
+
+        merged = alive_app.merge_migration_profiles(
+            old_profile,
+            new_profile,
+            now=self.now,
+        )
+
+        self.assertEqual(merged["location"], {})
+
+    def test_all_top_level_owner_references_are_reindexed(self):
+        state = {
+            "users": {
+                self.old_id: {
+                    **alive_app.DEFAULT_PROFILE,
+                    "line_user_id": self.old_id,
+                },
+                self.new_id: {
+                    **alive_app.DEFAULT_PROFILE,
+                    "line_user_id": self.new_id,
+                },
+                "U-peer": {
+                    **alive_app.DEFAULT_PROFILE,
+                    "line_user_id": "U-peer",
+                    "friends": [self.old_id],
+                    "contacts": [
+                        {
+                            "id": "peer-contact",
+                            "line_id": self.old_id,
+                            "line_user_id": self.old_id,
+                        }
+                    ],
+                    "guarding_for": [self.old_id],
+                    "invited_by": self.old_id,
+                },
+            },
+            "guardian_groups": {
+                "group-1": {
+                    "group_id": "group-1",
+                    "owner_line_user_id": self.old_id,
+                    "admin_line_user_ids": [self.old_id, "U-peer"],
+                    "member_ids_at_bind": [self.old_id, "U-peer"],
+                }
+            },
+            "friend_invites": {
+                "INVITE1": {
+                    "line_user_id": self.old_id,
+                    "accepted_by": self.old_id,
+                }
+            },
+            "orders": [
+                {"order_id": "order-1", "line_user_id": self.old_id}
+            ],
+            "payment_records": [
+                {"transaction_id": "payment-1", "payer_line_user_id": self.old_id}
+            ],
+            "support_tickets": [
+                {"id": "support-1", "line_user_id": self.old_id}
+            ],
+            "privacy_requests": [
+                {"request_id": "privacy-1", "requester_line_user_id": self.old_id},
+                {"requester_line_user_id": self.old_id, "status": "open"},
+            ],
+            "notification_logs": [
+                {
+                    "log_id": "notification-1",
+                    "line_user_id": self.old_id,
+                    "target": self.old_id,
+                    "message": "Historical message remains unchanged",
+                }
+            ],
+            "checkin_warnings": [
+                {"event_id": "warning-1", "owner_line_user_id": self.old_id}
+            ],
+            "sos_logs": [
+                {"event_id": "sos-1", "line_user_id": self.old_id}
+            ],
+            "sos_pending": {
+                self.old_id: {
+                    "event_id": "sos-pending-1",
+                }
+            },
+            "location_grants": {
+                self.old_id: {
+                    "grant_id": "grant-1",
+                    "owner_line_user_id": self.old_id,
+                    "grantee_line_user_id": "U-peer",
+                }
+            },
+            "account_migration_aliases": {},
+        }
+
+        result = alive_app.reindex_account_references(
+            state,
+            self.old_id,
+            self.new_id,
+            self.event_id,
+            now=self.now,
+        )
+
+        self.assertEqual(
+            result,
+            {"ok": True, "reindexed_records": 13},
+        )
+        peer = state["users"]["U-peer"]
+        self.assertEqual(peer["friends"], [self.new_id])
+        self.assertEqual(peer["contacts"][0]["line_id"], self.new_id)
+        self.assertEqual(peer["contacts"][0]["line_user_id"], self.new_id)
+        self.assertEqual(peer["guarding_for"], [self.new_id])
+        self.assertEqual(peer["invited_by"], self.new_id)
+        group = state["guardian_groups"]["group-1"]
+        self.assertEqual(group["owner_line_user_id"], self.new_id)
+        self.assertEqual(
+            group["admin_line_user_ids"],
+            [self.new_id, "U-peer"],
+        )
+        self.assertEqual(
+            group["member_ids_at_bind"],
+            [self.new_id, "U-peer"],
+        )
+        self.assertEqual(
+            state["friend_invites"]["INVITE1"]["line_user_id"],
+            self.new_id,
+        )
+        self.assertEqual(
+            state["friend_invites"]["INVITE1"]["accepted_by"],
+            self.new_id,
+        )
+        self.assertEqual(state["orders"][0]["line_user_id"], self.new_id)
+        self.assertEqual(
+            state["payment_records"][0]["payer_line_user_id"],
+            self.new_id,
+        )
+        self.assertEqual(
+            state["support_tickets"][0]["line_user_id"],
+            self.new_id,
+        )
+        self.assertTrue(
+            all(
+                row["requester_line_user_id"] == self.new_id
+                for row in state["privacy_requests"]
+            )
+        )
+        self.assertIn("id", state["privacy_requests"][1])
+        notification = state["notification_logs"][0]
+        self.assertEqual(notification["line_user_id"], self.new_id)
+        self.assertEqual(notification["target"], self.new_id)
+        self.assertEqual(
+            notification["message"],
+            "Historical message remains unchanged",
+        )
+        self.assertEqual(
+            state["checkin_warnings"][0]["owner_line_user_id"],
+            self.new_id,
+        )
+        self.assertEqual(state["sos_logs"][0]["line_user_id"], self.new_id)
+        self.assertIn(self.new_id, state["sos_pending"])
+        self.assertNotIn(self.old_id, state["sos_pending"])
+        self.assertIn(self.new_id, state["location_grants"])
+        self.assertNotIn(self.old_id, state["location_grants"])
+        self.assertTrue(
+            all(
+                row.get("migration_event_id") == self.event_id
+                for row in (
+                    group,
+                    state["friend_invites"]["INVITE1"],
+                    state["orders"][0],
+                    state["payment_records"][0],
+                    state["support_tickets"][0],
+                    *state["privacy_requests"],
+                    notification,
+                    state["checkin_warnings"][0],
+                    state["sos_logs"][0],
+                    state["sos_pending"][self.new_id],
+                    state["location_grants"][self.new_id],
+                )
+            )
+        )
+        self.assertEqual(
+            state["account_migration_aliases"][self.old_id],
+            {
+                "target_line_user_id": self.new_id,
+                "created_at": "2026-07-26T02:00:00+00:00",
+                "status": "disabled",
+            },
+        )
+
+    def test_top_level_records_dedupe_by_stable_id_but_not_visible_fields(self):
+        state = {
+            "users": {},
+            "orders": [
+                {
+                    "order_id": "order-shared",
+                    "line_user_id": self.old_id,
+                    "status": "pending",
+                    "updated_at": "2026-07-20T00:00:00+00:00",
+                },
+                {
+                    "order_id": "order-shared",
+                    "line_user_id": self.new_id,
+                    "status": "paid",
+                    "updated_at": "2026-07-25T00:00:00+00:00",
+                },
+                {
+                    "line_user_id": self.old_id,
+                    "display_name": "Same visible name",
+                },
+                {
+                    "line_user_id": self.new_id,
+                    "display_name": "Same visible name",
+                },
+            ],
+            "account_migration_aliases": {},
+        }
+
+        alive_app.reindex_account_references(
+            state,
+            self.old_id,
+            self.new_id,
+            self.event_id,
+            now=self.now,
+        )
+
+        shared = [
+            row for row in state["orders"] if row.get("order_id") == "order-shared"
+        ]
+        self.assertEqual(len(shared), 1)
+        self.assertEqual(shared[0]["status"], "paid")
+        stableless = [
+            row
+            for row in state["orders"]
+            if row.get("display_name") == "Same visible name"
+        ]
+        self.assertEqual(len(stableless), 2)
+        self.assertEqual(len({row["id"] for row in stableless}), 2)
+
+    def test_same_old_and_new_identity_is_rejected(self):
+        state = {
+            "users": {
+                self.old_id: {
+                    **alive_app.DEFAULT_PROFILE,
+                    "line_user_id": self.old_id,
+                }
+            },
+            "account_migration_aliases": {},
+        }
+        before = copy.deepcopy(state)
+
+        with self.assertRaisesRegex(ValueError, "^same_identity$"):
+            alive_app.reindex_account_references(
+                state,
+                self.old_id,
+                self.old_id,
+                self.event_id,
+                now=self.now,
+            )
+
+        self.assertEqual(state, before)
+
+    def test_disabled_alias_blocks_profile_recreation_and_registration(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            data_file = str(Path(tempdir) / "state.json")
+            state = alive_app.load_state(data_file)
+            state["users"].pop(self.old_id, None)
+            state["account_migration_aliases"][self.old_id] = {
+                "target_line_user_id": self.new_id,
+                "created_at": self.now.isoformat(),
+                "status": "disabled",
+            }
+            alive_app.save_state(data_file, state)
+
+            loaded = alive_app.load_state(data_file)
+            profile = alive_app.get_profile(loaded, self.old_id)
+            response, code = alive_app.register_line_user(
+                data_file,
+                {
+                    "line_user_id": self.old_id,
+                    "display_name": "Must not recreate",
+                },
+            )
+            after = alive_app.load_state(data_file)
+
+        self.assertIsNone(profile)
+        self.assertEqual(
+            response,
+            {
+                "ok": False,
+                "error": "account_migrated",
+                "action": "open_current_liff",
+            },
+        )
+        self.assertEqual(code, 409)
+        self.assertNotIn(self.old_id, after["users"])
+        response_text = json.dumps(response, ensure_ascii=False)
+        self.assertNotIn(self.old_id, response_text)
+        self.assertNotIn(self.new_id, response_text)
+
+
 if __name__ == "__main__":
     unittest.main()

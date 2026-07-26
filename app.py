@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import hmac
 import json
@@ -200,6 +201,16 @@ DEFAULT_PROFILE = {
     # 試用／方案到期提醒（≤3 天或已到期）；opt-out 後不再催
     "expiry_remind_opt_out": False,
     "expiry_remind_sent_date": "",
+}
+
+PLAN_RANK = {
+    "trial": 0,
+    "paid_199": 1,
+    "paid_199_year": 1,
+    "paid_399": 2,
+    "paid_399_year": 2,
+    "paid_799": 3,
+    "paid_799_year": 3,
 }
 
 # 試用／付費方案剩餘 ≤ 此天數（含已到期）才推到期提醒；每日最多一次
@@ -1407,6 +1418,9 @@ def get_profile(state, line_user_id=None):
     once on first create and never restarted on later visits.
     """
     if line_user_id:
+        alias = (state.get("account_migration_aliases") or {}).get(line_user_id)
+        if isinstance(alias, dict) and alias.get("status") == "disabled":
+            return None
         users = state.setdefault("users", {})
         is_new = line_user_id not in users
         user = users.setdefault(
@@ -2410,6 +2424,13 @@ def register_line_user(data_file, payload):
     if not line_user_id:
         return {"error": "missing line_user_id"}, 400
     state = load_state(data_file)
+    alias = (state.get("account_migration_aliases") or {}).get(line_user_id)
+    if isinstance(alias, dict) and alias.get("status") == "disabled":
+        return {
+            "ok": False,
+            "error": "account_migrated",
+            "action": "open_current_liff",
+        }, 409
     existing = (state.get("users") or {}).get(line_user_id)
     preserved = {}
     if isinstance(existing, dict):
@@ -6067,6 +6088,581 @@ def account_migration_ticket_status(
     safe_status["pending"] = remaining > 0
     safe_status["expires_in"] = remaining
     return safe_status
+
+
+_MIGRATION_PROFILE_LIST_KEYS = {
+    "contacts": ("id", "accepted_invite_id", "invite_id"),
+    "contacts_archived": ("id", "accepted_invite_id", "invite_id"),
+    "smart_reminders": ("id",),
+    "guarding_details": ("id", "line_user_id"),
+}
+
+_MIGRATION_PREFERENCE_KEYS = {
+    "preferences",
+    "interaction_state",
+    "smart_reminder_defaults",
+    "grace_hours",
+    "reminder_time",
+    "reminder_times",
+    "checkin_mode",
+    "auto_checkin_on_open",
+    "warning_cancel_minutes",
+    "alert_channels",
+    "attach_location_on_alert",
+    "contact_capacity_reminder_enabled",
+    "daily_checkin_reminder_enabled",
+    "guardian_details_reminder_enabled",
+    "expiry_remind_opt_out",
+}
+
+_MIGRATION_ENTITLEMENT_KEYS = {
+    "plan",
+    "membership_source",
+    "trial_started_at",
+    "trial_end",
+    "trial_policy_version",
+    "trial_notice_days_sent",
+    "trial_bonus_days",
+    "payment_status",
+    "paid_until",
+    "billing_cycle",
+    "payment_provider",
+    "payment_method_last4",
+    "next_billing_date",
+    "auto_renew_requested",
+    "auto_renew_enabled",
+    "auto_renew_status",
+    "plan_expired_at",
+    "contacts_retain_until",
+}
+
+
+def _migration_value_blank(value):
+    return value is None or value == "" or value == [] or value == {}
+
+
+def _migration_timestamp(value):
+    if not value:
+        return None
+    return _account_migration_datetime(value)
+
+
+def _migration_record_timestamp(record):
+    if not isinstance(record, dict):
+        return None
+    for key in ("updated_at", "accepted_at", "created_at"):
+        parsed = _migration_timestamp(record.get(key))
+        if parsed:
+            return parsed
+    return None
+
+
+def _migration_preference_timestamp(profile, key, value):
+    if isinstance(value, dict):
+        nested = _migration_timestamp(value.get("updated_at"))
+        if nested:
+            return nested
+    return (
+        _migration_timestamp((profile or {}).get(f"{key}_updated_at"))
+        or _migration_timestamp((profile or {}).get("preferences_updated_at"))
+    )
+
+
+def _migration_choose_record(legacy, current):
+    legacy_time = _migration_record_timestamp(legacy)
+    current_time = _migration_record_timestamp(current)
+    if current_time and (not legacy_time or current_time > legacy_time):
+        return copy.deepcopy(current)
+    return copy.deepcopy(legacy)
+
+
+def _migration_stable_value(record, keys):
+    if not isinstance(record, dict):
+        return ""
+    for key in keys:
+        value = str(record.get(key) or "").strip()
+        if value:
+            return f"{key}:{value}"
+    return ""
+
+
+def _merge_migration_records(legacy_rows, current_rows, keys, prefix):
+    merged = []
+    positions = {}
+    used_ids = {
+        str(row.get("id") or "").strip()
+        for row in [*(legacy_rows or []), *(current_rows or [])]
+        if isinstance(row, dict) and str(row.get("id") or "").strip()
+    }
+    generated_index = 0
+
+    for source_name, rows in (("legacy", legacy_rows or []), ("current", current_rows or [])):
+        for row in rows:
+            if not isinstance(row, dict):
+                row = {"value": copy.deepcopy(row)}
+            else:
+                row = copy.deepcopy(row)
+            stable = _migration_stable_value(row, keys)
+            if stable and stable in positions:
+                position = positions[stable]
+                if source_name == "current":
+                    merged[position] = _migration_choose_record(
+                        merged[position],
+                        row,
+                    )
+                continue
+            if not stable:
+                generated_index += 1
+                generated = f"migration-{prefix}-{generated_index:04d}"
+                while generated in used_ids:
+                    generated_index += 1
+                    generated = f"migration-{prefix}-{generated_index:04d}"
+                row["id"] = generated
+                used_ids.add(generated)
+                stable = f"id:{generated}"
+            positions[stable] = len(merged)
+            merged.append(row)
+    return merged
+
+
+def _migration_history_date(value):
+    if isinstance(value, dict):
+        raw = (
+            value.get("date")
+            or value.get("checkin_date")
+            or value.get("checked_at")
+            or value.get("created_at")
+        )
+    else:
+        raw = value
+    text = str(raw or "").strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return text
+    return date_string_in_taipei(text)
+
+
+def _merge_migration_history(legacy_rows, current_rows):
+    by_date = {}
+    undated = []
+    for row in [*(legacy_rows or []), *(current_rows or [])]:
+        normalized = _migration_history_date(row)
+        if normalized:
+            by_date[normalized] = normalized
+        else:
+            undated.append(copy.deepcopy(row))
+    return [*sorted(by_date), *undated]
+
+
+def _merge_migration_calendar_notes(legacy_notes, current_notes):
+    if isinstance(legacy_notes, dict) or isinstance(current_notes, dict):
+        merged = copy.deepcopy(legacy_notes) if isinstance(legacy_notes, dict) else {}
+        for key, current_value in (
+            current_notes.items() if isinstance(current_notes, dict) else []
+        ):
+            if key not in merged:
+                merged[key] = copy.deepcopy(current_value)
+                continue
+            merged[key] = _migration_choose_record(merged[key], current_value)
+        return merged
+    return _merge_migration_records(
+        legacy_notes or [],
+        current_notes or [],
+        ("id",),
+        "calendar-note",
+    )
+
+
+def _migration_entitlement_active(profile, now):
+    plan = str((profile or {}).get("plan") or "")
+    if plan not in PLAN_RANK:
+        return False
+    if plan == "trial":
+        expires_at = _migration_timestamp((profile or {}).get("trial_end"))
+        return bool(expires_at and expires_at > now)
+    if str((profile or {}).get("payment_status") or "") != "active":
+        return False
+    expires_at = _migration_timestamp((profile or {}).get("paid_until"))
+    return expires_at is None or expires_at > now
+
+
+def _migration_entitlement_expiry(profile):
+    plan = str((profile or {}).get("plan") or "")
+    key = "trial_end" if plan == "trial" else "paid_until"
+    return _migration_timestamp((profile or {}).get(key))
+
+
+def _migration_choose_entitlement(legacy_profile, current_profile, now):
+    candidates = [
+        profile
+        for profile in (legacy_profile or {}, current_profile or {})
+        if _migration_entitlement_active(profile, now)
+    ]
+    if not candidates:
+        return legacy_profile or current_profile or {}
+
+    def entitlement_key(profile):
+        expiry = _migration_entitlement_expiry(profile)
+        expiry_score = expiry.timestamp() if expiry else float("inf")
+        return (PLAN_RANK.get(str(profile.get("plan") or ""), -1), expiry_score)
+
+    return max(candidates, key=entitlement_key)
+
+
+def _migration_location_active(location, now):
+    if not isinstance(location, dict):
+        return False
+    if not location.get("active") and not location.get("sharing"):
+        return False
+    if location.get("until_stop"):
+        return True
+    expires_at = _migration_timestamp(location.get("expires_at"))
+    return bool(expires_at and expires_at > now)
+
+
+def _merge_migration_location(legacy_location, current_location, now):
+    legacy_active = _migration_location_active(legacy_location, now)
+    current_active = _migration_location_active(current_location, now)
+    if legacy_active and current_active:
+        return _migration_choose_record(legacy_location, current_location)
+    if current_active:
+        return copy.deepcopy(current_location)
+    if legacy_active:
+        return copy.deepcopy(legacy_location)
+    return {}
+
+
+def merge_migration_profiles(old_profile, new_profile, now=None):
+    """Deterministically merge two verified Provider profiles.
+
+    Stable business identifiers drive collection deduplication. Display names
+    and other human-readable attributes are never identity keys.
+    """
+    legacy = copy.deepcopy(old_profile or {})
+    current = copy.deepcopy(new_profile or {})
+    current_now = _account_migration_now(now)
+    merged = copy.deepcopy(legacy)
+
+    for key, value in current.items():
+        if key in {
+            "line_user_id",
+            "history",
+            "calendar_notes",
+            "location",
+            "friends",
+            "guardian_group_ids",
+            "guarding_for",
+            "smart_reminder_sent_keys",
+            *_MIGRATION_PROFILE_LIST_KEYS,
+            *_MIGRATION_ENTITLEMENT_KEYS,
+            *_MIGRATION_PREFERENCE_KEYS,
+        }:
+            continue
+        if key == "display_name" and is_placeholder_display_name(value):
+            continue
+        if _migration_value_blank(value):
+            continue
+        if key in DEFAULT_PROFILE and value == DEFAULT_PROFILE.get(key):
+            continue
+        merged[key] = copy.deepcopy(value)
+
+    merged["history"] = _merge_migration_history(
+        legacy.get("history"),
+        current.get("history"),
+    )
+    for key, stable_keys in _MIGRATION_PROFILE_LIST_KEYS.items():
+        merged[key] = _merge_migration_records(
+            legacy.get(key),
+            current.get(key),
+            stable_keys,
+            key.replace("_", "-"),
+        )
+    merged["calendar_notes"] = _merge_migration_calendar_notes(
+        legacy.get("calendar_notes"),
+        current.get("calendar_notes"),
+    )
+    for key in (
+        "friends",
+        "guardian_group_ids",
+        "guarding_for",
+        "smart_reminder_sent_keys",
+    ):
+        merged[key] = list(
+            dict.fromkeys([*(legacy.get(key) or []), *(current.get(key) or [])])
+        )
+
+    for key in _MIGRATION_PREFERENCE_KEYS:
+        legacy_value = legacy.get(key)
+        current_value = current.get(key)
+        legacy_time = _migration_preference_timestamp(legacy, key, legacy_value)
+        current_time = _migration_preference_timestamp(current, key, current_value)
+        if current_time and (not legacy_time or current_time > legacy_time):
+            merged[key] = copy.deepcopy(current_value)
+        elif key in legacy:
+            merged[key] = copy.deepcopy(legacy_value)
+        elif key in current:
+            merged[key] = copy.deepcopy(current_value)
+
+    entitlement = _migration_choose_entitlement(legacy, current, current_now)
+    for key in _MIGRATION_ENTITLEMENT_KEYS:
+        if key in entitlement:
+            merged[key] = copy.deepcopy(entitlement[key])
+
+    merged["location"] = _merge_migration_location(
+        legacy.get("location"),
+        current.get("location"),
+        current_now,
+    )
+    merged["line_user_id"] = str(current.get("line_user_id") or "").strip()
+    return merged
+
+
+_MIGRATION_REFERENCE_SCALAR_FIELDS = {
+    "line_user_id",
+    "line_id",
+    "owner_line_user_id",
+    "member_line_user_id",
+    "requester_line_user_id",
+    "payer_line_user_id",
+    "recipient_line_user_id",
+    "inviter_line_user_id",
+    "contact_line_user_id",
+    "guardian_line_user_id",
+    "acceptor_line_user_id",
+    "grantee_line_user_id",
+    "accepted_by",
+    "invited_by",
+    "target",
+}
+
+_MIGRATION_REFERENCE_LIST_FIELDS = {
+    "admin_line_user_ids",
+    "member_ids_at_bind",
+    "member_line_user_ids",
+    "member_user_ids",
+    "members",
+    "friends",
+    "guarding_for",
+}
+
+_MIGRATION_TOP_LEVEL_COLLECTION_KEYS = {
+    "orders": ("order_id", "merchant_order_id", "merchant_trade_no"),
+    "payment_records": ("transaction_id", "order_id", "merchant_order_id"),
+    "payments": ("transaction_id", "order_id", "merchant_order_id"),
+    "support_tickets": ("id", "ticket_id"),
+    "privacy_requests": ("id", "request_id"),
+    "notification_logs": ("id", "log_id", "event_id"),
+    "checkin_warnings": ("id", "event_id", "log_id"),
+    "checkin_warning_logs": ("id", "event_id", "log_id"),
+    "sos_logs": ("id", "event_id", "log_id"),
+    "contact_rewards": ("id", "reward_id"),
+}
+
+_MIGRATION_INDEX_KEYS = {
+    "sos_pending",
+    "location_grants",
+    "checkin_warning_index",
+    "location_grant_index",
+}
+
+
+def _reindex_migration_record(record, old_id, new_id, migration_event_id):
+    if not isinstance(record, dict):
+        return False
+    changed = False
+    for key, value in list(record.items()):
+        if key in _MIGRATION_REFERENCE_SCALAR_FIELDS:
+            if str(value or "") == old_id:
+                record[key] = new_id
+                changed = True
+            continue
+        if key in _MIGRATION_REFERENCE_LIST_FIELDS and isinstance(value, list):
+            replaced = []
+            list_changed = False
+            for item in value:
+                if isinstance(item, dict):
+                    nested_changed = _reindex_migration_record(
+                        item,
+                        old_id,
+                        new_id,
+                        migration_event_id,
+                    )
+                    list_changed = list_changed or nested_changed
+                    replaced.append(item)
+                elif str(item or "") == old_id:
+                    replaced.append(new_id)
+                    list_changed = True
+                else:
+                    replaced.append(item)
+            if list_changed:
+                record[key] = list(dict.fromkeys(replaced))
+                changed = True
+            continue
+        if isinstance(value, dict):
+            changed = (
+                _reindex_migration_record(
+                    value,
+                    old_id,
+                    new_id,
+                    migration_event_id,
+                )
+                or changed
+            )
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    changed = (
+                        _reindex_migration_record(
+                            item,
+                            old_id,
+                            new_id,
+                            migration_event_id,
+                        )
+                        or changed
+                    )
+    if changed:
+        record["migration_event_id"] = migration_event_id
+    return changed
+
+
+def _dedupe_migration_collection(rows, stable_keys, prefix, migration_event_id):
+    deduped = []
+    positions = {}
+    used_ids = {
+        str(row.get("id") or "").strip()
+        for row in rows
+        if isinstance(row, dict) and str(row.get("id") or "").strip()
+    }
+    generated_index = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            deduped.append(row)
+            continue
+        stable = _migration_stable_value(row, stable_keys)
+        if not stable:
+            generated_index += 1
+            generated = f"migration-{prefix}-{generated_index:04d}"
+            while generated in used_ids:
+                generated_index += 1
+                generated = f"migration-{prefix}-{generated_index:04d}"
+            row["id"] = generated
+            used_ids.add(generated)
+            deduped.append(row)
+            continue
+        if stable not in positions:
+            positions[stable] = len(deduped)
+            deduped.append(row)
+            continue
+
+        position = positions[stable]
+        previous = deduped[position]
+        winner = _migration_choose_record(previous, row)
+        loser = row if winner == previous else previous
+        combined = copy.deepcopy(loser)
+        combined.update(winner)
+        combined["migration_event_id"] = migration_event_id
+        deduped[position] = combined
+    return deduped
+
+
+def reindex_account_references(
+    state,
+    old_id,
+    new_id,
+    migration_event_id,
+    now=None,
+):
+    """Replace exact account references without rewriting historical prose."""
+    source_id = str(old_id or "").strip()
+    target_id = str(new_id or "").strip()
+    if not source_id or not target_id:
+        raise ValueError("missing_identity")
+    if source_id == target_id:
+        raise ValueError("same_identity")
+
+    event_id = str(migration_event_id or "").strip()
+    if not event_id:
+        raise ValueError("missing_migration_event")
+    reindexed_records = 0
+
+    for user_id, profile in (state.get("users") or {}).items():
+        if user_id in {source_id, target_id} or not isinstance(profile, dict):
+            continue
+        if _reindex_migration_record(profile, source_id, target_id, event_id):
+            reindexed_records += 1
+
+    for group in (state.get("guardian_groups") or {}).values():
+        if isinstance(group, dict) and _reindex_migration_record(
+            group,
+            source_id,
+            target_id,
+            event_id,
+        ):
+            reindexed_records += 1
+
+    for invite in (state.get("friend_invites") or {}).values():
+        if isinstance(invite, dict) and _reindex_migration_record(
+            invite,
+            source_id,
+            target_id,
+            event_id,
+        ):
+            reindexed_records += 1
+
+    for collection_key, stable_keys in _MIGRATION_TOP_LEVEL_COLLECTION_KEYS.items():
+        rows = state.get(collection_key) or []
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if _reindex_migration_record(
+                row,
+                source_id,
+                target_id,
+                event_id,
+            ):
+                reindexed_records += 1
+        state[collection_key] = _dedupe_migration_collection(
+            rows,
+            stable_keys,
+            collection_key.replace("_", "-"),
+            event_id,
+        )
+
+    for index_key in _MIGRATION_INDEX_KEYS:
+        index = state.get(index_key) or {}
+        if not isinstance(index, dict):
+            continue
+        was_rekeyed = source_id in index
+        if source_id in index:
+            source_record = index.pop(source_id)
+            if target_id in index:
+                index[target_id] = _migration_choose_record(
+                    source_record,
+                    index[target_id],
+                )
+            else:
+                index[target_id] = source_record
+        record = index.get(target_id)
+        if isinstance(record, dict):
+            changed = _reindex_migration_record(
+                record,
+                source_id,
+                target_id,
+                event_id,
+            )
+            if changed or was_rekeyed:
+                record["migration_event_id"] = event_id
+                reindexed_records += 1
+        state[index_key] = index
+
+    current_iso = _account_migration_now(now).isoformat(timespec="seconds")
+    state.setdefault("account_migration_aliases", {})[source_id] = {
+        "target_line_user_id": target_id,
+        "created_at": current_iso,
+        "status": "disabled",
+    }
+    return {"ok": True, "reindexed_records": reindexed_records}
 
 
 def admin_password_matches(config, candidate):
