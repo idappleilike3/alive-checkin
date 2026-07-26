@@ -224,6 +224,8 @@ class PushDeliveryPolicyTests(unittest.TestCase):
                         "U-owner": {
                             "line_user_id": "U-owner",
                             "display_name": "阿明",
+                            "plan": "paid_799",
+                            "payment_status": "active",
                             "history": [],
                         }
                     },

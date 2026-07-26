@@ -42,6 +42,7 @@ const context = {
     async init() {},
     isLoggedIn() { return true; },
     login() {},
+    getIDToken() { return "verified-id-token"; },
     async getProfile() { return { userId: "U-owner" }; },
   },
   fetch: async (url, options = {}) => {
@@ -90,11 +91,13 @@ await context.init();
 assert.match(element("groupCount").textContent, /1\/3/);
 assert.match(element("groupList").innerHTML, /家人守護群/);
 assert.match(element("groupList").innerHTML, /每日摘要/);
+assert.match(html, /id="retryButton"/);
 
 await context.saveGroupPreferences("C-family", true, "22:30");
 const saveRequest = requests.find((row) => row.options.method === "POST");
 assert.ok(saveRequest, "saving should call the preferences endpoint");
 assert.equal(saveRequest.url, "/api/guardian-groups/preferences");
+assert.equal(saveRequest.options.headers.Authorization, "Bearer verified-id-token");
 assert.deepEqual(
   JSON.parse(saveRequest.options.body),
   {

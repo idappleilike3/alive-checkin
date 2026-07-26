@@ -11,6 +11,7 @@ import sqlite3
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -5567,6 +5568,64 @@ def _member_checked_today(profile, today):
     return any(str(item.get("date", "")) == today for item in history if isinstance(item, dict))
 
 
+def eligible_guardian_group_summary_members(state, group, current_member_ids):
+    """Return current LINE group members who still belong to the owner's safety circle.
+
+    The owner is eligible while present in the LINE group. Other rows require a
+    live reciprocal core-guardian relationship at send time; a historical group
+    snapshot or mere LINE group membership is never enough.
+    """
+    users = (state or {}).get("users") or {}
+    owner_id = str((group or {}).get("owner_line_user_id") or "").strip()
+    owner = users.get(owner_id) or {}
+    if (
+        not owner_id
+        or not plan_includes_guardian_group(owner)
+        or not paid_membership_is_active(owner)
+    ):
+        return []
+
+    current_ids = {
+        str(uid or "").strip()
+        for uid in (current_member_ids or [])
+        if str(uid or "").strip()
+    }
+    eligible_ids = {owner_id}
+    for contact in owner.get("contacts") or []:
+        if (
+            resolve_contact_role(contact) != "guardian"
+            or not bool(contact.get("is_primary"))
+            or not contact_is_bound_guardian(contact, owner_id)
+        ):
+            continue
+        peer_id = get_contact_line_id(contact)
+        peer = users.get(peer_id) or {}
+        reciprocal = any(
+            get_contact_line_id(peer_contact) == owner_id
+            and resolve_contact_role(peer_contact) == "guardian"
+            and bool(peer_contact.get("is_primary"))
+            and contact_is_bound_guardian(peer_contact, peer_id)
+            for peer_contact in (peer.get("contacts") or [])
+        )
+        if reciprocal:
+            eligible_ids.add(peer_id)
+
+    rows = []
+    for uid in current_member_ids or []:
+        uid = str(uid or "").strip()
+        if not uid or uid not in current_ids or uid not in eligible_ids:
+            continue
+        profile = users.get(uid)
+        if not isinstance(profile, dict):
+            continue
+        rows.append({
+            "line_user_id": uid,
+            "name": profile.get("display_name") or profile.get("name") or "LINE 成員",
+            "profile": profile,
+        })
+    return rows
+
+
 def build_owner_today_safety_roster(state, profile, config=None, now=None):
     """管理員用：今天誰已報／尚未報平安（私訊／LIFF；不依賴群組提醒開關）。"""
     now = now or current_app_time(config or {})
@@ -8968,7 +9027,7 @@ def push_sos_to_guardian_group(token, group_id, alert_text, *, sender=None, memb
             return result, "text", plain
 
 
-def line_push_message(token, line_user_id, message):
+def line_push_message(token, line_user_id, message, *, retry_key=None):
     """推訊息給單一 LINE 用戶。
 
     message 可以是:
@@ -8986,19 +9045,31 @@ def line_push_message(token, line_user_id, message):
         {"to": to_id, "messages": [msg_obj]},
         ensure_ascii=False,
     ).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json; charset=UTF-8",
+        "Authorization": f"Bearer {token}",
+    }
+    if retry_key:
+        headers["X-Line-Retry-Key"] = str(retry_key)
     req = urllib.request.Request(
         "https://api.line.me/v2/bot/message/push",
         data=body,
-        headers={
-            "Content-Type": "application/json; charset=UTF-8",
-            "Authorization": f"Bearer {token}",
-        },
+        headers=headers,
         method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as res:
             return {"ok": 200 <= res.status < 300, "status": res.status}
     except urllib.error.HTTPError as exc:
+        if exc.code == 409 and exc.headers.get("X-Line-Accepted-Request-Id"):
+            return {
+                "ok": True,
+                "status": 409,
+                "idempotent_replay": True,
+                "accepted_request_id": exc.headers.get(
+                    "X-Line-Accepted-Request-Id"
+                ),
+            }
         err_body = ""
         try:
             err_body = exc.read().decode("utf-8", errors="replace")[:500]
@@ -9385,6 +9456,14 @@ def send_guardian_group_daily_summaries(config):
         if not isinstance(group, dict) or group.get("status") != "active":
             skipped += 1
             continue
+        owner = users.get(str(group.get("owner_line_user_id") or "").strip()) or {}
+        if (
+            not plan_includes_guardian_group(owner)
+            or not paid_membership_is_active(owner)
+        ):
+            skipped += 1
+            results.append({"group_id": group_id, "status": "owner_not_eligible"})
+            continue
         prefs = normalize_guardian_group_preferences(group.get("preferences"))
         if not prefs.get("daily_admin_summary"):
             skipped += 1
@@ -9401,28 +9480,107 @@ def send_guardian_group_daily_summaries(config):
         if not push_attempt_allowed(group, delivery_key):
             skipped += 1
             continue
+        claim_result = mutate_state_atomically(
+            config["DATA_FILE"],
+            lambda current_state: _claim_guardian_group_summary(
+                current_state, group_id, today, now
+            ),
+        )
+        if not claim_result.get("claimed"):
+            skipped += 1
+            results.append({"group_id": group_id, "status": "already_claimed"})
+            continue
+        claim_token = claim_result["claim_token"]
         try:
-            current_ids = member_fetcher(token, group_id)
-        except Exception as exc:
-            skipped += 1
-            results.append({"group_id": group_id, "status": "member_refresh_failed", "error": str(exc)[:400]})
-            continue
-        if current_ids is None:
-            skipped += 1
-            results.append({"group_id": group_id, "status": "member_refresh_failed"})
-            continue
+            current_ids = None
+            member_error = None
+            for _attempt in range(3):
+                try:
+                    current_ids = member_fetcher(token, group_id)
+                    if current_ids is not None:
+                        member_error = None
+                        break
+                    member_error = RuntimeError("LINE member list unavailable")
+                except Exception as exc:
+                    member_error = exc
+            if current_ids is None:
+                mutate_state_atomically(
+                    config["DATA_FILE"],
+                    lambda current_state: _finish_guardian_group_summary(
+                        current_state,
+                        group_id,
+                        today,
+                        now,
+                        claim_token=claim_token,
+                        release_only=True,
+                        audit_kind="guardian_group_member_refresh",
+                        audit_status="failed",
+                        audit_detail=str(member_error or "member refresh failed")[:400],
+                    ),
+                )
+                skipped += 1
+                results.append({
+                    "group_id": group_id,
+                    "status": "member_refresh_failed",
+                    "error": str(member_error or "")[:400],
+                })
+                continue
+        except Exception:
+            mutate_state_atomically(
+                config["DATA_FILE"],
+                lambda current_state: _finish_guardian_group_summary(
+                    current_state,
+                    group_id,
+                    today,
+                    now,
+                    claim_token=claim_token,
+                    release_only=True,
+                ),
+            )
+            raise
         member_ids = list(dict.fromkeys(
             str(uid or "").strip() for uid in current_ids if str(uid or "").strip()
         ))
-        group["member_ids_last_summary"] = member_ids
-        group["member_ids_last_summary_at"] = now.isoformat(timespec="seconds")
+        prepared = mutate_state_atomically(
+            config["DATA_FILE"],
+            lambda current_state: _prepare_guardian_group_summary(
+                current_state,
+                group_id,
+                today,
+                now,
+                claim_token,
+                member_ids,
+            ),
+        )
+        eligible_members = prepared.get("eligible_members") or []
+        if not prepared.get("ready"):
+            skipped += 1
+            results.append({
+                "group_id": group_id,
+                "status": prepared.get("reason") or "no_longer_eligible",
+            })
+            continue
+        if not eligible_members:
+            mutate_state_atomically(
+                config["DATA_FILE"],
+                lambda current_state: _finish_guardian_group_summary(
+                    current_state,
+                    group_id,
+                    today,
+                    now,
+                    claim_token=claim_token,
+                    release_only=True,
+                    member_ids=member_ids,
+                ),
+            )
+            skipped += 1
+            results.append({"group_id": group_id, "status": "no_eligible_members"})
+            continue
         checked = []
         unchecked = []
-        for uid in member_ids:
-            if not uid:
-                continue
-            profile = users.get(uid) or {}
-            name = profile.get("display_name") or profile.get("name") or "LINE 成員"
+        for member in eligible_members:
+            profile = member["profile"]
+            name = member["name"]
             (checked if _member_checked_today(profile, today) else unchecked).append(name)
         message = (
             f"📊 今日平安摘要（{today}）\n"
@@ -9431,48 +9589,51 @@ def send_guardian_group_daily_summaries(config):
             "（此為選用群組摘要；關閉後只會私訊核心守護人。）"
         )
         try:
-            result = sender(token, group_id, message)
-            _clear_push_delivery_failure(group, delivery_key)
-            append_notification_log(
-                state,
-                "guardian_group_daily_summary",
-                group_id,
-                "sent",
-                message,
-                json.dumps(result, ensure_ascii=False),
+            if sender is line_push_message:
+                result = sender(
+                    token,
+                    group_id,
+                    message,
+                    retry_key=_line_retry_key(delivery_key),
+                )
+            else:
+                result = sender(token, group_id, message)
+            mutate_state_atomically(
+                config["DATA_FILE"],
+                lambda current_state: _finish_guardian_group_summary(
+                    current_state,
+                    group_id,
+                    today,
+                    now,
+                    claim_token=claim_token,
+                    sent=True,
+                    message=message,
+                    result=result,
+                    member_ids=member_ids,
+                ),
             )
-            record_line_message_usage(
-                state,
-                category="guardian_summary",
-                owner_line_user_id=group.get("owner_line_user_id") or group_id,
-                recipient_count=max(1, len(member_ids)),
-                event_id=delivery_key,
-                sent_at=now,
-            )
-            group["last_daily_summary_date"] = today
-            groups[group_id] = group
             sent += 1
             results.append({"group_id": group_id, "result": result})
         except Exception as exc:
-            failure = _record_scheduled_push_failure(
-                state,
-                group,
-                delivery_key,
-                "guardian_group_daily_summary",
-                group_id,
-                message,
-                exc,
-                now,
+            failure = mutate_state_atomically(
+                config["DATA_FILE"],
+                lambda current_state: _finish_guardian_group_summary(
+                    current_state,
+                    group_id,
+                    today,
+                    now,
+                    claim_token=claim_token,
+                    message=message,
+                    error=exc,
+                    member_ids=member_ids,
+                ),
             )
-            groups[group_id] = group
             skipped += 1
             results.append({"group_id": group_id, "error": str(exc)})
             if failure["kind"] == "system":
                 system_error = True
                 break
 
-    state["guardian_groups"] = groups
-    save_state(config["DATA_FILE"], state)
     return {
         "sent": sent,
         "skipped": skipped,
@@ -9481,6 +9642,163 @@ def send_guardian_group_daily_summaries(config):
         "date": today,
         "system_error": system_error,
     }, 200
+
+
+def _line_retry_key(delivery_key):
+    """Stable UUID accepted by LINE for idempotent retries of one logical push."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"daily-peace:{delivery_key}"))
+
+
+def _claim_guardian_group_summary(state, group_id, today, now):
+    group = (state.get("guardian_groups") or {}).get(group_id)
+    if not isinstance(group, dict):
+        return {"claimed": False, "reason": "group_not_found"}
+    owner = (state.get("users") or {}).get(
+        str(group.get("owner_line_user_id") or "").strip()
+    ) or {}
+    prefs = normalize_guardian_group_preferences(group.get("preferences"))
+    if (
+        group.get("status") != "active"
+        or not prefs.get("daily_admin_summary")
+        or not plan_includes_guardian_group(owner)
+        or not paid_membership_is_active(owner)
+    ):
+        return {"claimed": False, "reason": "no_longer_eligible"}
+    if group.get("last_daily_summary_date") == today:
+        return {"claimed": False}
+    claims = dict(group.get("daily_summary_claims") or {})
+    existing = claims.get(today) or {}
+    if existing:
+        claimed_at = None
+        try:
+            claimed_at = datetime.fromisoformat(str(existing.get("claimed_at") or ""))
+        except (TypeError, ValueError):
+            claimed_at = None
+        if claimed_at is not None and (now - claimed_at).total_seconds() < 900:
+            return {"claimed": False, "reason": "active_claim"}
+    claim_token = secrets.token_hex(16)
+    claims[today] = {
+        "claimed_at": now.isoformat(timespec="seconds"),
+        "claim_token": claim_token,
+    }
+    group["daily_summary_claims"] = claims
+    return {
+        "claimed": True,
+        "recovered": bool(existing),
+        "claim_token": claim_token,
+    }
+
+
+def _prepare_guardian_group_summary(
+    state, group_id, today, now, claim_token, member_ids
+):
+    group = (state.get("guardian_groups") or {}).get(group_id)
+    claim = ((group or {}).get("daily_summary_claims") or {}).get(today) or {}
+    if not isinstance(group, dict) or claim.get("claim_token") != claim_token:
+        return {"ready": False, "reason": "claim_lost"}
+    owner = (state.get("users") or {}).get(
+        str(group.get("owner_line_user_id") or "").strip()
+    ) or {}
+    prefs = normalize_guardian_group_preferences(group.get("preferences"))
+    if (
+        group.get("status") != "active"
+        or not prefs.get("daily_admin_summary")
+        or not plan_includes_guardian_group(owner)
+        or not paid_membership_is_active(owner)
+    ):
+        _finish_guardian_group_summary(
+            state,
+            group_id,
+            today,
+            now,
+            claim_token=claim_token,
+            release_only=True,
+        )
+        return {"ready": False, "reason": "no_longer_eligible"}
+    group["member_ids_last_summary"] = list(member_ids)
+    group["member_ids_last_summary_at"] = now.isoformat(timespec="seconds")
+    return {
+        "ready": True,
+        "eligible_members": eligible_guardian_group_summary_members(
+            state, group, member_ids
+        ),
+    }
+
+
+def _finish_guardian_group_summary(
+    state,
+    group_id,
+    today,
+    now,
+    *,
+    claim_token,
+    sent=False,
+    release_only=False,
+    message="",
+    result=None,
+    error=None,
+    member_ids=None,
+    audit_kind=None,
+    audit_status=None,
+    audit_detail=None,
+):
+    group = (state.get("guardian_groups") or {}).get(group_id)
+    if not isinstance(group, dict):
+        return {"kind": "permanent", "retry": False}
+    claims = dict(group.get("daily_summary_claims") or {})
+    claim = claims.get(today) or {}
+    if claim.get("claim_token") != claim_token:
+        return {"kind": "claim_lost", "retry": False}
+    claims.pop(today, None)
+    if claims:
+        group["daily_summary_claims"] = claims
+    else:
+        group.pop("daily_summary_claims", None)
+    if member_ids is not None:
+        group["member_ids_last_summary"] = list(member_ids)
+        group["member_ids_last_summary_at"] = now.isoformat(timespec="seconds")
+    if audit_kind:
+        append_notification_log(
+            state,
+            audit_kind,
+            group_id,
+            audit_status or "failed",
+            "",
+            audit_detail,
+        )
+    if release_only:
+        return {"released": True}
+    delivery_key = f"guardian_group_daily_summary:{today}:{group_id}"
+    if sent:
+        _clear_push_delivery_failure(group, delivery_key)
+        append_notification_log(
+            state,
+            "guardian_group_daily_summary",
+            group_id,
+            "sent",
+            message,
+            json.dumps(result, ensure_ascii=False),
+        )
+        record_line_message_usage(
+            state,
+            category="guardian_summary",
+            owner_line_user_id=group.get("owner_line_user_id") or group_id,
+            recipient_count=max(1, len(member_ids or [])),
+            event_id=delivery_key,
+            sent_at=now,
+        )
+        group["last_daily_summary_date"] = today
+        return {"sent": True}
+    return _record_scheduled_push_failure(
+        state,
+        group,
+        delivery_key,
+        "guardian_group_daily_summary",
+        group_id,
+        message,
+        error,
+        now,
+    )
 
 
 def send_missing_contact_reminders(config):
@@ -12821,17 +13139,34 @@ def create_app(config=None):
 
     @app.post("/api/guardian-groups/bind")
     def guardian_groups_bind_api():
-        data, code = bind_guardian_group(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = bind_guardian_group(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
     @app.post("/api/guardian-groups/unbind")
     def guardian_groups_unbind_api():
-        data, code = unbind_guardian_group(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = unbind_guardian_group(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
     @app.post("/api/guardian-groups/preferences")
     def guardian_groups_preferences_api():
-        data, code = update_guardian_group_preferences(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = update_guardian_group_preferences(
+            app.config["DATA_FILE"], payload
+        )
         return jsonify(data), code
 
     @app.get("/api/guardian-groups/settings")
@@ -13831,14 +14166,32 @@ class MiniClient:
             )
             return MiniResponse(body, code)
         if route == "/api/guardian-groups/bind":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["line_user_id"] = line_user_id
             body, code = bind_guardian_group(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
         if route == "/api/guardian-groups/preferences":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["line_user_id"] = line_user_id
             body, code = update_guardian_group_preferences(
                 self.app.config["DATA_FILE"], payload
             )
             return MiniResponse(body, code)
         if route == "/api/guardian-groups/unbind":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["line_user_id"] = line_user_id
             body, code = unbind_guardian_group(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
         if route == "/api/friends/invite":

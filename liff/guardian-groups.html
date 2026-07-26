@@ -138,7 +138,11 @@
   </section>
 
   <div id="loadingState" class="empty"><strong>正在讀取守護群</strong>請稍候</div>
-  <div id="errorState" class="error" hidden><strong>無法讀取設定</strong><span id="errorMessage">請稍後再試</span></div>
+  <div id="errorState" class="error" hidden>
+    <strong>無法讀取設定</strong>
+    <span id="errorMessage">請稍後再試</span>
+    <button id="retryButton" class="save-btn" type="button">重新讀取</button>
+  </div>
   <section id="groupList" aria-label="守護群設定"></section>
   <p id="saveStatus" role="status" aria-live="polite"></p>
 
@@ -163,6 +167,13 @@
 const API_BASE = "";
 const FALLBACK_LIFF_ID = "2010549494-KRb0mn7U";
 const pageState = { lineUserId: "", groups: [] };
+
+function authHeaders() {
+  const token = (typeof liff !== "undefined" && typeof liff.getIDToken === "function")
+    ? String(liff.getIDToken() || "").trim()
+    : "";
+  return token ? { "Authorization": `Bearer ${token}` } : {};
+}
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[<>&"']/g, (c) => ({
@@ -233,7 +244,7 @@ async function saveGroupPreferences(groupId, enabled, time, button) {
   try {
     const response = await fetch(`${API_BASE}/api/guardian-groups/preferences`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({
         line_user_id: pageState.lineUserId,
         group_id: groupId,
@@ -255,6 +266,8 @@ async function saveGroupPreferences(groupId, enabled, time, button) {
 }
 
 async function init() {
+  document.getElementById("errorState").hidden = true;
+  document.getElementById("loadingState").hidden = false;
   try {
     await liff.init({ liffId: await resolveLiffId() });
     if (!liff.isLoggedIn()) {
@@ -263,7 +276,8 @@ async function init() {
     }
     pageState.lineUserId = (await liff.getProfile()).userId;
     const response = await fetch(
-      `${API_BASE}/api/guardian-groups/settings?line_user_id=${encodeURIComponent(pageState.lineUserId)}`
+      `${API_BASE}/api/guardian-groups/settings?line_user_id=${encodeURIComponent(pageState.lineUserId)}`,
+      { headers: authHeaders() }
     );
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "讀取失敗");
@@ -277,6 +291,7 @@ async function init() {
   }
 }
 
+document.getElementById("retryButton").addEventListener("click", init);
 init();
 </script>
 </body>

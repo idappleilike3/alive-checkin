@@ -5,6 +5,7 @@ tags:
   - 每日平安
   - 開發進度
   - task-3
+  - task-4
 status: in-progress
 branch: agent/liff-provider-migration
 ---
@@ -20,7 +21,7 @@ branch: agent/liff-provider-migration
 |---|---|---|
 | 規格 | ✅ 已核對 | [[superpowers/specs/2026-07-26-member-guardian-sos-recovery-design]] |
 | 程式 | 🔄 修正中 | `agent/liff-provider-migration` |
-| 自動化測試 | 🟡 開發分支通過 | Python 343／343、Node 35／35 |
+| 自動化測試 | 🟡 開發分支通過 | Python 355／355、Node 35／35 |
 | LINE 實機 | ❌ 尚未完成 | 需兩個真實 LINE 帳號、iPhone 與 Android |
 | 合併主線 | ❌ 尚未完成 | 未合併 |
 | 正式部署 | ❌ 尚未完成 | 未取得部署同意 |
@@ -53,7 +54,7 @@ branch: agent/liff-provider-migration
 
 ### 🟡 已實作但未上線
 
-- Task 4 守護群摘要與設定
+- Task 4 守護群摘要與設定（本機 2026-07-27 全量回歸通過，等待真 LINE 群組及 PostgreSQL 實機）
 - Task 5 SOS 統一流程及濫用限制
 - Task 6 智慧提醒及 LINE 用量統計
 
@@ -77,10 +78,49 @@ branch: agent/liff-provider-migration
 
 | 測試 | 結果 |
 |---|---|
-| Task 3 聚焦 Python | 117／117 通過 |
-| 全量 Python | 343／343 通過 |
+| Task 4 聚焦 Python | 37／37 通過 |
+| Task 4 LIFF 行為測試 | 1／1 通過 |
+| 全量 Python | 355／355 通過 |
 | Node 行為測試 | 35／35 通過 |
 | `git diff --check` | 通過 |
+
+## Task 4｜守護群
+
+> [!warning] 🟡 本機程式與測試通過
+> 尚未完成真實 LINE 群組、iPhone／Android、群組成員異動與實際推播成本驗收，因此尚未正式上線。
+
+### ✅ 本機已完成
+
+- 新綁定守護群的每日摘要預設關閉
+- 每個守護群可獨立設定摘要開關及台灣時間
+- 排程僅處理 active 群、有效 799 會員擁有的群及已開啟摘要的群
+- 摘要發送前重新讀取 LINE 群組目前成員
+- 摘要只列會員本人及仍維持雙向核心守護關係的群內成員
+- 已解除、已刪除、單向殘留或僅在 LINE 群內的人不列入摘要
+- 沒有可列入摘要的有效會員時不推送空摘要
+- 同一群同一天最多發送一次
+- 重疊排程以資料庫交易租約防止重複推播及重複計費
+- 程序中斷留下的租約 15 分鐘後可安全回收，舊程序不可完成新租約
+- 正式 LINE 推播使用同事件的穩定 `X-Line-Retry-Key`，成功後斷線重跑也不重複投遞
+- 群成員同步後再次核對最新方案、群狀態、摘要開關及雙向核心守護關係
+- 正式以 `is_primary` 判定核心守護人，一般守護人不列入摘要
+- LINE 群成員讀取失敗於同次排程最多重試三次，最終失敗留下稽核並釋放租約
+- 失敗推播最多重試三次並保留稽核紀錄
+- 設定讀取與儲存皆使用 LINE 登入憑證，不信任前端會員 ID
+- LIFF 顯示載入、空白、失敗、儲存中及儲存結果狀態
+- LIFF 讀取失敗可直接按「重新讀取」，不必關閉頁面
+- 一般摘要設定不影響真正 SOS 的緊急群組通知
+
+### 🔄 外部驗收
+
+- 真實 LINE 群組加入、綁定、開啟／關閉摘要及時間設定
+- 群員退出、解除核心守護關係後的下一次摘要名單
+- Bot 被踢出、群組被刪除、LINE API 失敗及恢復
+- iPhone／Android LIFF 版面、鍵盤焦點與螢幕閱讀器
+- 實際群組收件人數與 LINE Message API 用量帳單對照
+
+> [!caution] 尚存低風險
+> 若首次推播已成功但程序在寫入結算前中斷，且租約回收前後群成員剛好改變，LINE 仍會透過 Retry Key 防止重複投遞，但重跑結算使用的成員數可能與首次投遞快照有少量差異；正式成本帳單對照時需驗證。
 
 > [!info] 依賴環境
 > 專案正式 runtime 為 Python 3.11。本工作區只有 Python 3.12；`aiohttp==3.8.4` 無 Python 3.12 wheel，因此本地回歸使用已安裝 Flask 的 Python 3.12 測試環境。正式部署前仍須在 Python 3.11 完整安裝 `requirements.txt` 再驗收。

@@ -117,6 +117,52 @@ class GuardianGroupSettingsTests(unittest.TestCase):
             saved.get_json()["preferences"]["daily_summary_time"], "20:15"
         )
 
+    def test_save_requires_authenticated_line_identity(self):
+        client = app.create_app({
+            "TESTING": True,
+            "DATA_FILE": self.data_file,
+            "ALLOW_LEGACY_LINE_USER_ID": False,
+            "REQUIRE_LIFF_AUTH": True,
+        }).test_client()
+
+        saved = client.post(
+            "/api/guardian-groups/preferences",
+            json={
+                "line_user_id": "U-owner",
+                "group_id": "C-family",
+                "daily_admin_summary": False,
+                "daily_summary_time": "20:15",
+            },
+        )
+
+        self.assertEqual(saved.status_code, 401)
+        stored = app.load_state(self.data_file)["guardian_groups"]["C-family"]
+        self.assertTrue(stored["preferences"]["daily_admin_summary"])
+        self.assertEqual(stored["preferences"]["daily_summary_time"], "22:30")
+
+    def test_bind_and_unbind_require_authenticated_line_identity(self):
+        client = app.create_app({
+            "TESTING": True,
+            "DATA_FILE": self.data_file,
+            "ALLOW_LEGACY_LINE_USER_ID": False,
+            "REQUIRE_LIFF_AUTH": True,
+        }).test_client()
+
+        bound = client.post(
+            "/api/guardian-groups/bind",
+            json={"line_user_id": "U-owner", "group_id": "C-new"},
+        )
+        unbound = client.post(
+            "/api/guardian-groups/unbind",
+            json={"line_user_id": "U-owner", "group_id": "C-family"},
+        )
+
+        self.assertEqual(bound.status_code, 401)
+        self.assertEqual(unbound.status_code, 401)
+        state = app.load_state(self.data_file)
+        self.assertNotIn("C-new", state["guardian_groups"])
+        self.assertIn("C-family", state["guardian_groups"])
+
 
 if __name__ == "__main__":
     unittest.main()
