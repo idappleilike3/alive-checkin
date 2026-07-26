@@ -1222,6 +1222,112 @@ class AtomicRedemptionTests(unittest.TestCase):
         self.assertEqual(after.get("account_migration_snapshots") or {}, {})
         self.assertEqual(after["account_migration_audit"], [])
 
+    def test_validation_failures_append_only_sanitized_audit_events(self):
+        cases = [
+            ("expired_code", {"now": self.now + timedelta(seconds=601)}, 410),
+            ("unsafe_conflict", {"new_line_user_id": self.old_id}, 409),
+            ("source_missing", {}, 404),
+            ("used_code", {}, 409),
+        ]
+        for category, overrides, expected_status in cases:
+            with self.subTest(category=category):
+                if category == "source_missing":
+                    state = alive_app.load_state(self.data_file)
+                    state["users"].pop(self.old_id, None)
+                    alive_app.save_state(self.data_file, state)
+                elif category == "used_code":
+                    state = alive_app.load_state(self.data_file)
+                    next(iter(state["account_migration_tickets"].values()))[
+                        "status"
+                    ] = "used"
+                    alive_app.save_state(self.data_file, state)
+                before = alive_app.load_state(self.data_file)
+                result, status = self._redeem(**overrides)
+                after = alive_app.load_state(self.data_file)
+
+                self.assertEqual(status, expected_status)
+                self.assertEqual(result, {"ok": False, "error": category})
+                for key in (
+                    "users",
+                    "account_migration_tickets",
+                    "account_migration_aliases",
+                    "account_migration_snapshots",
+                ):
+                    self.assertEqual(after.get(key), before.get(key))
+                new_events = after["account_migration_audit"][
+                    len(before["account_migration_audit"]):
+                ]
+                self.assertEqual(len(new_events), 1)
+                self.assertEqual(
+                    set(new_events[0]),
+                    {
+                        "event_id",
+                        "status",
+                        "created_at",
+                        "failure_category",
+                        "counts",
+                    },
+                )
+                self.assertEqual(new_events[0]["status"], "failed")
+                self.assertEqual(new_events[0]["failure_category"], category)
+                self.assertEqual(
+                    new_events[0]["counts"],
+                    {
+                        "checkins": 0,
+                        "contacts": 0,
+                        "groups": 0,
+                        "reminders": 0,
+                        "orders": 0,
+                        "requests": 0,
+                    },
+                )
+                audit_text = json.dumps(new_events, ensure_ascii=False)
+                for forbidden in (
+                    self.old_id,
+                    self.new_id,
+                    self.migration_code,
+                    "code_digest",
+                    "profile",
+                    "token",
+                ):
+                    self.assertNotIn(forbidden, audit_text)
+
+    def test_exception_rolls_back_migration_then_atomically_audits_failure(self):
+        before = alive_app.load_state(self.data_file)
+        with mock.patch.object(
+            alive_app,
+            "merge_migration_profiles",
+            side_effect=RuntimeError("private exception detail"),
+        ):
+            result, status = self._redeem()
+        after = alive_app.load_state(self.data_file)
+
+        self.assertEqual(status, 500)
+        self.assertEqual(result, {"ok": False, "error": "migration_failed"})
+        for key in (
+            "users",
+            "account_migration_tickets",
+            "account_migration_aliases",
+            "account_migration_snapshots",
+        ):
+            self.assertEqual(after.get(key), before.get(key))
+        self.assertEqual(len(after["account_migration_audit"]), 1)
+        event = after["account_migration_audit"][0]
+        self.assertEqual(
+            set(event),
+            {"event_id", "status", "created_at", "failure_category", "counts"},
+        )
+        self.assertEqual(event["status"], "failed")
+        self.assertEqual(event["failure_category"], "migration_failed")
+        serialized = json.dumps(event, ensure_ascii=False)
+        for forbidden in (
+            self.old_id,
+            self.new_id,
+            self.migration_code,
+            "private exception detail",
+        ):
+            self.assertNotIn(forbidden, serialized)
+
     def test_two_parallel_redemptions_produce_exactly_one_success(self):
         barrier = threading.Barrier(2)
 
@@ -1239,7 +1345,17 @@ class AtomicRedemptionTests(unittest.TestCase):
         )
         state = alive_app.load_state(self.data_file)
         self.assertEqual(len(state["account_migration_snapshots"]), 1)
-        self.assertEqual(len(state["account_migration_audit"]), 1)
+        self.assertEqual(len(state["account_migration_audit"]), 2)
+        self.assertEqual(
+            sorted(
+                (
+                    event["status"],
+                    event["failure_category"],
+                )
+                for event in state["account_migration_audit"]
+            ),
+            [("failed", "used_code"), ("success", "")],
+        )
         self.assertEqual(
             next(iter(state["account_migration_tickets"].values()))["status"],
             "used",

@@ -750,14 +750,27 @@
         : "尚無搬家紀錄";
     }
 
+    function renderAccountMigrationsUnavailable() {
+      $("migrationConfigured").textContent = "暫時無法取得";
+      $("migrationTotals").textContent = "暫時無法取得";
+      $("migrationLastAttempt").textContent = "暫時無法取得";
+      $("migrationFailure").textContent = "暫時無法取得";
+      $("migrationCounts").textContent = "暫時無法取得";
+    }
+
     async function refreshAccountMigrations() {
-      const response = await adminFetch("/api/admin/account-migrations");
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        renderAccountMigrations({configured: false, totals: {}, latest_events: []});
-        return;
+      try {
+        const response = await adminFetch("/api/admin/account-migrations");
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          renderAccountMigrationsUnavailable();
+          return;
+        }
+        renderAccountMigrations(data);
+      } catch (error) {
+        if (error && error.message === "admin_session_expired") throw error;
+        renderAccountMigrationsUnavailable();
       }
-      renderAccountMigrations(data);
     }
 
     function statusBadge(user) {

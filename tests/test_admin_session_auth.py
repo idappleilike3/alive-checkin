@@ -86,6 +86,14 @@ class AdminSessionAuthTests(unittest.TestCase):
                 "old_line_user_id": "U-private-old",
                 "code_digest": "digest-private",
                 "status": "pending",
+                "expires_at": "2099-07-26T04:00:00+00:00",
+            },
+            "ticket-private-expired": {
+                "ticket_id": "ticket-private-expired",
+                "old_line_user_id": "U-private-expired",
+                "code_digest": "digest-private-expired",
+                "status": "pending",
+                "expires_at": "2020-07-26T04:00:00+00:00",
             }
         }
         state["account_migration_aliases"] = {
@@ -174,7 +182,9 @@ class AdminSessionAuthTests(unittest.TestCase):
             "U-private-old",
             "U-private-new",
             "ticket-private",
+            "ticket-private-expired",
             "digest-private",
+            "digest-private-expired",
             "snapshot-private",
             "event-private",
             "raw-private-code",

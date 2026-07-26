@@ -7037,6 +7037,23 @@ def _account_migration_safe_counts(state, profile, line_user_id):
     }
 
 
+def _append_account_migration_failure_audit(state, category, now):
+    state.setdefault("account_migration_audit", []).append({
+        "event_id": f"ame_{secrets.token_urlsafe(12)}",
+        "status": "failed",
+        "created_at": now.isoformat(timespec="seconds"),
+        "failure_category": str(category),
+        "counts": {
+            "checkins": 0,
+            "contacts": 0,
+            "groups": 0,
+            "reminders": 0,
+            "orders": 0,
+            "requests": 0,
+        },
+    })
+
+
 def _account_migration_snapshot(
     state,
     ticket,
@@ -7102,8 +7119,13 @@ def redeem_account_migration_ticket(
             "source_missing": 404,
         }
         if ticket_error:
-            raise AccountMigrationRejected(
+            _append_account_migration_failure_audit(
+                state,
                 ticket_error,
+                current,
+            )
+            return (
+                {"ok": False, "error": ticket_error},
                 error_statuses.get(ticket_error, 409),
             )
 
@@ -7114,15 +7136,30 @@ def redeem_account_migration_ticket(
             or old_line_user_id == verified_new_id
             or verified_new_id in aliases
         ):
-            raise AccountMigrationRejected("unsafe_conflict", 409)
+            _append_account_migration_failure_audit(
+                state,
+                "unsafe_conflict",
+                current,
+            )
+            return {"ok": False, "error": "unsafe_conflict"}, 409
 
         users = state.setdefault("users", {})
         old_profile = users.get(old_line_user_id)
         if not isinstance(old_profile, dict):
-            raise AccountMigrationRejected("source_missing", 404)
+            _append_account_migration_failure_audit(
+                state,
+                "source_missing",
+                current,
+            )
+            return {"ok": False, "error": "source_missing"}, 404
         new_profile = users.get(verified_new_id)
         if new_profile is not None and not isinstance(new_profile, dict):
-            raise AccountMigrationRejected("unsafe_conflict", 409)
+            _append_account_migration_failure_audit(
+                state,
+                "unsafe_conflict",
+                current,
+            )
+            return {"ok": False, "error": "unsafe_conflict"}, 409
 
         event_id = f"ame_{secrets.token_urlsafe(12)}"
         snapshot_id, snapshot = _account_migration_snapshot(
@@ -7185,6 +7222,17 @@ def redeem_account_migration_ticket(
     except AccountMigrationRejected as exc:
         return {"ok": False, "error": exc.category}, exc.status_code
     except Exception:
+        try:
+            mutate_state_atomically(
+                data_file,
+                lambda state: _append_account_migration_failure_audit(
+                    state,
+                    "migration_failed",
+                    current,
+                ),
+            )
+        except Exception:
+            pass
         return {"ok": False, "error": "migration_failed"}, 500
 
 
@@ -7623,9 +7671,10 @@ _MIGRATION_ADMIN_FAILURE_CATEGORIES = {
 }
 
 
-def admin_account_migrations(data_file, config):
+def admin_account_migrations(data_file, config, now=None):
     """Return a read-only, allowlisted operational migration summary."""
     state = load_state(data_file)
+    current = _account_migration_now(now)
     audit = state.get("account_migration_audit") or []
     successes = sum(
         1
@@ -7640,7 +7689,15 @@ def admin_account_migrations(data_file, config):
     pending = sum(
         1
         for ticket in (state.get("account_migration_tickets") or {}).values()
-        if isinstance(ticket, dict) and ticket.get("status") == "pending"
+        if (
+            isinstance(ticket, dict)
+            and ticket.get("status") == "pending"
+            and (
+                _account_migration_datetime(ticket.get("expires_at"))
+                and current
+                < _account_migration_datetime(ticket.get("expires_at"))
+            )
+        )
     )
     latest_events = []
     for event in reversed(audit[-10:]):

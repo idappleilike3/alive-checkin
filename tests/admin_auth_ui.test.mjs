@@ -130,3 +130,41 @@ test("migration card renders server text through textContent only", () => {
     "簽到 2、聯絡人 1、群組 0、提醒 3、訂單 1、申請 0"
   );
 });
+
+test("migration card distinguishes HTTP and network failures from unconfigured", async () => {
+  for (const fetchImpl of [
+    () => Promise.resolve(response({ok: false, status: 500})),
+    () => Promise.reject(new Error("network unavailable"))
+  ]) {
+    const harness = createHarness(fetchImpl);
+
+    await harness.context.refreshAccountMigrations();
+
+    assert.equal(
+      harness.elements.get("migrationConfigured").textContent,
+      "暫時無法取得"
+    );
+    assert.equal(
+      harness.elements.get("migrationTotals").textContent,
+      "暫時無法取得"
+    );
+  }
+});
+
+test("migration 401 keeps the existing expired-session flow", async () => {
+  const harness = createHarness(() => Promise.resolve(
+    response({ok: false, status: 401})
+  ));
+
+  await assert.rejects(
+    harness.context.refreshAccountMigrations(),
+    /admin_session_expired/
+  );
+
+  assert.equal(harness.elements.get("adminShell").hidden, true);
+  assert.equal(harness.elements.get("loginPanel").hidden, false);
+  assert.equal(
+    harness.elements.get("loginStatus").textContent,
+    "登入已失效，請重新登入。"
+  );
+});
