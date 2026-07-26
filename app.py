@@ -667,8 +667,13 @@ def _ensure_pg_kv():
             "CREATE TABLE IF NOT EXISTS kv_store ("
             "  key TEXT PRIMARY KEY,"
             "  value TEXT NOT NULL,"
+            "  revision BIGINT NOT NULL DEFAULT 0,"
             "  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
             ")"
+        )
+        conn.execute(
+            "ALTER TABLE kv_store "
+            "ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0"
         )
         conn.commit()
 
@@ -769,9 +774,19 @@ def _ensure_db(db_path):
             "CREATE TABLE IF NOT EXISTS kv_store ("
             "  key TEXT PRIMARY KEY,"
             "  value TEXT NOT NULL,"
+            "  revision INTEGER NOT NULL DEFAULT 0,"
             "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))"
             ")"
         )
+        columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(kv_store)").fetchall()
+        }
+        if "revision" not in columns:
+            conn.execute(
+                "ALTER TABLE kv_store "
+                "ADD COLUMN revision INTEGER NOT NULL DEFAULT 0"
+            )
         conn.commit()
     finally:
         conn.close()
@@ -801,7 +816,11 @@ def _migrate_legacy_json(data_file, db_path):
         pass
 
 
-def _hydrate_state(saved):
+class StateConflictError(RuntimeError):
+    pass
+
+
+def _hydrate_state(saved, revision=None):
     state = {**DEFAULT_STATE, **(saved or {})}
     state["history"] = sorted(set(state.get("history") or []))
     state["users"] = state.get("users") or {}
@@ -824,6 +843,8 @@ def _hydrate_state(saved):
     state["account_migration_snapshots"] = (
         state.get("account_migration_snapshots") or {}
     )
+    if revision is not None:
+        state["_state_revision"] = int(revision)
     return state
 
 
@@ -837,32 +858,74 @@ def _load_state_sqlite(data_file):
     conn = sqlite3.connect(str(db_path))
     try:
         row = conn.execute(
-            "SELECT value FROM kv_store WHERE key = ?", ("default",)
+            "SELECT value, revision FROM kv_store WHERE key = ?", ("default",)
         ).fetchone()
     finally:
         conn.close()
 
     if not row:
-        return _hydrate_state({})
+        return _hydrate_state({}, revision=0)
     try:
         saved = json.loads(row[0])
     except (json.JSONDecodeError, TypeError):
-        return _hydrate_state({})
-    return _hydrate_state(saved)
+        return _hydrate_state({}, revision=row[1])
+    return _hydrate_state(saved, revision=row[1])
 
 
-def _save_state_sqlite(data_file, state):
+def _save_state_sqlite(data_file, state, force=False):
     db_path = _resolve_db_path(data_file)
     _ensure_db(db_path)
-    payload = json.dumps(state, ensure_ascii=False, indent=2)
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), timeout=30)
     try:
-        conn.execute(
-            "INSERT OR REPLACE INTO kv_store (key, value, updated_at) "
-            "VALUES (?, ?, datetime('now'))",
-            ("default", payload),
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT revision FROM kv_store WHERE key = ?",
+            ("default",),
+        ).fetchone()
+        current_revision = int(row[0]) if row else 0
+        expected_revision = (state or {}).get("_state_revision")
+        if (
+            row
+            and not force
+            and expected_revision is not None
+            and int(expected_revision) != current_revision
+        ):
+            raise StateConflictError("state_conflict")
+        if (
+            not row
+            and not force
+            and expected_revision not in (None, 0)
+        ):
+            raise StateConflictError("state_conflict")
+
+        next_revision = (
+            int(expected_revision)
+            if force and expected_revision is not None
+            else current_revision + 1
         )
+        persisted = {**(state or {}), "_state_revision": next_revision}
+        payload = json.dumps(persisted, ensure_ascii=False, indent=2)
+        if row:
+            cursor = conn.execute(
+                "UPDATE kv_store "
+                "SET value = ?, revision = ?, updated_at = datetime('now') "
+                "WHERE key = ? AND revision = ?",
+                (payload, next_revision, "default", current_revision),
+            )
+            if cursor.rowcount != 1:
+                raise StateConflictError("state_conflict")
+        else:
+            conn.execute(
+                "INSERT INTO kv_store (key, value, revision, updated_at) "
+                "VALUES (?, ?, ?, datetime('now'))",
+                ("default", payload, next_revision),
+            )
         conn.commit()
+        if isinstance(state, dict):
+            state["_state_revision"] = next_revision
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -871,26 +934,55 @@ def _load_state_postgres():
     _ensure_pg_kv()
     with _pg_connect() as conn:
         row = conn.execute(
-            "SELECT value FROM kv_store WHERE key = %s", ("default",)
+            "SELECT value, revision FROM kv_store WHERE key = %s", ("default",)
         ).fetchone()
     if not row:
-        return None
+        return _hydrate_state({}, revision=0)
     try:
-        return _hydrate_state(json.loads(row[0]))
+        return _hydrate_state(json.loads(row[0]), revision=row[1])
     except (json.JSONDecodeError, TypeError, IndexError):
-        return None
+        return _hydrate_state({}, revision=row[1] if len(row) > 1 else 0)
 
 
 def _save_state_postgres(state):
     _ensure_pg_kv()
-    payload = json.dumps(state, ensure_ascii=False, indent=2)
     with _pg_connect() as conn:
-        conn.execute(
-            "INSERT INTO kv_store (key, value, updated_at) VALUES (%s, %s, NOW()) "
-            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
-            ("default", payload),
-        )
+        row = conn.execute(
+            "SELECT revision FROM kv_store WHERE key = %s FOR UPDATE",
+            ("default",),
+        ).fetchone()
+        current_revision = int(row[0]) if row else 0
+        expected_revision = (state or {}).get("_state_revision")
+        if (
+            row
+            and expected_revision is not None
+            and int(expected_revision) != current_revision
+        ):
+            raise StateConflictError("state_conflict")
+        next_revision = current_revision + 1
+        persisted = {**(state or {}), "_state_revision": next_revision}
+        payload = json.dumps(persisted, ensure_ascii=False, indent=2)
+        if row:
+            updated = conn.execute(
+                "UPDATE kv_store "
+                "SET value = %s, revision = %s, updated_at = NOW() "
+                "WHERE key = %s AND revision = %s RETURNING revision",
+                (payload, next_revision, "default", current_revision),
+            ).fetchone()
+            if not updated:
+                raise StateConflictError("state_conflict")
+            next_revision = int(updated[0])
+        else:
+            inserted = conn.execute(
+                "INSERT INTO kv_store (key, value, revision, updated_at) "
+                "VALUES (%s, %s, %s, NOW()) RETURNING revision",
+                ("default", payload, next_revision),
+            ).fetchone()
+            if inserted:
+                next_revision = int(inserted[0])
         conn.commit()
+        if isinstance(state, dict):
+            state["_state_revision"] = next_revision
 
 
 def _state_user_count(state):
@@ -926,7 +1018,7 @@ def load_state(data_file):
             if pg_state is not None and _state_user_count(pg_state) > 0:
                 # Keep a local mirror for ops/debug; never wipe Postgres on mirror fail.
                 try:
-                    _save_state_sqlite(data_file, pg_state)
+                    _save_state_sqlite(data_file, pg_state, force=True)
                 except OSError:
                     pass
                 return pg_state
@@ -966,6 +1058,14 @@ def save_state(data_file, state):
                 existing = _load_state_postgres()
             except Exception:
                 existing = None
+            expected_revision = (state or {}).get("_state_revision")
+            existing_revision = (existing or {}).get("_state_revision")
+            if (
+                expected_revision is not None
+                and existing_revision is not None
+                and int(expected_revision) != int(existing_revision)
+            ):
+                raise StateConflictError("state_conflict")
             if (
                 existing is not None
                 and _state_user_count(existing) > 0
@@ -983,12 +1083,14 @@ def save_state(data_file, state):
                             existing[key] = value
                     state = existing
             _save_state_postgres(state)
+        except StateConflictError:
+            raise
         except Exception:
             # Still try local write so the request does not silently discard mutations.
             _save_state_sqlite(data_file, state)
             raise
         try:
-            _save_state_sqlite(data_file, state)
+            _save_state_sqlite(data_file, state, force=True)
         except OSError:
             pass
         return
@@ -1003,7 +1105,8 @@ def _account_migration_state_from_row(row):
     if not row:
         return _hydrate_state({})
     try:
-        return _hydrate_state(json.loads(row[0]))
+        revision = row[1] if len(row) > 1 else 0
+        return _hydrate_state(json.loads(row[0]), revision=revision)
     except (json.JSONDecodeError, TypeError, IndexError):
         return _hydrate_state({})
 
@@ -1016,24 +1119,32 @@ def mutate_state_atomically(data_file, mutator):
         try:
             conn.execute("BEGIN")
             row = conn.execute(
-                "SELECT value FROM kv_store WHERE key = %s FOR UPDATE",
+                "SELECT value, revision FROM kv_store WHERE key = %s FOR UPDATE",
                 ("default",),
             ).fetchone()
             state = _account_migration_state_from_row(row)
             working = copy.deepcopy(state)
             result = mutator(working)
+            current_revision = (
+                int(row[1])
+                if row and len(row) > 1
+                else int(working.get("_state_revision") or 0)
+            )
+            next_revision = current_revision + 1
+            working["_state_revision"] = next_revision
             payload = _account_migration_serialize_state(working)
             if row:
                 conn.execute(
-                    "UPDATE kv_store SET value = %s, updated_at = NOW() "
-                    "WHERE key = %s",
-                    (payload, "default"),
+                    "UPDATE kv_store "
+                    "SET value = %s, revision = %s, updated_at = NOW() "
+                    "WHERE key = %s AND revision = %s",
+                    (payload, next_revision, "default", current_revision),
                 )
             else:
                 conn.execute(
-                    "INSERT INTO kv_store (key, value, updated_at) "
-                    "VALUES (%s, %s, NOW())",
-                    ("default", payload),
+                    "INSERT INTO kv_store (key, value, revision, updated_at) "
+                    "VALUES (%s, %s, %s, NOW())",
+                    ("default", payload, next_revision),
                 )
             conn.commit()
         except Exception:
@@ -1042,7 +1153,7 @@ def mutate_state_atomically(data_file, mutator):
         finally:
             conn.close()
         try:
-            _save_state_sqlite(data_file, working)
+            _save_state_sqlite(data_file, working, force=True)
         except Exception:
             pass
         return result
@@ -1053,18 +1164,35 @@ def mutate_state_atomically(data_file, mutator):
     try:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
-            "SELECT value FROM kv_store WHERE key = ?",
+            "SELECT value, revision FROM kv_store WHERE key = ?",
             ("default",),
         ).fetchone()
         state = _account_migration_state_from_row(row)
         working = copy.deepcopy(state)
         result = mutator(working)
-        payload = _account_migration_serialize_state(working)
-        conn.execute(
-            "INSERT OR REPLACE INTO kv_store (key, value, updated_at) "
-            "VALUES (?, ?, datetime('now'))",
-            ("default", payload),
+        current_revision = (
+            int(row[1])
+            if row and len(row) > 1
+            else int(working.get("_state_revision") or 0)
         )
+        next_revision = current_revision + 1
+        working["_state_revision"] = next_revision
+        payload = _account_migration_serialize_state(working)
+        if row:
+            cursor = conn.execute(
+                "UPDATE kv_store "
+                "SET value = ?, revision = ?, updated_at = datetime('now') "
+                "WHERE key = ? AND revision = ?",
+                (payload, next_revision, "default", current_revision),
+            )
+            if cursor.rowcount != 1:
+                raise StateConflictError("state_conflict")
+        else:
+            conn.execute(
+                "INSERT INTO kv_store (key, value, revision, updated_at) "
+                "VALUES (?, ?, ?, datetime('now'))",
+                ("default", payload, next_revision),
+            )
         conn.commit()
         return result
     except Exception:

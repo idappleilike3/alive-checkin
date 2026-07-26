@@ -1245,6 +1245,136 @@ class AtomicRedemptionTests(unittest.TestCase):
             "used",
         )
 
+    def test_stale_ordinary_sqlite_save_is_rejected_after_redemption(self):
+        stale_ordinary_state = alive_app.load_state(self.data_file)
+        stale_ordinary_state["users"][self.old_id]["display_name"] = "Stale edit"
+
+        result, code = self._redeem()
+        self.assertEqual(code, 200)
+        self.assertTrue(result["ok"])
+
+        conflict_type = getattr(alive_app, "StateConflictError", RuntimeError)
+        with self.assertRaisesRegex(conflict_type, "^state_conflict$"):
+            alive_app.save_state(self.data_file, stale_ordinary_state)
+
+        final = alive_app.load_state(self.data_file)
+        self.assertNotIn(self.old_id, final["users"])
+        self.assertIn(self.new_id, final["users"])
+        self.assertEqual(
+            final["account_migration_aliases"][self.old_id]["status"],
+            "disabled",
+        )
+        self.assertEqual(
+            next(iter(final["account_migration_tickets"].values()))["status"],
+            "used",
+        )
+        self.assertEqual(len(final["account_migration_snapshots"]), 1)
+        self.assertEqual(len(final["account_migration_audit"]), 1)
+
+    def test_normal_sqlite_save_advances_revision(self):
+        state = alive_app.load_state(self.data_file)
+        before_revision = state.get("_state_revision", -1)
+        self.assertGreaterEqual(before_revision, 0)
+        state["users"][self.old_id]["display_name"] = "Fresh edit"
+
+        alive_app.save_state(self.data_file, state)
+
+        self.assertGreater(state["_state_revision"], before_revision)
+        reloaded = alive_app.load_state(self.data_file)
+        self.assertEqual(reloaded["_state_revision"], state["_state_revision"])
+        self.assertEqual(
+            reloaded["users"][self.old_id]["display_name"],
+            "Fresh edit",
+        )
+
+    def test_empty_sqlite_load_has_zero_revision_and_stale_insert_is_rejected(self):
+        empty_data_file = str(Path(self.tempdir.name) / "empty-state.json")
+        stale = alive_app.load_state(empty_data_file)
+        fresh = alive_app.load_state(empty_data_file)
+
+        self.assertEqual(stale.get("_state_revision"), 0)
+        fresh["users"]["U-first"] = {"line_user_id": "U-first"}
+        alive_app.save_state(empty_data_file, fresh)
+
+        stale["users"]["U-stale"] = {"line_user_id": "U-stale"}
+        with self.assertRaisesRegex(
+            alive_app.StateConflictError,
+            "^state_conflict$",
+        ):
+            alive_app.save_state(empty_data_file, stale)
+
+        final = alive_app.load_state(empty_data_file)
+        self.assertIn("U-first", final["users"])
+        self.assertNotIn("U-stale", final["users"])
+
+    def test_postgres_save_uses_revision_compare_and_swap_predicate(self):
+        class FakeResult:
+            def __init__(self, row=None):
+                self.row = row
+
+            def fetchone(self):
+                return self.row
+
+        class FakeConnection:
+            def __init__(self):
+                self.statements = []
+                self.commits = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, sql, params=None):
+                self.statements.append((sql, params))
+                if "SELECT revision" in sql:
+                    return FakeResult((7,))
+                if "RETURNING revision" in sql:
+                    return FakeResult((8,))
+                return FakeResult()
+
+            def commit(self):
+                self.commits += 1
+
+        connection = FakeConnection()
+        state = alive_app._hydrate_state({"users": {"U-one": {"value": 1}}})
+        state["_state_revision"] = 7
+        with (
+            mock.patch.object(alive_app, "_ensure_pg_kv"),
+            mock.patch.object(alive_app, "_pg_connect", return_value=connection),
+        ):
+            alive_app._save_state_postgres(state)
+
+        update_statements = [
+            sql
+            for sql, _ in connection.statements
+            if "UPDATE kv_store" in sql
+        ]
+        self.assertEqual(len(update_statements), 1)
+        update_sql = update_statements[0]
+        self.assertIn("revision = %s", update_sql)
+        self.assertIn("WHERE key = %s AND revision = %s", update_sql)
+        self.assertEqual(state["_state_revision"], 8)
+        self.assertEqual(connection.commits, 1)
+
+    def test_forced_sqlite_mirror_preserves_authoritative_revision(self):
+        mirrored = alive_app._hydrate_state(
+            {"users": {"U-one": {"value": 1}}},
+            revision=42,
+        )
+
+        alive_app._save_state_sqlite(
+            self.data_file,
+            mirrored,
+            force=True,
+        )
+
+        self.assertEqual(mirrored["_state_revision"], 42)
+        reloaded = alive_app._load_state_sqlite(self.data_file)
+        self.assertEqual(reloaded["_state_revision"], 42)
+        self.assertEqual(reloaded["users"]["U-one"]["value"], 1)
+
     def test_success_snapshot_is_retained_for_thirty_days(self):
         result, code = self._redeem()
         self.assertEqual(code, 200)
