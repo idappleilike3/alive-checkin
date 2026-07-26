@@ -96,13 +96,14 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertIn("function hasAnyGuardianOrContact(", page)
         self.assertIn("function syncInviteUiForBoundState(", page)
         self.assertIn("hasHomeSetupComplete(currentGuardianContacts())", page)
-        self.assertIn("const homeReady = hasHomeSetupComplete(contactsNow);", page)
-        self.assertIn("hasAnyGuardianOrContact(contactsNow)", page)
+        self.assertIn("const guardianRequired = (", page)
+        self.assertIn("status.guardian_required === true", page)
+        self.assertIn("status.home_ready === true", page)
         self.assertIn("mvpRewardInviteCard", page)
         self.assertIn("mvpGuardInviteCard", page)
         self.assertIn("isCheckinOpen", page)
         self.assertIn("isGuardOpen", page)
-        self.assertIn('openAction === "checkin" && (homeReady || hasGuardians)', page)
+        self.assertIn('openAction === "checkin" && homeReady', page)
         self.assertNotIn("if (isCheckinOpen || isGuardOpen || forceOnboarding)", page)
         # LINE 綁定即可進首頁（不再要求聯絡人電話）
         gate = page[page.index("function hasHomeSetupComplete(") : page.index("function closeGuardianPrompt(")]
@@ -115,8 +116,9 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertNotIn("maybeShowGuardianPrompt();", init_line)
         self.assertIn("maybeShowInviteAcceptPrompt();", init_line)
         init_app = page[page.rindex("async function initApp()") : page.index("// ===== D01")]
-        self.assertIn("homeReady || hasGuardians || setupDone", init_app)
-        self.assertIn("syncInviteUiForBoundState(homeReady || hasGuardians)", init_app)
+        self.assertIn("else if (guardianRequired)", init_app)
+        self.assertIn("syncInviteUiForBoundState(homeReady)", init_app)
+        self.assertIn("await showOnboarding();\n          return true;", init_app)
         # 報平安／安全守護不得被 wantsInviteShare 帶走；一鍵邀請才進分享頁
         self.assertTrue(
             'location.replace("/liff/share-invite.html")' in init_app
@@ -148,6 +150,89 @@ class BindAndHomeGateTests(unittest.TestCase):
         status = app_module.build_status(app_module.load_state(self.data_file)["users"]["U-owner"])
         self.assertEqual(status["bound_guardian_count"], 0)
         self.assertEqual(status["contact_count"], 1)
+
+    def test_member_access_state_rejects_every_legacy_or_unbound_false_positive(self):
+        """A legacy completion signal must not make a member home-ready."""
+        false_positive_profiles = {
+            "legacy completion flag": {"is_onboarding_completed": True},
+            "legacy interaction completion": {
+                "interaction_state": {"onboarding_completed": True},
+            },
+            "emergency contact": {
+                "contacts": [{
+                    "name": "阿姨",
+                    "relationship": "緊急聯絡人",
+                    "phone": "0912345678",
+                    "contact_role": "emergency",
+                }],
+            },
+            "unbound guardian profile": {
+                "contacts": [{
+                    "name": "阿媽",
+                    "relationship": "家人",
+                    "phone": "0912345678",
+                    "contact_role": "guardian",
+                    "binding_status": "unbound",
+                }],
+            },
+            "name and phone only": {
+                "contacts": [{
+                    "name": "阿公",
+                    "relationship": "家人",
+                    "phone": "0912345678",
+                }],
+            },
+        }
+        for label, fields in false_positive_profiles.items():
+            with self.subTest(label=label):
+                profile = {"line_user_id": "U-member", **fields}
+                access = app_module.member_access_state(profile)
+                self.assertEqual(access["home_ready"], False)
+                self.assertEqual(access["guardian_required"], True)
+                self.assertNotIn("friend_required", access)
+                self.assertNotIn("login_required", access)
+                self.assertNotIn("migration_pending", access)
+
+    def test_member_access_state_unlocks_only_a_notifiable_bound_line_guardian(self):
+        profile = {
+            "line_user_id": "U-member",
+            "contacts": [{
+                "name": "阿媽",
+                "relationship": "家人",
+                "contact_role": "guardian",
+                "line_user_id": "U-guardian",
+                "binding_status": "accepted",
+                "consent_status": "accepted",
+                "notify_methods": ["line"],
+            }],
+        }
+
+        self.assertEqual(
+            app_module.member_access_state(profile),
+            {"guardian_required": False, "home_ready": True},
+        )
+
+    def test_status_and_onboarding_apis_expose_authoritative_member_access_state(self):
+        app = app_module.create_app({"DATA_FILE": self.data_file, "REQUIRE_LIFF_AUTH": "0"})
+        state = app_module.load_state(self.data_file)
+        profile = app_module.get_profile(state, "U-member")
+        profile["is_onboarding_completed"] = True
+        profile["interaction_state"] = {"onboarding_completed": True}
+        profile["contacts"] = [{
+            "name": "阿媽",
+            "relationship": "家人",
+            "phone": "0912345678",
+            "contact_role": "guardian",
+            "binding_status": "unbound",
+        }]
+        app_module.save_state(self.data_file, state)
+
+        client = app.test_client()
+        status = client.get("/api/status?line_user_id=U-member").get_json()
+        onboarding = client.get("/api/onboarding?line_user_id=U-member").get_json()
+        for payload in (status, onboarding):
+            self.assertEqual(payload["home_ready"], False)
+            self.assertEqual(payload["guardian_required"], True)
 
     def test_scrub_self_line_id_fake_bind(self):
         state = app_module.load_state(self.data_file)

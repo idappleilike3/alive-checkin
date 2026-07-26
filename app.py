@@ -2035,16 +2035,72 @@ def profile_has_bound_line_guardian(profile):
     return any(contact_is_notifiable_line_guardian(c, owner) for c in contacts)
 
 
+def member_access_state(profile):
+    """Return only server-authoritative readiness for a member session.
+
+    Historical onboarding flags and ordinary contact records describe prior UI
+    progress; they do not prove that a LINE-reachable core guardian is bound.
+    Optional blockers are emitted only when this persisted profile explicitly
+    records them, never inferred from browser state.
+    """
+    profile = profile if isinstance(profile, dict) else {}
+    home_ready = profile_has_bound_line_guardian(profile)
+    state = {
+        "guardian_required": not home_ready,
+        "home_ready": home_ready,
+    }
+    for key in ("friend_required", "login_required", "migration_pending"):
+        if profile.get(key) is True:
+            state[key] = True
+    return state
+
+
+def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=False):
+    """Build the onboarding API payload from the same authoritative gate."""
+    line_user_id = str(line_user_id or "").strip()
+    if not line_user_id:
+        return {"ok": False, "error": "missing line_user_id"}, 400
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if not profile and not allow_missing_profile:
+        return {"ok": False, "error": "user not registered"}, 404
+    profile = profile or {}
+    if profile and ensure_onboarding_completed_flag(profile):
+        save_state(data_file, state)
+    access = member_access_state(profile)
+    contacts = profile.get("contacts") or []
+    has_guardian = profile_has_guardian(profile)
+    times = (
+        reminder_times_for_profile(profile)
+        if profile
+        else default_reminder_times_for_count(1)
+    )
+    daily_reminders = int(plan_rules(profile).get("daily_reminders") or 1) if profile else 1
+    return {
+        "ok": True,
+        **access,
+        "line_user_id": line_user_id,
+        "is_onboarding_completed": access["home_ready"],
+        "setup_completed": access["home_ready"],
+        "has_guardian": has_guardian,
+        "guardian_count": len(contacts),
+        "reminder_time": times[0] if times else "12:00",
+        "reminder_times": times,
+        "daily_reminders": daily_reminders,
+        "default_reminder_times": default_reminder_times_for_count(daily_reminders),
+        "grace_hours": normalize_grace_hours(profile.get("grace_hours")),
+        "warning_cancel_minutes": int(
+            profile.get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
+        ),
+        "allowed_grace_hours": list(ALLOWED_GRACE_HOURS),
+        "plan": profile.get("plan", "trial"),
+        "display_name": profile.get("display_name", ""),
+    }, 200
+
+
 def profile_setup_completed(profile):
-    """首次設定是否已完成：以伺服器 durable flag／守護人為準（不用只靠 localStorage）。"""
-    if not profile:
-        return False
-    if profile.get("is_onboarding_completed"):
-        return True
-    istate = profile.get("interaction_state") or {}
-    if isinstance(istate, dict) and istate.get("onboarding_completed"):
-        return True
-    return profile_has_guardian(profile)
+    """Compatibility alias for server-authoritative home readiness."""
+    return member_access_state(profile)["home_ready"]
 
 
 def ensure_onboarding_completed_flag(profile):
@@ -2056,10 +2112,10 @@ def ensure_onboarding_completed_flag(profile):
         and profile["interaction_state"].get("onboarding_completed")
     ):
         return False
-    if not profile_has_guardian(profile) and not profile.get("is_onboarding_completed"):
+    if not profile_has_bound_line_guardian(profile) and not profile.get("is_onboarding_completed"):
         return False
     changed = False
-    if profile_has_guardian(profile) or profile.get("is_onboarding_completed"):
+    if profile_has_bound_line_guardian(profile) or profile.get("is_onboarding_completed"):
         if not profile.get("is_onboarding_completed"):
             profile["is_onboarding_completed"] = True
             changed = True
@@ -2385,6 +2441,7 @@ def build_status(profile, state=None, now=None):
             enrich_contact_peer_display_name(state, row)
         normalized_contacts.append(row)
     profile["contacts"] = normalized_contacts
+    access = member_access_state(profile)
     now = now or current_app_time({})
     last = parse_last_checkin(profile.get("last_check_in"))
     grace_hours = normalize_grace_hours(profile.get("grace_hours"))
@@ -2443,6 +2500,7 @@ def build_status(profile, state=None, now=None):
 
     return {
         "ok": True,
+        **access,
         "line_user_id": profile.get("line_user_id"),
         "display_name": profile.get("display_name", ""),
         "picture_url": profile.get("picture_url", ""),
@@ -9991,39 +10049,12 @@ def create_app(config=None):
     @app.get("/api/onboarding/state")
     def onboarding_state_api():
         """取得使用者 onboarding 狀態(守護人是否綁定 + 提醒時間)。"""
-        line_user_id = request.args.get("line_user_id", "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
-        state = load_state(app.config["DATA_FILE"])
-        profile = state.get("users", {}).get(line_user_id, {})
-        contacts = profile.get("contacts") or []
-        if profile and ensure_onboarding_completed_flag(profile):
-            save_state(app.config["DATA_FILE"], state)
-        has_guardian = profile_has_guardian(profile)
-        setup_done = profile_setup_completed(profile)
-        times = reminder_times_for_profile(profile) if profile else default_reminder_times_for_count(1)
-        daily_reminders = int(plan_rules(profile).get("daily_reminders") or 1) if profile else 1
-        grace = normalize_grace_hours((profile or {}).get("grace_hours"))
-        warn_m = int(
-            (profile or {}).get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
+        data, code = onboarding_status_payload(
+            app.config["DATA_FILE"],
+            request.args.get("line_user_id"),
+            allow_missing_profile=True,
         )
-        return jsonify({
-            "ok": True,
-            "line_user_id": line_user_id,
-            "has_guardian": has_guardian,
-            "guardian_count": len(contacts),
-            "reminder_time": times[0] if times else None,
-            "reminder_times": times,
-            "daily_reminders": daily_reminders,
-            "daily_checkin_reminder_enabled": bool(profile.get("daily_checkin_reminder_enabled", True)) if profile else True,
-            "default_reminder_times": default_reminder_times_for_count(daily_reminders),
-            "grace_hours": grace,
-            "warning_cancel_minutes": warn_m,
-            "allowed_grace_hours": list(ALLOWED_GRACE_HOURS),
-            "plan": profile.get("plan"),
-            "is_onboarding_completed": setup_done,
-            "setup_completed": setup_done,
-        })
+        return jsonify(data), code
 
     @app.post("/api/onboarding/reminder")
     def onboarding_reminder_api():
@@ -11360,35 +11391,10 @@ def create_app(config=None):
     @app.get("/api/onboarding")
     def onboarding_get():
         """回傳使用者 onboarding 狀態。"""
-        line_user_id = (request.args.get("line_user_id") or "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
-        state = load_state(app.config["DATA_FILE"])
-        profile = state.get("users", {}).get(line_user_id)
-        if not profile:
-            return jsonify({"ok": False, "error": "user not registered"}), 404
-        if ensure_onboarding_completed_flag(profile):
-            save_state(app.config["DATA_FILE"], state)
-        contacts = profile.get("contacts") or []
-        has_guardian = profile_has_guardian(profile)
-        setup_done = profile_setup_completed(profile)
-        times = reminder_times_for_profile(profile)
-        return jsonify({
-            "ok": True,
-            "line_user_id": line_user_id,
-            "is_onboarding_completed": setup_done,
-            "setup_completed": setup_done,
-            "has_guardian": has_guardian,
-            "guardian_count": len(contacts),
-            "reminder_time": times[0] if times else "12:00",
-            "reminder_times": times,
-            "daily_reminders": int(plan_rules(profile).get("daily_reminders") or 1),
-            "default_reminder_times": default_reminder_times_for_count(
-                plan_rules(profile).get("daily_reminders") or 1
-            ),
-            "plan": profile.get("plan", "trial"),
-            "display_name": profile.get("display_name", ""),
-        })
+        data, code = onboarding_status_payload(
+            app.config["DATA_FILE"], request.args.get("line_user_id")
+        )
+        return jsonify(data), code
 
     @app.get("/api/interaction-state")
     def interaction_state_get():
@@ -11517,13 +11523,13 @@ def create_app(config=None):
         profile = state.get("users", {}).get(line_user_id)
         if not profile:
             return jsonify({"ok": False, "error": "user not registered"}), 404
-        contacts = profile.get("contacts") or []
-        has_guardian = profile_has_guardian(profile)
-        if not has_guardian:
+        access = member_access_state(profile)
+        if access["guardian_required"]:
             return jsonify({
                 "ok": False,
                 "error": "guardian_required",
-                "message": "必須先新增至少 1 位守護人"
+                "message": "必須先完成至少 1 位可接收 LINE 通知的核心守護人綁定",
+                **access,
             }), 400
         profile["is_onboarding_completed"] = True
         # 儲存提醒時段(多時段優先;未提供則套用方案預設)
@@ -11549,6 +11555,7 @@ def create_app(config=None):
         times = reminder_times_for_profile(profile)
         return jsonify({
             "ok": True,
+            **member_access_state(profile),
             "is_onboarding_completed": True,
             "setup_completed": True,
             "reminder_time": times[0],
@@ -12342,6 +12349,18 @@ class MiniClient:
             return MiniResponse({"ok": True})
         if route == "/api/status":
             return MiniResponse(self.app.status(params.get("line_user_id")))
+        if route == "/api/onboarding":
+            body, code = onboarding_status_payload(
+                self.app.config["DATA_FILE"], params.get("line_user_id")
+            )
+            return MiniResponse(body, code)
+        if route == "/api/onboarding/state":
+            body, code = onboarding_status_payload(
+                self.app.config["DATA_FILE"],
+                params.get("line_user_id"),
+                allow_missing_profile=True,
+            )
+            return MiniResponse(body, code)
         if route == "/api/admin/summary":
             denied = admin_auth_error_payload(self.app.config, params.get("password", ""))
             if denied:
@@ -12629,6 +12648,16 @@ class MiniApp:
                             data["auto_registered"] = True
                         return handler.send_json(data, code)
                     return handler.send_json(build_status(state["users"][line_user_id], state))
+                if route == "/api/onboarding":
+                    data, code = onboarding_status_payload(data_file, params.get("line_user_id"))
+                    return handler.send_json(data, code)
+                if route == "/api/onboarding/state":
+                    data, code = onboarding_status_payload(
+                        data_file,
+                        params.get("line_user_id"),
+                        allow_missing_profile=True,
+                    )
+                    return handler.send_json(data, code)
                 if route == "/api/admin/summary":
                     denied = admin_auth_error_payload(config, params.get("password", ""))
                     if denied:

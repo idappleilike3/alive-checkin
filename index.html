@@ -9232,31 +9232,29 @@
 
     async function fetchOnboardingState() {
       if (!lineUserId) {
-        return { done: false, hasGuardian: false, ok: false };
+        return { done: false, homeReady: false, guardianRequired: false, hasGuardian: false, ok: false };
       }
       try {
         const res = await apiGetOnboarding(lineUserId);
         if (res.status !== 200 || !res.data) {
-          return { done: false, hasGuardian: currentGuardianContacts().length > 0, ok: false };
+          return { done: false, homeReady: false, guardianRequired: false, hasGuardian: false, ok: false };
         }
         const hasGuardian = (
           res.data.has_guardian === true
           || Number(res.data.guardian_count || 0) > 0
-          || currentGuardianContacts().length > 0
         );
-        const done = (
-          res.data.setup_completed === true
-          || res.data.is_onboarding_completed === true
-          || hasGuardian
-        );
+        const guardianRequired = res.data.guardian_required === true;
+        const homeReady = res.data.home_ready === true && !guardianRequired;
         return {
-          done,
+          done: homeReady,
+          homeReady,
+          guardianRequired,
           hasGuardian,
           ok: true,
           data: res.data,
         };
       } catch (e) {
-        return { done: false, hasGuardian: currentGuardianContacts().length > 0, ok: false };
+        return { done: false, homeReady: false, guardianRequired: false, hasGuardian: false, ok: false };
       }
     }
 
@@ -9639,22 +9637,22 @@
         const isGuardOpen = openAction === "guard";
         const forceOnboarding = openAction === "onboarding" || openAction === "bind" || isOnboardingInvite;
         const inviteeMode = isInviteeDeepLink();
-        const contactsNow = currentGuardianContacts();
-        const homeReady = hasHomeSetupComplete(contactsNow);
-        const hasGuardians = (
-          homeReady
-          || hasAnyGuardianOrContact(contactsNow)
-          || onboardingState.hasGuardian
-          || Number(onboardingState.data?.guardian_count || 0) > 0
-          || Number(status.bound_guardian_count || 0) > 0
-          || Number(status.contact_count || 0) > 0
-          || contactsNow.length > 0
+        const guardianRequired = (
+          status.guardian_required === true
+          || onboardingState.guardianRequired === true
+          || onboardingState.data?.guardian_required === true
         );
-        // ≥1 LINE 綁定 或 ≥1 聯絡人 → 直接進首頁／功能，不再彈「未綁定／一鍵邀請」
-        const setupDone = homeReady || onboardingState.done || hasGuardians;
+        const homeReady = !guardianRequired && (
+          status.home_ready === true
+          || onboardingState.homeReady === true
+          || onboardingState.data?.home_ready === true
+        );
+        // Compatibility aliases: neither may unlock a route beyond server homeReady.
+        const hasGuardians = homeReady;
+        const setupDone = homeReady;
         const wantsInviteShare = wantsShareInvite;
-        syncInviteUiForBoundState(homeReady || hasGuardians);
-        if ((homeReady || hasGuardians) && !inviteeMode) {
+        syncInviteUiForBoundState(homeReady);
+        if (homeReady && !inviteeMode) {
           clearShareFirstLocalFlags();
           closeGuardianPrompt();
           closeInviteAcceptPrompt();
@@ -9675,14 +9673,17 @@
           // 一鍵邀請：已綁定仍可再邀（rich menu share-invite／invite）
           // 但 onboarding/invite 教學路徑：已有 ≥1 綁定守護人 → 進首頁，不再推「邀請家人加入」
           clearShareFirstLocalFlags();
-          if ((homeReady || hasGuardians) && isOnboardingInvite) {
+          if (homeReady && isOnboardingInvite) {
             if (typeof showTab === "function") showTab("home");
           } else {
             location.replace(buildShareInvitePageUrl("home"));
             return;
           }
+        } else if (guardianRequired) {
+          await showOnboarding();
+          return true;
         } else if (homeReady || hasGuardians || setupDone) {
-          // 已有 ≥1 LINE 守護人或 ≥1 聯絡人：絕不 showOnboarding／share-invite
+          // Only the server-confirmed bound LINE guardian unlocks member routes.
           clearShareFirstLocalFlags();
           const preservesRequestedScreen = [
             "member", "guardians", "history", "sos", "guard", "checkin"
@@ -9690,8 +9691,9 @@
           if (!preservesRequestedScreen && typeof showTab === "function") showTab("home");
         } else {
           await showOnboarding();
+          return true;
         }
-        if ((homeReady || hasGuardians) && forceOnboarding && !wantsInviteShare) {
+        if (homeReady && forceOnboarding && !wantsInviteShare) {
           if (typeof showTab === "function") showTab("home");
         } else if (openAction === "member" && !forceOnboarding && typeof showTab === "function") {
           showTab("member");
@@ -9706,14 +9708,14 @@
           openSosFlow();
         } else if (isGuardOpen) {
           const onboardingOpen = $("onboardingModal") && !$("onboardingModal").hidden;
-          if (homeReady || hasGuardians || !onboardingOpen) {
+          if (homeReady || !onboardingOpen) {
             openMvpGuardPanel();
           }
         } else if (openAction === "call" || openAction === "family") {
           openMvpCallPanel();
         } else if (isCheckinOpen && typeof showTab === "function") {
           showTab("home");
-          if (openAction === "checkin" && (homeReady || hasGuardians)) {
+          if (openAction === "checkin" && homeReady) {
             setTimeout(() => {
               if (currentStatusData && currentStatusData.is_today_checked) {
                 syncCheckBtn(currentStatusData);

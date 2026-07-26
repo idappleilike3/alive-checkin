@@ -288,6 +288,55 @@ test("status error renders senior-readable retry without page reload", () => {
   assert.equal(page.includes("location.reload()"), false);
 });
 
+test("server guardian_required shows onboarding and blocks home, check-in, guard, and SOS routes", async () => {
+  const initSource = section("async function initApp()", "// ===== D01");
+
+  for (const openAction of ["home", "checkin", "guard", "sos"]) {
+    const events = [];
+    const sandbox = expose(initSource, ["initApp"], {
+      lineUserId: "U-member",
+      pendingMigratedMemberData: null,
+      location: { hash: "" },
+      bindTabEvents() {},
+      loadInitialMemberData: async () => ({
+        status: {
+          guardian_required: true,
+          home_ready: false,
+          contact_count: 1,
+          bound_guardian_count: 0,
+        },
+        contacts: [{ name: "阿媽", binding_status: "unbound" }],
+        onboarding: {
+          guardian_required: true,
+          home_ready: false,
+          done: false,
+          hasGuardian: true,
+          data: { guardian_required: true, home_ready: false },
+        },
+      }),
+      requestedAppAction: () => openAction,
+      isInviteeDeepLink: () => false,
+      currentGuardianContacts: () => [{ name: "阿媽", binding_status: "unbound" }],
+      hasHomeSetupComplete: () => false,
+      hasAnyGuardianOrContact: () => true,
+      syncInviteUiForBoundState() {},
+      clearShareFirstLocalFlags() {},
+      closeGuardianPrompt() {},
+      closeInviteAcceptPrompt() {},
+      showOnboarding: async () => events.push("onboarding"),
+      showTab: (tab) => events.push(`tab:${tab}`),
+      openMvpGuardPanel: () => events.push("guard"),
+      openSosFlow: () => events.push("sos"),
+      doCheckin: async () => events.push("checkin"),
+      $: () => null,
+      showMemberBootstrapError: (error) => { throw error; },
+    });
+
+    await sandbox.initApp();
+    assert.deepEqual(events, ["onboarding"], `${openAction} must stay behind the guardian gate`);
+  }
+});
+
 test("legacy handoff parses nested liff.state and drops the old Provider inviter ID", () => {
   const oldProviderUserId = "U0123456789abcdef0123456789abcdef";
   const nestedState = encodeURIComponent(
