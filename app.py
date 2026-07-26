@@ -1464,11 +1464,7 @@ def get_calendar_notes(data_file, line_user_id=None):
     notes = profile.get("calendar_notes")
     if not isinstance(notes, dict):
         notes = {}
-    public_notes = {
-        note_date: public_calendar_note(note)
-        for note_date, note in notes.items()
-    }
-    return {"ok": True, "notes": public_notes}
+    return {"ok": True, "notes": public_calendar_notes(notes)}
 
 
 def save_calendar_note(data_file, payload):
@@ -1522,7 +1518,7 @@ def save_calendar_note(data_file, payload):
         notes.pop(note_date, None)
     profile["calendar_notes"] = notes
     save_state(data_file, state)
-    return {"ok": True, "notes": notes}, 200
+    return {"ok": True, "notes": public_calendar_notes(notes)}, 200
 
 
 def calendar_note_entries(note):
@@ -1570,13 +1566,27 @@ def calendar_note_birthday(note):
 
 def public_calendar_note(note):
     if not isinstance(note, list):
-        return copy.deepcopy(note)
+        if not isinstance(note, dict):
+            return copy.deepcopy(note)
+        return {
+            key: copy.deepcopy(value)
+            for key, value in note.items()
+            if key not in {"id", "migration_event_id"}
+            and not str(key).startswith("_migration")
+        }
     public_note = {"content": calendar_note_content(note)}
     birthdays = calendar_note_birthdays(note)
     if birthdays:
         public_note.update(birthdays[0])
         public_note["birthdays"] = birthdays
     return public_note
+
+
+def public_calendar_notes(notes):
+    return {
+        note_date: public_calendar_note(note)
+        for note_date, note in (notes or {}).items()
+    }
 
 
 def birthday_occurs_on(birthday, target_date):

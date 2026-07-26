@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from datetime import datetime
@@ -152,6 +153,86 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertNotIn("id", public_note)
         self.assertNotIn("migration-calendar-note", str(result))
         self.assertNotIn("[{", calendar_note_content(state["users"]["U-calendar"]["calendar_notes"]["2026-08-08"]))
+
+    def test_single_migrated_note_dict_hides_internal_fields(self):
+        state = load_state(self.data_file)
+        state["users"]["U-calendar"] = {
+            "line_user_id": "U-calendar",
+            "calendar_notes": {
+                "2026-08-08": {
+                    "id": "migration-calendar-note-0001",
+                    "migration_event_id": "migration-event-001",
+                    "content": "記得打電話",
+                    "birthday_name": "爸爸",
+                    "birthday_relationship": "爸爸",
+                    "birthday_date": "2026-08-08",
+                    "birthday_yearly": True,
+                    "birthday_remind_days": 1,
+                }
+            },
+        }
+        save_state(self.data_file, state)
+
+        result = get_calendar_notes(self.data_file, "U-calendar")
+
+        self.assertEqual(
+            result["notes"]["2026-08-08"],
+            {
+                "content": "記得打電話",
+                "birthday_name": "爸爸",
+                "birthday_relationship": "爸爸",
+                "birthday_date": "2026-08-08",
+                "birthday_yearly": True,
+                "birthday_remind_days": 1,
+            },
+        )
+        response_text = json.dumps(result, ensure_ascii=False)
+        self.assertNotIn("migration-calendar-note", response_text)
+        self.assertNotIn("migration_event_id", response_text)
+
+    def test_save_response_sanitizes_existing_migrated_notes(self):
+        state = load_state(self.data_file)
+        state["users"]["U-calendar"] = {
+            "line_user_id": "U-calendar",
+            "calendar_notes": {
+                "2026-08-08": [
+                    {
+                        "id": "migration-calendar-note-0001",
+                        "migration_event_id": "migration-event-001",
+                        "content": "陪媽媽回診",
+                    },
+                    {
+                        "id": "migration-calendar-note-0002",
+                        "content": "記得打電話",
+                        "birthday_name": "爸爸",
+                        "birthday_relationship": "爸爸",
+                        "birthday_date": "2026-08-08",
+                        "birthday_yearly": True,
+                        "birthday_remind_days": 1,
+                    },
+                ]
+            },
+        }
+        save_state(self.data_file, state)
+
+        result, code = save_calendar_note(
+            self.data_file,
+            {
+                "line_user_id": "U-calendar",
+                "date": "2026-08-09",
+                "content": "領藥",
+            },
+        )
+
+        self.assertEqual(code, 200)
+        self.assertEqual(
+            result["notes"]["2026-08-08"]["content"],
+            "陪媽媽回診\n記得打電話",
+        )
+        self.assertEqual(result["notes"]["2026-08-09"], "領藥")
+        response_text = json.dumps(result, ensure_ascii=False)
+        self.assertNotIn("migration-calendar-note", response_text)
+        self.assertNotIn("migration_event_id", response_text)
 
     def test_migrated_birthday_inside_same_date_list_is_reminded(self):
         state = load_state(self.data_file)
