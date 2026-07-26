@@ -19,10 +19,11 @@ function createHarness(fetchImpl) {
     "adminShell", "loginPanel", "loginStatus", "adminLoginForm", "loginBtn",
     "adminPassword", "logoutBtn", "refreshBtn", "contactRemindBtn", "remindBtn",
     "renewalRemindBtn", "birthdayRemindBtn", "createBackupBtn", "richMenuDeployBtn",
-    "authStatus", "message"
+    "authStatus", "message", "migrationConfigured", "migrationTotals",
+    "migrationLastAttempt", "migrationFailure", "migrationCounts"
   ];
   for (const id of ids) {
-    elements.set(id, {
+    const element = {
       classList: {add() {}, remove() {}},
       disabled: false,
       hidden: id === "adminShell",
@@ -30,7 +31,13 @@ function createHarness(fetchImpl) {
       textContent: "",
       value: "",
       addEventListener(type, listener) { this.listeners[type] = listener; }
-    });
+    };
+    if (id.startsWith("migration")) {
+      Object.defineProperty(element, "innerHTML", {
+        set() { throw new Error("migration server text must not use innerHTML"); }
+      });
+    }
+    elements.set(id, element);
   }
   const context = {
     Blob,
@@ -57,7 +64,7 @@ function createHarness(fetchImpl) {
     );
   }
   vm.runInNewContext(source, context, {filename: "admin.html"});
-  return {elements, scheduled};
+  return {context, elements, scheduled};
 }
 
 test("stale session restore cannot hide dashboard after successful login", async () => {
@@ -89,4 +96,37 @@ test("login network error restores the button and shows a friendly message", asy
 
   assert.equal(harness.elements.get("loginStatus").textContent, "連線失敗，請稍後再試。");
   assert.equal(harness.elements.get("loginBtn").disabled, false);
+});
+
+test("migration card renders server text through textContent only", () => {
+  const harness = createHarness(() => {
+    throw new Error("fetch is not expected");
+  });
+  const hostile = '<img src=x onerror="globalThis.compromised=true">';
+
+  harness.context.renderAccountMigrations({
+    configured: true,
+    totals: {total: 2, success: 1, failed: 1, pending: 0},
+    latest_events: [{
+      status: "failed",
+      created_at: hostile,
+      failure_category: hostile,
+      counts: {
+        checkins: 2,
+        contacts: 1,
+        groups: 0,
+        reminders: 3,
+        orders: 1,
+        requests: 0
+      }
+    }]
+  });
+
+  assert.equal(harness.elements.get("migrationLastAttempt").textContent, hostile);
+  assert.equal(harness.elements.get("migrationFailure").textContent, hostile);
+  assert.equal(harness.context.compromised, undefined);
+  assert.equal(
+    harness.elements.get("migrationCounts").textContent,
+    "簽到 2、聯絡人 1、群組 0、提醒 3、訂單 1、申請 0"
+  );
 });

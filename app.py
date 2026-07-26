@@ -7604,6 +7604,90 @@ def admin_summary(data_file, config=None, now=None):
     }
 
 
+_MIGRATION_ADMIN_COUNT_KEYS = (
+    "checkins",
+    "contacts",
+    "groups",
+    "reminders",
+    "orders",
+    "requests",
+)
+_MIGRATION_ADMIN_FAILURE_CATEGORIES = {
+    "",
+    "invalid_code",
+    "expired_code",
+    "used_code",
+    "source_missing",
+    "unsafe_conflict",
+    "migration_failed",
+}
+
+
+def admin_account_migrations(data_file, config):
+    """Return a read-only, allowlisted operational migration summary."""
+    state = load_state(data_file)
+    audit = state.get("account_migration_audit") or []
+    successes = sum(
+        1
+        for event in audit
+        if isinstance(event, dict) and event.get("status") == "success"
+    )
+    failures = sum(
+        1
+        for event in audit
+        if isinstance(event, dict) and event.get("status") == "failed"
+    )
+    pending = sum(
+        1
+        for ticket in (state.get("account_migration_tickets") or {}).values()
+        if isinstance(ticket, dict) and ticket.get("status") == "pending"
+    )
+    latest_events = []
+    for event in reversed(audit[-10:]):
+        if not isinstance(event, dict):
+            continue
+        status = (
+            event.get("status")
+            if event.get("status") in {"success", "failed"}
+            else "failed"
+        )
+        failure_category = str(event.get("failure_category") or "")
+        if failure_category not in _MIGRATION_ADMIN_FAILURE_CATEGORIES:
+            failure_category = "other"
+        created_at = _account_migration_datetime(event.get("created_at"))
+        raw_counts = (
+            event.get("counts")
+            if isinstance(event.get("counts"), dict)
+            else {}
+        )
+        counts = {}
+        for key in _MIGRATION_ADMIN_COUNT_KEYS:
+            try:
+                counts[key] = max(0, int(raw_counts.get(key) or 0))
+            except (TypeError, ValueError):
+                counts[key] = 0
+        latest_events.append({
+            "status": status,
+            "created_at": (
+                created_at.isoformat(timespec="seconds")
+                if created_at
+                else ""
+            ),
+            "failure_category": failure_category,
+            "counts": counts,
+        })
+    return {
+        "configured": account_migration_ready(config),
+        "totals": {
+            "total": successes + failures + pending,
+            "success": successes,
+            "failed": failures,
+            "pending": pending,
+        },
+        "latest_events": latest_events,
+    }
+
+
 def backup_root(data_file):
     return Path(data_file).parent / "backups"
 
@@ -11606,6 +11690,18 @@ def create_app(config=None):
         if denied:
             return denied
         return jsonify(admin_summary(app.config["DATA_FILE"], app.config))
+
+    @app.get("/api/admin/account-migrations")
+    def admin_account_migrations_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        return jsonify(
+            admin_account_migrations(
+                app.config["DATA_FILE"],
+                app.config,
+            )
+        )
 
     @app.get("/api/admin/support-tickets")
     def admin_support_tickets_api():

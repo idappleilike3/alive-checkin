@@ -387,6 +387,20 @@
         <div class="stat"><strong id="pendingOrders">0</strong><span>待付款訂單</span></div>
       </div>
 
+      <section class="release-status" aria-label="帳號搬家狀態">
+        <h2>帳號搬家</h2>
+        <div class="release-row">
+          <strong id="migrationConfigured">尚未載入</strong>
+          <span id="migrationTotals">成功 0、失敗 0、待處理 0</span>
+          <span class="badge" id="migrationLastAttempt">尚無紀錄</span>
+        </div>
+        <div class="release-row">
+          <strong>最近結果</strong>
+          <span id="migrationCounts">尚無搬家紀錄</span>
+          <span class="badge" id="migrationFailure">無失敗原因</span>
+        </div>
+      </section>
+
       <h2 style="margin: 0 0 8px;">台灣縣市會員與訂單</h2>
       <p class="note">依會員實際分享的位置縣市統計；尚未分享位置的會員會列在「未提供」。</p>
       <div class="table-wrap" style="margin-bottom: 16px;">
@@ -699,6 +713,51 @@
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return value;
       return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+    }
+
+    function migrationFailureLabel(category) {
+      return {
+        "": "無失敗原因",
+        invalid_code: "代碼無效",
+        expired_code: "代碼已過期",
+        used_code: "代碼已使用",
+        source_missing: "舊帳號不存在",
+        unsafe_conflict: "帳號狀態衝突",
+        migration_failed: "搬家執行失敗",
+        other: "其他安全錯誤"
+      }[category] || String(category || "無失敗原因");
+    }
+
+    function renderAccountMigrations(data) {
+      const totals = data && data.totals ? data.totals : {};
+      const latest = Array.isArray(data && data.latest_events)
+        ? data.latest_events[0]
+        : null;
+      $("migrationConfigured").textContent = data && data.configured
+        ? "已設定"
+        : "尚未設定";
+      $("migrationTotals").textContent =
+        `總計 ${Number(totals.total || 0)}、成功 ${Number(totals.success || 0)}、失敗 ${Number(totals.failed || 0)}、待處理 ${Number(totals.pending || 0)}`;
+      $("migrationLastAttempt").textContent = latest
+        ? formatDate(latest.created_at)
+        : "尚無紀錄";
+      $("migrationFailure").textContent = latest
+        ? migrationFailureLabel(latest.failure_category)
+        : "無失敗原因";
+      const counts = latest && latest.counts ? latest.counts : null;
+      $("migrationCounts").textContent = counts
+        ? `簽到 ${Number(counts.checkins || 0)}、聯絡人 ${Number(counts.contacts || 0)}、群組 ${Number(counts.groups || 0)}、提醒 ${Number(counts.reminders || 0)}、訂單 ${Number(counts.orders || 0)}、申請 ${Number(counts.requests || 0)}`
+        : "尚無搬家紀錄";
+    }
+
+    async function refreshAccountMigrations() {
+      const response = await adminFetch("/api/admin/account-migrations");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        renderAccountMigrations({configured: false, totals: {}, latest_events: []});
+        return;
+      }
+      renderAccountMigrations(data);
     }
 
     function statusBadge(user) {
@@ -1044,6 +1103,7 @@
           `).join("")
           : `<div class="reward-item"><span>尚無 LINE 邀請綁定關係</span><span></span><span></span></div>`;
       }
+      await refreshAccountMigrations();
       const ticketRes = await adminFetch("/api/admin/support-tickets");
       const ticketData = ticketRes.ok ? await ticketRes.json() : { tickets: [] };
       $("supportList").innerHTML = (ticketData.tickets || []).length

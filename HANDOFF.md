@@ -6,19 +6,44 @@
 
 這次變更已把正式入口與預設值切到新的 LINE Login provider，但 **尚未由本地工作樹執行外部部署或 LINE Console 操作**。PR 合併到 `main` 並確認 Render 部署完成後，指定的 release owner 依以下順序操作與驗收：
 
-1. 在 Render 的 `alive-checkin` Web Service → **Environment**，逐一新增或更新：
+### 安全帳號搬家 rollout 順序
+
+1. **先部署後端支援**：部署含 migration start/status/redeem、atomic state、
+   snapshot retention 與 read-only admin status 的版本；健康檢查成功前不得
+   切換舊 LIFF。
+2. 在 Render 設定獨立隨機 `ACCOUNT_MIGRATION_SECRET`（至少 32 bytes）；
+   不得沿用或記錄 LINE token、Channel Secret 或管理員密碼。
+3. 確認目前與舊版 Channel／LIFF 變數均正確：
 
    ```text
+   ACCOUNT_MIGRATION_SECRET=<Render secret>
+   LEGACY_LINE_LOGIN_CHANNEL_ID=<legacy channel ID>
    LINE_LOGIN_CHANNEL_ID=2010848330
+   LEGACY_LIFF_ID=<legacy LIFF ID>
    LIFF_ID=2010848330-UAiqPPYD
    ```
 
    不要 bulk-clear 或刪除後重建環境變數。既有 `LINE_CHANNEL_ACCESS_TOKEN` 與 `LINE_CHANNEL_SECRET` 是 Messaging API 憑證，必須保留原值，不能以新 LINE Login provider 的值取代。
-2. 儲存後只對這個 service 觸發部署／重啟，等 Render health check 成功；確認 `https://alive-checkin.onrender.com/api/config` 的 `liff_id` 為 `2010848330-UAiqPPYD`。
-3. 用真實 LINE 帳號開啟 `https://liff.line.me/2010848330-UAiqPPYD`，完成授權後確認 `?open=checkin`、`?open=guard` 等 requested `open` route 可到達。
-4. 用會員帳號執行「一鍵邀請」，確認直接開啟 `shareTargetPicker`；讓另一個已加官方帳號好友的帳號完成一次守護人綁定，確認雙方都收到「綁定成功」。
-5. 以該單一已綁定守護人開啟安全守護、允許定位，確認啟動結果或後台紀錄為 `target_count=1`、`sent=1`，且守護人收到位置訊息。
-6. 以正式 Messaging API token 發布 [`line-rich-menu-config.json`](line-rich-menu-config.json)；不要把 token 寫入檔案、git、shell history 或交接文件：
+4. 後端再次部署／重啟並通過 health check 後，才把舊 LIFF App Endpoint URL
+   指向 `https://alive-checkin.onrender.com/liff/migrate.html`。
+5. 先用一位非正式／非生產會員 smoke test：舊 LIFF 產生單次代碼、新 LIFF
+   兌換、資料數量與方案合併、舊入口安全導引都必須成功。
+6. 以 session-authenticated 後台的「帳號搬家」卡確認成功／失敗／待處理
+   totals、最近時間與 moved-record counts；重新開啟舊帳號，確認 disabled
+   alias 只導向目前 LIFF，且後台／response 都沒有 LINE ID、代碼或 digest。
+7. 舊 LIFF 必須保留至少 30 天。保留期間持續看 totals 與 failure category，
+   不可刪除 aliases、snapshots、tickets 或 audit。
+8. 若 rollout 失敗，將 Render 恢復到上一個成功 deploy；**不要刪除任何
+   migration state**，也不要先輪替 secret。記錄時間、deploy ID 與安全錯誤
+   category 後交由工程人員判讀。
+
+### 其他正式驗收
+
+1. 確認 `https://alive-checkin.onrender.com/api/config` 的 `liff_id` 為 `2010848330-UAiqPPYD`。
+2. 用真實 LINE 帳號開啟 `https://liff.line.me/2010848330-UAiqPPYD`，完成授權後確認 `?open=checkin`、`?open=guard` 等 requested `open` route 可到達。
+3. 用會員帳號執行「一鍵邀請」，確認直接開啟 `shareTargetPicker`；讓另一個已加官方帳號好友的帳號完成一次守護人綁定，確認雙方都收到「綁定成功」。
+4. 以該單一已綁定守護人開啟安全守護、允許定位，確認啟動結果或後台紀錄為 `target_count=1`、`sent=1`，且守護人收到位置訊息。
+5. 以正式 Messaging API token 發布 [`line-rich-menu-config.json`](line-rich-menu-config.json)；不要把 token 寫入檔案、git、shell history 或交接文件：
 
    ```bash
    read -rsp 'LINE Messaging API token: ' RICH_MENU_TOKEN; printf '\n'
@@ -27,7 +52,7 @@
    unset RICH_MENU_TOKEN
    ```
 
-7. 在舊 LIFF App 的 LINE Developers Console 將 Endpoint URL 改為 `https://alive-checkin.onrender.com/liff/migrate.html`。再打開一條舊連結，確認 handoff 會解析 `liff.state`，但僅保留 `open`、`page`、`friend_invite`；`invite_from`、舊 Provider user ID、access token、ID token 與其他參數都不得被帶到新連結。舊版守護人邀請必須由邀請人在新版重新分享，不得自動合併帳號或沿用舊 ID。
+6. 再打開一條舊連結，確認 handoff 會解析 `liff.state`，但僅保留 `open`、`page`、`friend_invite`；`invite_from`、舊 Provider user ID、access token、ID token 與其他參數都不得被帶到新連結。舊版守護人邀請必須由邀請人在新版重新分享，不得自動合併帳號或沿用舊 ID。
 
 若任一步失敗，停止發布圖文選單或舊端點切換，保留目前 Render 環境變數，記錄失敗帳號／時間／頁面與 Render deploy ID，回到本分支調查。
 

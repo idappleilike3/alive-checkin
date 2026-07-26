@@ -79,22 +79,35 @@ LINE 推播提醒可由後台按鈕手動送出，也可由 Render Cron Job 自�
 
 ## LIFF Provider 遷移與正式驗收
 
-正式環境要使用新的 LINE Login provider。合併到 `main`、確認 Render 已完成該次部署後，在 Render 的 `alive-checkin` Web Service 依序開啟 **Environment**，只新增或編輯下列兩個鍵並儲存：
+安全帳號搬家必須先部署後端，再切換舊 LIFF。合併到 `main` 並確認
+Render 已完成含搬家 API 的部署後，在 `alive-checkin` Web Service →
+**Environment** 逐一新增或確認：
 
 ```text
+ACCOUNT_MIGRATION_SECRET=至少 32 bytes 的獨立隨機密鑰
+LEGACY_LINE_LOGIN_CHANNEL_ID=舊 LINE Login Channel ID
 LINE_LOGIN_CHANNEL_ID=2010848330
+LEGACY_LIFF_ID=舊 LIFF ID
 LIFF_ID=2010848330-UAiqPPYD
 ```
 
-不要使用「Clear all」或先刪除整批環境變數的方式更新。`LINE_CHANNEL_ACCESS_TOKEN` 與 `LINE_CHANNEL_SECRET` 是既有 Messaging API 憑證，**不可替換、不可清空**；其餘既有 Render 變數也必須保留。儲存後只重啟／部署這個 web service，並等待健康檢查成功。
+`ACCOUNT_MIGRATION_SECRET` 不可沿用 LINE token、Channel Secret、管理員密碼，
+也不可寫入 git、日誌或交接文件。不要使用「Clear all」或先刪除整批環境
+變數的方式更新。`LINE_CHANNEL_ACCESS_TOKEN` 與 `LINE_CHANNEL_SECRET` 是既有
+Messaging API 憑證，**不可替換、不可清空**；其餘既有 Render 變數也必須
+保留。儲存後只重啟／部署這個 web service，等待健康檢查成功，再進行下列
+smoke test：
 
 正式人工驗收請由兩個已加入官方帳號好友的 LINE 帳號完成：
 
 1. 在瀏覽器或 Render Shell 確認 `https://alive-checkin.onrender.com/api/config` 回傳的 `liff_id` 是 `2010848330-UAiqPPYD`。
-2. 在 LINE 開啟 `https://liff.line.me/2010848330-UAiqPPYD`，授權後確認可到帶有 `open` 參數的目標畫面，例如 `https://liff.line.me/2010848330-UAiqPPYD?open=guard`。
-3. 由會員選「一鍵邀請」，確認直接開啟 LINE 的 `shareTargetPicker`，再由第二個帳號完成守護人綁定；兩個帳號都必須收到「綁定成功」訊息。
-4. 以已綁定且可推播的單一守護人帳號開啟「安全守護」，允許定位；回應／後台紀錄必須顯示 `target_count=1`、`sent=1`，守護人必須收到含位置連結的通知。
-5. 使用正式的 Messaging API token 發布目前圖文選單（token 不寫入檔案或命令歷史）：
+2. 在舊 LIFF App 將 Endpoint URL 指向 `https://alive-checkin.onrender.com/liff/migrate.html`。
+3. 以一個非正式／非生產會員走完舊 LIFF 產生代碼、新 LIFF 兌換與重新開啟流程。
+4. 在 session-authenticated 後台確認「帳號搬家」成功數與 moved-record counts 增加，且舊帳號再次進入時只收到開啟目前 LIFF 的安全導引。
+5. 在 LINE 開啟 `https://liff.line.me/2010848330-UAiqPPYD`，授權後確認可到帶有 `open` 參數的目標畫面，例如 `https://liff.line.me/2010848330-UAiqPPYD?open=guard`。
+6. 由會員選「一鍵邀請」，確認直接開啟 LINE 的 `shareTargetPicker`，再由第二個帳號完成守護人綁定；兩個帳號都必須收到「綁定成功」訊息。
+7. 以已綁定且可推播的單一守護人帳號開啟「安全守護」，允許定位；回應／後台紀錄必須顯示 `target_count=1`、`sent=1`，守護人必須收到含位置連結的通知。
+8. 使用正式的 Messaging API token 發布目前圖文選單（token 不寫入檔案或命令歷史）：
 
    ```bash
    read -rsp 'LINE Messaging API token: ' RICH_MENU_TOKEN; printf '\n'
@@ -103,7 +116,13 @@ LIFF_ID=2010848330-UAiqPPYD
    unset RICH_MENU_TOKEN
    ```
 
-6. 在舊 LIFF App 的 Endpoint URL 設為 `https://alive-checkin.onrender.com/liff/migrate.html`。開啟一個舊 LIFF 連結並確認 handoff 解析 `liff.state` 後只會帶轉 `open`、`page`、`friend_invite`；不得轉送 `invite_from`、舊 Provider user ID、access token、ID token 或其他登入憑證。舊版守護人邀請必須由邀請人在新版重新分享，且不得依舊 ID 自動合併帳號。
+舊 LIFF 至少保留 30 天，不可在 rollout 當天刪除。開啟舊連結時，handoff
+只可帶轉 `open`、`page`、`friend_invite`；不得轉送 `invite_from`、舊
+Provider user ID、access token、ID token 或其他登入憑證。
+
+若 smoke test 或正式切換失敗，將 Render 恢復到上一個成功 deploy；**不要**
+刪除 migration tickets、aliases、snapshots 或 audit state，也不要輪替
+`ACCOUNT_MIGRATION_SECRET`，直到工程人員確認未完成代碼的處理方式。
 
 ## 自動推播
 
@@ -151,6 +170,7 @@ LIFF_ID=2010848330-UAiqPPYD
 - `POST /api/guardian-groups/unbind`：會員解除自己建立的守護群
 - `POST /api/line/register`：註冊 LINE 使用者
 - `GET /api/admin/summary`：後台總覽
+- `GET /api/admin/account-migrations`：session-authenticated、唯讀且去識別化的帳號搬家 totals／最近事件
 - `POST /api/admin/user-plan`：後台調整使用者方案
 - `POST /api/admin/send-reminders`：推播逾期提醒
 - `POST /api/admin/send-contact-reminders`：手動提醒未填緊急聯絡人的用戶

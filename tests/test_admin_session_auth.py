@@ -58,6 +58,132 @@ class AdminSessionAuthTests(unittest.TestCase):
             401,
         )
 
+    def test_account_migrations_requires_admin_session(self):
+        client, _ = self.make_client()
+
+        self.assertEqual(
+            client.get("/api/admin/account-migrations").status_code,
+            401,
+        )
+        self.assertEqual(
+            client.get(
+                "/api/admin/account-migrations",
+                query_string={"password": "very-strong-admin-password"},
+            ).status_code,
+            401,
+        )
+
+    def test_account_migrations_returns_only_sanitized_operational_fields(self):
+        client, data_file = self.make_client(
+            ACCOUNT_MIGRATION_SECRET="migration-secret",
+            LEGACY_LINE_LOGIN_CHANNEL_ID="legacy-channel",
+            LINE_LOGIN_CHANNEL_ID="current-channel",
+        )
+        state = alive_app.load_state(data_file)
+        state["account_migration_tickets"] = {
+            "ticket-private": {
+                "ticket_id": "ticket-private",
+                "old_line_user_id": "U-private-old",
+                "code_digest": "digest-private",
+                "status": "pending",
+            }
+        }
+        state["account_migration_aliases"] = {
+            "U-private-old": {
+                "target_line_user_id": "U-private-new",
+                "status": "disabled",
+            }
+        }
+        state["account_migration_snapshots"] = {
+            "snapshot-private": {"old_profile": {"display_name": "Private"}}
+        }
+        state["account_migration_audit"] = [
+            {
+                "event_id": "event-private-success",
+                "status": "success",
+                "created_at": "2026-07-26T02:00:00+00:00",
+                "failure_category": "",
+                "counts": {
+                    "checkins": 2,
+                    "contacts": 1,
+                    "groups": 1,
+                    "reminders": 1,
+                    "orders": 1,
+                    "requests": 0,
+                },
+                "profile": {"line_user_id": "U-private-old"},
+            },
+            {
+                "event_id": "event-private-failed",
+                "status": "failed",
+                "created_at": "2026-07-26T03:00:00+00:00",
+                "failure_category": "unsafe_conflict",
+                "counts": {"contacts": 0},
+                "raw_code": "raw-private-code",
+                "token": "token-private",
+            },
+        ]
+        alive_app.save_state(data_file, state)
+        self.assertEqual(self.login(client).status_code, 200)
+
+        response = client.get("/api/admin/account-migrations")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.get_json(),
+            {
+                "configured": True,
+                "totals": {
+                    "total": 3,
+                    "success": 1,
+                    "failed": 1,
+                    "pending": 1,
+                },
+                "latest_events": [
+                    {
+                        "status": "failed",
+                        "created_at": "2026-07-26T03:00:00+00:00",
+                        "failure_category": "unsafe_conflict",
+                        "counts": {
+                            "checkins": 0,
+                            "contacts": 0,
+                            "groups": 0,
+                            "reminders": 0,
+                            "orders": 0,
+                            "requests": 0,
+                        },
+                    },
+                    {
+                        "status": "success",
+                        "created_at": "2026-07-26T02:00:00+00:00",
+                        "failure_category": "",
+                        "counts": {
+                            "checkins": 2,
+                            "contacts": 1,
+                            "groups": 1,
+                            "reminders": 1,
+                            "orders": 1,
+                            "requests": 0,
+                        },
+                    },
+                ],
+            },
+        )
+        rendered = response.get_data(as_text=True)
+        for forbidden in (
+            "U-private-old",
+            "U-private-new",
+            "ticket-private",
+            "digest-private",
+            "snapshot-private",
+            "event-private",
+            "raw-private-code",
+            "token-private",
+            "Private",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, rendered)
+
     def test_bot_admin_routes_require_session_and_reject_legacy_passwords(self):
         client, _ = self.make_client()
         routes = (
