@@ -429,9 +429,127 @@ test("bootstrap redeems migration before applying a redirecting destination", as
   assert.deepEqual(events, ["auth", "redeem", "member", "route"]);
 });
 
-test("migration status card is outside route-hidden application sections", () => {
-  const card = indexPage.indexOf('id="accountMigrationCard"');
-  const firstAppSection = indexPage.indexOf("<section", indexPage.indexOf('<main class="app">'));
-  assert.notEqual(card, -1);
-  assert.ok(card < firstAppSection, "migration card must remain visible while routes hide sections");
+test("working, error, and success migration cards stay visible on every member route", () => {
+  const migrationSource = section(
+    indexPage,
+    "let pendingAccountMigrationCode",
+    "function requestedAppAction()",
+  );
+  const routeSource = section(
+    indexPage,
+    "function showTab(tabName)",
+    "function relationEmoji(",
+  );
+  const card = {hidden: true, dataset: {}};
+  const elements = {
+    accountMigrationCard: card,
+    accountMigrationTitle: {textContent: ""},
+    accountMigrationMessage: {textContent: ""},
+    accountMigrationSummary: {innerHTML: ""},
+    retryAccountMigrationBtn: {hidden: true, onclick: null},
+    accountMigrationAction: {hidden: true, href: "", textContent: ""},
+    mvpHome: {hidden: false},
+    mvpGuardPanel: {hidden: true},
+    mvpCallPanel: {hidden: true},
+    guardianSection: {hidden: true},
+  };
+  const appSections = [
+    elements.mvpHome,
+    elements.mvpGuardPanel,
+    {hidden: true, getAttribute: () => "守護群設定教學"},
+    {hidden: true, getAttribute: () => "簽到月曆"},
+    {hidden: true, getAttribute: () => "簽到狀態"},
+    {hidden: true, getAttribute: () => "會員個人中心"},
+    {hidden: true, getAttribute: () => "升級方案"},
+  ];
+  for (const appSection of appSections) {
+    appSection.getAttribute ||= () => "";
+  }
+  const sandbox = expose(
+    `${migrationSource}\n${routeSource}`,
+    ["showAccountMigrationState", "showTab", "openMvpGuardPanel"],
+    {
+      document: {
+        getElementById: (id) => elements[id] || null,
+        querySelectorAll: (selector) => selector === "main > section" ? appSections : [],
+        body: {
+          classList: {toggle() {}},
+        },
+      },
+      $: (id) => elements[id] || null,
+      location: {hash: ""},
+      history: {replaceState() {}},
+      setMemberCenterExpanded() {},
+      renderMemberRoleIntro() {},
+      setCalendarExpanded() {},
+      syncInviteUiForBoundState() {},
+      hasLineBoundGuardian: () => false,
+      syncSafetyGuardDurationOptions() {},
+      currentStatusData: null,
+      renderSafetyGuardUi() {},
+      window: {scrollTo() {}},
+    },
+  );
+
+  for (const state of ["working", "error", "success"]) {
+    sandbox.showAccountMigrationState(state, {
+      title: state,
+      message: "安全顯示",
+    });
+    for (const route of ["member", "guardians", "history"]) {
+      sandbox.showTab(route);
+      assert.equal(card.hidden, false, `${state} card hidden on ${route}`);
+    }
+    sandbox.openMvpGuardPanel();
+    assert.equal(card.hidden, false, `${state} card hidden on guard`);
+  }
+});
+
+test("bootstrap without migration keeps the fast route and skips redemption", async () => {
+  const bootstrapSource = section(
+    indexPage,
+    "async function bootstrapApp()",
+    "appBootstrapPromise = bootstrapApp()",
+  );
+  const events = [];
+  const sandbox = expose(bootstrapSource, ["bootstrapApp"], {
+    appBootstrapComplete: false,
+    memberBootstrapState: {},
+    setMemberInteractionLocked() {},
+    bindTabEvents() {},
+    bindSosFab() {},
+    bindMvpHome() {},
+    bindGuardianCompletePrompt() {},
+    bindGuardianEvents() {},
+    getAppParam: () => "",
+    applyInitialDeepLinkRoute: () => {
+      events.push("route");
+      return {handled: true, redirected: false};
+    },
+    lineUserId: "",
+    initLine: async () => {
+      events.push("auth");
+      sandbox.lineUserId = "U-current";
+      return true;
+    },
+    useLocalMode: false,
+    redeemPendingAccountMigration: async () => {
+      events.push("redeem");
+      return {attempted: false, succeeded: false};
+    },
+    initApp: async () => {
+      events.push("member");
+      return true;
+    },
+    refreshCalendarNotes: async () => events.push("calendar"),
+    refreshFriendLocations: async () => {},
+    openRequestedPage: () => events.push("open"),
+    showLineLoginRequired() {},
+    document: {body: {removeAttribute() {}, dataset: {}}},
+    console: {warn() {}},
+  });
+
+  await sandbox.bootstrapApp();
+
+  assert.deepEqual(events, ["route", "auth", "member", "calendar", "open"]);
 });

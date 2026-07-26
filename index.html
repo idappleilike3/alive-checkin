@@ -10312,7 +10312,9 @@
           return;
         }
 
-        const migration = await redeemPendingAccountMigration();
+        const migration = hasPendingMigration
+          ? await redeemPendingAccountMigration()
+          : { attempted: false, succeeded: false };
         const memberReady = await initApp();
         if (!memberReady) return;
         if (hasPendingMigration && migration.succeeded) {

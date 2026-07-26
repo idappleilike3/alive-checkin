@@ -118,3 +118,72 @@ OK
 ### Concerns
 
 None within Task 5 scope.
+
+## Fix round 2 — Executed route visibility and no-code comparison
+
+### Changes
+
+- Replaced the source-position-only card assertion with an executed behavior
+  test. It runs the real `showAccountMigrationState()`, `showTab()`, and
+  `openMvpGuardPanel()` implementations and verifies working, error, and success
+  cards stay visible on member, guardians, guard, and history routes.
+- Added an executed no-`migration_code` bootstrap comparison. The original route
+  is applied first, authentication and the single normal member bootstrap follow,
+  and the migration redemption phase is not called.
+- Production bootstrap now calls `redeemPendingAccountMigration()` only when a
+  migration code was detected. Migration behavior is unchanged; ordinary fast
+  routes avoid an unnecessary migration helper call.
+
+### RED evidence
+
+```text
+node --test tests/account_migration_ui.behavior.test.mjs
+
+tests 9
+pass 8
+fail 1
+
+bootstrap without migration keeps the fast route and skips redemption
+actual:   [route, auth, redeem, member, calendar, open]
+expected: [route, auth, member, calendar, open]
+```
+
+The executed card test passed against the implementation and directly exercised
+all required states and routes; it replaced the earlier source-position check.
+
+### GREEN evidence
+
+Focused:
+
+```text
+node --test tests/account_migration_ui.behavior.test.mjs \
+  tests/liff_fast_route.behavior.test.mjs
+
+tests 19
+pass 19
+fail 0
+
+/tmp/alive-checkin-venv/bin/python -m unittest tests.test_liff_fast_route -v
+
+Ran 13 tests
+OK
+```
+
+Full regression:
+
+```text
+node --test tests/*.test.mjs
+
+tests 21
+pass 21
+fail 0
+
+/tmp/alive-checkin-venv/bin/python -m unittest discover -s tests
+
+Ran 273 tests
+OK
+```
+
+### Concerns
+
+None within Task 5 scope.
