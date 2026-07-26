@@ -863,14 +863,7 @@ class ProfileMergeTests(unittest.TestCase):
                 )
             )
         )
-        self.assertEqual(
-            state["account_migration_aliases"][self.old_id],
-            {
-                "target_line_user_id": self.new_id,
-                "created_at": "2026-07-26T02:00:00+00:00",
-                "status": "disabled",
-            },
-        )
+        self.assertNotIn(self.old_id, state["account_migration_aliases"])
 
     def test_guardian_group_dict_members_are_reindexed_without_hashing(self):
         state = {
@@ -1150,6 +1143,63 @@ class AtomicRedemptionTests(unittest.TestCase):
         self.assertNotIn(
             self.migration_code,
             json.dumps(state, ensure_ascii=False),
+        )
+
+    def test_redeem_creates_alias_only_after_reindex_and_user_key_replacement(self):
+        state = alive_app.load_state(self.data_file)
+        operations = []
+
+        class TrackingUsers(dict):
+            def __setitem__(tracking_self, key, value):
+                if key == self.new_id:
+                    operations.append("replace_new_user")
+                super().__setitem__(key, value)
+
+            def pop(tracking_self, key, default=None):
+                if key == self.old_id:
+                    operations.append("remove_old_user")
+                return super().pop(key, default)
+
+        class TrackingAliases(dict):
+            def __setitem__(tracking_self, key, value):
+                if key == self.old_id:
+                    operations.append("create_alias")
+                super().__setitem__(key, value)
+
+        state["users"] = TrackingUsers(state["users"])
+        state["account_migration_aliases"] = TrackingAliases(
+            state["account_migration_aliases"]
+        )
+        real_reindex = alive_app.reindex_account_references
+
+        def record_reindex(*args, **kwargs):
+            operations.append("reindex")
+            return real_reindex(*args, **kwargs)
+
+        with (
+            mock.patch.object(
+                alive_app,
+                "mutate_state_atomically",
+                side_effect=lambda _data_file, mutator: mutator(state),
+            ),
+            mock.patch.object(
+                alive_app,
+                "reindex_account_references",
+                side_effect=record_reindex,
+            ),
+        ):
+            result, code = self._redeem()
+
+        self.assertEqual(code, 200)
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            operations,
+            [
+                "reindex",
+                "replace_new_user",
+                "remove_old_user",
+                "create_alias",
+            ],
         )
 
     def test_save_failure_restores_old_and_new_accounts(self):

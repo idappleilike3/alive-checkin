@@ -2932,16 +2932,7 @@ def confirm_payment_order(data_file, payload, config=None):
     }, 200
 
 
-def apply_expired_plan_downgrades(config):
-    """試用／付費到期：降為 free，當下保留守護人＋連絡人，並開始 30 天軟保留倒數。
-
-    若 paid_until 為空（後台剛改方案尚未寫到期日），不要當成過期清掉方案。
-    降級只改 plan／付款欄位，绝不清空 contacts／friends／guardian_group_ids。
-    保留期結束後由 cleanup_expired_data 軟封存。
-    """
-    data_file = config["DATA_FILE"]
-    state = load_state(data_file)
-    now = current_app_time(config)
+def _apply_expired_plan_downgrades_to_state(state, now):
     downgraded = []
     for profile in state.get("users", {}).values():
         plan = str(profile.get("plan") or "")
@@ -3000,8 +2991,17 @@ def apply_expired_plan_downgrades(config):
                 f"plan expired -> free (was {plan}); contacts kept={len(preserved_contacts)}; "
                 f"retain_until={profile.get('contacts_retain_until')}",
             )
-    if downgraded:
-        save_state(data_file, state)
+    return downgraded
+
+
+def apply_expired_plan_downgrades(config):
+    """試用／付費到期：降為 free，並在同一資料庫交易保留帳戶資料。"""
+    data_file = config["DATA_FILE"]
+    now = current_app_time(config)
+    downgraded = mutate_state_atomically(
+        data_file,
+        lambda state: _apply_expired_plan_downgrades_to_state(state, now),
+    )
     return {"downgraded": len(downgraded), "line_user_ids": downgraded}, 200
 
 
@@ -6853,13 +6853,23 @@ def reindex_account_references(
                 reindexed_records += 1
         state[index_key] = index
 
+    return {"ok": True, "reindexed_records": reindexed_records}
+
+
+def create_account_migration_alias(state, old_id, new_id, now=None):
+    source_id = str(old_id or "").strip()
+    target_id = str(new_id or "").strip()
+    if not source_id or not target_id:
+        raise ValueError("missing_identity")
+    if source_id == target_id:
+        raise ValueError("same_identity")
     current_iso = _account_migration_now(now).isoformat(timespec="seconds")
     state.setdefault("account_migration_aliases", {})[source_id] = {
         "target_line_user_id": target_id,
         "created_at": current_iso,
         "status": "disabled",
     }
-    return {"ok": True, "reindexed_records": reindexed_records}
+    return state["account_migration_aliases"][source_id]
 
 
 class AccountMigrationRejected(Exception):
@@ -7014,6 +7024,12 @@ def redeem_account_migration_ticket(
         )
         users[verified_new_id] = merged_profile
         users.pop(old_line_user_id, None)
+        create_account_migration_alias(
+            state,
+            old_line_user_id,
+            verified_new_id,
+            now=current,
+        )
 
         ticket["status"] = "used"
         ticket["used_at"] = current.isoformat(timespec="seconds")
@@ -8093,13 +8109,9 @@ def send_missing_contact_reminders(config):
 
 def cleanup_expired_data(config):
     data_file = config["DATA_FILE"]
-    downgrade_result, _ = apply_expired_plan_downgrades(config)
-    state = load_state(data_file)
     now = current_app_time(config)
     invite_cutoff = now - timedelta(days=7)
     notification_cutoff = now - timedelta(days=90)
-    expired_locations_removed = 0
-    contacts_archived = 0
     migration_cleanup_now = now
     if migration_cleanup_now.tzinfo is None:
         timezone_name = (
@@ -8114,54 +8126,70 @@ def cleanup_expired_data(config):
         migration_cleanup_now = migration_cleanup_now.replace(
             tzinfo=app_timezone
         ).astimezone(timezone.utc)
-    migration_snapshots_removed = purge_account_migration_snapshots(
-        state,
-        now=migration_cleanup_now,
-    )
 
-    for profile in state.get("users", {}).values():
-        if soft_archive_contacts_past_retain(profile, now):
-            contacts_archived += 1
-        location = profile.get("location") or {}
-        if not location:
-            continue
-        # Keep until_stop sessions until the user stops; expire timed sessions by clock.
-        if location.get("until_stop") and (location.get("sharing") or location.get("active")):
-            continue
-        expires_at = parse_datetime(location.get("expires_at"))
-        if expires_at and expires_at < now:
-            profile["location"] = {
-                **location,
-                "sharing": False,
-                "active": False,
-                "ended_at": location.get("ended_at") or now.isoformat(timespec="seconds"),
-            }
-            expired_locations_removed += 1
+    def mutate(state):
+        downgraded = _apply_expired_plan_downgrades_to_state(state, now)
+        expired_locations_removed = 0
+        contacts_archived = 0
+        migration_snapshots_removed = purge_account_migration_snapshots(
+            state,
+            now=migration_cleanup_now,
+        )
 
-    invites_before = len(state.get("friend_invites", {}))
-    state["friend_invites"] = {
-        code: invite for code, invite in state.get("friend_invites", {}).items()
-        if not parse_datetime(invite.get("created_at"))
-        or parse_datetime(invite.get("created_at")) >= invite_cutoff
-    }
+        for profile in state.get("users", {}).values():
+            if soft_archive_contacts_past_retain(profile, now):
+                contacts_archived += 1
+            location = profile.get("location") or {}
+            if not location:
+                continue
+            if location.get("until_stop") and (
+                location.get("sharing") or location.get("active")
+            ):
+                continue
+            expires_at = parse_datetime(location.get("expires_at"))
+            if expires_at and expires_at < now:
+                profile["location"] = {
+                    **location,
+                    "sharing": False,
+                    "active": False,
+                    "ended_at": (
+                        location.get("ended_at")
+                        or now.isoformat(timespec="seconds")
+                    ),
+                }
+                expired_locations_removed += 1
 
-    logs_before = len(state.get("notification_logs", []))
-    state["notification_logs"] = [
-        log for log in state.get("notification_logs", [])
-        if not parse_datetime(log.get("created_at"))
-        or parse_datetime(log.get("created_at")) >= notification_cutoff
-    ][-100:]
-    save_state(data_file, state)
-    return {
-        "cleaned_at": now.isoformat(timespec="seconds"),
-        "expired_locations_removed": expired_locations_removed,
-        "expired_invites_removed": invites_before - len(state["friend_invites"]),
-        "old_notification_logs_removed": logs_before - len(state["notification_logs"]),
-        "contacts_archived_users": contacts_archived,
-        "migration_snapshots_removed": migration_snapshots_removed,
-        "orders_removed": 0,
-        "plans_downgraded": downgrade_result.get("downgraded", 0),
-    }, 200
+        invites_before = len(state.get("friend_invites", {}))
+        state["friend_invites"] = {
+            code: invite
+            for code, invite in state.get("friend_invites", {}).items()
+            if not parse_datetime(invite.get("created_at"))
+            or parse_datetime(invite.get("created_at")) >= invite_cutoff
+        }
+
+        logs_before = len(state.get("notification_logs", []))
+        state["notification_logs"] = [
+            log
+            for log in state.get("notification_logs", [])
+            if not parse_datetime(log.get("created_at"))
+            or parse_datetime(log.get("created_at")) >= notification_cutoff
+        ][-100:]
+        return {
+            "cleaned_at": now.isoformat(timespec="seconds"),
+            "expired_locations_removed": expired_locations_removed,
+            "expired_invites_removed": (
+                invites_before - len(state["friend_invites"])
+            ),
+            "old_notification_logs_removed": (
+                logs_before - len(state["notification_logs"])
+            ),
+            "contacts_archived_users": contacts_archived,
+            "migration_snapshots_removed": migration_snapshots_removed,
+            "orders_removed": 0,
+            "plans_downgraded": len(downgraded),
+        }, 200
+
+    return mutate_state_atomically(data_file, mutate)
 
 
 def reminder_time_in_window(reminder_time, now, late_minutes=4):
