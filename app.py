@@ -243,6 +243,7 @@ DEFAULT_STATE = {
     "account_migration_tickets": {},
     "account_migration_aliases": {},
     "account_migration_audit": [],
+    "account_migration_snapshots": {},
 }
 
 PLAN_LIMITS = {
@@ -820,6 +821,9 @@ def _hydrate_state(saved):
     state["account_migration_audit"] = (
         state.get("account_migration_audit") or []
     )
+    state["account_migration_snapshots"] = (
+        state.get("account_migration_snapshots") or {}
+    )
     return state
 
 
@@ -989,6 +993,85 @@ def save_state(data_file, state):
             pass
         return
     _save_state_sqlite(data_file, state)
+
+
+def _account_migration_serialize_state(state):
+    return json.dumps(state, ensure_ascii=False, indent=2)
+
+
+def _account_migration_state_from_row(row):
+    if not row:
+        return _hydrate_state({})
+    try:
+        return _hydrate_state(json.loads(row[0]))
+    except (json.JSONDecodeError, TypeError, IndexError):
+        return _hydrate_state({})
+
+
+def mutate_state_atomically(data_file, mutator):
+    """Mutate the authoritative state under a database transaction."""
+    if database_url():
+        _ensure_pg_kv()
+        conn = _pg_connect()
+        try:
+            conn.execute("BEGIN")
+            row = conn.execute(
+                "SELECT value FROM kv_store WHERE key = %s FOR UPDATE",
+                ("default",),
+            ).fetchone()
+            state = _account_migration_state_from_row(row)
+            working = copy.deepcopy(state)
+            result = mutator(working)
+            payload = _account_migration_serialize_state(working)
+            if row:
+                conn.execute(
+                    "UPDATE kv_store SET value = %s, updated_at = NOW() "
+                    "WHERE key = %s",
+                    (payload, "default"),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO kv_store (key, value, updated_at) "
+                    "VALUES (%s, %s, NOW())",
+                    ("default", payload),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        try:
+            _save_state_sqlite(data_file, working)
+        except Exception:
+            pass
+        return result
+
+    db_path = _resolve_db_path(data_file)
+    _ensure_db(db_path)
+    conn = sqlite3.connect(str(db_path), timeout=30)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT value FROM kv_store WHERE key = ?",
+            ("default",),
+        ).fetchone()
+        state = _account_migration_state_from_row(row)
+        working = copy.deepcopy(state)
+        result = mutator(working)
+        payload = _account_migration_serialize_state(working)
+        conn.execute(
+            "INSERT OR REPLACE INTO kv_store (key, value, updated_at) "
+            "VALUES (?, ?, datetime('now'))",
+            ("default", payload),
+        )
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def current_app_time(config=None):
@@ -6779,6 +6862,207 @@ def reindex_account_references(
     return {"ok": True, "reindexed_records": reindexed_records}
 
 
+class AccountMigrationRejected(Exception):
+    def __init__(self, category, status_code):
+        super().__init__(str(category))
+        self.category = str(category)
+        self.status_code = int(status_code)
+
+
+def _account_migration_record_references(record, line_user_id):
+    if not isinstance(record, dict):
+        return False
+    return any(
+        str(record.get(key) or "") == line_user_id
+        for key in _MIGRATION_REFERENCE_SCALAR_FIELDS
+    )
+
+
+def _account_migration_safe_counts(state, profile, line_user_id):
+    def owned_count(collection_key):
+        return sum(
+            1
+            for record in (state.get(collection_key) or [])
+            if _account_migration_record_references(record, line_user_id)
+        )
+
+    return {
+        "checkins": len(profile.get("history") or []),
+        "contacts": len(profile.get("contacts") or []),
+        "groups": len(profile.get("guardian_group_ids") or []),
+        "reminders": len(profile.get("smart_reminders") or []),
+        "orders": owned_count("orders"),
+        "requests": (
+            owned_count("support_tickets")
+            + owned_count("privacy_requests")
+        ),
+    }
+
+
+def _account_migration_snapshot(
+    state,
+    ticket,
+    old_line_user_id,
+    new_line_user_id,
+    event_id,
+    now,
+):
+    users = state.get("users") or {}
+    affected_keys = {
+        "guardian_groups",
+        "friend_invites",
+        "account_migration_aliases",
+        *_MIGRATION_TOP_LEVEL_COLLECTION_KEYS,
+        *_MIGRATION_INDEX_KEYS,
+    }
+    snapshot_id = f"ams_{secrets.token_urlsafe(12)}"
+    return snapshot_id, {
+        "snapshot_id": snapshot_id,
+        "event_id": event_id,
+        "created_at": now.isoformat(timespec="seconds"),
+        "purge_after": (now + timedelta(days=30)).isoformat(timespec="seconds"),
+        "old_profile": copy.deepcopy(users.get(old_line_user_id)),
+        "new_profile": (
+            copy.deepcopy(users.get(new_line_user_id))
+            if new_line_user_id in users
+            else None
+        ),
+        "migration_ticket": copy.deepcopy(ticket),
+        "affected_top_level_records": {
+            key: copy.deepcopy(state.get(key))
+            for key in sorted(affected_keys)
+            if key in state
+        },
+    }
+
+
+def redeem_account_migration_ticket(
+    data_file,
+    code,
+    new_line_user_id,
+    config,
+    now=None,
+):
+    if not account_migration_ready(config):
+        return {"ok": False, "error": "migration_unavailable"}, 503
+
+    current = _account_migration_now(now)
+    verified_new_id = str(new_line_user_id or "").strip()
+    raw_code = str(code or "").strip()
+
+    def mutate(state):
+        ticket, ticket_error = validate_account_migration_ticket(
+            state,
+            raw_code,
+            config.get("ACCOUNT_MIGRATION_SECRET"),
+            now=current,
+        )
+        error_statuses = {
+            "invalid_code": 404,
+            "expired_code": 410,
+            "used_code": 409,
+            "source_missing": 404,
+        }
+        if ticket_error:
+            raise AccountMigrationRejected(
+                ticket_error,
+                error_statuses.get(ticket_error, 409),
+            )
+
+        old_line_user_id = str(ticket.get("old_line_user_id") or "").strip()
+        aliases = state.get("account_migration_aliases") or {}
+        if (
+            not verified_new_id
+            or old_line_user_id == verified_new_id
+            or verified_new_id in aliases
+        ):
+            raise AccountMigrationRejected("unsafe_conflict", 409)
+
+        users = state.setdefault("users", {})
+        old_profile = users.get(old_line_user_id)
+        if not isinstance(old_profile, dict):
+            raise AccountMigrationRejected("source_missing", 404)
+        new_profile = users.get(verified_new_id)
+        if new_profile is not None and not isinstance(new_profile, dict):
+            raise AccountMigrationRejected("unsafe_conflict", 409)
+
+        event_id = f"ame_{secrets.token_urlsafe(12)}"
+        snapshot_id, snapshot = _account_migration_snapshot(
+            state,
+            ticket,
+            old_line_user_id,
+            verified_new_id,
+            event_id,
+            current,
+        )
+        state.setdefault("account_migration_snapshots", {})[snapshot_id] = snapshot
+
+        merged_profile = merge_migration_profiles(
+            old_profile,
+            new_profile or {
+                **DEFAULT_PROFILE,
+                "line_user_id": verified_new_id,
+            },
+            now=current,
+        )
+        reindex_account_references(
+            state,
+            old_line_user_id,
+            verified_new_id,
+            event_id,
+            now=current,
+        )
+        users[verified_new_id] = merged_profile
+        users.pop(old_line_user_id, None)
+
+        ticket["status"] = "used"
+        ticket["used_at"] = current.isoformat(timespec="seconds")
+        ticket["migration_event_id"] = event_id
+        counts = _account_migration_safe_counts(
+            state,
+            merged_profile,
+            verified_new_id,
+        )
+        state.setdefault("account_migration_audit", []).append({
+            "event_id": event_id,
+            "status": "success",
+            "created_at": current.isoformat(timespec="seconds"),
+            "failure_category": "",
+            "counts": counts,
+        })
+        return {
+            "ok": True,
+            "status": "migrated",
+            "counts": counts,
+        }, 200
+
+    try:
+        return mutate_state_atomically(data_file, mutate)
+    except AccountMigrationRejected as exc:
+        return {"ok": False, "error": exc.category}, exc.status_code
+    except Exception:
+        return {"ok": False, "error": "migration_failed"}, 500
+
+
+def purge_account_migration_snapshots(state, now=None):
+    current = _account_migration_now(now)
+    snapshots = state.get("account_migration_snapshots") or {}
+    retained = {}
+    removed = 0
+    for snapshot_id, snapshot in snapshots.items():
+        purge_after = _account_migration_datetime(
+            (snapshot or {}).get("purge_after")
+            if isinstance(snapshot, dict)
+            else None
+        )
+        if purge_after and purge_after <= current:
+            removed += 1
+            continue
+        retained[snapshot_id] = snapshot
+    state["account_migration_snapshots"] = retained
+    return removed
+
+
 def admin_password_matches(config, candidate):
     if not admin_security_ready(config):
         return False
@@ -7816,6 +8100,24 @@ def cleanup_expired_data(config):
     notification_cutoff = now - timedelta(days=90)
     expired_locations_removed = 0
     contacts_archived = 0
+    migration_cleanup_now = now
+    if migration_cleanup_now.tzinfo is None:
+        timezone_name = (
+            config.get("APP_TIMEZONE")
+            or os.environ.get("APP_TIMEZONE")
+            or "Asia/Taipei"
+        )
+        try:
+            app_timezone = ZoneInfo(str(timezone_name))
+        except Exception:
+            app_timezone = timezone.utc
+        migration_cleanup_now = migration_cleanup_now.replace(
+            tzinfo=app_timezone
+        ).astimezone(timezone.utc)
+    migration_snapshots_removed = purge_account_migration_snapshots(
+        state,
+        now=migration_cleanup_now,
+    )
 
     for profile in state.get("users", {}).values():
         if soft_archive_contacts_past_retain(profile, now):
@@ -7856,6 +8158,7 @@ def cleanup_expired_data(config):
         "expired_invites_removed": invites_before - len(state["friend_invites"]),
         "old_notification_logs_removed": logs_before - len(state["notification_logs"]),
         "contacts_archived_users": contacts_archived,
+        "migration_snapshots_removed": migration_snapshots_removed,
         "orders_removed": 0,
         "plans_downgraded": downgrade_result.get("downgraded", 0),
     }, 200
@@ -11127,10 +11430,19 @@ def create_app(config=None):
     @app.post("/api/account-migration/redeem")
     def account_migration_redeem_api():
         payload = request.get_json(silent=True) or {}
-        _, err = _migration_verified_subject(payload, "LINE_LOGIN_CHANNEL_ID")
+        new_line_user_id, err = _migration_verified_subject(
+            payload,
+            "LINE_LOGIN_CHANNEL_ID",
+        )
         if err:
             return jsonify(err[0]), err[1]
-        return jsonify({"ok": False, "error": "migration_not_implemented"}), 501
+        data, code = redeem_account_migration_ticket(
+            app.config["DATA_FILE"],
+            payload.get("migration_code"),
+            new_line_user_id,
+            app.config,
+        )
+        return jsonify(data), code
 
     @app.get("/api/admin/summary")
     def admin_summary_api():

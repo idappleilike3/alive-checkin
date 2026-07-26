@@ -1,7 +1,9 @@
 import copy
 import json
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -1050,6 +1052,291 @@ class ProfileMergeTests(unittest.TestCase):
             self.assertNotIn(self.old_id, response_text)
             self.assertNotIn(self.new_id, response_text)
         self.assertNotIn(self.old_id, after["users"])
+
+
+class AtomicRedemptionTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.data_file = str(Path(self.tempdir.name) / "state.json")
+        self.old_id = "U0123456789abcdef0123456789abcdef"
+        self.new_id = "Ufedcba9876543210fedcba9876543210"
+        self.now = datetime(2026, 7, 26, 2, 0, tzinfo=timezone.utc)
+        self.config = {
+            "TESTING": True,
+            "DATA_FILE": self.data_file,
+            "LEGACY_LINE_LOGIN_CHANNEL_ID": "2010674803",
+            "LINE_LOGIN_CHANNEL_ID": "2010848330",
+            "ACCOUNT_MIGRATION_SECRET": "test-only-secret",
+            "ACCOUNT_MIGRATION_TTL_SECONDS": 600,
+            "LINE_CHANNEL_ACCESS_TOKEN": "",
+        }
+        state = alive_app.load_state(self.data_file)
+        state["users"][self.old_id] = {
+            **alive_app.DEFAULT_PROFILE,
+            "line_user_id": self.old_id,
+            "display_name": "Legacy member",
+            "history": ["2026-07-25", "2026-07-26"],
+            "contacts": [{"id": "contact-1", "name": "Guardian"}],
+            "smart_reminders": [{"id": "reminder-1", "title": "Medicine"}],
+            "guardian_group_ids": ["group-1"],
+        }
+        state["users"][self.new_id] = {
+            **alive_app.DEFAULT_PROFILE,
+            "line_user_id": self.new_id,
+            "display_name": "Current member",
+            "history": ["2026-07-26"],
+        }
+        state["guardian_groups"]["group-1"] = {
+            "group_id": "group-1",
+            "owner_line_user_id": self.old_id,
+        }
+        state["orders"] = [
+            {"order_id": "order-1", "line_user_id": self.old_id}
+        ]
+        state["support_tickets"] = [
+            {"id": "support-1", "line_user_id": self.old_id}
+        ]
+        alive_app.save_state(self.data_file, state)
+        created, code = alive_app.create_account_migration_ticket(
+            self.data_file,
+            self.old_id,
+            self.config,
+            now=self.now,
+        )
+        self.assertEqual(code, 200)
+        self.migration_code = created["migration_code"]
+
+    def _redeem(self, **overrides):
+        return alive_app.redeem_account_migration_ticket(
+            self.data_file,
+            overrides.get("migration_code", self.migration_code),
+            overrides.get("new_line_user_id", self.new_id),
+            self.config,
+            now=overrides.get("now", self.now + timedelta(seconds=1)),
+        )
+
+    def test_redeem_is_atomic_and_marks_ticket_used_in_same_write(self):
+        result, code = self._redeem()
+
+        self.assertEqual(code, 200)
+        self.assertEqual(
+            result,
+            {
+                "ok": True,
+                "status": "migrated",
+                "counts": {
+                    "checkins": 2,
+                    "contacts": 1,
+                    "groups": 1,
+                    "reminders": 1,
+                    "orders": 1,
+                    "requests": 1,
+                },
+            },
+        )
+        state = alive_app.load_state(self.data_file)
+        self.assertNotIn(self.old_id, state["users"])
+        self.assertIn(self.new_id, state["users"])
+        self.assertEqual(
+            state["account_migration_aliases"][self.old_id]["status"],
+            "disabled",
+        )
+        ticket = next(iter(state["account_migration_tickets"].values()))
+        self.assertEqual(ticket["status"], "used")
+        self.assertTrue(ticket["used_at"])
+        self.assertEqual(len(state["account_migration_snapshots"]), 1)
+        self.assertEqual(len(state["account_migration_audit"]), 1)
+        self.assertNotIn(
+            self.migration_code,
+            json.dumps(state, ensure_ascii=False),
+        )
+
+    def test_save_failure_restores_old_and_new_accounts(self):
+        before = alive_app.load_state(self.data_file)
+        with mock.patch.object(
+            alive_app,
+            "_account_migration_serialize_state",
+            side_effect=RuntimeError("simulated write failure"),
+            create=True,
+        ):
+            result, code = self._redeem()
+        after = alive_app.load_state(self.data_file)
+
+        self.assertEqual(code, 500)
+        self.assertEqual(result, {"ok": False, "error": "migration_failed"})
+        self.assertEqual(after, before)
+        self.assertNotIn(self.old_id, after["account_migration_aliases"])
+        ticket = next(iter(after["account_migration_tickets"].values()))
+        self.assertEqual(ticket["status"], "pending")
+        self.assertEqual(after.get("account_migration_snapshots") or {}, {})
+        self.assertEqual(after["account_migration_audit"], [])
+
+    def test_two_parallel_redemptions_produce_exactly_one_success(self):
+        barrier = threading.Barrier(2)
+
+        def redeem_once():
+            barrier.wait(timeout=5)
+            return self._redeem()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(lambda _: redeem_once(), range(2)))
+
+        self.assertEqual(sorted(code for _, code in outcomes), [200, 409])
+        self.assertEqual(
+            sorted(result.get("status") or result.get("error") for result, _ in outcomes),
+            ["migrated", "used_code"],
+        )
+        state = alive_app.load_state(self.data_file)
+        self.assertEqual(len(state["account_migration_snapshots"]), 1)
+        self.assertEqual(len(state["account_migration_audit"]), 1)
+        self.assertEqual(
+            next(iter(state["account_migration_tickets"].values()))["status"],
+            "used",
+        )
+
+    def test_success_snapshot_is_retained_for_thirty_days(self):
+        result, code = self._redeem()
+        self.assertEqual(code, 200)
+        self.assertTrue(result["ok"])
+
+        day_29, _ = alive_app.cleanup_expired_data(
+            {
+                **self.config,
+                "CRON_NOW": self.now + timedelta(days=29),
+            }
+        )
+        state_at_29 = alive_app.load_state(self.data_file)
+        day_31, _ = alive_app.cleanup_expired_data(
+            {
+                **self.config,
+                "CRON_NOW": self.now + timedelta(days=31),
+            }
+        )
+        state_at_31 = alive_app.load_state(self.data_file)
+
+        self.assertEqual(day_29["migration_snapshots_removed"], 0)
+        self.assertEqual(len(state_at_29["account_migration_snapshots"]), 1)
+        self.assertEqual(day_31["migration_snapshots_removed"], 1)
+        self.assertEqual(state_at_31["account_migration_snapshots"], {})
+
+    def test_snapshot_cleanup_converts_naive_app_time_before_retention_check(self):
+        result, code = self._redeem()
+        self.assertEqual(code, 200)
+        self.assertTrue(result["ok"])
+
+        cleanup, _ = alive_app.cleanup_expired_data(
+            {
+                **self.config,
+                "APP_TIMEZONE": "Asia/Taipei",
+                # Snapshot purge_after is 2026-08-25 02:00 UTC (10:00 Taipei).
+                "CRON_NOW": datetime(2026, 8, 25, 9, 59),
+            }
+        )
+        state = alive_app.load_state(self.data_file)
+
+        self.assertEqual(cleanup["migration_snapshots_removed"], 0)
+        self.assertEqual(len(state["account_migration_snapshots"]), 1)
+
+    def test_admin_audit_contains_counts_but_no_identity_or_code(self):
+        created, create_code = alive_app.create_account_migration_ticket(
+            self.data_file,
+            self.old_id,
+            self.config,
+        )
+        self.assertEqual(create_code, 200)
+        migration_code = created["migration_code"]
+        app = alive_app.create_app(self.config)
+        with mock.patch.object(
+            alive_app,
+            "verify_line_id_token_for_channel",
+            return_value=self.new_id,
+        ):
+            response = app.test_client().post(
+                "/api/account-migration/redeem",
+                headers={"Authorization": "Bearer current-id-token"},
+                json={
+                    "migration_code": migration_code,
+                    "line_user_id": self.old_id,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertEqual(set(response.get_json()), {"ok", "status", "counts"})
+        public_text = response.get_data(as_text=True)
+        for secret_value in (
+            self.old_id,
+            self.new_id,
+            migration_code,
+            "current-id-token",
+        ):
+            self.assertNotIn(secret_value, public_text)
+
+        audit = alive_app.load_state(self.data_file)["account_migration_audit"]
+        self.assertEqual(len(audit), 1)
+        self.assertEqual(
+            set(audit[0]),
+            {"event_id", "status", "created_at", "failure_category", "counts"},
+        )
+        self.assertEqual(audit[0]["status"], "success")
+        audit_text = json.dumps(audit, ensure_ascii=False)
+        for secret_value in (self.old_id, self.new_id, migration_code):
+            self.assertNotIn(secret_value, audit_text)
+        self.assertNotIn("code_digest", audit_text)
+
+    def test_postgres_atomic_boundary_uses_row_lock_transaction(self):
+        initial = alive_app._hydrate_state({"users": {"U-one": {"value": 1}}})
+
+        class FakeResult:
+            def __init__(self, row=None):
+                self.row = row
+
+            def fetchone(self):
+                return self.row
+
+        class FakeConnection:
+            def __init__(self):
+                self.statements = []
+                self.commits = 0
+                self.rollbacks = 0
+                self.closed = False
+
+            def execute(self, sql, params=None):
+                self.statements.append((sql, params))
+                if "SELECT value" in sql:
+                    return FakeResult((json.dumps(initial),))
+                return FakeResult()
+
+            def commit(self):
+                self.commits += 1
+
+            def rollback(self):
+                self.rollbacks += 1
+
+            def close(self):
+                self.closed = True
+
+        connection = FakeConnection()
+        with (
+            mock.patch.object(alive_app, "database_url", return_value="postgresql://db"),
+            mock.patch.object(alive_app, "_ensure_pg_kv"),
+            mock.patch.object(alive_app, "_pg_connect", return_value=connection),
+            mock.patch.object(alive_app, "_save_state_sqlite"),
+        ):
+            result = alive_app.mutate_state_atomically(
+                self.data_file,
+                lambda state: state["users"]["U-one"].update({"value": 2}) or "ok",
+            )
+
+        sql = "\n".join(statement for statement, _ in connection.statements)
+        self.assertEqual(result, "ok")
+        self.assertIn("BEGIN", sql)
+        self.assertIn("FOR UPDATE", sql)
+        self.assertIn("UPDATE kv_store", sql)
+        self.assertEqual(connection.commits, 1)
+        self.assertEqual(connection.rollbacks, 0)
+        self.assertTrue(connection.closed)
 
 
 if __name__ == "__main__":
