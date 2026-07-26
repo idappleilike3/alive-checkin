@@ -72,6 +72,7 @@ class AdminCoreGuardianTests(unittest.TestCase):
                     "line_id": "U-core",
                     "priority": 2,
                     "is_primary": True,
+                    "binding_status": "accepted",
                     "notify_methods": ["line"],
                 },
             ],

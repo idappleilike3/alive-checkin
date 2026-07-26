@@ -13601,6 +13601,16 @@ class MiniApp:
             "LINE_CHANNEL_ACCESS_TOKEN": os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
             "LINE_CHANNEL_SECRET": os.environ.get("LINE_CHANNEL_SECRET", ""),
             "LIFF_ID": os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID,
+            "LINE_LOGIN_CHANNEL_ID": (
+                os.environ.get("LINE_LOGIN_CHANNEL_ID")
+                or (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).split("-", 1)[0]
+                or DEFAULT_LINE_LOGIN_CHANNEL_ID
+            ),
+            "LEGACY_LINE_LOGIN_CHANNEL_ID": os.environ.get(
+                "LEGACY_LINE_LOGIN_CHANNEL_ID", "2010674803"
+            ),
+            "LEGACY_LIFF_ID": os.environ.get("LEGACY_LIFF_ID", DEFAULT_LEGACY_LIFF_ID),
+            "ACCOUNT_MIGRATION_SECRET": os.environ.get("ACCOUNT_MIGRATION_SECRET", ""),
             "APP_PUBLIC_URL": os.environ.get("APP_PUBLIC_URL", ""),
             "APP_TIMEZONE": os.environ.get("APP_TIMEZONE", "Asia/Taipei"),
             "CRON_SECRET": os.environ.get("CRON_SECRET", ""),
