@@ -127,6 +127,7 @@ class NotifyChannelPrefsTests(unittest.TestCase):
                     "DATA_FILE": data_file,
                     "LINE_CHANNEL_ACCESS_TOKEN": "token",
                     "LINE_PUSH_SENDER": fake_sender,
+                    "GROUP_MEMBER_IDS_FETCHER": lambda _token, _group: ["U-owner"],
                     "CRON_NOW": morning,
                 }
             )
@@ -139,6 +140,7 @@ class NotifyChannelPrefsTests(unittest.TestCase):
                     "DATA_FILE": data_file,
                     "LINE_CHANNEL_ACCESS_TOKEN": "token",
                     "LINE_PUSH_SENDER": fake_sender,
+                    "GROUP_MEMBER_IDS_FETCHER": lambda _token, _group: ["U-owner"],
                     "CRON_NOW": evening,
                 }
             )

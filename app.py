@@ -4881,6 +4881,10 @@ def normalize_guardian_group_preferences(raw=None):
         for key in DEFAULT_GUARDIAN_GROUP_PREFERENCES:
             if key in raw:
                 prefs[key] = bool(raw.get(key))
+        summary_time = str(raw.get("daily_summary_time") or "").strip()
+        if REMINDER_TIME_PATTERN.match(summary_time):
+            prefs["daily_summary_time"] = summary_time
+    prefs.setdefault("daily_summary_time", "21:00")
     return prefs
 
 
@@ -5139,6 +5143,11 @@ def update_guardian_group_preferences(data_file, payload):
     for key in DEFAULT_GUARDIAN_GROUP_PREFERENCES:
         if key in payload:
             preferences[key] = bool(payload.get(key))
+    if "daily_summary_time" in payload:
+        summary_time = str(payload.get("daily_summary_time") or "").strip()
+        if not REMINDER_TIME_PATTERN.match(summary_time):
+            return {"error": "invalid daily_summary_time format, use HH:MM"}, 400
+        preferences["daily_summary_time"] = summary_time
     group["preferences"] = preferences
     save_state(data_file, state)
     return {"ok": True, "group_id": group_id, "preferences": preferences}, 200
@@ -8594,16 +8603,14 @@ def send_guardian_group_daily_summaries(config):
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
     now = current_app_time(config)
     today = now.strftime("%Y-%m-%d")
-    # 預設 21:00 後才推群組摘要，避免白天洗版
-    if now.hour < 21:
-        return {"sent": 0, "skipped": 0, "deferred_until": "21:00", "date": today}, 200
-
     users = state.get("users") or {}
     groups = state.get("guardian_groups") or {}
     sent = 0
     skipped = 0
     results = []
     system_error = False
+    deferred = 0
+    member_fetcher = config.get("GROUP_MEMBER_IDS_FETCHER") or get_group_member_ids
     for group_id, group in list(groups.items()):
         if not isinstance(group, dict) or group.get("status") != "active":
             skipped += 1
@@ -8612,6 +8619,11 @@ def send_guardian_group_daily_summaries(config):
         if not prefs.get("daily_admin_summary"):
             skipped += 1
             continue
+        summary_time = str(prefs.get("daily_summary_time") or "21:00")
+        current_hm = now.strftime("%H:%M")
+        if current_hm < summary_time:
+            deferred += 1
+            continue
         if group.get("last_daily_summary_date") == today:
             skipped += 1
             continue
@@ -8619,12 +8631,21 @@ def send_guardian_group_daily_summaries(config):
         if not push_attempt_allowed(group, delivery_key):
             skipped += 1
             continue
-        owner_id = str(group.get("owner_line_user_id") or "").strip()
-        owner = users.get(owner_id) or {}
-        member_ids = [owner_id] if owner_id else []
-        for uid in group.get("member_ids_at_bind") or []:
-            if uid not in member_ids:
-                member_ids.append(uid)
+        try:
+            current_ids = member_fetcher(token, group_id)
+        except Exception as exc:
+            skipped += 1
+            results.append({"group_id": group_id, "status": "member_refresh_failed", "error": str(exc)[:400]})
+            continue
+        if current_ids is None:
+            skipped += 1
+            results.append({"group_id": group_id, "status": "member_refresh_failed"})
+            continue
+        member_ids = list(dict.fromkeys(
+            str(uid or "").strip() for uid in current_ids if str(uid or "").strip()
+        ))
+        group["member_ids_last_summary"] = member_ids
+        group["member_ids_last_summary_at"] = now.isoformat(timespec="seconds")
         checked = []
         unchecked = []
         for uid in member_ids:
@@ -8677,6 +8698,7 @@ def send_guardian_group_daily_summaries(config):
     return {
         "sent": sent,
         "skipped": skipped,
+        "deferred": deferred,
         "results": results,
         "date": today,
         "system_error": system_error,

@@ -242,6 +242,7 @@ class PushDeliveryPolicyTests(unittest.TestCase):
                 "DATA_FILE": data_file,
                 "LINE_CHANNEL_ACCESS_TOKEN": "token",
                 "LINE_PUSH_SENDER": timeout_sender,
+                "GROUP_MEMBER_IDS_FETCHER": lambda _token, _group: ["U-owner"],
                 "CRON_NOW": datetime(2026, 7, 26, 21, 0),
             }
 
