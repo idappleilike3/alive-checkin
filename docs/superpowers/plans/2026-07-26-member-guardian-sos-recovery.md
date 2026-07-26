@@ -114,8 +114,10 @@ git commit -m "feat: gate onboarding by LINE friendship and login"
 **Files:**
 - Modify: `app.py`
 - Modify: `index.html`
+- Modify: `liff/share-invite.html`
 - Test: `tests/test_bind_and_home_gate.py`
 - Test: `tests/test_sos_rules.py`
+- Test: `tests/test_product_rules.py`
 
 **Interfaces:**
 - Consumes: `bind_emergency_contact(...)`, authenticated inviter/invitee identities, LINE push sender
@@ -123,7 +125,7 @@ git commit -m "feat: gate onboarding by LINE friendship and login"
 
 - [ ] **Step 1: Write failing tests**
 
-Prove that manual contact data cannot finish onboarding before invite consent; accepted LINE identity plus completed contact data creates one bound core guardian; owner and guardian are each notified; one push failure does not undo the binding.
+Prove that manual contact data cannot finish onboarding before invite consent; the recipient sees the inviter and complete guardian-purpose/privacy explanation before login; accepted LINE identity plus recipient-confirmed contact data creates one bound core guardian; owner and guardian are each notified; one push failure does not undo the binding; a pending invite expires after seven days.
 
 - [ ] **Step 2: Run focused tests and verify RED**
 
@@ -135,18 +137,18 @@ python -m unittest tests.test_bind_and_home_gate tests.test_sos_rules -v
 
 - [ ] **Step 3: Implement minimal verified binding transition**
 
-Join the accepted invite identity to the owner-entered contact, set the canonical core-guardian role/status once, then push separate success notices and append per-recipient delivery logs.
+Store only the inviter-provided display name/relationship before sharing. After the recipient reads the public explanation, joins the OA, logs in and consents, join that authenticated identity to recipient-confirmed contact data, set the canonical core-guardian role/status once, then push separate success notices and append per-recipient delivery logs.
 
 - [ ] **Step 4: Update onboarding completion UI**
 
-Show share, consent-waiting, details, and completion states. Display both party names and individual notification results.
+Show inviter prefill/share, public explanation, add-friend, login, consent, recipient details, waiting, and completion states. Display both party names and individual notification results.
 
 - [ ] **Step 5: Verify GREEN and commit**
 
 Run the focused suite and:
 
 ```bash
-git add app.py index.html tests/test_bind_and_home_gate.py tests/test_sos_rules.py
+git add app.py index.html liff/share-invite.html tests/test_bind_and_home_gate.py tests/test_sos_rules.py tests/test_product_rules.py
 git commit -m "feat: verify and notify core guardian binding"
 ```
 
@@ -220,7 +222,7 @@ Build recipient lists immediately before sending, deliver independently, audit e
 
 - [ ] **Step 4: Write failing direct-route and three-tap tests**
 
-Prove `open=sos` renders the SOS overlay before home content, both entry points share the same handler, and each tap visibly advances from 1/3 through 3/3.
+Prove `open=sos` renders the SOS overlay before home content, both entry points share the same handler, and each tap visibly advances from 1/3 through 3/3. Also prove Rich Menu, home and chat check-in entrances do not create a check-in without a bound core guardian; they show the required-guardian message and invite/explanation actions instead.
 
 - [ ] **Step 5: Run frontend/product tests and verify RED**
 
@@ -233,7 +235,7 @@ python -m unittest tests.test_product_rules -v
 
 - [ ] **Step 6: Implement direct overlay and result UI**
 
-Do not call `showTab("home")` before opening SOS. Render guardian/group names, sender confirmation, success/failure counts and actionable failure hints.
+Do not call `showTab("home")` before opening SOS. Render guardian/group names, sender confirmation, success/failure counts and actionable failure hints. Reuse the authoritative readiness gate for all check-in entrances; “later” may close the prompt but never write a check-in, and post-binding completion offers an explicit check-in action.
 
 - [ ] **Step 7: Verify GREEN and commit**
 
