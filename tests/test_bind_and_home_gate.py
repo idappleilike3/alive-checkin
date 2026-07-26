@@ -199,8 +199,15 @@ class BindAndHomeGateTests(unittest.TestCase):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         share = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
         self.assertIn("invite_from: safeId", page)
-        self.assertIn('?invite_from=" + encodeURIComponent(safeId)', share)
+        self.assertIn("?invite_from=${encodeURIComponent(safeId)}", share)
         self.assertIn("buildContactInvite", page)
+
+    def test_invite_flex_targets_dedicated_share_page(self):
+        """Changing the Flex action to an R/share URL would bypass the LIFF picker flow."""
+        flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
+
+        self.assertIn('return liff_path_url("/liff/share-invite.html")', flex)
+        self.assertIn("share_uri = share_invite_liff_url()", flex)
 
     def test_resolve_data_file_honors_explicit(self):
         with tempfile.TemporaryDirectory() as tmp:

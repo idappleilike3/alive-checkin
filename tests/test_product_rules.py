@@ -408,12 +408,10 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("liff.login({ redirectUri: buildSafeRedirectUri() })", page)
         self.assertNotIn("redirectUri: window.location.href", page)
         self.assertIn("alertFail", page)
-        self.assertIn("line.me/R/share?text=", page)
-        self.assertIn("openNativeShare()", page)
-        self.assertIn("liff.openWindow", page)
+        self.assertNotIn("line.me/R/share?text=", page)
+        self.assertIn("openGuardianShare", page)
         self.assertIn("alive_share_invite_auto_v1", page)
         self.assertIn("hasAutoShareTried", page)
-        self.assertIn("請先加入 LINE 官方帳號「每日平安」", page)
         # 禁止教學中間頁文案
         self.assertNotIn("分享給好友", page)
         self.assertNotIn("請點下面大按鈕", page)
@@ -425,13 +423,24 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("autoShareOnce", page)
         init_fn = page[page.index("async function initializeLiff()") :]
         self.assertNotIn("shareTargetPicker", init_fn)
-        self.assertIn("openNativeShare()", init_fn)
+        self.assertIn("await openShare()", init_fn)
         self.assertNotIn("clipboard", page)
-        self.assertIn("https://line.me/R/app/\" + LIFF_ID + \"?invite_from=", page)
+        self.assertIn("https://line.me/R/app/${LIFF_ID}?invite_from=", page)
         self.assertIn('const LIFF_ID = "2010848330-UAiqPPYD"', page)
         self.assertIn("W250724ir", page)
         self.assertIn("resolveReturnUrl", page)
         self.assertIn("appPublicOrigin", page)
+
+    def test_guardian_invite_uses_direct_share_target_picker(self):
+        """Removing the picker would make the one-tap guardian invite unusable in LINE."""
+        page = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
+        home = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("async function openGuardianShare(inviterId)", page)
+        self.assertIn("await liff.shareTargetPicker([", page)
+        self.assertNotIn('location.replace("/?open=home")', page)
+        self.assertNotIn('params.set("open", hash)', home)
+        self.assertIn("請從 LINE App 重新開啟「一鍵邀請守護人」再試一次", page)
         self.assertIn("完成，返回原位置", page)
         self.assertIn('params.get("return")', page)
 

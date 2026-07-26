@@ -98,7 +98,6 @@
     const actions = document.getElementById("actions");
     const hint = document.getElementById("hint");
 
-    let inviteText = "";
     let myUserId = "";
     let ready = false;
     let sharing = false;
@@ -106,23 +105,6 @@
 
     function sanitizeUserId(raw) {
       return String(raw || "").trim().replace(/[^a-zA-Z0-9_-]/g, "");
-    }
-
-    function buildInviteText(userId) {
-      const safeId = sanitizeUserId(userId);
-      const bindUrl = safeId
-        ? ("https://line.me/R/app/" + LIFF_ID + "?invite_from=" + encodeURIComponent(safeId))
-        : ("https://line.me/R/app/" + LIFF_ID + "?open=onboarding");
-      return (
-        "我想邀請你成為「每日平安」的守護人\n" +
-        "有緊急或我沒報平安時，系統會通知你\n" +
-        "請先加入 LINE 官方帳號「每日平安」，再點下面連結完成綁定\n" +
-        bindUrl
-      );
-    }
-
-    function buildNativeShareUrl(text) {
-      return "https://line.me/R/share?text=" + encodeURIComponent(String(text || ""));
     }
 
     function buildSafeRedirectUri() {
@@ -203,10 +185,6 @@
       return appPublicOrigin() + resolveReturnPathOnly();
     }
 
-    function homeUrl() {
-      return appPublicOrigin() + "/#home";
-    }
-
     function markAutoShareTried() {
       try { sessionStorage.setItem(AUTO_SHARE_KEY, "1"); } catch (_) {}
     }
@@ -249,61 +227,33 @@
       try { alert(String(msg || "暫時無法分享")); } catch (_) {}
     }
 
-    function openNativeShare() {
-      if (!inviteText) inviteText = buildInviteText(myUserId);
-      const shareUrl = buildNativeShareUrl(inviteText);
+    async function openGuardianShare(inviterId) {
+      const safeId = sanitizeUserId(inviterId);
+      const bindUrl = `https://line.me/R/app/${LIFF_ID}?invite_from=${encodeURIComponent(safeId)}`;
       try {
-        if (
-          window.liff &&
-          typeof liff.openWindow === "function" &&
-          typeof liff.isInClient === "function" &&
-          liff.isInClient()
-        ) {
-          liff.openWindow({ url: shareUrl, external: false });
-          return true;
+        if (!safeId || !window.liff || typeof liff.shareTargetPicker !== "function") {
+          throw new Error("shareTargetPicker unavailable");
         }
-        window.location.assign(shareUrl);
-        return true;
-      } catch (error) {
-        alertFail((error && error.message) ? error.message : error);
-        return false;
-      }
-    }
-
-    async function tryShareTargetPicker() {
-      if (!window.liff || typeof liff.shareTargetPicker !== "function") return false;
-      try {
-        if (typeof liff.isInClient === "function" && !liff.isInClient()) return false;
-        if (typeof liff.isApiAvailable === "function" && !liff.isApiAvailable("shareTargetPicker")) return false;
-        const result = await liff.shareTargetPicker([{ type: "text", text: inviteText }]);
-        if (result) {
-          goNextStep();
-          return true;
-        }
-        // 使用者取消：仍顯示完成／返回，不要卡在邀請頁
-        showPostShareUi();
-        return false;
-      } catch (error) {
-        alertFail((error && error.message) ? error.message : error);
+        const result = await liff.shareTargetPicker([{
+          type: "text",
+          text: `想邀請你成為我的每日平安守護人。\n${bindUrl}`,
+        }]);
+        return Boolean(result);
+      } catch (_) {
+        alertFail("請從 LINE App 重新開啟「一鍵邀請守護人」再試一次");
         return false;
       }
     }
 
     async function openShare() {
       if (sharing || shareBlocked || !ready) return;
-      if (!inviteText) inviteText = buildInviteText(myUserId);
       sharing = true;
       tapLayer.disabled = true;
       hidePostShareUi();
       try {
-        if (openNativeShare()) {
-          // openWindow 不會離開本頁：立刻給「完成／返回原位置」
-          markAutoShareTried();
-          showPostShareUi();
-          return;
-        }
-        const ok = await tryShareTargetPicker();
-        if (!ok) showPostShareUi();
+        await openGuardianShare(myUserId);
+        // 分享完成或使用者取消後都留在專用頁，讓使用者自行決定何時返回。
+        showPostShareUi();
       } finally {
         sharing = false;
         if (!shareBlocked) tapLayer.disabled = false;
@@ -319,7 +269,6 @@
     }
 
     async function initializeLiff() {
-      inviteText = buildInviteText("");
       resolveReturnUrl();
       try {
         if (!window.liff) throw new Error("LIFF SDK 未載入");
@@ -345,8 +294,6 @@
         } catch (_) {
           myUserId = "";
         }
-        inviteText = buildInviteText(myUserId);
-
         if (inviteFrom && myUserId && inviteFrom !== myUserId) {
           shareBlocked = true;
           alertFail("這是別人的邀請連結，請回官方帳號完成綁定");
@@ -364,8 +311,7 @@
         }
 
         markAutoShareTried();
-        openNativeShare();
-        showPostShareUi();
+        await openShare();
       } catch (error) {
         alertFail((error && error.message) ? error.message : error);
         showPostShareUi();

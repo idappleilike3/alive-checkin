@@ -6522,7 +6522,6 @@
       const hash = String(returnHash || currentShareReturnHash() || "home").replace(/^#/, "") || "home";
       const params = new URLSearchParams();
       params.set("return", `/#${hash}`);
-      params.set("open", hash);
       return `/liff/share-invite.html?${params.toString()}`;
     }
 

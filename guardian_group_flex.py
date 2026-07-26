@@ -123,9 +123,8 @@ def line_native_share_url(text: str) -> str:
 
 
 def share_invite_flex(invite_from: str, *, nickname: str = ""):
-    """一鍵邀請回覆：整張卡片 URI＝line.me/R/share（無教學文案大按鈕頁）。"""
-    text = guardian_invite_share_text(invite_from, nickname=nickname)
-    share_uri = line_native_share_url(text)
+    """一鍵邀請回覆：開啟專用 LIFF 頁並直接使用 shareTargetPicker。"""
+    share_uri = share_invite_liff_url()
     return {
         "type": "bubble",
         "action": {"type": "uri", "label": "傳給家人", "uri": share_uri},
