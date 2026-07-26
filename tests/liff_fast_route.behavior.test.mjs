@@ -337,6 +337,85 @@ test("server guardian_required shows onboarding and blocks home, check-in, guard
   }
 });
 
+test("guardian_required keeps member controls locked after bootstrap data arrives", async () => {
+  const locks = [];
+  const elements = {
+    mvpSafeBtn: { disabled: true },
+    mvpGuardStartBtn: { disabled: true },
+  };
+  const sandbox = expose(
+    section("async function loadInitialMemberData()", "// 整合到 initApp"),
+    ["loadInitialMemberData"],
+    {
+      apiGetStatus: async () => ({ guardian_required: true, home_ready: false, contacts: [] }),
+      apiGetContacts: async () => ({ status: 200, data: { contacts: [], contact_limit: 1 } }),
+      fetchOnboardingState: async () => ({ guardianRequired: true, homeReady: false, data: {} }),
+      renderStatus() {},
+      syncCheckBtn() {},
+      renderSosAccess() {},
+      renderGuardians() {},
+      renderMemberCenter() {},
+      friendlyApiFailure: () => "bad status",
+      contactData: [],
+      currentContactLimit: 1,
+      lineUserId: "U-member",
+      memberBootstrapState: { statusReady: false, dataReady: false, error: null },
+      setMemberInteractionLocked: (locked) => locks.push(locked),
+      $: (id) => elements[id] || null,
+      document: { body: { removeAttribute() {} } },
+    },
+  );
+
+  await sandbox.loadInitialMemberData();
+  assert.equal(sandbox.memberBootstrapState.statusReady, false);
+  assert.equal(elements.mvpSafeBtn.disabled, true);
+  assert.equal(elements.mvpGuardStartBtn.disabled, true);
+  assert.ok(locks.every((locked) => locked === true));
+});
+
+test("guardian-required onboarding cannot be dismissed by an unbound contact", async () => {
+  const closeVisibility = [];
+  const steps = [];
+  const elements = {
+    onboardingModal: { hidden: true, dataset: {}, addEventListener() {}, scrollTop: 0 },
+    onboardingError: { hidden: true, textContent: "" },
+    obName: { value: "" },
+    obPhone: { value: "" },
+    obEmail: { value: "" },
+  };
+  const sandbox = expose(functionSource("showOnboarding"), ["showOnboarding"], {
+    currentStatusData: { guardian_required: true },
+    currentGuardianContacts: () => [{ name: "阿媽", binding_status: "unbound" }],
+    setRelationshipValue() {},
+    setOnboardingCloseVisible: (visible) => closeVisibility.push(visible),
+    showOnboardingShareStep: () => steps.push("share"),
+    showOnboardingReminderStep: () => steps.push("reminder"),
+    $: (id) => elements[id] || null,
+  });
+
+  await sandbox.showOnboarding();
+  assert.deepEqual(closeVisibility, [false]);
+  assert.deepEqual(steps, ["share"]);
+  assert.equal(elements.onboardingModal.hidden, false);
+});
+
+test("guardian_required blocks status actions even after status data is loaded", () => {
+  const gateSource = section(
+    "function requireMemberActionReady(",
+    "function showMemberBootstrapError(",
+  );
+  const sandbox = expose(gateSource, ["requireMemberActionReady"], {
+    useLocalMode: false,
+    lineUserId: "U-member",
+    memberBootstrapState: { guardianRequired: true, statusReady: true, dataReady: true },
+    showMemberBootstrapPending() {},
+    showLineLoginRequired() {},
+    readSafeDeepLinkParams: () => ({}),
+  });
+
+  assert.equal(sandbox.requireMemberActionReady("status"), false);
+});
+
 test("legacy handoff parses nested liff.state and drops the old Provider inviter ID", () => {
   const oldProviderUserId = "U0123456789abcdef0123456789abcdef";
   const nestedState = encodeURIComponent(

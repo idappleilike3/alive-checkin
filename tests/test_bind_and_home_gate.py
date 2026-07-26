@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import app as app_module
 
@@ -172,7 +173,10 @@ class BindAndHomeGateTests(unittest.TestCase):
                     "relationship": "家人",
                     "phone": "0912345678",
                     "contact_role": "guardian",
+                    "line_user_id": "U-unbound-guardian",
+                    "line_id": "U-unbound-guardian",
                     "binding_status": "unbound",
+                    "notify_methods": ["line"],
                 }],
             },
             "name and phone only": {
@@ -233,6 +237,65 @@ class BindAndHomeGateTests(unittest.TestCase):
         for payload in (status, onboarding):
             self.assertEqual(payload["home_ready"], False)
             self.assertEqual(payload["guardian_required"], True)
+
+    def test_onboarding_routes_use_verified_identity_not_requested_member_id(self):
+        app = app_module.create_app({"DATA_FILE": self.data_file, "REQUIRE_LIFF_AUTH": "1"})
+        state = app_module.load_state(self.data_file)
+        owner = app_module.get_profile(state, "U-owner")
+        owner["display_name"] = "本人"
+        owner["contacts"] = [{
+            "name": "阿媽",
+            "relationship": "家人",
+            "contact_role": "guardian",
+            "line_user_id": "U-guardian",
+            "binding_status": "accepted",
+            "consent_status": "accepted",
+            "notify_methods": ["line"],
+        }]
+        target = app_module.get_profile(state, "U-target")
+        target["display_name"] = "別人"
+        target["reminder_times"] = ["12:00"]
+        app_module.save_state(self.data_file, state)
+
+        # A verified U-owner token must win over an attacker-controlled U-target ID.
+        with patch.object(app_module, "resolve_line_user_id", return_value=("U-owner", None)):
+            client = app.test_client()
+            read = client.get("/api/onboarding?line_user_id=U-target")
+            self.assertEqual(read.status_code, 200)
+            self.assertEqual(read.get_json()["line_user_id"], "U-owner")
+
+            complete = client.post(
+                "/api/onboarding/complete",
+                data='{"line_user_id":"U-target","reminder_times":["13:00"]}',
+                content_type="application/json",
+            )
+        self.assertEqual(complete.status_code, 200)
+        state_after = app_module.load_state(self.data_file)
+        self.assertEqual(state_after["users"]["U-owner"]["reminder_times"], ["13:00"])
+        self.assertEqual(state_after["users"]["U-target"]["reminder_times"], ["12:00"])
+
+    def test_checkin_rejects_unbound_contact_even_when_it_has_a_foreign_line_id(self):
+        app = app_module.create_app({"DATA_FILE": self.data_file, "REQUIRE_LIFF_AUTH": "0"})
+        state = app_module.load_state(self.data_file)
+        profile = app_module.get_profile(state, "U-member")
+        profile["contacts"] = [{
+            "name": "阿媽",
+            "relationship": "家人",
+            "contact_role": "guardian",
+            "line_user_id": "U-unbound-guardian",
+            "binding_status": "unbound",
+            "notify_methods": ["line"],
+        }]
+        app_module.save_state(self.data_file, state)
+
+        response = app.test_client().post(
+            "/api/checkin",
+            data='{"line_user_id":"U-member"}',
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "guardian_required")
+        self.assertEqual(app_module.load_state(self.data_file)["users"]["U-member"]["history"], [])
 
     def test_scrub_self_line_id_fake_bind(self):
         state = app_module.load_state(self.data_file)

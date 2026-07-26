@@ -4609,6 +4609,7 @@
     let memberBootstrapState = {
       statusReady: false,
       dataReady: false,
+      guardianRequired: false,
       inFlight: null,
       error: null
     };
@@ -8292,6 +8293,7 @@
 
     function hasActiveSosAccess() {
       // SOS 不依方案／價格分級：登入後即可用（後端另有每日上限／冷卻）
+      if (currentStatusData && currentStatusData.guardian_required === true) return false;
       return Boolean(lineUserId || (currentStatusData && currentStatusData.sos_enabled !== false));
     }
 
@@ -8349,7 +8351,12 @@
     }
 
     function openSosFlow() {
+      if (currentStatusData && currentStatusData.guardian_required === true) {
+        showOnboarding();
+        return false;
+      }
       openSosModal();
+      return true;
     }
 
     function triggerSos() {
@@ -9275,11 +9282,12 @@
       $("obEmail").value = "";
 
       const contacts = currentGuardianContacts();
-      const canDismiss = contacts.length > 0;
+      const guardianRequired = currentStatusData && currentStatusData.guardian_required === true;
+      const canDismiss = !guardianRequired && contacts.length > 0;
       setOnboardingCloseVisible(canDismiss);
 
       // 已有 ≥1 位守護人：不要再強制「新增守護人」，直接進提醒步驟（可按 X 關閉）
-      if (contacts.length > 0) {
+      if (contacts.length > 0 && !guardianRequired) {
         showOnboardingReminderStep();
       } else {
         showOnboardingShareStep();
@@ -9477,6 +9485,7 @@
 
     function setMemberInteractionLocked(locked) {
       const ids = [
+        "checkBtn", "mvpSafeBtn", "mvpGuardStartBtn", "sosHoldButton",
         "saveDailyReminderBtn", "smartReminderSaveBtn",
         "deleteCheckinHistoryBtn", "deleteAccountBtn",
         "saveGuardianBtn", "confirmDeleteGuardianBtn",
@@ -9512,6 +9521,10 @@
         showLineLoginRequired(readSafeDeepLinkParams());
         return false;
       }
+      if (memberBootstrapState.guardianRequired) {
+        showMemberBootstrapPending("請先完成至少 1 位核心守護人的 LINE 綁定。");
+        return false;
+      }
       const ready = scope === "data"
         ? memberBootstrapState.dataReady
         : memberBootstrapState.statusReady;
@@ -9527,6 +9540,7 @@
     function showMemberBootstrapError(error) {
       memberBootstrapState.statusReady = false;
       memberBootstrapState.dataReady = false;
+      memberBootstrapState.guardianRequired = false;
       memberBootstrapState.error = error || new Error("member_bootstrap_failed");
       setMemberInteractionLocked(true);
       const errBox = $("inlineError");
@@ -9547,6 +9561,7 @@
       if (memberBootstrapState.inFlight) return memberBootstrapState.inFlight;
       memberBootstrapState.statusReady = false;
       memberBootstrapState.dataReady = false;
+      memberBootstrapState.guardianRequired = false;
       memberBootstrapState.error = null;
       setMemberInteractionLocked(true);
       hideInlineError();
@@ -9574,10 +9589,18 @@
       }
       renderStatus(status);
       syncCheckBtn(status);
-      memberBootstrapState.statusReady = true;
+      memberBootstrapState.guardianRequired = status.guardian_required === true;
+      memberBootstrapState.statusReady = !memberBootstrapState.guardianRequired;
       memberBootstrapState.error = null;
-      if ($("mvpSafeBtn")) $("mvpSafeBtn").disabled = false;
-      if ($("mvpGuardStartBtn")) $("mvpGuardStartBtn").disabled = false;
+      setMemberInteractionLocked(memberBootstrapState.guardianRequired);
+      if ($("mvpSafeBtn")) {
+        $("mvpSafeBtn").disabled = memberBootstrapState.guardianRequired;
+        if (!memberBootstrapState.guardianRequired) $("mvpSafeBtn").disabled = false;
+      }
+      if ($("mvpGuardStartBtn")) {
+        $("mvpGuardStartBtn").disabled = memberBootstrapState.guardianRequired;
+        if (!memberBootstrapState.guardianRequired) $("mvpGuardStartBtn").disabled = false;
+      }
       renderSosAccess();
 
       const contactsPayload = await contactsPromise;
@@ -9597,8 +9620,14 @@
       }
 
       const onboarding = await onboardingPromise;
-      memberBootstrapState.dataReady = true;
-      setMemberInteractionLocked(false);
+      memberBootstrapState.guardianRequired = (
+        memberBootstrapState.guardianRequired
+        || onboarding.guardianRequired === true
+        || onboarding.data?.guardian_required === true
+      );
+      memberBootstrapState.statusReady = !memberBootstrapState.guardianRequired;
+      memberBootstrapState.dataReady = !memberBootstrapState.guardianRequired;
+      setMemberInteractionLocked(memberBootstrapState.guardianRequired);
       document.body.removeAttribute("aria-busy");
       return { status, contacts: contactData, onboarding };
     }
@@ -10303,6 +10332,7 @@
       appBootstrapComplete = false;
       memberBootstrapState.statusReady = false;
       memberBootstrapState.dataReady = false;
+      memberBootstrapState.guardianRequired = false;
       memberBootstrapState.error = null;
       setMemberInteractionLocked(true);
       // 導覽與基本操作不依賴 LINE 身分；先綁定再套用 deep link，畫面不必等網路。

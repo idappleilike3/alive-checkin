@@ -1955,7 +1955,7 @@ def contact_is_bound_guardian(contact, owner_line_user_id=None):
         return False
     if contact.get("binding_status") == "accepted" or contact.get("consent_status") == "accepted":
         return bool(lid) and (not owner or lid != owner)
-    return bool(lid)
+    return False
 
 
 def contact_is_notifiable_line_guardian(contact, owner_line_user_id=None):
@@ -9762,6 +9762,24 @@ def app_config(config):
     }
 
 
+def authenticated_line_user(payload=None, *, args=None, headers=None, config=None):
+    """Resolve one caller identity; never trust a route's requested member ID."""
+    payload = payload or {}
+    args = args or {}
+    headers = headers or {}
+    if resolve_line_user_id is None:
+        claimed = str(payload.get("line_user_id") or args.get("line_user_id") or "").strip()
+        if not claimed:
+            return None, ({"ok": False, "error": "missing line_user_id"}, 400)
+        return claimed, None
+    return resolve_line_user_id(
+        headers=headers,
+        payload=payload,
+        args=args,
+        config=config or {},
+    )
+
+
 def create_app(config=None):
     if Flask is None:
         return MiniApp(config)
@@ -9933,20 +9951,10 @@ def create_app(config=None):
         """Resolve LINE user from verified id_token when required."""
         payload = payload if payload is not None else (request.get_json(silent=True) or {})
         args = request.args if use_args else {}
-        if resolve_line_user_id is None:
-            claimed = str(
-                (payload or {}).get("line_user_id")
-                or (args.get("line_user_id") if use_args else "")
-                or ""
-            ).strip()
-            if not claimed:
-                return None, ({"ok": False, "error": "missing line_user_id"}, 400)
-            return claimed, None
-        headers = {key: value for key, value in request.headers.items()}
-        return resolve_line_user_id(
-            headers=headers,
-            payload=payload or {},
+        return authenticated_line_user(
+            payload,
             args=args,
+            headers={key: value for key, value in request.headers.items()},
             config=app.config,
         )
 
@@ -10049,9 +10057,12 @@ def create_app(config=None):
     @app.get("/api/onboarding/state")
     def onboarding_state_api():
         """取得使用者 onboarding 狀態(守護人是否綁定 + 提醒時間)。"""
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
         data, code = onboarding_status_payload(
             app.config["DATA_FILE"],
-            request.args.get("line_user_id"),
+            line_user_id,
             allow_missing_profile=True,
         )
         return jsonify(data), code
@@ -10258,6 +10269,15 @@ def create_app(config=None):
                     "display_name": str(payload.get("display_name") or "LINE 使用者"),
                 },
             )
+            state = load_state(app.config["DATA_FILE"])
+        access = member_access_state(state.get("users", {}).get(line_user_id))
+        if access["guardian_required"]:
+            return jsonify({
+                "ok": False,
+                "error": "guardian_required",
+                "message": "必須先完成至少 1 位可接收 LINE 通知的核心守護人綁定",
+                **access,
+            }), 400
         status = record_checkin(app.config["DATA_FILE"], payload)
         status["ok"] = True
         return jsonify(status)
@@ -11391,8 +11411,11 @@ def create_app(config=None):
     @app.get("/api/onboarding")
     def onboarding_get():
         """回傳使用者 onboarding 狀態。"""
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
         data, code = onboarding_status_payload(
-            app.config["DATA_FILE"], request.args.get("line_user_id")
+            app.config["DATA_FILE"], line_user_id
         )
         return jsonify(data), code
 
@@ -11516,9 +11539,10 @@ def create_app(config=None):
     def onboarding_complete():
         """標記 onboarding 完成(必須至少有 1 位守護人)。"""
         payload = request.get_json(silent=True) or {}
-        line_user_id = (payload.get("line_user_id") or "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
         state = load_state(app.config["DATA_FILE"])
         profile = state.get("users", {}).get(line_user_id)
         if not profile:
@@ -12324,40 +12348,64 @@ def create_app(config=None):
 
 
 class MiniResponse:
-    def __init__(self, data, status_code=200):
+    def __init__(self, data, status_code=200, headers=None):
         self._data = data
         self.status_code = status_code
+        self.headers = headers or {}
 
     def get_json(self):
         return self._data
+
+    def close(self):
+        return None
 
 
 class MiniClient:
     def __init__(self, app):
         self.app = app
 
-    def get(self, path):
+    def get(self, path, headers=None):
         route, _, query = path.partition("?")
         if route == "/api/admin" or route.startswith("/api/admin/"):
             return MiniResponse({"error": "admin_not_configured"}, 503)
         params = dict(urllib.parse.parse_qsl(query))
+        headers = headers or {}
         if route == "/api/config":
             return MiniResponse(app_config(self.app.config))
         if route == "/health":
             return MiniResponse({"ok": True})
         if route in ("/terms", "/privacy"):
             return MiniResponse({"ok": True})
+        if route == "/liff/migrate.html":
+            return MiniResponse({"ok": True})
+        if route == "/liff/onboarding":
+            liff_id = str(self.app.config.get("LIFF_ID") or DEFAULT_LIFF_ID).strip()
+            return MiniResponse(
+                {"ok": True},
+                302,
+                {"Location": f"https://liff.line.me/{liff_id}?open=onboarding"},
+            )
         if route == "/api/status":
             return MiniResponse(self.app.status(params.get("line_user_id")))
         if route == "/api/onboarding":
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
             body, code = onboarding_status_payload(
-                self.app.config["DATA_FILE"], params.get("line_user_id")
+                self.app.config["DATA_FILE"], line_user_id
             )
             return MiniResponse(body, code)
         if route == "/api/onboarding/state":
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
             body, code = onboarding_status_payload(
                 self.app.config["DATA_FILE"],
-                params.get("line_user_id"),
+                line_user_id,
                 allow_missing_profile=True,
             )
             return MiniResponse(body, code)
@@ -12422,7 +12470,78 @@ class MiniClient:
             body, code = register_line_user(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
         if route == "/api/checkin":
-            return MiniResponse(record_checkin(self.app.config["DATA_FILE"], payload))
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["line_user_id"] = line_user_id
+            state = load_state(self.app.config["DATA_FILE"])
+            if line_user_id not in state.get("users", {}):
+                register_line_user(
+                    self.app.config["DATA_FILE"],
+                    {"line_user_id": line_user_id, "display_name": payload.get("display_name") or "LINE 使用者"},
+                )
+                state = load_state(self.app.config["DATA_FILE"])
+            access = member_access_state(state.get("users", {}).get(line_user_id))
+            if access["guardian_required"]:
+                return MiniResponse({
+                    "ok": False,
+                    "error": "guardian_required",
+                    "message": "必須先完成至少 1 位可接收 LINE 通知的核心守護人綁定",
+                    **access,
+                }, 400)
+            result = record_checkin(self.app.config["DATA_FILE"], payload)
+            result["ok"] = True
+            return MiniResponse(result)
+        if route == "/api/onboarding/complete":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["line_user_id"] = line_user_id
+            state = load_state(self.app.config["DATA_FILE"])
+            profile = state.get("users", {}).get(line_user_id)
+            if not profile:
+                return MiniResponse({"ok": False, "error": "user not registered"}, 404)
+            access = member_access_state(profile)
+            if access["guardian_required"]:
+                return MiniResponse({
+                    "ok": False,
+                    "error": "guardian_required",
+                    "message": "必須先完成至少 1 位可接收 LINE 通知的核心守護人綁定",
+                    **access,
+                }, 400)
+            profile["is_onboarding_completed"] = True
+            if "reminder_times" in payload or payload.get("reminder_time"):
+                apply_reminder_times_to_profile(
+                    profile,
+                    times=payload.get("reminder_times"),
+                    single=payload.get("reminder_time"),
+                )
+            else:
+                apply_reminder_times_to_profile(profile)
+            istate = get_or_create_interaction_state(profile)
+            istate["onboarding_completed"] = True
+            if "add_first_guardian" not in istate["completed_steps"]:
+                istate["completed_steps"].append("add_first_guardian")
+            if "set_reminder_time" not in istate["completed_steps"]:
+                istate["completed_steps"].append("set_reminder_time")
+            if not istate.get("pending_steps"):
+                istate["pending_steps"] = ["explore_app", "read_help", "add_more_guardians_if_paid"]
+            istate["last_interaction_at"] = datetime.now().isoformat(timespec="seconds")
+            save_state(self.app.config["DATA_FILE"], state)
+            times = reminder_times_for_profile(profile)
+            return MiniResponse({
+                "ok": True,
+                **member_access_state(profile),
+                "is_onboarding_completed": True,
+                "setup_completed": True,
+                "reminder_time": times[0],
+                "reminder_times": times,
+                "interaction_state": istate,
+            })
         if route == "/api/warning/cancel":
             return MiniResponse(cancel_warning(self.app.config["DATA_FILE"], payload, self.app.config))
         if route == "/api/settings":
