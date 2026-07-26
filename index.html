@@ -3677,7 +3677,7 @@
         </div>
         <div id="lineEntryLoginStep" hidden>
           <h2>使用 LINE 一鍵登入</h2>
-          <p>已確認你加入官方帳號。請按一下登入，安全帶回你的會員資料與守護設定。</p>
+          <p>請按一下登入。登入後，系統會立即確認官方帳號好友狀態，再安全帶回你的會員資料與守護設定。</p>
           <div class="line-entry-actions">
             <button id="lineEntryLoginBtn" type="button">使用 LINE 一鍵登入</button>
           </div>
@@ -5012,14 +5012,39 @@
       return buildPublicAppUrl({ from: safeId }, "/invite");
     }
 
-    function readSafeDeepLinkParams() {
-      const src = readAppParams();
+    const LOGIN_CONTINUATION_ACTIONS = new Set([
+      "home", "checkin", "guard", "safety", "sos", "member", "profile",
+      "guardians", "history", "status", "pricing", "plans", "plan",
+      "help", "faq", "terms", "privacy", "onboarding", "bind",
+      "share-invite", "invite", "onboarding/invite"
+    ]);
+
+    function sanitizeLoginContinuationParams(source = {}) {
+      const read = (key) => {
+        if (source instanceof URLSearchParams) return source.get(key);
+        return source && source[key];
+      };
       const out = {};
-      ["invite_from", "friend_invite", "open"].forEach((key) => {
-        const value = String(src.get(key) || "").trim();
-        if (value) out[key] = value;
-      });
+      const inviteFrom = String(read("invite_from") || "").trim();
+      if (/^U[0-9a-f]{32}$/i.test(inviteFrom)) out.invite_from = inviteFrom;
+      const friendInvite = String(read("friend_invite") || "").trim().toUpperCase();
+      if (/^[A-Z0-9]{6,8}$/.test(friendInvite)) out.friend_invite = friendInvite;
+      for (const key of ["open", "page"]) {
+        const action = String(read(key) || "").trim().toLowerCase();
+        if (LOGIN_CONTINUATION_ACTIONS.has(action)) out[key] = action;
+      }
+      const migrationCode = String(read("migration_code") || "").trim();
+      if (
+        /^[A-Za-z0-9_-]{32,128}$/.test(migrationCode)
+        && !/^U[0-9a-f]{32}$/i.test(migrationCode)
+      ) {
+        out.migration_code = migrationCode;
+      }
       return out;
+    }
+
+    function readSafeDeepLinkParams() {
+      return sanitizeLoginContinuationParams(readAppParams());
     }
 
     function isInviteeDeepLink() {
@@ -5029,7 +5054,10 @@
 
     function buildCleanLoginRedirectUri(extraParams = {}) {
       // Endpoint 必須是 LINE Console 允許的 origin；query 只保留業務參數
-      const params = { ...readSafeDeepLinkParams(), ...(extraParams || {}) };
+      const params = sanitizeLoginContinuationParams({
+        ...readSafeDeepLinkParams(),
+        ...sanitizeLoginContinuationParams(extraParams || {})
+      });
       const endpoint = `${location.origin}${location.pathname || "/"}`;
       const qs = new URLSearchParams(params).toString();
       // LINE Login redirectUri 不帶 fragment，避免邀請連結登入時被 LINE 判定 400。
@@ -5042,10 +5070,13 @@
         return false;
       }
       try {
-        // 使用者指定標準：絕對不要自己帶 redirectUri，LINE 會完美跳回當前頁（含參數）
-        liff.login();
+        const redirectUri = buildCleanLoginRedirectUri(extraParams);
+        liff.login({ redirectUri });
       } catch (_) {
-        try { liff.login(); } catch (e2) {
+        try {
+          const redirectUri = buildCleanLoginRedirectUri(extraParams);
+          liff.login({ redirectUri });
+        } catch (e2) {
           showLineLoginRequired(extraParams, { detail: String(e2 && e2.message || e2) });
           return false;
         }
@@ -7761,9 +7792,10 @@
       if (!sdk || typeof sdk.getFriendship !== "function" || typeof sdk.isLoggedIn !== "function") {
         throw new Error("LIFF SDK 無法確認官方帳號好友狀態");
       }
+      if (!sdk.isLoggedIn()) return "login";
       const friendship = await sdk.getFriendship();
       if (!friendship || friendship.friendFlag !== true) return "friend";
-      return sdk.isLoggedIn() ? "ready" : "login";
+      return "ready";
     }
 
     function showLineEntryGate(step) {
@@ -7785,19 +7817,24 @@
     }
 
     async function recheckLineEntryGate() {
-      try {
-        const step = await resolveLineEntryGate();
-        if (step !== "ready") {
-          showLineEntryGate(step);
+      if (recheckLineEntryGate.inFlight) return recheckLineEntryGate.inFlight;
+      const task = (async () => {
+        try {
+          // initializeLiff performs a fresh logged-in friendship check before registration.
+          const lineReady = await initializeLiff();
+          if (!lineReady) return false;
+          hideInlineError();
+          return await resumeMemberBootstrapAfterLineEntry();
+        } catch (error) {
+          showLineLoginRequired(readSafeDeepLinkParams(), { detail: formatLiffError(error) });
           return false;
         }
-        // A returned add-friend flow must pass a second fresh LIFF check before member work resumes.
-        const lineReady = await initializeLiff();
-        if (!lineReady) return false;
-        return resumeMemberBootstrapAfterLineEntry();
-      } catch (error) {
-        showLineLoginRequired(readSafeDeepLinkParams(), { detail: formatLiffError(error) });
-        return false;
+      })();
+      recheckLineEntryGate.inFlight = task;
+      try {
+        return await task;
+      } finally {
+        recheckLineEntryGate.inFlight = null;
       }
     }
 
@@ -7815,8 +7852,8 @@
     }
 
     /**
-     * LIFF 初始化後先確認官方帳號好友，再由使用者明確按鈕決定是否登入。
-     * 只有兩個入口條件都通過，才讀取 profile 或開始會員／搬家業務。
+     * LIFF 初始化後，未登入者只顯示明確登入按鈕；登入後才查官方好友。
+     * 只有登入與實際好友狀態都通過，才讀取 profile 或開始會員／搬家業務。
      */
     async function initializeLiff() {
       if (useLocalMode) return true;
@@ -7838,7 +7875,7 @@
           })
           .catch(() => ({}));
 
-        // 2) 官方好友與登入是固定順序；不把加好友網址當成完成證明。
+        // 2) 未登入無權呼叫 getFriendship；登入後才以實際結果判斷好友狀態。
         const entryStep = await resolveLineEntryGate();
         if (entryStep !== "ready") {
           showLineEntryGate(entryStep);
