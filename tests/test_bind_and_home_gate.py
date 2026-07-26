@@ -1235,6 +1235,8 @@ class BindAndHomeGateTests(unittest.TestCase):
     def test_limit_full_without_match_returns_chinese(self):
         state = app_module.load_state(self.data_file)
         inviter = app_module.get_profile(state, "U-inviter")
+        inviter["plan"] = "free"
+        inviter["membership_source"] = "expired"
         inviter["contacts"] = [
             {
                 "id": "c1",
@@ -1460,7 +1462,7 @@ class BindAndHomeGateTests(unittest.TestCase):
         )
         admin = (ROOT / "admin.html").read_text(encoding="utf-8")
         self.assertIn("membershipCell", admin)
-        self.assertIn("免費剩幾天", admin)
+        self.assertIn("體驗剩幾天", admin)
         self.assertIn("核心／一般", admin)
         self.assertIn("資料可能因重啟遺失請掛磁碟", admin)
 

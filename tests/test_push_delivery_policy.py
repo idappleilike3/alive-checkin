@@ -302,7 +302,12 @@ class PushDeliveryPolicyTests(unittest.TestCase):
             self.assertTrue(result["system_error"])
             self.assertEqual(
                 list(result["tasks"]),
-                ["membership_transition_migration", "checkin_reminders"],
+                [
+                    "membership_transition_migration",
+                    "trial_milestone_notices",
+                    "membership_expiry",
+                    "checkin_reminders",
+                ],
             )
             self.assertEqual(calls, ["U1"])
 

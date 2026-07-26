@@ -224,6 +224,15 @@ WEEKDAY_SHORT_ZH = ("一", "二", "三", "四", "五", "六", "日")
 
 # 正式新會員與既有 free 過渡會員皆為一次性 14 天體驗。
 PUBLIC_TRIAL_DAYS = 14
+BETA_TRIAL_DAYS = 21
+BETA_COHORT_LIMITS = {"A": 10, "B399": 20, "B799": 10}
+BETA_COHORT_PLAN = {"A": "paid_799", "B399": "paid_399", "B799": "paid_799"}
+LAUNCH_SCENARIO_STEPS = {
+    "payment": {
+        "success", "failure", "cancel", "callback_idempotent", "order_synced"
+    },
+    "expiry": {"expired", "paused", "renewed"},
+}
 TRIAL_POLICY_VERSION = "2026-07-no-invite-reward-v1"
 # 方案／試用到期後，守護人＋緊急連絡人資料再保留天數（之後軟封存）
 CONTACTS_RETAIN_DAYS = 30
@@ -1402,7 +1411,7 @@ def membership_expiry_info(profile, now=None):
             days = total
         return {
             "plan": plan,
-            "label": "免費試用",
+            "label": "14 天安心體驗",
             "days_left": days,
             "expired": days <= 0,
             "near": days <= EXPIRY_REMIND_WITHIN_DAYS,
@@ -1428,7 +1437,7 @@ def membership_expiry_info(profile, now=None):
             return None
         return {
             "plan": plan,
-            "label": "免費方案",
+            "label": "未訂閱",
             "days_left": 0,
             "expired": True,
             "near": True,
@@ -1697,6 +1706,13 @@ def get_calendar_notes(data_file, line_user_id=None):
         return {"ok": False, "error": "missing line_user_id", "notes": {}}
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
+    if not plan_has_smart_reminders(profile):
+        return {
+            "ok": False,
+            "error": "calendar_notes_require_799",
+            "required_plan": "paid_799",
+            "notes": {},
+        }
     notes = profile.get("calendar_notes")
     if not isinstance(notes, dict):
         notes = {}
@@ -1737,6 +1753,12 @@ def save_calendar_note(data_file, payload):
 
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
+    if not plan_has_smart_reminders(profile):
+        return {
+            "ok": False,
+            "error": "calendar_notes_require_799",
+            "required_plan": "paid_799",
+        }, 403
     notes = dict(profile.get("calendar_notes") or {})
     if content or birthday_name:
         if birthday_name:
@@ -1835,9 +1857,8 @@ def birthday_occurs_on(birthday, target_date):
     return source == target_date
 
 
-def plan_rules(profile):
-    plan = profile.get("plan") or "trial"
-    return PLAN_LIMITS.get(plan, PLAN_LIMITS["trial"])
+def plan_rules(profile, now=None):
+    return plan_rules_for_effective_entitlement(profile, now)
 
 
 def allowed_safety_guard_hours(profile):
@@ -2248,6 +2269,9 @@ def migrate_existing_free_members(config):
             continue
         if plan != "free":
             continue
+        if source == "expired" and profile.get("plan_expired_at"):
+            # 到期會員不是 legacy free；Cron 重跑不得再次發放體驗。
+            continue
         if ensure_membership_trial(profile, now=now, source="transition_trial"):
             migrated.append(str(profile.get("line_user_id") or ""))
             changed = True
@@ -2261,22 +2285,635 @@ def migrate_existing_free_members(config):
     }, 200
 
 
+def _comparable_datetimes(left, right):
+    if left.tzinfo is None and right.tzinfo is not None:
+        right = right.astimezone(ZoneInfo("Asia/Taipei")).replace(tzinfo=None)
+    elif left.tzinfo is not None and right.tzinfo is None:
+        left = left.astimezone(ZoneInfo("Asia/Taipei")).replace(tzinfo=None)
+    return left, right
+
+
 def membership_access_active(profile, now=None):
     """會員權益是否有效；free 僅代表未訂閱，SOS 安全政策另行判斷。"""
     if not isinstance(profile, dict):
         return False
     now = now or current_app_time({})
+    if profile.get("membership_source") == "beta":
+        if profile.get("beta_revoked_at"):
+            return False
+        started = parse_datetime(profile.get("beta_started_at"))
+        ends = parse_datetime(profile.get("beta_ends_at"))
+        if not started or not ends:
+            return False
+        comparable_now, comparable_start = _comparable_datetimes(now, started)
+        comparable_now, comparable_end = _comparable_datetimes(comparable_now, ends)
+        return comparable_start <= comparable_now < comparable_end
     plan = str(profile.get("plan") or "free")
     if plan == "trial":
         trial_end = parse_datetime(profile.get("trial_end"))
         if trial_end:
-            return now < trial_end
+            comparable_now, comparable_end = _comparable_datetimes(now, trial_end)
+            return comparable_now < comparable_end
         started_at = parse_datetime(profile.get("trial_started_at"))
         return bool(started_at and now < started_at + timedelta(days=PUBLIC_TRIAL_DAYS))
     if plan.startswith("paid_"):
         paid_until = parse_datetime(profile.get("paid_until"))
         return paid_until is None or now < paid_until
     return False
+
+
+def beta_access_active(profile, now=None):
+    """Return whether a closed-beta entitlement is currently usable."""
+    if not isinstance(profile, dict) or profile.get("membership_source") != "beta":
+        return False
+    if profile.get("beta_revoked_at"):
+        return False
+    now = now or current_app_time({})
+    started = parse_datetime(profile.get("beta_started_at"))
+    ends = parse_datetime(profile.get("beta_ends_at"))
+    if not started or not ends:
+        return False
+    comparable_now, comparable_start = _comparable_datetimes(now, started)
+    comparable_now, comparable_end = _comparable_datetimes(comparable_now, ends)
+    return comparable_start <= comparable_now < comparable_end
+
+
+def effective_entitlement_plan(profile, now=None):
+    """Active public/transition trials receive 399 core rights, never 799 rights."""
+    now = now or current_app_time({})
+    if str(profile.get("plan") or "") == "trial" and membership_access_active(profile, now):
+        return "paid_399"
+    if beta_access_active(profile, now):
+        return BETA_COHORT_PLAN.get(str(profile.get("beta_cohort") or ""), "paid_399")
+    if str(profile.get("membership_source") or "") == "beta":
+        return "free"
+    return str(profile.get("plan") or "free")
+
+
+def plan_rules_for_effective_entitlement(profile, now=None):
+    rules = copy.deepcopy(
+        PLAN_LIMITS.get(effective_entitlement_plan(profile, now), PLAN_LIMITS["free"])
+    )
+    if str(profile.get("plan") or "") == "trial":
+        # One labeled group test is handled separately and never enables schedules.
+        rules["guardian_group_limit"] = 0
+    return rules
+
+
+def claim_trial_group_test(profile, group_id, now=None):
+    now = now or current_app_time({})
+    if effective_entitlement_plan(profile, now) != "paid_399":
+        return {"claimed": False, "reason": "not_eligible"}
+    if profile.get("trial_group_test_used_at"):
+        delivery = dict(profile.get("trial_group_test_delivery") or {})
+        if (
+            delivery.get("group_id") == str(group_id or "").strip()
+            and delivery.get("status") in {"pending", "failed"}
+        ):
+            return {
+                "claimed": True,
+                "recovered": True,
+                "message": "這是測試通知：守護群綁定與推播流程已完成",
+                "retry_key": delivery.get("retry_key"),
+            }
+        return {"claimed": False, "reason": "already_used"}
+    retry_key = _line_retry_key(
+        f"trial-group-test:{profile.get('line_user_id')}:{str(group_id or '').strip()}"
+    )
+    profile["trial_group_test_used_at"] = now.isoformat(timespec="seconds")
+    profile["trial_group_test_group_id"] = str(group_id or "").strip()
+    profile["trial_group_test_delivery"] = {
+        "group_id": str(group_id or "").strip(),
+        "status": "pending",
+        "retry_key": retry_key,
+        "claimed_at": now.isoformat(timespec="seconds"),
+    }
+    return {
+        "claimed": True,
+        "message": "這是測試通知：守護群綁定與推播流程已完成",
+        "retry_key": retry_key,
+    }
+
+
+def consume_labeled_test_action(profile, action, now=None):
+    """Limit explicit test actions without changing real SOS emergency access."""
+    action = str(action or "").strip().lower()
+    if action not in {"sos", "location", "push"}:
+        return {"allowed": False, "reason": "invalid_action"}
+    now = now or current_app_time({})
+    today = now.strftime("%Y-%m-%d")
+    ledger = profile.setdefault("labeled_test_actions", {})
+    rows = [
+        row for row in (ledger.get(action) or [])
+        if str(row.get("at") or "").startswith(today)
+    ]
+    if len(rows) >= 2:
+        return {"allowed": False, "reason": "daily_limit", "used": len(rows)}
+    if rows:
+        last = parse_datetime(rows[-1].get("at"))
+        if last and (now - last).total_seconds() < 600:
+            return {
+                "allowed": False,
+                "reason": "cooldown",
+                "retry_after_seconds": int(600 - (now - last).total_seconds()),
+            }
+    rows.append({"at": now.isoformat(timespec="seconds")})
+    ledger[action] = rows
+    return {
+        "allowed": True,
+        "used": len(rows),
+        "remaining": 2 - len(rows),
+        "event_id": f"trial-test:{action}:{now.isoformat(timespec='seconds')}",
+        "message": f"這是測試通知（{action.upper()}）：未觸發真正緊急求助或持續定位。",
+    }
+
+
+def authorize_labeled_test_action(data_file, line_user_id, action, now=None):
+    """Atomically consume a bounded explicit test action for the verified member."""
+    clock = now or current_app_time({})
+
+    def mutate(state):
+        profile = (state.get("users") or {}).get(str(line_user_id or "").strip())
+        if not isinstance(profile, dict):
+            raise ValueError("member_not_found")
+        if str(profile.get("plan") or "") != "trial" or not membership_access_active(
+            profile, clock
+        ):
+            return {"allowed": False, "reason": "not_eligible"}
+        return consume_labeled_test_action(profile, action, now=clock)
+
+    try:
+        result = mutate_state_atomically(data_file, mutate)
+    except ValueError:
+        return {"allowed": False, "reason": "member_not_found"}, 404
+    return result, 200 if result.get("allowed") else 429
+
+
+def assign_beta_cohort(
+    state,
+    line_user_id,
+    cohort,
+    *,
+    now=None,
+    recruitment_source="",
+):
+    """Assign one real member to a capped 21-day beta cohort without an order."""
+    cohort = str(cohort or "").strip().upper()
+    if cohort not in BETA_COHORT_LIMITS:
+        raise ValueError("invalid_cohort")
+    users = state.setdefault("users", {})
+    profile = users.get(str(line_user_id or "").strip())
+    if not isinstance(profile, dict):
+        raise ValueError("member_not_found")
+    if (
+        profile.get("membership_source") == "beta"
+        and profile.get("beta_cohort") == cohort
+        and not profile.get("beta_revoked_at")
+    ):
+        return {
+            "assigned": False,
+            "idempotent": True,
+            "cohort": cohort,
+            "line_user_id": line_user_id,
+        }
+    active_count = sum(
+        1
+        for row in users.values()
+        if isinstance(row, dict)
+        and row.get("membership_source") == "beta"
+        and row.get("beta_cohort") == cohort
+        and not row.get("beta_revoked_at")
+    )
+    if active_count >= BETA_COHORT_LIMITS[cohort]:
+        raise ValueError("cohort_full")
+    now = now or current_app_time({})
+    profile["membership_source"] = "beta"
+    profile["plan"] = BETA_COHORT_PLAN[cohort]
+    profile["payment_status"] = "beta"
+    profile["beta_cohort"] = cohort
+    profile["beta_started_at"] = now.isoformat(timespec="seconds")
+    profile["beta_ends_at"] = (
+        now + timedelta(days=BETA_TRIAL_DAYS)
+    ).isoformat(timespec="seconds")
+    profile["beta_recruitment_source"] = str(recruitment_source or "").strip()[:80]
+    profile["beta_feedback_status"] = "pending"
+    profile["beta_revoked_at"] = None
+    profile["trial_bonus_days"] = 0
+    state.setdefault("beta_audit", []).append({
+        "action": "assign",
+        "line_user_id": str(line_user_id),
+        "cohort": cohort,
+        "at": now.isoformat(timespec="seconds"),
+    })
+    return {
+        "assigned": True,
+        "idempotent": False,
+        "cohort": cohort,
+        "line_user_id": line_user_id,
+        "ends_at": profile["beta_ends_at"],
+    }
+
+
+def revoke_beta_cohort(state, line_user_id, *, now=None):
+    """Revoke beta rights while retaining member and guardian data."""
+    profile = (state.get("users") or {}).get(str(line_user_id or "").strip())
+    if not isinstance(profile, dict):
+        raise ValueError("member_not_found")
+    now = now or current_app_time({})
+    if profile.get("beta_revoked_at"):
+        return {"revoked": False, "idempotent": True}
+    profile["beta_revoked_at"] = now.isoformat(timespec="seconds")
+    profile["membership_source"] = "expired"
+    profile["payment_status"] = "expired"
+    profile["plan"] = "free"
+    mark_entitlement_lapsed(profile, now)
+    state.setdefault("beta_audit", []).append({
+        "action": "revoke",
+        "line_user_id": str(line_user_id),
+        "cohort": profile.get("beta_cohort"),
+        "at": now.isoformat(timespec="seconds"),
+    })
+    return {"revoked": True, "idempotent": False}
+
+
+def beta_members_snapshot(state, now=None):
+    """Sanitized beta roster and exact cohort counters for the admin UI."""
+    now = now or current_app_time({})
+    rows = []
+    counts = {key: 0 for key in BETA_COHORT_LIMITS}
+    for profile in (state.get("users") or {}).values():
+        cohort = str(profile.get("beta_cohort") or "")
+        if cohort not in BETA_COHORT_LIMITS:
+            continue
+        if beta_access_active(profile, now):
+            counts[cohort] += 1
+        ends = parse_datetime(profile.get("beta_ends_at"))
+        remaining = max(0, int(((ends - now).total_seconds() + 86399) // 86400)) if ends else 0
+        rows.append({
+            "line_user_id": str(profile.get("line_user_id") or ""),
+            "display_name": str(profile.get("display_name") or "未命名會員"),
+            "cohort": cohort,
+            "plan": str(profile.get("plan") or ""),
+            "source": str(profile.get("beta_recruitment_source") or ""),
+            "started_at": profile.get("beta_started_at"),
+            "ends_at": profile.get("beta_ends_at"),
+            "remaining_days": remaining,
+            "feedback_status": str(profile.get("beta_feedback_status") or "pending"),
+            "guardian_count": len([
+                item for item in (profile.get("contacts") or [])
+                if contact_is_bound_guardian(item)
+            ]),
+            "reminder_setup": bool(profile.get("reminder_times") or profile.get("reminder_time")),
+            "push_result": str(profile.get("beta_push_result") or ""),
+            "sos_test_status": str(profile.get("beta_sos_test_status") or ""),
+            "revoked": bool(profile.get("beta_revoked_at")),
+            "active": beta_access_active(profile, now),
+        })
+    return {
+        "limits": dict(BETA_COHORT_LIMITS),
+        "counts": counts,
+        "total_active": sum(counts.values()),
+        "members": sorted(rows, key=lambda row: (row["cohort"], row["display_name"])),
+        "notice": "封閉測試不會建立訂單，也不會自動扣款",
+    }
+
+
+def admin_assign_beta_member(data_file, payload, now=None):
+    try:
+        result = mutate_state_atomically(
+            data_file,
+            lambda state: {
+                **assign_beta_member_with_release_gate(
+                    state,
+                    payload.get("line_user_id"),
+                    payload.get("cohort"),
+                    now=now,
+                    recruitment_source=payload.get("source") or "",
+                ),
+                "beta": beta_members_snapshot(state, now),
+            },
+        )
+    except ValueError as exc:
+        error = str(exc)
+        conflict_errors = {
+            "cohort_full",
+            "a_cohort_not_mature",
+            "readiness_blocked",
+            "first_release_max_10",
+            "wait_until_next_day",
+            "remaining_release_max_20",
+        }
+        return {"ok": False, "error": error}, (
+            404 if error == "member_not_found" else 409 if error in conflict_errors else 400
+        )
+    return {"ok": True, **result}, 200
+
+
+def admin_revoke_beta_member(data_file, line_user_id, now=None):
+    try:
+        result = mutate_state_atomically(
+            data_file,
+            lambda state: {
+                **revoke_beta_cohort(state, line_user_id, now=now),
+                "beta": beta_members_snapshot(state, now),
+            },
+        )
+    except ValueError:
+        return {"ok": False, "error": "member_not_found"}, 404
+    return {"ok": True, **result}, 200
+
+
+def launch_readiness_snapshot(state, now=None):
+    """Quantified launch gates used to stop unsafe beta expansion."""
+    metrics = dict(state.get("launch_metrics") or {})
+    launch_events = [
+        row for row in (state.get("launch_events") or [])
+        if isinstance(row, dict)
+    ]
+    checkin_events = [
+        row for row in launch_events if row.get("kind") == "checkin"
+    ]
+    if checkin_events:
+        metrics["checkin_attempts"] = len(checkin_events)
+        metrics["checkin_successes"] = sum(
+            1 for row in checkin_events if row.get("success")
+        )
+    reminder_logs = [
+        row for row in (state.get("notification_logs") or [])
+        if isinstance(row, dict)
+        and row.get("kind") in {"checkin", "overdue", "contact_alert"}
+    ]
+    if reminder_logs:
+        reminder_keys = {
+            (
+                row.get("kind"),
+                row.get("line_user_id"),
+                str(row.get("message") or ""),
+            )
+            for row in reminder_logs
+        }
+        sent_keys = {
+            (
+                row.get("kind"),
+                row.get("line_user_id"),
+                str(row.get("message") or ""),
+            )
+            for row in reminder_logs
+            if row.get("status") == "sent"
+        }
+        metrics["required_reminders"] = len(reminder_keys)
+        metrics["sent_required_reminders"] = len(sent_keys)
+    delivery_events = [
+        row for row in (state.get("launch_delivery_events") or {}).values()
+        if isinstance(row, dict) and row.get("expected")
+    ]
+    if delivery_events:
+        metrics["required_reminders"] = len(delivery_events)
+        metrics["sent_required_reminders"] = sum(
+            1 for row in delivery_events if int(row.get("sent_count") or 0) == 1
+        )
+        metrics["duplicate_alerts"] = sum(
+            1 for row in delivery_events if int(row.get("sent_count") or 0) > 1
+        )
+    invites = [
+        row for row in (state.get("guardian_invites") or [])
+        if isinstance(row, dict)
+    ]
+    if invites:
+        metrics["guardian_bind_attempts"] = len(invites)
+        metrics["guardian_bind_successes"] = sum(
+            1 for row in invites if row.get("status") == "used"
+        )
+    beta_profiles = [
+        profile for profile in (state.get("users") or {}).values()
+        if isinstance(profile, dict) and profile.get("membership_source") == "beta"
+    ]
+    sos_results = [
+        str(profile.get("beta_sos_test_status") or "")
+        for profile in beta_profiles
+        if str(profile.get("beta_sos_test_status") or "")
+    ]
+    if sos_results:
+        metrics["sos_tests"] = len(sos_results)
+        metrics["sos_test_successes"] = sum(
+            1 for value in sos_results if value in {"sent", "passed", "success"}
+        )
+    scenarios = state.get("launch_validation_scenarios") or {}
+    payment_ok = any(
+        row.get("kind") == "payment"
+        and LAUNCH_SCENARIO_STEPS["payment"] <= set(row.get("steps") or [])
+        for row in scenarios.values()
+        if isinstance(row, dict)
+    )
+    expiry_ok = any(
+        row.get("kind") == "expiry"
+        and row.get("line_user_id")
+        and LAUNCH_SCENARIO_STEPS["expiry"] <= set(row.get("steps") or [])
+        for row in scenarios.values()
+        if isinstance(row, dict)
+    )
+    # Payment and expiry are launch blockers.  Only correlated scenario
+    # evidence is authoritative; legacy/manual summary booleans must not
+    # bypass the acceptance ledger.
+    metrics["payment_flow_passed"] = payment_ok
+    metrics["expiry_flow_passed"] = expiry_ok
+    checkin_attempts = max(0, int(metrics.get("checkin_attempts") or 0))
+    checkin_successes = max(0, int(metrics.get("checkin_successes") or 0))
+    required = max(0, int(metrics.get("required_reminders") or 0))
+    sent_required = max(0, int(metrics.get("sent_required_reminders") or 0))
+    sos_tests = max(0, int(metrics.get("sos_tests") or 0))
+    sos_successes = max(0, int(metrics.get("sos_test_successes") or 0))
+    bind_attempts = max(0, int(metrics.get("guardian_bind_attempts") or 0))
+    bind_successes = max(0, int(metrics.get("guardian_bind_successes") or 0))
+    failures = [
+        {
+            "category": str(row.get("category") or ""),
+            "reason": str(row.get("reason") or "")[:200],
+            "critical": bool(row.get("critical")),
+        }
+        for row in (state.get("push_failures") or [])
+        if isinstance(row, dict)
+    ]
+    for row in reminder_logs:
+        if row.get("status") not in {"failed", "retry", "blocked"}:
+            continue
+        failures.append({
+            "category": str(row.get("kind") or ""),
+            "reason": str(row.get("detail") or row.get("status") or "")[:200],
+            "critical": True,
+        })
+    for row in delivery_events:
+        if not row.get("failed") and int(row.get("sent_count") or 0) == 1:
+            continue
+        failures.append({
+            "category": str(row.get("kind") or ""),
+            "reason": (
+                "duplicate_delivery"
+                if int(row.get("sent_count") or 0) > 1
+                else "required_delivery_failed_or_missing"
+            ),
+            "critical": True,
+        })
+    checkin_rate = checkin_successes / checkin_attempts if checkin_attempts else 0.0
+    sos_rate = sos_successes / sos_tests if sos_tests else 0.0
+    bind_rate = bind_successes / bind_attempts if bind_attempts else 0.0
+    missed = max(0, required - sent_required)
+    duplicate_alerts = max(0, int(metrics.get("duplicate_alerts") or 0))
+    critical_miss = missed > 0 or any(row["critical"] for row in failures)
+    payment_ok = metrics.get("payment_flow_passed") is True
+    expiry_ok = metrics.get("expiry_flow_passed") is True
+    ready = all([
+        checkin_rate >= 0.99,
+        missed == 0,
+        duplicate_alerts == 0,
+        sos_rate >= 1.0,
+        bind_rate >= 0.95,
+        payment_ok,
+        expiry_ok,
+        not critical_miss,
+    ])
+    return {
+        "checkin_success_rate": round(checkin_rate, 4),
+        "missed_required_reminders": missed,
+        "duplicate_alerts": duplicate_alerts,
+        "sos_test_success_rate": round(sos_rate, 4),
+        "guardian_bind_success_rate": round(bind_rate, 4),
+        "payment_flow_passed": payment_ok,
+        "expiry_flow_passed": expiry_ok,
+        "push_failures": failures,
+        "critical_notification_miss": critical_miss,
+        "ready": ready,
+    }
+
+
+def record_launch_validation_step(
+    state, scenario_id, kind, step, *, line_user_id="", now=None
+):
+    scenario_id = str(scenario_id or "").strip()
+    kind = str(kind or "").strip()
+    step = str(step or "").strip()
+    if not scenario_id or kind not in LAUNCH_SCENARIO_STEPS:
+        raise ValueError("invalid_launch_scenario")
+    if step not in LAUNCH_SCENARIO_STEPS[kind]:
+        raise ValueError("invalid_launch_step")
+    scenarios = state.setdefault("launch_validation_scenarios", {})
+    row = scenarios.setdefault(scenario_id, {
+        "kind": kind,
+        "line_user_id": str(line_user_id or "").strip(),
+        "steps": [],
+    })
+    if row.get("kind") != kind:
+        raise ValueError("launch_scenario_kind_conflict")
+    if kind == "expiry" and not (
+        str(line_user_id or "").strip() or row.get("line_user_id")
+    ):
+        raise ValueError("line_user_id_required")
+    if line_user_id:
+        if row.get("line_user_id") not in {"", str(line_user_id)}:
+            raise ValueError("launch_scenario_member_conflict")
+        row["line_user_id"] = str(line_user_id)
+    row["steps"] = sorted(set(row.get("steps") or []) | {step})
+    row["updated_at"] = (now or current_app_time({})).isoformat(timespec="seconds")
+    return copy.deepcopy(row)
+
+
+def beta_release_allowed(state, requested_count, now=None):
+    now = now or current_app_time({})
+    requested_count = max(0, int(requested_count or 0))
+    snapshot = launch_readiness_snapshot(state, now)
+    if not snapshot["ready"]:
+        return False, "readiness_blocked"
+    history = [
+        row for row in (state.get("beta_release_history") or [])
+        if row.get("batch") == "B"
+    ]
+    released = sum(max(0, int(row.get("count") or 0)) for row in history)
+    if released <= 0:
+        return (
+            (True, "first_release_allowed")
+            if 0 < requested_count <= 10
+            else (False, "first_release_max_10")
+        )
+    if released < 10:
+        if requested_count <= 10 - released:
+            return True, "first_release_allowed"
+        return False, "first_release_max_10"
+    cumulative = 0
+    first_batch_completed_at = None
+    for row in sorted(
+        history,
+        key=lambda item: str(item.get("released_at") or ""),
+    ):
+        cumulative += max(0, int(row.get("count") or 0))
+        if cumulative >= 10:
+            first_batch_completed_at = parse_datetime(row.get("released_at"))
+            break
+    if first_batch_completed_at and first_batch_completed_at.date() >= now.date():
+        return False, "wait_until_next_day"
+    remaining = max(0, 30 - released)
+    return (
+        (True, "remaining_release_allowed")
+        if 0 < requested_count <= remaining
+        else (False, "remaining_release_max_20")
+    )
+
+
+def assign_beta_member_with_release_gate(
+    state,
+    line_user_id,
+    cohort,
+    *,
+    now=None,
+    recruitment_source="",
+):
+    """Apply the A-day-7 and quantified rollout gates before any B activation."""
+    clock = now or current_app_time({})
+    cohort = str(cohort or "").strip().upper()
+    profile = (state.get("users") or {}).get(str(line_user_id or "").strip())
+    if (
+        isinstance(profile, dict)
+        and profile.get("membership_source") == "beta"
+        and profile.get("beta_cohort") == cohort
+        and not profile.get("beta_revoked_at")
+    ):
+        return assign_beta_cohort(
+            state,
+            line_user_id,
+            cohort,
+            now=clock,
+            recruitment_source=recruitment_source,
+        )
+    if cohort in {"B399", "B799"}:
+        a_started = [
+            parse_datetime(profile.get("beta_started_at"))
+            for profile in (state.get("users") or {}).values()
+            if isinstance(profile, dict)
+            and profile.get("membership_source") == "beta"
+            and profile.get("beta_cohort") == "A"
+            and not profile.get("beta_revoked_at")
+        ]
+        valid_a_started = [value for value in a_started if value]
+        if not valid_a_started or min(valid_a_started) > clock - timedelta(days=7):
+            raise ValueError("a_cohort_not_mature")
+        allowed, reason = beta_release_allowed(state, 1, now=clock)
+        if not allowed:
+            raise ValueError(reason)
+    result = assign_beta_cohort(
+        state,
+        line_user_id,
+        cohort,
+        now=clock,
+        recruitment_source=recruitment_source,
+    )
+    if cohort in {"B399", "B799"} and result.get("assigned"):
+        state.setdefault("beta_release_history", []).append({
+            "batch": "B",
+            "cohort": cohort,
+            "count": 1,
+            "line_user_id": str(line_user_id),
+            "released_at": clock.isoformat(timespec="seconds"),
+        })
+    return result
 
 
 def trial_days_left(profile, now=None):
@@ -2297,24 +2934,35 @@ def trial_active(profile):
 
 
 def clear_contacts_retain_window(profile):
-    """付費／試用權益恢復時，取消到期保留倒數（資料繼續留下）。"""
+    """Restore service pause flags while keeping every relationship."""
     if not isinstance(profile, dict):
         return
     profile["plan_expired_at"] = ""
     profile["contacts_retain_until"] = ""
+    was_paused = bool(profile.get("membership_paused") or profile.get("scheduled_notifications_paused"))
+    profile["membership_paused"] = False
+    profile["scheduled_notifications_paused"] = False
+    if was_paused:
+        profile["daily_checkin_reminder_enabled"] = True
 
 
 def mark_entitlement_lapsed(profile, now):
-    """方案／試用到期：開始 30 天軟保留倒數（當下不清空 contacts）。"""
+    """Pause paid services at expiry while retaining relationships indefinitely."""
     if not isinstance(profile, dict):
         return
     stamp = now.isoformat(timespec="seconds")
     if not str(profile.get("plan_expired_at") or "").strip():
         profile["plan_expired_at"] = stamp
-    if not str(profile.get("contacts_retain_until") or "").strip():
-        profile["contacts_retain_until"] = (now + timedelta(days=CONTACTS_RETAIN_DAYS)).isoformat(
-            timespec="seconds"
-        )
+    profile["contacts_retain_until"] = ""
+    profile["membership_paused"] = True
+    profile["daily_checkin_reminder_enabled"] = False
+    profile["scheduled_notifications_paused"] = True
+    location = dict(profile.get("location") or {})
+    if location:
+        location["active"] = False
+        location["sharing"] = False
+        location["ended_at"] = stamp
+        profile["location"] = location
 
 
 def contacts_retain_days_left(profile, now=None):
@@ -2326,23 +2974,164 @@ def contacts_retain_days_left(profile, now=None):
 
 
 def soft_archive_contacts_past_retain(profile, now):
-    """保留期結束後軟封存守護人／緊急連絡人（不清簽到 history）。"""
-    retain_until = parse_datetime(profile.get("contacts_retain_until"))
-    if not retain_until or retain_until >= now:
-        return False
-    contacts = list(profile.get("contacts") or [])
-    if not contacts and not profile.get("contacts_retain_until"):
-        return False
-    archived = list(profile.get("contacts_archived") or [])
-    stamp = now.isoformat(timespec="seconds")
-    for contact in contacts:
-        if not isinstance(contact, dict):
-            continue
-        archived.append({**contact, "archived_at": stamp, "archive_reason": "retain_window_ended"})
-    profile["contacts_archived"] = archived[-200:]
-    profile["contacts"] = []
-    profile["contacts_retain_until"] = ""
-    return True
+    """Relationships are never auto-archived merely because a plan expired."""
+    return False
+
+
+def restore_membership_after_renewal(profile, plan, paid_until, now=None):
+    """Restore paid service flags without requiring guardian re-invitation."""
+    now = now or current_app_time({})
+    profile["plan"] = str(plan)
+    profile["membership_source"] = "paid"
+    profile["payment_status"] = "active"
+    profile["paid_until"] = (
+        paid_until.isoformat(timespec="seconds")
+        if isinstance(paid_until, datetime)
+        else str(paid_until or "")
+    )
+    profile["membership_paused"] = False
+    profile["scheduled_notifications_paused"] = False
+    profile["daily_checkin_reminder_enabled"] = True
+    profile["renewed_at"] = now.isoformat(timespec="seconds")
+    clear_contacts_retain_window(profile)
+    return profile
+
+
+def process_verified_privacy_request(
+    state,
+    line_user_id,
+    request_type,
+    *,
+    peer_line_user_id="",
+    now=None,
+):
+    """Process a verified unlink/delete request and retain minimal legal audit."""
+    now = now or current_app_time({})
+    line_user_id = str(line_user_id or "").strip()
+    request_type = str(request_type or "").strip()
+    peer_line_user_id = str(peer_line_user_id or "").strip()
+    request_key = hashlib.sha256(
+        f"{line_user_id}:{request_type}:{peer_line_user_id}".encode("utf-8")
+    ).hexdigest()
+    requests = state.setdefault("privacy_requests", [])
+    if any(row.get("request_key") == request_key for row in requests):
+        return {"processed": True, "idempotent": True, "request_key": request_key}
+    if line_user_id not in (state.get("users") or {}):
+        raise ValueError("member_not_found")
+    if request_type == "unlink_guardian":
+        if not peer_line_user_id:
+            raise ValueError("peer_required")
+        for owner_id, peer_id in (
+            (line_user_id, peer_line_user_id),
+            (peer_line_user_id, line_user_id),
+        ):
+            profile = (state.get("users") or {}).get(owner_id)
+            if not isinstance(profile, dict):
+                continue
+            profile["contacts"] = [
+                row for row in (profile.get("contacts") or [])
+                if not (
+                    get_contact_line_id(row) == peer_id
+                    and resolve_contact_role(row) == "guardian"
+                )
+            ]
+    elif request_type == "delete_account":
+        state["users"].pop(line_user_id, None)
+        for profile in state["users"].values():
+            profile["friends"] = [
+                value for value in (profile.get("friends") or [])
+                if value != line_user_id
+            ]
+            profile["guarding_for"] = [
+                value for value in (profile.get("guarding_for") or [])
+                if value != line_user_id
+            ]
+            profile["contacts"] = [
+                row for row in (profile.get("contacts") or [])
+                if get_contact_line_id(row) != line_user_id
+            ]
+        for group_id, group in list((state.get("guardian_groups") or {}).items()):
+            if str(group.get("owner_line_user_id") or "") == line_user_id:
+                state["guardian_groups"].pop(group_id, None)
+                continue
+            for field in ("admin_line_user_ids", "member_ids_at_bind", "member_line_user_ids"):
+                if isinstance(group.get(field), list):
+                    group[field] = [
+                        value for value in group[field] if value != line_user_id
+                    ]
+        for key in (
+            "guardian_invites",
+            "friend_invites",
+            "contact_rewards",
+            "support_tickets",
+            "notification_logs",
+            "sos_logs",
+            "checkin_warnings",
+            "checkin_warning_logs",
+        ):
+            collection = state.get(key)
+            if isinstance(collection, list):
+                state[key] = [
+                    row for row in collection
+                    if not _account_migration_record_references(row, line_user_id)
+                ]
+            elif isinstance(collection, dict):
+                state[key] = {
+                    record_id: row for record_id, row in collection.items()
+                    if not _account_migration_record_references(row, line_user_id)
+                    and record_id != line_user_id
+                }
+        for key in ("sos_pending", "location_grants", "location_grant_index"):
+            collection = state.get(key)
+            if isinstance(collection, dict):
+                state[key] = {
+                    record_id: row for record_id, row in collection.items()
+                    if record_id != line_user_id
+                    and not _account_migration_record_references(row, line_user_id)
+                }
+        for order in state.get("orders") or []:
+            if str(order.get("line_user_id") or "") == line_user_id:
+                order["line_user_id"] = "deleted-user"
+                order["display_name"] = "已刪除會員"
+                order["personal_data_removed_at"] = now.isoformat(timespec="seconds")
+        def contains_deleted_identity(value):
+            if isinstance(value, dict):
+                return any(
+                    str(key) == line_user_id
+                    or contains_deleted_identity(item)
+                    for key, item in value.items()
+                )
+            if isinstance(value, (list, tuple, set)):
+                return any(contains_deleted_identity(item) for item in value)
+            return isinstance(value, str) and value == line_user_id
+
+        # Final graph sweep: operational records have no legal retention basis.
+        # Orders and the hashed privacy audit are handled separately above/below.
+        for key, collection in list(state.items()):
+            if key in {"users", "orders", "privacy_requests"}:
+                continue
+            if isinstance(collection, list):
+                state[key] = [
+                    row for row in collection
+                    if not contains_deleted_identity(row)
+                ]
+            elif isinstance(collection, dict):
+                state[key] = {
+                    record_id: row
+                    for record_id, row in collection.items()
+                    if str(record_id) != line_user_id
+                    and not contains_deleted_identity(row)
+                }
+    else:
+        raise ValueError("unsupported_request_type")
+    requests.append({
+        "id": f"privacy-{uuid.uuid4().hex[:12]}",
+        "request_key": request_key,
+        "request_type": request_type,
+        "status": "completed",
+        "completed_at": now.isoformat(timespec="seconds"),
+    })
+    return {"processed": True, "idempotent": False, "request_key": request_key}
 
 
 def apply_invite_trial_reward(inviter, reward, *, accepted_at):
@@ -2362,8 +3151,8 @@ def apply_invite_trial_reward(inviter, reward, *, accepted_at):
 def plan_type_label(profile):
     plan = str(profile.get("plan") or "trial")
     return {
-        "trial": "免費試用",
-        "free": "免費方案",
+        "trial": "14 天安心體驗",
+        "free": "未訂閱",
         "paid_199": "199 月費",
         "paid_199_year": "199 年費",
         "paid_399": "399 月費",
@@ -2374,7 +3163,7 @@ def plan_type_label(profile):
 
 
 def compute_plan_expires_at(profile):
-    """回傳方案到期 ISO 字串（試用結束日或付費 paid_until）；免費方案回空字串。"""
+    """回傳方案到期 ISO 字串（試用結束日或付費 paid_until）；未訂閱回空字串。"""
     plan = str(profile.get("plan") or "trial")
     if plan.startswith("paid"):
         return str(profile.get("paid_until") or "").strip()
@@ -2628,6 +3417,8 @@ def build_status(profile, state=None, now=None):
         "core_guardian_alert_limit": plan_rules(profile).get("core_guardian_alert_limit", 1),
         "guardian_group_limit": plan_rules(profile).get("guardian_group_limit", 0),
         "guardian_group_member_limit": int(plan_rules(profile).get("guardian_group_member_limit") or 0),
+        "calendar_notes_enabled": plan_has_smart_reminders(profile),
+        "smart_reminders_enabled": plan_has_smart_reminders(profile),
         "safety_guard_hours": allowed_safety_guard_hours(profile),
         "guardian_group_ids": profile.get("guardian_group_ids", []),
         "guardian_groups": guardian_groups,
@@ -2662,8 +3453,8 @@ def build_status(profile, state=None, now=None):
 def _membership_label(profile):
     plan = str(profile.get("plan") or "trial")
     labels = {
-        "trial": "免費試用",
-        "free": "免費方案",
+        "trial": "14 天安心體驗",
+        "free": "未訂閱",
         "paid_199": "已升級 199 月費",
         "paid_199_year": "已升級 199 年費",
         "paid_399": "已升級 399 月費",
@@ -2678,9 +3469,9 @@ def _trial_days_text(profile):
     plan = str(profile.get("plan") or "trial")
     if plan == "trial":
         days = trial_days_left(profile)
-        return f"免費剩 {days} 天" if days > 0 else "試用已結束"
+        return f"體驗剩 {days} 天" if days > 0 else "體驗已結束"
     if plan == "free":
-        return "免費方案（無試用倒數）"
+        return "未訂閱（無體驗倒數）"
     return "已升級（非試用）"
 
 
@@ -2692,16 +3483,16 @@ def _upgrade_status(profile):
         return f"{_membership_label(profile)}｜{'使用中' if active else paymentLabel_zh(payment)}"
     if plan == "trial":
         days = trial_days_left(profile)
-        return f"試用中｜免費剩 {days} 天" if days > 0 else "試用已結束｜尚未升級"
+        return f"體驗中｜剩 {days} 天" if days > 0 else "體驗已結束｜尚未升級"
     if plan == "free":
-        return "免費方案｜尚未升級"
+        return "未訂閱｜尚未升級"
     return _membership_label(profile)
 
 
 def paymentLabel_zh(status):
     return {
         "trial": "試用中",
-        "free": "免費",
+        "free": "未訂閱",
         "active": "已付款",
         "pending": "待付款",
         "expired": "已到期",
@@ -2710,14 +3501,19 @@ def paymentLabel_zh(status):
     }.get(status, status or "未付費")
 
 
-def paid_membership_is_active(profile):
+def paid_membership_is_active(profile, now=None):
     if profile.get("payment_status") != "active":
         return False
     paid_until = str(profile.get("paid_until") or "").strip()
     if not paid_until:
         return True
     expires_at = parse_datetime(paid_until)
-    return bool(expires_at and expires_at >= datetime.now())
+    if not expires_at:
+        return False
+    comparable_expires, comparable_now = _comparable_datetimes(
+        expires_at, now or current_app_time({})
+    )
+    return comparable_expires >= comparable_now
 
 
 _WELCOME_NAME_PLACEHOLDERS = frozenset(
@@ -3170,8 +3966,32 @@ def _apply_expired_plan_downgrades_to_state(state, now):
         preserved_friends = list(profile.get("friends") or [])
         preserved_groups = list(profile.get("guardian_group_ids") or [])
 
-        # 試用到期 → free，資料保留 30 天
-        if plan == "trial" and trial_days_left(profile) <= 0:
+        beta_end = parse_datetime(profile.get("beta_ends_at"))
+        if (
+            profile.get("membership_source") == "beta"
+            and beta_end
+            and not membership_access_active(profile, now)
+            and not profile.get("beta_revoked_at")
+        ):
+            profile["plan"] = "free"
+            profile["membership_source"] = "expired"
+            profile["payment_status"] = "expired"
+            profile["contacts"] = preserved_contacts
+            profile["friends"] = preserved_friends
+            profile["guardian_group_ids"] = preserved_groups
+            mark_entitlement_lapsed(profile, now)
+            downgraded.append(profile.get("line_user_id"))
+            append_notification_log(
+                state,
+                "plan_expired",
+                profile.get("line_user_id"),
+                "downgraded",
+                "beta expired -> free; relationships retained",
+            )
+            continue
+
+        # 試用到期 → 未訂閱；資料與守護關係不自動刪除
+        if plan == "trial" and not membership_access_active(profile, now):
             profile["plan"] = "free"
             profile["membership_source"] = "expired"
             profile["payment_status"] = "expired"
@@ -3197,9 +4017,10 @@ def _apply_expired_plan_downgrades_to_state(state, now):
         if not paid_until:
             # 無到期日：保留現況，避免誤降級並讓使用者以為好友被清掉
             continue
-        if paid_until >= now:
+        comparable_until, comparable_now = _comparable_datetimes(paid_until, now)
+        if comparable_until >= comparable_now:
             continue
-        # 已過期：只降方案，保留所有綁定，並開始 30 天軟保留
+        # 已過期：暫停付費服務，但保留所有綁定直到驗證後申請解除
         if profile.get("payment_status") == "active" or paid_until:
             profile["plan"] = "free"
             profile["membership_source"] = "expired"
@@ -3233,6 +4054,141 @@ def apply_expired_plan_downgrades(config):
         lambda state: _apply_expired_plan_downgrades_to_state(state, now),
     )
     return {"downgraded": len(downgraded), "line_user_ids": downgraded}, 200
+
+
+def _claim_trial_milestone_notices(state, clock):
+    claims = []
+    lease_cutoff = clock - timedelta(minutes=15)
+    for profile in (state.get("users") or {}).values():
+        if str(profile.get("plan") or "") != "trial":
+            continue
+        started = parse_datetime(profile.get("trial_started_at"))
+        target = str(profile.get("line_user_id") or "").strip()
+        if not started or not target:
+            continue
+        elapsed_days = max(0, (clock.date() - started.date()).days)
+        completed = {
+            int(day)
+            for day in (
+                profile.get("trial_notice_days_sent")
+                or profile.pop("trial_milestone_notices_sent", [])
+            )
+            if str(day).isdigit()
+        }
+        profile["trial_notice_days_sent"] = sorted(completed)
+        active_claims = dict(profile.get("trial_notice_claims") or {})
+        for day in (7, 12, 14):
+            if elapsed_days < day or day in completed:
+                continue
+            existing = active_claims.get(str(day)) or {}
+            claimed_at = parse_datetime(existing.get("claimed_at"))
+            if claimed_at and claimed_at > lease_cutoff:
+                continue
+            claim_token = uuid.uuid4().hex
+            active_claims[str(day)] = {
+                "token": claim_token,
+                "claimed_at": clock.isoformat(timespec="seconds"),
+            }
+            claims.append({
+                "line_user_id": target,
+                "day": day,
+                "trial_started_at": started.isoformat(timespec="seconds"),
+                "claim_token": claim_token,
+            })
+        profile["trial_notice_claims"] = active_claims
+    return claims
+
+
+def _finish_trial_milestone_notice(
+    state, claim, message, status, detail=""
+):
+    profile = (state.get("users") or {}).get(claim["line_user_id"])
+    if not isinstance(profile, dict):
+        return False
+    day_key = str(claim["day"])
+    active_claims = dict(profile.get("trial_notice_claims") or {})
+    current = active_claims.get(day_key) or {}
+    if current.get("token") != claim.get("claim_token"):
+        return False
+    active_claims.pop(day_key, None)
+    profile["trial_notice_claims"] = active_claims
+    if status == "sent":
+        completed = {
+            int(day) for day in (profile.get("trial_notice_days_sent") or [])
+            if str(day).isdigit()
+        }
+        completed.add(int(claim["day"]))
+        profile["trial_notice_days_sent"] = sorted(completed)
+    append_notification_log(
+        state,
+        "trial_milestone",
+        claim["line_user_id"],
+        status,
+        message,
+        detail,
+    )
+    return True
+
+
+def send_trial_milestone_notices(config, now=None):
+    """Claim, deliver and atomically finalize each 14-day experience milestone."""
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+        "LINE_CHANNEL_ACCESS_TOKEN", ""
+    )
+    if not token:
+        return {
+            "sent": 0,
+            "skipped": 0,
+            "error": "LINE_CHANNEL_ACCESS_TOKEN is not set",
+        }, 400
+    clock = now or current_app_time(config)
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    messages = {
+        7: "14 天安心體驗已進行 7 天。可到會員中心確認守護人與提醒設定是否完整。",
+        12: "14 天安心體驗還剩 2 天。到期後一般提醒會暫停，守護關係與資料仍會保留。",
+        14: "14 天安心體驗今天到期。系統不會自動扣款；可到會員中心選擇適合的守護方案。",
+    }
+    sent = 0
+    skipped = 0
+    results = []
+    claims = mutate_state_atomically(
+        config["DATA_FILE"],
+        lambda state: _claim_trial_milestone_notices(state, clock),
+    )
+    for claim in claims:
+        target = claim["line_user_id"]
+        day = claim["day"]
+        message = messages[day]
+        retry_key = _line_retry_key(
+            f"trial-milestone:{target}:{claim['trial_started_at']}:{day}"
+        )
+        status = "sent"
+        detail = ""
+        try:
+            _send_line_with_retry_key(sender, token, target, message, retry_key)
+            sent += 1
+        except Exception as exc:
+            status = "failed"
+            detail = str(exc)[:400]
+            skipped += 1
+        mutate_state_atomically(
+            config["DATA_FILE"],
+            lambda state, current_claim=claim, current_message=message,
+            current_status=status, current_detail=detail:
+                _finish_trial_milestone_notice(
+                    state,
+                    current_claim,
+                    current_message,
+                    current_status,
+                    current_detail,
+                ),
+        )
+        results.append({
+            "line_user_id": target,
+            "day": day,
+            "status": status,
+        })
+    return {"sent": sent, "skipped": skipped, "results": results}, 200
 
 
 def send_renewal_reminders(config):
@@ -4419,11 +5375,16 @@ def retry_pending_bind_notifications(config):
     data_file = config["DATA_FILE"]
     state = load_state(data_file)
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    now = current_app_time(config)
     outcomes = []
 
     for inviter_id, inviter, contact, guardian_id in iter_accepted_line_bind_pairs(
         state
     ):
+        if inviter.get("membership_paused") or not membership_access_active(
+            inviter, now
+        ):
+            continue
         status_map = contact.get("bind_notify_status")
         if not isinstance(status_map, dict):
             continue
@@ -5270,6 +6231,14 @@ def plan_includes_guardian_group(profile) -> bool:
     return int(plan_rules(profile or {}).get("guardian_group_limit") or 0) > 0
 
 
+def guardian_group_entitlement_active(profile, now=None):
+    if not plan_includes_guardian_group(profile):
+        return False
+    if str((profile or {}).get("membership_source") or "") == "beta":
+        return membership_access_active(profile, now)
+    return paid_membership_is_active(profile)
+
+
 def normalize_guardian_group_preferences(raw=None):
     """Product defaults: 私訊提醒 ON、群組提醒 OFF、每日群組摘要 OFF。"""
     prefs = dict(DEFAULT_GUARDIAN_GROUP_PREFERENCES)
@@ -5464,7 +6433,7 @@ def bind_guardian_group(data_file, payload):
             profile["guardian_group_ids"] = group_ids
             sync_owned_guardian_group_ids(state, profile)
             save_state(data_file, state)
-            return {
+            response = {
                 "bound": True,
                 "already_bound": True,
                 "group_id": group_id,
@@ -5473,13 +6442,55 @@ def bind_guardian_group(data_file, payload):
                 "guardian_group_ids": list(profile.get("guardian_group_ids") or []),
                 "is_group_admin": True,
                 "should_leave": False,
-            }, 200
+            }
+            delivery = dict(profile.get("trial_group_test_delivery") or {})
+            if (
+                bool(payload.get("trial_test"))
+                and delivery.get("group_id") == group_id
+                and delivery.get("status") in {"pending", "failed"}
+            ):
+                response.update({
+                    "trial_test": True,
+                    "trial_test_message": "這是測試通知：守護群綁定與推播流程已完成",
+                    "trial_test_retry_key": delivery.get("retry_key"),
+                    "trial_test_recovered": True,
+                })
+            return response, 200
         return {
             "error": "group is already bound to another member",
             "should_leave": False,
         }, 409
 
-    eligible = profile.get("plan") in {"paid_799", "paid_799_year"} and paid_membership_is_active(profile)
+    trial_test = bool(payload.get("trial_test"))
+    trial_test_eligible = (
+        trial_test
+        and str(profile.get("plan") or "") == "trial"
+        and membership_access_active(profile)
+    )
+    trial_claim = None
+    if trial_test_eligible:
+        def claim_group_test(current_state):
+            current_profile = (current_state.get("users") or {}).get(line_user_id)
+            if not isinstance(current_profile, dict):
+                raise ValueError("member_not_found")
+            if (
+                str(current_profile.get("plan") or "") != "trial"
+                or not membership_access_active(current_profile)
+            ):
+                raise ValueError("trial_group_test_not_eligible")
+            claim = claim_trial_group_test(current_profile, group_id)
+            if not claim.get("claimed"):
+                raise ValueError("trial_group_test_already_used")
+            return claim
+
+        try:
+            trial_claim = mutate_state_atomically(data_file, claim_group_test)
+        except ValueError as exc:
+            return {"error": str(exc), "should_leave": True}, 409
+        state = load_state(data_file)
+        profile = get_profile(state, line_user_id)
+        groups = state.setdefault("guardian_groups", {})
+    eligible = guardian_group_entitlement_active(profile) or trial_test_eligible
     if not eligible:
         return {
             "error": "guardian groups require an active paid_799 membership",
@@ -5488,7 +6499,7 @@ def bind_guardian_group(data_file, payload):
         }, 403
 
     group_ids = list(dict.fromkeys(profile.get("guardian_group_ids") or []))
-    group_limit = plan_rules(profile).get("guardian_group_limit", 0)
+    group_limit = 1 if trial_test_eligible else plan_rules(profile).get("guardian_group_limit", 0)
     if len(group_ids) >= group_limit:
         return {
             "error": f"guardian_group_limit exceeded: {group_limit}",
@@ -5539,7 +6550,7 @@ def bind_guardian_group(data_file, payload):
     profile["guardian_group_ids"] = group_ids
     sync_owned_guardian_group_ids(state, profile)
     save_state(data_file, state)
-    return {
+    response = {
         "bound": True,
         "already_bound": False,
         "group_id": group_id,
@@ -5548,7 +6559,13 @@ def bind_guardian_group(data_file, payload):
         "guardian_group_ids": list(profile.get("guardian_group_ids") or group_ids),
         "is_group_admin": True,
         "should_leave": False,
-    }, 200
+    }
+    if trial_claim and trial_claim.get("claimed"):
+        response["trial_test"] = True
+        response["trial_test_message"] = trial_claim["message"]
+        response["trial_test_retry_key"] = trial_claim.get("retry_key")
+        response["trial_test_recovered"] = bool(trial_claim.get("recovered"))
+    return response, 200
 
 
 def update_guardian_group_preferences(data_file, payload):
@@ -5599,8 +6616,7 @@ def eligible_guardian_group_summary_members(state, group, current_member_ids):
     owner = users.get(owner_id) or {}
     if (
         not owner_id
-        or not plan_includes_guardian_group(owner)
-        or not paid_membership_is_active(owner)
+        or not guardian_group_entitlement_active(owner)
     ):
         return []
 
@@ -9949,6 +10965,24 @@ def _clear_push_delivery_failure(recipient, delivery_key):
         recipient.pop("push_delivery_attempts", None)
 
 
+def _record_launch_delivery(state, delivery_key, kind, target, status):
+    ledger = state.setdefault("launch_delivery_events", {})
+    ledger_key = f"{kind}:{target}:{delivery_key}"
+    event = ledger.setdefault(ledger_key, {
+        "kind": str(kind),
+        "target": str(target),
+        "expected": True,
+        "sent_count": 0,
+        "failed": False,
+    })
+    if status == "sent":
+        event["sent_count"] = int(event.get("sent_count") or 0) + 1
+    elif status == "failed":
+        event["failed"] = True
+    event["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    return event
+
+
 def _record_scheduled_push_failure(
     state,
     recipient,
@@ -9960,6 +10994,9 @@ def _record_scheduled_push_failure(
     now,
 ):
     failure = record_push_failure(recipient, delivery_key, exc, now)
+    _record_launch_delivery(
+        state, delivery_key, kind, line_user_id, "failed"
+    )
     append_notification_log(
         state,
         kind,
@@ -9997,6 +11034,9 @@ def send_due_reminders(config):
         profile = state.get("users", {}).get(user["line_user_id"])
         if not profile:
             continue
+        if profile.get("membership_paused") or not membership_access_active(profile, now):
+            skipped += 1
+            continue
         if profile.get("last_overdue_alert_date") == today:
             skipped += 1
             continue
@@ -10007,6 +11047,9 @@ def send_due_reminders(config):
             location_link = f"\n最後位置：https://www.google.com/maps?q={location['latitude']},{location['longitude']}"
         message = f"❤️ 今天一切都好嗎？\n點一下「我平安」，讓家人放心。{location_link}"
         delivery_key = f"overdue:{today}"
+        _record_launch_delivery(
+            state, delivery_key, "overdue", user["line_user_id"], "expected"
+        )
         if profile.get("last_overdue_member_alert_date") == today:
             skipped += 1
         elif not push_attempt_allowed(profile, delivery_key):
@@ -10015,6 +11058,9 @@ def send_due_reminders(config):
             try:
                 result = sender(token, user["line_user_id"], message)
                 _clear_push_delivery_failure(profile, delivery_key)
+                _record_launch_delivery(
+                    state, delivery_key, "overdue", user["line_user_id"], "sent"
+                )
                 profile["last_overdue_member_alert_date"] = today
                 append_notification_log(state, "overdue", user["line_user_id"], "sent", message, json.dumps(result, ensure_ascii=False))
                 sent += 1
@@ -10042,7 +11088,7 @@ def send_due_reminders(config):
             f"【需要幫忙】{profile.get('display_name') or '家人'} 超過時間尚未回報平安，請協助確認是否一切都好。"
             f"{location_link}"
         )
-        rules = plan_rules(profile)
+        rules = plan_rules(profile, now)
         notify_private = should_notify_private_guardians(state, profile)
         if notify_private:
             alert_limit = int(rules.get("core_guardian_alert_limit") or 1)
@@ -10196,8 +11242,7 @@ def send_guardian_group_daily_summaries(config):
             continue
         owner = users.get(str(group.get("owner_line_user_id") or "").strip()) or {}
         if (
-            not plan_includes_guardian_group(owner)
-            or not paid_membership_is_active(owner)
+            not guardian_group_entitlement_active(owner, now)
         ):
             skipped += 1
             results.append({"group_id": group_id, "status": "owner_not_eligible"})
@@ -10398,8 +11443,7 @@ def _claim_guardian_group_summary(state, group_id, today, now):
     if (
         group.get("status") != "active"
         or not prefs.get("daily_admin_summary")
-        or not plan_includes_guardian_group(owner)
-        or not paid_membership_is_active(owner)
+        or not guardian_group_entitlement_active(owner, now)
     ):
         return {"claimed": False, "reason": "no_longer_eligible"}
     if group.get("last_daily_summary_date") == today:
@@ -10441,8 +11485,7 @@ def _prepare_guardian_group_summary(
     if (
         group.get("status") != "active"
         or not prefs.get("daily_admin_summary")
-        or not plan_includes_guardian_group(owner)
-        or not paid_membership_is_active(owner)
+        or not guardian_group_entitlement_active(owner, now)
     ):
         _finish_guardian_group_summary(
             state,
@@ -10556,6 +11599,9 @@ def send_missing_contact_reminders(config):
     for user in state.get("users", {}).values():
         line_user_id = user.get("line_user_id")
         if not line_user_id:
+            skipped += 1
+            continue
+        if user.get("membership_paused") or not membership_access_active(user, now):
             skipped += 1
             continue
         contact_count = len(user.get("contacts") or [])
@@ -10676,6 +11722,15 @@ def cleanup_expired_data(config):
             tzinfo=app_timezone
         ).astimezone(timezone.utc)
 
+    def at_or_after(value, cutoff):
+        parsed = parse_datetime(value)
+        if parsed is None:
+            return True
+        comparable_parsed, comparable_cutoff = _comparable_datetimes(
+            parsed, cutoff
+        )
+        return comparable_parsed >= comparable_cutoff
+
     def mutate(state):
         downgraded = _apply_expired_plan_downgrades_to_state(state, now)
         migration_history_removed = purge_account_migration_history(
@@ -10700,7 +11755,13 @@ def cleanup_expired_data(config):
             ):
                 continue
             expires_at = parse_datetime(location.get("expires_at"))
-            if expires_at and expires_at < now:
+            location_expired = False
+            if expires_at:
+                comparable_expires, comparable_now = _comparable_datetimes(
+                    expires_at, now
+                )
+                location_expired = comparable_expires < comparable_now
+            if location_expired:
                 profile["location"] = {
                     **location,
                     "sharing": False,
@@ -10716,16 +11777,14 @@ def cleanup_expired_data(config):
         state["friend_invites"] = {
             code: invite
             for code, invite in state.get("friend_invites", {}).items()
-            if not parse_datetime(invite.get("created_at"))
-            or parse_datetime(invite.get("created_at")) >= invite_cutoff
+            if at_or_after(invite.get("created_at"), invite_cutoff)
         }
 
         logs_before = len(state.get("notification_logs", []))
         state["notification_logs"] = [
             log
             for log in state.get("notification_logs", [])
-            if not parse_datetime(log.get("created_at"))
-            or parse_datetime(log.get("created_at")) >= notification_cutoff
+            if at_or_after(log.get("created_at"), notification_cutoff)
         ][-100:]
         return {
             "cleaned_at": now.isoformat(timespec="seconds"),
@@ -10971,6 +12030,9 @@ def send_checkin_reminders(config):
         if user.get("line_push_blocked"):
             skipped += 1
             continue
+        if user.get("membership_paused") or not membership_access_active(user, now):
+            skipped += 1
+            continue
         if not bool(user.get("daily_checkin_reminder_enabled", True)):
             skipped += 1
             continue
@@ -11006,6 +12068,9 @@ def send_checkin_reminders(config):
         # 同一五分鐘時間窗只推一次；較早漏掉的時段不補送也不標記。
         target_time = due_unsent[-1]
         delivery_key = f"checkin:{today}:{target_time}"
+        _record_launch_delivery(
+            state, delivery_key, "checkin", line_user_id, "expected"
+        )
         if not push_attempt_allowed(user, delivery_key):
             skipped += 1
             continue
@@ -11013,6 +12078,9 @@ def send_checkin_reminders(config):
         try:
             result = sender(token, line_user_id, message)
             _clear_push_delivery_failure(user, delivery_key)
+            _record_launch_delivery(
+                state, delivery_key, "checkin", line_user_id, "sent"
+            )
             _mark_checkin_reminder_slots(user, today, times, due_unsent)
             append_notification_log(state, "checkin", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
             record_line_message_usage(
@@ -11176,6 +12244,12 @@ def send_birthday_reminders(config):
         if not line_user_id:
             skipped += 1
             continue
+        if not plan_has_smart_reminders(user, now=now):
+            skipped += 1
+            continue
+        if user.get("membership_paused") or not membership_access_active(user, now):
+            skipped += 1
+            continue
         if user.get("line_push_blocked"):
             blocked += 1
             skipped += 1
@@ -11265,10 +12339,10 @@ SMART_REMINDER_CATEGORIES = {
 }
 
 
-def plan_has_smart_reminders(profile):
+def plan_has_smart_reminders(profile, now=None):
     plan = str((profile or {}).get("plan") or "trial")
-    return plan in {"paid_799", "paid_799_year"} and (
-        str((profile or {}).get("payment_status") or "") == "active" or paid_membership_is_active(profile or {})
+    return plan in {"paid_799", "paid_799_year"} and paid_membership_is_active(
+        profile or {}, now=now
     )
 
 
@@ -11703,7 +12777,12 @@ def send_smart_reminders(config):
 
     for user in state.get("users", {}).values():
         line_user_id = user.get("line_user_id")
-        if not line_user_id or not plan_has_smart_reminders(user):
+        if (
+            not line_user_id
+            or user.get("membership_paused")
+            or not membership_access_active(user, now)
+            or not plan_has_smart_reminders(user)
+        ):
             skipped += 1
             continue
         sent_keys = set(user.get("smart_reminder_sent_keys") or [])
@@ -11833,6 +12912,9 @@ def send_profile_completion_reminders(config):
     for profile in (state.get("users") or {}).values():
         if not isinstance(profile, dict) or not profile.get("profile_completion_required"):
             continue
+        if profile.get("membership_paused") or not membership_access_active(profile, now):
+            skipped += 1
+            continue
         completion_peer = str(
             profile.get("profile_completion_peer_line_user_id") or ""
         ).strip()
@@ -11878,11 +12960,23 @@ def send_profile_completion_reminders(config):
 def run_cron_tick(config):
     now = current_app_time(config)
     results = {}
+    slot = now.strftime("%H:%M")
 
     migration_data, migration_code = migrate_existing_free_members(config)
     results["membership_transition_migration"] = {
         "status": migration_code,
         "result": migration_data,
+    }
+    # 每次 Cron 都先補送到期里程碑，再執行到期降級；claim/outbox 會防重。
+    milestone_data, milestone_code = send_trial_milestone_notices(config)
+    results["trial_milestone_notices"] = {
+        "status": milestone_code,
+        "result": milestone_data,
+    }
+    expiry_data, expiry_code = apply_expired_plan_downgrades(config)
+    results["membership_expiry"] = {
+        "status": expiry_code,
+        "result": expiry_data,
     }
 
     always = {
@@ -11916,10 +13010,8 @@ def run_cron_tick(config):
         "09:00": ("birthday_reminders", send_birthday_reminders),
         "09:05": ("contact_reminders", send_missing_contact_reminders),
         "10:00": ("renewal_reminders", send_renewal_reminders),
-        "10:15": ("membership_expiry", apply_expired_plan_downgrades),
         "02:30": ("data_cleanup", cleanup_expired_data),
     }
-    slot = now.strftime("%H:%M")
     if slot in daily:
         name, task = daily[slot]
         data, code = task(config)
@@ -12096,6 +13188,19 @@ def complete_onboarding_for_user(data_file, line_user_id, payload):
 def checkin_for_user(data_file, line_user_id, payload, config=None):
     payload = dict(payload or {})
     payload["line_user_id"] = line_user_id
+    now = current_app_time(config or {})
+    event_id = f"checkin:{line_user_id}:{uuid.uuid4().hex}"
+    mutate_state_atomically(
+        data_file,
+        lambda current_state: current_state.setdefault(
+            "launch_events", []
+        ).append({
+            "id": event_id,
+            "kind": "checkin",
+            "success": False,
+            "at": now.isoformat(timespec="seconds"),
+        }),
+    )
     state = load_state(data_file)
     if line_user_id not in state.get("users", {}):
         register_line_user(
@@ -12115,6 +13220,17 @@ def checkin_for_user(data_file, line_user_id, payload, config=None):
             **access,
         }, 400
     status = record_checkin(data_file, payload)
+    mutate_state_atomically(
+        data_file,
+        lambda current_state: next(
+            (
+                row.update({"success": True})
+                for row in current_state.get("launch_events") or []
+                if row.get("id") == event_id
+            ),
+            None,
+        ),
+    )
     status["ok"] = True
     return status, 200
 
@@ -12731,7 +13847,7 @@ def create_app(config=None):
                 "開始使用前兩個步驟：\n"
                 "① 新增 1 位守護人\n"
                 "② 設定每日提醒時間\n\n"
-                "🎁 完成設定即可享 7 天免費安心體驗\n"
+                "🎁 首次註冊可享一次 14 天安心體驗\n"
                 "緊急狀況請直接撥打 119 或 110\n\n"
                 f"立即開始設定：{setup_uri}\n"
                 f"查看方案：{pricing_uri}\n"
@@ -13654,11 +14770,22 @@ def create_app(config=None):
 
     @app.get("/api/calendar-notes")
     def calendar_notes_get():
-        return jsonify(get_calendar_notes(app.config["DATA_FILE"], request.args.get("line_user_id")))
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
+        data = get_calendar_notes(
+            app.config["DATA_FILE"], line_user_id
+        )
+        return jsonify(data), 200 if data.get("ok") else 403
 
     @app.post("/api/calendar-notes")
     def calendar_notes_post():
-        data, code = save_calendar_note(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = save_calendar_note(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
     @app.post("/api/contacts/add")
@@ -13883,6 +15010,63 @@ def create_app(config=None):
             return jsonify(err[0]), err[1]
         payload["line_user_id"] = line_user_id
         data, code = bind_guardian_group(app.config["DATA_FILE"], payload)
+        if code == 200 and data.get("trial_test_message"):
+            token = app.config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+                "LINE_CHANNEL_ACCESS_TOKEN", ""
+            )
+            if not token:
+                return jsonify({
+                    **data,
+                    "trial_test_delivery": "failed",
+                    "error": "LINE_CHANNEL_ACCESS_TOKEN is not set",
+                }), 503
+            sender = app.config.get("LINE_PUSH_SENDER") or line_push_message
+            retry_key = data.get("trial_test_retry_key") or _line_retry_key(
+                f"trial-group-test:{line_user_id}:{payload.get('group_id')}"
+            )
+            try:
+                _send_line_with_retry_key(
+                    sender,
+                    token,
+                    payload.get("group_id"),
+                    data["trial_test_message"],
+                    retry_key,
+                )
+                data["trial_test_delivery"] = "sent"
+                mutate_state_atomically(
+                    app.config["DATA_FILE"],
+                    lambda state: (
+                        (state.get("users") or {}).get(line_user_id, {}).setdefault(
+                            "trial_group_test_delivery", {}
+                        ).update({
+                            "status": "sent",
+                            "sent_at": current_app_time(app.config).isoformat(
+                                timespec="seconds"
+                            ),
+                        }),
+                        record_line_message_usage(
+                            state,
+                            category="trial_group_test",
+                            owner_line_user_id=line_user_id,
+                            recipient_count=1,
+                            event_id=retry_key,
+                        ),
+                    )[-1],
+                )
+            except Exception as exc:
+                data["trial_test_delivery"] = "failed"
+                data["error"] = "測試通知暫時無法送出，請稍後再試。"
+                mutate_state_atomically(
+                    app.config["DATA_FILE"],
+                    lambda state: (state.get("users") or {}).get(
+                        line_user_id, {}
+                    ).setdefault("trial_group_test_delivery", {}).update({
+                        "status": "failed",
+                        "last_error": str(exc)[:200],
+                    }),
+                )
+                app.logger.warning("trial group test delivery failed: %s", exc)
+                return jsonify(data), 502
         return jsonify(data), code
 
     @app.post("/api/guardian-groups/unbind")
@@ -14073,6 +15257,51 @@ def create_app(config=None):
             return jsonify(err[0]), err[1]
         payload["line_user_id"] = line_user_id
         data, code = trigger_sos(app.config["DATA_FILE"], payload, app.config)
+        return jsonify(data), code
+
+    @app.post("/api/trial/test-action")
+    def trial_test_action_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = authorize_labeled_test_action(
+            app.config["DATA_FILE"],
+            line_user_id,
+            payload.get("action"),
+        )
+        if code == 200 and data.get("allowed"):
+            token = app.config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+                "LINE_CHANNEL_ACCESS_TOKEN", ""
+            )
+            if not token:
+                return jsonify({
+                    **data,
+                    "allowed": False,
+                    "reason": "push_unavailable",
+                }), 503
+            sender = app.config.get("LINE_PUSH_SENDER") or line_push_message
+            retry_key = _line_retry_key(data["event_id"])
+            try:
+                _send_line_with_retry_key(
+                    sender, token, line_user_id, data["message"], retry_key
+                )
+                mutate_state_atomically(
+                    app.config["DATA_FILE"],
+                    lambda state: record_line_message_usage(
+                        state,
+                        category=f"trial_{payload.get('action')}_test",
+                        owner_line_user_id=line_user_id,
+                        recipient_count=1,
+                        event_id=data["event_id"],
+                    ),
+                )
+                data["delivery"] = "sent"
+            except Exception as exc:
+                app.logger.warning("trial test delivery failed: %s", exc)
+                data["delivery"] = "failed"
+                data["reason"] = "push_failed"
+                return jsonify(data), 502
         return jsonify(data), code
 
     @app.post("/api/sos/cancel")
@@ -14327,6 +15556,71 @@ def create_app(config=None):
                 app.config["DATA_FILE"],
                 app.config,
             )
+        )
+
+    @app.get("/api/admin/beta-members")
+    def admin_beta_members_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        return jsonify(beta_members_snapshot(load_state(app.config["DATA_FILE"])))
+
+    @app.post("/api/admin/beta-members")
+    def admin_beta_member_assign_api():
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
+        data, code = admin_assign_beta_member(
+            app.config["DATA_FILE"], request.get_json(silent=True) or {}
+        )
+        return _admin_mutation_response("beta.assign", data, code)
+
+    @app.delete("/api/admin/beta-members/<line_user_id>")
+    def admin_beta_member_revoke_api(line_user_id):
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
+        data, code = admin_revoke_beta_member(
+            app.config["DATA_FILE"], line_user_id
+        )
+        return _admin_mutation_response("beta.revoke", data, code)
+
+    @app.get("/api/admin/launch-readiness")
+    def admin_launch_readiness_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        return jsonify(
+            launch_readiness_snapshot(load_state(app.config["DATA_FILE"]))
+        )
+
+    @app.post("/api/admin/launch-validation")
+    def admin_launch_validation_api():
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        try:
+            scenario = mutate_state_atomically(
+                app.config["DATA_FILE"],
+                lambda state: record_launch_validation_step(
+                    state,
+                    payload.get("scenario_id"),
+                    payload.get("kind"),
+                    payload.get("step"),
+                    line_user_id=payload.get("line_user_id") or "",
+                ),
+            )
+        except ValueError as exc:
+            return _admin_mutation_response(
+                "launch_validation.record",
+                {"ok": False, "error": str(exc)},
+                400,
+            )
+        return _admin_mutation_response(
+            "launch_validation.record",
+            {"ok": True, "scenario": scenario},
+            200,
         )
 
     @app.get("/api/admin/support-tickets")
@@ -14812,7 +16106,24 @@ class MiniClient:
             )
             return MiniResponse(body, code)
         if route == "/api/calendar-notes":
-            return MiniResponse(get_calendar_notes(self.app.config["DATA_FILE"], params.get("line_user_id")))
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            body = get_calendar_notes(self.app.config["DATA_FILE"], line_user_id)
+            return MiniResponse(body, 200 if body.get("ok") else 403)
+        if route == "/api/smart-reminders":
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            return MiniResponse(
+                get_smart_reminders_payload(
+                    self.app.config["DATA_FILE"], line_user_id
+                )
+            )
         if route == "/api/friends/locations":
             return MiniResponse(friend_locations(self.app.config["DATA_FILE"], params.get("line_user_id")))
         if route == "/api/location/status":
@@ -14884,7 +16195,32 @@ class MiniClient:
             body, code = save_contacts(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
         if route == "/api/calendar-notes":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["line_user_id"] = line_user_id
             body, code = save_calendar_note(self.app.config["DATA_FILE"], payload)
+            return MiniResponse(body, code)
+        if route == "/api/smart-reminders":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["line_user_id"] = line_user_id
+            body, code = save_smart_reminder(self.app.config["DATA_FILE"], payload)
+            return MiniResponse(body, code)
+        if route in {"/api/cron/smart-reminders", "/api/cron/birthday-reminders"}:
+            if not cron_allowed(self.app.config, cron_secret):
+                return MiniResponse({"error": "unauthorized"}, 401)
+            task = (
+                send_smart_reminders
+                if route.endswith("smart-reminders")
+                else send_birthday_reminders
+            )
+            body, code = task(self.app.config)
             return MiniResponse(body, code)
         if route == "/api/emergency-contact/bind":
             line_user_id, err = authenticated_line_user(payload, args=params, headers=headers, config=self.app.config)
@@ -15054,6 +16390,23 @@ class MiniClient:
             return MiniResponse(body, code)
         return MiniResponse({"error": "not found"}, 404)
 
+    def delete(self, path, headers=None):
+        route, _, query = path.partition("?")
+        params = dict(urllib.parse.parse_qsl(query))
+        headers = headers or {}
+        if route.startswith("/api/smart-reminders/"):
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            reminder_id = route.rsplit("/", 1)[-1]
+            body, code = delete_smart_reminder(
+                self.app.config["DATA_FILE"], line_user_id, reminder_id
+            )
+            return MiniResponse(body, code)
+        return MiniResponse({"error": "not found"}, 404)
+
 
 class MiniApp:
     def __init__(self, config=None):
@@ -15187,7 +16540,20 @@ class MiniApp:
                     )
                     return handler.send_json(data, code)
                 if route == "/api/calendar-notes":
-                    return handler.send_json(get_calendar_notes(data_file, params.get("line_user_id")))
+                    line_user_id, err = handler.authenticated_user(params=params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    body = get_calendar_notes(data_file, line_user_id)
+                    return handler.send_json(
+                        body, status=200 if body.get("ok") else 403
+                    )
+                if route == "/api/smart-reminders":
+                    line_user_id, err = handler.authenticated_user(params=params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    return handler.send_json(
+                        get_smart_reminders_payload(data_file, line_user_id)
+                    )
                 if route == "/api/friends/locations":
                     return handler.send_json(friend_locations(data_file, params.get("line_user_id")))
                 if route == "/api/location/status":
@@ -15309,7 +16675,31 @@ class MiniApp:
                     data, code = save_contacts(data_file, payload)
                     return handler.send_json(data, code)
                 if route == "/api/calendar-notes":
+                    line_user_id, err = handler.authenticated_user(payload, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    payload["line_user_id"] = line_user_id
                     data, code = save_calendar_note(data_file, payload)
+                    return handler.send_json(data, code)
+                if route == "/api/smart-reminders":
+                    line_user_id, err = handler.authenticated_user(payload, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    payload["line_user_id"] = line_user_id
+                    data, code = save_smart_reminder(data_file, payload)
+                    return handler.send_json(data, code)
+                if route in {
+                    "/api/cron/smart-reminders",
+                    "/api/cron/birthday-reminders",
+                }:
+                    if not cron_allowed(config, handler.cron_secret()):
+                        return handler.send_json({"error": "unauthorized"}, 401)
+                    task = (
+                        send_smart_reminders
+                        if route.endswith("smart-reminders")
+                        else send_birthday_reminders
+                    )
+                    data, code = task(config)
                     return handler.send_json(data, code)
                 if route == "/api/emergency-contact/bind":
                     line_user_id, err = handler.authenticated_user(payload, params)

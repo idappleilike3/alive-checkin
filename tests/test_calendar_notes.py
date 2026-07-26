@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app import (
+    build_status,
     calendar_note_content,
     get_calendar_notes,
     load_state,
@@ -21,9 +22,117 @@ class CalendarNotesTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.data_file = Path(self.temp_dir.name) / "state.json"
+        save_state(
+            self.data_file,
+            {
+                "users": {
+                    "U-calendar": {
+                        "line_user_id": "U-calendar",
+                        "plan": "paid_799",
+                        "payment_status": "active",
+                        "paid_until": "2099-01-01T00:00:00",
+                    }
+                }
+            },
+        )
 
     def tearDown(self):
         self.temp_dir.cleanup()
+
+    def test_calendar_notes_require_active_paid_799_membership(self):
+        state = load_state(self.data_file)
+        state["users"] = {
+            "U-trial": {
+                "line_user_id": "U-trial",
+                "plan": "trial",
+                "trial_started_at": "2026-07-27T09:00:00",
+                "trial_end": "2099-01-01T00:00:00",
+            },
+            "U-399": {
+                "line_user_id": "U-399",
+                "plan": "paid_399",
+                "payment_status": "active",
+                "paid_until": "2099-01-01T00:00:00",
+            },
+            "U-beta-799": {
+                "line_user_id": "U-beta-799",
+                "plan": "paid_799",
+                "payment_status": "beta",
+                "membership_source": "beta",
+                "beta_cohort": "A",
+                "beta_started_at": "2026-07-27T09:00:00",
+                "beta_ends_at": "2099-01-01T00:00:00",
+            },
+            "U-799": {
+                "line_user_id": "U-799",
+                "plan": "paid_799",
+                "payment_status": "active",
+                "paid_until": "2099-01-01T00:00:00",
+            },
+        }
+        save_state(self.data_file, state)
+
+        for line_user_id in ("U-trial", "U-399", "U-beta-799"):
+            read_result = get_calendar_notes(self.data_file, line_user_id)
+            write_result, write_code = save_calendar_note(
+                self.data_file,
+                {
+                    "line_user_id": line_user_id,
+                    "date": "2026-07-27",
+                    "content": "不應儲存",
+                },
+            )
+            self.assertFalse(read_result["ok"])
+            self.assertEqual(read_result["error"], "calendar_notes_require_799")
+            self.assertEqual(write_code, 403)
+            self.assertEqual(write_result["error"], "calendar_notes_require_799")
+
+        allowed, allowed_code = save_calendar_note(
+            self.data_file,
+            {
+                "line_user_id": "U-799",
+                "date": "2026-07-27",
+                "content": "799 樂年方案備忘錄",
+            },
+        )
+        self.assertEqual(allowed_code, 200)
+        self.assertTrue(allowed["ok"])
+
+    def test_status_exposes_calendar_note_entitlement_only_for_formal_799(self):
+        base = {"line_user_id": "U", "paid_until": "2099-01-01T00:00:00"}
+        self.assertFalse(
+            build_status({
+                **base,
+                "plan": "paid_399",
+                "payment_status": "active",
+            })["calendar_notes_enabled"]
+        )
+        self.assertFalse(
+            build_status({
+                **base,
+                "plan": "paid_799",
+                "payment_status": "beta",
+                "membership_source": "beta",
+            })["calendar_notes_enabled"]
+        )
+        formal_799 = build_status({
+            **base,
+            "plan": "paid_799",
+            "payment_status": "active",
+        })
+        self.assertTrue(formal_799["calendar_notes_enabled"])
+        self.assertTrue(formal_799["smart_reminders_enabled"])
+
+    def test_liff_pricing_shows_memo_only_for_799(self):
+        page = (ROOT / "liff" / "pricing.html").read_text(encoding="utf-8")
+        self.assertIn(
+            '<tr><td>月曆備忘</td><td class="no">✗</td><td class="no">✗</td>'
+            '<td class="no">✗</td><td class="no">✗</td><td class="no">✗</td>'
+            '<td class="yes">✓</td><td class="yes">✓</td></tr>',
+            page,
+        )
+        self.assertNotIn("<li>SOS、月曆備忘</li>", page)
+        self.assertNotIn("<li>月曆備忘、簽到後停止當日提醒</li>", page.split("799 守護版(月)")[0])
 
     def test_note_can_be_created_and_updated(self):
         created, code = save_calendar_note(
@@ -113,6 +222,9 @@ class CalendarNotesTests(unittest.TestCase):
         state = load_state(self.data_file)
         state["users"]["U-calendar"] = {
             "line_user_id": "U-calendar",
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": "2099-01-01T00:00:00",
             "calendar_notes": {
                 "2026-08-08": [
                     {
@@ -158,6 +270,9 @@ class CalendarNotesTests(unittest.TestCase):
         state = load_state(self.data_file)
         state["users"]["U-calendar"] = {
             "line_user_id": "U-calendar",
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": "2099-01-01T00:00:00",
             "calendar_notes": {
                 "2026-08-08": {
                     "id": "migration-calendar-note-0001",
@@ -194,6 +309,9 @@ class CalendarNotesTests(unittest.TestCase):
         state = load_state(self.data_file)
         state["users"]["U-calendar"] = {
             "line_user_id": "U-calendar",
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": "2099-01-01T00:00:00",
             "calendar_notes": {
                 "2026-08-08": [
                     {
@@ -238,6 +356,9 @@ class CalendarNotesTests(unittest.TestCase):
         state = load_state(self.data_file)
         state["users"]["U-calendar"] = {
             "line_user_id": "U-calendar",
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": "2099-01-01T00:00:00",
             "calendar_notes": {
                 "2026-08-08": [
                     {

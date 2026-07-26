@@ -235,6 +235,57 @@ class SmartReminderTests(unittest.TestCase):
         self.assertTrue(ok["reminder"]["notify_private"])
         self.assertFalse(ok["reminder"]["notify_group"])
 
+    def test_beta_799_cannot_use_formal_smart_reminders(self):
+        state = app.load_state(self.data_file)
+        profile = app.get_profile(state, "U-beta-799")
+        profile.update({
+            "plan": "paid_799",
+            "payment_status": "beta",
+            "membership_source": "beta",
+            "beta_cohort": "A",
+            "beta_started_at": "2026-07-27T09:00:00",
+            "beta_ends_at": "2099-01-01T00:00:00",
+        })
+        app.save_state(self.data_file, state)
+
+        result, code = app.save_smart_reminder(
+            self.data_file,
+            {
+                "line_user_id": "U-beta-799",
+                "target_name": "媽媽",
+                "category": "birthday",
+                "month": 7,
+                "day": 27,
+            },
+        )
+
+        self.assertEqual(code, 403)
+        self.assertEqual(result["error"], "smart_reminders_require_799")
+
+    def test_expired_799_cannot_use_smart_reminders(self):
+        state = app.load_state(self.data_file)
+        profile = app.get_profile(state, "U-expired-799")
+        profile.update({
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": "2020-01-01T00:00:00",
+        })
+        app.save_state(self.data_file, state)
+
+        result, code = app.save_smart_reminder(
+            self.data_file,
+            {
+                "line_user_id": "U-expired-799",
+                "target_name": "媽媽",
+                "category": "birthday",
+                "month": 7,
+                "day": 27,
+            },
+        )
+
+        self.assertEqual(code, 403)
+        self.assertEqual(result["error"], "smart_reminders_require_799")
+
     def test_smart_push_private_only(self):
         sent = []
 

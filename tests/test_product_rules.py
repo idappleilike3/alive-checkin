@@ -364,15 +364,14 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("儲存續扣", page)
         self.assertNotIn("有效的 799 守護版會員，可連續按 3 次", page)
 
-    def test_export_my_data_supports_liff_json_csv(self):
+    def test_privacy_requests_require_verified_contact_path(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
-        self.assertIn("function exportMyData(", page)
-        self.assertIn("function buildExportCsv(", page)
-        self.assertIn("function shareOrDownloadBlob(", page)
-        self.assertIn("liff.openWindow", page)
-        self.assertIn("application/json", page)
-        self.assertIn("text/csv", page)
-        self.assertIn('id="exportMyDataBtn"', page)
+        self.assertIn("隱私權申請", page)
+        self.assertIn("alivecheckin.tw@gmail.com", page)
+        self.assertIn("LINE 身分確認", page)
+        self.assertNotIn('id="exportMyDataBtn"', page)
+        self.assertNotIn('id="deleteCheckinHistoryBtn"', page)
+        self.assertNotIn('id="deleteAccountBtn"', page)
 
     def test_member_unbound_guardian_shows_one_tap_invite(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -876,6 +875,32 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("欢迎", onboarding)
         self.assertNotIn("关系", onboarding)
         self.assertIn(".onboarding-submit", page)
+
+    def test_active_surfaces_use_one_14_day_experience_not_permanent_free(self):
+        surfaces = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (
+                ROOT / "index.html",
+                ROOT / "admin.html",
+                ROOT / "pricing.html",
+                ROOT / "liff" / "pricing.html",
+                ROOT / "liff" / "onboarding.html",
+            )
+        )
+        for cancelled in (
+            "7 天安心體驗",
+            "7 天免費安心體驗",
+            "7 天試用",
+            "免費方案",
+            "免費版",
+            "NT$0 / 永久",
+        ):
+            self.assertNotIn(cancelled, surfaces)
+        self.assertIn("14 天安心體驗", surfaces)
+        self.assertIn("不自動扣款", surfaces)
+        self.assertIn("199", surfaces)
+        self.assertIn("399", surfaces)
+        self.assertIn("799", surfaces)
 
 
 if __name__ == "__main__":

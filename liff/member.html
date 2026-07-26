@@ -295,12 +295,12 @@
       <h3>👨‍👩‍👧 守護人（Guardian）</h3>
       <p><span class="role-label">用途</span>　平常每天守護你的人。</p>
       <p><span class="role-label">會收到</span>　未報平安通知、SOS、安全守護、可查看平安狀態（若有授權）。</p>
-      <p><span class="role-label">免費版建議</span>　1 位守護人（配偶／父母／子女足夠）。</p>
+      <p><span class="role-label">體驗期建議</span>　1 位守護人（配偶／父母／子女足夠）。</p>
     </article>
     <article class="role-card">
       <h3>☎️ 緊急聯絡人（Emergency Contact）</h3>
       <p><span class="role-label">用途</span>　電話備援：緊急時可手動撥打（不會自動群發）。</p>
-      <p><span class="role-label">免費版建議</span>　2 位（爸媽，或配偶＋好友）。</p>
+      <p><span class="role-label">體驗期建議</span>　2 位（爸媽，或配偶＋好友）。</p>
     </article>
   </div>
 
@@ -484,6 +484,15 @@ let state = {
   smartEditingId: null
 };
 
+function lineAuthHeaders(extra = {}) {
+  const token = (window.liff && typeof liff.getIDToken === "function")
+    ? (liff.getIDToken() || "")
+    : "";
+  return token
+    ? { ...extra, Authorization: `Bearer ${token}`, "X-Line-Id-Token": token }
+    : { ...extra };
+}
+
 const MEMBER_ROLE_INTRO_KEY = "member_role_intro_dismissed";
 
 function isRoleIntroDismissed() {
@@ -629,7 +638,10 @@ async function refreshSmartReminders() {
   const listEl = document.getElementById("smartReminderList");
   if (!state.lineUserId || !listEl) return;
   try {
-    const res = await fetch(`${API_BASE}/api/smart-reminders?line_user_id=${encodeURIComponent(state.lineUserId)}`);
+    const res = await fetch(
+      `${API_BASE}/api/smart-reminders?line_user_id=${encodeURIComponent(state.lineUserId)}`,
+      { headers: lineAuthHeaders() }
+    );
     const data = await res.json();
     state.smartReminders = data.reminders || [];
     state.smartCategories = data.categories || [];
@@ -713,7 +725,7 @@ async function submitSmartReminder() {
   const [y, m, d] = dateVal.split("-").map((x) => parseInt(x, 10));
   const res = await fetch(`${API_BASE}/api/smart-reminders`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: lineAuthHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       line_user_id: state.lineUserId,
       id: state.smartEditingId || undefined,
@@ -745,7 +757,8 @@ async function submitSmartReminder() {
 async function deleteSmartReminder(id) {
   if (!id || !confirm("確定刪除此提醒？")) return;
   const res = await fetch(`${API_BASE}/api/smart-reminders/${encodeURIComponent(id)}?line_user_id=${encodeURIComponent(state.lineUserId)}`, {
-    method: "DELETE"
+    method: "DELETE",
+    headers: lineAuthHeaders()
   });
   const data = await res.json();
   if (!res.ok || data.ok === false) {

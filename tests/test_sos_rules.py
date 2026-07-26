@@ -937,6 +937,9 @@ class SosRulesTests(unittest.TestCase):
         data_file = self.make_data_file({
             "line_user_id": "U-owner",
             "display_name": "小美",
+            "plan": "trial",
+            "trial_started_at": "2026-07-01T00:00:00",
+            "trial_end": "2026-07-15T00:00:00",
             "profile_completion_required": True,
             "profile_completion_bound_at": "2026-07-01T09:00:00+08:00",
         })
@@ -967,6 +970,9 @@ class SosRulesTests(unittest.TestCase):
         data_file = self.make_data_file({
             "line_user_id": "U-owner",
             "display_name": "小美",
+            "plan": "trial",
+            "trial_started_at": "2026-07-01T00:00:00",
+            "trial_end": "2026-07-15T00:00:00",
             "profile_completion_required": True,
             "profile_completion_bound_at": "2026-07-01T09:00:00+08:00",
             "contacts": [{
@@ -995,6 +1001,9 @@ class SosRulesTests(unittest.TestCase):
         data_file = self.make_data_file({
             "line_user_id": "U-owner",
             "display_name": "小美",
+            "plan": "trial",
+            "trial_started_at": "2026-07-01T00:00:00",
+            "trial_end": "2026-07-15T00:00:00",
             "profile_completion_required": True,
             "profile_completion_bound_at": "2026-07-01T09:00:00+08:00",
             "profile_completion_peer_line_user_id": "U-guardian",

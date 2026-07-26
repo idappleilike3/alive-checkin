@@ -394,6 +394,50 @@
         <div class="stat"><strong id="lineUsageAlert">正常</strong><span>LINE 額度警示</span></div>
       </div>
 
+      <section class="release-status" aria-label="21 天封閉測試名單">
+        <h2>21 天封閉測試名單</h2>
+        <p class="note">A 10 人、B399 20 人、B799 10 人。不會建立訂單，也不會自動扣款。</p>
+        <div class="stats">
+          <div class="stat"><strong id="betaCountA">0／10</strong><span>A｜完整 799 測試</span></div>
+          <div class="stat"><strong id="betaCountB399">0／20</strong><span>B399｜安心版測試</span></div>
+          <div class="stat"><strong id="betaCountB799">0／10</strong><span>B799｜家庭群組測試</span></div>
+        </div>
+        <form id="betaAssignForm" class="toolbar">
+          <label>會員 LINE ID<input id="betaLineUserId" required autocomplete="off"></label>
+          <label>測試組別
+            <select id="betaCohort">
+              <option value="A">A</option>
+              <option value="B399">B399</option>
+              <option value="B799">B799</option>
+            </select>
+          </label>
+          <label>招募來源<input id="betaSource" placeholder="認識的人／陌生測試者"></label>
+          <button type="submit">加入封測</button>
+        </form>
+        <p id="betaStatus" class="auth-status" role="status" aria-live="polite"></p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>測試者</th><th>組別／權益</th><th>剩餘</th><th>守護／提醒</th><th>推播／SOS／回饋</th><th>操作</th></tr></thead>
+            <tbody id="betaMembersBody"><tr><td colspan="6">尚未載入封測名單</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="release-status" aria-label="封測上線門檻">
+        <h2>封測上線量化門檻</h2>
+        <p id="launchGateBanner" class="auth-status">尚未載入；未通過時必須停止新增測試者。</p>
+        <div class="stats">
+          <div class="stat"><strong id="launchCheckinRate">0%</strong><span>簽到成功率（≥99%）</span></div>
+          <div class="stat"><strong id="launchMissed">0</strong><span>漏發提醒（=0）</span></div>
+          <div class="stat"><strong id="launchDuplicates">0</strong><span>重複警報（=0）</span></div>
+          <div class="stat"><strong id="launchSosRate">0%</strong><span>SOS 測試（100%）</span></div>
+          <div class="stat"><strong id="launchBindRate">0%</strong><span>守護人綁定（≥95%）</span></div>
+          <div class="stat"><strong id="launchPayment">未通過</strong><span>付款流程</span></div>
+          <div class="stat"><strong id="launchExpiry">未通過</strong><span>取消／到期／恢復</span></div>
+        </div>
+        <div id="launchFailures" class="log-list"><div class="log-item"><span>尚無推播失敗紀錄</span></div></div>
+      </section>
+
       <section class="release-status" aria-label="帳號搬家狀態">
         <h2>帳號搬家</h2>
         <div class="release-row">
@@ -560,7 +604,7 @@
               <th>方案／升級狀態</th>
               <th>付款</th>
               <th>方案到期（試用／訂閱）</th>
-              <th>免費剩幾天</th>
+              <th>體驗剩幾天</th>
               <th>已綁定守護人（含 LINE ID）</th>
               <th>核心／一般／名額</th>
               <th>守護群</th>
@@ -700,6 +744,67 @@
       return (data && (data.message || data.error)) || `載入失敗（HTTP ${status}）。`;
     }
 
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      })[char]);
+    }
+
+    function renderBetaMembers(data) {
+      const counts = data.counts || {};
+      const limits = data.limits || { A: 10, B399: 20, B799: 10 };
+      $("betaCountA").textContent = `${counts.A || 0}／${limits.A || 10}`;
+      $("betaCountB399").textContent = `${counts.B399 || 0}／${limits.B399 || 20}`;
+      $("betaCountB799").textContent = `${counts.B799 || 0}／${limits.B799 || 10}`;
+      const rows = data.members || [];
+      $("betaMembersBody").innerHTML = rows.length ? rows.map((row) => `
+        <tr>
+          <td><strong>${escapeHtml(row.display_name)}</strong><br><small>${escapeHtml(row.line_user_id)}</small><br><small>${escapeHtml(row.source || "未填來源")}</small></td>
+          <td>${escapeHtml(row.cohort)}／${escapeHtml(row.plan)}</td>
+          <td>${row.revoked ? "已移除" : `${Number(row.remaining_days) || 0} 天`}<br><small>${escapeHtml(row.ends_at || "")}</small></td>
+          <td>守護 ${row.guardian_count || 0} 位<br>${row.reminder_setup ? "已設提醒" : "未設提醒"}</td>
+          <td>${escapeHtml(row.push_result || "尚未測推播")}<br>${escapeHtml(row.sos_test_status || "尚未測 SOS")}<br>${escapeHtml(row.feedback_status || "pending")}</td>
+          <td><button type="button" class="secondary beta-revoke" data-line-user-id="${escapeHtml(row.line_user_id)}" ${row.revoked ? "disabled" : ""}>移除</button></td>
+        </tr>
+      `).join("") : '<tr><td colspan="6">目前沒有封測名單</td></tr>';
+      document.querySelectorAll(".beta-revoke").forEach((button) => {
+        button.addEventListener("click", () => revokeBetaMember(button.dataset.lineUserId || ""));
+      });
+    }
+
+    async function loadBetaMembers() {
+      const response = await adminFetch("/api/admin/beta-members");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(authErrorText(data, response.status));
+      renderBetaMembers(data);
+    }
+
+    async function loadLaunchReadiness() {
+      const response = await adminFetch("/api/admin/launch-readiness");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(authErrorText(data, response.status));
+      $("launchCheckinRate").textContent = `${Math.round(Number(data.checkin_success_rate || 0) * 100)}%`;
+      $("launchMissed").textContent = data.missed_required_reminders || 0;
+      $("launchDuplicates").textContent = data.duplicate_alerts || 0;
+      $("launchSosRate").textContent = `${Math.round(Number(data.sos_test_success_rate || 0) * 100)}%`;
+      $("launchBindRate").textContent = `${Math.round(Number(data.guardian_bind_success_rate || 0) * 100)}%`;
+      $("launchPayment").textContent = data.payment_flow_passed ? "通過" : "未通過";
+      $("launchExpiry").textContent = data.expiry_flow_passed ? "通過" : "未通過";
+      $("launchGateBanner").textContent = data.ready
+        ? "✅ 目前門檻通過，可依 10 人→隔日 20 人節奏開放。"
+        : "⛔ 停止新增測試者：尚有上線門檻未通過。";
+      $("launchFailures").innerHTML = (data.push_failures || []).length
+        ? data.push_failures.map((row) => `<div class="log-item"><strong>${escapeHtml(row.category || "推播")}</strong><span>${escapeHtml(row.reason || "未知原因")}</span><span>${row.critical ? "重大" : "一般"}</span></div>`).join("")
+        : '<div class="log-item"><span>尚無推播失敗紀錄</span></div>';
+    }
+
+    async function revokeBetaMember(lineUserId) {
+      const response = await adminFetch(`/api/admin/beta-members/${encodeURIComponent(lineUserId)}`, { method: "DELETE" });
+      const data = await response.json().catch(() => ({}));
+      $("betaStatus").textContent = response.ok ? "已移除封測資格，會員資料與守護關係仍保留。" : authErrorText(data, response.status);
+      if (response.ok) renderBetaMembers(data.beta || {});
+    }
+
     async function restoreAdminSession() {
       const generation = adminAuthGeneration;
       try {
@@ -789,8 +894,8 @@
 
     function planLabel(plan) {
       return {
-        trial: "試用（免費）",
-        free: "免費方案",
+        trial: "14 天安心體驗",
+        free: "未訂閱",
         paid_199: "已升級 199 月費",
         paid_199_year: "已升級 199 年費",
         paid_399: "已升級 399 月費",
@@ -852,9 +957,9 @@
       if (user.trial_days_text) return user.trial_days_text;
       if (user.plan === "trial") {
         const days = Number(user.trial_days_left || 0);
-        return days > 0 ? `免費剩 ${days} 天` : "試用已結束";
+        return days > 0 ? `體驗剩 ${days} 天` : "體驗已結束";
       }
-      if (user.plan === "free") return "免費方案（無試用倒數）";
+      if (user.plan === "free") return "未訂閱（無試用倒數）";
       return "已升級（非試用）";
     }
 
@@ -995,6 +1100,8 @@
         setAuthStatus(authErrorText(data, res.status), "is-err");
         return;
       }
+      await loadBetaMembers();
+      await loadLaunchReadiness();
       $("totalUsers").textContent = data.total_users;
       $("checkedToday").textContent = data.checked_today;
       $("warningUsers").textContent = data.warning_users;
@@ -1301,6 +1408,27 @@
         if (error.message !== "admin_session_expired") console.warn(error);
       }
     });
+    const betaAssignForm = $("betaAssignForm");
+    if (betaAssignForm) {
+      betaAssignForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await adminFetch("/api/admin/beta-members", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            line_user_id: $("betaLineUserId").value.trim(),
+            cohort: $("betaCohort").value,
+            source: $("betaSource").value.trim()
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        $("betaStatus").textContent = response.ok ? "已加入 21 天封閉測試。" : authErrorText(data, response.status);
+        if (response.ok) {
+          renderBetaMembers(data.beta || {});
+          $("betaLineUserId").value = "";
+        }
+      });
+    }
     $("contactRemindBtn").addEventListener("click", sendContactReminders);
     $("remindBtn").addEventListener("click", sendReminders);
     $("renewalRemindBtn").addEventListener("click", sendRenewalReminders);

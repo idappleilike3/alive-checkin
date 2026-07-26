@@ -4058,7 +4058,7 @@
         <div class="status-row"><span class="status-label">⏰ 上次簽到</span><span class="status-value" id="lastDate">--</span></div>
         <div class="status-row"><span class="status-label">♡ 目前狀態</span><span class="status-value" id="statusText">--</span></div>
         <div class="plan-strip" id="planStrip" data-plan-tone="trial">
-          <div class="plan-chip plan-state-chip"><strong id="planStateLabel">7 天安心體驗</strong><span id="planDetailText">還有 7 天完整體驗</span></div>
+          <div class="plan-chip plan-state-chip"><strong id="planStateLabel">14 天安心體驗</strong><span id="planDetailText">還有 14 天完整體驗</span></div>
           <div class="plan-chip"><strong id="contactLimit">1</strong><span>核心守護人</span></div>
         </div>
         <div class="guardian-status-grid">
@@ -4086,7 +4086,7 @@
           <button id="nextMonth" type="button" aria-label="下一個月">&#8250;</button>
         </div>
         <div class="calendar-grid" id="calendarGrid"></div>
-        <div class="helper" style="margin-top:10px;">綠色是已簽到，紅點是有記事。點日期可查看節日或新增記事。</div>
+        <div class="helper" id="calendarPlanHint" style="margin-top:10px;">綠色是已簽到。備忘錄只開放 799 樂年方案使用。</div>
       </div>
     </section>
 
@@ -4154,13 +4154,13 @@
             <h4>👨‍👩‍👧 守護人（Guardian）</h4>
             <p><span class="role-label">用途</span>　平常每天守護你的人。</p>
             <p><span class="role-label">會收到</span>　未報平安通知、SOS、安全守護、可查看平安狀態（若有授權）。</p>
-            <p><span class="role-label">免費版建議</span>　1 位守護人（配偶／父母／子女足夠）。</p>
+            <p><span class="role-label">體驗期建議</span>　1 位守護人（配偶／父母／子女足夠）。</p>
           </article>
           <article class="member-role-card" aria-label="緊急聯絡人說明">
             <h4>☎️ 緊急聯絡人（Emergency Contact）</h4>
             <p><span class="role-label">用途</span>　電話備援：緊急時可手動撥打（不會自動群發）。</p>
             <p><span class="role-label">會收到</span>　不會自動推播；與守護人的 LINE 通知分開。</p>
-            <p><span class="role-label">免費版建議</span>　2 位（爸媽，或配偶＋好友）。可先填姓名與電話。</p>
+            <p><span class="role-label">體驗期建議</span>　2 位（爸媽，或配偶＋好友）。可先填姓名與電話。</p>
           </article>
         </div>
 
@@ -4184,7 +4184,7 @@
             <div class="member-role-bind-intro" id="memberGuardianBindIntro" aria-label="核心守護人說明">
               <p><strong>用途</strong>：平常每天守護你的人，需完成 LINE 綁定。</p>
               <p><strong>會收到</strong>：未報平安通知、SOS、安全守護、可查看平安狀態（若有授權）。</p>
-              <p id="memberGuardianPlanTip"><strong>免費版建議</strong>：1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。</p>
+              <p id="memberGuardianPlanTip"><strong>體驗期建議</strong>：1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。</p>
             </div>
             <div class="member-quota-line" id="memberGuardianQuotaLine">核心守護人 0/1</div>
             <div class="member-core-line" id="memberCoreGeneralLine">可新增 1 位・已新增 0 位</div>
@@ -4215,7 +4215,7 @@
             <h3>緊急聯絡人</h3>
             <div class="member-role-bind-intro" id="memberEmergencyBindIntro" aria-label="緊急聯絡人說明">
               <p><strong>用途</strong>：電話備援，緊急時可手動撥打（不會自動群發簡訊／推播）。</p>
-              <p id="memberEmergencyPlanTip"><strong>免費版建議</strong>：2 位（爸媽，或配偶＋好友）。可先填姓名與電話。</p>
+              <p id="memberEmergencyPlanTip"><strong>體驗期建議</strong>：2 位（爸媽，或配偶＋好友）。可先填姓名與電話。</p>
             </div>
             <div class="member-quota-line" id="memberEmergencyQuotaLine">緊急聯絡人 0/2</div>
             <div class="member-data-list" id="memberEmergencyList">
@@ -4313,13 +4313,8 @@
         </div>
 
         <div class="member-data-section">
-          <h3>我的資料管理</h3>
-          <div class="helper">所有會員都能匯出及刪除自己的個人資料，不會因方案不同而限制基本權利。可下載 JSON／CSV（個人資料、聯絡人、簽到紀錄）。</div>
-          <div class="member-data-actions">
-            <button class="action-btn" id="exportMyDataBtn" type="button">匯出我的資料</button>
-            <button class="action-btn" id="deleteCheckinHistoryBtn" type="button">刪除簽到紀錄</button>
-            <button class="action-btn danger-action" id="deleteAccountBtn" type="button">刪除帳號與個人資料</button>
-          </div>
+          <h3>隱私權申請</h3>
+          <div class="helper">需要查詢、更正、匯出、解除守護關係或刪除帳號時，請寄信至 <a href="mailto:alivecheckin.tw@gmail.com">alivecheckin.tw@gmail.com</a>。客服完成 LINE 身分確認後才會處理，避免他人冒用你的帳號。</div>
         </div>
       </div>
     </section>
@@ -4339,7 +4334,7 @@
             <li>核心守護人 2 位、緊急聯絡人 4 位</li>
             <li>LINE 私聊預警 1 次／日</li>
             <li>安全守護 1 小時</li>
-            <li>SOS、月曆備忘</li>
+            <li>SOS（不含備忘錄與智慧提醒）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="199-month">選擇 199 月費</button>
         </article>
@@ -4352,7 +4347,7 @@
             <li>核心守護人 3 位、緊急聯絡人 10 位</li>
             <li>LINE 私聊預警 2 次／日</li>
             <li>安全守護 1 小時</li>
-            <li>SOS、月曆備忘</li>
+            <li>SOS（不含備忘錄與智慧提醒）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="199-year">選擇 199 年費</button>
         </article>
@@ -4364,7 +4359,7 @@
             <li>核心守護人 5 位、緊急聯絡人 15 位</li>
             <li>LINE 私聊預警 2 次／日</li>
             <li>安全守護 1／3 小時</li>
-            <li>SOS、月曆備忘</li>
+            <li>SOS（不含備忘錄與智慧提醒）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="399-month">選擇 399 月費</button>
         </article>
@@ -4377,17 +4372,17 @@
             <li>核心守護人 7 位、緊急聯絡人 25 位</li>
             <li>LINE 私聊預警 3 次／日</li>
             <li>安全守護 1／3 小時</li>
-            <li>SOS、月曆備忘</li>
+            <li>SOS（不含備忘錄與智慧提醒）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="399-year">選擇 399 年費</button>
         </article>
         <article class="price-card plan-card tier-799 billing-month premium-month-card" data-plan-tier="799" data-billing-cycle="month">
           <div class="price-head"><strong>799 守護版</strong><span class="plan-cycle-badge">月費方案</span></div>
           <div class="plan-price">NT$799 <small>／月</small></div>
-          <div class="plan-card-note">解鎖更完整守護（基本 SOS／1 位守護人通知免費版已含）。</div>
+          <div class="plan-card-note">解鎖更完整守護（基礎 SOS 在到期後仍保留）。</div>
           <ul>
             <li>核心守護人 10 位、緊急聯絡人 35 位</li>
-            <li>早中晚、多階段、智慧提醒</li>
+            <li>早中晚、多階段、備忘錄、智慧提醒</li>
             <li>安全守護 1／3／6／8 小時</li>
             <li>守護群最多 1 群／50 人（僅安全事件）</li>
           </ul>
@@ -4400,12 +4395,12 @@
           <div class="plan-card-note"><s>月付一年 NT$9,588</s>，平均每月約 NT$666。</div>
           <ul>
             <li>核心守護人 15 位、緊急聯絡人 50 位</li>
-            <li>早中晚、多階段、智慧提醒</li>
+            <li>早中晚、多階段、備忘錄、智慧提醒</li>
             <li>安全守護 1／3／6／8 小時</li>
             <li>守護群最多 3 群／50 人（僅安全事件）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="799-year">選擇 799 年費</button>
-          <div class="annual-proof">799 解鎖更完整守護；SOS／1 位守護人通知免費版已含。</div>
+          <div class="annual-proof">799 解鎖更完整守護；基礎 SOS 在到期後仍保留。</div>
         </article>
       </div>
       <div class="payment-order-notice" id="paymentOrderNotice" role="status" aria-live="polite" hidden></div>
@@ -4790,7 +4785,7 @@
       const plan = String(status?.plan || "").trim();
       return {
         trial: "安心體驗",
-        free: "免費方案",
+        free: "未訂閱",
         paid_199: "基礎版",
         paid_199_year: "基礎版（年繳）",
         paid_399: "進階版",
@@ -5216,7 +5211,7 @@
         ...state,
         plan: state.plan || "trial",
         payment_status: state.payment_status || "trial",
-        trial_days_left: state.trial_days_left ?? 7,
+        trial_days_left: state.trial_days_left ?? 14,
         contact_limit: state.contact_limit || 1,
         history: Array.from(new Set(state.history || [])).sort(),
         is_today_checked: (state.history || []).includes(getToday()),
@@ -5306,7 +5301,10 @@
     async function apiGetCalendarNotes() {
       if (useLocalMode) return { ok: true, notes: loadLocalState().calendar_notes || {} };
       if (!lineUserId) return { ok: true, notes: {} };
-      const res = await fetch(`/api/calendar-notes?line_user_id=${encodeURIComponent(lineUserId)}`);
+      const res = await fetch(
+        await withAuthQuery(`/api/calendar-notes?line_user_id=${encodeURIComponent(lineUserId)}`),
+        { headers: await authHeaders() }
+      );
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error || "calendar notes failed");
       return data;
@@ -5727,8 +5725,8 @@
 
     function planLabel(plan) {
       return {
-        trial: "7 天試用",
-        free: "免費版",
+        trial: "14 天安心體驗",
+        free: "未訂閱",
         paid_199: "199 活著價",
         paid_199_year: "199 活著價年費",
         paid_399: "399 安心版",
@@ -5748,8 +5746,8 @@
       }
       if (plan === "free") {
         return {
-          state: "基本守護",
-          detail: "基礎功能持續可用",
+          state: "服務已暫停",
+          detail: "可查看資料、求助電話與基礎 SOS；一般提醒已暫停",
           tone: "free"
         };
       }
@@ -5941,15 +5939,15 @@
         paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 7, emergencies: 25, detail: "核心 7／緊急 25、LINE 預警 3 次／日、安全守護 1／3 小時、SOS、月曆。" },
         paid_799: { cycle: "799 守護版｜月費進階", contacts: 10, emergencies: 35, detail: "核心 10／緊急 35、早中晚與多階段、安全守護 1／3／6／8、智慧提醒、1 個守護群。" },
         paid_799_year: { cycle: "799 守護版｜年費進階", contacts: 15, emergencies: 50, detail: "核心 15／緊急 50、付 10 個月送 2 個月、早中晚與多階段、3 個守護群、智慧提醒。" },
-        free: { cycle: "基本守護｜免費方案", contacts: 1, emergencies: 2, detail: "核心 1／緊急 2、LINE 預警 1 次／日、安全守護 1 小時、SOS、月曆。" },
-        trial: { cycle: "安心體驗", contacts: 1, emergencies: 2, detail: "試用同免費：核心 1／緊急 2、安全守護 1 小時、SOS。799 進階才解鎖早中晚與守護群。" }
+        free: { cycle: "未訂閱", contacts: 1, emergencies: 2, detail: "一般提醒已暫停；仍可查看資料、求助電話與基礎 SOS。" },
+        trial: { cycle: "14 天安心體驗", contacts: 1, emergencies: 2, detail: "體驗 399 核心權益；可另做一次標示為測試的守護群通知，不開放一般群組排程。" }
       }[plan] || { cycle: "尚未選擇方案", contacts: 1, emergencies: 2, detail: "請先選擇適合你的守護方案。" };
     }
 
     function planQuotaLabel(plan) {
       const p = plan || "trial";
-      if (p === "trial") return "試用方案";
-      if (p === "free") return "免費方案";
+      if (p === "trial") return "14 天安心體驗";
+      if (p === "free") return "未訂閱";
       if (String(p).startsWith("paid_199")) return "199 方案";
       if (String(p).startsWith("paid_399")) return "399 方案";
       if (String(p).startsWith("paid_799")) return "799 方案";
@@ -6100,7 +6098,7 @@
         });
         const data = await res.json();
         smartReminderCache = data || smartReminderCache;
-        const entitled = Boolean(data.entitled) || planIs799(plan);
+        const entitled = Boolean(data.entitled);
         if (hint) {
           hint.textContent = data.state === "recovering"
             ? "帳號資料正在安全恢復，完成後會自動取回既有智慧提醒，不需要重新購買。"
@@ -6407,7 +6405,7 @@
       $("memberExpiryText").textContent = status.paid_until
         ? `使用期限 ${status.paid_until}`
         : memberPlan === "trial"
-          ? (status.trial_days_text || `免費剩 ${status.trial_days_left ?? 7} 天`)
+          ? (status.trial_days_text || `體驗剩 ${status.trial_days_left ?? 14} 天`)
           : "尚未設定到期日";
       $("memberLineAccount").textContent = lineUserId || status.line_user_id ? "LINE 已綁定" : "尚未綁定 LINE";
       $("memberContactEmail").textContent = status.contact_email || "尚未填寫";
@@ -6424,14 +6422,14 @@
       if (guardianTip) {
         guardianTip.hidden = isPaidPlan;
         if (!isPaidPlan) {
-          guardianTip.innerHTML = `<strong>免費版建議</strong>：1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。`;
+          guardianTip.innerHTML = `<strong>體驗期建議</strong>：1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。`;
         }
       }
       const emergencyTip = $("memberEmergencyPlanTip");
       if (emergencyTip) {
         emergencyTip.hidden = isPaidPlan;
         if (!isPaidPlan) {
-          emergencyTip.innerHTML = `<strong>免費版建議</strong>：2 位（爸媽，或配偶＋好友）。可先填姓名與電話。`;
+          emergencyTip.innerHTML = `<strong>體驗期建議</strong>：2 位（爸媽，或配偶＋好友）。可先填姓名與電話。`;
         } else {
           emergencyTip.hidden = false;
           emergencyTip.innerHTML = `<strong>方案名額</strong>：最多 ${emergencyLimit} 位電話備援。可先填姓名與電話。`;
@@ -6459,7 +6457,7 @@
       const atLimit = totalCount >= coreLimit;
       const limitBanner = $("memberGuardianLimitBanner");
       if (limitBanner) {
-        // 已有 ≥1 位守護人時顯示橫幅（含再邀請），名額未滿也顯示以便再邀拿 +7 天
+        // 已有 ≥1 位守護人時顯示橫幅；名額未滿也顯示，方便繼續建立守護圈。
         const showBanner = totalCount >= 1;
         limitBanner.hidden = !showBanner;
         if (showBanner) {
@@ -6623,7 +6621,7 @@
       if (isMemberRoleIntroDismissed()) return false;
       const plan = String((status && status.plan) || "trial");
       const isFreeOrTrial = plan === "trial" || plan === "free" || !String(plan).startsWith("paid_");
-      // 付費（含 799）不顯示「免費體驗小教室／免費版建議」
+      // 付費（含 799）不顯示體驗期引導
       return isFreeOrTrial;
     }
 
@@ -8217,6 +8215,10 @@
     }
 
     function openCalendarNote(dateText) {
+      if (!(currentStatusData && currentStatusData.calendar_notes_enabled === true)) {
+        alert("備忘錄只開放 799 樂年方案使用");
+        return;
+      }
       selectedCalendarDate = dateText;
       const date = new Date(`${dateText}T12:00:00`);
       const lunar = lunarInfo(date);
@@ -8922,7 +8924,7 @@
 
       const planView = planPresentation(data.plan, data.trial_days_left);
       $("planStateLabel").textContent = data.plan === "trial"
-        ? "7 天安心體驗"
+        ? "14 天安心體驗"
         : planLabel(data.plan);
       $("planDetailText").textContent = planView.detail;
       $("planStrip").dataset.planTone = planView.tone;
@@ -10391,7 +10393,7 @@
         const count = (cdata.contacts || []).length;
         const limit = cdata.contact_limit || 1;
         // 判斷:399/799 + 未填滿 + 沒被 dismiss
-        if (limit <= 1) return; // 免費版不再催
+        if (limit <= 1) return; // 未訂閱／體驗基準不再催
         if (count >= limit) return;
         const pref = istate.guardian_reminder_preference || "";
         if (pref === "dismissed") return;
@@ -10524,9 +10526,9 @@
     if (memberRoleIntroDismiss) {
       memberRoleIntroDismiss.addEventListener("click", dismissMemberRoleIntro);
     }
-    $("exportMyDataBtn").addEventListener("click", exportMyData);
-    $("deleteCheckinHistoryBtn").addEventListener("click", deleteCheckinHistory);
-    $("deleteAccountBtn").addEventListener("click", deleteAccountAndData);
+    if ($("exportMyDataBtn")) $("exportMyDataBtn").addEventListener("click", exportMyData);
+    if ($("deleteCheckinHistoryBtn")) $("deleteCheckinHistoryBtn").addEventListener("click", deleteCheckinHistory);
+    if ($("deleteAccountBtn")) $("deleteAccountBtn").addEventListener("click", deleteAccountAndData);
     document.querySelectorAll(".member-contact-tab").forEach((btn) => {
       btn.addEventListener("click", () => {
         setMemberContactTab(btn.getAttribute("data-contact-tab") || "core");
