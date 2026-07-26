@@ -599,6 +599,33 @@
       color: #166534;
     }
     .inline-error[hidden] { display: none; }
+    .account-migration-card {
+      margin: 16px 0;
+      padding: 18px;
+      border: 2px solid #86d7a2;
+      border-radius: 16px;
+      background: #f0fdf4;
+      color: #14532d;
+      text-align: left;
+      font-size: 17px;
+      line-height: 1.65;
+    }
+    .account-migration-card h2 { margin: 0 0 8px; font-size: 22px; }
+    .account-migration-card p { margin: 0 0 10px; }
+    .account-migration-card ul { margin: 0 0 12px; padding-left: 24px; }
+    .account-migration-card button,
+    .account-migration-card a {
+      display: inline-block;
+      min-height: 48px;
+      padding: 11px 18px;
+      border: 0;
+      border-radius: 12px;
+      background: #087f23;
+      color: #fff;
+      font-size: 17px;
+      font-weight: 700;
+      text-decoration: none;
+    }
     .check-btn:disabled,
     .reload-btn:disabled {
       opacity: 0.55;
@@ -3652,6 +3679,13 @@
       <div class="mvp-checkin-banner" id="mvpCheckinBanner" hidden>✅ 今天已完成平安回報</div>
       <div class="mvp-checkin-banner" id="mvpNextReminderBanner" hidden style="background:#ecfdf3;color:#166534;"></div>
       <p id="inlineError" class="inline-error" hidden></p>
+      <section id="accountMigrationCard" class="account-migration-card" role="status" aria-live="polite" hidden>
+        <h2 id="accountMigrationTitle">正在安全搬家</h2>
+        <p id="accountMigrationMessage">請稍候，正在確認你的帳號。</p>
+        <div id="accountMigrationSummary"></div>
+        <button id="retryAccountMigrationBtn" type="button" hidden>再試一次</button>
+        <a id="accountMigrationAction" href="https://liff.line.me/2010674803-rK98c0lo" hidden>回舊版重新驗證</a>
+      </section>
     </section>
 
     <section class="mvp-panel" id="mvpGuardPanel" aria-label="安全守護面板" hidden>
@@ -4626,6 +4660,134 @@
 
     function getAppParam(key) {
       return String(readAppParams().get(key) || "").trim();
+    }
+
+    let pendingAccountMigrationCode = "";
+    let accountMigrationInFlight = null;
+
+    function accountMigrationElement(id) {
+      return document.getElementById(id);
+    }
+
+    function removeMigrationCodeFromVisibleUrl() {
+      const safeParams = new URLSearchParams();
+      for (const key of ["open", "page", "friend_invite"]) {
+        const value = getAppParam(key);
+        if (value) safeParams.set(key, value);
+      }
+      const query = safeParams.toString();
+      const cleanUrl = `${location.pathname || "/"}${query ? `?${query}` : ""}`;
+      history.replaceState(null, "", cleanUrl);
+    }
+
+    function safeMigrationCount(value) {
+      const count = Number(value);
+      return Number.isFinite(count) && count >= 0 ? Math.floor(count) : 0;
+    }
+
+    function showAccountMigrationState(state, options = {}) {
+      const card = accountMigrationElement("accountMigrationCard");
+      const title = accountMigrationElement("accountMigrationTitle");
+      const message = accountMigrationElement("accountMigrationMessage");
+      const summary = accountMigrationElement("accountMigrationSummary");
+      const retry = accountMigrationElement("retryAccountMigrationBtn");
+      const action = accountMigrationElement("accountMigrationAction");
+      if (card) {
+        card.hidden = false;
+        card.dataset.state = state;
+      }
+      if (title) title.textContent = options.title || "";
+      if (message) message.textContent = options.message || "";
+      if (summary) summary.innerHTML = options.summary || "";
+      if (retry) {
+        retry.hidden = !options.retry;
+        retry.onclick = options.retry ? () => redeemPendingAccountMigration() : null;
+      }
+      if (action) {
+        action.hidden = !options.action;
+        action.href = options.actionHref || "https://liff.line.me/2010674803-rK98c0lo";
+        action.textContent = options.actionText || "回舊版重新驗證";
+      }
+    }
+
+    function showAccountMigrationFailure(errorCode) {
+      if (errorCode === "expired_code") {
+        showAccountMigrationState("expired", {
+          title: "搬家連結已過期",
+          message: "這個安全搬家連結已超過使用時間，請回舊版重新驗證。",
+          action: true,
+          actionText: "回舊版重新驗證"
+        });
+        return;
+      }
+      if (errorCode === "used_code") {
+        showAccountMigrationState("used", {
+          title: "搬家連結已使用",
+          message: "這個連結已完成使用。請回到新版首頁查看資料；若資料未出現，再從舊版重新驗證。",
+          action: true,
+          actionText: "回舊版重新驗證"
+        });
+        return;
+      }
+      showAccountMigrationState("error", {
+        title: "暫時無法完成搬家",
+        message: "資料仍安全保留，請確認網路後再試一次。",
+        retry: true
+      });
+    }
+
+    async function redeemPendingAccountMigration() {
+      const migrationCode = pendingAccountMigrationCode || getAppParam("migration_code");
+      if (!migrationCode) return { attempted: false, succeeded: false };
+      pendingAccountMigrationCode = migrationCode;
+      if (accountMigrationInFlight) return accountMigrationInFlight;
+
+      accountMigrationInFlight = (async () => {
+        showAccountMigrationState("working", {
+          title: "正在安全搬家",
+          message: "正在確認新舊帳號，請稍候。"
+        });
+        try {
+          const idToken = String(liff.getIDToken() || "").trim();
+          if (!idToken) throw new Error("missing_current_token");
+          const request = fetch("/api/account-migration/redeem", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${idToken}`
+            },
+            body: JSON.stringify({ migration_code: migrationCode })
+          });
+          removeMigrationCodeFromVisibleUrl();
+          const response = await request;
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || !data.ok) {
+            showAccountMigrationFailure(String(data.error || ""));
+            return { attempted: true, succeeded: false };
+          }
+          const counts = data.counts || {};
+          const summary = [
+            `<li>平安紀錄 ${safeMigrationCount(counts.checkins)} 筆</li>`,
+            `<li>守護聯絡人 ${safeMigrationCount(counts.contacts)} 位</li>`,
+            `<li>守護群組 ${safeMigrationCount(counts.groups)} 個</li>`,
+            `<li>智能提醒 ${safeMigrationCount(counts.reminders)} 項</li>`
+          ].join("");
+          showAccountMigrationState("success", {
+            title: "帳號搬家完成",
+            message: "原有方案與可移轉資料已安全帶到新版。",
+            summary: `<ul>${summary}</ul>`
+          });
+          pendingAccountMigrationCode = "";
+          const initialData = await loadInitialMemberData();
+          return { attempted: true, succeeded: true, initialData };
+        } catch (_) {
+          showAccountMigrationFailure("");
+          return { attempted: true, succeeded: false };
+        } finally {
+          accountMigrationInFlight = null;
+        }
+      })();
+      return accountMigrationInFlight;
     }
 
     function requestedAppAction() {
@@ -9414,7 +9576,7 @@
     }
 
     // 整合到 initApp:載入守護人 + onboarding 檢查
-    async function initApp() {
+    async function initApp(options = {}) {
       const dailyEl = $("dailyStatus");
       if (dailyEl) dailyEl.textContent = "讀取中...";
 
@@ -9426,7 +9588,7 @@
       }
 
       try {
-        const initialData = await loadInitialMemberData();
+        const initialData = options.initialData || await loadInitialMemberData();
         const status = initialData.status;
         const onboardingState = initialData.onboarding;
 
@@ -10126,7 +10288,10 @@
           return;
         }
 
-        const memberReady = await initApp();
+        const migration = await redeemPendingAccountMigration();
+        const memberReady = await initApp({
+          initialData: migration.succeeded ? migration.initialData : null
+        });
         if (!memberReady) return;
         if (useLocalMode) renderStatus(buildLocalStatus(loadLocalState()));
         await refreshCalendarNotes();

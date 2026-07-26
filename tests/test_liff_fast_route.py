@@ -66,7 +66,7 @@ class LiffFastRouteTests(unittest.TestCase):
     def test_initial_member_requests_run_in_parallel(self):
         loader = self.section(
             "async function loadInitialMemberData()",
-            "async function initApp()",
+            "async function initApp(options = {})",
         )
         self.assertIn("const statusPromise", loader)
         self.assertIn("const contactsPromise", loader)
@@ -76,7 +76,7 @@ class LiffFastRouteTests(unittest.TestCase):
     def test_first_status_response_syncs_checkin_button_immediately(self):
         loader = self.section(
             "async function loadInitialMemberData()",
-            "async function initApp()",
+            "async function initApp(options = {})",
         )
         self.assertIn("renderStatus(status)", loader)
         self.assertIn("syncCheckBtn(status)", loader)
@@ -84,7 +84,7 @@ class LiffFastRouteTests(unittest.TestCase):
     def test_first_status_response_unlocks_safe_member_actions(self):
         loader = self.section(
             "async function loadInitialMemberData()",
-            "async function initApp()",
+            "async function initApp(options = {})",
         )
         self.assertIn('$("mvpSafeBtn").disabled = false', loader)
         self.assertIn('$("mvpGuardStartBtn").disabled = false', loader)
@@ -99,6 +99,32 @@ class LiffFastRouteTests(unittest.TestCase):
         response = self.client.get("/liff/migrate.html")
         self.addCleanup(response.close)
         self.assertEqual(response.status_code, 200)
+
+    def test_account_migration_redeems_after_liff_before_member_bootstrap(self):
+        bootstrap = self.section(
+            "async function bootstrapApp()",
+            "appBootstrapPromise = bootstrapApp()",
+        )
+        self.assertIn("await redeemPendingAccountMigration()", bootstrap)
+        self.assertLess(
+            bootstrap.index("await initLine()"),
+            bootstrap.index("await redeemPendingAccountMigration()"),
+        )
+        self.assertLess(
+            bootstrap.index("await redeemPendingAccountMigration()"),
+            bootstrap.index("await initApp("),
+        )
+
+    def test_migration_redemption_reuses_member_data_without_page_reload(self):
+        redeem = self.section(
+            "async function redeemPendingAccountMigration()",
+            "function requestedAppAction()",
+        )
+        self.assertIn('fetch("/api/account-migration/redeem"', redeem)
+        self.assertIn("removeMigrationCodeFromVisibleUrl()", redeem)
+        self.assertIn("history.replaceState", self.page)
+        self.assertIn("await loadInitialMemberData()", redeem)
+        self.assertNotIn("location.reload", redeem)
 
     def test_degraded_liff_embed_redirect_uses_query_without_extra_slash(self):
         with patch.object(alive_app, "liff_entry_url", None):

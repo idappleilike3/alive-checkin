@@ -15,21 +15,19 @@ function section(start, end) {
   return page.slice(from, to);
 }
 
-function migrationTarget(search) {
+function migrationTarget(search, migrationCode = "single-use-code") {
   assert.ok(migrationScript, "liff/migrate.html script not found");
-  const anchor = {href: ""};
-  vm.runInNewContext(migrationScript, {
+  const sandbox = {
     URL,
     URLSearchParams,
     location: {search},
-    document: {
-      querySelector(selector) {
-        assert.equal(selector, "#openNewLiff");
-        return anchor;
-      },
-    },
-  }, {filename: "liff/migrate.html"});
-  return anchor.href;
+  };
+  vm.runInNewContext(
+    `${migrationScript}\nthis.buildCurrentMigrationUrl = buildCurrentMigrationUrl;`,
+    sandbox,
+    {filename: "liff/migrate.html"},
+  );
+  return sandbox.buildCurrentMigrationUrl(migrationCode, search);
 }
 
 function functionSource(name) {
@@ -298,7 +296,7 @@ test("legacy handoff parses nested liff.state and drops the old Provider inviter
 
   assert.equal(
     migrationTarget(`?liff.state=${nestedState}`),
-    "https://liff.line.me/2010848330-UAiqPPYD?open=guard&friend_invite=ABC1234",
+    "https://liff.line.me/2010848330-UAiqPPYD?migration_code=single-use-code&open=guard&friend_invite=ABC1234",
   );
 });
 
@@ -309,7 +307,7 @@ test("legacy handoff forwards only non-identity allowlisted outer parameters", (
     migrationTarget(
       `?page=member&invite_from=${oldProviderUserId}&id_token=secret&unexpected=leak`,
     ),
-    "https://liff.line.me/2010848330-UAiqPPYD?page=member",
+    "https://liff.line.me/2010848330-UAiqPPYD?migration_code=single-use-code&page=member",
   );
 });
 
@@ -319,7 +317,7 @@ test("legacy handoff never emits an old Provider user ID under an allowlisted ke
   for (const key of ["open", "page", "friend_invite"]) {
     assert.equal(
       migrationTarget(`?${key}=${oldProviderUserId}`),
-      "https://liff.line.me/2010848330-UAiqPPYD",
+      "https://liff.line.me/2010848330-UAiqPPYD?migration_code=single-use-code",
       `${key} must not carry a legacy LINE user ID`,
     );
   }
