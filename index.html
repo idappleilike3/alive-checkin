@@ -5027,6 +5027,8 @@
       const out = {};
       const inviteFrom = String(read("invite_from") || "").trim();
       if (/^U[0-9a-f]{32}$/i.test(inviteFrom)) out.invite_from = inviteFrom;
+      const inviteToken = String(read("invite_token") || "").trim();
+      if (/^[A-Za-z0-9_-]{32,128}$/.test(inviteToken)) out.invite_token = inviteToken;
       const friendInvite = String(read("friend_invite") || "").trim().toUpperCase();
       if (/^[A-Z0-9]{6,8}$/.test(friendInvite)) out.friend_invite = friendInvite;
       for (const key of ["open", "page"]) {
@@ -5523,6 +5525,8 @@
         contact_picture_url: linePictureUrl || (currentStatusData && currentStatusData.picture_url) || "",
         recipient_consent: true
       };
+      const inviteToken = String(getAppParam("invite_token") || "").trim();
+      if (inviteToken) body.invite_token = inviteToken;
       if (options && options.mutual_core) {
         body.mutual_core = true;
       }
@@ -5554,6 +5558,8 @@
         invite_from: inviterLineUserId,
         line_user_id: lineUserId,
       });
+      const inviteToken = String(getAppParam("invite_token") || "").trim();
+      if (inviteToken) qs.set("invite_token", inviteToken);
       const res = await fetch(await withAuthQuery(`/api/emergency-contact/invite-preview?${qs.toString()}`), {
         headers: await authHeaders(),
       });
@@ -7019,7 +7025,7 @@
       try {
         const url = new URL(window.location.href);
         let changed = false;
-        ["invite_from", "from"].forEach((key) => {
+        ["invite_from", "from", "invite_token"].forEach((key) => {
           if (url.searchParams.has(key)) {
             url.searchParams.delete(key);
             changed = true;
@@ -7028,7 +7034,7 @@
         const rawHash = String(url.hash || "").replace(/^#/, "");
         if (rawHash && rawHash.includes("=")) {
           const hp = new URLSearchParams(rawHash);
-          ["invite_from", "from"].forEach((key) => {
+          ["invite_from", "from", "invite_token"].forEach((key) => {
             if (hp.has(key)) {
               hp.delete(key);
               changed = true;
@@ -7183,11 +7189,11 @@
         } catch (_) {}
       }
       if (!lineUserId && window.liff && !liff.isLoggedIn()) {
-        startLineLogin({ invite_from: inviteFrom });
+        startLineLogin({ invite_from: inviteFrom, invite_token: getAppParam("invite_token") });
         return;
       }
       if (!lineUserId) {
-        showLineLoginRequired({ invite_from: inviteFrom });
+        showLineLoginRequired({ invite_from: inviteFrom, invite_token: getAppParam("invite_token") });
         alert("請先用 LINE 登入，系統會自動帶回這份守護邀請。");
         return;
       }

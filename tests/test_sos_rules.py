@@ -445,6 +445,34 @@ class SosRulesTests(unittest.TestCase):
         self.assertEqual(stopped_code, 200)
         self.assertEqual(stopped["sent"], 0)
 
+    def test_profile_completion_reminder_auto_stops_when_contact_details_are_complete(self):
+        data_file = self.make_data_file({
+            "line_user_id": "U-owner",
+            "display_name": "小美",
+            "profile_completion_required": True,
+            "profile_completion_bound_at": "2026-07-01T09:00:00+08:00",
+            "contacts": [{
+                "name": "阿媽",
+                "relationship": "母女",
+                "phone": "0912345678",
+                "line_user_id": "U-guardian",
+                "binding_status": "accepted",
+            }],
+        })
+        sent = []
+        result, code = app_module.send_profile_completion_reminders({
+            "DATA_FILE": data_file,
+            "LINE_CHANNEL_ACCESS_TOKEN": "token",
+            "LINE_PUSH_SENDER": lambda *_args: sent.append(True) or {"ok": True},
+            "CRON_NOW": datetime.fromisoformat("2026-07-04T09:00:00"),
+        })
+        self.assertEqual(code, 200)
+        self.assertEqual(result["sent"], 0)
+        self.assertEqual(sent, [])
+        stored = load_state(data_file)["users"]["U-owner"]
+        self.assertFalse(stored["profile_completion_required"])
+        self.assertTrue(stored["profile_completion_completed_at"])
+
 
 if __name__ == "__main__":
     unittest.main()

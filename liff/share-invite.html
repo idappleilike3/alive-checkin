@@ -103,6 +103,7 @@
     let sharing = false;
     let shareBlocked = false;
     let autoShareAttempted = false;
+    let activeInviteToken = "";
 
     function sanitizeUserId(raw) {
       return String(raw || "").trim().replace(/[^a-zA-Z0-9_-]/g, "");
@@ -220,13 +221,34 @@
       try { alert(String(msg || "暫時無法分享")); } catch (_) {}
     }
 
+    async function createGuardianInvite() {
+      const idToken = (window.liff && typeof liff.getIDToken === "function")
+        ? String(liff.getIDToken() || "")
+        : "";
+      const response = await fetch("/api/emergency-contact/invite", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(idToken ? { "Authorization": `Bearer ${idToken}` } : {}),
+        },
+        body: JSON.stringify({ line_user_id: myUserId }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.invite_token) {
+        throw new Error(data.error || "invite_create_failed");
+      }
+      activeInviteToken = String(data.invite_token);
+      return activeInviteToken;
+    }
+
     async function openGuardianShare(inviterId) {
       const safeId = sanitizeUserId(inviterId);
-      const bindUrl = `https://line.me/R/app/${LIFF_ID}?invite_from=${encodeURIComponent(safeId)}`;
       try {
         if (!safeId || !window.liff || typeof liff.shareTargetPicker !== "function") {
           throw new Error("shareTargetPicker unavailable");
         }
+        const inviteToken = await createGuardianInvite();
+        const bindUrl = `https://line.me/R/app/${LIFF_ID}?invite_from=${encodeURIComponent(safeId)}&invite_token=${encodeURIComponent(inviteToken)}`;
         const result = await liff.shareTargetPicker([{
           type: "text",
           text: `想邀請你成為我的每日平安守護人。\n${bindUrl}`,

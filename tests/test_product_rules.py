@@ -19,6 +19,18 @@ def load_plan_limits():
 
 
 class ProductRulesTests(unittest.TestCase):
+    def test_guardian_share_creates_server_invite_and_carries_unique_token(self):
+        share_page = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
+        member_page = (ROOT / "index.html").read_text(encoding="utf-8")
+        invite_page = (ROOT / "invite.html").read_text(encoding="utf-8")
+        self.assertIn('fetch("/api/emergency-contact/invite"', share_page)
+        self.assertIn("data.invite_token", share_page)
+        self.assertIn("&invite_token=", share_page)
+        self.assertIn("body.invite_token = inviteToken", member_page)
+        self.assertIn('qs.set("invite_token", inviteToken)', member_page)
+        self.assertIn('"invite_from", "from", "invite_token"', member_page)
+        self.assertIn('q.set("invite_token", inviteToken)', invite_page)
+
     def test_no_production_entry_uses_legacy_liff_id(self):
         allowed = {
             ROOT / "liff" / "migrate.html",

@@ -3436,7 +3436,7 @@ def complete_guardian_contact(contact):
         str(contact.get("name") or "").strip()
         and str(contact.get("relationship") or "").strip()
         and str(contact.get("phone") or "").strip()
-        and (str(contact.get("line_id") or "").strip() or contact.get("consent_status") == "accepted")
+        and (get_contact_line_id(contact) or contact.get("consent_status") == "accepted")
     )
 
 
@@ -3883,8 +3883,10 @@ def create_guardian_invite(data_file, inviter_line_user_id, payload, now=None):
     now = now or current_app_time({})
     state = load_state(data_file)
     get_profile(state, inviter_id)
+    invite_token = secrets.token_urlsafe(32)
     invite = {
         "id": secrets.token_urlsafe(12),
+        "invite_token": invite_token,
         "inviter_line_user_id": inviter_id,
         "display_name": display_name,
         "relationship": relationship,
@@ -3898,8 +3900,43 @@ def create_guardian_invite(data_file, inviter_line_user_id, payload, now=None):
     return {"ok": True, **invite}, 201
 
 
-def _pending_guardian_invite(state, inviter_id, now=None):
+def _guardian_invite_for_token(state, inviter_id, invite_token, now=None):
+    """Resolve exactly one invite token and normalize its lifecycle state."""
     now = now or current_app_time({})
+    token = str(invite_token or "").strip()
+    if not token:
+        return None, "invalid"
+    for invite in reversed(state.get("guardian_invites") or []):
+        if not isinstance(invite, dict):
+            continue
+        if invite.get("inviter_line_user_id") != inviter_id:
+            continue
+        if not secrets.compare_digest(str(invite.get("invite_token") or ""), token):
+            continue
+        if invite.get("status") == "accepted":
+            return invite, "used"
+        if invite.get("status") == "expired":
+            return invite, "expired"
+        try:
+            expiry = datetime.fromisoformat(str(invite.get("expires_at") or ""))
+        except ValueError:
+            expiry = now
+        if expiry <= now:
+            invite["status"] = "expired"
+            return invite, "expired"
+        if invite.get("status") != "pending":
+            return invite, "invalid"
+        return invite, "pending"
+    return None, "invalid"
+
+
+def _pending_guardian_invite(state, inviter_id, now=None, invite_token=""):
+    now = now or current_app_time({})
+    if str(invite_token or "").strip():
+        invite, status = _guardian_invite_for_token(
+            state, inviter_id, invite_token, now
+        )
+        return invite if status == "pending" else None
     rows = state.get("guardian_invites") or []
     for invite in reversed(rows):
         if not isinstance(invite, dict) or invite.get("inviter_line_user_id") != inviter_id:
@@ -3943,7 +3980,25 @@ def invite_bind_preview(data_file, payload):
     inviter_name = str(inviter.get("display_name") or "").strip() or "親友"
     inviter_rules = plan_rules(inviter or {"plan": "trial"})
     invitee_rules = plan_rules(invitee or {"plan": "trial"})
-    pending = _pending_guardian_invite(state, inviter_id)
+    inviter_invites = [
+        row for row in (state.get("guardian_invites") or [])
+        if isinstance(row, dict) and row.get("inviter_line_user_id") == inviter_id
+    ]
+    invite_token = str(payload.get("invite_token") or "").strip()
+    pending = None
+    if inviter_invites:
+        matched, invite_status = _guardian_invite_for_token(
+            state, inviter_id, invite_token
+        )
+        if invite_status == "used":
+            save_state(data_file, state)
+            return {"ok": False, "error": "邀請已使用", "code": "invite_used"}, 410
+        if invite_status == "expired":
+            save_state(data_file, state)
+            return {"ok": False, "error": "邀請已超過七天，請對方重新分享", "code": "invite_expired"}, 410
+        if invite_status != "pending":
+            return {"ok": False, "error": "邀請連結無效", "code": "invalid_invite_token"}, 403
+        pending = matched
     return {
         "ok": True,
         "is_reverse_invite": is_reverse,
@@ -4213,7 +4268,27 @@ def bind_emergency_contact(data_file, payload, config=None):
         return {"ok": False, "error": "不能綁定自己成為守護人", "code": "self_bind"}, 400
 
     state = load_state(data_file)
-    pending_invite = _pending_guardian_invite(state, inviter_id, current_app_time(config or {}))
+    invite_token = str(payload.get("invite_token") or "").strip()
+    inviter_invites = [
+        row for row in (state.get("guardian_invites") or [])
+        if isinstance(row, dict) and row.get("inviter_line_user_id") == inviter_id
+    ]
+    pending_invite = None
+    invite_status = "legacy"
+    if inviter_invites:
+        pending_invite, invite_status = _guardian_invite_for_token(
+            state,
+            inviter_id,
+            invite_token,
+            current_app_time(config or {}),
+        )
+        if invite_status == "used":
+            return {"ok": False, "error": "邀請已使用", "code": "invite_used"}, 410
+        if invite_status == "expired":
+            save_state(data_file, state)
+            return {"ok": False, "error": "邀請已超過七天，請對方重新分享", "code": "invite_expired"}, 410
+        if invite_status != "pending":
+            return {"ok": False, "error": "邀請連結無效", "code": "invalid_invite_token"}, 403
     expired_invite = next(
         (
             row for row in (state.get("guardian_invites") or [])
@@ -4223,7 +4298,7 @@ def bind_emergency_contact(data_file, payload, config=None):
         ),
         None,
     )
-    if not pending_invite and expired_invite:
+    if not inviter_invites and not pending_invite and expired_invite:
         save_state(data_file, state)
         return {"ok": False, "error": "邀請已超過七天，請對方重新分享", "code": "invite_expired"}, 410
     if pending_invite and not bool(payload.get("recipient_consent")):
@@ -4482,6 +4557,10 @@ def bind_emergency_contact(data_file, payload, config=None):
         invite_reward_applied = apply_invite_trial_reward(
             inviter, reward, accepted_at=accepted_at
         )
+
+    # Relationship and consumed invite must be durable before either party sees
+    # a success notification. Notification attempts are logged in a second save.
+    save_state(data_file, state)
 
     inviter_notified = False
     guardian_notified = False
@@ -7955,6 +8034,21 @@ def admin_summary(data_file, config=None, now=None):
         key=lambda item: (-item["revenue"], -item["members"], item["county"]),
     )
     persist = persistence_info(data_file)
+    guardian_invites = []
+    for row in reversed((state.get("guardian_invites") or [])[-100:]):
+        if not isinstance(row, dict):
+            continue
+        guardian_invites.append({
+            "id": row.get("id") or "",
+            "inviter_line_user_id": row.get("inviter_line_user_id") or "",
+            "display_name": row.get("display_name") or "",
+            "relationship": row.get("relationship") or "",
+            "status": row.get("status") or "",
+            "created_at": row.get("created_at") or "",
+            "expires_at": row.get("expires_at") or "",
+            "accepted_at": row.get("accepted_at") or "",
+            "invitee_line_user_id": row.get("invitee_line_user_id") or "",
+        })
     return {
         "total_users": len(users),
         "overdue_users": sum(1 for user in users if user["is_overdue"]),
@@ -7964,6 +8058,11 @@ def admin_summary(data_file, config=None, now=None):
         "guardian_groups": guardian_groups,
         "bound_guardian_total": sum(int(user.get("bound_guardian_count") or 0) for user in users),
         "invite_edges": list(reversed(invite_edges[-100:])),
+        "guardian_invites": guardian_invites,
+        "guardian_invite_counts": {
+            status: sum(1 for row in guardian_invites if row.get("status") == status)
+            for status in ("pending", "accepted", "expired")
+        },
         "orders": orders,
         "paid_order_count": len(paid_orders),
         "paid_revenue": sum(int(order.get("amount") or 0) for order in paid_orders),
@@ -9785,6 +9884,15 @@ def send_profile_completion_reminders(config):
     results = []
     for profile in (state.get("users") or {}).values():
         if not isinstance(profile, dict) or not profile.get("profile_completion_required"):
+            continue
+        if any(
+            complete_guardian_contact(contact)
+            for contact in (profile.get("contacts") or [])
+            if isinstance(contact, dict)
+        ):
+            profile["profile_completion_required"] = False
+            profile["profile_completion_completed_at"] = now.isoformat(timespec="seconds")
+            skipped += 1
             continue
         try:
             bound_at = datetime.fromisoformat(str(profile.get("profile_completion_bound_at") or ""))
@@ -11782,9 +11890,21 @@ def create_app(config=None):
             return jsonify(err[0]), err[1]
         payload = {
             "invite_from": request.args.get("invite_from") or request.args.get("from") or "",
+            "invite_token": request.args.get("invite_token") or "",
             "line_user_id": line_user_id,
         }
         data, code = invite_bind_preview(app.config["DATA_FILE"], payload)
+        return jsonify(data), code
+
+    @app.post("/api/emergency-contact/invite")
+    def emergency_contact_invite_create_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = create_guardian_invite(
+            app.config["DATA_FILE"], line_user_id, payload
+        )
         return jsonify(data), code
 
     @app.post("/api/emergency-contact/bind")
@@ -12635,11 +12755,17 @@ class MiniClient:
         if route == "/api/contacts":
             return MiniResponse(get_contacts(self.app.config["DATA_FILE"], params.get("line_user_id")))
         if route == "/api/emergency-contact/invite-preview":
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
             body, code = invite_bind_preview(
                 self.app.config["DATA_FILE"],
                 {
                     "invite_from": params.get("invite_from") or params.get("from") or "",
-                    "line_user_id": params.get("line_user_id") or "",
+                    "invite_token": params.get("invite_token") or "",
+                    "line_user_id": line_user_id,
                 },
             )
             return MiniResponse(body, code)
@@ -12724,6 +12850,16 @@ class MiniClient:
                 return MiniResponse(err[0], err[1])
             payload["contact_line_user_id"] = line_user_id
             body, code = bind_emergency_contact(self.app.config["DATA_FILE"], payload, self.app.config)
+            return MiniResponse(body, code)
+        if route == "/api/emergency-contact/invite":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            body, code = create_guardian_invite(
+                self.app.config["DATA_FILE"], line_user_id, payload
+            )
             return MiniResponse(body, code)
         if route == "/api/guardian-groups/bind":
             body, code = bind_guardian_group(self.app.config["DATA_FILE"], payload)
@@ -12957,11 +13093,15 @@ class MiniApp:
                 if route == "/api/contacts":
                     return handler.send_json(get_contacts(data_file, params.get("line_user_id")))
                 if route == "/api/emergency-contact/invite-preview":
+                    line_user_id, err = handler.authenticated_user({}, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
                     data, code = invite_bind_preview(
                         data_file,
                         {
                             "invite_from": params.get("invite_from") or params.get("from") or "",
-                            "line_user_id": params.get("line_user_id") or "",
+                            "invite_token": params.get("invite_token") or "",
+                            "line_user_id": line_user_id,
                         },
                     )
                     return handler.send_json(data, code)
@@ -13096,6 +13236,14 @@ class MiniApp:
                         return handler.send_json(err[0], err[1])
                     payload["contact_line_user_id"] = line_user_id
                     data, code = bind_emergency_contact(data_file, payload, config)
+                    return handler.send_json(data, code)
+                if route == "/api/emergency-contact/invite":
+                    line_user_id, err = handler.authenticated_user(payload, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    data, code = create_guardian_invite(
+                        data_file, line_user_id, payload
+                    )
                     return handler.send_json(data, code)
                 if route == "/api/guardian-groups/bind":
                     data, code = bind_guardian_group(data_file, payload)

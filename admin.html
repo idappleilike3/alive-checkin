@@ -382,6 +382,9 @@
         <div class="stat"><strong id="overdueUsers">0</strong><span>已逾期</span></div>
         <div class="stat"><strong id="guardianGroups">0</strong><span>守護群</span></div>
         <div class="stat"><strong id="boundGuardians">0</strong><span>已綁守護人</span></div>
+        <div class="stat"><strong id="pendingGuardianInvites">0</strong><span>待接受邀請</span></div>
+        <div class="stat"><strong id="acceptedGuardianInvites">0</strong><span>已接受邀請</span></div>
+        <div class="stat"><strong id="expiredGuardianInvites">0</strong><span>已過期邀請</span></div>
         <div class="stat"><strong id="paidRevenue">NT$0</strong><span>已付款營收</span></div>
         <div class="stat"><strong id="paidOrders">0</strong><span>已付款訂單</span></div>
         <div class="stat"><strong id="pendingOrders">0</strong><span>待付款訂單</span></div>
@@ -994,6 +997,10 @@
       $("overdueUsers").textContent = data.overdue_users;
       $("guardianGroups").textContent = data.guardian_group_count || 0;
       if ($("boundGuardians")) $("boundGuardians").textContent = data.bound_guardian_total || 0;
+      const inviteCounts = data.guardian_invite_counts || {};
+      $("pendingGuardianInvites").textContent = inviteCounts.pending || 0;
+      $("acceptedGuardianInvites").textContent = inviteCounts.accepted || 0;
+      $("expiredGuardianInvites").textContent = inviteCounts.expired || 0;
       const persistNote = $("persistenceNote");
       if (persistNote) {
         const persist = data.persistence || {};

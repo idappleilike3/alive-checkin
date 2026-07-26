@@ -122,7 +122,11 @@ class BindAndHomeGateTests(unittest.TestCase):
 
         rejected, rejected_code = app_module.bind_emergency_contact(
             self.data_file,
-            {"inviter_line_user_id": "U-owner", "contact_line_user_id": "U-guardian"},
+            {
+                "inviter_line_user_id": "U-owner",
+                "contact_line_user_id": "U-guardian",
+                "invite_token": invite["invite_token"],
+            },
             config={},
         )
         self.assertEqual(rejected_code, 409)
@@ -135,6 +139,7 @@ class BindAndHomeGateTests(unittest.TestCase):
                 "inviter_line_user_id": "U-owner",
                 "contact_line_user_id": "U-guardian",
                 "recipient_consent": True,
+                "invite_token": invite["invite_token"],
             },
             config={},
         )
@@ -151,7 +156,7 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(state["guardian_invites"][0]["status"], "accepted")
 
     def test_verified_bind_keeps_both_records_when_one_notice_fails(self):
-        app_module.create_guardian_invite(
+        invite, _ = app_module.create_guardian_invite(
             self.data_file, "U-owner", {"display_name": "阿媽", "relationship": "阿嬤"}
         )
 
@@ -166,6 +171,7 @@ class BindAndHomeGateTests(unittest.TestCase):
                 "inviter_line_user_id": "U-owner",
                 "contact_line_user_id": "U-guardian",
                 "recipient_consent": True,
+                "invite_token": invite["invite_token"],
             },
             config={"LINE_CHANNEL_ACCESS_TOKEN": "token", "LINE_PUSH_SENDER": sender},
         )
@@ -180,7 +186,7 @@ class BindAndHomeGateTests(unittest.TestCase):
 
     def test_pending_invite_expires_after_seven_days(self):
         past = app_module.current_app_time({}) - app_module.timedelta(days=8)
-        app_module.create_guardian_invite(
+        invite, _ = app_module.create_guardian_invite(
             self.data_file,
             "U-owner",
             {"display_name": "阿媽", "relationship": "阿嬤"},
@@ -192,11 +198,147 @@ class BindAndHomeGateTests(unittest.TestCase):
                 "inviter_line_user_id": "U-owner",
                 "contact_line_user_id": "U-guardian",
                 "recipient_consent": True,
+                "invite_token": invite["invite_token"],
             },
             config={},
         )
         self.assertEqual(code, 410)
         self.assertEqual(result["code"], "invite_expired")
+
+    def test_guardian_invite_token_is_required_and_bound_to_one_invite(self):
+        invite, code = app_module.create_guardian_invite(
+            self.data_file,
+            "U-owner",
+            {"display_name": "阿媽", "relationship": "阿嬤"},
+        )
+        self.assertEqual(code, 201)
+        token = invite.get("invite_token")
+        self.assertTrue(token)
+
+        missing, missing_code = app_module.invite_bind_preview(
+            self.data_file,
+            {"invite_from": "U-owner", "line_user_id": "U-stranger"},
+        )
+        self.assertEqual(missing_code, 403)
+        self.assertEqual(missing["code"], "invalid_invite_token")
+
+        wrong, wrong_code = app_module.invite_bind_preview(
+            self.data_file,
+            {
+                "invite_from": "U-owner",
+                "line_user_id": "U-stranger",
+                "invite_token": "wrong-token",
+            },
+        )
+        self.assertEqual(wrong_code, 403)
+        self.assertEqual(wrong["code"], "invalid_invite_token")
+
+        preview, preview_code = app_module.invite_bind_preview(
+            self.data_file,
+            {
+                "invite_from": "U-owner",
+                "line_user_id": "U-guardian",
+                "invite_token": token,
+            },
+        )
+        self.assertEqual(preview_code, 200)
+        self.assertEqual(preview["invite_status"], "pending")
+        self.assertNotIn("invite_token", preview)
+
+    def test_guardian_bind_rejects_wrong_token_and_consumed_token(self):
+        invite, _ = app_module.create_guardian_invite(
+            self.data_file, "U-owner", {"display_name": "阿媽"}
+        )
+        token = invite["invite_token"]
+
+        wrong, wrong_code = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-owner",
+                "contact_line_user_id": "U-attacker",
+                "recipient_consent": True,
+                "invite_token": "wrong-token",
+            },
+            config={},
+        )
+        self.assertEqual(wrong_code, 403)
+        self.assertEqual(wrong["code"], "invalid_invite_token")
+
+        accepted, accepted_code = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-owner",
+                "contact_line_user_id": "U-guardian",
+                "recipient_consent": True,
+                "invite_token": token,
+            },
+            config={},
+        )
+        self.assertEqual(accepted_code, 200)
+        self.assertTrue(accepted["reciprocal"])
+
+        reused, reused_code = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-owner",
+                "contact_line_user_id": "U-other",
+                "recipient_consent": True,
+                "invite_token": token,
+            },
+            config={},
+        )
+        self.assertEqual(reused_code, 410)
+        self.assertEqual(reused["code"], "invite_used")
+
+    def test_binding_is_persisted_before_success_notifications_are_sent(self):
+        invite, _ = app_module.create_guardian_invite(
+            self.data_file, "U-owner", {"display_name": "阿媽"}
+        )
+
+        def sender(_token, _target, _message):
+            persisted = app_module.load_state(self.data_file)
+            owner = persisted["users"]["U-owner"]
+            guardian = persisted["users"]["U-guardian"]
+            self.assertEqual(owner["contacts"][0]["line_user_id"], "U-guardian")
+            self.assertEqual(guardian["contacts"][0]["line_user_id"], "U-owner")
+            self.assertEqual(persisted["guardian_invites"][0]["status"], "accepted")
+            return {"ok": True}
+
+        result, code = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-owner",
+                "contact_line_user_id": "U-guardian",
+                "recipient_consent": True,
+                "invite_token": invite["invite_token"],
+            },
+            config={"LINE_CHANNEL_ACCESS_TOKEN": "token", "LINE_PUSH_SENDER": sender},
+        )
+        self.assertEqual(code, 200)
+        self.assertEqual(result["owner_notice"]["status"], "sent")
+        self.assertEqual(result["invitee_notice"]["status"], "sent")
+
+    def test_fallback_http_create_invite_uses_authenticated_owner_and_returns_token(self):
+        status, body = self.fallback_http_request(
+            "POST",
+            "/api/emergency-contact/invite",
+            payload={"line_user_id": "U-forged"},
+            authenticated_user="U-owner",
+        )
+        self.assertEqual(status, 201)
+        self.assertTrue(body["invite_token"])
+        self.assertEqual(body["inviter_line_user_id"], "U-owner")
+        state = app_module.load_state(self.data_file)
+        self.assertEqual(state["guardian_invites"][0]["inviter_line_user_id"], "U-owner")
+        self.assertEqual(state["guardian_invites"][0]["invite_token"], body["invite_token"])
+        summary = app_module.admin_summary(self.data_file)
+        self.assertEqual(summary["guardian_invite_counts"]["pending"], 1)
+        self.assertEqual(summary["guardian_invites"][0]["status"], "pending")
+        self.assertNotIn("invite_token", summary["guardian_invites"][0])
+        admin_page = (ROOT / "admin.html").read_text(encoding="utf-8")
+        self.assertIn('id="pendingGuardianInvites"', admin_page)
+        self.assertIn('id="acceptedGuardianInvites"', admin_page)
+        self.assertIn('id="expiredGuardianInvites"', admin_page)
 
     def test_bind_matches_legacy_line_user_id_field(self):
         state = app_module.load_state(self.data_file)
