@@ -4,6 +4,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+NEW_LIFF_ID = "2010848330-UAiqPPYD"
+NEW_CHANNEL_ID = "2010848330"
 
 
 def load_plan_limits():
@@ -16,6 +18,11 @@ def load_plan_limits():
 
 
 class ProductRulesTests(unittest.TestCase):
+    def test_render_uses_new_line_login_provider(self):
+        render = (ROOT / "render.yaml").read_text(encoding="utf-8")
+        self.assertIn(f"value: {NEW_LIFF_ID}", render)
+        self.assertIn(f"value: {NEW_CHANNEL_ID}", render)
+
     def test_paid_plan_limits_match_public_pricing(self):
         plans = load_plan_limits()
 

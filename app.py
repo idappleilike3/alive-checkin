@@ -115,6 +115,10 @@ from push_delivery import (
 )
 
 
+DEFAULT_LIFF_ID = "2010848330-UAiqPPYD"
+DEFAULT_LINE_LOGIN_CHANNEL_ID = "2010848330"
+
+
 # 逾時未報平安：會員可選 24／48／72 小時（取代舊固定 36h 主流程）
 ALLOWED_GRACE_HOURS = (24, 48, 72)
 DEFAULT_GRACE_HOURS = 48
@@ -419,7 +423,7 @@ def line_status_summary(status):
 def line_liff_url(open_action):
     if liff_entry_url is not None:
         return liff_entry_url(open_action=open_action)
-    liff_id = (os.environ.get("LIFF_ID") or "2010674803-rK98c0lo").strip()
+    liff_id = (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).strip()
     return f"https://liff.line.me/{liff_id}?open={open_action}"
 
 
@@ -431,7 +435,7 @@ def public_page_url(path=""):
 
 def pricing_direct_url():
     """方案頁 LIFF 直連（避免跳出 LINE 開瀏覽器，跟其他按鈕一致）。"""
-    liff_id = (os.environ.get("LIFF_ID") or "2010674803-rK98c0lo").strip() or "2010674803-rK98c0lo"
+    liff_id = (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).strip() or DEFAULT_LIFF_ID
     return f"https://liff.line.me/{liff_id}?open=pricing"
 
 
@@ -446,7 +450,7 @@ def permanent_liff_invite_url(*, invite_from="", friend_invite="", open_action=N
         params["friend_invite"] = friend_invite
     if liff_entry_url is not None:
         return liff_entry_url(open_action=open_action, **params)
-    lid = (os.environ.get("LIFF_ID") or "2010674803-rK98c0lo").strip() or "2010674803-rK98c0lo"
+    lid = (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).strip() or DEFAULT_LIFF_ID
     if open_action and not params:
         return f"https://liff.line.me/{lid}?open={open_action}"
     if open_action:
@@ -460,7 +464,7 @@ def line_app_invite_url(*, invite_from="", friend_invite="", open_action=None):
 
     Use ``?`` not ``/?`` — the slash-before-query form can make LIFF/OAuth return 400.
     """
-    lid = (os.environ.get("LIFF_ID") or "2010674803-rK98c0lo").strip() or "2010674803-rK98c0lo"
+    lid = (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).strip() or DEFAULT_LIFF_ID
     params = {}
     invite_from = str(invite_from or "").strip()
     friend_invite = str(friend_invite or "").strip()
@@ -6823,7 +6827,7 @@ def send_missing_contact_reminders(config):
                 skipped += 1
                 continue
             link_text = (
-                f"\n前往我的守護資料：{liff_entry_url(open_action='member') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo?open=member'}"
+                f"\n前往我的守護資料：{liff_entry_url(open_action='member') if liff_entry_url else 'https://liff.line.me/2010848330-UAiqPPYD?open=member'}"
             )
             message = (
                 "你的 799 守護方案還少一份必要資料。請在『我的守護資料』完成至少 1 位守護人的姓名、關係與電話，"
@@ -6859,7 +6863,7 @@ def send_missing_contact_reminders(config):
         if today in sent_dates:
             continue
         link_text = (
-            f"\n一鍵邀請守護人：{share_invite_liff_url() if share_invite_liff_url else 'https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html'}"
+            f"\n一鍵邀請守護人：{share_invite_liff_url() if share_invite_liff_url else 'https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html'}"
         )
         if contact_count == 0:
             message = (
@@ -6994,12 +6998,12 @@ def build_daily_checkin_flex(now, target_time=""):
     guard_uri = (
         liff_entry_url(open_action="guard")
         if liff_entry_url
-        else "https://liff.line.me/2010674803-rK98c0lo?open=guard"
+        else "https://liff.line.me/2010848330-UAiqPPYD?open=guard"
     )
     sos_uri = (
         liff_entry_url(open_action="sos")
         if liff_entry_url
-        else "https://liff.line.me/2010674803-rK98c0lo?open=sos"
+        else "https://liff.line.me/2010848330-UAiqPPYD?open=sos"
     )
     body_contents = [
         {
@@ -8023,7 +8027,7 @@ def app_config(config):
         or ""
     ).strip()
     return {
-        "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
+        "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID,
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
         "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gh",
@@ -8046,6 +8050,24 @@ def app_config(config):
 def create_app(config=None):
     if Flask is None:
         return MiniApp(config)
+
+    supplied_config = config or {}
+    liff_id = (
+        supplied_config.get("LIFF_ID")
+        or os.environ.get("LIFF_ID")
+        or DEFAULT_LIFF_ID
+    ).strip() or DEFAULT_LIFF_ID
+    explicit_channel_id = (
+        supplied_config.get("LINE_LOGIN_CHANNEL_ID")
+        or os.environ.get("LINE_LOGIN_CHANNEL_ID")
+        or os.environ.get("LINE_Login_Channel_ID")
+        or ""
+    ).strip()
+    line_login_channel_id = (
+        explicit_channel_id
+        or liff_id.split("-", 1)[0]
+        or DEFAULT_LINE_LOGIN_CHANNEL_ID
+    )
 
     app = Flask(__name__, static_folder=".", static_url_path="")
     app._start_time = datetime.now()  # 2026-07-21 patch 17: 供 /api/bot/status 計算 uptime
@@ -8071,17 +8093,13 @@ def create_app(config=None):
             or ""
         ),
         # Accept odd casing from Render UI typos (LINE_Login_Channel_ID etc.)
-        LINE_LOGIN_CHANNEL_ID=(
-            os.environ.get("LINE_LOGIN_CHANNEL_ID")
-            or os.environ.get("LINE_Login_Channel_ID")
-            or ""
-        ),
+        LINE_LOGIN_CHANNEL_ID=line_login_channel_id,
         LINE_LOGIN_CHANNEL_SECRET=(
             os.environ.get("LINE_LOGIN_CHANNEL_SECRET")
             or os.environ.get("LINE_Login_CHANNEL_SECRET")
             or ""
         ),
-        LIFF_ID=os.environ.get("LIFF_ID", ""),
+        LIFF_ID=liff_id,
         APP_PUBLIC_URL=os.environ.get("APP_PUBLIC_URL", ""),
         APP_TIMEZONE=os.environ.get("APP_TIMEZONE", "Asia/Taipei"),
         CRON_SECRET=os.environ.get("CRON_SECRET", ""),
@@ -8272,7 +8290,7 @@ def create_app(config=None):
             lid = (
                 app.config.get("LIFF_ID")
                 or os.environ.get("LIFF_ID")
-                or "2010674803-rK98c0lo"
+                or DEFAULT_LIFF_ID
             ).strip()
             target = f"https://liff.line.me/{lid}"
             if open_action:
@@ -8637,7 +8655,7 @@ def create_app(config=None):
                 liff_sos = (
                     liff_entry_url(open_action="sos")
                     if liff_entry_url
-                    else "https://liff.line.me/2010674803-rK98c0lo?open=sos"
+                    else "https://liff.line.me/2010848330-UAiqPPYD?open=sos"
                 )
                 reply(
                     sos_flow.sos_emergency_flex(
@@ -8679,12 +8697,12 @@ def create_app(config=None):
             setup_uri = (
                 liff_entry_url(open_action="onboarding")
                 if liff_entry_url
-                else "https://liff.line.me/2010674803-rK98c0lo?open=onboarding"
+                else "https://liff.line.me/2010848330-UAiqPPYD?open=onboarding"
             )
             pricing_uri = (
                 pricing_direct_url()
                 if pricing_direct_url
-                else "https://liff.line.me/2010674803-rK98c0lo?open=pricing"
+                else "https://liff.line.me/2010848330-UAiqPPYD?open=pricing"
             )
             welcome_fallback = (
                 f"{greeting}\n\n"
@@ -9170,7 +9188,7 @@ def create_app(config=None):
                 share_page = (
                     share_invite_liff_url()
                     if share_invite_liff_url
-                    else "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html"
+                    else "https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html"
                 )
                 line_bot_api.reply_message(
                     event.reply_token,
@@ -10745,7 +10763,7 @@ class MiniApp:
             "ADMIN_OPEN": os.environ.get("ADMIN_OPEN", ""),
             "LINE_CHANNEL_ACCESS_TOKEN": os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
             "LINE_CHANNEL_SECRET": os.environ.get("LINE_CHANNEL_SECRET", ""),
-            "LIFF_ID": os.environ.get("LIFF_ID", ""),
+            "LIFF_ID": os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID,
             "APP_PUBLIC_URL": os.environ.get("APP_PUBLIC_URL", ""),
             "APP_TIMEZONE": os.environ.get("APP_TIMEZONE", "Asia/Taipei"),
             "CRON_SECRET": os.environ.get("CRON_SECRET", ""),

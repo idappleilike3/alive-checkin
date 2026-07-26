@@ -48,7 +48,7 @@ class LiffFastRouteTests(unittest.TestCase):
             self.page.index("async function initializeLiff()"):
             self.page.index("async function initLine()")
         ]
-        self.assertIn('const FIXED_LIFF_ID = "2010674803-rK98c0lo"', initializer)
+        self.assertIn('const FIXED_LIFF_ID = "2010848330-UAiqPPYD"', initializer)
         self.assertIn("await liff.init({ liffId: FIXED_LIFF_ID })", initializer)
         self.assertIn("appConfigPromise", initializer)
         self.assertLess(

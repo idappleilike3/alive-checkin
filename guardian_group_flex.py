@@ -37,7 +37,7 @@ RED_WARN = "#D6322C"
 ORANGE = "#E08E00"
 
 # 與 render.yaml / 正式 /api/config 一致。禁止把帶 code=&state= 的 OAuth callback 當永久連結。
-DEFAULT_LIFF_ID = "2010674803-rK98c0lo"
+DEFAULT_LIFF_ID = "2010848330-UAiqPPYD"
 PUBLIC_BASE = "https://alive-checkin.onrender.com"
 
 

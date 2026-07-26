@@ -15,7 +15,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: LIFF_ID
-        value: 2010674803-rK98c0lo
+        value: 2010848330-UAiqPPYD
       - key: APP_PUBLIC_URL
         value: https://alive-checkin.onrender.com/
       - key: APP_TIMEZONE
@@ -44,7 +44,7 @@ services:
       - key: LINE_CHANNEL_SECRET
         sync: false
       - key: LINE_LOGIN_CHANNEL_ID
-        sync: false
+        value: 2010848330
       - key: CRON_SECRET
         sync: false
       - key: NEWEBPAY_MERCHANT_ID
