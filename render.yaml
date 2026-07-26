@@ -45,6 +45,12 @@ services:
         sync: false
       - key: LINE_LOGIN_CHANNEL_ID
         value: 2010848330
+      - key: LEGACY_LINE_LOGIN_CHANNEL_ID
+        value: 2010674803
+      - key: LEGACY_LIFF_ID
+        value: 2010674803-rK98c0lo
+      - key: ACCOUNT_MIGRATION_SECRET
+        generateValue: true
       - key: CRON_SECRET
         sync: false
       - key: NEWEBPAY_MERCHANT_ID

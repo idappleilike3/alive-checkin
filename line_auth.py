@@ -94,6 +94,18 @@ def verify_line_id_token(
     return payload
 
 
+def verify_line_id_token_for_channel(
+    id_token: str,
+    channel_id: str,
+    verify_fn: Optional[VerifyFn] = None,
+) -> Optional[str]:
+    """Verify an ID token against one explicit LINE Login channel."""
+    verifier = verify_fn or verify_line_id_token
+    claims = verifier(str(id_token or "").strip(), str(channel_id or "").strip())
+    sub = str((claims or {}).get("sub") or "").strip()
+    return sub or None
+
+
 def extract_id_token(headers: dict, payload: Optional[dict] = None, args: Optional[dict] = None) -> str:
     payload = payload or {}
     args = args or {}

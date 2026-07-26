@@ -95,9 +95,15 @@ except Exception:
     sos_flow = None
 
 try:
-    from line_auth import resolve_line_user_id
+    from line_auth import (
+        extract_id_token,
+        resolve_line_user_id,
+        verify_line_id_token_for_channel,
+    )
 except Exception:  # pragma: no cover
+    extract_id_token = None
     resolve_line_user_id = None
+    verify_line_id_token_for_channel = None
 
 try:
     import newebpay
@@ -5884,6 +5890,17 @@ def admin_security_ready(config):
     return bool(password and len(session_secret) >= 32)
 
 
+def account_migration_ready(config):
+    return all(
+        str(config.get(key) or "").strip()
+        for key in (
+            "LEGACY_LINE_LOGIN_CHANNEL_ID",
+            "LINE_LOGIN_CHANNEL_ID",
+            "ACCOUNT_MIGRATION_SECRET",
+        )
+    )
+
+
 def admin_password_matches(config, candidate):
     if not admin_security_ready(config):
         return False
@@ -8099,6 +8116,14 @@ def create_app(config=None):
             or os.environ.get("LINE_Login_CHANNEL_SECRET")
             or ""
         ),
+        LEGACY_LINE_LOGIN_CHANNEL_ID=os.environ.get(
+            "LEGACY_LINE_LOGIN_CHANNEL_ID", "2010674803"
+        ),
+        LEGACY_LIFF_ID=os.environ.get(
+            "LEGACY_LIFF_ID", "2010674803-rK98c0lo"
+        ),
+        ACCOUNT_MIGRATION_SECRET=os.environ.get("ACCOUNT_MIGRATION_SECRET", ""),
+        ACCOUNT_MIGRATION_TTL_SECONDS=600,
         LIFF_ID=liff_id,
         APP_PUBLIC_URL=os.environ.get("APP_PUBLIC_URL", ""),
         APP_TIMEZONE=os.environ.get("APP_TIMEZONE", "Asia/Taipei"),
@@ -10157,6 +10182,43 @@ def create_app(config=None):
         payload["line_user_id"] = line_user_id
         data, code = delete_personal_history(app.config["DATA_FILE"], payload)
         return jsonify(data), code
+
+    def _migration_verified_subject(payload, channel_key):
+        if not account_migration_ready(app.config):
+            return None, ({"ok": False, "error": "migration_unavailable"}, 503)
+        if extract_id_token is None or verify_line_id_token_for_channel is None:
+            return None, ({"ok": False, "error": "migration_unavailable"}, 503)
+        token = extract_id_token(
+            {key: value for key, value in request.headers.items()},
+            payload,
+            {},
+        )
+        subject = verify_line_id_token_for_channel(
+            token,
+            app.config.get(channel_key),
+        )
+        if not subject:
+            return None, ({"ok": False, "error": "invalid_token"}, 401)
+        return subject, None
+
+    @app.post("/api/account-migration/start")
+    def account_migration_start_api():
+        payload = request.get_json(silent=True) or {}
+        _, err = _migration_verified_subject(
+            payload,
+            "LEGACY_LINE_LOGIN_CHANNEL_ID",
+        )
+        if err:
+            return jsonify(err[0]), err[1]
+        return jsonify({"ok": False, "error": "migration_not_implemented"}), 501
+
+    @app.post("/api/account-migration/redeem")
+    def account_migration_redeem_api():
+        payload = request.get_json(silent=True) or {}
+        _, err = _migration_verified_subject(payload, "LINE_LOGIN_CHANNEL_ID")
+        if err:
+            return jsonify(err[0]), err[1]
+        return jsonify({"ok": False, "error": "migration_not_implemented"}), 501
 
     @app.get("/api/admin/summary")
     def admin_summary_api():

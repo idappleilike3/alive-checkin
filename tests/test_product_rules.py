@@ -31,7 +31,21 @@ class ProductRulesTests(unittest.TestCase):
                 continue
             if any(str(path).startswith(str(prefix)) for prefix in allowed):
                 continue
-            if "2010674803-rK98c0lo" in path.read_text(encoding="utf-8"):
+            source = path.read_text(encoding="utf-8")
+            if path == ROOT / "app.py":
+                source = source.replace(
+                    'LEGACY_LIFF_ID=os.environ.get(\n'
+                    '            "LEGACY_LIFF_ID", "2010674803-rK98c0lo"\n'
+                    "        ),",
+                    "",
+                )
+            elif path == ROOT / "render.yaml":
+                source = source.replace(
+                    "      - key: LEGACY_LIFF_ID\n"
+                    "        value: 2010674803-rK98c0lo",
+                    "",
+                )
+            if "2010674803-rK98c0lo" in source:
                 offenders.append(str(path.relative_to(ROOT)))
         self.assertEqual(offenders, [])
 
