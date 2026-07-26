@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Restore the migrated member experience, require one genuinely bound LINE core guardian, stop stale group summaries, unify SOS delivery, and make smart-reminder state explicit.
+**Goal:** Restore the migrated member experience, require one genuinely bound LINE core guardian, stop stale group summaries, unify SOS delivery, prevent abusive SOS use without removing emergency access, control LINE message costs, and make smart-reminder state explicit.
 
 **Architecture:** Keep the existing Flask/state-store and single-page LIFF architecture, but centralize server-authoritative readiness and recipient calculations. Frontend routing consumes those explicit states and never treats local flags, unbound contacts, or stale group snapshots as authorization.
 
@@ -16,6 +16,10 @@
 - Guardian-group daily summaries default off and only include currently eligible members.
 - SOS is available to every plan but retains the three-tap UI, daily limit, cooldown, fresh-location-only rule, and delivery audit.
 - SOS emergency group delivery is independent from optional daily-summary preferences.
+- A single false alarm never completely disables emergency help; 110/119 and one primary core-guardian fallback remain available during an abuse restriction.
+- Smart reminders default to the member's private LINE chat, allow at most two deliveries per member per day, and merge reminders due in the same time slot.
+- A member may select at most one core guardian for a smart reminder; that guardian receives at most one smart-reminder delivery per day. Smart reminders never deliver to guardian groups.
+- LINE message usage is recorded by actual recipients and categorized by notification type.
 - Do not expose access tokens, ID tokens, migration secrets, or unnecessary full LINE user IDs.
 - Do not include the unrelated modified `assets/daily-peace-hero.png` in any task commit.
 
@@ -206,7 +210,7 @@ git commit -m "fix: send group summaries only to live memberships"
 
 **Interfaces:**
 - Consumes: all notifiable bound core guardians, active owned groups, authenticated sender
-- Produces: structured SOS result with `self`, `guardians`, `groups`, `sent`, `failed`, and recipient display names
+- Produces: structured SOS result with `event_id`, `self`, `guardians`, `groups`, `sent`, `failed`, recipient display names, and retry-safe per-recipient delivery records
 
 - [ ] **Step 1: Write failing backend recipient tests**
 
@@ -237,13 +241,51 @@ python -m unittest tests.test_product_rules -v
 
 Do not call `showTab("home")` before opening SOS. Render guardian/group names, sender confirmation, success/failure counts and actionable failure hints. Reuse the authoritative readiness gate for all check-in entrances; “later” may close the prompt but never write a check-in, and post-binding completion offers an explicit check-in action.
 
-- [ ] **Step 7: Verify GREEN and commit**
+- [ ] **Step 7: Write failing false-alarm and abuse-policy tests**
+
+Add cases proving:
+
+- cancelling an SOS notifies only recipients whose original delivery succeeded;
+- cancellation never deletes the original event;
+- two false alarms in 24 hours create a three-day observation state;
+- an observed member must use the long-confirm/reason flow;
+- repeated abuse inside seven days restricts normal fan-out for seven days;
+- a restricted member still sees 110/119 and may notify exactly one primary core guardian;
+- retry sends only to failed original recipients and does not duplicate successful deliveries.
+
+Run:
+
+```bash
+python -m unittest tests.test_sos_rules -v
+node --test tests/liff_fast_route.behavior.test.mjs
+```
+
+Expected: FAIL because cancellation events, observation state, abuse restriction and emergency fallback are not implemented.
+
+- [ ] **Step 8: Implement false-alarm cancellation and graded abuse controls**
+
+Add pure policy helpers:
+
+```python
+def sos_abuse_state(profile: dict, now: datetime) -> dict:
+    """Return mode: normal | observation | restricted plus expiry and reason."""
+
+def cancel_sos_event(state: dict, actor_line_user_id: str, event_id: str, now: datetime) -> dict:
+    """Append cancellation and deliver only to successful original recipients."""
+
+def eligible_sos_retry_recipients(event: dict) -> list[dict]:
+    """Return failed recipients only."""
+```
+
+Persist observation/restriction expiry, false-alarm timestamps and the audit reason. Do not use humiliating copy such as「亂按」. During restriction return the 110/119 actions and one primary-core-guardian fallback instead of claiming that normal fan-out occurred.
+
+- [ ] **Step 9: Verify GREEN and commit**
 
 Run all three focused suites and:
 
 ```bash
 git add app.py index.html liff/sos.html sos_flow.py tests/test_sos_rules.py tests/test_product_rules.py tests/liff_fast_route.behavior.test.mjs
-git commit -m "fix: unify SOS routing and emergency delivery"
+git commit -m "fix: unify and protect SOS delivery"
 ```
 
 ### Task 6: Smart-reminder recovery state and mobile form
@@ -256,11 +298,11 @@ git commit -m "fix: unify SOS routing and emergency delivery"
 
 **Interfaces:**
 - Consumes: verified plan entitlement and account-migration status
-- Produces: smart-reminder UI state `entitled | recovering | upgrade_required`
+- Produces: smart-reminder UI state `entitled | recovering | upgrade_required`, `smart_reminder_daily_usage(...)`, and an optional single bound-core-guardian target
 
 - [ ] **Step 1: Write failing tests**
 
-Cover: 799 displays all inputs; migration pending displays recovery copy instead of upgrade; non-799 displays upgrade copy; modal save button remains reachable on a short mobile viewport.
+Cover: 799 displays all inputs; migration pending displays recovery copy instead of upgrade; non-799 displays upgrade copy; modal save button remains reachable on a short mobile viewport; private delivery is the default; only one currently bound core guardian can be selected; unbound/stale IDs are rejected; same-slot reminders merge; private delivery is capped at two per member per day; the selected guardian is capped at one smart-reminder delivery per day; guardian-group targeting is rejected.
 
 - [ ] **Step 2: Run focused tests and verify RED**
 
@@ -272,7 +314,7 @@ python -m unittest tests.test_checkin_postback_and_smart tests.test_product_rule
 
 - [ ] **Step 3: Implement explicit UI state**
 
-Return migration/entitlement state from the API, keep the form markup intact, and distinguish recovery from a real plan restriction. Adjust modal layout so fields and save remain reachable.
+Return migration/entitlement state from the API, keep the form markup intact, and distinguish recovery from a real plan restriction. Adjust modal layout so fields and save remain reachable. Add the explicit target choices「只通知自己（預設）」and「通知一位核心守護人」using server-provided bound guardians only. Add a visible `今日智慧提醒已使用 X／2 則` counter, merge reminders due in the same slot into one LINE push, enforce the two/private and one/guardian daily limits server-side, and reject every guardian-group target.
 
 - [ ] **Step 4: Verify GREEN and commit**
 
@@ -283,7 +325,94 @@ git add app.py index.html tests/test_checkin_postback_and_smart.py tests/test_pr
 git commit -m "fix: restore smart reminder recovery experience"
 ```
 
-### Task 7: Full verification, review and deployment gate
+### Task 7: LINE message-cost ledger and member-facing policy pages
+
+**Files:**
+- Modify: `app.py`
+- Modify: `admin.html`
+- Modify: `help.html`
+- Modify: `pricing.html`
+- Modify: `index.html`
+- Test: `tests/test_push_delivery_policy.py`
+- Test: `tests/test_admin_observability.py`
+- Test: `tests/test_product_rules.py`
+
+**Interfaces:**
+- Consumes: notification delivery logs from binding, check-in, overdue, SOS, SOS cancellation, smart reminders and guardian summaries
+- Produces: `record_line_message_usage(...)`, monthly usage aggregation, 70%/90% alerts and member-facing policy copy
+
+- [ ] **Step 1: Write failing usage-ledger tests**
+
+Cover actual-recipient counting, group member counts, failed/non-delivered exclusions, category totals, per-member totals, false-alarm cost, month filtering, projected month-end usage and 70%/90% thresholds.
+
+Run:
+
+```bash
+python -m unittest tests.test_push_delivery_policy tests.test_admin_observability -v
+```
+
+Expected: FAIL because the normalized message-cost ledger and dashboard aggregate do not exist.
+
+- [ ] **Step 2: Implement normalized usage recording**
+
+Add:
+
+```python
+def record_line_message_usage(
+    state: dict,
+    *,
+    category: str,
+    owner_line_user_id: str,
+    recipient_count: int,
+    event_id: str,
+    sent_at: datetime,
+) -> dict:
+    """Idempotently record delivered recipient-count units."""
+
+def monthly_line_message_usage(state: dict, year_month: str, quota: int, now: datetime) -> dict:
+    """Return totals, category/member breakdown, projection and alert level."""
+```
+
+Use categories `binding`, `checkin`, `overdue`, `sos`, `sos_cancel`, `smart_reminder`, and `guardian_summary`. Never store access tokens or expose full LINE IDs in dashboard responses.
+
+- [ ] **Step 3: Add admin cost and abuse views**
+
+Show monthly used units, projected month-end units, category share, highest-usage members, false-alarm units and active observation/restriction cases. Show warnings at 70% and 90%, with SOS prioritized over smart reminders and daily summaries.
+
+- [ ] **Step 4: Write failing member-copy and navigation tests**
+
+Require `help.html`, `pricing.html` and the member center to explain:
+
+- correct SOS use, three taps, false-alarm cancellation, cooldown, daily limit and graded restrictions;
+- 110/119 and primary-guardian fallback during restriction;
+- private/core-guardian/group notification differences;
+- smart-reminder two-per-day merging and no guardian-group delivery;
+- direct plan lookup without returning to home, preserving the member's return route.
+
+Run:
+
+```bash
+python -m unittest tests.test_product_rules -v
+```
+
+Expected: FAIL until all pages and direct navigation are synchronized.
+
+- [ ] **Step 5: Implement member help, FAQ and plan comparison**
+
+Use senior-readable Traditional Chinese, keep product rules identical across pages, and ensure the basic SOS capability is not removed by plan tier. Add direct member-center links to FAQ and full plan comparison while preserving the safe return route.
+
+- [ ] **Step 6: Verify GREEN and commit**
+
+Run:
+
+```bash
+python -m unittest tests.test_push_delivery_policy tests.test_admin_observability tests.test_product_rules -v
+git diff --check
+git add app.py admin.html help.html pricing.html index.html tests/test_push_delivery_policy.py tests/test_admin_observability.py tests/test_product_rules.py
+git commit -m "feat: track LINE message cost and explain notification rules"
+```
+
+### Task 8: Full verification, review and deployment gate
 
 **Files:**
 - Modify: `.superpowers/sdd/2026-07-26-secure-account-migration/progress.md`
