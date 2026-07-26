@@ -4579,7 +4579,7 @@
     };
 
     const $ = (id) => document.getElementById(id);
-    const DEFAULT_LIFF_ID = "2010674803-rK98c0lo";
+    const DEFAULT_LIFF_ID = "2010848330-UAiqPPYD";
     const OAUTH_PARAM_KEYS = new Set([
       "code", "state", "liff.state", "liffClientId", "liffRedirectUri", "friendship_status_changed"
     ]);
@@ -6522,7 +6522,6 @@
       const hash = String(returnHash || currentShareReturnHash() || "home").replace(/^#/, "") || "home";
       const params = new URLSearchParams();
       params.set("return", `/#${hash}`);
-      params.set("open", hash);
       return `/liff/share-invite.html?${params.toString()}`;
     }
 
@@ -7517,7 +7516,7 @@
         return false;
       }
       try {
-        const FIXED_LIFF_ID = "2010674803-rK98c0lo";
+        const FIXED_LIFF_ID = "2010848330-UAiqPPYD";
         window.__LIFF_ID__ = FIXED_LIFF_ID;
 
         // 1) 先 init（不要先判斷 isInClient）

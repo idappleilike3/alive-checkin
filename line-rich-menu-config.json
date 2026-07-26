@@ -9,19 +9,19 @@
   "areas": [
     {
       "bounds": { "x": 0, "y": 0, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "報平安", "uri": "https://liff.line.me/2010674803-rK98c0lo?open=checkin" }
+      "action": { "type": "uri", "label": "報平安", "uri": "https://liff.line.me/2010848330-UAiqPPYD?open=checkin" }
     },
     {
       "bounds": { "x": 833, "y": 0, "width": 834, "height": 843 },
-      "action": { "type": "uri", "label": "一鍵邀請", "uri": "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html" }
+      "action": { "type": "uri", "label": "一鍵邀請", "uri": "https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html" }
     },
     {
       "bounds": { "x": 1667, "y": 0, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "需要幫忙", "uri": "https://liff.line.me/2010674803-rK98c0lo?open=sos" }
+      "action": { "type": "uri", "label": "需要幫忙", "uri": "https://liff.line.me/2010848330-UAiqPPYD?open=sos" }
     },
     {
       "bounds": { "x": 0, "y": 843, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "使用教學", "uri": "https://liff.line.me/2010674803-rK98c0lo?open=help" }
+      "action": { "type": "uri", "label": "使用教學", "uri": "https://liff.line.me/2010848330-UAiqPPYD?open=help" }
     },
     {
       "bounds": { "x": 833, "y": 843, "width": 834, "height": 843 },
@@ -29,7 +29,7 @@
     },
     {
       "bounds": { "x": 1667, "y": 843, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "安全守護", "uri": "https://liff.line.me/2010674803-rK98c0lo?open=guard" }
+      "action": { "type": "uri", "label": "安全守護", "uri": "https://liff.line.me/2010848330-UAiqPPYD?open=guard" }
     }
   ]
 }

@@ -77,6 +77,34 @@ python app.py
 
 LINE 推播提醒可由後台按鈕手動送出，也可由 Render Cron Job 自動送出。使用者必須先加你的 LINE 官方帳號好友，且曾經從 LIFF 頁面進來完成註冊。
 
+## LIFF Provider 遷移與正式驗收
+
+正式環境要使用新的 LINE Login provider。合併到 `main`、確認 Render 已完成該次部署後，在 Render 的 `alive-checkin` Web Service 依序開啟 **Environment**，只新增或編輯下列兩個鍵並儲存：
+
+```text
+LINE_LOGIN_CHANNEL_ID=2010848330
+LIFF_ID=2010848330-UAiqPPYD
+```
+
+不要使用「Clear all」或先刪除整批環境變數的方式更新。`LINE_CHANNEL_ACCESS_TOKEN` 與 `LINE_CHANNEL_SECRET` 是既有 Messaging API 憑證，**不可替換、不可清空**；其餘既有 Render 變數也必須保留。儲存後只重啟／部署這個 web service，並等待健康檢查成功。
+
+正式人工驗收請由兩個已加入官方帳號好友的 LINE 帳號完成：
+
+1. 在瀏覽器或 Render Shell 確認 `https://alive-checkin.onrender.com/api/config` 回傳的 `liff_id` 是 `2010848330-UAiqPPYD`。
+2. 在 LINE 開啟 `https://liff.line.me/2010848330-UAiqPPYD`，授權後確認可到帶有 `open` 參數的目標畫面，例如 `https://liff.line.me/2010848330-UAiqPPYD?open=guard`。
+3. 由會員選「一鍵邀請」，確認直接開啟 LINE 的 `shareTargetPicker`，再由第二個帳號完成守護人綁定；兩個帳號都必須收到「綁定成功」訊息。
+4. 以已綁定且可推播的單一守護人帳號開啟「安全守護」，允許定位；回應／後台紀錄必須顯示 `target_count=1`、`sent=1`，守護人必須收到含位置連結的通知。
+5. 使用正式的 Messaging API token 發布目前圖文選單（token 不寫入檔案或命令歷史）：
+
+   ```bash
+   read -rsp 'LINE Messaging API token: ' RICH_MENU_TOKEN; printf '\n'
+   LINE_CHANNEL_ACCESS_TOKEN="$RICH_MENU_TOKEN" \
+     /tmp/alive-checkin-sos-venv/bin/python scripts/setup_line_rich_menu.py
+   unset RICH_MENU_TOKEN
+   ```
+
+6. 在舊 LIFF App 的 Endpoint URL 設為 `https://alive-checkin.onrender.com/liff/migrate.html`。開啟一個舊 LIFF 連結並確認 handoff 解析 `liff.state` 後只會帶轉 `open`、`page`、`friend_invite`；不得轉送 `invite_from`、舊 Provider user ID、access token、ID token 或其他登入憑證。舊版守護人邀請必須由邀請人在新版重新分享，且不得依舊 ID 自動合併帳號。
+
 ## 自動推播
 
 - 未填緊急聯絡人：每天台灣時間 09:00 自動檢查，沒有至少 1 位聯絡人就推 LINE Bot 提醒。
