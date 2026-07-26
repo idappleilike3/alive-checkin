@@ -3,7 +3,14 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
-from app import get_calendar_notes, save_calendar_note, send_birthday_reminders
+from app import (
+    calendar_note_content,
+    get_calendar_notes,
+    load_state,
+    save_calendar_note,
+    save_state,
+    send_birthday_reminders,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,6 +106,94 @@ class CalendarNotesTests(unittest.TestCase):
 
         self.assertEqual(code, 200)
         self.assertEqual(result["sent"], 1)
+        self.assertIn("明天是爸爸生日", sent_messages[0][1])
+
+    def test_migrated_same_date_notes_have_readable_public_output(self):
+        state = load_state(self.data_file)
+        state["users"]["U-calendar"] = {
+            "line_user_id": "U-calendar",
+            "calendar_notes": {
+                "2026-08-08": [
+                    {
+                        "id": "migration-calendar-note-0001",
+                        "content": "陪媽媽回診",
+                    },
+                    {
+                        "id": "migration-calendar-note-0002",
+                        "content": "記得打電話",
+                        "birthday_name": "爸爸",
+                        "birthday_relationship": "爸爸",
+                        "birthday_date": "2026-08-08",
+                        "birthday_yearly": True,
+                        "birthday_remind_days": 1,
+                    },
+                ]
+            },
+        }
+        save_state(self.data_file, state)
+
+        result = get_calendar_notes(self.data_file, "U-calendar")
+        public_note = result["notes"]["2026-08-08"]
+
+        self.assertEqual(public_note["content"], "陪媽媽回診\n記得打電話")
+        self.assertEqual(public_note["birthday_name"], "爸爸")
+        self.assertEqual(
+            public_note["birthdays"],
+            [
+                {
+                    "birthday_name": "爸爸",
+                    "birthday_relationship": "爸爸",
+                    "birthday_date": "2026-08-08",
+                    "birthday_yearly": True,
+                    "birthday_remind_days": 1,
+                }
+            ],
+        )
+        self.assertNotIn("id", public_note)
+        self.assertNotIn("migration-calendar-note", str(result))
+        self.assertNotIn("[{", calendar_note_content(state["users"]["U-calendar"]["calendar_notes"]["2026-08-08"]))
+
+    def test_migrated_birthday_inside_same_date_list_is_reminded(self):
+        state = load_state(self.data_file)
+        state["users"]["U-calendar"] = {
+            "line_user_id": "U-calendar",
+            "calendar_notes": {
+                "2026-08-08": [
+                    {
+                        "id": "migration-calendar-note-0001",
+                        "content": "買藥",
+                    },
+                    {
+                        "id": "migration-calendar-note-0002",
+                        "content": "記得打電話",
+                        "birthday_name": "爸爸",
+                        "birthday_relationship": "爸爸",
+                        "birthday_date": "2026-08-08",
+                        "birthday_yearly": True,
+                        "birthday_remind_days": 1,
+                    },
+                ]
+            },
+        }
+        save_state(self.data_file, state)
+        sent_messages = []
+
+        def fake_sender(_token, line_user_id, message):
+            sent_messages.append((line_user_id, message))
+            return {"ok": True}
+
+        result, code = send_birthday_reminders(
+            {
+                "DATA_FILE": self.data_file,
+                "LINE_CHANNEL_ACCESS_TOKEN": "token",
+                "LINE_PUSH_SENDER": fake_sender,
+                "CRON_NOW": datetime(2026, 8, 7, 9, 0),
+            }
+        )
+
+        self.assertEqual(code, 200)
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(len(sent_messages), 1)
         self.assertIn("明天是爸爸生日", sent_messages[0][1])
 
     def test_calendar_ui_contains_lunar_festivals_notes_and_google_entry(self):

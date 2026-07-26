@@ -1464,7 +1464,11 @@ def get_calendar_notes(data_file, line_user_id=None):
     notes = profile.get("calendar_notes")
     if not isinstance(notes, dict):
         notes = {}
-    return {"ok": True, "notes": dict(notes)}
+    public_notes = {
+        note_date: public_calendar_note(note)
+        for note_date, note in notes.items()
+    }
+    return {"ok": True, "notes": public_notes}
 
 
 def save_calendar_note(data_file, payload):
@@ -1521,22 +1525,58 @@ def save_calendar_note(data_file, payload):
     return {"ok": True, "notes": notes}, 200
 
 
+def calendar_note_entries(note):
+    return note if isinstance(note, list) else [note]
+
+
 def calendar_note_content(note):
+    if isinstance(note, list):
+        contents = [
+            calendar_note_content(item)
+            for item in note
+        ]
+        return "\n".join(content for content in contents if content)
     if isinstance(note, dict):
         return str(note.get("content") or "").strip()
     return str(note or "").strip()
 
 
+def calendar_note_birthdays(note):
+    birthdays = []
+    for entry in calendar_note_entries(note):
+        if not isinstance(entry, dict):
+            continue
+        birthday_name = str(entry.get("birthday_name") or "").strip()
+        if not birthday_name:
+            continue
+        birthdays.append(
+            {
+                "birthday_name": birthday_name,
+                "birthday_relationship": str(
+                    entry.get("birthday_relationship") or ""
+                ).strip(),
+                "birthday_date": str(entry.get("birthday_date") or "").strip(),
+                "birthday_yearly": bool(entry.get("birthday_yearly", True)),
+                "birthday_remind_days": int(entry.get("birthday_remind_days") or 1),
+            }
+        )
+    return birthdays
+
+
 def calendar_note_birthday(note):
-    if not isinstance(note, dict) or not str(note.get("birthday_name") or "").strip():
-        return None
-    return {
-        "birthday_name": str(note.get("birthday_name") or "").strip(),
-        "birthday_relationship": str(note.get("birthday_relationship") or "").strip(),
-        "birthday_date": str(note.get("birthday_date") or "").strip(),
-        "birthday_yearly": bool(note.get("birthday_yearly", True)),
-        "birthday_remind_days": int(note.get("birthday_remind_days") or 1),
-    }
+    birthdays = calendar_note_birthdays(note)
+    return birthdays[0] if birthdays else None
+
+
+def public_calendar_note(note):
+    if not isinstance(note, list):
+        return copy.deepcopy(note)
+    public_note = {"content": calendar_note_content(note)}
+    birthdays = calendar_note_birthdays(note)
+    if birthdays:
+        public_note.update(birthdays[0])
+        public_note["birthdays"] = birthdays
+    return public_note
 
 
 def birthday_occurs_on(birthday, target_date):
@@ -8241,52 +8281,55 @@ def send_birthday_reminders(config):
             continue
         sent_keys = set(user.get("birthday_reminder_sent_keys") or [])
         for note_date, note in notes.items():
-            birthday = calendar_note_birthday(note)
-            if not birthday:
-                continue
-            try:
-                remind_days = int(birthday.get("birthday_remind_days") or 1)
-            except (TypeError, ValueError):
-                remind_days = 1
-            target_date = today_date + timedelta(days=remind_days)
-            if not birthday_occurs_on(birthday, target_date):
-                continue
-            sent_key = f"{today_key}:{note_date}:{remind_days}"
-            if sent_key in sent_keys:
-                continue
-            delivery_key = f"birthday:{sent_key}"
-            if not push_attempt_allowed(user, delivery_key):
-                skipped += 1
-                continue
-            who = birthday.get("birthday_relationship") or birthday.get("birthday_name") or "家人"
-            when_text = "今天" if remind_days == 0 else ("明天" if remind_days == 1 else f"{remind_days} 天後")
-            message = f"{when_text}是{who}生日，記得跟他說聲生日快樂。也可以順手確認他今天平安。"
-            try:
-                result = sender(token, line_user_id, message)
-                _clear_push_delivery_failure(user, delivery_key)
-                sent_keys.add(sent_key)
-                user["birthday_reminder_sent_keys"] = sorted(sent_keys)[-80:]
-                append_notification_log(state, "birthday", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
-                sent += 1
-                results.append({"line_user_id": line_user_id, "birthday": who, "remind_days": remind_days})
-            except Exception as exc:
-                failure = _record_scheduled_push_failure(
-                    state,
-                    user,
-                    delivery_key,
-                    "birthday",
-                    line_user_id,
-                    message,
-                    exc,
-                    now,
+            for birthday_index, birthday in enumerate(calendar_note_birthdays(note)):
+                try:
+                    remind_days = int(birthday.get("birthday_remind_days") or 1)
+                except (TypeError, ValueError):
+                    remind_days = 1
+                target_date = today_date + timedelta(days=remind_days)
+                if not birthday_occurs_on(birthday, target_date):
+                    continue
+                birthday_suffix = f":{birthday_index}" if birthday_index else ""
+                sent_key = (
+                    f"{today_key}:{note_date}:{remind_days}{birthday_suffix}"
                 )
-                if failure["status"] == "blocked":
-                    blocked += 1
-                skipped += 1
-                results.append({"line_user_id": line_user_id, "birthday": who, "error": str(exc)})
-                if failure["kind"] == "system":
-                    system_error = True
-                    break
+                if sent_key in sent_keys:
+                    continue
+                delivery_key = f"birthday:{sent_key}"
+                if not push_attempt_allowed(user, delivery_key):
+                    skipped += 1
+                    continue
+                who = birthday.get("birthday_relationship") or birthday.get("birthday_name") or "家人"
+                when_text = "今天" if remind_days == 0 else ("明天" if remind_days == 1 else f"{remind_days} 天後")
+                message = f"{when_text}是{who}生日，記得跟他說聲生日快樂。也可以順手確認他今天平安。"
+                try:
+                    result = sender(token, line_user_id, message)
+                    _clear_push_delivery_failure(user, delivery_key)
+                    sent_keys.add(sent_key)
+                    user["birthday_reminder_sent_keys"] = sorted(sent_keys)[-80:]
+                    append_notification_log(state, "birthday", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
+                    sent += 1
+                    results.append({"line_user_id": line_user_id, "birthday": who, "remind_days": remind_days})
+                except Exception as exc:
+                    failure = _record_scheduled_push_failure(
+                        state,
+                        user,
+                        delivery_key,
+                        "birthday",
+                        line_user_id,
+                        message,
+                        exc,
+                        now,
+                    )
+                    if failure["status"] == "blocked":
+                        blocked += 1
+                    skipped += 1
+                    results.append({"line_user_id": line_user_id, "birthday": who, "error": str(exc)})
+                    if failure["kind"] == "system":
+                        system_error = True
+                        break
+            if system_error:
+                break
         if system_error:
             break
 
