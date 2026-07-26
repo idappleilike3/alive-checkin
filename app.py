@@ -121,6 +121,7 @@ except Exception:  # pragma: no cover
     holidays_tw = None
 
 from push_delivery import (
+    classify_push_exception,
     push_attempt_allowed,
     record_push_failure,
 )
@@ -3681,18 +3682,142 @@ def update_single_contact(data_file, line_user_id, contact_id, contact_payload):
 
 
 def delete_single_contact(data_file, line_user_id, contact_id):
-    """刪除單一聯絡人,回傳 (status_code, response_dict)。"""
-    state = load_state(data_file)
-    profile = state.get("users", {}).get(line_user_id)
-    if not profile:
-        return {"error": "user not registered", "line_user_id": line_user_id}, 404
-    existing = profile.get("contacts") or []
-    new_contacts = [c for c in existing if str(c.get("id") or "") != contact_id]
-    if len(new_contacts) == len(existing):
-        return {"error": "contact_not_found", "contact_id": contact_id}, 404
-    profile["contacts"] = new_contacts
-    save_state(data_file, state)
-    return {"deleted": True, "contact_id": contact_id, "contacts": new_contacts}, 200
+    """Atomically remove a contact and the reciprocal guardian relationship."""
+    result = {}
+
+    def remove_relationship(state):
+        profile = (state.get("users") or {}).get(line_user_id)
+        if not isinstance(profile, dict):
+            result.update(
+                {"error": "user not registered", "line_user_id": line_user_id}
+            )
+            return
+        existing = list(profile.get("contacts") or [])
+        removed = next(
+            (
+                contact
+                for contact in existing
+                if str(contact.get("id") or "") == contact_id
+            ),
+            None,
+        )
+        if removed is None:
+            result.update(
+                {"error": "contact_not_found", "contact_id": contact_id}
+            )
+            return
+
+        peer_id = get_contact_line_id(removed)
+        is_reciprocal_guardian = bool(
+            peer_id
+            and resolve_contact_role(removed) == "guardian"
+            and contact_is_bound_guardian(removed, line_user_id)
+        )
+        profile["contacts"] = [
+            contact
+            for contact in existing
+            if str(contact.get("id") or "") != contact_id
+        ]
+        if profile["contacts"] and not any(
+            bool(contact.get("is_primary"))
+            for contact in profile["contacts"]
+            if resolve_contact_role(contact) == "guardian"
+        ):
+            next_guardian = next(
+                (
+                    contact
+                    for contact in profile["contacts"]
+                    if resolve_contact_role(contact) == "guardian"
+                ),
+                None,
+            )
+            if next_guardian is not None:
+                next_guardian["is_primary"] = True
+
+        if is_reciprocal_guardian:
+            profile["guarding_for"] = [
+                value
+                for value in (profile.get("guarding_for") or [])
+                if str(value or "") != peer_id
+            ]
+            profile["guarding_details"] = [
+                row
+                for row in (profile.get("guarding_details") or [])
+                if str((row or {}).get("line_user_id") or "") != peer_id
+            ]
+            peer = (state.get("users") or {}).get(peer_id)
+            if isinstance(peer, dict):
+                peer["contacts"] = [
+                    contact
+                    for contact in (peer.get("contacts") or [])
+                    if get_contact_line_id(contact) != line_user_id
+                ]
+                peer["guarding_for"] = [
+                    value
+                    for value in (peer.get("guarding_for") or [])
+                    if str(value or "") != line_user_id
+                ]
+                peer["guarding_details"] = [
+                    row
+                    for row in (peer.get("guarding_details") or [])
+                    if str((row or {}).get("line_user_id") or "") != line_user_id
+                ]
+                if peer["contacts"] and not any(
+                    bool(contact.get("is_primary"))
+                    for contact in peer["contacts"]
+                    if resolve_contact_role(contact) == "guardian"
+                ):
+                    next_peer_guardian = next(
+                        (
+                            contact
+                            for contact in peer["contacts"]
+                            if resolve_contact_role(contact) == "guardian"
+                        ),
+                        None,
+                    )
+                    if next_peer_guardian is not None:
+                        next_peer_guardian["is_primary"] = True
+
+                if (
+                    str(peer.get("profile_completion_peer_line_user_id") or "")
+                    == line_user_id
+                ):
+                    peer["profile_completion_required"] = False
+                    peer["profile_completion_cancelled_at"] = iso_now()
+                    for key in (
+                        "profile_completion_peer_line_user_id",
+                        "profile_completion_bound_at",
+                        "profile_completion_reminder_days",
+                    ):
+                        peer.pop(key, None)
+
+            if (
+                str(profile.get("profile_completion_peer_line_user_id") or "")
+                == peer_id
+            ):
+                profile["profile_completion_required"] = False
+                profile["profile_completion_cancelled_at"] = iso_now()
+                for key in (
+                    "profile_completion_peer_line_user_id",
+                    "profile_completion_bound_at",
+                    "profile_completion_reminder_days",
+                ):
+                    profile.pop(key, None)
+
+        result.update(
+            {
+                "deleted": True,
+                "contact_id": contact_id,
+                "contacts": copy.deepcopy(profile["contacts"]),
+            }
+        )
+
+    mutate_state_atomically(data_file, remove_relationship)
+    if result.get("error") == "user not registered":
+        return result, 404
+    if result.get("error") == "contact_not_found":
+        return result, 404
+    return result, 200
 
 
 
@@ -4257,7 +4382,140 @@ def backfill_bind_notify(config, *, dry_run=False, limit=0):
     }, 200
 
 
-def bind_emergency_contact(data_file, payload, config=None):
+def retry_pending_bind_notifications(config):
+    """Retry only the failed side of a recent guardian bind, up to 3 attempts."""
+    token = (
+        config.get("LINE_CHANNEL_ACCESS_TOKEN")
+        or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+        or os.environ.get("CHANNEL_ACCESS_TOKEN", "")
+    )
+    if not token:
+        return {
+            "sent": 0,
+            "failed": 0,
+            "skipped": 0,
+            "error": "LINE_CHANNEL_ACCESS_TOKEN is not set",
+        }, 400
+    data_file = config["DATA_FILE"]
+    state = load_state(data_file)
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    outcomes = []
+
+    for inviter_id, inviter, contact, guardian_id in iter_accepted_line_bind_pairs(
+        state
+    ):
+        status_map = contact.get("bind_notify_status")
+        if not isinstance(status_map, dict):
+            continue
+        guardian_name = (
+            str(contact.get("name") or "").strip()
+            or ((state.get("users") or {}).get(guardian_id) or {}).get(
+                "display_name"
+            )
+            or "守護人"
+        )
+        inviter_notice, guardian_notice = build_bind_success_notices(
+            inviter,
+            inviter.get("contacts") or [],
+            inviter_id,
+            guardian_name,
+            invite_reward_applied=False,
+        )
+        for who, target, message in (
+            ("inviter", inviter_id, inviter_notice),
+            ("guardian", guardian_id, guardian_notice),
+        ):
+            entry = status_map.get(who) or {}
+            attempts = int(entry.get("attempts") or 0)
+            if (
+                entry.get("status") == "sent"
+                or not entry.get("retryable")
+                or attempts >= 3
+            ):
+                continue
+            try:
+                result = sender(token, target, message)
+                outcomes.append(
+                    {
+                        "inviter_id": inviter_id,
+                        "guardian_id": guardian_id,
+                        "who": who,
+                        "target": target,
+                        "status": "sent",
+                        "detail": json.dumps(result, ensure_ascii=False),
+                    }
+                )
+            except Exception as exc:
+                failure = classify_push_exception(exc)
+                outcomes.append(
+                    {
+                        "inviter_id": inviter_id,
+                        "guardian_id": guardian_id,
+                        "who": who,
+                        "target": target,
+                        "status": "failed",
+                        "detail": str(exc)[:400],
+                        "retryable": failure.kind
+                        in {"transient", "rate_limited"},
+                    }
+                )
+
+    now_stamp = current_app_time(config).isoformat(timespec="seconds")
+
+    def merge_retry_results(latest):
+        for outcome in outcomes:
+            latest_inviter = (latest.get("users") or {}).get(
+                outcome["inviter_id"]
+            ) or {}
+            latest_contact = next(
+                (
+                    row
+                    for row in (latest_inviter.get("contacts") or [])
+                    if get_contact_line_id(row) == outcome["guardian_id"]
+                ),
+                None,
+            )
+            if latest_contact is None:
+                continue
+            latest_status = latest_contact.setdefault("bind_notify_status", {})
+            entry = dict(latest_status.get(outcome["who"]) or {})
+            entry["attempts"] = int(entry.get("attempts") or 0) + 1
+            entry["status"] = outcome["status"]
+            if outcome["status"] == "failed":
+                entry["retryable"] = bool(outcome.get("retryable"))
+            else:
+                entry["retryable"] = False
+                entry["sent_at"] = now_stamp
+            latest_status[outcome["who"]] = entry
+            append_notification_log(
+                latest,
+                "binding_complete",
+                outcome["target"],
+                outcome["status"],
+                "綁定完成通知補送",
+                outcome["detail"],
+            )
+            if all(
+                (latest_status.get(key) or {}).get("status") == "sent"
+                for key in ("inviter", "guardian")
+            ):
+                latest_contact["bind_notify_sent_at"] = now_stamp
+
+    if outcomes:
+        mutate_state_atomically(data_file, merge_retry_results)
+    sent = sum(1 for row in outcomes if row["status"] == "sent")
+    failed = sum(1 for row in outcomes if row["status"] == "failed")
+    return {
+        "sent": sent,
+        "failed": failed,
+        "skipped": 0,
+        "results": outcomes,
+    }, 200
+
+
+def bind_emergency_contact(
+    data_file, payload, config=None, *, _state_conflict_retries=1
+):
     inviter_id = str(payload.get("inviter_line_user_id") or "").strip()
     contact_line_user_id = str(payload.get("contact_line_user_id") or "").strip()
     contact_display_name = str(payload.get("contact_display_name") or "LINE 聯絡人").strip()
@@ -4514,6 +4772,8 @@ def bind_emergency_contact(data_file, payload, config=None):
             profile["profile_completion_required"] = True
             profile["profile_completion_bound_at"] = accepted_at
             profile["profile_completion_reminder_days"] = []
+        inviter["profile_completion_peer_line_user_id"] = contact_line_user_id
+        contact_user["profile_completion_peer_line_user_id"] = inviter_id
 
     # 互綁可選：兩邊互相設為核心（各受方案 core_guardian_alert_limit 約束）
     mutual_core_applied = False
@@ -4563,13 +4823,29 @@ def bind_emergency_contact(data_file, payload, config=None):
 
     # Relationship and consumed invite must be durable before either party sees
     # a success notification. Notification attempts are logged in a second save.
-    save_state(data_file, state)
+    try:
+        save_state(data_file, state)
+    except StateConflictError:
+        if _state_conflict_retries <= 0:
+            return {
+                "ok": False,
+                "error": "綁定狀態剛剛有更新，請重新開啟邀請連結",
+                "code": "state_conflict",
+            }, 409
+        return bind_emergency_contact(
+            data_file,
+            payload,
+            config,
+            _state_conflict_retries=_state_conflict_retries - 1,
+        )
 
     inviter_notified = False
     guardian_notified = False
     sent = 0
     notify_errors = []
     notify_hint = ""
+    notification_log_start = len(state.get("notification_logs") or [])
+    usage_start = len(state.get("line_message_usage") or [])
     # 首次綁定成功：一定推播雙方（重複綁定不狂推）
     if config and not was_duplicate:
         token = (
@@ -4656,7 +4932,95 @@ def bind_emergency_contact(data_file, payload, config=None):
             event_id=str((pending_invite or {}).get("id") or f"{inviter_id}:{contact_line_user_id}:{accepted_at}"),
             sent_at=parse_datetime(accepted_at) or current_app_time(config or {}),
         )
-    save_state(data_file, state)
+    delivery_logs = copy.deepcopy(
+        (state.get("notification_logs") or [])[notification_log_start:]
+    )
+    delivery_usage = copy.deepcopy(
+        (state.get("line_message_usage") or [])[usage_start:]
+    )
+    bind_notify_status = None
+    if config and not was_duplicate:
+        failed_by_who = {
+            str(row.get("who") or ""): row
+            for row in notify_errors
+            if isinstance(row, dict)
+        }
+        bind_notify_status = {
+            "inviter": {
+                "status": "sent" if inviter_notified else "failed",
+                "attempts": 1,
+                "retryable": (
+                    classify_push_exception(
+                        RuntimeError(
+                            (failed_by_who.get("inviter") or {}).get("error") or ""
+                        )
+                    ).kind in {"transient", "rate_limited"}
+                ),
+            },
+            "guardian": {
+                "status": "sent" if guardian_notified else "failed",
+                "attempts": 1,
+                "retryable": (
+                    classify_push_exception(
+                        RuntimeError(
+                            (failed_by_who.get("guardian") or {}).get("error") or ""
+                        )
+                    ).kind in {"transient", "rate_limited"}
+                ),
+            },
+        }
+
+    if (
+        delivery_logs
+        or delivery_usage
+        or bind_notify_status
+        or (inviter_notified and guardian_notified)
+    ):
+        def merge_delivery_results(latest):
+            if delivery_logs:
+                logs = list(latest.get("notification_logs") or [])
+                logs.extend(delivery_logs)
+                latest["notification_logs"] = logs[-100:]
+            if delivery_usage:
+                ledger = list(latest.get("line_message_usage") or [])
+                known_keys = {
+                    str(row.get("key") or "")
+                    for row in ledger
+                    if isinstance(row, dict)
+                }
+                for row in delivery_usage:
+                    key = str(row.get("key") or "")
+                    if key and key not in known_keys:
+                        ledger.append(row)
+                        known_keys.add(key)
+                latest["line_message_usage"] = ledger[-10000:]
+            if inviter_notified and guardian_notified:
+                latest_inviter = (latest.get("users") or {}).get(inviter_id) or {}
+                latest_contact = next(
+                    (
+                        row
+                        for row in (latest_inviter.get("contacts") or [])
+                        if get_contact_line_id(row) == contact_line_user_id
+                    ),
+                    None,
+                )
+                if latest_contact is not None:
+                    latest_contact["bind_notify_sent_at"] = accepted_at
+            latest_inviter = (latest.get("users") or {}).get(inviter_id) or {}
+            latest_contact = next(
+                (
+                    row
+                    for row in (latest_inviter.get("contacts") or [])
+                    if get_contact_line_id(row) == contact_line_user_id
+                ),
+                None,
+            )
+            if latest_contact is not None and bind_notify_status:
+                latest_contact["bind_notify_status"] = copy.deepcopy(
+                    bind_notify_status
+                )
+
+        mutate_state_atomically(data_file, merge_delivery_results)
     bound_contact = next(
         (contact for contact in contacts if get_contact_line_id(contact) == contact_line_user_id),
         None,
@@ -10413,11 +10777,20 @@ def send_profile_completion_reminders(config):
     for profile in (state.get("users") or {}).values():
         if not isinstance(profile, dict) or not profile.get("profile_completion_required"):
             continue
-        if any(
-            complete_guardian_contact(contact)
+        completion_peer = str(
+            profile.get("profile_completion_peer_line_user_id") or ""
+        ).strip()
+        completion_contacts = [
+            contact
             for contact in (profile.get("contacts") or [])
             if isinstance(contact, dict)
-        ):
+            and resolve_contact_role(contact) == "guardian"
+            and (
+                not completion_peer
+                or get_contact_line_id(contact) == completion_peer
+            )
+        ]
+        if any(complete_guardian_contact(contact) for contact in completion_contacts):
             profile["profile_completion_required"] = False
             profile["profile_completion_completed_at"] = now.isoformat(timespec="seconds")
             skipped += 1
@@ -10458,6 +10831,7 @@ def run_cron_tick(config):
 
     always = {
         "checkin_reminders": send_checkin_reminders,
+        "binding_notification_retries": retry_pending_bind_notifications,
         "profile_completion_reminders": send_profile_completion_reminders,
         "overdue_alerts": send_due_reminders,
         "guardian_group_daily_summaries": send_guardian_group_daily_summaries,

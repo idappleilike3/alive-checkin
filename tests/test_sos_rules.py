@@ -665,6 +665,47 @@ class SosRulesTests(unittest.TestCase):
         self.assertFalse(stored["profile_completion_required"])
         self.assertTrue(stored["profile_completion_completed_at"])
 
+    def test_profile_completion_does_not_stop_for_unrelated_emergency_contact(self):
+        data_file = self.make_data_file({
+            "line_user_id": "U-owner",
+            "display_name": "小美",
+            "profile_completion_required": True,
+            "profile_completion_bound_at": "2026-07-01T09:00:00+08:00",
+            "profile_completion_peer_line_user_id": "U-guardian",
+            "contacts": [
+                {
+                    "id": "emergency-1",
+                    "name": "鄰居",
+                    "relationship": "鄰居",
+                    "phone": "0912345678",
+                    "contact_role": "emergency",
+                    "line_user_id": "U-neighbor",
+                    "binding_status": "accepted",
+                },
+                {
+                    "id": "guardian-1",
+                    "name": "阿媽",
+                    "relationship": "家人",
+                    "phone": "",
+                    "line_user_id": "U-guardian",
+                    "binding_status": "accepted",
+                    "contact_role": "guardian",
+                },
+            ],
+        })
+
+        result, code = app_module.send_profile_completion_reminders({
+            "DATA_FILE": data_file,
+            "LINE_CHANNEL_ACCESS_TOKEN": "token",
+            "LINE_PUSH_SENDER": lambda *_args: {"ok": True},
+            "CRON_NOW": datetime.fromisoformat("2026-07-02T09:00:00+08:00"),
+        })
+
+        self.assertEqual(code, 200)
+        self.assertGreaterEqual(result["sent"], 1)
+        stored = app_module.load_state(data_file)["users"]["U-owner"]
+        self.assertTrue(stored["profile_completion_required"])
+
 
 if __name__ == "__main__":
     unittest.main()

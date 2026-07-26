@@ -707,6 +707,39 @@
     }
     .member-subpanel-body { margin-top: 10px; }
     .member-subpanel-body[hidden] { display: none; }
+    .member-contact-card-toggle {
+      width: 100%;
+      min-height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 0;
+      background: transparent;
+      padding: 12px 0;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .member-contact-card-toggle:focus-visible {
+      outline: 3px solid #0f766e;
+      outline-offset: 3px;
+      border-radius: 10px;
+    }
+    .member-contact-card-chevron {
+      flex: 0 0 auto;
+      color: #0f766e;
+      font-size: 22px;
+      transition: transform 0.15s;
+    }
+    .member-contact-card-toggle[aria-expanded="true"] .member-contact-card-chevron {
+      transform: rotate(180deg);
+    }
+    .member-contact-card-body[hidden] { display: none; }
+    @media (prefers-reduced-motion: reduce) {
+      .member-contact-card-chevron { transition: none; }
+    }
     .daily-remind-toggle-row {
       display: flex;
       align-items: center;
@@ -6268,6 +6301,8 @@
       }
       return list.map((contact, index) => {
         const cid = escapeHtml(contact.id || "");
+        const cardKey = String(contact.id || index).replace(/[^a-zA-Z0-9_-]/g, "") || String(index);
+        const bodyId = `member-contact-body-${cardKey}-${index}`;
         const bound = isContactBound(contact);
         const tier = contact.is_primary || (index === 0 && !list.some((c) => c.is_primary))
           ? "核心"
@@ -6282,15 +6317,20 @@
             </div>`;
         return `
           <div class="member-guardian-manage-row" data-id="${cid}">
-            <div class="member-guardian-manage-meta">
-              <div class="member-guardian-manage-head">${guardianAvatarHtml(contact)}<span class="guardian-manage-name">${escapeHtml(nick)}</span></div>
+            <button class="member-contact-card-toggle" type="button" aria-expanded="false" aria-controls="${bodyId}" data-contact-card-toggle="${bodyId}">
+              <span class="member-guardian-manage-head">${guardianAvatarHtml(contact)}<span class="guardian-manage-meta"><span class="guardian-manage-name">${escapeHtml(nick)}</span><small>${escapeHtml(contact.relationship || "關係未設定")}・${tier}${contact.is_primary ? "・主要" : ""}</small></span></span>
+              <span class="member-contact-card-chevron" aria-hidden="true">⌄</span>
+            </button>
+            <div class="member-contact-card-body" id="${bodyId}" hidden>
+              <div class="member-guardian-manage-meta">
               <span>${escapeHtml(contact.relationship || "關係未設定")} ／ ${escapeHtml(contact.phone || contact.email || "未填電話")} ／ ${tier}${contact.is_primary ? "／主要" : ""}</span>
               ${statusHtml}
               ${added ? `<small>新增日期：${escapeHtml(added)}</small>` : ""}
-            </div>
-            <div class="member-guardian-manage-actions">
-              <button class="action-btn member-edit-guardian" type="button" data-id="${cid}" aria-label="編輯">編輯</button>
-              <button class="action-btn danger-action member-delete-guardian" type="button" data-id="${cid}" aria-label="刪除">刪除</button>
+              </div>
+              <div class="member-guardian-manage-actions">
+                <button class="action-btn member-edit-guardian" type="button" data-id="${cid}" aria-label="編輯">編輯</button>
+                <button class="action-btn danger-action member-delete-guardian" type="button" data-id="${cid}" aria-label="解除守護關係">解除守護關係</button>
+              </div>
             </div>
           </div>`;
       }).join("");
@@ -6473,6 +6513,22 @@
           const inviteBtn = event.target.closest(".member-invite-guardian, .one-tap-invite-btn");
           const editBtn = event.target.closest(".member-edit-guardian");
           const deleteBtn = event.target.closest(".member-delete-guardian");
+          const toggleBtn = event.target.closest("[data-contact-card-toggle]");
+          if (toggleBtn) {
+            event.preventDefault();
+            const opening = toggleBtn.getAttribute("aria-expanded") !== "true";
+            listEl.querySelectorAll("[data-contact-card-toggle]").forEach((other) => {
+              other.setAttribute("aria-expanded", "false");
+              const otherBody = document.getElementById(other.dataset.contactCardToggle || "");
+              if (otherBody) otherBody.hidden = true;
+            });
+            if (opening) {
+              toggleBtn.setAttribute("aria-expanded", "true");
+              const body = document.getElementById(toggleBtn.dataset.contactCardToggle || "");
+              if (body) body.hidden = false;
+            }
+            return;
+          }
           if (inviteBtn) {
             event.preventDefault();
             openShareInviteForContact();

@@ -184,6 +184,46 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(len(state["users"]["U-guardian"]["contacts"]), 1)
         self.assertEqual(len([row for row in state["notification_logs"] if row["kind"] == "binding_complete"]), 2)
 
+    def test_binding_retry_sends_only_the_previously_failed_recipient(self):
+        invite, _ = app_module.create_guardian_invite(
+            self.data_file, "U-owner", {"display_name": "阿媽"}
+        )
+        first_targets = []
+
+        def first_sender(_token, target, _message):
+            first_targets.append(target)
+            if target == "U-guardian":
+                raise RuntimeError("temporary network failure")
+            return {"ok": True}
+
+        result, code = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-owner",
+                "contact_line_user_id": "U-guardian",
+                "recipient_consent": True,
+                "invite_token": invite["invite_token"],
+            },
+            config={"LINE_CHANNEL_ACCESS_TOKEN": "token", "LINE_PUSH_SENDER": first_sender},
+        )
+        self.assertEqual(code, 200)
+        self.assertEqual(result["owner_notice"]["status"], "sent")
+        self.assertEqual(result["invitee_notice"]["status"], "failed")
+
+        retry_targets = []
+        retried, retry_code = app_module.retry_pending_bind_notifications({
+            "DATA_FILE": self.data_file,
+            "LINE_CHANNEL_ACCESS_TOKEN": "token",
+            "LINE_PUSH_SENDER": lambda _token, target, _message: retry_targets.append(target) or {"ok": True},
+        })
+
+        self.assertEqual(retry_code, 200)
+        self.assertEqual(retried["sent"], 1)
+        self.assertEqual(retry_targets, ["U-guardian"])
+        state = app_module.load_state(self.data_file)
+        contact = state["users"]["U-owner"]["contacts"][0]
+        self.assertTrue(contact["bind_notify_sent_at"])
+
     def test_pending_invite_expires_after_seven_days(self):
         past = app_module.current_app_time({}) - app_module.timedelta(days=8)
         invite, _ = app_module.create_guardian_invite(
@@ -290,6 +330,135 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(reused_code, 410)
         self.assertEqual(reused["code"], "invite_used")
 
+    def test_delete_bound_guardian_unbinds_both_sides_and_allows_reinvite(self):
+        invite, _ = app_module.create_guardian_invite(
+            self.data_file, "U-owner", {"display_name": "阿媽"}
+        )
+        accepted, accepted_code = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-owner",
+                "contact_line_user_id": "U-guardian",
+                "recipient_consent": True,
+                "invite_token": invite["invite_token"],
+            },
+            config={},
+        )
+        self.assertEqual(accepted_code, 200)
+        contact_id = accepted["owner_guardian"]["id"]
+
+        deleted, deleted_code = app_module.delete_single_contact(
+            self.data_file, "U-owner", contact_id
+        )
+        self.assertEqual(deleted_code, 200)
+        self.assertTrue(deleted["deleted"])
+        state = app_module.load_state(self.data_file)
+        self.assertEqual(state["users"]["U-owner"]["contacts"], [])
+        self.assertEqual(state["users"]["U-guardian"]["contacts"], [])
+        self.assertNotIn(
+            "U-owner", state["users"]["U-guardian"].get("guarding_for") or []
+        )
+        self.assertNotIn(
+            "U-guardian", state["users"]["U-owner"].get("guarding_for") or []
+        )
+
+        reinvite, reinvite_code = app_module.create_guardian_invite(
+            self.data_file, "U-owner", {"display_name": "阿媽"}
+        )
+        self.assertEqual(reinvite_code, 201)
+        rebound, rebound_code = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-owner",
+                "contact_line_user_id": "U-guardian",
+                "recipient_consent": True,
+                "invite_token": reinvite["invite_token"],
+            },
+            config={},
+        )
+        self.assertEqual(rebound_code, 200)
+        self.assertTrue(rebound["binding_complete"])
+
+    def test_delete_bound_guardian_clears_profile_completion_reminders(self):
+        invite, _ = app_module.create_guardian_invite(
+            self.data_file, "U-owner", {"display_name": "阿媽"}
+        )
+        accepted, _ = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-owner",
+                "contact_line_user_id": "U-guardian",
+                "recipient_consent": True,
+                "invite_token": invite["invite_token"],
+            },
+            config={},
+        )
+
+        deleted, code = app_module.delete_single_contact(
+            self.data_file, "U-owner", accepted["owner_guardian"]["id"]
+        )
+
+        self.assertEqual(code, 200)
+        self.assertTrue(deleted["deleted"])
+        state = app_module.load_state(self.data_file)
+        for line_user_id in ("U-owner", "U-guardian"):
+            profile = state["users"][line_user_id]
+            self.assertFalse(profile.get("profile_completion_required"))
+            self.assertNotIn("profile_completion_peer_line_user_id", profile)
+            self.assertNotIn("profile_completion_bound_at", profile)
+
+    def test_delete_emergency_contact_does_not_remove_guardian_for_same_peer(self):
+        state = app_module.load_state(self.data_file)
+        owner = app_module.get_profile(state, "U-owner")
+        peer = app_module.get_profile(state, "U-peer")
+        owner["contacts"] = [
+            {
+                "id": "guardian-peer",
+                "line_user_id": "U-peer",
+                "binding_status": "accepted",
+                "consent_status": "accepted",
+                "contact_role": "guardian",
+                "is_primary": True,
+            },
+            {
+                "id": "emergency-peer",
+                "line_user_id": "U-peer",
+                "binding_status": "accepted",
+                "contact_role": "emergency",
+            },
+        ]
+        peer["contacts"] = [
+            {
+                "id": "guardian-owner",
+                "line_user_id": "U-owner",
+                "binding_status": "accepted",
+                "consent_status": "accepted",
+                "contact_role": "guardian",
+                "is_primary": True,
+            }
+        ]
+        owner["guarding_for"] = ["U-peer"]
+        peer["guarding_for"] = ["U-owner"]
+        app_module.save_state(self.data_file, state)
+
+        deleted, code = app_module.delete_single_contact(
+            self.data_file, "U-owner", "emergency-peer"
+        )
+
+        self.assertEqual(code, 200)
+        self.assertTrue(deleted["deleted"])
+        stored = app_module.load_state(self.data_file)
+        self.assertEqual(
+            [row["id"] for row in stored["users"]["U-owner"]["contacts"]],
+            ["guardian-peer"],
+        )
+        self.assertEqual(
+            [row["id"] for row in stored["users"]["U-peer"]["contacts"]],
+            ["guardian-owner"],
+        )
+        self.assertIn("U-peer", stored["users"]["U-owner"]["guarding_for"])
+        self.assertIn("U-owner", stored["users"]["U-peer"]["guarding_for"])
+
     def test_binding_is_persisted_before_success_notifications_are_sent(self):
         invite, _ = app_module.create_guardian_invite(
             self.data_file, "U-owner", {"display_name": "阿媽"}
@@ -317,6 +486,142 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(result["owner_notice"]["status"], "sent")
         self.assertEqual(result["invitee_notice"]["status"], "sent")
+
+    def test_bind_retries_one_state_conflict_and_consumes_invite_once(self):
+        """A concurrent state update must not turn invite acceptance into a 500."""
+        invite, _ = app_module.create_guardian_invite(
+            self.data_file, "U-owner", {"display_name": "阿媽"}
+        )
+        real_save_state = app_module.save_state
+        saves = 0
+
+        def conflict_once(data_file, state):
+            nonlocal saves
+            saves += 1
+            if saves == 1:
+                raise app_module.StateConflictError("state_conflict")
+            return real_save_state(data_file, state)
+
+        with patch.object(app_module, "save_state", side_effect=conflict_once):
+            result, code = app_module.bind_emergency_contact(
+                self.data_file,
+                {
+                    "inviter_line_user_id": "U-owner",
+                    "contact_line_user_id": "U-guardian",
+                    "recipient_consent": True,
+                    "invite_token": invite["invite_token"],
+                },
+                config={},
+            )
+
+        self.assertEqual(code, 200)
+        self.assertTrue(result["binding_complete"])
+        state = app_module.load_state(self.data_file)
+        self.assertEqual(state["guardian_invites"][0]["status"], "accepted")
+        self.assertEqual(len(state["users"]["U-owner"]["contacts"]), 1)
+        self.assertEqual(len(state["users"]["U-guardian"]["contacts"]), 1)
+
+    def test_same_invite_concurrent_acceptance_has_one_winner(self):
+        invite, _ = app_module.create_guardian_invite(
+            self.data_file, "U-owner", {"display_name": "阿媽"}
+        )
+        barrier = threading.Barrier(2)
+        results = []
+
+        def accept_as(line_user_id):
+            barrier.wait(timeout=2)
+            results.append(
+                app_module.bind_emergency_contact(
+                    self.data_file,
+                    {
+                        "inviter_line_user_id": "U-owner",
+                        "contact_line_user_id": line_user_id,
+                        "recipient_consent": True,
+                        "invite_token": invite["invite_token"],
+                    },
+                    config={},
+                )
+            )
+
+        threads = [
+            threading.Thread(target=accept_as, args=("U-guardian-a",)),
+            threading.Thread(target=accept_as, args=("U-guardian-b",)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=3)
+
+        self.assertEqual(sorted(code for _body, code in results), [200, 410])
+        state = app_module.load_state(self.data_file)
+        self.assertEqual(state["guardian_invites"][0]["status"], "accepted")
+        owner_contacts = state["users"]["U-owner"]["contacts"]
+        self.assertEqual(len(owner_contacts), 1)
+
+    def test_persistent_state_conflict_leaves_no_one_sided_relationship(self):
+        invite, _ = app_module.create_guardian_invite(
+            self.data_file, "U-owner", {"display_name": "阿媽"}
+        )
+        with patch.object(
+            app_module,
+            "save_state",
+            side_effect=app_module.StateConflictError("state_conflict"),
+        ):
+            result, code = app_module.bind_emergency_contact(
+                self.data_file,
+                {
+                    "inviter_line_user_id": "U-owner",
+                    "contact_line_user_id": "U-guardian",
+                    "recipient_consent": True,
+                    "invite_token": invite["invite_token"],
+                },
+                config={},
+            )
+
+        self.assertEqual(code, 409)
+        self.assertEqual(result["code"], "state_conflict")
+        state = app_module.load_state(self.data_file)
+        self.assertEqual(state["guardian_invites"][0]["status"], "pending")
+        self.assertEqual(state["users"]["U-owner"].get("contacts") or [], [])
+        self.assertNotIn("U-guardian", state["users"])
+
+    def test_bind_notification_logging_preserves_concurrent_state_update(self):
+        """A write during LINE delivery must not lose data or fail the accepted bind."""
+        invite, _ = app_module.create_guardian_invite(
+            self.data_file, "U-owner", {"display_name": "阿媽"}
+        )
+        sender_calls = 0
+
+        def sender(_token, _target, _message):
+            nonlocal sender_calls
+            sender_calls += 1
+            if sender_calls == 1:
+                concurrent = app_module.load_state(self.data_file)
+                concurrent["concurrent_marker"] = "keep-me"
+                app_module.save_state(self.data_file, concurrent)
+            return {"ok": True}
+
+        result, code = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-owner",
+                "contact_line_user_id": "U-guardian",
+                "recipient_consent": True,
+                "invite_token": invite["invite_token"],
+            },
+            config={"LINE_CHANNEL_ACCESS_TOKEN": "token", "LINE_PUSH_SENDER": sender},
+        )
+
+        self.assertEqual(code, 200)
+        self.assertTrue(result["binding_complete"])
+        state = app_module.load_state(self.data_file)
+        self.assertEqual(state["concurrent_marker"], "keep-me")
+        logs = [
+            row
+            for row in state["notification_logs"]
+            if row.get("kind") == "binding_complete"
+        ]
+        self.assertEqual(len(logs), 2)
 
     def test_fallback_http_create_invite_uses_authenticated_owner_and_returns_token(self):
         status, body = self.fallback_http_request(

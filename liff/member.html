@@ -789,6 +789,8 @@ function renderContactList(listEl, items, emptyText) {
     return;
   }
   listEl.innerHTML = items.map((g, i) => {
+    const cardKey = String(g.id || i).replace(/[^a-zA-Z0-9_-]/g, "") || String(i);
+    const bodyId = `contact-card-body-${cardKey}-${i}`;
     const bound = isBoundContact(g);
     const nick = contactPeerDisplayName(g);
     const pic = String(g.picture_url || g.pictureUrl || "").trim();
@@ -804,11 +806,11 @@ function renderContactList(listEl, items, emptyText) {
         </div>`;
     return `
     <div class="guardian-row contact-card ${g.is_primary || i === 0 ? "primary" : ""}">
-      <button class="contact-card-toggle" type="button" data-contact-toggle="${escape(g.id)}" aria-expanded="false">
+      <button class="contact-card-toggle" type="button" data-contact-toggle="${escape(g.id)}" aria-expanded="false" aria-controls="${bodyId}">
         <span class="guardian-row-head">${avatar}<span><span class="guardian-name">${escape(nick)}${g.is_primary || i === 0 ? " ⭐ 主要" : ""}</span><span class="guardian-detail">${escape(g.relationship || "關係未設定")}</span></span></span>
         <span class="contact-card-chevron" aria-hidden="true">⌄</span>
       </button>
-      <div class="contact-card-body" data-contact-body="${escape(g.id)}" hidden>
+      <div class="contact-card-body" id="${bodyId}" data-contact-body="${escape(g.id)}" hidden>
         <div class="guardian-detail">${escape(g.phone || g.email || "未填聯絡方式")}</div>
         ${statusHtml}
         <div class="guardian-actions">
