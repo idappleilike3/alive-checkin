@@ -18,7 +18,44 @@
         #eef3f7;
       padding: 24px;
     }
-    .shell { max-width: 1080px; margin: 0 auto; }
+    .shell { max-width: 1380px; margin: 0 auto; }
+    .admin-nav {
+      position: sticky;
+      top: 10px;
+      z-index: 5;
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      margin: 0 0 16px;
+      padding: 10px;
+      border-radius: 16px;
+      background: #102a43;
+      box-shadow: 0 14px 30px rgba(16,42,67,0.2);
+    }
+    .admin-nav a {
+      flex: 0 0 auto;
+      color: #d9f9e6;
+      text-decoration: none;
+      font-weight: 800;
+      font-size: 14px;
+      padding: 9px 12px;
+      border-radius: 10px;
+    }
+    .admin-nav a:hover, .admin-nav a:focus-visible { background: #1f4d61; outline: 2px solid #86efac; }
+    .section-heading { scroll-margin-top: 82px; }
+    .integration-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .integration-card {
+      padding: 16px;
+      border: 1px solid #dbe5ec;
+      border-radius: 16px;
+      background: #f8fbfd;
+    }
+    .integration-card strong { display: block; margin-bottom: 6px; font-size: 17px; }
+    .integration-card p { margin: 0; color: #52606d; line-height: 1.55; }
     .login-panel { max-width: 440px; margin: 10vh auto 0; }
     .login-panel form { display: grid; gap: 12px; }
     .login-panel label { font-weight: 800; color: #14532d; }
@@ -355,12 +392,105 @@
     <div class="topbar">
       <div>
         <h1>後台總覽 ♡</h1>
-        <p class="subtitle">看大家有沒有平安簽到，必要時推播提醒。</p>
+        <p class="subtitle">看大家有沒有平安簽到，必要時推播提醒。 <span class="badge" id="adminRoleBadge">讀取權限</span></p>
       </div>
       <button id="logoutBtn" class="secondary" type="button">登出</button>
     </div>
 
-    <section class="panel">
+    <nav class="admin-nav" aria-label="後台主要功能">
+      <a href="#operations">營運總覽</a>
+      <a href="#members">會員管理</a>
+      <a href="#guardian-operations">守護營運</a>
+      <a href="#incidents">緊急事件</a>
+      <a href="#beta-program">封測管理</a>
+      <a href="#orders">方案與訂單</a>
+      <a href="#support">客服與隱私</a>
+      <a href="#analytics">流量分析</a>
+      <a href="#seo">SEO 管理</a>
+      <a href="#system">系統設定</a>
+    </nav>
+
+    <section class="panel section-heading" id="incidents" style="margin-bottom:16px;">
+      <h2 style="margin:0 0 6px;">緊急事件中心</h2>
+      <p class="note">優先處理尚未結案的 SOS 與 LINE 發送失敗；數字會隨後台刷新更新。</p>
+      <div class="stats">
+        <div class="stat"><strong id="incidentTotal">0</strong><span>待處理事件</span></div>
+        <div class="stat"><strong id="incidentSos">0</strong><span>未結案 SOS</span></div>
+        <div class="stat"><strong id="incidentDelivery">0</strong><span>通知失敗</span></div>
+      </div>
+      <h3>事件處理佇列</h3>
+      <div class="log-list" id="incidentQueue">
+        <div class="log-item"><span>正在載入事件…</span><span></span><span></span></div>
+      </div>
+    </section>
+
+    <section class="panel section-heading" id="line-cost" style="margin-bottom:16px;">
+      <h2 style="margin:0 0 6px;">LINE 訊息用量</h2>
+      <p class="note">以本系統推播紀錄估算當月用量；正式帳單仍以 LINE Developers 後台為準。</p>
+      <div class="stats">
+        <div class="stat"><strong id="lineMessagesUsed">0</strong><span>本月已記錄</span></div>
+        <div class="stat"><strong id="lineMessagesRemaining">—</strong><span>預估剩餘</span></div>
+        <div class="stat"><strong id="lineUsagePercent">0%</strong><span>額度使用率</span></div>
+        <div class="stat"><strong id="lineBudgetStatus">正常</strong><span>成本警示</span></div>
+        <div class="stat"><strong id="lineHardStopStatus">未啟動</strong><span>非緊急推播硬上限</span></div>
+      </div>
+      <p class="note" id="lineHardStopHint">達到硬上限時停止一般提醒與批次推播；SOS 與安全事件仍可發送。</p>
+    </section>
+
+    <section class="panel section-heading" id="beta-program" style="margin-bottom:16px;">
+      <h2 style="margin:0 0 6px;">21 天封測管理</h2>
+      <p class="note">名額固定為 10／20／10；封測結束不自動扣款，同一會員只會占用一組進行中名額。</p>
+      <div class="stats">
+        <div class="stat"><strong id="betaKnown">0/10</strong><span>認識會員 10 人</span></div>
+        <div class="stat"><strong id="betaStandard">0/20</strong><span>一般會員 20 人</span></div>
+        <div class="stat"><strong id="betaFamily">0/10</strong><span>家庭群組 10 人</span></div>
+      </div>
+      <div class="toolbar" style="margin-top:14px;">
+        <select id="betaMemberSelect" aria-label="選擇封測會員">
+          <option value="">選擇會員</option>
+        </select>
+        <select id="betaCohortSelect" aria-label="選擇封測組別">
+          <option value="known_10">認識會員 10 人</option>
+          <option value="standard_20">一般會員 20 人</option>
+          <option value="family_group_10">家庭群組 10 人</option>
+        </select>
+        <button type="button" id="betaAssignBtn">加入 21 天封測</button>
+      </div>
+      <div class="log-list" id="betaMemberList">
+        <div class="log-item"><span>正在載入封測名單…</span><span></span><span></span></div>
+      </div>
+    </section>
+
+    <section class="panel section-heading" id="analytics" style="margin-bottom:16px;">
+      <h2 style="margin:0 0 6px;">流量分析</h2>
+      <p class="note">站內轉換資料可直接驗證；GA4 報表需設定 Property ID 與服務帳號後才會顯示正式流量。</p>
+      <div class="stats">
+        <div class="stat"><strong id="funnelRegistered">0</strong><span>註冊會員</span></div>
+        <div class="stat"><strong id="funnelGuardian">0</strong><span>已綁守護人</span></div>
+        <div class="stat"><strong id="funnelPaid">0</strong><span>有效付費會員</span></div>
+        <div class="stat"><strong id="deliveryRate">—</strong><span>LINE 推播成功率</span></div>
+      </div>
+      <div class="integration-grid">
+        <div class="integration-card">
+          <strong id="ga4Status">GA4 尚未連接</strong>
+          <p id="ga4Hint">需要設定 GA4_PROPERTY_ID 與 GA4_SERVICE_ACCOUNT_JSON，設定前不顯示假流量。</p>
+        </div>
+        <div class="integration-card">
+          <strong id="lineStatus">LINE 設定檢查中</strong>
+          <p>只顯示是否已設定，不會在頁面回傳或顯示 Channel Access Token。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel section-heading" id="seo" style="margin-bottom:16px;">
+      <h2 style="margin:0 0 6px;">SEO 管理</h2>
+      <p class="note">自動稽核公開頁面的標題、摘要、canonical、robots 與結構化資料。</p>
+      <div id="seoAuditList" class="log-list">
+        <div class="log-item"><span>正在檢查</span><span>公開頁面 SEO</span><span class="badge warn">載入中</span></div>
+      </div>
+    </section>
+
+    <section class="panel section-heading" id="operations">
       <div class="auth-bar" id="authBar" aria-label="後台操作">
         <p class="note" id="persistenceNote" style="grid-column:1/-1;margin:0;color:#9a3412;" hidden></p>
         <button id="refreshBtn" type="button">刷新資料</button>
@@ -527,6 +657,7 @@
         </table>
       </div>
 
+      <h2 class="section-heading" id="members" style="margin:20px 0 8px;">會員管理</h2>
       <div class="table-wrap">
         <table>
           <thead>
@@ -553,7 +684,7 @@
         </table>
       </div>
 
-      <div class="plan-reference" style="margin-top:16px;">
+      <div class="plan-reference section-heading" id="orders" style="margin-top:16px;">
         <h2>付款訂單</h2>
         <table>
           <thead>
@@ -573,7 +704,7 @@
         </table>
       </div>
 
-      <h2 style="margin: 20px 0 8px;">資料備份紀錄</h2>
+      <h2 class="section-heading" id="system" style="margin: 20px 0 8px;">系統設定與資料備份</h2>
       <p class="note">每次備份都會保留歷史紀錄，可隨時再次下載。系統最多保留最近 50 筆紀錄。</p>
       <div class="table-wrap">
         <table>
@@ -594,7 +725,7 @@
       <p class="note" id="message">小提醒：推播需要設定 LINE_CHANNEL_ACCESS_TOKEN，使用者也要先加官方帳號好友。</p>
     </section>
 
-    <section class="panel" style="margin-top: 16px;">
+    <section class="panel section-heading" id="guardian-operations" style="margin-top: 16px;">
       <h2 style="margin: 0 0 8px;">邀請綁定關係（誰邀請誰）</h2>
       <p class="note">依邀請人 contacts 的 LINE 綁定列出；每個人分享連結都帶自己的 <code>invite_from</code>。</p>
       <div class="reward-list" id="inviteEdgeList">
@@ -609,11 +740,16 @@
       </div>
     </section>
 
-    <section class="panel" style="margin-top: 16px;">
+    <section class="panel section-heading" id="support" style="margin-top: 16px;">
       <h2 style="margin: 0 0 8px;">客服訊息</h2>
       <p class="note">使用者在 LINE 留下問題後，會出現在這裡。輸入回覆後可直接推送到對方 LINE。</p>
       <div class="support-list" id="supportList">
         <div class="support-item">尚未載入客服訊息</div>
+      </div>
+      <h3 style="margin-top:22px;">隱私權申請</h3>
+      <p class="note">集中處理資料匯出、刪除、更正與查詢；完成或拒絕前必須留下處理摘要。</p>
+      <div class="support-list" id="privacyRequestList">
+        <div class="support-item">正在載入隱私權申請…</div>
       </div>
     </section>
 
@@ -630,6 +766,20 @@
 
     let adminCsrfToken = "";
     let adminAuthGeneration = 0;
+    let adminRole = "viewer";
+    let adminPermissions = [];
+
+    function applyAdminAccess(role, permissions) {
+      adminRole = role || "viewer";
+      adminPermissions = Array.isArray(permissions) ? permissions : [];
+      const labels = {
+        super_admin: "超級管理員",
+        operations: "營運客服",
+        finance: "財務人員",
+        viewer: "僅查看"
+      };
+      $("adminRoleBadge").textContent = labels[adminRole] || "僅查看";
+    }
 
     function showLogin(message) {
       adminCsrfToken = "";
@@ -655,7 +805,7 @@
         headers,
         credentials: "same-origin"
       });
-      if (response.status === 401 || response.status === 403) {
+      if (response.status === 401) {
         showLogin("登入已失效，請重新登入。");
         throw new Error("admin_session_expired");
       }
@@ -687,6 +837,7 @@
         if (generation !== adminAuthGeneration) return;
         if (!response.ok || !data.authenticated) return showLogin("");
         adminCsrfToken = data.csrf_token || "";
+        applyAdminAccess(data.role, data.permissions);
         showDashboard();
         await refresh();
       } catch (error) {
@@ -908,6 +1059,195 @@
       return parts.join("") || `<div><span class="badge warn">已綁定 0 位</span></div>`;
     }
 
+    async function loadBusinessDashboard() {
+      const res = await adminFetch("/api/admin/business-dashboard");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        $("ga4Status").textContent = "流量資料載入失敗";
+        $("ga4Hint").textContent = "請重新整理；若持續失敗，檢查管理員工作階段與伺服器紀錄。";
+        return;
+      }
+      const funnel = data.funnel || {};
+      const delivery = data.delivery || {};
+      const integrations = data.integrations || {};
+      const incidents = data.incidents || {};
+      const lineBudget = data.line_budget || {};
+      $("funnelRegistered").textContent = funnel.registered_members || 0;
+      $("funnelGuardian").textContent = funnel.members_with_guardian || 0;
+      $("funnelPaid").textContent = funnel.active_paid_members || 0;
+      $("deliveryRate").textContent = delivery.success_rate == null ? "尚無資料" : `${delivery.success_rate}%`;
+      $("incidentTotal").textContent = incidents.total_open || 0;
+      $("incidentSos").textContent = incidents.open_sos || 0;
+      $("incidentDelivery").textContent = incidents.delivery_failures || 0;
+      const canResolve = adminPermissions.includes("incident.manage");
+      $("incidentQueue").innerHTML = (incidents.items || []).length
+        ? incidents.items.map((item) => `
+          <div class="log-item">
+            <div><strong>${item.kind === "sos" ? "SOS 待確認" : "LINE 通知失敗"}</strong><br><small>${item.created_at || ""}</small></div>
+            <span>${item.notification_kind || item.incident_id || ""}</span>
+            ${canResolve
+              ? `<button type="button" onclick="resolveIncident('${item.kind}', '${item.incident_id}')">確認結案</button>`
+              : `<span class="badge">僅查看</span>`}
+          </div>
+        `).join("")
+        : `<div class="log-item"><span>目前沒有待處理事件</span><span></span><span class="badge ok">正常</span></div>`;
+      $("lineMessagesUsed").textContent = lineBudget.used || 0;
+      $("lineMessagesRemaining").textContent = lineBudget.remaining == null ? "—" : lineBudget.remaining;
+      $("lineUsagePercent").textContent = `${lineBudget.usage_percent || 0}%`;
+      $("lineBudgetStatus").textContent = lineBudget.status === "exceeded"
+        ? "已超過額度"
+        : lineBudget.status === "warning" ? "接近額度" : "正常";
+      $("lineHardStopStatus").textContent = lineBudget.hard_stop_active ? "已停止一般推播" : "未啟動";
+      $("lineHardStopHint").textContent = lineBudget.hard_stop_active
+        ? `已達 ${lineBudget.hard_stop_percent || 100}% 硬上限；一般提醒暫停，SOS 與安全事件保留。`
+        : `目前硬上限 ${lineBudget.hard_stop_percent || 100}%；達標時停止一般提醒，SOS 與安全事件保留。`;
+      const ga4 = integrations.ga4 || {};
+      $("ga4Status").textContent = ga4.configured ? "GA4 已連接" : "GA4 尚未連接";
+      $("ga4Hint").textContent = ga4.configured
+        ? "正式報表憑證已設定；本頁目前先顯示站內可驗證的會員轉換資料。"
+        : "需要設定 GA4_PROPERTY_ID 與 GA4_SERVICE_ACCOUNT_JSON，設定前不顯示假流量。";
+      $("lineStatus").textContent = integrations.line && integrations.line.configured
+        ? "LINE 正式通道已設定"
+        : "LINE 正式通道尚未設定";
+      const seoPages = (data.seo || {}).pages || [];
+      $("seoAuditList").innerHTML = seoPages.length
+        ? seoPages.map((page) => `
+          <div class="log-item">
+            <strong>${page.page}</strong>
+            <span>通過 ${page.passed}/${page.total} 項基礎檢查</span>
+            <span class="badge ${page.passed === page.total ? "ok" : "warn"}">${page.passed === page.total ? "完整" : "待補強"}</span>
+          </div>
+        `).join("")
+        : `<div class="log-item"><span>尚無可稽核頁面</span><span>請確認公開頁面檔案存在</span><span class="badge warn">待處理</span></div>`;
+    }
+
+    async function resolveIncident(kind, incidentId) {
+      if (!adminPermissions.includes("incident.manage")) {
+        $("message").textContent = "目前帳號沒有事件結案權限。";
+        return;
+      }
+      const resolutionNote = prompt("請輸入處理摘要（例如：已電話確認平安）", "");
+      if (resolutionNote === null) return;
+      const res = await adminFetch("/api/admin/incidents/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, incident_id: incidentId, resolution_note: resolutionNote })
+      });
+      const data = await res.json().catch(() => ({}));
+      $("message").textContent = res.ok ? "事件已結案並留下操作紀錄。" : (data.error || "事件結案失敗。");
+      if (res.ok) await loadBusinessDashboard();
+    }
+
+    function betaStatusLabel(status) {
+      return {
+        active: "進行中",
+        waitlisted: "候補",
+        completed: "已完成",
+        withdrawn: "已退出"
+      }[status] || status || "未知";
+    }
+
+    async function loadOperationsControls() {
+      const [betaRes, privacyRes] = await Promise.all([
+        adminFetch("/api/admin/beta-program"),
+        adminFetch("/api/admin/privacy-requests")
+      ]);
+      const betaData = betaRes.ok ? await betaRes.json() : { cohorts: {}, members: [] };
+      const cohorts = betaData.cohorts || {};
+      $("betaKnown").textContent = `${cohorts.known_10?.active || 0}/10`;
+      $("betaStandard").textContent = `${cohorts.standard_20?.active || 0}/20`;
+      $("betaFamily").textContent = `${cohorts.family_group_10?.active || 0}/10`;
+      const canManageBeta = adminPermissions.includes("beta.manage");
+      $("betaAssignBtn").disabled = !canManageBeta;
+      $("betaMemberList").innerHTML = (betaData.members || []).length
+        ? betaData.members.map((member) => `
+          <div class="log-item">
+            <div><strong>${member.display_name || "未取得暱稱"}</strong><br><small>${member.line_user_id || ""}</small></div>
+            <span>${(cohorts[member.cohort] || {}).label || member.cohort}<br><small>${String(member.starts_at || "").slice(0, 10)}～${String(member.ends_at || "").slice(0, 10)}</small></span>
+            ${canManageBeta && ["active", "waitlisted"].includes(member.status)
+              ? `<button type="button" onclick="updateBetaMember('${member.line_user_id}', 'completed')">標記完成</button>`
+              : `<span class="badge ${member.status === "completed" ? "ok" : "warn"}">${betaStatusLabel(member.status)}</span>`}
+          </div>
+        `).join("")
+        : `<div class="log-item"><span>尚無封測會員</span><span>可從上方選擇會員加入</span><span class="badge">0 人</span></div>`;
+
+      const privacyData = privacyRes.ok ? await privacyRes.json() : { requests: [] };
+      const canManagePrivacy = adminPermissions.includes("privacy.manage");
+      $("privacyRequestList").innerHTML = (privacyData.requests || []).length
+        ? privacyData.requests.map((item) => `
+          <div class="support-item">
+            <div class="support-meta">
+              <strong>${item.request_type || "查詢"}</strong>
+              <span>${item.created_at || ""}</span>
+              <span class="badge ${item.status === "completed" ? "ok" : "warn"}">${item.status || "pending"}</span>
+            </div>
+            <div>${item.summary || "使用者提出個資處理申請"}</div>
+            ${item.resolution_note ? `<small>處理摘要：${item.resolution_note}</small>` : ""}
+            ${canManagePrivacy && !["completed", "rejected"].includes(item.status)
+              ? `<div class="toolbar">
+                  <button type="button" onclick="updatePrivacyRequest('${item.id}', 'in_progress')">開始處理</button>
+                  <button type="button" onclick="updatePrivacyRequest('${item.id}', 'completed')">完成申請</button>
+                </div>`
+              : ""}
+          </div>
+        `).join("")
+        : `<div class="support-item">目前沒有隱私權申請</div>`;
+    }
+
+    async function assignBetaMember() {
+      if (!adminPermissions.includes("beta.manage")) {
+        $("message").textContent = "目前帳號沒有封測管理權限。";
+        return;
+      }
+      const lineUserId = $("betaMemberSelect").value;
+      if (!lineUserId) {
+        $("message").textContent = "請先選擇要加入封測的會員。";
+        return;
+      }
+      const res = await adminFetch("/api/admin/beta-program/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId, cohort: $("betaCohortSelect").value })
+      });
+      const data = await res.json().catch(() => ({}));
+      $("message").textContent = res.ok ? "會員已加入 21 天封測。" : (data.error || "加入封測失敗。");
+      if (res.ok) await loadOperationsControls();
+    }
+
+    async function updateBetaMember(lineUserId, status) {
+      const outcomeNote = prompt("請輸入封測結果摘要", "");
+      if (outcomeNote === null) return;
+      const res = await adminFetch("/api/admin/beta-program/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_user_id: lineUserId, status, outcome_note: outcomeNote })
+      });
+      const data = await res.json().catch(() => ({}));
+      $("message").textContent = res.ok ? "封測狀態已更新。" : (data.error || "封測狀態更新失敗。");
+      if (res.ok) await loadOperationsControls();
+    }
+
+    async function updatePrivacyRequest(requestId, status) {
+      let resolutionNote = "";
+      if (["completed", "rejected"].includes(status)) {
+        const answer = prompt("請輸入處理摘要（必填）", "");
+        if (answer === null) return;
+        resolutionNote = answer.trim();
+        if (!resolutionNote) {
+          $("message").textContent = "完成或拒絕申請前，必須輸入處理摘要。";
+          return;
+        }
+      }
+      const res = await adminFetch("/api/admin/privacy-requests/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request_id: requestId, status, resolution_note: resolutionNote })
+      });
+      const data = await res.json().catch(() => ({}));
+      $("message").textContent = res.ok ? "隱私權申請狀態已更新。" : (data.error || "隱私權申請更新失敗。");
+      if (res.ok) await loadOperationsControls();
+    }
+
     async function refresh() {
       setAuthStatus("正在載入後台資料…", "is-loading");
       const res = await adminFetch("/api/admin/summary");
@@ -981,6 +1321,9 @@
           </tr>
         `).join("")
         : `<tr><td colspan="14">還沒有 LINE 使用者進來簽到。</td></tr>`;
+      $("betaMemberSelect").innerHTML = `<option value="">選擇會員</option>` + (data.users || []).map((user) =>
+        `<option value="${user.line_user_id || ""}">${user.display_name || "未取得暱稱"}</option>`
+      ).join("");
       $("ordersBody").innerHTML = (data.orders || []).length
         ? data.orders.map((order) => `
           <tr>
@@ -1062,6 +1405,8 @@
           </div>
         `).join("")
         : `<div class="support-item">目前沒有客服訊息</div>`;
+      await loadBusinessDashboard();
+      await loadOperationsControls();
       await refreshBackups();
       setAuthStatus(`資料已載入（已綁守護人 ${data.bound_guardian_total || 0}、邀請關係 ${(data.invite_edges || []).length}）。`, "is-ok");
     }
@@ -1180,6 +1525,7 @@
         if (!response.ok) return showLogin("密碼不正確，請再試一次。");
         $("adminPassword").value = "";
         adminCsrfToken = data.csrf_token || "";
+        applyAdminAccess(data.role, data.permissions);
         showDashboard();
         await refresh();
       } catch (error) {
@@ -1216,6 +1562,7 @@
     $("birthdayRemindBtn").addEventListener("click", sendBirthdayReminders);
     $("createBackupBtn").addEventListener("click", createBackup);
     $("richMenuDeployBtn").addEventListener("click", deployRichMenu);
+    if ($("betaAssignBtn")) $("betaAssignBtn").addEventListener("click", assignBetaMember);
     let autoRefreshAdminBusy = false;
     async function autoRefreshAdmin() {
       if (document.visibilityState !== "visible" || $("adminShell").hidden || autoRefreshAdminBusy) return;

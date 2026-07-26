@@ -214,6 +214,8 @@ DEFAULT_STATE = {
     "friend_invites": {},
     "contact_rewards": [],
     "support_tickets": [],
+    "privacy_requests": [],
+    "beta_program_members": [],
     "backup_exports": [],
     "guardian_groups": {},
     "orders": [],
@@ -2827,6 +2829,8 @@ def send_renewal_reminders(config):
     state = load_state(config["DATA_FILE"])
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
     now = current_app_time(config)
+    if not line_non_emergency_push_allowed(state, config, now):
+        return line_budget_blocked_response(state, config, now)
     sent = 0
     skipped = 0
     system_error = False
@@ -5875,17 +5879,69 @@ def admin_auth_error_payload(config, password):
 
 
 def admin_security_ready(config):
-    password = _normalize_admin_password(config.get("ADMIN_PASSWORD", ""))
+    password = any(
+        _normalize_admin_password(config.get(name, ""))
+        for name in (
+            "ADMIN_PASSWORD",
+            "ADMIN_OPERATIONS_PASSWORD",
+            "ADMIN_FINANCE_PASSWORD",
+            "ADMIN_VIEWER_PASSWORD",
+        )
+    )
     session_secret = str(config.get("ADMIN_SESSION_SECRET") or "").strip()
     return bool(password and len(session_secret) >= 32)
 
 
 def admin_password_matches(config, candidate):
+    return admin_role_for_password(config, candidate) is not None
+
+
+ADMIN_ROLE_PERMISSIONS = {
+    "super_admin": {
+        "backup.manage",
+        "beta.manage",
+        "incident.manage",
+        "member.manage",
+        "notification.manage",
+        "order.manage",
+        "privacy.manage",
+        "support.manage",
+        "system.manage",
+    },
+    "operations": {
+        "beta.manage",
+        "incident.manage",
+        "member.manage",
+        "notification.manage",
+        "privacy.manage",
+        "support.manage",
+    },
+    "finance": {"order.manage"},
+    "viewer": set(),
+}
+
+
+def admin_role_for_password(config, candidate):
     if not admin_security_ready(config):
-        return False
-    expected = _normalize_admin_password(config.get("ADMIN_PASSWORD", ""))
+        return None
     got = _normalize_admin_password(candidate)
-    return bool(got) and secrets.compare_digest(expected, got)
+    if not got:
+        return None
+    role_passwords = (
+        ("super_admin", "ADMIN_PASSWORD"),
+        ("operations", "ADMIN_OPERATIONS_PASSWORD"),
+        ("finance", "ADMIN_FINANCE_PASSWORD"),
+        ("viewer", "ADMIN_VIEWER_PASSWORD"),
+    )
+    for role, config_name in role_passwords:
+        expected = _normalize_admin_password(config.get(config_name, ""))
+        if expected and secrets.compare_digest(expected, got):
+            return role
+    return None
+
+
+def admin_permissions_for_role(role):
+    return sorted(ADMIN_ROLE_PERMISSIONS.get(str(role or ""), set()))
 
 
 ADMIN_LOGIN_ATTEMPTS = {}
@@ -5970,6 +6026,44 @@ def append_admin_audit(data_file, action, status, metadata=None):
     })
     state["admin_audit_logs"] = logs[-200:]
     save_state(data_file, state)
+
+
+def resolve_admin_incident(data_file, payload, actor_role):
+    kind = str((payload or {}).get("kind") or "").strip().casefold()
+    incident_id = str((payload or {}).get("incident_id") or "").strip()
+    note = str((payload or {}).get("resolution_note") or "").strip()[:500]
+    if kind not in {"sos", "delivery"} or not incident_id:
+        return {"ok": False, "error": "invalid_incident"}, 400
+    state = load_state(data_file)
+    resolved_at = datetime.now().isoformat(timespec="seconds")
+    if kind == "sos":
+        target = next(
+            (
+                item
+                for item in (state.get("sos_pending") or {}).values()
+                if str(item.get("event_id") or "") == incident_id
+            ),
+            None,
+        )
+    else:
+        target = next(
+            (
+                item
+                for index, item in enumerate(state.get("notification_logs") or [])
+                if str(item.get("incident_id") or f"delivery-{index}") == incident_id
+                and item.get("status") in {"failed", "error"}
+            ),
+            None,
+        )
+    if target is None:
+        return {"ok": False, "error": "incident_not_found"}, 404
+    target["status"] = "resolved"
+    target["resolved_at"] = resolved_at
+    target["resolved_by_role"] = str(actor_role or "unknown")
+    if note:
+        target["resolution_note"] = note
+    save_state(data_file, state)
+    return {"ok": True, "kind": kind, "incident_id": incident_id, "resolved_at": resolved_at}, 200
 
 
 def _line_channel_access_token(config=None):
@@ -6166,6 +6260,379 @@ def cron_allowed(config, secret):
     if not expected:
         return False
     return secrets.compare_digest(expected, provided)
+
+
+def _positive_percentage(config, name, default):
+    raw = config.get(name) if hasattr(config, "get") else None
+    if raw in (None, ""):
+        raw = os.environ.get(name, "")
+    try:
+        value = int(str(raw or default))
+    except (TypeError, ValueError):
+        return default
+    return value if 1 <= value <= 100 else default
+
+
+def line_message_budget_status(state, config=None, now=None):
+    """Return system-recorded LINE usage without exposing configuration values."""
+    cfg = config if config is not None and hasattr(config, "get") else {}
+    generated_at = now or current_app_time(cfg)
+    try:
+        message_limit = max(
+            1,
+            int(str(cfg.get("LINE_MONTHLY_MESSAGE_LIMIT")
+                    or os.environ.get("LINE_MONTHLY_MESSAGE_LIMIT", "")
+                    or 200)),
+        )
+    except (TypeError, ValueError):
+        message_limit = 200
+    warning_percent = _positive_percentage(
+        cfg, "LINE_MESSAGE_WARNING_PERCENT", 80
+    )
+    hard_stop_percent = _positive_percentage(
+        cfg, "LINE_MESSAGE_HARD_STOP_PERCENT", 100
+    )
+    month_key = generated_at.strftime("%Y-%m")
+    monthly_logs = [
+        item
+        for item in (state.get("notification_logs") or [])
+        if not str(item.get("created_at") or "")
+        or str(item.get("created_at") or "").startswith(month_key)
+    ]
+    used = len(monthly_logs)
+    usage_percent = round(used / message_limit * 100, 1)
+    hard_stop_active = usage_percent >= hard_stop_percent
+    if used >= message_limit:
+        status = "exceeded"
+    elif usage_percent >= warning_percent:
+        status = "warning"
+    else:
+        status = "healthy"
+    return {
+        "month": month_key,
+        "used": used,
+        "limit": message_limit,
+        "remaining": max(0, message_limit - used),
+        "usage_percent": usage_percent,
+        "warning_percent": warning_percent,
+        "hard_stop_percent": hard_stop_percent,
+        "hard_stop_active": hard_stop_active,
+        "status": status,
+    }
+
+
+def line_non_emergency_push_allowed(state, config=None, now=None):
+    return not line_message_budget_status(state, config, now)["hard_stop_active"]
+
+
+def line_push_allowed_for_kind(state, config, kind, now=None):
+    emergency_kinds = {"sos", "safety_guard", "guardian_sos", "emergency"}
+    if str(kind or "").strip().casefold() in emergency_kinds:
+        return True
+    return line_non_emergency_push_allowed(state, config, now)
+
+
+def line_budget_blocked_response(state, config, now=None):
+    budget = line_message_budget_status(state, config, now)
+    return {
+        "sent": 0,
+        "skipped": 0,
+        "error": "line_non_emergency_budget_hard_stop",
+        "line_budget": budget,
+    }, 429
+
+
+BETA_COHORTS = {
+    "known_10": {"label": "認識會員 10 人", "capacity": 10},
+    "standard_20": {"label": "一般會員 20 人", "capacity": 20},
+    "family_group_10": {"label": "家庭群組 10 人", "capacity": 10},
+}
+BETA_ACTIVE_STATUSES = {"active", "waitlisted"}
+BETA_STATUSES = BETA_ACTIVE_STATUSES | {"completed", "withdrawn"}
+
+
+def admin_beta_summary(data_file, now=None):
+    state = load_state(data_file)
+    members = list(state.get("beta_program_members") or [])
+    current = now or current_app_time({})
+    cohorts = {}
+    for key, definition in BETA_COHORTS.items():
+        cohort_members = [row for row in members if row.get("cohort") == key]
+        active = sum(
+            1 for row in cohort_members if row.get("status") in BETA_ACTIVE_STATUSES
+        )
+        cohorts[key] = {
+            **definition,
+            "active": active,
+            "completed": sum(
+                1 for row in cohort_members if row.get("status") == "completed"
+            ),
+            "remaining": max(0, definition["capacity"] - active),
+        }
+    return {
+        "duration_days": 21,
+        "generated_at": current.isoformat(timespec="seconds"),
+        "cohorts": cohorts,
+        "members": list(reversed(members[-100:])),
+    }
+
+
+def assign_beta_member(data_file, payload, now=None):
+    line_user_id = str((payload or {}).get("line_user_id") or "").strip()
+    cohort = str((payload or {}).get("cohort") or "").strip()
+    if not line_user_id or cohort not in BETA_COHORTS:
+        return {"ok": False, "error": "invalid_beta_assignment"}, 400
+    state = load_state(data_file)
+    profile = (state.get("users") or {}).get(line_user_id)
+    if profile is None:
+        return {"ok": False, "error": "member_not_found"}, 404
+    members = state.setdefault("beta_program_members", [])
+    existing = next(
+        (
+            row for row in members
+            if row.get("line_user_id") == line_user_id
+            and row.get("status") in BETA_ACTIVE_STATUSES
+        ),
+        None,
+    )
+    if existing:
+        return {"ok": False, "error": "beta_member_already_assigned"}, 409
+    active_count = sum(
+        1 for row in members
+        if row.get("cohort") == cohort
+        and row.get("status") in BETA_ACTIVE_STATUSES
+    )
+    if active_count >= BETA_COHORTS[cohort]["capacity"]:
+        return {"ok": False, "error": "beta_cohort_full"}, 409
+    started = now or current_app_time({})
+    member = {
+        "line_user_id": line_user_id,
+        "display_name": str(profile.get("display_name") or "未取得暱稱"),
+        "cohort": cohort,
+        "status": "active",
+        "starts_at": started.isoformat(timespec="seconds"),
+        "ends_at": (started + timedelta(days=21)).isoformat(timespec="seconds"),
+        "outcome_note": "",
+    }
+    members.append(member)
+    state["beta_program_members"] = members[-200:]
+    save_state(data_file, state)
+    return {"ok": True, "member": member}, 200
+
+
+def update_beta_member(data_file, payload, now=None):
+    line_user_id = str((payload or {}).get("line_user_id") or "").strip()
+    status = str((payload or {}).get("status") or "").strip().casefold()
+    if not line_user_id or status not in BETA_STATUSES:
+        return {"ok": False, "error": "invalid_beta_update"}, 400
+    state = load_state(data_file)
+    member = next(
+        (
+            row for row in reversed(state.get("beta_program_members") or [])
+            if row.get("line_user_id") == line_user_id
+            and row.get("status") in BETA_ACTIVE_STATUSES
+        ),
+        None,
+    )
+    if member is None:
+        return {"ok": False, "error": "beta_member_not_found"}, 404
+    member["status"] = status
+    member["updated_at"] = (now or current_app_time({})).isoformat(
+        timespec="seconds"
+    )
+    note = str((payload or {}).get("outcome_note") or "").strip()[:500]
+    if note:
+        member["outcome_note"] = note
+    save_state(data_file, state)
+    return {"ok": True, "member": member}, 200
+
+
+def admin_privacy_requests(data_file):
+    state = load_state(data_file)
+    requests = list(reversed((state.get("privacy_requests") or [])[-100:]))
+    statuses = ("pending", "in_progress", "completed", "rejected")
+    return {
+        "requests": requests,
+        "counts": {
+            status: sum(1 for row in requests if row.get("status") == status)
+            for status in statuses
+        },
+    }
+
+
+def create_privacy_request(data_file, payload, now=None):
+    line_user_id = str((payload or {}).get("line_user_id") or "").strip()
+    request_type = str((payload or {}).get("request_type") or "").strip().casefold()
+    if not line_user_id or request_type not in {
+        "export", "deletion", "correction", "inquiry"
+    }:
+        return {"ok": False, "error": "invalid_privacy_request"}, 400
+    state = load_state(data_file)
+    if line_user_id not in (state.get("users") or {}):
+        return {"ok": False, "error": "member_not_found"}, 404
+    requests = state.setdefault("privacy_requests", [])
+    if any(
+        row.get("line_user_id") == line_user_id
+        and row.get("request_type") == request_type
+        and row.get("status") in {"pending", "in_progress"}
+        for row in requests
+    ):
+        return {"ok": False, "error": "privacy_request_already_open"}, 409
+    created = now or current_app_time({})
+    privacy_request = {
+        "id": f"privacy-{secrets.token_hex(8)}",
+        "line_user_id": line_user_id,
+        "request_type": request_type,
+        "summary": str((payload or {}).get("summary") or "").strip()[:500],
+        "status": "pending",
+        "created_at": created.isoformat(timespec="seconds"),
+    }
+    requests.append(privacy_request)
+    state["privacy_requests"] = requests[-200:]
+    save_state(data_file, state)
+    return {"ok": True, "request": privacy_request}, 201
+
+
+def update_privacy_request(data_file, payload, actor_role):
+    request_id = str((payload or {}).get("request_id") or "").strip()
+    status = str((payload or {}).get("status") or "").strip().casefold()
+    note = str((payload or {}).get("resolution_note") or "").strip()[:1000]
+    if not request_id or status not in {
+        "pending", "in_progress", "completed", "rejected"
+    }:
+        return {"ok": False, "error": "invalid_privacy_update"}, 400
+    if status in {"completed", "rejected"} and not note:
+        return {"ok": False, "error": "resolution_note_required"}, 400
+    state = load_state(data_file)
+    privacy_request = next(
+        (
+            row for row in (state.get("privacy_requests") or [])
+            if str(row.get("id") or "") == request_id
+        ),
+        None,
+    )
+    if privacy_request is None:
+        return {"ok": False, "error": "privacy_request_not_found"}, 404
+    privacy_request["status"] = status
+    privacy_request["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    privacy_request["resolved_by_role"] = str(actor_role or "unknown")
+    if note:
+        privacy_request["resolution_note"] = note
+    save_state(data_file, state)
+    return {"ok": True, "request": privacy_request}, 200
+
+
+def admin_business_dashboard(data_file, config=None, now=None):
+    """Aggregate non-sensitive commercial metrics for the protected admin UI."""
+    state = load_state(data_file)
+    cfg = config if config is not None and hasattr(config, "get") else {}
+    generated_at = now or current_app_time(cfg)
+    users = list((state.get("users") or {}).values())
+    notification_logs = list(state.get("notification_logs") or [])
+    sent = sum(1 for item in notification_logs if item.get("status") == "sent")
+    failed = sum(1 for item in notification_logs if item.get("status") in {"failed", "error"})
+    delivery_total = sent + failed
+
+    def configured(name):
+        return bool(str(cfg.get(name) or os.environ.get(name, "") or "").strip())
+
+    ga4_property = configured("GA4_PROPERTY_ID")
+    ga4_credentials = configured("GA4_SERVICE_ACCOUNT_JSON")
+
+    line_budget = line_message_budget_status(state, cfg, generated_at)
+
+    pending_sos = [
+        item
+        for item in (state.get("sos_pending") or {}).values()
+        if str(item.get("status") or "pending").casefold() not in {"resolved", "cancelled", "closed"}
+    ]
+    delivery_failures = [
+        dict(item, incident_id=str(item.get("incident_id") or f"delivery-{index}"))
+        for index, item in enumerate(notification_logs)
+        if item.get("status") in {"failed", "error"}
+    ]
+    public_pages = ("index.html", "pricing.html", "help.html", "privacy.html", "terms.html")
+    project_root = Path(__file__).resolve().parent
+    seo_pages = []
+    for filename in public_pages:
+        path = project_root / filename
+        source = path.read_text(encoding="utf-8") if path.exists() else ""
+        lowered = source.lower()
+        checks = {
+            "title": "<title" in lowered,
+            "description": 'name="description"' in lowered or "name='description'" in lowered,
+            "canonical": 'rel="canonical"' in lowered or "rel='canonical'" in lowered,
+            "robots": 'name="robots"' in lowered or "name='robots'" in lowered,
+            "structured_data": "application/ld+json" in lowered,
+        }
+        seo_pages.append(
+            {
+                "page": filename,
+                "checks": checks,
+                "passed": sum(1 for value in checks.values() if value),
+                "total": len(checks),
+            }
+        )
+
+    return {
+        "generated_at": generated_at.isoformat(),
+        "funnel": {
+            "registered_members": len(users),
+            "members_with_guardian": sum(
+                1
+                for user in users
+                if any(get_contact_line_id(contact) for contact in (user.get("contacts") or []))
+            ),
+            "active_paid_members": sum(
+                1
+                for user in users
+                if str(user.get("plan") or "").startswith("paid_")
+                and user.get("payment_status") == "active"
+            ),
+        },
+        "delivery": {
+            "sent": sent,
+            "failed": failed,
+            "total": delivery_total,
+            "success_rate": round((sent / delivery_total * 100), 1) if delivery_total else None,
+        },
+        "incidents": {
+            "open_sos": len(pending_sos),
+            "delivery_failures": len(delivery_failures),
+            "total_open": len(pending_sos) + len(delivery_failures),
+            "items": [
+                {
+                    "kind": "sos",
+                    "incident_id": str(item.get("event_id") or ""),
+                    "created_at": item.get("created_at"),
+                }
+                for item in pending_sos
+                if item.get("event_id")
+            ] + [
+                {
+                    "kind": "delivery",
+                    "incident_id": item["incident_id"],
+                    "created_at": item.get("created_at"),
+                    "notification_kind": item.get("kind"),
+                }
+                for item in delivery_failures
+            ],
+        },
+        "line_budget": line_budget,
+        "integrations": {
+            "line": {"configured": configured("LINE_CHANNEL_ACCESS_TOKEN")},
+            "ga4": {
+                "configured": ga4_property and ga4_credentials,
+                "property_configured": ga4_property,
+                "credentials_configured": ga4_credentials,
+            },
+        },
+        "seo": {
+            "pages": seo_pages,
+            "passed": sum(row["passed"] for row in seo_pages),
+            "total": sum(row["total"] for row in seo_pages),
+        },
+    }
 
 
 def admin_summary(data_file, config=None, now=None):
@@ -6800,6 +7267,8 @@ def send_missing_contact_reminders(config):
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
     public_url = (config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", "")).rstrip("/")
     now = current_app_time(config)
+    if not line_non_emergency_push_allowed(state, config, now):
+        return line_budget_blocked_response(state, config, now)
     today = now.strftime("%Y-%m-%d")
     sent = 0
     skipped = 0
@@ -7172,6 +7641,8 @@ def send_checkin_reminders(config):
     state = load_state(data_file)
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
     now = current_app_time(config)
+    if not line_non_emergency_push_allowed(state, config, now):
+        return line_budget_blocked_response(state, config, now)
     today = now.strftime("%Y-%m-%d")
     sent = 0
     skipped = 0
@@ -7307,6 +7778,8 @@ def broadcast_checkin_reminders(config, *, pause_every=20, pause_seconds=1.0):
     state = load_state(data_file)
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
     now = current_app_time(config)
+    if not line_non_emergency_push_allowed(state, config, now):
+        return line_budget_blocked_response(state, config, now)
     today = now.strftime("%Y-%m-%d")
     message = build_daily_checkin_flex(now, target_time="")
     sent = 0
@@ -8052,6 +8525,9 @@ def create_app(config=None):
     app.config.update(
         DATA_FILE=resolve_data_file(os.environ.get("DATA_FILE")),
         ADMIN_PASSWORD=os.environ.get("ADMIN_PASSWORD", ""),
+        ADMIN_OPERATIONS_PASSWORD=os.environ.get("ADMIN_OPERATIONS_PASSWORD", ""),
+        ADMIN_FINANCE_PASSWORD=os.environ.get("ADMIN_FINANCE_PASSWORD", ""),
+        ADMIN_VIEWER_PASSWORD=os.environ.get("ADMIN_VIEWER_PASSWORD", ""),
         ADMIN_SESSION_SECRET=os.environ.get("ADMIN_SESSION_SECRET", ""),
         TRUST_PROXY_HEADERS=os.environ.get("TRUST_PROXY_HEADERS", ""),
         ALLOW_OPEN_ADMIN=os.environ.get("ALLOW_OPEN_ADMIN", ""),
@@ -8084,6 +8560,11 @@ def create_app(config=None):
         LIFF_ID=os.environ.get("LIFF_ID", ""),
         APP_PUBLIC_URL=os.environ.get("APP_PUBLIC_URL", ""),
         APP_TIMEZONE=os.environ.get("APP_TIMEZONE", "Asia/Taipei"),
+        GA4_PROPERTY_ID=os.environ.get("GA4_PROPERTY_ID", ""),
+        GA4_SERVICE_ACCOUNT_JSON=os.environ.get("GA4_SERVICE_ACCOUNT_JSON", ""),
+        LINE_MONTHLY_MESSAGE_LIMIT=os.environ.get("LINE_MONTHLY_MESSAGE_LIMIT", "200"),
+        LINE_MESSAGE_WARNING_PERCENT=os.environ.get("LINE_MESSAGE_WARNING_PERCENT", "80"),
+        LINE_MESSAGE_HARD_STOP_PERCENT=os.environ.get("LINE_MESSAGE_HARD_STOP_PERCENT", "100"),
         CRON_SECRET=os.environ.get("CRON_SECRET", ""),
         REQUIRE_LIFF_AUTH=os.environ.get("REQUIRE_LIFF_AUTH", "0"),
         NEWEBPAY_MERCHANT_ID=os.environ.get("NEWEBPAY_MERCHANT_ID", ""),
@@ -8101,7 +8582,7 @@ def create_app(config=None):
         or secrets.token_hex(32)
     )
 
-    def _admin_guard(*, write=False):
+    def _admin_guard(*, write=False, permission=None):
         if not admin_security_ready(app.config):
             return jsonify({"error": "admin_not_configured"}), 503
         if session.get("admin_authenticated") is not True:
@@ -8111,6 +8592,16 @@ def create_app(config=None):
             provided = str(request.headers.get("X-CSRF-Token") or "")
             if not expected or not secrets.compare_digest(expected, provided):
                 return jsonify({"error": "csrf_required"}), 403
+        if permission:
+            role = str(session.get("admin_role") or "viewer")
+            if permission not in ADMIN_ROLE_PERMISSIONS.get(role, set()):
+                append_admin_audit(
+                    app.config["DATA_FILE"],
+                    "permission.denied",
+                    "failed",
+                    {"role": role, "required_permission": permission},
+                )
+                return jsonify({"error": "forbidden", "required_permission": permission}), 403
         return None
 
     def _admin_mutation_response(action, data, code=200):
@@ -8148,7 +8639,8 @@ def create_app(config=None):
         client_key = str(request.remote_addr or "unknown")
         if admin_login_rate_limited(client_key):
             return jsonify({"error": "too_many_attempts"}), 429
-        if not admin_password_matches(app.config, payload.get("password")):
+        role = admin_role_for_password(app.config, payload.get("password"))
+        if role is None:
             record_admin_login_failure(client_key)
             append_admin_audit(app.config["DATA_FILE"], "session.login", "failed")
             return jsonify({"error": "invalid_credentials"}), 401
@@ -8156,11 +8648,14 @@ def create_app(config=None):
         session.clear()
         session.permanent = True
         session["admin_authenticated"] = True
+        session["admin_role"] = role
         session["admin_csrf"] = secrets.token_urlsafe(32)
         append_admin_audit(app.config["DATA_FILE"], "session.login", "success")
         return jsonify({
             "ok": True,
             "csrf_token": session["admin_csrf"],
+            "role": role,
+            "permissions": admin_permissions_for_role(role),
             "expires_in": 8 * 60 * 60,
         })
 
@@ -8172,6 +8667,8 @@ def create_app(config=None):
         return jsonify({
             "authenticated": authenticated,
             "csrf_token": session.get("admin_csrf") if authenticated else None,
+            "role": session.get("admin_role") if authenticated else None,
+            "permissions": admin_permissions_for_role(session.get("admin_role")) if authenticated else [],
         }), (200 if authenticated else 401)
 
     @app.post("/api/admin/logout")
@@ -10135,12 +10632,75 @@ def create_app(config=None):
         data, code = delete_personal_history(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
+    @app.post("/api/account/privacy-request")
+    def account_privacy_request_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = create_privacy_request(app.config["DATA_FILE"], payload)
+        return jsonify(data), code
+
     @app.get("/api/admin/summary")
     def admin_summary_api():
         denied = _admin_guard()
         if denied:
             return denied
         return jsonify(admin_summary(app.config["DATA_FILE"], app.config))
+
+    @app.get("/api/admin/business-dashboard")
+    def admin_business_dashboard_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        return jsonify(admin_business_dashboard(app.config["DATA_FILE"], app.config))
+
+    @app.get("/api/admin/beta-program")
+    def admin_beta_program_api():
+        denied = _admin_guard(permission="beta.manage")
+        if denied:
+            return denied
+        return jsonify(admin_beta_summary(app.config["DATA_FILE"]))
+
+    @app.post("/api/admin/beta-program/assign")
+    def admin_beta_program_assign_api():
+        denied = _admin_guard(write=True, permission="beta.manage")
+        if denied:
+            return denied
+        data, code = assign_beta_member(
+            app.config["DATA_FILE"], request.get_json(silent=True) or {}
+        )
+        return _admin_mutation_response("beta.assign", data, code)
+
+    @app.post("/api/admin/beta-program/update")
+    def admin_beta_program_update_api():
+        denied = _admin_guard(write=True, permission="beta.manage")
+        if denied:
+            return denied
+        data, code = update_beta_member(
+            app.config["DATA_FILE"], request.get_json(silent=True) or {}
+        )
+        return _admin_mutation_response("beta.update", data, code)
+
+    @app.get("/api/admin/privacy-requests")
+    def admin_privacy_requests_api():
+        denied = _admin_guard(permission="privacy.manage")
+        if denied:
+            return denied
+        return jsonify(admin_privacy_requests(app.config["DATA_FILE"]))
+
+    @app.post("/api/admin/privacy-requests/update")
+    def admin_privacy_requests_update_api():
+        denied = _admin_guard(write=True, permission="privacy.manage")
+        if denied:
+            return denied
+        data, code = update_privacy_request(
+            app.config["DATA_FILE"],
+            request.get_json(silent=True) or {},
+            str(session.get("admin_role") or "viewer"),
+        )
+        return _admin_mutation_response("privacy.update", data, code)
 
     @app.get("/api/admin/support-tickets")
     def admin_support_tickets_api():
@@ -10158,7 +10718,7 @@ def create_app(config=None):
 
     @app.post("/api/admin/backups")
     def admin_backups_create_api():
-        denied = _admin_guard(write=True)
+        denied = _admin_guard(write=True, permission="backup.manage")
         if denied:
             return denied
         data, code = create_admin_backup(app.config["DATA_FILE"])
@@ -10174,7 +10734,7 @@ def create_app(config=None):
 
     @app.post("/api/admin/support-reply")
     def admin_support_reply_api():
-        denied = _admin_guard(write=True)
+        denied = _admin_guard(write=True, permission="support.manage")
         if denied:
             return denied
         data, code = admin_reply_support_ticket(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
@@ -10182,7 +10742,7 @@ def create_app(config=None):
 
     @app.post("/api/admin/send-reminders")
     def send_reminders_api():
-        denied = _admin_guard(write=True)
+        denied = _admin_guard(write=True, permission="notification.manage")
         if denied:
             return denied
         data, code = send_due_reminders(app.config)
@@ -10190,7 +10750,7 @@ def create_app(config=None):
 
     @app.post("/api/admin/send-contact-reminders")
     def send_contact_reminders_api():
-        denied = _admin_guard(write=True)
+        denied = _admin_guard(write=True, permission="notification.manage")
         if denied:
             return denied
         data, code = send_missing_contact_reminders(app.config)
@@ -10198,7 +10758,7 @@ def create_app(config=None):
 
     @app.post("/api/admin/send-renewal-reminders")
     def send_renewal_reminders_api():
-        denied = _admin_guard(write=True)
+        denied = _admin_guard(write=True, permission="notification.manage")
         if denied:
             return denied
         data, code = send_renewal_reminders(app.config)
@@ -10206,7 +10766,7 @@ def create_app(config=None):
 
     @app.post("/api/admin/send-birthday-reminders")
     def send_birthday_reminders_api():
-        denied = _admin_guard(write=True)
+        denied = _admin_guard(write=True, permission="notification.manage")
         if denied:
             return denied
         data, code = send_birthday_reminders(app.config)
@@ -10214,7 +10774,7 @@ def create_app(config=None):
 
     @app.post("/api/admin/payments/confirm")
     def admin_payment_confirm_api():
-        denied = _admin_guard(write=True)
+        denied = _admin_guard(write=True, permission="order.manage")
         if denied:
             return denied
         data, code = confirm_payment_order(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
@@ -10371,7 +10931,7 @@ def create_app(config=None):
     @app.post("/api/admin/rich-menu/deploy")
     def admin_rich_menu_deploy_api():
         """用 Render 上的 LINE_CHANNEL_ACCESS_TOKEN 上傳並設為預設圖文選單。"""
-        denied = _admin_guard(write=True)
+        denied = _admin_guard(write=True, permission="system.manage")
         if denied:
             return denied
         data, code = deploy_default_rich_menu(app.config)
@@ -10392,7 +10952,7 @@ def create_app(config=None):
     @app.post("/api/admin/push-welcome")
     def admin_push_welcome_api():
         """管理員補推歡迎 Flex（需已加好友）。body: {line_user_id, display_name?}"""
-        denied = _admin_guard(write=True)
+        denied = _admin_guard(write=True, permission="notification.manage")
         if denied:
             return denied
         if LineBotApi is None or FlexSendMessage is None or welcome_flex is None:
@@ -10488,7 +11048,7 @@ def create_app(config=None):
 
     @app.post("/api/admin/user-plan")
     def admin_user_plan_api():
-        denied = _admin_guard(write=True)
+        denied = _admin_guard(write=True, permission="member.manage")
         if denied:
             return denied
         data, code = admin_update_user_plan(app.config["DATA_FILE"], request.get_json(silent=True) or {})
@@ -10496,11 +11056,28 @@ def create_app(config=None):
 
     @app.post("/api/admin/set-core-guardian")
     def admin_set_core_guardian_api():
-        denied = _admin_guard(write=True)
+        denied = _admin_guard(write=True, permission="member.manage")
         if denied:
             return denied
         data, code = admin_set_core_guardian(app.config["DATA_FILE"], request.get_json(silent=True) or {})
         return _admin_mutation_response("core_guardian.set", data, code)
+
+    @app.post("/api/admin/incidents/resolve")
+    def admin_incident_resolve_api():
+        denied = _admin_guard(write=True, permission="incident.manage")
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        data, code = resolve_admin_incident(
+            app.config["DATA_FILE"],
+            payload,
+            session.get("admin_role"),
+        )
+        return _admin_mutation_response(
+            "incident.resolve",
+            data,
+            code,
+        )
 
     return app
 

@@ -5,6 +5,39 @@
 完整操作與上線流程請看：`流程說明.md`  
 定位功能與方案權限請看：`定位功能規格.md`
 
+## 商業後台、GA4 與 SEO
+
+正式後台位於 `/admin.html`，包含會員、守護營運、訂單、客服、站內轉換漏斗、LINE 推播成功率與公開頁 SEO 稽核。
+
+管理員權限採最小權限原則。既有 `ADMIN_PASSWORD` 維持超級管理員，不設定其他角色密碼也不影響原部署：
+
+```text
+ADMIN_OPERATIONS_PASSWORD=營運客服密碼
+ADMIN_FINANCE_PASSWORD=財務人員密碼
+ADMIN_VIEWER_PASSWORD=唯讀人員密碼
+LINE_MONTHLY_MESSAGE_LIMIT=200
+LINE_MESSAGE_WARNING_PERCENT=80
+LINE_MESSAGE_HARD_STOP_PERCENT=100
+```
+
+- 超級管理員：全部權限
+- 營運客服：會員、通知、客服與事件結案
+- 財務人員：訂單與付款操作
+- 唯讀人員：只可查看
+
+所有寫入操作仍需 Session 與 CSRF；權限不足會回傳 `403 forbidden` 並寫入去識別化稽核紀錄。事件中心可將 SOS 或通知失敗標記結案，處理摘要不會寫進稽核 metadata。
+
+後台另提供 21 天封測 `10／20／10` 固定名額、隱私權申請處理佇列，以及 LINE 月用量預警與非緊急推播硬上限。達到 `LINE_MESSAGE_HARD_STOP_PERCENT` 時，系統停止每日一般提醒、補資料提醒、續費提醒與批次重送；SOS 與安全事件不受此限制。後台用量是依系統推播紀錄估算，正式用量與費用仍以 LINE 官方後台為準。
+
+若要讓後台辨識 GA4 報表串接已完成，請在 Render 設定：
+
+```text
+GA4_PROPERTY_ID=properties/你的資源編號
+GA4_SERVICE_ACCOUNT_JSON=完整服務帳號 JSON
+```
+
+後台只回傳「是否已設定」，不會把 Property ID、私鑰或 LINE token 傳到瀏覽器。未設定時會顯示「GA4 尚未連接」，不會用假數據代替正式流量。
+
 ## 直接開啟
 
 雙擊 `index.html` 就能用。這個模式會用瀏覽器的 localStorage 存資料。
@@ -126,6 +159,12 @@ LINE 推播提醒可由後台按鈕手動送出，也可由 Render Cron Job 自�
 - `POST /api/admin/user-plan`：後台調整使用者方案
 - `POST /api/admin/send-reminders`：推播逾期提醒
 - `POST /api/admin/send-contact-reminders`：手動提醒未填緊急聯絡人的用戶
+- `GET /api/admin/beta-program`：查看 21 天封測三組名額與名單
+- `POST /api/admin/beta-program/assign`：將既有會員加入封測
+- `POST /api/admin/beta-program/update`：更新封測完成／退出狀態
+- `POST /api/account/privacy-request`：會員建立資料匯出、刪除、更正或查詢申請
+- `GET /api/admin/privacy-requests`：後台查看隱私權申請
+- `POST /api/admin/privacy-requests/update`：更新隱私申請處理狀態
 - `POST /api/cron/contact-reminders`：排程提醒未填緊急聯絡人的用戶
 - `POST /api/cron/checkin-reminders`：排程推播每日簽到提醒
 - `POST /api/cron/data-cleanup`：排程清理過期暫存資料
