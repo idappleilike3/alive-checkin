@@ -1,5 +1,6 @@
 import copy
 import json
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -22,7 +23,7 @@ class ProviderVerificationTests(unittest.TestCase):
             "LEGACY_LINE_LOGIN_CHANNEL_ID": "2010674803",
             "LEGACY_LIFF_ID": "2010674803-rK98c0lo",
             "LINE_LOGIN_CHANNEL_ID": "2010848330",
-            "ACCOUNT_MIGRATION_SECRET": "test-only-secret",
+            "ACCOUNT_MIGRATION_SECRET": "test-only-migration-secret-32bytes",
         }
 
     def test_start_rejects_token_verified_for_current_channel(self):
@@ -117,6 +118,29 @@ class ProviderVerificationTests(unittest.TestCase):
                             {"ok": False, "error": "migration_unavailable"},
                         )
 
+    def test_migration_requires_at_least_thirty_two_secret_bytes(self):
+        weak = {**self.config, "ACCOUNT_MIGRATION_SECRET": "x" * 31}
+        multibyte = {**self.config, "ACCOUNT_MIGRATION_SECRET": "密" * 11}
+
+        self.assertFalse(alive_app.account_migration_ready(weak))
+        self.assertTrue(alive_app.account_migration_ready(multibyte))
+
+    def test_migration_routes_reject_non_object_json(self):
+        app = alive_app.create_app(self.config)
+        client = app.test_client()
+
+        for path in (
+            "/api/account-migration/start",
+            "/api/account-migration/redeem",
+        ):
+            response = client.post(path, json=["not", "an", "object"])
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(
+                response.get_json(),
+                {"ok": False, "error": "invalid_request"},
+            )
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
+
     def test_channel_explicit_verifier_returns_only_verified_subject(self):
         calls = []
 
@@ -147,7 +171,7 @@ class TicketLifecycleTests(unittest.TestCase):
             "LEGACY_LINE_LOGIN_CHANNEL_ID": "2010674803",
             "LEGACY_LIFF_ID": "2010674803-rK98c0lo",
             "LINE_LOGIN_CHANNEL_ID": "2010848330",
-            "ACCOUNT_MIGRATION_SECRET": "test-only-secret",
+            "ACCOUNT_MIGRATION_SECRET": "test-only-migration-secret-32bytes",
             "ACCOUNT_MIGRATION_TTL_SECONDS": 600,
         }
         state = alive_app.load_state(self.data_file)
@@ -1060,7 +1084,7 @@ class AtomicRedemptionTests(unittest.TestCase):
             "DATA_FILE": self.data_file,
             "LEGACY_LINE_LOGIN_CHANNEL_ID": "2010674803",
             "LINE_LOGIN_CHANNEL_ID": "2010848330",
-            "ACCOUNT_MIGRATION_SECRET": "test-only-secret",
+            "ACCOUNT_MIGRATION_SECRET": "test-only-migration-secret-32bytes",
             "ACCOUNT_MIGRATION_TTL_SECONDS": 600,
             "LINE_CHANNEL_ACCESS_TOKEN": "",
         }
@@ -1144,6 +1168,58 @@ class AtomicRedemptionTests(unittest.TestCase):
             self.migration_code,
             json.dumps(state, ensure_ascii=False),
         )
+
+    def test_merged_profile_reindexes_identity_fields_but_not_human_text(self):
+        state = alive_app.load_state(self.data_file)
+        state["users"][self.old_id]["contacts"] = [{
+            "id": "contact-old",
+            "line_user_id": "U-guardian",
+            "invited_by": self.old_id,
+            "note": f"historical prose keeps {self.old_id}",
+        }]
+        state["users"][self.old_id]["guarding_details"] = [{
+            "id": "guarding-old",
+            "line_user_id": self.old_id,
+            "display_name": f"human text {self.old_id}",
+        }]
+        alive_app.save_state(self.data_file, state)
+
+        result, code = self._redeem()
+
+        self.assertEqual(code, 200)
+        self.assertTrue(result["ok"])
+        merged = alive_app.load_state(self.data_file)["users"][self.new_id]
+        self.assertEqual(merged["line_user_id"], self.new_id)
+        self.assertEqual(merged["contacts"][0]["invited_by"], self.new_id)
+        self.assertEqual(merged["guarding_details"][0]["line_user_id"], self.new_id)
+        self.assertIn(self.old_id, merged["contacts"][0]["note"])
+        self.assertIn(self.old_id, merged["guarding_details"][0]["display_name"])
+
+    def test_snapshot_captures_every_peer_user_changed_by_reindex(self):
+        state = alive_app.load_state(self.data_file)
+        state["users"]["U-peer"] = {
+            **alive_app.DEFAULT_PROFILE,
+            "line_user_id": "U-peer",
+            "friends": [self.old_id],
+            "contacts": [{
+                "id": "peer-contact",
+                "line_user_id": self.old_id,
+            }],
+        }
+        peer_before = copy.deepcopy(state["users"]["U-peer"])
+        alive_app.save_state(self.data_file, state)
+
+        result, code = self._redeem()
+
+        self.assertEqual(code, 200)
+        self.assertTrue(result["ok"])
+        final = alive_app.load_state(self.data_file)
+        snapshot = next(iter(final["account_migration_snapshots"].values()))
+        self.assertEqual(snapshot["affected_users"]["U-peer"], peer_before)
+        restored = copy.deepcopy(final)
+        restored["users"] = copy.deepcopy(snapshot["affected_users"])
+        self.assertEqual(restored["users"]["U-peer"], peer_before)
+        self.assertEqual(final["users"]["U-peer"]["friends"], [self.new_id])
 
     def test_redeem_creates_alias_only_after_reindex_and_user_key_replacement(self):
         state = alive_app.load_state(self.data_file)
@@ -1491,6 +1567,48 @@ class AtomicRedemptionTests(unittest.TestCase):
         self.assertEqual(reloaded["_state_revision"], 42)
         self.assertEqual(reloaded["users"]["U-one"]["value"], 1)
 
+    def test_postgres_load_remains_authoritative_when_sqlite_mirror_fails(self):
+        postgres = alive_app._hydrate_state(
+            {"users": {"U-postgres": {"value": "durable"}}},
+            revision=7,
+        )
+        stale = alive_app._hydrate_state(
+            {"users": {"U-stale": {"value": "cache"}}},
+            revision=3,
+        )
+        with (
+            mock.patch.object(alive_app, "database_url", return_value="postgres://db"),
+            mock.patch.object(alive_app, "_load_state_postgres", return_value=postgres),
+            mock.patch.object(alive_app, "_load_state_sqlite", return_value=stale),
+            mock.patch.object(
+                alive_app,
+                "_save_state_sqlite",
+                side_effect=sqlite3.OperationalError("mirror unavailable"),
+            ),
+        ):
+            loaded = alive_app.load_state(self.data_file)
+
+        self.assertIs(loaded, postgres)
+
+    def test_postgres_save_succeeds_when_sqlite_mirror_fails(self):
+        state = alive_app._hydrate_state(
+            {"users": {"U-postgres": {"value": "durable"}}},
+            revision=7,
+        )
+        with (
+            mock.patch.object(alive_app, "database_url", return_value="postgres://db"),
+            mock.patch.object(alive_app, "_load_state_postgres", return_value=None),
+            mock.patch.object(alive_app, "_save_state_postgres") as save_postgres,
+            mock.patch.object(
+                alive_app,
+                "_save_state_sqlite",
+                side_effect=sqlite3.OperationalError("mirror unavailable"),
+            ),
+        ):
+            alive_app.save_state(self.data_file, state)
+
+        save_postgres.assert_called_once_with(state)
+
     def test_success_snapshot_is_retained_for_thirty_days(self):
         result, code = self._redeem()
         self.assertEqual(code, 200)
@@ -1533,6 +1651,100 @@ class AtomicRedemptionTests(unittest.TestCase):
 
         self.assertEqual(cleanup["migration_snapshots_removed"], 0)
         self.assertEqual(len(state["account_migration_snapshots"]), 1)
+
+    def test_start_rate_limit_is_safe_and_does_not_corrupt_state(self):
+        outcomes = []
+        start_limit = getattr(
+            alive_app,
+            "ACCOUNT_MIGRATION_START_MAX_PER_WINDOW",
+            5,
+        )
+        for offset in range(start_limit + 1):
+            outcomes.append(
+                alive_app.create_account_migration_ticket(
+                    self.data_file,
+                    self.old_id,
+                    self.config,
+                    now=self.now + timedelta(seconds=offset),
+                )
+            )
+
+        result, status = outcomes[-1]
+        self.assertEqual(status, 429)
+        self.assertEqual(result, {"ok": False, "error": "rate_limited"})
+        state = alive_app.load_state(self.data_file)
+        self.assertLessEqual(
+            len(state["account_migration_tickets"]),
+            getattr(alive_app, "ACCOUNT_MIGRATION_TICKET_MAX_PER_SOURCE", 20),
+        )
+        self.assertNotIn(self.old_id, json.dumps(result))
+
+    def test_migration_maintenance_bounds_old_tickets_and_audit(self):
+        state = alive_app.load_state(self.data_file)
+        old_time = self.now - timedelta(days=91)
+        for index in range(40):
+            state["account_migration_tickets"][f"old-{index}"] = {
+                "ticket_id": f"old-{index}",
+                "code_digest": f"digest-{index}",
+                "old_line_user_id": self.old_id,
+                "created_at": old_time.isoformat(),
+                "expires_at": old_time.isoformat(),
+                "used_at": old_time.isoformat(),
+                "status": "used",
+            }
+            state["account_migration_audit"].append({
+                "event_id": f"event-{index}",
+                "status": "failed",
+                "created_at": old_time.isoformat(),
+                "failure_category": "invalid_code",
+                "counts": {},
+            })
+        alive_app.save_state(self.data_file, state)
+
+        cleanup, status = alive_app.cleanup_expired_data({
+            **self.config,
+            "CRON_NOW": self.now,
+            "APP_TIMEZONE": "UTC",
+        })
+
+        self.assertEqual(status, 200)
+        self.assertGreaterEqual(cleanup["migration_tickets_removed"], 40)
+        self.assertGreaterEqual(cleanup["migration_audit_removed"], 40)
+        final = alive_app.load_state(self.data_file)
+        self.assertLessEqual(
+            len(final["account_migration_tickets"]),
+            getattr(alive_app, "ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX", 2000),
+        )
+        self.assertLessEqual(
+            len(final["account_migration_audit"]),
+            getattr(alive_app, "ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX", 1000),
+        )
+
+    def test_invalid_redeem_attempts_are_globally_rate_limited(self):
+        outcome = None
+        invalid_limit = getattr(
+            alive_app,
+            "ACCOUNT_MIGRATION_INVALID_REDEEM_MAX_PER_WINDOW",
+            30,
+        )
+        for offset in range(invalid_limit + 1):
+            outcome = alive_app.redeem_account_migration_ticket(
+                self.data_file,
+                f"invalid-{offset}",
+                self.new_id,
+                self.config,
+                now=self.now + timedelta(seconds=offset),
+            )
+
+        self.assertEqual(
+            outcome,
+            ({"ok": False, "error": "rate_limited"}, 429),
+        )
+        state = alive_app.load_state(self.data_file)
+        self.assertLessEqual(
+            len(state["account_migration_audit"]),
+            getattr(alive_app, "ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX", 1000),
+        )
 
     def test_admin_audit_contains_counts_but_no_identity_or_code(self):
         created, create_code = alive_app.create_account_migration_ticket(

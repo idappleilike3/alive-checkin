@@ -98,9 +98,15 @@ Messaging API 憑證，**不可替換、不可清空**；其餘既有 Render 變
 保留。儲存後只重啟／部署這個 web service，等待健康檢查成功，再進行下列
 smoke test：
 
+搬家資料會在一般操作與 maintenance cleanup 中自動整理：已完成／過期
+ticket 保留 30 天（每來源最多 20、全域最多 2,000），去識別 audit 保留
+90 天（全域最多 1,000），snapshot 依既有 `purge_after` 保留 30 天；
+disabled alias 不自動刪除。每個來源 10 分鐘最多建立 5 次，無效兌換全域
+10 分鐘最多 30 次；超限固定回 `429 rate_limited`，不揭露帳號或代碼。
+
 正式人工驗收請由兩個已加入官方帳號好友的 LINE 帳號完成：
 
-1. 在瀏覽器或 Render Shell 確認 `https://alive-checkin.onrender.com/api/config` 回傳的 `liff_id` 是 `2010848330-UAiqPPYD`。
+1. 在瀏覽器或 Render Shell 確認 `https://alive-checkin.onrender.com/api/config` 回傳的 `liff_id` 是 `2010848330-UAiqPPYD`，且 `legacy_liff_id` 是預期舊入口。
 2. 在舊 LIFF App 將 Endpoint URL 指向 `https://alive-checkin.onrender.com/liff/migrate.html`。
 3. 以一個非正式／非生產會員走完舊 LIFF 產生代碼、新 LIFF 兌換與重新開啟流程。
 4. 在 session-authenticated 後台確認「帳號搬家」成功數與 moved-record counts 增加，且舊帳號再次進入時只收到開啟目前 LIFF 的安全導引。

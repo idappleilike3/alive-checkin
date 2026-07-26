@@ -75,7 +75,7 @@ class AdminSessionAuthTests(unittest.TestCase):
 
     def test_account_migrations_returns_only_sanitized_operational_fields(self):
         client, data_file = self.make_client(
-            ACCOUNT_MIGRATION_SECRET="migration-secret",
+            ACCOUNT_MIGRATION_SECRET="test-only-migration-secret-32bytes",
             LEGACY_LINE_LOGIN_CHANNEL_ID="legacy-channel",
             LINE_LOGIN_CHANNEL_ID="current-channel",
         )

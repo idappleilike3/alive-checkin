@@ -34,9 +34,7 @@ class ProductRulesTests(unittest.TestCase):
             source = path.read_text(encoding="utf-8")
             if path == ROOT / "app.py":
                 source = source.replace(
-                    'LEGACY_LIFF_ID=os.environ.get(\n'
-                    '            "LEGACY_LIFF_ID", "2010674803-rK98c0lo"\n'
-                    "        ),",
+                    'DEFAULT_LEGACY_LIFF_ID = "2010674803-rK98c0lo"',
                     "",
                 )
             elif path == ROOT / "render.yaml":

@@ -125,6 +125,7 @@ from push_delivery import (
 
 
 DEFAULT_LIFF_ID = "2010848330-UAiqPPYD"
+DEFAULT_LEGACY_LIFF_ID = "2010674803-rK98c0lo"
 DEFAULT_LINE_LOGIN_CHANNEL_ID = "2010848330"
 
 
@@ -1019,7 +1020,7 @@ def load_state(data_file):
                 # Keep a local mirror for ops/debug; never wipe Postgres on mirror fail.
                 try:
                     _save_state_sqlite(data_file, pg_state, force=True)
-                except OSError:
+                except Exception:
                     pass
                 return pg_state
 
@@ -1091,7 +1092,7 @@ def save_state(data_file, state):
             raise
         try:
             _save_state_sqlite(data_file, state, force=True)
-        except OSError:
+        except Exception:
             pass
         return
     _save_state_sqlite(data_file, state)
@@ -1632,6 +1633,25 @@ def account_migrated_response():
         "error": "account_migrated",
         "action": "open_current_liff",
     }
+
+
+def migrated_account_webhook_guidance(
+    registration_result,
+    liff_id=DEFAULT_LIFF_ID,
+):
+    """Return safe LINE guidance when an old Provider identity is disabled."""
+    data, status = registration_result or ({}, 0)
+    if (
+        status == 409
+        and isinstance(data, dict)
+        and data.get("error") == "account_migrated"
+    ):
+        return (
+            "此帳號已移轉到新版 LINE 登入，舊入口已停用。\n"
+            "請由新版入口繼續使用：\n"
+            f"https://liff.line.me/{str(liff_id or DEFAULT_LIFF_ID).strip()}"
+        )
+    return ""
 
 
 def get_profile(state, line_user_id=None):
@@ -6195,14 +6215,27 @@ def admin_security_ready(config):
 
 
 def account_migration_ready(config):
-    return all(
-        str(config.get(key) or "").strip()
-        for key in (
-            "LEGACY_LINE_LOGIN_CHANNEL_ID",
-            "LINE_LOGIN_CHANNEL_ID",
-            "ACCOUNT_MIGRATION_SECRET",
-        )
+    legacy_channel = str(
+        config.get("LEGACY_LINE_LOGIN_CHANNEL_ID") or ""
+    ).strip()
+    current_channel = str(config.get("LINE_LOGIN_CHANNEL_ID") or "").strip()
+    secret = str(config.get("ACCOUNT_MIGRATION_SECRET") or "").strip()
+    return bool(
+        legacy_channel
+        and current_channel
+        and len(secret.encode("utf-8")) >= 32
     )
+
+
+ACCOUNT_MIGRATION_TICKET_RETENTION_DAYS = 30
+ACCOUNT_MIGRATION_TICKET_MAX_PER_SOURCE = 20
+ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX = 2000
+ACCOUNT_MIGRATION_AUDIT_RETENTION_DAYS = 90
+ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX = 1000
+ACCOUNT_MIGRATION_START_WINDOW_SECONDS = 600
+ACCOUNT_MIGRATION_START_MAX_PER_WINDOW = 5
+ACCOUNT_MIGRATION_INVALID_REDEEM_WINDOW_SECONDS = 600
+ACCOUNT_MIGRATION_INVALID_REDEEM_MAX_PER_WINDOW = 30
 
 
 def _account_migration_now(now=None):
@@ -6218,6 +6251,51 @@ def _account_migration_datetime(value):
     except (TypeError, ValueError):
         return None
     return _account_migration_now(parsed)
+
+
+def purge_account_migration_history(state, now=None):
+    current = _account_migration_now(now)
+    ticket_cutoff = current - timedelta(
+        days=ACCOUNT_MIGRATION_TICKET_RETENTION_DAYS
+    )
+    audit_cutoff = current - timedelta(
+        days=ACCOUNT_MIGRATION_AUDIT_RETENTION_DAYS
+    )
+    tickets = state.get("account_migration_tickets") or {}
+    retained_tickets = []
+    for key, ticket in tickets.items():
+        if not isinstance(ticket, dict):
+            continue
+        created = _account_migration_datetime(ticket.get("created_at"))
+        expires = _account_migration_datetime(ticket.get("expires_at"))
+        status = str(ticket.get("status") or "")
+        if status == "pending" and expires and expires > current:
+            retained_tickets.append((key, ticket))
+        elif created and created >= ticket_cutoff:
+            retained_tickets.append((key, ticket))
+    retained_tickets.sort(
+        key=lambda item: str(item[1].get("created_at") or ""),
+        reverse=True,
+    )
+    retained_tickets = retained_tickets[:ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX]
+    state["account_migration_tickets"] = dict(retained_tickets)
+
+    audit = [
+        event
+        for event in (state.get("account_migration_audit") or [])
+        if isinstance(event, dict)
+        and (
+            _account_migration_datetime(event.get("created_at"))
+            and _account_migration_datetime(event.get("created_at"))
+            >= audit_cutoff
+        )
+    ][-ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX:]
+    removed = {
+        "tickets": len(tickets) - len(state["account_migration_tickets"]),
+        "audit": len(state.get("account_migration_audit") or []) - len(audit),
+    }
+    state["account_migration_audit"] = audit
+    return removed
 
 
 def account_migration_code_digest(code, secret):
@@ -6277,47 +6355,76 @@ def create_account_migration_ticket(
         return {"ok": False, "error": "migration_unavailable"}, 503
 
     verified_old_id = str(old_line_user_id or "").strip()
-    state = load_state(data_file)
-    users = state.get("users") or {}
-    aliases = state.get("account_migration_aliases") or {}
-    if not verified_old_id or verified_old_id not in users or verified_old_id in aliases:
-        return {"ok": False, "error": "account_not_found"}, 404
-
     current = _account_migration_now(now)
     current_iso = current.isoformat(timespec="seconds")
-    tickets = state.setdefault("account_migration_tickets", {})
-    for ticket in tickets.values():
-        if (
-            isinstance(ticket, dict)
-            and ticket.get("old_line_user_id") == verified_old_id
-            and ticket.get("status") == "pending"
-        ):
-            ticket["status"] = "expired"
-            ticket["expires_at"] = current_iso
-
     ttl_seconds = int(config.get("ACCOUNT_MIGRATION_TTL_SECONDS") or 600)
     raw_code = secrets.token_urlsafe(32)
     ticket_id = f"amt_{secrets.token_urlsafe(12)}"
-    tickets[ticket_id] = {
-        "ticket_id": ticket_id,
-        "code_digest": account_migration_code_digest(
-            raw_code,
-            config.get("ACCOUNT_MIGRATION_SECRET"),
-        ),
-        "old_line_user_id": verified_old_id,
-        "created_at": current_iso,
-        "expires_at": (
-            current + timedelta(seconds=ttl_seconds)
-        ).isoformat(timespec="seconds"),
-        "used_at": "",
-        "status": "pending",
-    }
-    save_state(data_file, state)
-    return {
-        "ok": True,
-        "migration_code": raw_code,
-        "expires_in": ttl_seconds,
-    }, 200
+
+    def mutate(state):
+        purge_account_migration_history(state, current)
+        users = state.get("users") or {}
+        aliases = state.get("account_migration_aliases") or {}
+        if (
+            not verified_old_id
+            or verified_old_id not in users
+            or verified_old_id in aliases
+        ):
+            return {"ok": False, "error": "account_not_found"}, 404
+        tickets = state.setdefault("account_migration_tickets", {})
+        recent_cutoff = current - timedelta(
+            seconds=ACCOUNT_MIGRATION_START_WINDOW_SECONDS
+        )
+        recent = [
+            ticket for ticket in tickets.values()
+            if isinstance(ticket, dict)
+            and ticket.get("old_line_user_id") == verified_old_id
+            and (
+                _account_migration_datetime(ticket.get("created_at"))
+                and _account_migration_datetime(ticket.get("created_at"))
+                >= recent_cutoff
+            )
+        ]
+        source_tickets = [
+            ticket for ticket in tickets.values()
+            if isinstance(ticket, dict)
+            and ticket.get("old_line_user_id") == verified_old_id
+        ]
+        if (
+            len(recent) >= ACCOUNT_MIGRATION_START_MAX_PER_WINDOW
+            or len(source_tickets) >= ACCOUNT_MIGRATION_TICKET_MAX_PER_SOURCE
+            or len(tickets) >= ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX
+        ):
+            return {"ok": False, "error": "rate_limited"}, 429
+        for ticket in tickets.values():
+            if (
+                isinstance(ticket, dict)
+                and ticket.get("old_line_user_id") == verified_old_id
+                and ticket.get("status") == "pending"
+            ):
+                ticket["status"] = "expired"
+                ticket["expires_at"] = current_iso
+        tickets[ticket_id] = {
+            "ticket_id": ticket_id,
+            "code_digest": account_migration_code_digest(
+                raw_code,
+                config.get("ACCOUNT_MIGRATION_SECRET"),
+            ),
+            "old_line_user_id": verified_old_id,
+            "created_at": current_iso,
+            "expires_at": (
+                current + timedelta(seconds=ttl_seconds)
+            ).isoformat(timespec="seconds"),
+            "used_at": "",
+            "status": "pending",
+        }
+        return {
+            "ok": True,
+            "migration_code": raw_code,
+            "expires_in": ttl_seconds,
+        }, 200
+
+    return mutate_state_atomically(data_file, mutate)
 
 
 def account_migration_ticket_status(
@@ -7000,13 +7107,6 @@ def create_account_migration_alias(state, old_id, new_id, now=None):
     return state["account_migration_aliases"][source_id]
 
 
-class AccountMigrationRejected(Exception):
-    def __init__(self, category, status_code):
-        super().__init__(str(category))
-        self.category = str(category)
-        self.status_code = int(status_code)
-
-
 def _account_migration_record_references(record, line_user_id):
     if not isinstance(record, dict):
         return False
@@ -7038,6 +7138,7 @@ def _account_migration_safe_counts(state, profile, line_user_id):
 
 
 def _append_account_migration_failure_audit(state, category, now):
+    purge_account_migration_history(state, now)
     state.setdefault("account_migration_audit", []).append({
         "event_id": f"ame_{secrets.token_urlsafe(12)}",
         "status": "failed",
@@ -7052,6 +7153,9 @@ def _append_account_migration_failure_audit(state, category, now):
             "requests": 0,
         },
     })
+    state["account_migration_audit"] = state["account_migration_audit"][
+        -ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX:
+    ]
 
 
 def _account_migration_snapshot(
@@ -7083,6 +7187,7 @@ def _account_migration_snapshot(
             else None
         ),
         "migration_ticket": copy.deepcopy(ticket),
+        "affected_users": copy.deepcopy(dict(users)),
         "affected_top_level_records": {
             key: copy.deepcopy(state.get(key))
             for key in sorted(affected_keys)
@@ -7106,6 +7211,23 @@ def redeem_account_migration_ticket(
     raw_code = str(code or "").strip()
 
     def mutate(state):
+        purge_account_migration_history(state, current)
+        invalid_cutoff = current - timedelta(
+            seconds=ACCOUNT_MIGRATION_INVALID_REDEEM_WINDOW_SECONDS
+        )
+        invalid_recent = sum(
+            1
+            for event in (state.get("account_migration_audit") or [])
+            if isinstance(event, dict)
+            and event.get("failure_category") == "invalid_code"
+            and (
+                _account_migration_datetime(event.get("created_at"))
+                and _account_migration_datetime(event.get("created_at"))
+                >= invalid_cutoff
+            )
+        )
+        if invalid_recent >= ACCOUNT_MIGRATION_INVALID_REDEEM_MAX_PER_WINDOW:
+            return {"ok": False, "error": "rate_limited"}, 429
         ticket, ticket_error = validate_account_migration_ticket(
             state,
             raw_code,
@@ -7187,6 +7309,12 @@ def redeem_account_migration_ticket(
             event_id,
             now=current,
         )
+        _reindex_migration_record(
+            merged_profile,
+            old_line_user_id,
+            verified_new_id,
+            event_id,
+        )
         users[verified_new_id] = merged_profile
         users.pop(old_line_user_id, None)
         create_account_migration_alias(
@@ -7219,8 +7347,6 @@ def redeem_account_migration_ticket(
 
     try:
         return mutate_state_atomically(data_file, mutate)
-    except AccountMigrationRejected as exc:
-        return {"ok": False, "error": exc.category}, exc.status_code
     except Exception:
         try:
             mutate_state_atomically(
@@ -8398,6 +8524,10 @@ def cleanup_expired_data(config):
 
     def mutate(state):
         downgraded = _apply_expired_plan_downgrades_to_state(state, now)
+        migration_history_removed = purge_account_migration_history(
+            state,
+            now=migration_cleanup_now,
+        )
         expired_locations_removed = 0
         contacts_archived = 0
         migration_snapshots_removed = purge_account_migration_snapshots(
@@ -8454,6 +8584,8 @@ def cleanup_expired_data(config):
             ),
             "contacts_archived_users": contacts_archived,
             "migration_snapshots_removed": migration_snapshots_removed,
+            "migration_tickets_removed": migration_history_removed["tickets"],
+            "migration_audit_removed": migration_history_removed["audit"],
             "orders_removed": 0,
             "plans_downgraded": len(downgraded),
         }, 200
@@ -9526,6 +9658,11 @@ def app_config(config):
     ).strip()
     return {
         "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID,
+        "legacy_liff_id": (
+            config.get("LEGACY_LIFF_ID")
+            or os.environ.get("LEGACY_LIFF_ID")
+            or DEFAULT_LEGACY_LIFF_ID
+        ),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
         "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gh",
@@ -9606,7 +9743,7 @@ def create_app(config=None):
             "LEGACY_LINE_LOGIN_CHANNEL_ID", "2010674803"
         ),
         LEGACY_LIFF_ID=os.environ.get(
-            "LEGACY_LIFF_ID", "2010674803-rK98c0lo"
+            "LEGACY_LIFF_ID", DEFAULT_LEGACY_LIFF_ID
         ),
         ACCOUNT_MIGRATION_SECRET=os.environ.get("ACCOUNT_MIGRATION_SECRET", ""),
         ACCOUNT_MIGRATION_TTL_SECONDS=600,
@@ -10294,6 +10431,24 @@ def create_app(config=None):
                 )
             return messages
 
+        def _reply_migrated_account(reply_token, registration_result):
+            guidance = migrated_account_webhook_guidance(
+                registration_result,
+                app.config.get("LIFF_ID") or DEFAULT_LIFF_ID,
+            )
+            if not guidance:
+                return False
+            try:
+                line_bot_api.reply_message(
+                    reply_token,
+                    TextSendMessage(text=guidance),
+                )
+            except Exception as exc:
+                app.logger.exception(
+                    "migrated account guidance reply failed: %s", exc
+                )
+            return True
+
         def _enrich_bind_result_for_flex(result, line_user_id):
             """補上資訊卡：管理人／核心守護人／緊急聯絡人／群組成員／提醒時間。"""
             enriched = dict(result or {})
@@ -10461,13 +10616,17 @@ def create_app(config=None):
             if line_user_id:
                 # Follow 當下就寫入 users，之後開 LIFF 不會因缺 row 而 404
                 try:
-                    register_line_user(
+                    registration_result = register_line_user(
                         app.config["DATA_FILE"],
                         {
                             "line_user_id": line_user_id,
                             "display_name": display_name or "",
                         },
                     )
+                    if _reply_migrated_account(
+                        event.reply_token, registration_result
+                    ):
+                        return
                     reactivate_line_push_for_follow(app.config["DATA_FILE"], line_user_id)
                 except Exception as exc:
                     app.logger.exception("FollowEvent register failed: %s", exc)
@@ -10647,13 +10806,17 @@ def create_app(config=None):
                 )
                 if line_user_id:
                     try:
-                        register_line_user(
+                        registration_result = register_line_user(
                             app.config["DATA_FILE"],
                             {
                                 "line_user_id": line_user_id,
                                 "display_name": display_name or "LINE 使用者",
                             },
                         )
+                        if _reply_migrated_account(
+                            event.reply_token, registration_result
+                        ):
+                            return
                     except Exception as exc:
                         app.logger.exception("welcome keyword register failed: %s", exc)
                 _send_welcome(
@@ -10674,10 +10837,14 @@ def create_app(config=None):
                     )
                     return
                 try:
-                    register_line_user(
+                    registration_result = register_line_user(
                         app.config["DATA_FILE"],
                         {"line_user_id": line_user_id, "display_name": "LINE 使用者"},
                     )
+                    if _reply_migrated_account(
+                        event.reply_token, registration_result
+                    ):
+                        return
                 except Exception as exc:
                     app.logger.exception("invite keyword register failed: %s", exc)
                 if FlexSendMessage is not None and share_invite_flex is not None:
@@ -11695,7 +11862,9 @@ def create_app(config=None):
 
     @app.post("/api/account-migration/start")
     def account_migration_start_api():
-        payload = request.get_json(silent=True) or {}
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"ok": False, "error": "invalid_request"}), 400
         old_line_user_id, err = _migration_verified_subject(
             payload,
             "LEGACY_LINE_LOGIN_CHANNEL_ID",
@@ -11726,7 +11895,9 @@ def create_app(config=None):
 
     @app.post("/api/account-migration/redeem")
     def account_migration_redeem_api():
-        payload = request.get_json(silent=True) or {}
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"ok": False, "error": "invalid_request"}), 400
         new_line_user_id, err = _migration_verified_subject(
             payload,
             "LINE_LOGIN_CHANNEL_ID",

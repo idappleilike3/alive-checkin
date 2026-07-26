@@ -39,6 +39,19 @@ class LineAuthTests(unittest.TestCase):
         self.assertEqual(response.get_json()["liff_id"], NEW_LIFF_ID)
         self.assertEqual(custom_liff_app.config["LINE_LOGIN_CHANNEL_ID"], "2010999999")
 
+    def test_public_config_exposes_legacy_liff_id_without_migration_secret(self):
+        app = alive_app.create_app(
+            {
+                "LEGACY_LIFF_ID": "2010674803-custom",
+                "ACCOUNT_MIGRATION_SECRET": "server-secret-must-not-leak-123456",
+            }
+        )
+
+        data = app.test_client().get("/api/config").get_json()
+
+        self.assertEqual(data["legacy_liff_id"], "2010674803-custom")
+        self.assertNotIn("migration_secret", str(data).lower())
+
     def test_production_liff_default_is_new_provider(self):
         source = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
         self.assertIn(f'DEFAULT_LIFF_ID = "{NEW_LIFF_ID}"', source)

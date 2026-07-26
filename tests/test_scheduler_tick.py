@@ -25,7 +25,7 @@ class SchedulerTickTests(unittest.TestCase):
                 "CRON_NOW": now,
                 "LEGACY_LINE_LOGIN_CHANNEL_ID": "legacy-channel",
                 "LINE_LOGIN_CHANNEL_ID": "current-channel",
-                "ACCOUNT_MIGRATION_SECRET": "test-only-secret",
+                "ACCOUNT_MIGRATION_SECRET": "test-only-migration-secret-32bytes",
                 "ACCOUNT_MIGRATION_TTL_SECONDS": 600,
             }
             state = alive_app.load_state(data_file)

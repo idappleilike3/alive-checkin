@@ -294,6 +294,10 @@ test("current migration errors show safe recovery and normal fast route stays un
     ["redeemPendingAccountMigration"],
     {
       getAppParam: () => paramValue,
+      appConfig: {legacy_liff_id: "2010674803-rK98c0lo"},
+      appConfigPromise: Promise.resolve({
+        legacy_liff_id: "2010674803-rK98c0lo",
+      }),
       liff: {
         getIDToken: () => {
           tokenReads += 1;
@@ -379,6 +383,60 @@ test("used migration code keeps recovery inside the current LIFF", async () => {
   assert.match(elements.accountMigrationAction.href, /open=member/);
   assert.doesNotMatch(elements.accountMigrationAction.href, /2010674803-rK98c0lo/);
   assert.match(elements.accountMigrationAction.textContent, /新版|會員/);
+});
+
+test("expired migration code uses the verified legacy LIFF config", async () => {
+  const migrationSource = section(
+    indexPage,
+    "let pendingAccountMigrationCode",
+    "function requestedAppAction()",
+  );
+  const elements = {
+    accountMigrationCard: {hidden: true, dataset: {}},
+    accountMigrationTitle: {textContent: ""},
+    accountMigrationMessage: {textContent: ""},
+    accountMigrationSummary: {innerHTML: ""},
+    retryAccountMigrationBtn: {hidden: true, onclick: null},
+    accountMigrationAction: {hidden: true, href: "", textContent: ""},
+  };
+  const sandbox = expose(migrationSource, ["showAccountMigrationFailure"], {
+    appConfig: {legacy_liff_id: "2010674803-rK98c0lo"},
+    document: {getElementById: (id) => elements[id] || null},
+  });
+
+  sandbox.showAccountMigrationFailure("expired_code");
+
+  assert.equal(
+    elements.accountMigrationAction.href,
+    "https://liff.line.me/2010674803-rK98c0lo",
+  );
+  assert.match(elements.accountMigrationAction.textContent, /舊版|重新驗證/);
+});
+
+test("expired migration code does not guess a legacy URL when config is absent", async () => {
+  const migrationSource = section(
+    indexPage,
+    "let pendingAccountMigrationCode",
+    "function requestedAppAction()",
+  );
+  const elements = {
+    accountMigrationCard: {hidden: true, dataset: {}},
+    accountMigrationTitle: {textContent: ""},
+    accountMigrationMessage: {textContent: ""},
+    accountMigrationSummary: {innerHTML: ""},
+    retryAccountMigrationBtn: {hidden: true, onclick: null},
+    accountMigrationAction: {hidden: true, href: "", textContent: ""},
+  };
+  const sandbox = expose(migrationSource, ["showAccountMigrationFailure"], {
+    appConfig: {},
+    document: {getElementById: (id) => elements[id] || null},
+  });
+
+  sandbox.showAccountMigrationFailure("expired_code");
+
+  assert.equal(elements.accountMigrationAction.hidden, true);
+  assert.doesNotMatch(elements.accountMigrationAction.href, /liff\.line\.me/);
+  assert.match(elements.accountMigrationMessage.textContent, /稍後|官方帳號/);
 });
 
 test("bootstrap redeems migration before applying a redirecting destination", async () => {

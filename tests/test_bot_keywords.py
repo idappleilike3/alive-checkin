@@ -135,6 +135,39 @@ class BotKeywordHandlerTests(unittest.TestCase):
             app_mod.resolve_welcome_display_name(hint="LINE 使用者")
         )
 
+    def test_migrated_alias_guidance_is_safe_and_handlers_short_circuit(self):
+        import app as app_mod
+
+        guidance = app_mod.migrated_account_webhook_guidance(
+            ({"ok": False, "error": "account_migrated"}, 409)
+        )
+        self.assertIn("新版", guidance)
+        self.assertIn("https://liff.line.me/2010848330-UAiqPPYD", guidance)
+        self.assertNotIn("U-old", guidance)
+
+        source = (ROOT / "app.py").read_text(encoding="utf-8")
+        follow = source.split("def handle_follow(event):", 1)[1].split(
+            "@handler.add(MemberJoinedEvent)", 1
+        )[0]
+        welcome = source.split("# 歡迎詞關鍵字", 1)[1].split(
+            "# 一鍵邀請", 1
+        )[0]
+        invite = source.split("# 一鍵邀請：", 1)[1].split(
+            "# fallback：純文字附上原生分享網址", 1
+        )[0]
+        self.assertLess(
+            follow.index("_reply_migrated_account"),
+            follow.index("_send_welcome"),
+        )
+        self.assertLess(
+            welcome.index("_reply_migrated_account"),
+            welcome.index("_send_welcome"),
+        )
+        self.assertLess(
+            invite.index("_reply_migrated_account"),
+            invite.index("share_invite_flex"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

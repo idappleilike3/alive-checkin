@@ -32,14 +32,18 @@
    totals、最近時間與 moved-record counts；重新開啟舊帳號，確認 disabled
    alias 只導向目前 LIFF，且後台／response 都沒有 LINE ID、代碼或 digest。
 7. 舊 LIFF 必須保留至少 30 天。保留期間持續看 totals 與 failure category，
-   不可刪除 aliases、snapshots、tickets 或 audit。
+   不可人工刪除 migration state。系統 maintenance 會依政策自動整理：
+   ticket 30 天（每來源最多 20、全域最多 2,000）、audit 90 天（全域最多
+   1,000）、snapshot 依 `purge_after` 30 天；disabled alias 不自動刪除。
+   建立代碼每來源 10 分鐘最多 5 次，無效兌換全域 10 分鐘最多 30 次，
+   超限固定回 `429 rate_limited`。
 8. 若 rollout 失敗，將 Render 恢復到上一個成功 deploy；**不要刪除任何
    migration state**，也不要先輪替 secret。記錄時間、deploy ID 與安全錯誤
    category 後交由工程人員判讀。
 
 ### 其他正式驗收
 
-1. 確認 `https://alive-checkin.onrender.com/api/config` 的 `liff_id` 為 `2010848330-UAiqPPYD`。
+1. 確認 `https://alive-checkin.onrender.com/api/config` 的 `liff_id` 為 `2010848330-UAiqPPYD`，且 `legacy_liff_id` 為預期舊入口。
 2. 用真實 LINE 帳號開啟 `https://liff.line.me/2010848330-UAiqPPYD`，完成授權後確認 `?open=checkin`、`?open=guard` 等 requested `open` route 可到達。
 3. 用會員帳號執行「一鍵邀請」，確認直接開啟 `shareTargetPicker`；讓另一個已加官方帳號好友的帳號完成一次守護人綁定，確認雙方都收到「綁定成功」。
 4. 以該單一已綁定守護人開啟安全守護、允許定位，確認啟動結果或後台紀錄為 `target_count=1`、`sent=1`，且守護人收到位置訊息。

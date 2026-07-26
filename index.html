@@ -4721,17 +4721,24 @@
       }
       if (action) {
         action.hidden = !options.action;
-        action.href = options.actionHref || "https://liff.line.me/2010848330-UAiqPPYD?open=member";
+        action.href = options.actionHref || "";
         action.textContent = options.actionText || "開啟新版會員中心";
       }
     }
 
     function showAccountMigrationFailure(errorCode) {
       if (errorCode === "expired_code") {
+        const legacyLiffId = String(appConfig.legacy_liff_id || "").trim();
+        const legacyLiffUrl = /^\d{10}-[A-Za-z0-9]+$/.test(legacyLiffId)
+          ? `https://liff.line.me/${legacyLiffId}`
+          : "";
         showAccountMigrationState("expired", {
           title: "搬家連結已過期",
-          message: "這個安全搬家連結已超過使用時間，請回舊版重新驗證。",
-          action: true,
+          message: legacyLiffUrl
+            ? "這個安全搬家連結已超過使用時間，請回舊版重新驗證。"
+            : "這個安全搬家連結已過期，舊版入口暫時無法確認；請稍後重試或聯絡官方帳號。",
+          action: Boolean(legacyLiffUrl),
+          actionHref: legacyLiffUrl,
           actionText: "回舊版重新驗證"
         });
         return;
@@ -4779,6 +4786,9 @@
           const response = await request;
           const data = await response.json().catch(() => ({}));
           if (!response.ok || !data.ok) {
+            if (String(data.error || "") === "expired_code") {
+              await appConfigPromise;
+            }
             showAccountMigrationFailure(String(data.error || ""));
             return { attempted: true, succeeded: false };
           }
