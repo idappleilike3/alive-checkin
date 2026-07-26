@@ -18,6 +18,23 @@ def load_plan_limits():
 
 
 class ProductRulesTests(unittest.TestCase):
+    def test_no_production_entry_uses_legacy_liff_id(self):
+        allowed = {
+            ROOT / "liff" / "migrate.html",
+            ROOT / "docs" / "superpowers",
+            ROOT / ".superpowers",
+            ROOT / "tests",
+        }
+        offenders = []
+        for path in ROOT.rglob("*"):
+            if not path.is_file() or path.suffix not in {".py", ".html", ".json", ".yaml", ".md"}:
+                continue
+            if any(str(path).startswith(str(prefix)) for prefix in allowed):
+                continue
+            if "2010674803-rK98c0lo" in path.read_text(encoding="utf-8"):
+                offenders.append(str(path.relative_to(ROOT)))
+        self.assertEqual(offenders, [])
+
     def test_render_uses_new_line_login_provider(self):
         render = (ROOT / "render.yaml").read_text(encoding="utf-8")
         self.assertIn(f"value: {NEW_LIFF_ID}", render)
@@ -411,7 +428,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("openNativeShare()", init_fn)
         self.assertNotIn("clipboard", page)
         self.assertIn("https://line.me/R/app/\" + LIFF_ID + \"?invite_from=", page)
-        self.assertIn('const LIFF_ID = "2010674803-rK98c0lo"', page)
+        self.assertIn('const LIFF_ID = "2010848330-UAiqPPYD"', page)
         self.assertIn("W250724ir", page)
         self.assertIn("resolveReturnUrl", page)
         self.assertIn("appPublicOrigin", page)
@@ -428,26 +445,27 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('String(key) === "liff.state"', page)
         self.assertIn('"invite_from", "friend_invite", "open"', page)
         self.assertIn("https://alive-checkin.onrender.com/liff/pricing.html", rich_menu)
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=checkin", rich_menu)
+        base = "https://liff.line.me/2010848330-UAiqPPYD"
+        self.assertIn(f"{base}?open=checkin", rich_menu)
         # 一鍵邀請：直連空白 share-invite（自動 R/share），無教學大按鈕文案頁
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html", rich_menu)
-        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=share-invite", rich_menu)
+        self.assertIn(f"{base}/liff/share-invite.html", rich_menu)
+        self.assertNotIn(f"{base}/?open=share-invite", rich_menu)
         # 「需要幫忙」統一進永久 LIFF SOS 入口，不再在聊天室分三次確認
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=sos", rich_menu)
-        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=sos", rich_menu)
+        self.assertIn(f"{base}?open=sos", rich_menu)
+        self.assertNotIn(f"{base}/?open=sos", rich_menu)
         self.assertNotIn('"type": "message", "label": "需要幫忙"', rich_menu)
         self.assertIn('"label": "需要幫忙"', rich_menu)
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=help", rich_menu)
-        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo?open=pricing", rich_menu)
-        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=pricing", rich_menu)
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=guard", rich_menu)
+        self.assertIn(f"{base}?open=help", rich_menu)
+        self.assertNotIn(f"{base}?open=pricing", rich_menu)
+        self.assertNotIn(f"{base}/?open=pricing", rich_menu)
+        self.assertIn(f"{base}?open=guard", rich_menu)
         self.assertIn('url += "?" + urlencode(params, safe="/")', flex)
         self.assertNotIn('url += "/?" + urlencode(params, safe="/")', flex)
         self.assertIn("line_native_share_url", flex)
         self.assertIn("share_invite_flex", flex)
         self.assertIn("請先加入 LINE 官方帳號「每日平安」", flex)
         self.assertIn("有緊急或我沒報平安時，系統會通知你", flex)
-        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo#open=", rich_menu)
+        self.assertNotIn(f"{base}#open=", rich_menu)
         self.assertNotIn("https://alive-checkin.onrender.com/help.html", rich_menu)
         self.assertNotIn('"type": "message", "label": "SOS 求救"', rich_menu)
         self.assertNotIn('"label": "連按SOS"', rich_menu)
@@ -639,7 +657,7 @@ class ProductRulesTests(unittest.TestCase):
         group_flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
         sos_flow = (ROOT / "sos_flow.py").read_text(encoding="utf-8")
         page = (ROOT / "index.html").read_text(encoding="utf-8")
-        uri = "https://liff.line.me/2010674803-rK98c0lo?open=sos"
+        uri = "https://liff.line.me/2010848330-UAiqPPYD?open=sos"
 
         self.assertIn(f'"uri": "{uri}"', rich_menu)
         self.assertIn('_uri_button("需要幫忙", liff_entry_url(open_action="sos")', group_flex)

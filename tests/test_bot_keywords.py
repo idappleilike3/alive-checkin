@@ -1,6 +1,9 @@
+import os
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+import guardian_group_flex
 import sos_flow
 from guardian_group_flex import pricing_direct_url, share_invite_liff_url, welcome_flex
 
@@ -38,7 +41,7 @@ class BotKeywordHandlerTests(unittest.TestCase):
         self.assertEqual(primary_buttons[0]["action"]["label"], "開啟需要幫忙")
 
     def test_sos_no_guardians_flex_has_invite(self):
-        flex = sos_flow.sos_no_guardians_flex("https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html")
+        flex = sos_flow.sos_no_guardians_flex("https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html")
         blob = str(flex)
         self.assertIn("還沒綁定守護人喔", blob)
         self.assertIn("邀請家人加入", blob)
@@ -77,8 +80,17 @@ class BotKeywordHandlerTests(unittest.TestCase):
         )
         self.assertEqual(
             share_invite_liff_url(),
-            "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html",
+            "https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html",
         )
+
+    def test_liff_link_helpers_preserve_function_parameters(self):
+        with patch.dict(os.environ, {"LIFF_ID": "2010848330-UAiqPPYD"}):
+            url = guardian_group_flex.liff_entry_url(
+                open_action="onboarding",
+                invite_from="U-new-provider",
+            )
+        self.assertIn("?open=onboarding", url)
+        self.assertIn("invite_from=U-new-provider", url)
 
     def test_welcome_flex_omits_placeholder_name(self):
         from guardian_group_flex import welcome_greeting_text
