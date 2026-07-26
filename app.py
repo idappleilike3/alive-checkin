@@ -1411,6 +1411,18 @@ _PROFILE_PERSIST_KEYS = (
 )
 
 
+class AccountMigratedError(Exception):
+    """Raised when a disabled Provider identity attempts profile access."""
+
+
+def account_migrated_response():
+    return {
+        "ok": False,
+        "error": "account_migrated",
+        "action": "open_current_liff",
+    }
+
+
 def get_profile(state, line_user_id=None):
     """Load or create per-user profile keyed by line_user_id.
 
@@ -1420,7 +1432,7 @@ def get_profile(state, line_user_id=None):
     if line_user_id:
         alias = (state.get("account_migration_aliases") or {}).get(line_user_id)
         if isinstance(alias, dict) and alias.get("status") == "disabled":
-            return None
+            raise AccountMigratedError("account_migrated")
         users = state.setdefault("users", {})
         is_new = line_user_id not in users
         user = users.setdefault(
@@ -2426,11 +2438,7 @@ def register_line_user(data_file, payload):
     state = load_state(data_file)
     alias = (state.get("account_migration_aliases") or {}).get(line_user_id)
     if isinstance(alias, dict) and alias.get("status") == "disabled":
-        return {
-            "ok": False,
-            "error": "account_migrated",
-            "action": "open_current_liff",
-        }, 409
+        return account_migrated_response(), 409
     existing = (state.get("users") or {}).get(line_user_id)
     preserved = {}
     if isinstance(existing, dict):
@@ -6256,13 +6264,58 @@ def _merge_migration_history(legacy_rows, current_rows):
 def _merge_migration_calendar_notes(legacy_notes, current_notes):
     if isinstance(legacy_notes, dict) or isinstance(current_notes, dict):
         merged = copy.deepcopy(legacy_notes) if isinstance(legacy_notes, dict) else {}
+        used_ids = set()
+        for notes in (legacy_notes, current_notes):
+            for value in (notes or {}).values() if isinstance(notes, dict) else []:
+                values = value if isinstance(value, list) else [value]
+                for item in values:
+                    if isinstance(item, dict) and item.get("id"):
+                        used_ids.add(str(item["id"]))
+        generated_index = 0
+
+        def normalized_note_records(value):
+            nonlocal generated_index
+            values = value if isinstance(value, list) else [value]
+            records = []
+            for item in values:
+                if isinstance(item, dict):
+                    record = copy.deepcopy(item)
+                else:
+                    record = {"content": str(item or "")}
+                if not str(record.get("id") or "").strip():
+                    generated_index += 1
+                    generated = f"migration-calendar-note-{generated_index:04d}"
+                    while generated in used_ids:
+                        generated_index += 1
+                        generated = f"migration-calendar-note-{generated_index:04d}"
+                    record["id"] = generated
+                    used_ids.add(generated)
+                records.append(record)
+            return records
+
         for key, current_value in (
             current_notes.items() if isinstance(current_notes, dict) else []
         ):
             if key not in merged:
                 merged[key] = copy.deepcopy(current_value)
                 continue
-            merged[key] = _migration_choose_record(merged[key], current_value)
+            combined = []
+            positions = {}
+            for record in [
+                *normalized_note_records(merged[key]),
+                *normalized_note_records(current_value),
+            ]:
+                stable = str(record["id"])
+                if stable in positions:
+                    position = positions[stable]
+                    combined[position] = _migration_choose_record(
+                        combined[position],
+                        record,
+                    )
+                    continue
+                positions[stable] = len(combined)
+                combined.append(record)
+            merged[key] = combined[0] if len(combined) == 1 else combined
         return merged
     return _merge_migration_records(
         legacy_notes or [],
@@ -6494,7 +6547,18 @@ def _reindex_migration_record(record, old_id, new_id, migration_event_id):
                 else:
                     replaced.append(item)
             if list_changed:
-                record[key] = list(dict.fromkeys(replaced))
+                deduped = []
+                seen_scalars = set()
+                for item in replaced:
+                    if isinstance(item, dict):
+                        deduped.append(item)
+                        continue
+                    marker = str(item)
+                    if marker in seen_scalars:
+                        continue
+                    seen_scalars.add(marker)
+                    deduped.append(item)
+                record[key] = deduped
                 changed = True
             continue
         if isinstance(value, dict):
@@ -8852,6 +8916,11 @@ def create_app(config=None):
 
     app = Flask(__name__, static_folder=".", static_url_path="")
     app._start_time = datetime.now()  # 2026-07-21 patch 17: 供 /api/bot/status 計算 uptime
+
+    @app.errorhandler(AccountMigratedError)
+    def _account_migrated_error(_error):
+        return jsonify(account_migrated_response()), 409
+
     app.config.update(
         DATA_FILE=resolve_data_file(os.environ.get("DATA_FILE")),
         ADMIN_PASSWORD=os.environ.get("ADMIN_PASSWORD", ""),

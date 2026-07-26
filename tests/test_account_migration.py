@@ -574,6 +574,44 @@ class ProfileMergeTests(unittest.TestCase):
         self.assertEqual(merged["friends"], ["U-friend-1", "U-friend-2"])
         self.assertEqual(merged["guardian_group_ids"], ["group-1", "group-2"])
 
+    def test_same_date_calendar_notes_without_ids_are_both_preserved(self):
+        old_profile = {
+            **alive_app.DEFAULT_PROFILE,
+            "line_user_id": self.old_id,
+            "calendar_notes": {
+                "2026-08-01": "Legacy appointment",
+            },
+        }
+        new_profile = {
+            **alive_app.DEFAULT_PROFILE,
+            "line_user_id": self.new_id,
+            "calendar_notes": {
+                "2026-08-01": {
+                    "content": "Current birthday",
+                    "birthday_name": "Alice",
+                    "birthday_date": "1950-08-01",
+                    "birthday_yearly": True,
+                },
+            },
+        }
+
+        merged = alive_app.merge_migration_profiles(
+            old_profile,
+            new_profile,
+            now=self.now,
+        )
+
+        notes = merged["calendar_notes"]["2026-08-01"]
+        self.assertIsInstance(notes, list)
+        self.assertEqual(len(notes), 2)
+        self.assertEqual(
+            {note["content"] for note in notes},
+            {"Legacy appointment", "Current birthday"},
+        )
+        self.assertEqual(len({note["id"] for note in notes}), 2)
+        birthday = next(note for note in notes if note.get("birthday_name"))
+        self.assertEqual(birthday["birthday_date"], "1950-08-01")
+
     def test_newer_preferences_win_but_higher_active_entitlement_is_preserved(self):
         old_profile = {
             **alive_app.DEFAULT_PROFILE,
@@ -832,6 +870,35 @@ class ProfileMergeTests(unittest.TestCase):
             },
         )
 
+    def test_guardian_group_dict_members_are_reindexed_without_hashing(self):
+        state = {
+            "users": {},
+            "guardian_groups": {
+                "group-1": {
+                    "group_id": "group-1",
+                    "members": [
+                        {"line_user_id": self.old_id, "role": "member"},
+                        {"line_user_id": "U-peer", "role": "member"},
+                    ],
+                }
+            },
+            "account_migration_aliases": {},
+        }
+
+        result = alive_app.reindex_account_references(
+            state,
+            self.old_id,
+            self.new_id,
+            self.event_id,
+            now=self.now,
+        )
+
+        self.assertEqual(result["reindexed_records"], 1)
+        group = state["guardian_groups"]["group-1"]
+        self.assertEqual(group["members"][0]["line_user_id"], self.new_id)
+        self.assertEqual(group["members"][1]["line_user_id"], "U-peer")
+        self.assertEqual(group["migration_event_id"], self.event_id)
+
     def test_top_level_records_dedupe_by_stable_id_but_not_visible_fields(self):
         state = {
             "users": {},
@@ -917,7 +984,8 @@ class ProfileMergeTests(unittest.TestCase):
             alive_app.save_state(data_file, state)
 
             loaded = alive_app.load_state(data_file)
-            profile = alive_app.get_profile(loaded, self.old_id)
+            with self.assertRaises(alive_app.AccountMigratedError):
+                alive_app.get_profile(loaded, self.old_id)
             response, code = alive_app.register_line_user(
                 data_file,
                 {
@@ -927,7 +995,6 @@ class ProfileMergeTests(unittest.TestCase):
             )
             after = alive_app.load_state(data_file)
 
-        self.assertIsNone(profile)
         self.assertEqual(
             response,
             {
@@ -941,6 +1008,48 @@ class ProfileMergeTests(unittest.TestCase):
         response_text = json.dumps(response, ensure_ascii=False)
         self.assertNotIn(self.old_id, response_text)
         self.assertNotIn(self.new_id, response_text)
+
+    def test_disabled_alias_get_lookup_apis_return_safe_guidance(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            data_file = str(Path(tempdir) / "state.json")
+            state = alive_app.load_state(data_file)
+            state["users"].pop(self.old_id, None)
+            state["account_migration_aliases"][self.old_id] = {
+                "target_line_user_id": self.new_id,
+                "created_at": self.now.isoformat(),
+                "status": "disabled",
+            }
+            alive_app.save_state(data_file, state)
+            app = alive_app.create_app(
+                {
+                    "TESTING": True,
+                    "DATA_FILE": data_file,
+                }
+            )
+            client = app.test_client()
+
+            calendar_response = client.get(
+                "/api/calendar-notes",
+                query_string={"line_user_id": self.old_id},
+            )
+            location_response = client.get(
+                "/api/location/status",
+                query_string={"line_user_id": self.old_id},
+            )
+            after = alive_app.load_state(data_file)
+
+        expected = {
+            "ok": False,
+            "error": "account_migrated",
+            "action": "open_current_liff",
+        }
+        for response in (calendar_response, location_response):
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(response.get_json(), expected)
+            response_text = response.get_data(as_text=True)
+            self.assertNotIn(self.old_id, response_text)
+            self.assertNotIn(self.new_id, response_text)
+        self.assertNotIn(self.old_id, after["users"])
 
 
 if __name__ == "__main__":
