@@ -88,6 +88,7 @@ class SafetyGuardTests(unittest.TestCase):
         # until_stop is no longer offered; timed session + refresh_only still works.
         state = alive_app.load_state(self.data_file)
         profile = alive_app.get_profile(state, "U2")
+        profile["plan"] = "paid_399"
         _add_bound_guardian(profile)
         alive_app.save_state(self.data_file, state)
         alive_app.update_location(
@@ -141,9 +142,22 @@ class SafetyGuardTests(unittest.TestCase):
         _add_bound_guardian(p799, "U_g_799")
         alive_app.save_state(self.data_file, state)
 
-        self.assertEqual(alive_app.allowed_safety_guard_hours(free_user), [1])
+        self.assertEqual(alive_app.allowed_safety_guard_hours(free_user), [])
         self.assertEqual(alive_app.allowed_safety_guard_hours(p399), [1, 3])
         self.assertEqual(alive_app.allowed_safety_guard_hours(p799), [1, 3, 6, 8])
+
+        denied_free, denied_free_code = alive_app.update_location(
+            self.data_file,
+            {
+                "line_user_id": "free_user",
+                "latitude": 25.0,
+                "longitude": 121.5,
+                "city": "台北市",
+                "duration": 1,
+            },
+        )
+        self.assertEqual(denied_free_code, 403)
+        self.assertEqual(denied_free.get("error_code"), "safety_guard_upgrade_required")
 
         denied, code = alive_app.update_location(
             self.data_file,
@@ -156,7 +170,7 @@ class SafetyGuardTests(unittest.TestCase):
             },
         )
         self.assertEqual(code, 403)
-        self.assertEqual(denied["allowed_hours"], [1])
+        self.assertEqual(denied["allowed_hours"], [])
 
         ok8, code8 = alive_app.update_location(
             self.data_file,
@@ -208,6 +222,76 @@ class SafetyGuardTests(unittest.TestCase):
         started = datetime.fromisoformat(body["safety_guard"]["started_at"])
         expires = datetime.fromisoformat(body["safety_guard"]["expires_at"])
         self.assertEqual(expires - started, timedelta(minutes=15))
+
+    def test_active_trial_gets_one_fifteen_minute_session_per_day(self):
+        state = alive_app.load_state(self.data_file)
+        owner = alive_app.get_profile(state, "u_trial_guard")
+        owner["plan"] = "trial"
+        owner["trial_started_at"] = (datetime.now() - timedelta(days=1)).isoformat(
+            timespec="seconds"
+        )
+        owner["trial_end"] = (datetime.now() + timedelta(days=13)).isoformat(
+            timespec="seconds"
+        )
+        _add_bound_guardian(owner, "U_guard_trial")
+        alive_app.save_state(self.data_file, state)
+
+        self.assertEqual(alive_app.allowed_safety_guard_hours(owner), [0.25])
+        first, first_code = alive_app.update_location(
+            self.data_file,
+            {
+                "line_user_id": "u_trial_guard",
+                "latitude": 25.0,
+                "longitude": 121.5,
+                "city": "台北市",
+                "duration": 0.25,
+            },
+        )
+        self.assertEqual(first_code, 200)
+        self.assertEqual(first["safety_guard"]["duration_hours"], 0.25)
+
+        alive_app.stop_location_sharing(
+            self.data_file, {"line_user_id": "u_trial_guard"}
+        )
+        second, second_code = alive_app.update_location(
+            self.data_file,
+            {
+                "line_user_id": "u_trial_guard",
+                "latitude": 25.001,
+                "longitude": 121.501,
+                "city": "台北市",
+                "duration": 0.25,
+            },
+        )
+        self.assertEqual(second_code, 429)
+        self.assertEqual(second.get("error_code"), "trial_daily_limit_reached")
+        self.assertIn("明天", second.get("message") or "")
+
+    def test_expired_trial_cannot_start_safety_guard(self):
+        state = alive_app.load_state(self.data_file)
+        owner = alive_app.get_profile(state, "u_expired_trial")
+        owner["plan"] = "trial"
+        owner["trial_started_at"] = (datetime.now() - timedelta(days=15)).isoformat(
+            timespec="seconds"
+        )
+        owner["trial_end"] = (datetime.now() - timedelta(days=1)).isoformat(
+            timespec="seconds"
+        )
+        _add_bound_guardian(owner, "U_guard_expired")
+        alive_app.save_state(self.data_file, state)
+
+        body, code = alive_app.update_location(
+            self.data_file,
+            {
+                "line_user_id": "u_expired_trial",
+                "latitude": 25.0,
+                "longitude": 121.5,
+                "city": "台北市",
+                "duration": 0.25,
+            },
+        )
+        self.assertEqual(code, 403)
+        self.assertEqual(body.get("error_code"), "safety_guard_upgrade_required")
 
     def test_selected_guardians_only_notifies_eligible_selected_targets(self):
         sent = []
@@ -273,7 +357,7 @@ class SafetyGuardTests(unittest.TestCase):
 
         state = alive_app.load_state(self.data_file)
         owner = alive_app.get_profile(state, "owner_sg")
-        owner["plan"] = "free"
+        owner["plan"] = "paid_399"
         owner["display_name"] = "小明"
         owner["contacts"] = [
             {
@@ -346,7 +430,7 @@ class SafetyGuardTests(unittest.TestCase):
 
         state = alive_app.load_state(self.data_file)
         owner = alive_app.get_profile(state, "owner_blk")
-        owner["plan"] = "free"
+        owner["plan"] = "paid_399"
         owner["display_name"] = "小華"
         _add_bound_guardian(owner, "U_blocked", "家人")
         alive_app.save_state(self.data_file, state)
@@ -373,6 +457,7 @@ class SafetyGuardTests(unittest.TestCase):
         state = alive_app.load_state(self.data_file)
         owner = alive_app.get_profile(state, "owner")
         friend = alive_app.get_profile(state, "friend")
+        friend["plan"] = "paid_399"
         owner["friends"] = ["friend"]
         friend["friends"] = ["owner"]
         friend["history"] = [datetime.now().date().isoformat()]
