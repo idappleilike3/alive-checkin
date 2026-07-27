@@ -37,12 +37,23 @@
       width: min(520px, 100%);
     }
     .brand {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
       font-size: clamp(1.75rem, 6vw, 2.15rem);
       font-weight: 800;
       letter-spacing: 0.04em;
       margin: 0 0 16px;
       color: var(--forest);
       text-align: center;
+    }
+    .brand-logo {
+      width: 58px;
+      height: 58px;
+      flex: none;
+      border-radius: 50%;
+      object-fit: contain;
     }
     .lead {
       margin: 0;
@@ -116,6 +127,13 @@
       box-shadow: 0 10px 24px rgba(6, 199, 85, 0.28);
     }
     .open-btn:active { background: var(--line-dark); transform: scale(0.99); }
+    .open-btn.secondary {
+      margin-top: 12px;
+      border: 2px solid var(--line);
+      background: #fff;
+      color: var(--forest);
+      box-shadow: none;
+    }
     .open-btn:focus-visible, .copy:focus-visible, .alt-link:focus-visible, .guide-link:focus-visible {
       outline: 3px solid rgba(6, 199, 85, 0.34);
       outline-offset: 3px;
@@ -369,15 +387,17 @@
 <body>
   <main class="wrap">
     <div class="card">
-      <p class="brand">每日平安</p>
+      <p class="brand"><img class="brand-logo" src="assets/daily-peace-logo.png" alt="">每日平安</p>
       <img class="invite-story-comic" src="assets/daily-peace-story-comic.png" alt="女兒邀請媽媽每天報平安，媽媽完成後女兒收到通知的三段故事漫畫" width="941" height="1672">
       <p class="invite-story-copy">成為核心守護人後，重要時刻才會收到通知；平常不打擾，也不會自動綁定。</p>
       <section class="hero" aria-labelledby="inviteTitle">
         <p class="eyebrow">安全守護邀請</p>
         <h1 class="lead" id="inviteTitle">朋友邀請你成為核心守護人</h1>
         <p class="hint">當對方忘記報平安或遇到緊急狀況時，你可以及時收到 LINE 通知並協助聯絡。</p>
-        <a class="open-btn" id="openInLine" href="#" aria-describedby="lineOpenHelp">請用 LINE 開啟並加入官方 LINE 綁定</a>
+        <a class="open-btn" id="acceptGuardianCta" href="#" aria-describedby="lineOpenHelp">接受成為核心守護人</a>
+        <a class="open-btn secondary" id="acceptAndTrialCta" href="#" aria-describedby="trialOpenHelp">完成守護資料後，我也要申請 14 天體驗</a>
         <p class="privacy-note" id="lineOpenHelp">開啟後會先顯示邀請人與守護關係，經你同意才完成綁定</p>
+        <p class="privacy-note" id="trialOpenHelp">選擇體驗仍會先完成守護資料；不會自動互相綁定，也不會自動扣款</p>
 
         <div class="flow" aria-label="綁定流程">
           <div class="flow-step"><span class="step-number">1</span>LINE 開啟</div>
@@ -445,7 +465,8 @@
       var friendInvite = (params.get("friend_invite") || "").trim();
       var openAction = (params.get("open") || "").trim();
       var statusEl = document.getElementById("status");
-      var openBtn = document.getElementById("openInLine");
+      var openBtn = document.getElementById("acceptGuardianCta");
+      var trialBtn = document.getElementById("acceptAndTrialCta");
       var altBtn = document.getElementById("openLiffAlt");
       var copyBtn = document.getElementById("copyLink");
       var demoBtn = document.getElementById("demoCheckinButton");
@@ -464,24 +485,25 @@
         return window.__INVITE_LIFF_ID__ || DEFAULT_LIFF_ID;
       }
 
-      function buildQuery() {
+      function buildQuery(wantsTrial) {
         var q = new URLSearchParams();
         if (inviteFrom) q.set("invite_from", inviteFrom);
         if (inviteToken) q.set("invite_token", inviteToken);
         if (friendInvite) q.set("friend_invite", friendInvite);
         if (openAction) q.set("open", openAction);
         if (!inviteFrom && !friendInvite && !openAction) q.set("open", "onboarding");
+        if (wantsTrial) q.set("trial_after_guardian", "1");
         return q.toString();
       }
 
       // 兩種官方入口：用 ? 不要用 /?（避免 LIFF 閘道 400）
-      function buildLiffUrl() {
-        var qs = buildQuery();
+      function buildLiffUrl(wantsTrial) {
+        var qs = buildQuery(wantsTrial);
         return "https://liff.line.me/" + getLiffId() + "?" + qs;
       }
 
-      function buildLineAppUrl() {
-        var qs = buildQuery();
+      function buildLineAppUrl(wantsTrial) {
+        var qs = buildQuery(wantsTrial);
         return "https://line.me/R/app/" + getLiffId() + "?" + qs;
       }
 
@@ -495,10 +517,14 @@
 
       var liffUrl = buildLiffUrl();
       var lineAppUrl = buildLineAppUrl();
+      var trialLiffUrl = buildLiffUrl(true);
+      var trialLineAppUrl = buildLineAppUrl(true);
       // Android：優先 line.me/R/app 強制喚起 LINE；其餘用 liff.line.me
       var primaryUrl = isAndroid() ? lineAppUrl : liffUrl;
       var secondaryUrl = isAndroid() ? liffUrl : lineAppUrl;
+      var trialUrl = isAndroid() ? trialLineAppUrl : trialLiffUrl;
       openBtn.href = primaryUrl;
+      trialBtn.href = trialUrl;
       if (altBtn) altBtn.href = secondaryUrl;
 
       function setStatus(text) {
@@ -508,9 +534,13 @@
       function refreshUrls() {
         liffUrl = buildLiffUrl();
         lineAppUrl = buildLineAppUrl();
+        trialLiffUrl = buildLiffUrl(true);
+        trialLineAppUrl = buildLineAppUrl(true);
         primaryUrl = isAndroid() ? lineAppUrl : liffUrl;
         secondaryUrl = isAndroid() ? liffUrl : lineAppUrl;
+        trialUrl = isAndroid() ? trialLineAppUrl : trialLiffUrl;
         openBtn.href = primaryUrl;
+        trialBtn.href = trialUrl;
         if (altBtn) altBtn.href = secondaryUrl;
       }
 
@@ -528,6 +558,10 @@
       openBtn.addEventListener("click", function (e) {
         e.preventDefault();
         openLine(primaryUrl);
+      });
+      trialBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        openLine(trialUrl);
       });
 
       if (altBtn) {
