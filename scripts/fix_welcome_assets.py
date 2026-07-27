@@ -20,6 +20,7 @@ MOCKUP = Path(
 
 def _font(size: int, bold: bool = False) -> ImageFont.ImageFont:
     candidates = [
+        str(ASSETS / "noto-sans-tc-700.ttf"),
         r"C:\Windows\Fonts\msjhbd.ttc" if bold else r"C:\Windows\Fonts\msjh.ttc",
         r"C:\Windows\Fonts\msyhbd.ttc" if bold else r"C:\Windows\Fonts\msyh.ttc",
         r"C:\Windows\Fonts\mingliu.ttc",
@@ -110,18 +111,18 @@ def make_banner() -> Path:
     )
 
     # left heart circle
-    cx, cy, cr = 150, H // 2 - 10, 78
+    cx, cy, cr = 125, H // 2 - 10, 68
     draw.ellipse((cx - cr, cy - cr, cx + cr, cy + cr), fill=pink_soft)
     _draw_heart(draw, cx, cy - 6, 34, heart_fill)
 
-    title_font = _font(54, bold=True)
-    sub_font = _font(36, bold=True)
-    tx = 260
-    draw.text((tx, 145), "每天 10 秒，報個平安", font=title_font, fill=pink_accent)
-    draw.text((tx, 235), "平常不打擾，有事才通知守護人", font=sub_font, fill=text_dark)
+    title_font = _font(68, bold=True)
+    sub_font = _font(42, bold=True)
+    tx = 210
+    draw.text((tx, 132), "每天 10 秒, 報個平安", font=title_font, fill=pink_accent)
+    draw.text((tx, 240), "平常不打擾, 有事才通知核心守護人", font=sub_font, fill=text_dark)
 
     # phone visual
-    phone_x, phone_y = 920, 95
+    phone_x, phone_y = 990, 95
     pw, ph = 170, 320
     draw.ellipse(
         (phone_x - 40, phone_y + 220, phone_x + pw + 30, phone_y + ph + 40),
@@ -162,9 +163,12 @@ def make_banner() -> Path:
 
 def main() -> None:
     ASSETS.mkdir(exist_ok=True)
-    if not SRC_LOGO.exists():
-        raise SystemExit(f"missing logo source: {SRC_LOGO}")
-    make_logo()
+    if SRC_LOGO.exists():
+        make_logo()
+    elif not (ASSETS / "daily-peace-logo.png").exists():
+        raise SystemExit(f"missing logo source and generated logo: {SRC_LOGO}")
+    else:
+        print("logo source unavailable; keeping existing daily-peace-logo.png")
     make_banner()
     if MOCKUP.exists():
         Image.open(MOCKUP).convert("RGB").save(ASSETS / "_welcome_design_ref.png")

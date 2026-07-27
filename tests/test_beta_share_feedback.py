@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class BetaShareFeedbackTests(unittest.TestCase):
     def test_beta_pages_explain_story_tasks_rules_and_require_consent(self):
         page = (ROOT / "beta-register.html").read_text(encoding="utf-8")
-        self.assertIn("guardian-story-mother-daughter", page)
+        self.assertIn("daily-peace-story-comic.png", page)
         self.assertIn("每天 19:00", page)
         self.assertIn("截圖、發生時間、操作步驟、手機型號與 LINE 版本", page)
         self.assertIn("家庭 LINE 群組", page)

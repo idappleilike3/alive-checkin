@@ -185,11 +185,14 @@ def parse_notify_payload(
     }, None
 
 
-def notify_success(parsed: Optional[dict]) -> bool:
+def notify_success(
+    parsed: Optional[dict], config: Optional[dict] = None
+) -> bool:
+    production = _cfg(config, "ECPAY_STAGE", "sandbox").lower() == "prod"
     return bool(
         parsed
         and str(parsed.get("status")) == "1"
-        and not bool(parsed.get("simulated"))
+        and not (production and bool(parsed.get("simulated")))
     )
 
 
@@ -206,6 +209,11 @@ def build_credit_action(
     normalized_action = str(action or "").strip().upper()
     if normalized_action not in {"C", "R", "E", "N"}:
         raise ValueError("action must be C, R, E or N")
+    if (
+        normalized_action == "R"
+        and _cfg(config, "ECPAY_STAGE", "sandbox").lower() != "prod"
+    ):
+        raise RuntimeError("ecpay_refund_requires_production")
     total = int(amount or 0)
     if total <= 0:
         raise ValueError("amount must be positive")

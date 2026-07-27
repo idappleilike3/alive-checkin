@@ -14,16 +14,15 @@ EXPECTED_HOME = "https://liff.line.me/2010848330-UAiqPPYD#home"
 w = g.welcome_flex()
 ws = json.dumps(w, ensure_ascii=False)
 assert "👋 您好，歡迎加入「每日平安」" in ws
-assert "每天 10 秒，報個平安" in ws
-assert "平常不打擾，有事才通知核心守護人" in ws
+assert "welcome-heart-banner.png" in ws
 assert "① 新增 1 位核心守護人" in ws
 assert "② 設定每日提醒時間" in ws
 assert "14 天新會員安心體驗" in ws
 assert "7 天" not in ws
 assert "永久免費" not in ws
 assert "🚨 緊急狀況請直接撥打 119 或 110" in ws
-assert "立即開始設定" in ws
-assert "查看方案" in ws
+assert "免費體驗 14 天" in ws
+assert "了解每日平安" in ws
 assert EXPECTED_BIND in ws
 assert "code=" not in ws and "state=" not in ws
 # Two clear CTAs; no unrelated actions.
@@ -32,10 +31,10 @@ assert "我的會員" not in ws
 assert "首次引導" not in ws
 
 assert w["footer"]["contents"][0]["action"]["uri"] == EXPECTED_BIND
-assert w["footer"]["contents"][1]["action"]["uri"] == g.pricing_direct_url()
+assert w["footer"]["contents"][1]["action"]["uri"] == g.liff_entry_url(open_action="help")
 
 w2 = g.welcome_flex("小明")
-assert "👋 小明 您好，歡迎加入「每日平安」" in json.dumps(w2, ensure_ascii=False)
+assert "👋 您好，小明，歡迎加入「每日平安」" in json.dumps(w2, ensure_ascii=False)
 
 
 def walk(node):
@@ -46,6 +45,16 @@ def walk(node):
     elif isinstance(node, list):
         for value in node:
             yield from walk(value)
+
+
+# 主標只在上方圖框出現一次，避免老人看到重複內容；圖框下方直接進入設定說明。
+welcome_texts = [
+    node.get("text")
+    for node in walk(w2)
+    if isinstance(node, dict) and node.get("type") == "text"
+]
+assert welcome_texts.count("每天 10 秒，報個平安") == 0
+assert welcome_texts.count("平常不打擾，有事才通知核心守護人") == 0
 
 
 nodes = list(walk(w))
@@ -62,22 +71,21 @@ for t in texts + labels:
 intro = g.guardian_group_intro_flex({"bound": False})
 ins = json.dumps(intro, ensure_ascii=False)
 assert "綁定守護群" in ins
-assert "一鍵綁定" in ins
+assert "一鍵邀請" in ins
 assert intro["footer"]["contents"][0]["action"]["text"] == "綁定守護群"
 assert intro["footer"]["contents"][0]["action"]["label"] == "綁定守護群"
-assert EXPECTED_BIND in ins
 
 intro2 = g.guardian_group_intro_flex(
     {"bound": True, "is_owner": True, "is_active": True}
 )
-assert intro2["footer"]["contents"][0]["action"]["label"] == "我已綁定守護群"
-assert intro2["footer"]["contents"][0]["action"]["text"] == "綁定守護群"
+assert intro2["footer"]["contents"][0]["action"]["label"] == "查看守護群狀態"
+assert intro2["footer"]["contents"][0]["action"]["text"] == "查看守護群狀態"
 
 conf = g.guardian_group_bind_confirm_flex(
     {"guardian_group_count": 1, "guardian_group_limit": 1}
 )
 cs = json.dumps(conf, ensure_ascii=False)
-assert "我已綁定守護群" in cs
+assert "守護群資訊" in cs
 assert "已完成綁定平安守護助理" not in cs
 
 # Follow handler should not mention LINE Bot / BOT
@@ -86,12 +94,11 @@ with open("app.py", encoding="utf-8") as f:
 follow_block = app_src.split("def handle_follow")[1].split("def handle_member_joined")[0]
 assert "LINE Bot" not in follow_block
 assert "BOT" not in follow_block
-assert "welcome_flex(display_name)" in follow_block
-assert "get_profile(line_user_id)" in follow_block
-assert "liff.line.me" in follow_block or "liff_entry_url" in follow_block
+assert "_send_welcome(" in follow_block
+assert "display_name=display_name" in follow_block
+assert "register_line_user(" in follow_block
 assert "code=" not in follow_block
-assert 'alt_text="✅ 我已綁定守護群"' in app_src
-assert '("綁定守護群", "綁定平安守護助理")' in app_src
+assert '("點我綁定守護群", "綁定守護群", "綁定平安守護助理")' in app_src
 
 # index onboarding reminder copy + skip share when already bound
 with open("index.html", encoding="utf-8") as f:

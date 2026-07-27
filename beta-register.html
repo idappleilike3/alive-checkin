@@ -5,70 +5,98 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>每日平安｜21 天封測</title>
   <style>
-    :root{--green:#168c65;--ink:#18332c;--muted:#63746f;--soft:#eef9f4;--line:#cfe9dd}
-    *{box-sizing:border-box}body{margin:0;font-family:"Noto Sans TC",system-ui,sans-serif;color:var(--ink);background:linear-gradient(180deg,#e9f8f1,#fff)}
-    main{width:min(100% - 28px,680px);margin:24px auto 56px}.card{background:#fff;border:1px solid var(--line);border-radius:26px;padding:25px 21px;box-shadow:0 18px 48px #1c72551a;margin-bottom:16px}
-    .eyebrow{color:var(--green);font-weight:900}h1{font-size:clamp(28px,7vw,40px);line-height:1.2;margin:10px 0}.lead{font-size:17px;line-height:1.75}.story{width:100%;border-radius:18px;display:block;margin:18px 0}
-    h2{font-size:21px;margin:0 0 12px}.grid{display:grid;gap:11px}.item{padding:14px 15px;border-radius:15px;background:var(--soft);line-height:1.6}.task-799{display:none}.notice{padding:14px;border-left:5px solid #e49b27;background:#fff7e8;border-radius:12px;line-height:1.65}
-    ul{padding-left:21px;line-height:1.75}.consent{display:flex;gap:11px;align-items:flex-start;padding:16px;background:#f5f7f6;border-radius:14px;font-weight:750;line-height:1.55}.consent input{width:23px;height:23px;flex:none}
-    .cta{display:block;width:100%;border:0;padding:18px 16px;border-radius:16px;background:var(--green);color:#fff;text-align:center;text-decoration:none;font-size:20px;font-weight:900;margin-top:15px}.cta[aria-disabled="true"]{opacity:.42;pointer-events:none}.spots{font-weight:900;color:#9b5d00}small{display:block;text-align:center;margin-top:12px;color:var(--muted);line-height:1.6}
+    :root { color-scheme: light; --green:#168c65; --ink:#18332c; --soft:#eef9f4; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:"Noto Sans TC",system-ui,sans-serif; color:var(--ink); background:linear-gradient(180deg,#e9f8f1,#fff); }
+    main { width:min(100% - 32px,760px); margin:28px auto; }
+    .card { background:#fff; border:1px solid #cfe9dd; border-radius:26px; padding:26px 22px; box-shadow:0 18px 48px #1c72551a; }
+    .eyebrow { color:var(--green); font-weight:800; }
+    .brand-logo { width:54px; height:54px; object-fit:contain; border-radius:50%; vertical-align:middle; margin-right:10px; }
+    h1 { font-size:clamp(28px,7vw,40px); line-height:1.2; margin:10px 0; }
+    .lead { font-size:18px; line-height:1.75; }
+    .story-comic { display:block; width:100%; height:auto; margin:20px 0; border:2px solid #b9ddcb; border-radius:20px; }
+    .story-title { margin:22px 0 8px; color:var(--green); font-size:clamp(24px,5vw,32px); font-weight:900; }
+    .story-copy { margin:0 0 18px; font-size:clamp(18px,3vw,22px); line-height:1.65; font-weight:750; }
+    .benefits { display:grid; gap:12px; margin:22px 0; }
+    .benefit { padding:14px 16px; border-radius:16px; background:var(--soft); }
+    .registration-flow { display:grid; gap:12px; margin:22px 0; }
+    .flow-step { padding:16px; border:2px solid #cfe9dd; border-radius:16px; background:#fff; font-size:18px; font-weight:800; line-height:1.55; }
+    .feedback-note { padding:16px; border-left:5px solid #e49b27; background:#fff7e8; border-radius:12px; font-size:17px; line-height:1.7; }
+    .consent { display:flex; gap:11px; align-items:flex-start; padding:16px; margin:18px 0; background:#f5f7f6; border-radius:14px; font-weight:750; line-height:1.55; }
+    .consent input { width:23px; height:23px; flex:none; }
+    .spots { font-weight:800; color:#9b5d00; }
+    a.cta { display:block; padding:17px 16px; border-radius:16px; background:var(--green); color:#fff; text-align:center; text-decoration:none; font-size:20px; font-weight:900; }
+    a.cta.secondary { margin-top:12px; color:var(--green); background:#fff; border:2px solid var(--green); }
+    a.cta[aria-disabled="true"] { opacity:.42; pointer-events:none; }
+    small { display:block; text-align:center; margin-top:12px; color:#63746f; line-height:1.6; }
   </style>
 </head>
 <body>
-<main>
-  <section class="card">
-    <div class="eyebrow">每日平安限定招募</div>
-    <h1 id="title">21 天封閉測試</h1>
-    <p class="lead">每天 10 秒報平安，平常不打擾，真的有事才通知守護人。即使你與家人不住在一起，也能用 LINE 簡單確認彼此平安。</p>
-    <img class="story" src="/assets/guardian-story-mother-daughter-mobile.webp" alt="媽媽每天按下我平安，女兒在 LINE 收到通知的母女圖文故事">
-    <div class="grid">
-      <div class="item">① 你每天按一次「我平安」</div>
-      <div class="item">② 未在設定時間完成，系統才提醒核心守護人</div>
-      <div class="item">③ 緊急時可用 SOS 通知指定收件人</div>
-    </div>
-  </section>
-
-  <section class="card">
-    <h2>封測期間請你協助什麼？</h2>
-    <p>21 天內實際使用功能，系統每天 19:00 透過官方 LINE 詢問一次使用狀況。你只要點選「正常／發現問題／使用心得／不會操作／稍後提醒」即可。</p>
-    <div class="grid">
-      <div class="item">✅ 測試每日報平安、逾時提醒、核心守護人與 SOS</div>
-      <div class="item task-399">✅ 399 組：測試私訊預警、1／3 小時安全守護與多位守護人</div>
-      <div class="item task-799">✅ 799 組：測試家庭 LINE 群組、多人守護、1／3／6／8 小時安全守護與 SOS</div>
-      <div class="item">✅ 第 7、14、21 天提供階段心得</div>
-    </div>
-    <p>若發現問題，請提供：<strong>截圖、發生時間、操作步驟、手機型號與 LINE 版本</strong>。回報都在官方 LINE 內完成，不必學另一套後台。</p>
-  </section>
-
-  <section class="card">
-    <h2>參加前請先了解</h2>
-    <ul>
-      <li>21 天封測不用刷卡、不會自動扣款</li>
-      <li>每人只能選一個封測組別，且免費資格只能使用一次</li>
-      <li>封測結束後每日問候會暫停；守護關係與設定保留</li>
-      <li>到期前會詢問是否升級；你可以選擇不再提醒</li>
-      <li>緊急危險請直接撥打 110／119，本服務不能取代警消與醫療</li>
-    </ul>
-    <p class="spots" id="spots"></p>
-    <label class="consent"><input id="consent" type="checkbox"><span>我已閱讀並同意封測規則，願意每天接收 1 則封測詢問並提供真實回饋</span></label>
-    <a class="cta" id="join" href="#" aria-disabled="true">用 LINE 加入 21 天封測</a>
-    <small>額滿後連結會自動停止接受註冊</small>
-  </section>
-</main>
-<script>
-  const is799 = location.pathname.endsWith("/799");
-  const cohort = is799 ? "B799" : "B399";
-  const join = document.getElementById("join");
-  const consent = document.getElementById("consent");
-  document.getElementById("title").textContent = is799 ? "799 守護版｜21 天封測" : "399 安心版｜21 天封測";
-  document.getElementById("spots").textContent = is799 ? "本組限額 10 人" : "本組限額 20 人";
-  document.querySelectorAll(is799 ? ".task-799" : ".task-399").forEach((el) => el.style.display = "block");
-  join.href = `https://liff.line.me/2010848330-UAiqPPYD?beta_cohort=${cohort}&open=onboarding`;
-  join.disabled = !consent.checked;
-  consent.addEventListener("change", () => {
+  <main>
+    <section class="card">
+      <div class="eyebrow"><img class="brand-logo" src="/assets/daily-peace-logo.png" alt="">每日平安限定招募</div>
+      <h1 id="title">21 天封閉測試</h1>
+      <p class="lead">不用刷卡、不會自動扣款。完成 LINE 註冊後，系統會自動分入正確組別，並引導你邀請至少一位核心守護人。</p>
+      <h2 class="story-title">每天 10 秒，讓家人知道你平安</h2>
+      <p class="story-copy">媽媽按一下「我平安」，女兒收到通知，就能放心。平常不打擾，真的有事才通知核心守護人。</p>
+      <img class="story-comic" src="/assets/daily-peace-story-comic.png" alt="女兒教媽媽每天按我平安，媽媽完成後女兒收到 LINE 通知的三段故事漫畫" width="941" height="1672">
+      <div class="benefits" aria-label="封測功能介紹">
+        <div class="benefit" id="entitlementSummary">✅ 21 天體驗指定方案的年費版完整功能</div>
+        <div class="benefit" id="featureOne">✅ 每日報平安、逾時提醒與 SOS</div>
+        <div class="benefit" id="featureTwo">✅ 守護人免費接收通知</div>
+        <div class="benefit" id="featureThree">✅ 安全守護與位置分享</div>
+      </div>
+      <div class="registration-flow" aria-label="封測任務">
+        <div class="flow-step"><strong>這 21 天請協助測試</strong><br>完成報平安、逾時提醒、SOS、守護人通知與方案專屬功能，並回報看不懂或操作不順的地方。</div>
+        <div class="flow-step">799 組另請實測家庭 LINE 群組、多人守護與 1／3／6／8 小時安全守護。</div>
+      </div>
+      <div class="feedback-note">
+        系統每天 19:00 會透過官方 LINE 詢問一次使用狀況；第 7、14、21 天也會邀請你提供階段心得。若發現問題，請附截圖、發生時間、操作步驟、手機型號與 LINE 版本。
+      </div>
+      <div class="registration-flow" aria-label="加入封測流程">
+        <div class="flow-step">第一步：先加入「每日平安」官方 LINE</div>
+        <div class="flow-step">第二步：回到這裡，用 LINE 登入並開始設定</div>
+        <div class="flow-step">第三步：一鍵邀請至少 1 位核心守護人，請對方接受並完成綁定</div>
+        <div class="flow-step">第四步：填寫守護人資料並設定每日提醒</div>
+      </div>
+      <p class="spots" id="spots"></p>
+      <a class="cta" id="addOfficialLine" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener">第一步：加入每日平安官方 LINE</a>
+      <label class="consent"><input id="consent" type="checkbox"><span>我已閱讀並同意封測規則，願意每天接收 1 則封測詢問並提供真實回饋</span></label>
+      <a class="cta secondary" id="continueRegistration" href="#" aria-disabled="true">我已加入，繼續 LINE 登入與設定</a>
+      <small>每人只能加入一個封測組別。額滿後連結會自動停止接受註冊。</small>
+    </section>
+  </main>
+  <script>
+    const is799 = location.pathname.endsWith("/799");
+    const cohort = is799 ? "B799" : "B399";
+    const continueRegistration = document.getElementById("continueRegistration");
+    const join = continueRegistration;
+    const consent = document.getElementById("consent");
+    document.getElementById("title").textContent =
+      is799 ? "799 守護版｜21 天封測" : "399 安心版｜21 天封測";
+    document.getElementById("title").dataset.fullTitle =
+      is799 ? "799 守護版｜21 天封測" : "399 安心版｜21 天封測";
+    document.getElementById("spots").textContent =
+      is799 ? "本組限額 10 人" : "本組限額 20 人";
+    document.getElementById("entitlementSummary").textContent = is799
+      ? "✅ 21 天體驗 799 守護版的年費版完整功能"
+      : "✅ 21 天體驗 399 安心版的年費版完整功能";
+    document.getElementById("featureOne").textContent = is799
+      ? "✅ 每日 3 次私訊預警，最多 15 位核心守護人"
+      : "✅ 每日 3 次私訊預警，最多 7 位核心守護人";
+    document.getElementById("featureTwo").textContent = is799
+      ? "✅ 最多 3 個守護群，每群可管理 50 位被守護成員"
+      : "✅ SOS、逾時提醒與守護人免費接收通知";
+    document.getElementById("featureThree").textContent = is799
+      ? "✅ 安全守護 1／3／6／8 小時與位置分享"
+      : "✅ 安全守護 1／3 小時與位置分享";
+    continueRegistration.href =
+      `https://liff.line.me/2010848330-UAiqPPYD?beta_cohort=${cohort}&open=onboarding`;
     join.disabled = !consent.checked;
-    join.setAttribute("aria-disabled", String(join.disabled));
-  });
-</script>
+    consent.addEventListener("change", () => {
+      join.disabled = !consent.checked;
+      continueRegistration.setAttribute("aria-disabled", String(!consent.checked));
+    });
+  </script>
 </body>
 </html>

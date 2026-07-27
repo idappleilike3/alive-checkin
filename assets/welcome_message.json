@@ -65,7 +65,7 @@
               "type": "text",
               "text": "每天 10 秒，報個平安",
               "weight": "bold",
-              "size": "xxl",
+              "size": "4xl",
               "color": "#DB2777",
               "wrap": true
             },
@@ -192,7 +192,7 @@
           "type": "button",
           "action": {
             "type": "uri",
-            "label": "立即開始設定",
+            "label": "免費體驗 14 天",
             "uri": "https://liff.line.me/2010848330-UAiqPPYD?open=onboarding"
           },
           "style": "primary",
@@ -203,11 +203,11 @@
           "type": "button",
           "action": {
             "type": "uri",
-            "label": "查看方案",
-            "uri": "https://alive-checkin.onrender.com/liff/pricing.html"
+            "label": "了解每日平安",
+            "uri": "https://liff.line.me/2010848330-UAiqPPYD?open=help"
           },
-          "style": "primary",
-          "color": "#0EA5A4",
+          "style": "secondary",
+          "color": "#00B900",
           "height": "md"
         }
       ]

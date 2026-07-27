@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from pathlib import Path
@@ -22,6 +23,14 @@ class BotKeywordHandlerTests(unittest.TestCase):
         self.assertIn("legacy_entry_commands", source)
         self.assertIn("sos_emergency_flex", source)
         self.assertIn("_send_welcome", source)
+
+    def test_unmatched_group_chat_stays_silent(self):
+        source = (ROOT / "app.py").read_text(encoding="utf-8")
+        group_block = source.split("# 2026-07-21 patch 11: 守護群相關", 1)[1]
+        silence = group_block.index("# 未符合上述明確指令：群聊保持安靜")
+        private_roster = group_block.index("# 私訊：管理員可查")
+        self.assertLess(silence, private_roster)
+        self.assertIn("if group_id:\n                    return", group_block[silence:private_roster])
 
     def test_sos_emergency_flex_has_dials_and_notify(self):
         flex = sos_flow.sos_emergency_flex(family_tel="0912345678", family_label="媽媽")
@@ -48,7 +57,7 @@ class BotKeywordHandlerTests(unittest.TestCase):
         self.assertIn("share-invite.html", blob)
         self.assertNotIn("no bound", blob.lower())
 
-    def test_welcome_flex_new_card_two_ctas(self):
+    def test_welcome_flex_uses_two_consistent_cross_platform_ctas(self):
         flex = welcome_flex("小明")
         blob = str(flex)
         self.assertIn("👋 小明 您好，歡迎加入「每日平安」", blob)
@@ -62,18 +71,29 @@ class BotKeywordHandlerTests(unittest.TestCase):
         self.assertIn("daily-peace-logo.png", blob)
         self.assertIn("welcome-heart-banner.png", blob)
         self.assertIn("open=onboarding", blob)
-        self.assertIn("/liff/pricing.html", blob)
+        self.assertIn("open=help", blob)
         self.assertNotIn("版本 W", blob)
         self.assertNotIn("W250723", blob)
         self.assertNotIn("BOT", blob)
-        self.assertNotIn("一鍵邀請守護人", blob)
+        self.assertNotIn("一鍵守護邀請", blob)
+        self.assertIn("了解每日平安", blob)
+        self.assertNotIn("接受守護邀請", blob)
         self.assertNotIn("需要幫忙", blob)
         labels = [
             item["action"]["label"]
             for item in (flex.get("footer") or {}).get("contents") or []
             if item.get("type") == "button"
         ]
-        self.assertEqual(labels, ["立即開始設定", "查看方案"])
+        self.assertEqual(
+            labels,
+            ["免費體驗 14 天", "了解每日平安"],
+        )
+        headline = next(
+            item
+            for item in flex["body"]["contents"][0]["contents"]
+            if item.get("text") == "每天 10 秒，報個平安"
+        )
+        self.assertEqual(headline["size"], "4xl")
         self.assertEqual(
             pricing_direct_url(),
             "https://alive-checkin.onrender.com/liff/pricing.html",
@@ -82,6 +102,23 @@ class BotKeywordHandlerTests(unittest.TestCase):
             share_invite_liff_url(),
             "https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html",
         )
+
+    def test_static_welcome_asset_matches_cross_platform_welcome_buttons(self):
+        asset = json.loads(
+            (ROOT / "assets" / "welcome_message.json").read_text(encoding="utf-8")
+        )
+        labels = [
+            item["action"]["label"]
+            for item in asset["contents"]["footer"]["contents"]
+            if item.get("type") == "button"
+        ]
+        self.assertEqual(labels, ["免費體驗 14 天", "了解每日平安"])
+        headline = next(
+            item
+            for item in asset["contents"]["body"]["contents"][0]["contents"]
+            if item.get("text") == "每天 10 秒，報個平安"
+        )
+        self.assertEqual(headline["size"], "4xl")
 
     def test_liff_link_helpers_preserve_function_parameters(self):
         with patch.dict(os.environ, {"LIFF_ID": "2010848330-UAiqPPYD"}):

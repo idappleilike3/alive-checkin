@@ -31,7 +31,7 @@ class BetaCohortPolicyTests(unittest.TestCase):
         self.assertTrue(result["assigned"])
         self.assertEqual(profile["membership_source"], "beta")
         self.assertEqual(profile["beta_cohort"], "A")
-        self.assertEqual(profile["plan"], "paid_799")
+        self.assertEqual(profile["plan"], "paid_799_year")
         self.assertEqual(
             datetime.fromisoformat(profile["beta_ends_at"]) - self.now,
             timedelta(days=21),

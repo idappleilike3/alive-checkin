@@ -1162,7 +1162,7 @@ def welcome_greeting_text(display_name: str | None = None) -> str:
     """歡迎標題：有真實暱稱就寫名；否則不寫「您」，避免看起來像沒寫誰。"""
     name = (display_name or "").strip()
     if name and name not in _WELCOME_PLACEHOLDER_NAMES:
-        return f"👋 {name} 您好，歡迎加入「每日平安」"
+        return f"👋 您好，{name}，歡迎加入「每日平安」"
     return "👋 您好，歡迎加入「每日平安」"
 
 
@@ -1172,23 +1172,25 @@ def welcome_flex(display_name: str | None = None):
     結構對齊長輩友善設計稿：
     - Header：左上 Logo + 旁側問候文字（含暱稱）／每日平安
     - Hero：白卡視覺（心＋大字＋手機「我平安」），無第二個 Logo
-    - Body：兩步驟垂直排列、14 天新會員安心體驗、119／110 免責
-    - Footer：立即開始設定 + 查看方案
+    - Body：三步驟垂直排列、14 天新會員安心體驗、119／110 免責
+    - Footer：免費體驗 14 天 + 了解每日平安
+
+    iPhone 與 Android 都由同一個 Flex payload 產生，避免兩個平台內容不一致。
+    守護邀請由免費體驗設定流程引導，不在首次歡迎卡重複顯示。
     """
     greeting = welcome_greeting_text(display_name)
     setup_uri = liff_entry_url(open_action="onboarding")
-    pricing_uri = pricing_direct_url()
+    help_uri = liff_entry_url(open_action="help")
     base = (os.environ.get("APP_PUBLIC_URL") or PUBLIC_BASE).rstrip("/")
     # cache-bust so LINE clients refresh logo after transparent PNG / layout updates
-    logo_uri = f"{base}/assets/daily-peace-logo.png?v=W250724am"
-    heart_uri = f"{base}/assets/welcome-heart-banner.png"
+    logo_uri = f"{base}/assets/daily-peace-logo.png?v=W260727welcome"
+    heart_uri = f"{base}/assets/welcome-heart-banner.png?v=W260727elderly1"
     pink_bg = "#FFF5F8"
     pink_soft = "#FFE4EC"
     pink_accent = "#DB2777"
     text_dark = "#831843"
     yellow_bg = "#FFF7D6"
     step_bg = "#FFFFFF"
-    teal_btn = "#0EA5A4"
 
     return {
         "type": "bubble",
@@ -1243,36 +1245,10 @@ def welcome_flex(display_name: str | None = None):
             "backgroundColor": pink_bg,
             "contents": [
                 {
-                    "type": "box",
-                    "layout": "vertical",
-                    "spacing": "sm",
-                    "paddingAll": "md",
-                    "backgroundColor": "#FFFFFF",
-                    "cornerRadius": "xl",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": "每天 10 秒，報個平安",
-                            "weight": "bold",
-                            "size": "xxl",
-                            "color": pink_accent,
-                            "wrap": True,
-                        },
-                        {
-                            "type": "text",
-                            "text": "平常不打擾，有事才通知核心守護人",
-                            "weight": "bold",
-                            "size": "xl",
-                            "color": text_dark,
-                            "wrap": True,
-                        },
-                    ],
-                },
-                {
                     "type": "text",
-                    "text": "📋 開始使用前，只要完成兩個步驟：",
+                    "text": "📋 開始使用前，只要完成三個步驟：",
                     "weight": "bold",
-                    "size": "lg",
+                    "size": "xl",
                     "color": text_dark,
                     "wrap": True,
                 },
@@ -1291,7 +1267,7 @@ def welcome_flex(display_name: str | None = None):
                             "contents": [
                                 {
                                     "type": "text",
-                                    "text": "① 新增 1 位核心守護人",
+                                    "text": "① 一鍵邀請 1 位核心守護人",
                                     "weight": "bold",
                                     "size": "xl",
                                     "color": pink_accent,
@@ -1299,8 +1275,8 @@ def welcome_flex(display_name: str | None = None):
                                 },
                                 {
                                     "type": "text",
-                                    "text": "讓重要的人在關鍵時刻收到通知",
-                                    "size": "lg",
+                                    "text": "請對方接受邀請並完成 LINE 綁定",
+                                    "size": "xl",
                                     "color": GRAY,
                                     "wrap": True,
                                 },
@@ -1316,7 +1292,32 @@ def welcome_flex(display_name: str | None = None):
                             "contents": [
                                 {
                                     "type": "text",
-                                    "text": "② 設定每日提醒時間",
+                                    "text": "② 填寫守護人資料",
+                                    "weight": "bold",
+                                    "size": "xl",
+                                    "color": pink_accent,
+                                    "wrap": True,
+                                },
+                                {
+                                    "type": "text",
+                                    "text": "填寫姓名、關係與聯絡方式",
+                                    "size": "xl",
+                                    "color": GRAY,
+                                    "wrap": True,
+                                },
+                            ],
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "spacing": "sm",
+                            "paddingAll": "md",
+                            "backgroundColor": step_bg,
+                            "cornerRadius": "xl",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "③ 設定每日提醒時間",
                                     "weight": "bold",
                                     "size": "xl",
                                     "color": pink_accent,
@@ -1325,7 +1326,7 @@ def welcome_flex(display_name: str | None = None):
                                 {
                                     "type": "text",
                                     "text": "系統會在你設定的時間提醒你報平安",
-                                    "size": "lg",
+                                    "size": "xl",
                                     "color": GRAY,
                                     "wrap": True,
                                 },
@@ -1362,7 +1363,7 @@ def welcome_flex(display_name: str | None = None):
                             "type": "text",
                             "text": "🚨 緊急狀況請直接撥打 119 或 110，本服務無法取代緊急救援。",
                             "weight": "bold",
-                            "size": "md",
+                            "size": "lg",
                             "color": RED_WARN,
                             "wrap": True,
                         },
@@ -1381,7 +1382,7 @@ def welcome_flex(display_name: str | None = None):
                     "type": "button",
                     "action": {
                         "type": "uri",
-                        "label": "立即開始設定",
+                        "label": "免費體驗 14 天",
                         "uri": setup_uri,
                     },
                     "style": "primary",
@@ -1392,11 +1393,11 @@ def welcome_flex(display_name: str | None = None):
                     "type": "button",
                     "action": {
                         "type": "uri",
-                        "label": "查看方案",
-                        "uri": pricing_uri,
+                        "label": "了解每日平安",
+                        "uri": help_uri,
                     },
-                    "style": "primary",
-                    "color": teal_btn,
+                    "style": "secondary",
+                    "color": GREEN_DARK,
                     "height": "md",
                 },
             ],

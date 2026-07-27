@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="每天花 10 秒報平安，平常不打擾，真的有事才通知守護人。">
-  <title>今天還在嗎｜LINE 平安守護</title>
+  <title>每日平安｜LINE 平安守護</title>
   <style>
     * { box-sizing: border-box; }
     html, body { margin: 0; min-height: 100%; }
@@ -32,12 +32,15 @@
     .brand {
       width: fit-content;
       padding: 8px 12px;
-      border-left: 5px solid #079455;
+      display: flex;
+      align-items: center;
+      gap: 10px;
       color: #123c2c;
       background: rgba(255, 255, 255, 0.88);
-      font-size: 17px;
+      font-size: 20px;
       font-weight: 900;
     }
+    .brand-logo { width: 48px; height: 48px; object-fit: contain; border-radius: 50%; }
     .hero-copy {
       width: min(100%, 560px);
       align-self: start;
@@ -117,7 +120,7 @@
 </head>
 <body>
   <main class="share-hero">
-    <div class="brand">今天還在嗎</div>
+    <div class="brand"><img class="brand-logo" src="assets/daily-peace-logo.png" alt="">每日平安</div>
     <div class="hero-copy">
       <h1>讓重要的人，知道你平安</h1>
       <p>每天花 10 秒簽到。平常不打擾，真的有狀況時，才通知你指定的守護人。</p>

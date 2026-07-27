@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BetaSelfRegistrationTests(unittest.TestCase):
-    def test_claim_beta_link_assigns_399_for_21_days(self):
+    def test_claim_beta_link_assigns_399_yearly_entitlements_for_21_days(self):
         state = {"users": {"U-member": {"line_user_id": "U-member", "plan": "trial"}}}
         result = app.claim_beta_link(
             state,
@@ -22,7 +22,21 @@ class BetaSelfRegistrationTests(unittest.TestCase):
         profile = state["users"]["U-member"]
         self.assertTrue(result["assigned"])
         self.assertEqual(profile["beta_cohort"], "B399")
-        self.assertEqual(profile["plan"], "paid_399")
+        self.assertEqual(profile["plan"], "paid_399_year")
+        self.assertEqual(profile["beta_ends_at"], "2026-08-17T12:00:00")
+
+    def test_claim_beta_link_assigns_799_yearly_entitlements_for_21_days(self):
+        state = {"users": {"U-member": {"line_user_id": "U-member", "plan": "trial"}}}
+        result = app.claim_beta_link(
+            state,
+            "U-member",
+            "B799",
+            now=datetime(2026, 7, 27, 12, 0, 0),
+        )
+
+        profile = state["users"]["U-member"]
+        self.assertTrue(result["assigned"])
+        self.assertEqual(profile["plan"], "paid_799_year")
         self.assertEqual(profile["beta_ends_at"], "2026-08-17T12:00:00")
 
     def test_claim_beta_link_rejects_when_399_is_full(self):
@@ -114,6 +128,8 @@ class BetaSelfRegistrationTests(unittest.TestCase):
         self.assertIn('@app.get("/beta/799")', backend)
         self.assertIn("399 安心版｜21 天封測", page)
         self.assertIn("799 守護版｜21 天封測", page)
+        self.assertIn("年費版完整功能", page)
+        self.assertIn("這 21 天請協助測試", page)
         self.assertIn("beta_cohort", member)
         self.assertIn('beta_cohort: betaCohort', member)
         self.assertNotIn('fetch("/api/beta/claim"', member)

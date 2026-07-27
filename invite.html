@@ -65,6 +65,22 @@
       background: var(--surface);
       box-shadow: 0 18px 50px rgba(20, 74, 42, 0.1);
     }
+    .invite-story-comic {
+      display: block;
+      width: 100%;
+      height: auto;
+      margin: 0 0 18px;
+      border: 2px solid #b7dec5;
+      border-radius: 20px;
+    }
+    .invite-story-copy {
+      margin: 0 0 18px;
+      color: var(--ink);
+      font-size: clamp(1.05rem, 4vw, 1.25rem);
+      font-weight: 800;
+      line-height: 1.65;
+      text-align: center;
+    }
     .eyebrow {
       width: fit-content;
       margin: 0 auto 12px;
@@ -354,6 +370,8 @@
   <main class="wrap">
     <div class="card">
       <p class="brand">每日平安</p>
+      <img class="invite-story-comic" src="assets/daily-peace-story-comic.png" alt="女兒邀請媽媽每天報平安，媽媽完成後女兒收到通知的三段故事漫畫" width="941" height="1672">
+      <p class="invite-story-copy">成為核心守護人後，重要時刻才會收到通知；平常不打擾，也不會自動綁定。</p>
       <section class="hero" aria-labelledby="inviteTitle">
         <p class="eyebrow">安全守護邀請</p>
         <h1 class="lead" id="inviteTitle">朋友邀請你成為核心守護人</h1>

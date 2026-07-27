@@ -764,6 +764,7 @@
               <th>狀態</th>
               <th>今日</th>
               <th>上次簽到</th>
+              <th>最近簽到地區</th>
               <th>方案／升級狀態</th>
               <th>付款</th>
               <th>方案到期（試用／訂閱）</th>
@@ -776,7 +777,7 @@
             </tr>
           </thead>
           <tbody id="usersBody">
-            <tr><td colspan="14">尚未載入資料</td></tr>
+            <tr><td colspan="15">尚未載入資料</td></tr>
           </tbody>
         </table>
       </div>
@@ -1738,6 +1739,7 @@
             <td>${statusBadge(user)}</td>
             <td>${user.is_today_checked ? "已簽到 ♡" : "還沒"}</td>
             <td>${formatDate(user.last_check_in)}</td>
+            <td><strong>${escapeHtml(user.last_checkin_area || "未提供")}</strong></td>
             <td>
               ${membershipCell(user)}
               <select class="plan-select" style="margin-top:6px;" onchange="updatePlan('${user.line_user_id}', this.value)">
@@ -1756,7 +1758,7 @@
             <td>${user.reminder_time}</td>
           </tr>
         `).join("")
-        : `<tr><td colspan="14">還沒有 LINE 使用者進來簽到。</td></tr>`;
+        : `<tr><td colspan="15">還沒有 LINE 使用者進來簽到。</td></tr>`;
       $("betaMemberSelect").innerHTML = `<option value="">選擇會員</option>` + (data.users || []).map((user) =>
         `<option value="${user.line_user_id || ""}">${user.display_name || "未取得暱稱"}</option>`
       ).join("");

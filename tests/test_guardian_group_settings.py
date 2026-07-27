@@ -1,6 +1,7 @@
 from pathlib import Path
 import tempfile
 import unittest
+from datetime import datetime
 
 import app
 
@@ -83,6 +84,43 @@ class GuardianGroupSettingsTests(unittest.TestCase):
         self.assertEqual(result["guardian_group_limit"], 1)
         self.assertEqual(result["guardian_group_count"], 0)
         self.assertEqual(result["groups"], [])
+
+    def test_group_status_shows_counts_and_only_that_groups_missing_names(self):
+        state = app.load_state(self.data_file)
+        today = datetime.now().strftime("%Y-%m-%d")
+        state["users"].update({
+            "U-owner": {
+                **state["users"]["U-owner"],
+                "display_name": "媽媽",
+                "history": [today],
+            },
+            "U-a": {"line_user_id": "U-a", "display_name": "小美", "history": [today]},
+            "U-b": {"line_user_id": "U-b", "display_name": "爸爸"},
+            "U-c": {"line_user_id": "U-c", "display_name": "阿嬤"},
+            "U-d": {"line_user_id": "U-d", "display_name": "哥哥", "history": [today]},
+            "U-other-member": {"line_user_id": "U-other-member", "display_name": "別群成員"},
+        })
+        state["guardian_groups"]["C-family"]["member_ids_at_bind"] = [
+            "U-a", "U-b", "U-c", "U-d"
+        ]
+        state["guardian_groups"]["C-family"]["preferences"] = {
+            "notify_admin_only": True,
+            "daily_admin_summary": False,
+            "notify_group_on_overdue": False,
+        }
+        state["guardian_groups"]["C-other"]["member_ids_at_bind"] = ["U-other-member"]
+        app.save_state(self.data_file, state)
+
+        text, code = app.guardian_group_daily_status_text(
+            self.data_file, "U-owner", "C-family"
+        )
+
+        self.assertEqual(code, 200)
+        self.assertIn("共 5 位成員", text)
+        self.assertIn("3 位已報平安", text)
+        self.assertIn("2 位未報平安", text)
+        self.assertIn("未報平安：爸爸、阿嬤", text)
+        self.assertNotIn("別群成員", text)
 
     def test_unknown_member_is_rejected(self):
         result, code = app.guardian_group_settings_for_user(

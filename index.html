@@ -938,6 +938,49 @@
     }
     .member-data-row + .member-data-row { border-top: 1px dashed #f9a8d4; }
     .member-data-row strong { color: #5b1535; text-align: right; font-size: 16px; }
+    .checkin-history-list { display: grid; gap: 10px; }
+    .checkin-history-item {
+      overflow: hidden;
+      border: 2px solid #bbf7d0;
+      border-radius: 14px;
+      background: #f0fdf4;
+    }
+    .checkin-history-toggle {
+      width: 100%;
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border: 0;
+      background: transparent;
+      color: #14532d;
+      font-size: 18px;
+      font-weight: 950;
+      text-align: left;
+      cursor: pointer;
+    }
+    .checkin-history-toggle::after {
+      content: "⌄";
+      flex: 0 0 auto;
+      font-size: 24px;
+      transition: transform 0.18s ease;
+    }
+    .checkin-history-toggle[aria-expanded="true"]::after { transform: rotate(180deg); }
+    .checkin-history-detail {
+      display: grid;
+      gap: 8px;
+      padding: 13px 14px 15px;
+      border-top: 2px solid #bbf7d0;
+      background: #fff;
+      color: #374151;
+      font-size: 17px;
+      font-weight: 800;
+      line-height: 1.55;
+      text-align: left;
+    }
+    .checkin-history-detail[hidden] { display: none; }
     .member-advanced-note {
       padding: 10px;
       border-left: 4px solid var(--accent);
@@ -2103,6 +2146,21 @@
       font-size: 18px;
       line-height: 1.65;
     }
+    .onboarding-story-comic {
+      display: block;
+      width: 100%;
+      height: auto;
+      margin: 0 0 14px;
+      border: 2px solid #9fd9bd;
+      border-radius: 16px;
+    }
+    .onboarding-story-copy {
+      margin: 0 0 16px;
+      color: #17324d;
+      font-size: 19px;
+      font-weight: 850;
+      line-height: 1.65;
+    }
     .onboarding-modal .onboarding-step {
       margin-bottom: 18px;
       padding: 11px 14px;
@@ -2148,6 +2206,68 @@
       background: rgba(15, 23, 42, 0.62);
     }
     #lineEntryGate[hidden] { display: none !important; }
+    .first-entry-guide {
+      display: grid;
+      gap: 10px;
+      margin: 16px 0 20px;
+      padding: 14px;
+      border: 2px solid #bbf7d0;
+      border-radius: 16px;
+      background: #f0fdf4;
+    }
+    .first-entry-guide-title {
+      margin: 0 !important;
+      color: #166534;
+      font-size: 20px !important;
+      font-weight: 950;
+      line-height: 1.45 !important;
+    }
+    .first-entry-step {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 52px;
+      padding: 10px 12px;
+      border: 2px solid #e5e7eb;
+      border-radius: 13px;
+      background: #fff;
+      color: #4b5563;
+      font-size: 17px;
+      font-weight: 850;
+      line-height: 1.45;
+    }
+    .first-entry-step::before {
+      content: attr(data-step);
+      display: grid;
+      flex: 0 0 32px;
+      width: 32px;
+      height: 32px;
+      place-items: center;
+      border-radius: 50%;
+      background: #e5e7eb;
+      color: #374151;
+      font-size: 16px;
+      font-weight: 950;
+    }
+    .first-entry-step[data-state="done"] {
+      border-color: #86efac;
+      background: #dcfce7;
+      color: #166534;
+    }
+    .first-entry-step[data-state="done"]::before {
+      content: "✓";
+      background: #16a34a;
+      color: #fff;
+    }
+    .first-entry-step[data-state="current"] {
+      border-color: #22c55e;
+      color: #14532d;
+      box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.14);
+    }
+    .first-entry-step[data-state="current"]::before {
+      background: #16a34a;
+      color: #fff;
+    }
     .line-entry-card {
       width: min(100%, 430px);
       padding: 28px 24px;
@@ -3011,11 +3131,22 @@
     }
     .mvp-brand {
       margin: 4px 0 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
       font-size: clamp(34px, 9vw, 44px);
       font-weight: 950;
       letter-spacing: 0.04em;
       color: #0f3d2e;
       line-height: 1.15;
+    }
+    .mvp-brand-logo {
+      width: clamp(52px, 15vw, 68px);
+      height: clamp(52px, 15vw, 68px);
+      flex: 0 0 auto;
+      object-fit: contain;
+      border-radius: 50%;
     }
     .mvp-slogan {
       margin: 0 0 14px;
@@ -3738,6 +3869,13 @@
 
     <section id="lineEntryGate" hidden aria-live="polite">
       <div class="line-entry-card" role="dialog" aria-modal="true" aria-labelledby="lineEntryTitle">
+        <div class="first-entry-guide" aria-label="第一次設定教學">
+          <p class="first-entry-guide-title">第一次使用，照著 4 步驟完成設定</p>
+          <div class="first-entry-step" id="lineGuideJoin" data-step="1">加入「每日平安」官方 LINE</div>
+          <div class="first-entry-step" id="lineGuideLogin" data-step="2">使用 LINE 一鍵登入</div>
+          <div class="first-entry-step" id="lineGuideProfile" data-step="3">填寫守護資料並發送邀請</div>
+          <div class="first-entry-step" id="lineGuideGuardian" data-step="4">核心守護人接受邀請，完成綁定</div>
+        </div>
         <div id="lineEntryFriendStep">
           <h2 id="lineEntryTitle">先加入「每日平安」官方帳號好友</h2>
           <p>加入好友後，我們才能在需要時傳送平安與守護通知。加入完成後，請回到這裡重新確認。</p>
@@ -3757,7 +3895,7 @@
     </section>
 
     <section class="mvp-home" id="mvpHome" aria-label="每日平安首頁">
-      <div class="mvp-brand">每日平安</div>
+      <div class="mvp-brand"><img class="mvp-brand-logo" src="assets/daily-peace-logo.png" alt="">每日平安</div>
       <p class="mvp-slogan">每天 10 秒，報個平安</p>
       <h1 class="mvp-welcome">平常不打擾，有事才通知守護人</h1>
       <p class="mvp-welcome-sub">不是監控，是讓重要的人知道你平安</p>
@@ -4007,8 +4145,17 @@
             <h2 id="onboardingTitle">歡迎使用「每日平安」</h2>
             <button class="onboarding-close-btn" id="onboardingCloseBtn" type="button" aria-label="關閉" hidden>×</button>
           </div>
+          <img class="onboarding-story-comic" src="assets/daily-peace-story-comic.png" alt="女兒教媽媽報平安，媽媽按下我平安後女兒收到通知的故事漫畫" width="941" height="1672">
+          <p class="onboarding-story-copy">媽媽每天按一下「我平安」，女兒收到通知，知道媽媽平安，就能放心。</p>
+          <div class="first-entry-guide" aria-label="第一次設定教學">
+            <p class="first-entry-guide-title">還沒綁定守護人，請完成以下設定</p>
+            <div class="first-entry-step" id="onboardingGuideJoin" data-step="1">加入「每日平安」官方 LINE</div>
+            <div class="first-entry-step" id="onboardingGuideLogin" data-step="2">使用 LINE 一鍵登入</div>
+            <div class="first-entry-step" id="onboardingGuideProfile" data-step="3">填寫守護資料並發送邀請</div>
+            <div class="first-entry-step" id="onboardingGuideGuardian" data-step="4">核心守護人接受邀請，完成綁定</div>
+          </div>
           <p class="onboarding-intro" id="onboardingIntro">請先用一鍵分享，把綁定邀請傳給你信任的人；完成後再填寫對方資料。</p>
-          <p class="onboarding-step" id="onboardingStepLabel">步驟 1／3　一鍵分享邀請守護人</p>
+          <p class="onboarding-step" id="onboardingStepLabel">步驟 2／4　一鍵分享邀請守護人</p>
 
           <div class="onboarding-form" id="onboardingShareStep">
             <p class="onboarding-note">對方點開邀請連結、用 LINE 同意後，就能成為你的守護人。分享完成後再繼續填寫資料。</p>
@@ -4204,15 +4351,6 @@
           </article>
         </div>
 
-        <div class="member-data-section">
-          <h3>個人資料與守護額度</h3>
-          <div class="member-data-list">
-            <div class="member-data-row"><span>LINE 帳號</span><strong id="memberLineAccount">尚未綁定</strong></div>
-            <div class="member-data-row"><span>聯絡信箱</span><strong id="memberContactEmail">尚未填寫</strong></div>
-            <div class="member-data-row"><span>守護對象</span><strong id="memberGuardianQuota">0/1 位</strong></div>
-          </div>
-        </div>
-
         <div class="member-data-section" id="memberContactsManageSection">
           <div class="member-contact-tabs" role="tablist" aria-label="聯絡人類型">
             <button class="member-contact-tab" id="memberTabCoreBtn" type="button" role="tab" aria-selected="true" aria-controls="memberGuardianSection" data-contact-tab="core">核心守護人</button>
@@ -4355,7 +4493,7 @@
 
         <div class="member-data-section">
           <h3>我的簽到紀錄</h3>
-          <div class="member-data-list" id="memberHistoryList">
+          <div class="checkin-history-list" id="memberHistoryList">
             <div class="member-data-row"><span>簽到紀錄</span><strong>目前沒有紀錄</strong></div>
           </div>
         </div>
@@ -5312,6 +5450,7 @@
         trial_days_left: state.trial_days_left ?? 14,
         contact_limit: state.contact_limit || 1,
         history: Array.from(new Set(state.history || [])).sort(),
+        checkin_records: Array.isArray(state.checkin_records) ? state.checkin_records : [],
         is_today_checked: (state.history || []).includes(getToday()),
         is_overdue: isOverdue,
         remaining_ms: remaining,
@@ -5435,12 +5574,31 @@
       return data;
     }
 
+    async function getCheckinArea() {
+      if (!navigator.geolocation) return "";
+      try {
+        const position = await getCurrentPositionPromise(
+          { timeout: 3500, maximumAge: 300000, enableHighAccuracy: false },
+          4500
+        );
+        return inferTaiwanCounty(position.coords.latitude, position.coords.longitude) || "";
+      } catch (_) {
+        return "";
+      }
+    }
+
     async function apiCheckin() {
+      const area = await getCheckinArea();
       if (useLocalMode) {
         const state = loadLocalState();
         const today = getToday();
-        state.last_check_in = new Date().toISOString();
+        const checkedAt = new Date().toISOString();
+        state.last_check_in = checkedAt;
         state.history = Array.from(new Set([...(state.history || []), today])).sort();
+        state.checkin_records = [
+          ...(state.checkin_records || []).filter((row) => row && row.date !== today),
+          { date: today, checked_at: checkedAt, area: area || "未提供位置" }
+        ];
         saveLocalState(state);
         return buildLocalStatus(state);
       }
@@ -5450,7 +5608,7 @@
       const res = await fetch("/api/checkin", {
         method: "POST",
         headers: await authHeaders(),
-        body: JSON.stringify({ line_user_id: lineUserId })
+        body: JSON.stringify({ line_user_id: lineUserId, area })
       });
       if (!res.ok) {
         const text = await res.text().catch(() => "");
@@ -6631,12 +6789,12 @@
         : memberPlan === "trial"
           ? (status.trial_days_text || `體驗剩 ${status.trial_days_left ?? 14} 天`)
           : "尚未設定到期日";
-      $("memberLineAccount").textContent = lineUserId || status.line_user_id ? "LINE 已綁定" : "尚未綁定 LINE";
-      $("memberContactEmail").textContent = status.contact_email || "尚未填寫";
+      if ($("memberLineAccount")) $("memberLineAccount").textContent = lineUserId || status.line_user_id ? "LINE 已綁定" : "尚未綁定 LINE";
+      if ($("memberContactEmail")) $("memberContactEmail").textContent = status.contact_email || "尚未填寫";
       if ($("memberSupportEmail") && !$("memberSupportEmail").value) {
         $("memberSupportEmail").value = status.contact_email || "";
       }
-      $("memberGuardianQuota").textContent = `核心守護人 ${shownCore}/${coreLimit}`;
+      if ($("memberGuardianQuota")) $("memberGuardianQuota").textContent = `核心守護人 ${shownCore}/${coreLimit}`;
       const quotaLine = $("memberGuardianQuotaLine");
       if (quotaLine) quotaLine.textContent = `核心守護人 ${shownCore}/${coreLimit}`;
       const emergencyQuota = $("memberEmergencyQuotaLine");
@@ -6784,14 +6942,27 @@
       bindManageList($("memberEmergencyList"));
       refreshSmartRemindersUi();
 
+      const recordByDate = Object.fromEntries(
+        (status.checkin_records || []).map((row) => [String(row.date || "").slice(0, 10), row])
+      );
       const recentHistory = [...historyData].sort().reverse().slice(0, 10);
       $("memberHistoryList").innerHTML = recentHistory.length
-        ? recentHistory.map((date, index) => `
-          <div class="member-data-row">
-            <span>${index === 0 ? "最近簽到" : "平安簽到"}</span>
-            <strong>${escapeHtml(date)}</strong>
-          </div>
-        `).join("")
+        ? recentHistory.map((date, index) => {
+          const row = recordByDate[date] || {};
+          const detailId = `checkin-history-detail-${index}`;
+          const checkedAt = row.checked_at ? formatDate(row.checked_at) : `${date}（時間未記錄）`;
+          const area = row.area || "未提供位置";
+          return `
+          <article class="checkin-history-item">
+            <button class="checkin-history-toggle" type="button" aria-expanded="false" aria-controls="${detailId}" data-checkin-history-toggle="${detailId}">
+              <span>${index === 0 ? "最近簽到" : "平安簽到"}・${escapeHtml(date)}</span>
+            </button>
+            <div class="checkin-history-detail" id="${detailId}" hidden>
+              <span>簽到時間：${escapeHtml(checkedAt)}</span>
+              <span>地區位置：${escapeHtml(area)}</span>
+            </div>
+          </article>`;
+        }).join("")
         : `<div class="member-data-row"><span>簽到紀錄</span><strong>目前沒有紀錄</strong></div>`;
 
       const isPaid = String(status.plan || "").startsWith("paid_");
@@ -8398,6 +8569,12 @@
       return "ready";
     }
 
+    function setLineSetupGuideState(step) {
+      setSetupGuideState("line", step === "friend"
+        ? { join: "current", login: "upcoming", profile: "upcoming", guardian: "upcoming" }
+        : { join: "done", login: "current", profile: "upcoming", guardian: "upcoming" });
+    }
+
     function showLineEntryGate(step) {
       const gate = $("lineEntryGate");
       if (!gate) return;
@@ -8406,6 +8583,7 @@
       const isFriendStep = step === "friend";
       if (friendStep) friendStep.hidden = !isFriendStep;
       if (loginStep) loginStep.hidden = isFriendStep;
+      setLineSetupGuideState(step);
       gate.hidden = false;
       document.body.classList.add("line-entry-gated");
     }
@@ -9716,6 +9894,20 @@
       return `第 ${index + 1} 次提醒`;
     }
 
+    function setSetupGuideState(prefix, states) {
+      const idPrefix = prefix === "line" ? "lineGuide" : "onboardingGuide";
+      const keys = {
+        Join: states && states.join,
+        Login: states && states.login,
+        Profile: states && states.profile,
+        Guardian: states && states.guardian,
+      };
+      Object.entries(keys).forEach(([suffix, value]) => {
+        const el = $(`${idPrefix}${suffix}`);
+        if (el) el.dataset.state = value || "upcoming";
+      });
+    }
+
     function showOnboardingShareStep() {
       const shareStep = $("onboardingShareStep");
       const guardianStep = $("onboardingGuardianStep");
@@ -9724,8 +9916,14 @@
       if (guardianStep) guardianStep.hidden = true;
       if (reminderStep) reminderStep.hidden = true;
       $("onboardingTitle").textContent = "歡迎使用「每日平安」";
-      $("onboardingIntro").textContent = "請先用一鍵分享，把綁定邀請傳給你信任的人；對方同意後，你再填寫對方資料並設定提醒。";
-      $("onboardingStepLabel").textContent = "步驟 1／3　一鍵分享邀請守護人";
+      setSetupGuideState("onboarding", {
+        join: "done",
+        login: "done",
+        profile: "current",
+        guardian: "upcoming",
+      });
+      $("onboardingIntro").textContent = "你已加入官方 LINE 並完成登入。接著請填寫資料、發送邀請，等核心守護人接受後才會完成綁定。";
+      $("onboardingStepLabel").textContent = "步驟 3／4　填寫資料並一鍵邀請守護人";
     }
 
     function showOnboardingGuardianStep() {
@@ -9735,9 +9933,15 @@
       if (shareStep) shareStep.hidden = true;
       if (guardianStep) guardianStep.hidden = false;
       if (reminderStep) reminderStep.hidden = true;
+      setSetupGuideState("onboarding", {
+        join: "done",
+        login: "done",
+        profile: "current",
+        guardian: "upcoming",
+      });
       $("onboardingTitle").textContent = "填寫守護人資料";
       $("onboardingIntro").textContent = "請填寫至少 1 位守護人的姓名、關係與手機，方便緊急時聯絡。";
-      $("onboardingStepLabel").textContent = "步驟 2／3　填寫守護人資料";
+      $("onboardingStepLabel").textContent = "步驟 3／4　填寫守護人資料";
       setTimeout(() => { try { $("obName")?.focus(); } catch (_) {} }, 50);
     }
 
@@ -9774,7 +9978,7 @@
 
       $("onboardingTitle").textContent = "私訊預警通知提醒設定";
       $("onboardingIntro").textContent = "守護人已新增。接下來請確認每日簽到提醒時間；不調整也可直接使用預設。";
-      $("onboardingStepLabel").textContent = `步驟 3／3　私訊預警通知提醒設定（本方案 ${count} 次）`;
+      $("onboardingStepLabel").textContent = `步驟 4／4　私訊預警通知提醒設定（本方案 ${count} 次）`;
       $("onboardingReminderHint").textContent =
         count === 1
           ? "預設中午 12:00。可自行更改。"
@@ -11026,6 +11230,15 @@
     });
     $("memberCenterToggleBtn").addEventListener("click", () => {
       setMemberCenterExpanded($("memberCenterToggleBtn").getAttribute("aria-expanded") !== "true");
+    });
+    $("memberHistoryList")?.addEventListener("click", (event) => {
+      const toggle = event.target.closest("[data-checkin-history-toggle]");
+      if (!toggle) return;
+      const detail = document.getElementById(toggle.dataset.checkinHistoryToggle || "");
+      if (!detail) return;
+      const expanded = toggle.getAttribute("aria-expanded") === "true";
+      toggle.setAttribute("aria-expanded", String(!expanded));
+      detail.hidden = expanded;
     });
     const memberRoleIntroDismiss = $("memberRoleIntroDismiss");
     if (memberRoleIntroDismiss) {

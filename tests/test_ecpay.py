@@ -9,8 +9,8 @@ import ecpay
 
 CONFIG = {
     "ECPAY_MERCHANT_ID": "2000132",
-    "ECPAY_HASH_KEY": "5294y06JbISpM5x9",
-    "ECPAY_HASH_IV": "v77hoKGq4kWxNNIS",
+    "ECPAY_HASH_KEY": "TEST_ONLY_HASH_KEY_123456789012",
+    "ECPAY_HASH_IV": "TEST_ONLY_IV_123",
     "ECPAY_STAGE": "sandbox",
     "APP_PUBLIC_URL": "https://alive.example",
 }
@@ -65,7 +65,7 @@ class ECPayPaymentTests(unittest.TestCase):
         )
         self.assertTrue(ecpay.verify_check_mac(form, CONFIG))
 
-    def test_notify_rejects_bad_mac_and_simulated_payment(self):
+    def test_notify_rejects_bad_mac_and_production_simulated_payment(self):
         valid = {
             "MerchantID": "2000132",
             "MerchantTradeNo": "AC202607270001",
@@ -80,7 +80,10 @@ class ECPayPaymentTests(unittest.TestCase):
         parsed, error = ecpay.parse_notify_payload(valid, CONFIG)
         self.assertIsNone(error)
         self.assertTrue(parsed["simulated"])
-        self.assertFalse(ecpay.notify_success(parsed))
+        self.assertTrue(ecpay.notify_success(parsed, CONFIG))
+        self.assertFalse(
+            ecpay.notify_success(parsed, {**CONFIG, "ECPAY_STAGE": "prod"})
+        )
 
         invalid = dict(valid)
         invalid["CheckMacValue"] = "BAD"
@@ -88,13 +91,26 @@ class ECPayPaymentTests(unittest.TestCase):
         self.assertIsNone(parsed)
         self.assertEqual(error, "invalid_check_mac")
 
-    def test_refund_request_uses_credit_do_action(self):
+    def test_refund_request_requires_production_environment(self):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "ecpay_refund_requires_production",
+        ):
+            ecpay.build_credit_action(
+                merchant_trade_no="AC202607270001",
+                trade_no="240727000001",
+                amount=199,
+                action="R",
+                config=CONFIG,
+            )
+
+    def test_production_refund_request_uses_credit_do_action(self):
         request = ecpay.build_credit_action(
             merchant_trade_no="AC202607270001",
             trade_no="240727000001",
             amount=199,
             action="R",
-            config=CONFIG,
+            config={**CONFIG, "ECPAY_STAGE": "prod"},
         )
 
         self.assertEqual(
@@ -103,7 +119,12 @@ class ECPayPaymentTests(unittest.TestCase):
         )
         self.assertEqual(request["form"]["Action"], "R")
         self.assertEqual(request["form"]["TotalAmount"], 199)
-        self.assertTrue(ecpay.verify_check_mac(request["form"], CONFIG))
+        self.assertTrue(
+            ecpay.verify_check_mac(
+                request["form"],
+                {**CONFIG, "ECPAY_STAGE": "prod"},
+            )
+        )
 
     def test_cancel_recurring_uses_period_action_and_signed_timestamp(self):
         with patch("ecpay.time.time", return_value=1_722_000_000):
@@ -143,6 +164,22 @@ class ECPayPaymentTests(unittest.TestCase):
 
 
 class ECPayAppIntegrationTests(unittest.TestCase):
+    def test_generated_order_id_matches_ecpay_trade_number(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result, status = alive_app.create_payment_order(
+                str(Path(tmp) / "state.json"),
+                {"line_user_id": "U-member", "plan": "paid_399"},
+                CONFIG,
+            )
+
+        order_id = result["order"]["order_id"]
+        self.assertEqual(status, 201)
+        self.assertLessEqual(len(order_id), 20)
+        self.assertEqual(
+            result["checkout"]["form"]["MerchantTradeNo"],
+            order_id,
+        )
+
     def test_new_orders_use_ecpay_without_exposing_provider_in_customer_message(self):
         with tempfile.TemporaryDirectory() as tmp:
             result, status = alive_app.create_payment_order(
@@ -185,6 +222,150 @@ class ECPayAppIntegrationTests(unittest.TestCase):
             profile = alive_app.load_state(data_file)["users"]["U-member"]
             self.assertEqual(profile["payment_status"], "active")
             self.assertEqual(profile["payment_provider"], "ecpay")
+
+    def test_sandbox_simulated_notify_activates_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_file = str(Path(tmp) / "state.json")
+            created, _ = alive_app.create_payment_order(
+                data_file,
+                {"line_user_id": "U-member", "plan": "paid_399"},
+                CONFIG,
+            )
+            form = {
+                "MerchantID": CONFIG["ECPAY_MERCHANT_ID"],
+                "MerchantTradeNo": created["order"]["order_id"],
+                "TradeNo": "240727000004",
+                "RtnCode": "1",
+                "RtnMsg": "Succeeded",
+                "TradeAmt": "399",
+                "SimulatePaid": "1",
+            }
+            form["CheckMacValue"] = ecpay.generate_check_mac(form, CONFIG)
+            client = alive_app.create_app(
+                {**CONFIG, "DATA_FILE": data_file, "REQUIRE_LIFF_AUTH": "0"}
+            ).test_client()
+
+            response = client.post("/api/payment/ecpay/notify", data=form)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                alive_app.load_state(data_file)["users"]["U-member"][
+                    "payment_status"
+                ],
+                "active",
+            )
+
+    def test_repeated_notify_does_not_extend_membership_twice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_file = str(Path(tmp) / "state.json")
+            created, _ = alive_app.create_payment_order(
+                data_file,
+                {"line_user_id": "U-member", "plan": "paid_399"},
+                CONFIG,
+            )
+            form = {
+                "MerchantID": CONFIG["ECPAY_MERCHANT_ID"],
+                "MerchantTradeNo": created["order"]["order_id"],
+                "TradeNo": "240727000005",
+                "RtnCode": "1",
+                "RtnMsg": "Succeeded",
+                "TradeAmt": "399",
+                "SimulatePaid": "0",
+            }
+            form["CheckMacValue"] = ecpay.generate_check_mac(form, CONFIG)
+            client = alive_app.create_app(
+                {**CONFIG, "DATA_FILE": data_file, "REQUIRE_LIFF_AUTH": "0"}
+            ).test_client()
+
+            first = client.post("/api/payment/ecpay/notify", data=form)
+            first_until = alive_app.load_state(data_file)["users"]["U-member"][
+                "paid_until"
+            ]
+            second = client.post("/api/payment/ecpay/notify", data=form)
+            second_until = alive_app.load_state(data_file)["users"]["U-member"][
+                "paid_until"
+            ]
+
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(second_until, first_until)
+
+    def test_notify_rejects_amount_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_file = str(Path(tmp) / "state.json")
+            created, _ = alive_app.create_payment_order(
+                data_file,
+                {"line_user_id": "U-member", "plan": "paid_399"},
+                CONFIG,
+            )
+            form = {
+                "MerchantID": CONFIG["ECPAY_MERCHANT_ID"],
+                "MerchantTradeNo": created["order"]["order_id"],
+                "TradeNo": "240727000002",
+                "RtnCode": "1",
+                "RtnMsg": "Succeeded",
+                "TradeAmt": "1",
+                "SimulatePaid": "0",
+            }
+            form["CheckMacValue"] = ecpay.generate_check_mac(form, CONFIG)
+            client = alive_app.create_app(
+                {**CONFIG, "DATA_FILE": data_file, "REQUIRE_LIFF_AUTH": "0"}
+            ).test_client()
+
+            response = client.post("/api/payment/ecpay/notify", data=form)
+
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(
+                response.get_data(as_text=True),
+                "0|payment_amount_mismatch",
+            )
+            state = alive_app.load_state(data_file)
+            self.assertEqual(state["orders"][0]["status"], "anomaly")
+            self.assertNotEqual(
+                state["users"]["U-member"].get("payment_status"),
+                "active",
+            )
+
+    def test_period_notify_rejects_amount_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_file = str(Path(tmp) / "state.json")
+            state = alive_app.load_state(data_file)
+            profile = alive_app.get_profile(state, "U-member")
+            profile["contact_email"] = "member@example.com"
+            profile["auto_renew_requested"] = True
+            alive_app.save_state(data_file, state)
+            created, _ = alive_app.create_payment_order(
+                data_file,
+                {"line_user_id": "U-member", "plan": "paid_399"},
+                CONFIG,
+            )
+            form = {
+                "MerchantID": CONFIG["ECPAY_MERCHANT_ID"],
+                "MerchantTradeNo": created["order"]["order_id"],
+                "TradeNo": "240727000003",
+                "RtnCode": "1",
+                "RtnMsg": "Succeeded",
+                "PeriodAmount": "1",
+                "SimulatePaid": "0",
+            }
+            form["CheckMacValue"] = ecpay.generate_check_mac(form, CONFIG)
+            client = alive_app.create_app(
+                {**CONFIG, "DATA_FILE": data_file, "REQUIRE_LIFF_AUTH": "0"}
+            ).test_client()
+
+            response = client.post("/api/payment/ecpay/period-notify", data=form)
+
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(
+                response.get_data(as_text=True),
+                "0|payment_amount_mismatch",
+            )
+            state = alive_app.load_state(data_file)
+            self.assertEqual(state["orders"][0]["status"], "anomaly")
+            self.assertNotEqual(
+                state["users"]["U-member"].get("payment_status"),
+                "active",
+            )
 
 
 if __name__ == "__main__":

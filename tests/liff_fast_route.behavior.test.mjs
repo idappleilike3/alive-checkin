@@ -511,6 +511,64 @@ test("logged-in LINE entry verifies actual friendship before returning friend or
   }
 });
 
+test("first-time unbound entry keeps the four-step setup guide visible across LINE and guardian gates", () => {
+  const elements = {
+    lineEntryGate: { hidden: true },
+    lineEntryFriendStep: { hidden: true },
+    lineEntryLoginStep: { hidden: true },
+    lineGuideJoin: { dataset: {}, textContent: "" },
+    lineGuideLogin: { dataset: {}, textContent: "" },
+    onboardingShareStep: { hidden: true },
+    onboardingGuardianStep: { hidden: true },
+    onboardingReminderStep: { hidden: true },
+    onboardingTitle: { textContent: "" },
+    onboardingIntro: { textContent: "" },
+    onboardingStepLabel: { textContent: "" },
+    onboardingGuideJoin: { dataset: {}, textContent: "" },
+    onboardingGuideLogin: { dataset: {}, textContent: "" },
+    onboardingGuideProfile: { dataset: {}, textContent: "" },
+    onboardingGuideGuardian: { dataset: {}, textContent: "" },
+  };
+  const classNames = new Set();
+  const source = [
+    functionSource("setSetupGuideState"),
+    functionSource("setLineSetupGuideState"),
+    functionSource("showLineEntryGate"),
+    functionSource("showOnboardingShareStep"),
+  ].join("\n");
+  const sandbox = expose(
+    source,
+    ["showLineEntryGate", "showOnboardingShareStep"],
+    {
+      $: (id) => elements[id] || null,
+      document: {
+        body: {
+          classList: {
+            add: (name) => classNames.add(name),
+          },
+        },
+      },
+    },
+  );
+
+  sandbox.showLineEntryGate("friend");
+  assert.equal(elements.lineEntryGate.hidden, false);
+  assert.equal(elements.lineGuideJoin.dataset.state, "current");
+  assert.equal(elements.lineGuideLogin.dataset.state, "upcoming");
+
+  sandbox.showLineEntryGate("login");
+  assert.equal(elements.lineGuideJoin.dataset.state, "done");
+  assert.equal(elements.lineGuideLogin.dataset.state, "current");
+
+  sandbox.showOnboardingShareStep();
+  assert.equal(elements.onboardingGuideJoin.dataset.state, "done");
+  assert.equal(elements.onboardingGuideLogin.dataset.state, "done");
+  assert.equal(elements.onboardingGuideProfile.dataset.state, "current");
+  assert.equal(elements.onboardingGuideGuardian.dataset.state, "upcoming");
+  assert.match(elements.onboardingIntro.textContent, /填寫資料/);
+  assert.match(elements.onboardingIntro.textContent, /核心守護人/);
+});
+
 test("explicit login click preserves only validated invite migration and route continuation", () => {
   const inviter = `U${"a".repeat(32)}`;
   const migrationCode = "m".repeat(43);
@@ -621,9 +679,15 @@ test("friendship return rechecks and runs registration migration and member boot
     lineEntryGate: { hidden: false },
     lineEntryFriendStep: { hidden: false },
     lineEntryLoginStep: { hidden: true },
+    lineGuideJoin: { dataset: {} },
+    lineGuideLogin: { dataset: {} },
+    lineGuideProfile: { dataset: {} },
+    lineGuideGuardian: { dataset: {} },
   };
   const source = [
     functionSource("resolveLineEntryGate"),
+    functionSource("setSetupGuideState"),
+    functionSource("setLineSetupGuideState"),
     functionSource("showLineEntryGate"),
     functionSource("hideLineEntryGate"),
     functionSource("initializeLiff"),
