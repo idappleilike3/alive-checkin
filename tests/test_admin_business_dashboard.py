@@ -55,6 +55,51 @@ class AdminBusinessDashboardTests(unittest.TestCase):
         self.assertEqual(dashboard["delivery"]["total"], 2)
         self.assertEqual(dashboard["delivery"]["success_rate"], 50.0)
 
+    def test_admin_summary_groups_daily_pushes_by_member_with_plan_and_expiry(self):
+        data_file = self.make_state()
+        state = alive_app.load_state(data_file)
+        state["users"]["U-active"]["paid_until"] = "2026-08-15T23:59:59"
+        state["notification_logs"] = [
+            {
+                "status": "sent",
+                "kind": "beta_daily_feedback",
+                "line_user_id": "U-active",
+                "created_at": "2026-07-27T19:00:00+08:00",
+            },
+            {
+                "status": "failed",
+                "kind": "overdue",
+                "line_user_id": "U-active",
+                "created_at": "2026-07-27T20:00:00+08:00",
+            },
+            {
+                "status": "sent",
+                "kind": "checkin",
+                "line_user_id": "U-free",
+                "created_at": "2026-07-26T19:00:00+08:00",
+            },
+        ]
+        alive_app.save_state(data_file, state)
+
+        summary = alive_app.admin_summary(
+            data_file,
+            now=alive_app.datetime.fromisoformat("2026-07-27T21:00:00+08:00"),
+        )
+
+        row = next(
+            item
+            for item in summary["daily_push_member_stats"]
+            if item["line_user_id"] == "U-active"
+        )
+        self.assertEqual(row["date"], "2026-07-27")
+        self.assertEqual(row["display_name"], "安心會員")
+        self.assertEqual(row["plan"], "paid_399")
+        self.assertEqual(row["expires_at"], "2026-08-15T23:59:59")
+        self.assertEqual(row["sent_count"], 1)
+        self.assertEqual(row["failed_count"], 1)
+        self.assertEqual(row["total_count"], 2)
+        self.assertEqual(row["kinds"], ["beta_daily_feedback", "overdue"])
+
     def test_dashboard_reports_actionable_incidents_and_line_budget(self):
         data_file = self.make_state()
         dashboard = alive_app.admin_business_dashboard(

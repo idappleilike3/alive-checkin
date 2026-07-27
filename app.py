@@ -1427,6 +1427,18 @@ def membership_expiry_info(profile, now=None):
         return None
     now = now or current_app_time({})
     plan = str(profile.get("plan") or "trial")
+    if str(profile.get("membership_source") or "") == "beta":
+        beta_end = parse_datetime(profile.get("beta_ends_at"))
+        if not beta_end:
+            return None
+        days = (beta_end.date() - now.date()).days
+        return {
+            "plan": plan,
+            "label": "21 天封測",
+            "days_left": days,
+            "expired": days <= 0,
+            "near": days <= EXPIRY_REMIND_WITHIN_DAYS,
+        }
     if plan == "trial":
         started = parse_datetime(profile.get("trial_started_at"))
         total = trial_total_days(profile)
@@ -1560,7 +1572,7 @@ def build_expiry_remind_flex(profile, now=None):
                         "type": "button",
                         "action": {
                             "type": "uri",
-                            "label": "繼續每日問候",
+                            "label": "升級後繼續每日問候",
                             "uri": pricing_uri,
                         },
                         "style": "primary",
@@ -2659,6 +2671,8 @@ def beta_members_snapshot(state, now=None):
                 "day_21": current_day >= 21,
             },
             "feedback_status": str(profile.get("beta_feedback_status") or "pending"),
+            "feedback_last_day": int(profile.get("beta_feedback_last_day") or 0),
+            "feedback_last_at": str(profile.get("beta_feedback_last_at") or ""),
             "guardian_count": len([
                 item for item in (profile.get("contacts") or [])
                 if contact_is_bound_guardian(item)
@@ -2676,6 +2690,174 @@ def beta_members_snapshot(state, now=None):
         "members": sorted(rows, key=lambda row: (row["cohort"], row["display_name"])),
         "notice": "封閉測試不會建立訂單，也不會自動扣款",
     }
+
+
+def _beta_feedback_task(cohort, day):
+    common = {
+        1: "完成一次「我平安」，確認本人與守護人都看到正確結果",
+        7: "檢查提醒時間、逾時通知與守護人收訊是否清楚",
+        14: "測試 SOS 的送出、取消及收件人提示",
+        21: "提交整體心得，告訴我們最想保留與改善的功能",
+    }
+    if int(day or 0) in common:
+        return common[int(day)]
+    if str(cohort or "").upper() == "B799":
+        return "測試家庭群組、多人守護、安全守護或 SOS，並確認通知對象正確"
+    return "使用一次報平安、提醒、守護人或 SOS，留意操作是否容易理解"
+
+
+def build_beta_feedback_flex(profile, day):
+    """Build one daily beta question with five explicit reply paths."""
+    day = max(1, min(BETA_TRIAL_DAYS, int(day or 1)))
+    cohort = str((profile or {}).get("beta_cohort") or "B399").upper()
+    buttons = [
+        ("使用正常", "normal", "#168C65"),
+        ("發現問題", "issue", "#C2413A"),
+        ("使用心得", "insight", "#3178C6"),
+        ("不會操作", "help", "#8A5A16"),
+        ("稍後提醒", "later", "#6B7280"),
+    ]
+    return {
+        "type": "flex",
+        "altText": f"每日平安封測 Day {day} 使用狀況詢問",
+        "contents": {
+            "type": "bubble",
+            "size": "mega",
+            "header": {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#168C65",
+                "contents": [
+                    {"type": "text", "text": f"21 天封測 Day {day}", "color": "#FFFFFF",
+                     "weight": "bold", "size": "xl"},
+                    {"type": "text", "text": "今天使用上有遇到問題嗎？",
+                     "color": "#EAF8F1", "margin": "sm"},
+                ],
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "contents": [
+                    {"type": "text", "text": "今日建議任務", "weight": "bold",
+                     "color": "#168C65"},
+                    {"type": "text", "text": _beta_feedback_task(cohort, day),
+                     "wrap": True, "margin": "sm", "color": "#33443F"},
+                    {"type": "text", "text": "點選下方最符合的狀況即可回報",
+                     "wrap": True, "margin": "lg", "size": "sm", "color": "#6B7773"},
+                ],
+            },
+            "footer": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "contents": [
+                    {
+                        "type": "button",
+                        "style": "primary",
+                        "color": color,
+                        "height": "sm",
+                        "action": {
+                            "type": "postback",
+                            "label": label,
+                            "data": f"beta_feedback:{kind}:{day}",
+                            "displayText": label,
+                        },
+                    }
+                    for label, kind, color in buttons
+                ],
+            },
+        },
+    }
+
+
+def send_beta_daily_feedback(config, now=None):
+    """At 19:00 Taipei time, push one beta question per active member per day."""
+    clock = now or current_app_time(config)
+    if clock.strftime("%H:%M") != "19:00":
+        return {"sent": 0, "skipped": 0, "reason": "not_1900"}, 200
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+        "LINE_CHANNEL_ACCESS_TOKEN", ""
+    )
+    if not token:
+        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    state = load_state(config["DATA_FILE"])
+    today = clock.date().isoformat()
+    sent = 0
+    skipped = 0
+    for profile in (state.get("users") or {}).values():
+        target = str(profile.get("line_user_id") or "").strip()
+        if (
+            not target
+            or not beta_access_active(profile, clock)
+            or profile.get("beta_feedback_last_push_date") == today
+        ):
+            skipped += 1
+            continue
+        started = parse_datetime(profile.get("beta_started_at"))
+        day = min(BETA_TRIAL_DAYS, max(1, (clock.date() - started.date()).days + 1))
+        message = build_beta_feedback_flex(profile, day)
+        try:
+            result = sender(token, target, message)
+            profile["beta_feedback_last_push_date"] = today
+            profile["beta_feedback_last_push_at"] = clock.isoformat(timespec="seconds")
+            profile["beta_feedback_last_push_day"] = day
+            append_notification_log(
+                state, "beta_daily_feedback", target, "sent",
+                message.get("altText"), json.dumps(result, ensure_ascii=False),
+            )
+            sent += 1
+        except Exception as exc:
+            append_notification_log(
+                state, "beta_daily_feedback", target, "failed",
+                message.get("altText"), str(exc)[:400],
+            )
+            skipped += 1
+    save_state(config["DATA_FILE"], state)
+    return {"sent": sent, "skipped": skipped, "date": today}, 200
+
+
+def handle_beta_feedback_postback(data_file, line_user_id, data, now=None):
+    parts = str(data or "").split(":")
+    if len(parts) != 3 or parts[0] != "beta_feedback":
+        return None
+    kind = parts[1]
+    if kind not in {"normal", "issue", "insight", "help", "later"}:
+        return None
+    try:
+        day = max(1, min(BETA_TRIAL_DAYS, int(parts[2])))
+    except (TypeError, ValueError):
+        return None
+    clock = now or current_app_time({})
+    state = load_state(data_file)
+    profile = (state.get("users") or {}).get(str(line_user_id or ""))
+    if not profile or str(profile.get("membership_source") or "") != "beta":
+        return "此回報只提供給目前的封測會員"
+    profile["beta_feedback_status"] = kind
+    profile["beta_feedback_last_day"] = day
+    profile["beta_feedback_last_at"] = clock.isoformat(timespec="seconds")
+    state.setdefault("beta_feedback_reports", []).append({
+        "line_user_id": str(line_user_id),
+        "cohort": str(profile.get("beta_cohort") or ""),
+        "day": day,
+        "kind": kind,
+        "created_at": profile["beta_feedback_last_at"],
+    })
+    state["beta_feedback_reports"] = state["beta_feedback_reports"][-2000:]
+    save_state(data_file, state)
+    if kind == "issue":
+        return (
+            "已記錄「發現問題」。請直接在這個聊天室傳送：\n"
+            "1. 問題截圖\n2. 發生時間\n3. 操作步驟\n"
+            "4. 手機型號\n5. LINE 版本"
+        )
+    if kind == "insight":
+        return "已記錄「使用心得」。請直接告訴我們哪裡好用、哪裡想改善"
+    if kind == "help":
+        return "已記錄「不會操作」。請告訴我們卡在哪個畫面，客服會協助你"
+    if kind == "later":
+        return "好的，今天不再重複推播；你方便時再回到這個聊天室告訴我們"
+    return "謝謝回報，已記錄今天使用正常"
 
 
 LINE_ACCEPTANCE_KINDS = (
@@ -3141,6 +3323,10 @@ def mark_entitlement_lapsed(profile, now):
     stamp = now.isoformat(timespec="seconds")
     if not str(profile.get("plan_expired_at") or "").strip():
         profile["plan_expired_at"] = stamp
+    if "daily_checkin_reminder_enabled_before_expiry" not in profile:
+        profile["daily_checkin_reminder_enabled_before_expiry"] = bool(
+            profile.get("daily_checkin_reminder_enabled", True)
+        )
     profile["contacts_retain_until"] = ""
     profile["membership_paused"] = True
     profile["daily_checkin_reminder_enabled"] = False
@@ -3179,7 +3365,9 @@ def restore_membership_after_renewal(profile, plan, paid_until, now=None):
     )
     profile["membership_paused"] = False
     profile["scheduled_notifications_paused"] = False
-    profile["daily_checkin_reminder_enabled"] = True
+    profile["daily_checkin_reminder_enabled"] = bool(
+        profile.pop("daily_checkin_reminder_enabled_before_expiry", True)
+    )
     profile["renewed_at"] = now.isoformat(timespec="seconds")
     clear_contacts_retain_window(profile)
     return profile
@@ -4493,6 +4681,12 @@ def confirm_payment_order(data_file, payload, config=None):
     order["status"] = "paid"
     order["paid_at"] = now.isoformat(timespec="seconds")
     order["transaction_id"] = str(payload.get("transaction_id") or "").strip()
+    reminder_enabled_before_expiry = bool(
+        profile.pop(
+            "daily_checkin_reminder_enabled_before_expiry",
+            profile.get("daily_checkin_reminder_enabled", True),
+        )
+    )
     profile["plan"] = order["plan"]
     profile["membership_source"] = "paid"
     profile["trial_policy_version"] = TRIAL_POLICY_VERSION
@@ -4507,6 +4701,7 @@ def confirm_payment_order(data_file, payload, config=None):
     profile["next_billing_date"] = profile["paid_until"]
     profile["renewal_reminder_sent_for"] = ""
     clear_contacts_retain_window(profile)
+    profile["daily_checkin_reminder_enabled"] = reminder_enabled_before_expiry
     if payload.get("auto_renew_enabled") is not None:
         profile["auto_renew_enabled"] = bool(payload.get("auto_renew_enabled"))
         profile["auto_renew_status"] = "active" if profile["auto_renew_enabled"] else "off"
@@ -4693,6 +4888,110 @@ def _finish_trial_milestone_notice(
     return True
 
 
+def membership_notice_milestones(profile, now=None):
+    """Return notice milestones due now for trial, beta, or paid membership."""
+    now = now or current_app_time({})
+    plan = str(profile.get("plan") or "")
+    if str(profile.get("membership_source") or "") == "beta":
+        started = parse_datetime(profile.get("beta_started_at"))
+        if not started:
+            return []
+        elapsed = max(0, (now.date() - started.date()).days)
+        return [day for day in (18, 20, 21) if elapsed == day]
+    if plan == "trial":
+        started = parse_datetime(profile.get("trial_started_at"))
+        if not started:
+            return []
+        elapsed = max(0, (now.date() - started.date()).days)
+        return [day for day in (7, 12, 14) if elapsed == day]
+    if plan.startswith("paid_"):
+        paid_until = parse_datetime(profile.get("paid_until"))
+        if not paid_until:
+            return []
+        days_left = (paid_until.date() - now.date()).days
+        return [day for day in (7, 3, 1, 0) if days_left == day]
+    return []
+
+
+def _membership_notice_key(profile, milestone):
+    if str(profile.get("membership_source") or "") == "beta":
+        return f"beta:{profile.get('beta_started_at', '')}:{milestone}"
+    if str(profile.get("plan") or "") == "trial":
+        return f"trial:{profile.get('trial_started_at', '')}:{milestone}"
+    return f"paid:{profile.get('paid_until', '')}:{milestone}"
+
+
+def send_membership_lifecycle_notices(config, now=None):
+    """Push one-button lifecycle reminders once per due membership milestone."""
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+        "LINE_CHANNEL_ACCESS_TOKEN", ""
+    )
+    if not token:
+        return {
+            "sent": 0,
+            "skipped": 0,
+            "error": "LINE_CHANNEL_ACCESS_TOKEN is not set",
+        }, 400
+    clock = now or current_app_time(config)
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    state = load_state(config["DATA_FILE"])
+    sent = 0
+    skipped = 0
+    results = []
+    for profile in (state.get("users") or {}).values():
+        target = str(profile.get("line_user_id") or "").strip()
+        if (
+            not target
+            or bool(profile.get("expiry_remind_opt_out"))
+            or (
+                str(profile.get("plan") or "") == "trial"
+                and str(profile.get("membership_source") or "") != "beta"
+            )
+        ):
+            continue
+        completed = set(profile.get("membership_notice_keys_sent") or [])
+        for milestone in membership_notice_milestones(profile, now=clock):
+            notice_key = _membership_notice_key(profile, milestone)
+            if notice_key in completed:
+                skipped += 1
+                continue
+            message = build_expiry_remind_flex(profile, now=clock)
+            message["altText"] = (
+                "每日問候方案即將到期"
+                if milestone not in (0, 14, 21)
+                else "每日問候方案今天到期"
+            )
+            retry_key = _line_retry_key(
+                f"membership-lifecycle:{target}:{notice_key}"
+            )
+            status = "sent"
+            detail = ""
+            try:
+                _send_line_with_retry_key(sender, token, target, message, retry_key)
+                completed.add(notice_key)
+                sent += 1
+            except Exception as exc:
+                status = "failed"
+                detail = str(exc)[:400]
+                skipped += 1
+            append_notification_log(
+                state,
+                "membership_lifecycle",
+                target,
+                status,
+                message.get("altText") or "方案到期提醒",
+                detail,
+            )
+            results.append({
+                "line_user_id": target,
+                "milestone": milestone,
+                "status": status,
+            })
+        profile["membership_notice_keys_sent"] = sorted(completed)
+    save_state(config["DATA_FILE"], state)
+    return {"sent": sent, "skipped": skipped, "results": results}, 200
+
+
 def send_trial_milestone_notices(config, now=None):
     """Claim, deliver and atomically finalize each 14-day experience milestone."""
     token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
@@ -4706,11 +5005,6 @@ def send_trial_milestone_notices(config, now=None):
         }, 400
     clock = now or current_app_time(config)
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
-    messages = {
-        7: "14 天安心體驗已進行 7 天。可到會員中心確認守護人與提醒設定是否完整。",
-        12: "14 天安心體驗還剩 2 天。到期後一般提醒會暫停，守護關係與資料仍會保留。",
-        14: "14 天安心體驗今天到期。系統不會自動扣款；可到會員中心選擇適合的守護方案。",
-    }
     sent = 0
     skipped = 0
     results = []
@@ -4721,7 +5015,15 @@ def send_trial_milestone_notices(config, now=None):
     for claim in claims:
         target = claim["line_user_id"]
         day = claim["day"]
-        message = messages[day]
+        state = load_state(config["DATA_FILE"])
+        profile = (state.get("users") or {}).get(target) or {}
+        message = build_expiry_remind_flex(profile, now=clock)
+        if day == 7:
+            message["altText"] = "14 天安心體驗已進行 7 天"
+        elif day == 12:
+            message["altText"] = "14 天安心體驗還剩 2 天"
+        else:
+            message["altText"] = "14 天安心體驗今天到期"
         retry_key = _line_retry_key(
             f"trial-milestone:{target}:{claim['trial_started_at']}:{day}"
         )
@@ -4736,12 +5038,12 @@ def send_trial_milestone_notices(config, now=None):
             skipped += 1
         mutate_state_atomically(
             config["DATA_FILE"],
-            lambda state, current_claim=claim, current_message=message,
+            lambda saved_state, current_claim=claim,
             current_status=status, current_detail=detail:
                 _finish_trial_milestone_notice(
-                    state,
+                    saved_state,
                     current_claim,
-                    current_message,
+                    message.get("altText") or "14 天體驗提醒",
                     current_status,
                     current_detail,
                 ),
@@ -4755,66 +5057,10 @@ def send_trial_milestone_notices(config, now=None):
 
 
 def send_renewal_reminders(config):
-    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-    if not token:
-        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
-
-    state = load_state(config["DATA_FILE"])
-    sender = config.get("LINE_PUSH_SENDER") or line_push_message
-    now = current_app_time(config)
-    if not line_non_emergency_push_allowed(state, config, now):
-        return line_budget_blocked_response(state, config, now)
-    sent = 0
-    skipped = 0
-    system_error = False
-    for profile in state.get("users", {}).values():
-        if profile.get("payment_status") != "active":
-            continue
-        paid_until_text = str(profile.get("paid_until") or "").strip()
-        paid_until = parse_datetime(paid_until_text)
-        if not paid_until:
-            continue
-        days_left = (paid_until.date() - now.date()).days
-        if days_left < 0 or days_left > 7:
-            continue
-        if profile.get("renewal_reminder_sent_for") == paid_until_text:
-            skipped += 1
-            continue
-        delivery_key = f"renewal:{paid_until_text}"
-        if not push_attempt_allowed(profile, delivery_key):
-            skipped += 1
-            continue
-        if profile.get("auto_renew_enabled"):
-            message = f"你的守護方案將在 {days_left} 天後續扣。若付款方式有異動，記得先到會員中心確認。"
-        else:
-            message = f"你的守護方案即將到期，還剩 {days_left} 天。可到會員中心查看方案並續費，避免守護提醒中斷。"
-        try:
-            sender(token, profile.get("line_user_id"), message)
-            _clear_push_delivery_failure(profile, delivery_key)
-            profile["renewal_reminder_sent_for"] = paid_until_text
-            append_notification_log(state, "renewal", profile.get("line_user_id"), "sent", message)
-            sent += 1
-        except Exception as exc:
-            failure = _record_scheduled_push_failure(
-                state,
-                profile,
-                delivery_key,
-                "renewal",
-                profile.get("line_user_id"),
-                message,
-                exc,
-                now,
-            )
-            skipped += 1
-            if failure["kind"] == "system":
-                system_error = True
-                break
-    save_state(config["DATA_FILE"], state)
-    return {
-        "sent": sent,
-        "skipped": skipped,
-        "system_error": system_error,
-    }, 200
+    """Scheduled beta/paid expiry reminders with a single upgrade CTA."""
+    return send_membership_lifecycle_notices(
+        config, now=current_app_time(config)
+    )
 
 
 def resolve_contact_role(contact):
@@ -11831,6 +12077,62 @@ def admin_summary(data_file, config=None, now=None):
                 }
             )
     users.sort(key=lambda item: (not item["is_overdue"], item.get("display_name") or ""))
+    users_by_id = {
+        str(user.get("line_user_id") or ""): user
+        for user in users
+        if user.get("line_user_id")
+    }
+    daily_push_rows = {}
+    persisted_daily_pushes = state.get("daily_push_member_stats") or {}
+    if isinstance(persisted_daily_pushes, dict):
+        for key, item in persisted_daily_pushes.items():
+            if isinstance(item, dict):
+                daily_push_rows[str(key)] = dict(item)
+    # Backfill recent legacy logs that predate the persistent daily counters.
+    for log in state.get("notification_logs") or []:
+        line_user_id = str(log.get("line_user_id") or "").strip()
+        created_at = str(log.get("created_at") or "")
+        date = created_at[:10]
+        if not line_user_id or len(date) != 10:
+            continue
+        key = f"{date}|{line_user_id}"
+        if key in daily_push_rows:
+            continue
+        matching = [
+            row
+            for row in (state.get("notification_logs") or [])
+            if str(row.get("line_user_id") or "").strip() == line_user_id
+            and str(row.get("created_at") or "")[:10] == date
+        ]
+        daily_push_rows[key] = {
+            "date": date,
+            "line_user_id": line_user_id,
+            "sent_count": sum(1 for row in matching if row.get("status") == "sent"),
+            "failed_count": sum(
+                1 for row in matching if row.get("status") in {"failed", "error", "blocked"}
+            ),
+            "total_count": len(matching),
+            "kinds": sorted({
+                str(row.get("kind") or "other") for row in matching
+            }),
+            "last_push_at": max(
+                (str(row.get("created_at") or "") for row in matching),
+                default="",
+            ),
+        }
+    daily_push_member_stats = []
+    for item in daily_push_rows.values():
+        member = users_by_id.get(str(item.get("line_user_id") or ""), {})
+        daily_push_member_stats.append({
+            **item,
+            "display_name": member.get("display_name") or "未取得暱稱",
+            "plan": member.get("plan") or "free",
+            "expires_at": member.get("plan_expires_at") or "",
+        })
+    daily_push_member_stats.sort(
+        key=lambda item: (item.get("date") or "", item.get("last_push_at") or ""),
+        reverse=True,
+    )
     guardian_groups = list(state.get("guardian_groups", {}).values())
     guardian_groups.sort(key=lambda item: item.get("created_at", ""), reverse=True)
     orders = list(reversed(state.get("orders", [])[-100:]))
@@ -11902,6 +12204,7 @@ def admin_summary(data_file, config=None, now=None):
         "users": users,
         "contact_rewards": list(reversed(state.get("contact_rewards", [])[-20:])),
         "notification_logs": list(reversed(state.get("notification_logs", [])[-20:])),
+        "daily_push_member_stats": daily_push_member_stats[:500],
         "line_message_usage": line_usage,
         "display_names_hydrated": hydrated,
         "persistence": persist,
@@ -12306,9 +12609,10 @@ def append_notification_log(state, kind, line_user_id, status, message, detail=N
         message_text = str(message.get("altText") or message.get("type") or message)[:120]
     else:
         message_text = str(message or "")[:120]
+    created_at = datetime.now().isoformat(timespec="seconds")
     logs.append(
         {
-            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "created_at": created_at,
             "kind": kind,
             "line_user_id": line_user_id,
             "status": status,
@@ -12317,6 +12621,34 @@ def append_notification_log(state, kind, line_user_id, status, message, detail=N
         }
     )
     state["notification_logs"] = logs[-100:]
+    member_id = str(line_user_id or "").strip()
+    date = created_at[:10]
+    if member_id:
+        stats = state.setdefault("daily_push_member_stats", {})
+        key = f"{date}|{member_id}"
+        row = stats.setdefault(
+            key,
+            {
+                "date": date,
+                "line_user_id": member_id,
+                "sent_count": 0,
+                "failed_count": 0,
+                "total_count": 0,
+                "kinds": [],
+                "last_push_at": created_at,
+            },
+        )
+        row["total_count"] = int(row.get("total_count") or 0) + 1
+        if status == "sent":
+            row["sent_count"] = int(row.get("sent_count") or 0) + 1
+        elif status in {"failed", "error", "blocked"}:
+            row["failed_count"] = int(row.get("failed_count") or 0) + 1
+        row["kinds"] = sorted(set(row.get("kinds") or []) | {str(kind or "other")})
+        row["last_push_at"] = created_at
+        # Keep roughly one year of daily/member aggregates without growing forever.
+        if len(stats) > 20000:
+            for old_key in sorted(stats)[: len(stats) - 20000]:
+                stats.pop(old_key, None)
 
 
 LINE_MESSAGE_USAGE_CATEGORIES = {
@@ -14531,6 +14863,7 @@ def run_cron_tick(config):
         "09:00": ("birthday_reminders", send_birthday_reminders),
         "09:05": ("contact_reminders", send_missing_contact_reminders),
         "10:00": ("renewal_reminders", send_renewal_reminders),
+        "19:00": ("beta_daily_feedback", send_beta_daily_feedback),
         "02:30": ("data_cleanup", cleanup_expired_data),
     }
     if slot in daily:
@@ -15844,6 +16177,10 @@ def create_app(config=None):
                     reply = handle_checkin_postback(app.config["DATA_FILE"], line_user_id, app.config)
                 elif is_expiry_opt_out_postback(data):
                     reply = handle_expiry_opt_out_postback(app.config["DATA_FILE"], line_user_id)
+                elif data.startswith("beta_feedback:"):
+                    reply = handle_beta_feedback_postback(
+                        app.config["DATA_FILE"], line_user_id, data
+                    )
                 elif data.startswith("smart:"):
                     reply = handle_smart_reminder_postback(
                         app.config["DATA_FILE"], line_user_id, data, app.config

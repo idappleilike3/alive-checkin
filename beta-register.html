@@ -5,46 +5,70 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>每日平安｜21 天封測</title>
   <style>
-    :root { color-scheme: light; --green:#168c65; --ink:#18332c; --soft:#eef9f4; }
-    * { box-sizing:border-box; }
-    body { margin:0; font-family:"Noto Sans TC",system-ui,sans-serif; color:var(--ink); background:linear-gradient(180deg,#e9f8f1,#fff); }
-    main { width:min(100% - 32px,620px); margin:28px auto; }
-    .card { background:#fff; border:1px solid #cfe9dd; border-radius:26px; padding:26px 22px; box-shadow:0 18px 48px #1c72551a; }
-    .eyebrow { color:var(--green); font-weight:800; }
-    h1 { font-size:clamp(28px,7vw,40px); line-height:1.2; margin:10px 0; }
-    .lead { font-size:18px; line-height:1.75; }
-    .benefits { display:grid; gap:12px; margin:22px 0; }
-    .benefit { padding:14px 16px; border-radius:16px; background:var(--soft); }
-    .spots { font-weight:800; color:#9b5d00; }
-    a.cta { display:block; padding:17px 16px; border-radius:16px; background:var(--green); color:#fff; text-align:center; text-decoration:none; font-size:20px; font-weight:900; }
-    small { display:block; text-align:center; margin-top:12px; color:#63746f; line-height:1.6; }
+    :root{--green:#168c65;--ink:#18332c;--muted:#63746f;--soft:#eef9f4;--line:#cfe9dd}
+    *{box-sizing:border-box}body{margin:0;font-family:"Noto Sans TC",system-ui,sans-serif;color:var(--ink);background:linear-gradient(180deg,#e9f8f1,#fff)}
+    main{width:min(100% - 28px,680px);margin:24px auto 56px}.card{background:#fff;border:1px solid var(--line);border-radius:26px;padding:25px 21px;box-shadow:0 18px 48px #1c72551a;margin-bottom:16px}
+    .eyebrow{color:var(--green);font-weight:900}h1{font-size:clamp(28px,7vw,40px);line-height:1.2;margin:10px 0}.lead{font-size:17px;line-height:1.75}.story{width:100%;border-radius:18px;display:block;margin:18px 0}
+    h2{font-size:21px;margin:0 0 12px}.grid{display:grid;gap:11px}.item{padding:14px 15px;border-radius:15px;background:var(--soft);line-height:1.6}.task-799{display:none}.notice{padding:14px;border-left:5px solid #e49b27;background:#fff7e8;border-radius:12px;line-height:1.65}
+    ul{padding-left:21px;line-height:1.75}.consent{display:flex;gap:11px;align-items:flex-start;padding:16px;background:#f5f7f6;border-radius:14px;font-weight:750;line-height:1.55}.consent input{width:23px;height:23px;flex:none}
+    .cta{display:block;width:100%;border:0;padding:18px 16px;border-radius:16px;background:var(--green);color:#fff;text-align:center;text-decoration:none;font-size:20px;font-weight:900;margin-top:15px}.cta[aria-disabled="true"]{opacity:.42;pointer-events:none}.spots{font-weight:900;color:#9b5d00}small{display:block;text-align:center;margin-top:12px;color:var(--muted);line-height:1.6}
   </style>
 </head>
 <body>
-  <main>
-    <section class="card">
-      <div class="eyebrow">每日平安限定招募</div>
-      <h1 id="title">21 天封閉測試</h1>
-      <p class="lead">不用刷卡、不會自動扣款。完成 LINE 註冊後，系統會自動分入正確組別，並引導你邀請至少一位核心守護人。</p>
-      <div class="benefits">
-        <div class="benefit">✅ 21 天完整測試指定方案功能</div>
-        <div class="benefit">✅ 每日報平安、逾時提醒與 SOS</div>
-        <div class="benefit">✅ 守護人免費接收通知</div>
-      </div>
-      <p class="spots" id="spots"></p>
-      <a class="cta" id="join" href="#">用 LINE 加入 21 天封測</a>
-      <small>每人只能加入一個封測組別。額滿後連結會自動停止接受註冊。</small>
-    </section>
-  </main>
-  <script>
-    const is799 = location.pathname.endsWith("/799");
-    const cohort = is799 ? "B799" : "B399";
-    document.getElementById("title").textContent =
-      is799 ? "799 守護版｜21 天封測" : "399 安心版｜21 天封測";
-    document.getElementById("spots").textContent =
-      is799 ? "本組限額 10 人" : "本組限額 20 人";
-    document.getElementById("join").href =
-      `https://liff.line.me/2010848330-UAiqPPYD?beta_cohort=${cohort}&open=onboarding`;
-  </script>
+<main>
+  <section class="card">
+    <div class="eyebrow">每日平安限定招募</div>
+    <h1 id="title">21 天封閉測試</h1>
+    <p class="lead">每天 10 秒報平安，平常不打擾，真的有事才通知守護人。即使你與家人不住在一起，也能用 LINE 簡單確認彼此平安。</p>
+    <img class="story" src="/assets/guardian-story-mother-daughter-mobile.webp" alt="媽媽每天按下我平安，女兒在 LINE 收到通知的母女圖文故事">
+    <div class="grid">
+      <div class="item">① 你每天按一次「我平安」</div>
+      <div class="item">② 未在設定時間完成，系統才提醒核心守護人</div>
+      <div class="item">③ 緊急時可用 SOS 通知指定收件人</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>封測期間請你協助什麼？</h2>
+    <p>21 天內實際使用功能，系統每天 19:00 透過官方 LINE 詢問一次使用狀況。你只要點選「正常／發現問題／使用心得／不會操作／稍後提醒」即可。</p>
+    <div class="grid">
+      <div class="item">✅ 測試每日報平安、逾時提醒、核心守護人與 SOS</div>
+      <div class="item task-399">✅ 399 組：測試私訊預警、1／3 小時安全守護與多位守護人</div>
+      <div class="item task-799">✅ 799 組：測試家庭 LINE 群組、多人守護、1／3／6／8 小時安全守護與 SOS</div>
+      <div class="item">✅ 第 7、14、21 天提供階段心得</div>
+    </div>
+    <p>若發現問題，請提供：<strong>截圖、發生時間、操作步驟、手機型號與 LINE 版本</strong>。回報都在官方 LINE 內完成，不必學另一套後台。</p>
+  </section>
+
+  <section class="card">
+    <h2>參加前請先了解</h2>
+    <ul>
+      <li>21 天封測不用刷卡、不會自動扣款</li>
+      <li>每人只能選一個封測組別，且免費資格只能使用一次</li>
+      <li>封測結束後每日問候會暫停；守護關係與設定保留</li>
+      <li>到期前會詢問是否升級；你可以選擇不再提醒</li>
+      <li>緊急危險請直接撥打 110／119，本服務不能取代警消與醫療</li>
+    </ul>
+    <p class="spots" id="spots"></p>
+    <label class="consent"><input id="consent" type="checkbox"><span>我已閱讀並同意封測規則，願意每天接收 1 則封測詢問並提供真實回饋</span></label>
+    <a class="cta" id="join" href="#" aria-disabled="true">用 LINE 加入 21 天封測</a>
+    <small>額滿後連結會自動停止接受註冊</small>
+  </section>
+</main>
+<script>
+  const is799 = location.pathname.endsWith("/799");
+  const cohort = is799 ? "B799" : "B399";
+  const join = document.getElementById("join");
+  const consent = document.getElementById("consent");
+  document.getElementById("title").textContent = is799 ? "799 守護版｜21 天封測" : "399 安心版｜21 天封測";
+  document.getElementById("spots").textContent = is799 ? "本組限額 10 人" : "本組限額 20 人";
+  document.querySelectorAll(is799 ? ".task-799" : ".task-399").forEach((el) => el.style.display = "block");
+  join.href = `https://liff.line.me/2010848330-UAiqPPYD?beta_cohort=${cohort}&open=onboarding`;
+  join.disabled = !consent.checked;
+  consent.addEventListener("change", () => {
+    join.disabled = !consent.checked;
+    join.setAttribute("aria-disabled", String(join.disabled));
+  });
+</script>
 </body>
 </html>

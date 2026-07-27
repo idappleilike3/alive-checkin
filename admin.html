@@ -851,6 +851,21 @@
     </section>
 
     <section class="panel" style="margin-top: 16px;">
+      <h2 style="margin: 0 0 8px;">每日會員推播次數</h2>
+      <p class="note">依日期與會員統計成功、失敗及總推播數，並顯示目前方案與到期時間。</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>日期</th><th>會員</th><th>方案</th><th>到期時間</th><th>成功</th><th>失敗</th><th>總次數</th><th>推播內容</th><th>最後推播</th></tr>
+          </thead>
+          <tbody id="dailyPushStatsBody">
+            <tr><td colspan="9">尚未載入</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top: 16px;">
       <h2 style="margin: 0 0 8px;">最近推播紀錄</h2>
       <div class="log-list" id="logList">
         <div class="log-item"><span>尚未載入</span><span></span><span></span></div>
@@ -956,7 +971,10 @@
           <td>${escapeHtml(row.cohort)}／${escapeHtml(row.plan)}</td>
           <td>${row.revoked ? "已移除" : `Day ${Number(row.current_day) || 0}／剩 ${Number(row.remaining_days) || 0} 天`}<br><small>${escapeHtml(row._milestoneText)}</small><br><small>${escapeHtml(row.ends_at || "")}</small></td>
           <td>守護 ${row.guardian_count || 0} 位<br>${row.reminder_setup ? "已設提醒" : "未設提醒"}</td>
-          <td>${escapeHtml(row.push_result || "尚未測推播")}<br>${escapeHtml(row.sos_test_status || "尚未測 SOS")}<br>${escapeHtml(row.feedback_status || "pending")}</td>
+          <td>${escapeHtml(row.push_result || "尚未測推播")}<br>${escapeHtml(row.sos_test_status || "尚未測 SOS")}<br>
+            回報：${escapeHtml(row.feedback_status || "pending")}
+            ${row.feedback_last_day ? `<br><small>Day ${Number(row.feedback_last_day)}／${escapeHtml(row.feedback_last_at || "")}</small>` : ""}
+          </td>
           <td><button type="button" class="secondary beta-revoke" data-line-user-id="${escapeHtml(row.line_user_id)}" ${row.revoked ? "disabled" : ""}>移除</button></td>
         </tr>
       `).join("") : '<tr><td colspan="6">目前沒有封測名單</td></tr>';
@@ -1694,6 +1712,21 @@
           </div>
         `).join("")
         : `<div class="log-item"><span>還沒有推播紀錄</span><span></span><span></span></div>`;
+      $("dailyPushStatsBody").innerHTML = (data.daily_push_member_stats || []).length
+        ? data.daily_push_member_stats.map((row) => `
+          <tr>
+            <td>${escapeHtml(row.date || "-")}</td>
+            <td><strong>${escapeHtml(row.display_name || "未取得暱稱")}</strong><br><small>${escapeHtml(row.line_user_id || "-")}</small></td>
+            <td>${escapeHtml(planLabel(row.plan || "free"))}</td>
+            <td>${row.expires_at ? escapeHtml(formatDate(row.expires_at)) : "無到期日"}</td>
+            <td><span class="badge ok">${Number(row.sent_count || 0)}</span></td>
+            <td><span class="badge ${Number(row.failed_count || 0) ? "bad" : "ok"}">${Number(row.failed_count || 0)}</span></td>
+            <td><strong>${Number(row.total_count || 0)}</strong></td>
+            <td>${(row.kinds || []).map((kind) => escapeHtml(logKindLabel(kind))).join("、") || "-"}</td>
+            <td>${row.last_push_at ? escapeHtml(formatDate(row.last_push_at)) : "-"}</td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="9">目前還沒有推播統計</td></tr>`;
       $("rewardList").innerHTML = (data.contact_rewards || []).length
         ? data.contact_rewards.map((reward) => `
           <div class="reward-item">
