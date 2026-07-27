@@ -206,7 +206,7 @@ DEFAULT_PROFILE = {
     "auto_renew_status": "off",
     "newebpay_period_no": "",
     "newebpay_period_order_no": "",
-    # 方案／試用到期後：守護人＋緊急連絡人軟保留至 contacts_retain_until
+    # 舊版相容欄位；現行政策不設自動刪除期限，排程會清除舊倒數並還原舊封存。
     "plan_expired_at": "",
     "contacts_retain_until": "",
     "contacts_archived": [],
@@ -251,9 +251,6 @@ LAUNCH_SCENARIO_STEPS = {
     "expiry": {"expired", "paused", "renewed"},
 }
 TRIAL_POLICY_VERSION = "2026-07-no-invite-reward-v1"
-# 方案／試用到期後，守護人＋緊急連絡人資料再保留天數（之後軟封存）
-CONTACTS_RETAIN_DAYS = 30
-
 # 依每日提醒次數的預設時段(使用者未自訂時使用)
 DEFAULT_REMINDER_TIMES_BY_COUNT = {
     1: ["12:00"],
@@ -3350,6 +3347,24 @@ def contacts_retain_days_left(profile, now=None):
 def soft_archive_contacts_past_retain(profile, now):
     """Relationships are never auto-archived merely because a plan expired."""
     return False
+
+
+def restore_legacy_auto_archived_contacts(profile):
+    """Migrate legacy expiry archives back to permanent active storage."""
+    if not isinstance(profile, dict):
+        return False
+    archived = profile.get("contacts_archived") or []
+    had_deadline = bool(str(profile.get("contacts_retain_until") or "").strip())
+    if archived:
+        profile["contacts"] = _merge_migration_records(
+            profile.get("contacts"),
+            archived,
+            ("id", "accepted_invite_id", "invite_id"),
+            "contact",
+        )
+    profile["contacts_retain_until"] = ""
+    profile["contacts_archived"] = []
+    return bool(archived or had_deadline)
 
 
 def restore_membership_after_renewal(profile, plan, paid_until, now=None):
@@ -11451,6 +11466,172 @@ def append_admin_audit(data_file, action, status, metadata=None):
     save_state(data_file, state)
 
 
+ADMIN_TEST_CENTER_TESTS = {
+    "daily_greeting": ("每日問候推播", "line"),
+    "trial_14_notice": ("14 天體驗提醒", "line"),
+    "beta_21_notice": ("21 天封測提醒", "line"),
+    "paid_expiry_notice": ("付費方案到期提醒", "line"),
+    "payment_restore": ("付款後恢復原設定", "simulation"),
+    "sos_location": ("SOS、取消與定位通知", "line"),
+    "guardian_invite": ("核心守護人邀請綁定", "line"),
+    "beta_feedback_1900": ("19:00 封測詢問", "line"),
+    "stop_renewal_notice": ("不再提醒我", "simulation"),
+    "r2_backup": ("R2 加密備份", "r2"),
+}
+
+
+def _test_line_user_ids(config):
+    raw = config.get("TEST_LINE_USER_IDS") or ""
+    if isinstance(raw, (list, tuple, set)):
+        values = raw
+    else:
+        values = str(raw).split(",")
+    return [str(value).strip() for value in values if str(value).strip()]
+
+
+def _masked_test_account(line_user_id):
+    digest = hashlib.sha256(str(line_user_id).encode("utf-8")).hexdigest()[:8]
+    return {"id": digest, "label": f"測試帳號 …{digest[-4:]}"}
+
+
+def _test_center_integrations(config):
+    configured = lambda key: bool(str(config.get(key) or "").strip())
+    return {
+        "line": {
+            "configured": configured("LINE_CHANNEL_ACCESS_TOKEN"),
+            "label": "LINE 推播",
+        },
+        "r2": {
+            "configured": all(configured(key) for key in (
+                "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY",
+                "R2_BUCKET", "R2_BACKUP_ENCRYPTION_KEY",
+            )),
+            "label": "R2 加密備份",
+        },
+        "ga4": {
+            "configured": configured("GA4_MEASUREMENT_ID")
+            and configured("GA4_PROPERTY_ID")
+            and configured("GA4_SERVICE_ACCOUNT_JSON"),
+            "label": "GA4 報表",
+        },
+        "payment": {
+            "configured": (
+                all(configured(key) for key in (
+                    "ECPAY_MERCHANT_ID", "ECPAY_HASH_KEY", "ECPAY_HASH_IV",
+                ))
+                or all(configured(key) for key in (
+                    "NEWEBPAY_MERCHANT_ID", "NEWEBPAY_HASH_KEY", "NEWEBPAY_HASH_IV",
+                ))
+            ),
+            "live": (
+                str(config.get("ECPAY_STAGE") or "sandbox").lower() == "production"
+                or str(config.get("NEWEBPAY_STAGE") or "sandbox").lower() == "production"
+            ),
+            "label": "金流",
+        },
+    }
+
+
+def admin_test_center_status(data_file, config):
+    state = load_state(data_file)
+    accounts = _test_line_user_ids(config)
+    return {
+        "test_mode": True,
+        "test_accounts": [_masked_test_account(item) for item in accounts],
+        "integrations": _test_center_integrations(config),
+        "tests": [
+            {"id": test_id, "label": label, "kind": kind}
+            for test_id, (label, kind) in ADMIN_TEST_CENTER_TESTS.items()
+        ],
+        "recent_runs": list(reversed(state.get("test_center_runs") or []))[:20],
+    }
+
+
+def _test_center_message(test_id):
+    label = ADMIN_TEST_CENTER_TESTS[test_id][0]
+    details = {
+        "daily_greeting": "這是每日問候推播測試，請確認文字與按鈕顯示正常。",
+        "trial_14_notice": "這是 14 天體驗第 7／12／14 天提醒預覽。",
+        "beta_21_notice": "這是 21 天封測第 18／20／21 天提醒預覽。",
+        "paid_expiry_notice": "這是付費方案到期前 7／3／1 天與到期日提醒預覽。",
+        "sos_location": "這是 SOS、取消 SOS 與定位通知的安全預覽，不會建立真實事件。",
+        "guardian_invite": "這是核心守護人邀請與綁定說明預覽。",
+        "beta_feedback_1900": "這是每天 19:00 封測使用詢問預覽。",
+    }
+    return f"【測試模式】{label}\n{details.get(test_id, '安全測試預覽')}\n不會扣款、不會變更方案。"
+
+
+def run_admin_test(data_file, config, payload):
+    payload = payload if isinstance(payload, dict) else {}
+    test_id = str(payload.get("test_id") or "").strip()
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if test_id not in ADMIN_TEST_CENTER_TESTS:
+        return {"ok": False, "error": "unknown_test"}, 400
+    allowed = _test_line_user_ids(config)
+    account_id = str(payload.get("account_id") or "").strip()
+    if not line_user_id and account_id:
+        line_user_id = next(
+            (
+                item for item in allowed
+                if _masked_test_account(item)["id"] == account_id
+            ),
+            "",
+        )
+    if line_user_id not in allowed:
+        return {"ok": False, "error": "test_recipient_not_allowed"}, 403
+    label, kind = ADMIN_TEST_CENTER_TESTS[test_id]
+    status = "success"
+    error = ""
+    result = {"ok": True, "test_id": test_id, "label": label, "test_mode": True}
+    try:
+        if kind == "line":
+            token = str(config.get("LINE_CHANNEL_ACCESS_TOKEN") or "").strip()
+            if not token:
+                raise ValueError("line_not_configured")
+            sender = config.get("LINE_PUSH_SENDER") or line_push_message
+            sender(token, line_user_id, _test_center_message(test_id))
+            result["sent"] = True
+        elif kind == "r2":
+            backup, code = create_r2_encrypted_backup(config)
+            if code >= 400:
+                raise ValueError(str(backup.get("error") or "r2_backup_failed"))
+            result["backup"] = {
+                "key": str(backup.get("key") or ""),
+                "created_at": str(backup.get("created_at") or ""),
+            }
+        else:
+            result["simulated"] = True
+            result["message"] = (
+                "付款後恢復原設定模擬成功；未呼叫金流、未改方案。"
+                if test_id == "payment_restore"
+                else "不再提醒偏好模擬成功；未修改正式會員資料。"
+            )
+    except Exception as exc:
+        status = "failed"
+        error = classify_line_push_error(exc)
+        result = {
+            "ok": False,
+            "error": error,
+            "test_id": test_id,
+            "test_mode": True,
+        }
+
+    state = load_state(data_file)
+    runs = list(state.get("test_center_runs") or [])
+    runs.append({
+        "id": uuid.uuid4().hex[:12],
+        "test_id": test_id,
+        "label": label,
+        "target": _masked_test_account(line_user_id)["label"],
+        "status": status,
+        "error": error,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    })
+    state["test_center_runs"] = runs[-100:]
+    save_state(data_file, state)
+    return result, (200 if status == "success" else 502)
+
+
 def resolve_admin_incident(data_file, payload, actor_role):
     kind = str((payload or {}).get("kind") or "").strip().casefold()
     incident_id = str((payload or {}).get("incident_id") or "").strip()
@@ -13660,12 +13841,15 @@ def cleanup_expired_data(config):
         )
         expired_locations_removed = 0
         contacts_archived = 0
+        contacts_restored = 0
         migration_snapshots_removed = purge_account_migration_snapshots(
             state,
             now=migration_cleanup_now,
         )
 
         for profile in state.get("users", {}).values():
+            if restore_legacy_auto_archived_contacts(profile):
+                contacts_restored += 1
             if soft_archive_contacts_past_retain(profile, now):
                 contacts_archived += 1
             location = profile.get("location") or {}
@@ -13717,6 +13901,7 @@ def cleanup_expired_data(config):
                 logs_before - len(state["notification_logs"])
             ),
             "contacts_archived_users": contacts_archived,
+            "contacts_restored_users": contacts_restored,
             "migration_snapshots_removed": migration_snapshots_removed,
             "migration_tickets_removed": migration_history_removed["tickets"],
             "migration_audit_removed": migration_history_removed["audit"],
@@ -15302,6 +15487,7 @@ def create_app(config=None):
         R2_BACKUP_ENCRYPTION_KEY=os.environ.get(
             "R2_BACKUP_ENCRYPTION_KEY", ""
         ),
+        TEST_LINE_USER_IDS=os.environ.get("TEST_LINE_USER_IDS", ""),
     )
     if config:
         app.config.update(config)
@@ -17651,6 +17837,31 @@ def create_app(config=None):
         if denied:
             return denied
         return jsonify(admin_summary(app.config["DATA_FILE"], app.config))
+
+    @app.get("/api/admin/test-center")
+    def admin_test_center_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        return jsonify(admin_test_center_status(app.config["DATA_FILE"], app.config))
+
+    @app.post("/api/admin/test-center/run")
+    def admin_test_center_run_api():
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
+        data, code = run_admin_test(
+            app.config["DATA_FILE"],
+            app.config,
+            request.get_json(silent=True) or {},
+        )
+        append_admin_audit(
+            app.config["DATA_FILE"],
+            f"test_center.{data.get('test_id') or 'unknown'}",
+            "success" if code < 400 else "failed",
+            {"http_status": code, "test_mode": True},
+        )
+        return jsonify(data), code
 
     @app.get("/api/admin/account-migrations")
     def admin_account_migrations_api():

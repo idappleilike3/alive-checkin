@@ -406,6 +406,7 @@
       <a href="#orders">方案與訂單</a>
       <a href="#support">客服與隱私</a>
       <a href="#analytics">流量分析</a>
+      <a href="#test-center">測試中心</a>
       <a href="#seo">SEO 管理</a>
       <a href="#system">系統設定</a>
     </nav>
@@ -822,6 +823,39 @@
       <p class="note" id="message">小提醒：推播需要設定 LINE_CHANNEL_ACCESS_TOKEN，使用者也要先加官方帳號好友。</p>
     </section>
 
+    <section class="panel section-heading" id="test-center" style="margin-top:16px;">
+      <h2 style="margin:0 0 6px;">部署前安全測試中心</h2>
+      <p class="note">所有操作均標示「測試模式」，只傳給白名單測試帳號，不扣款、不改方案、不計入正式會員推播次數。</p>
+      <div class="toolbar">
+        <label>指定測試 LINE 帳號
+          <select id="testAccountSelect">
+            <option value="">尚未設定測試帳號</option>
+          </select>
+        </label>
+        <button type="button" class="info" onclick="loadTestCenter()">重新讀取狀態</button>
+      </div>
+      <h3>外部服務狀態</h3>
+      <div class="integration-grid" id="testIntegrationStatus">
+        <div class="integration-card"><strong>正在檢查</strong><p>只檢查是否已設定，不顯示任何金鑰。</p></div>
+      </div>
+      <h3>測試按鈕</h3>
+      <div class="integration-grid" id="testCenterActions">
+        <button type="button" data-test-id="daily_greeting" onclick="runTestCenterAction('daily_greeting')">測試每日問候推播</button>
+        <button type="button" data-test-id="trial_14_notice" onclick="runTestCenterAction('trial_14_notice')">測試 14 天體驗提醒</button>
+        <button type="button" data-test-id="beta_21_notice" onclick="runTestCenterAction('beta_21_notice')">測試 21 天封測提醒</button>
+        <button type="button" data-test-id="paid_expiry_notice" onclick="runTestCenterAction('paid_expiry_notice')">測試付費到期提醒</button>
+        <button type="button" data-test-id="payment_restore" onclick="runTestCenterAction('payment_restore')">模擬付款後恢復</button>
+        <button type="button" data-test-id="sos_location" onclick="runTestCenterAction('sos_location')">測試 SOS／取消／定位</button>
+        <button type="button" data-test-id="guardian_invite" onclick="runTestCenterAction('guardian_invite')">測試守護人邀請綁定</button>
+        <button type="button" data-test-id="beta_feedback_1900" onclick="runTestCenterAction('beta_feedback_1900')">測試 19:00 封測詢問</button>
+        <button type="button" data-test-id="stop_renewal_notice" onclick="runTestCenterAction('stop_renewal_notice')">模擬不再提醒</button>
+        <button type="button" data-test-id="r2_backup" onclick="runTestCenterAction('r2_backup')">測試 R2 加密備份</button>
+      </div>
+      <p class="auth-status" id="testCenterMessage" role="status" aria-live="polite">尚未執行測試。</p>
+      <h3>最近測試紀錄</h3>
+      <div class="log-list" id="testCenterRuns"><div class="log-item"><span>尚無紀錄</span><span></span><span></span></div></div>
+    </section>
+
     <section class="panel section-heading" id="guardian-operations" style="margin-top: 16px;">
       <h2 style="margin: 0 0 8px;">邀請綁定關係（誰邀請誰）</h2>
       <p class="note">依邀請人 contacts 的 LINE 綁定列出；每個人分享連結都帶自己的 <code>invite_from</code>。</p>
@@ -1126,6 +1160,56 @@
       $("migrationLastAttempt").textContent = "暫時無法取得";
       $("migrationFailure").textContent = "暫時無法取得";
       $("migrationCounts").textContent = "暫時無法取得";
+    }
+
+    function renderTestCenter(data) {
+      const select = $("testAccountSelect");
+      const current = select.value;
+      const accounts = data.test_accounts || [];
+      select.innerHTML = accounts.length
+        ? accounts.map((account) => `<option value="${account.id}">${account.label}</option>`).join("")
+        : '<option value="">尚未設定 TEST_LINE_USER_IDS</option>';
+      if (accounts.some((account) => account.id === current)) select.value = current;
+      $("testIntegrationStatus").innerHTML = Object.values(data.integrations || {}).map((item) => `
+        <div class="integration-card">
+          <strong>${item.label}</strong>
+          <p><span class="badge ${item.configured ? "ok" : "bad"}">${item.configured ? "已設定" : "尚未設定"}</span>${item.live === false ? "｜目前為測試環境" : ""}</p>
+        </div>
+      `).join("");
+      const runs = data.recent_runs || [];
+      $("testCenterRuns").innerHTML = runs.length
+        ? runs.map((run) => `<div class="log-item"><span>${run.label}</span><span>${run.target}｜${run.status === "success" ? "成功" : "失敗"}</span><span>${formatDate(run.created_at)}</span></div>`).join("")
+        : '<div class="log-item"><span>尚無測試紀錄</span><span></span><span></span></div>';
+    }
+
+    async function loadTestCenter() {
+      const response = await adminFetch("/api/admin/test-center");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        $("testCenterMessage").textContent = authErrorText(data, response.status);
+        return;
+      }
+      renderTestCenter(data);
+    }
+
+    async function runTestCenterAction(testId) {
+      const accountId = $("testAccountSelect").value;
+      if (!accountId) {
+        $("testCenterMessage").textContent = "請先在 Render 設定 TEST_LINE_USER_IDS 測試帳號白名單。";
+        return;
+      }
+      if (!confirm("確定以測試模式執行？只會作用於指定測試帳號。")) return;
+      $("testCenterMessage").textContent = "測試執行中…";
+      const response = await adminFetch("/api/admin/test-center/run", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({test_id: testId, account_id: accountId})
+      });
+      const data = await response.json().catch(() => ({}));
+      $("testCenterMessage").textContent = response.ok
+        ? `${data.label || "測試"}已完成（測試模式）。`
+        : `測試失敗：${data.error || "請檢查外部服務設定"}`;
+      await loadTestCenter();
     }
 
     async function refreshAccountMigrations() {
@@ -1792,6 +1876,7 @@
       await loadBusinessDashboard();
       await loadOperationsControls();
       await refreshBackups();
+      await loadTestCenter();
       setAuthStatus(`資料已載入（已綁守護人 ${data.bound_guardian_total || 0}、邀請關係 ${(data.invite_edges || []).length}）。`, "is-ok");
     }
 

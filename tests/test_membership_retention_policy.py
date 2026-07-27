@@ -45,6 +45,48 @@ class MembershipRetentionPolicyTests(unittest.TestCase):
         )
         self.assertEqual(len(profile["contacts"]), 1)
 
+    def test_cleanup_cancels_legacy_deadline_and_restores_auto_archived_contacts(self):
+        with TemporaryDirectory() as temp_dir:
+            data_file = Path(temp_dir) / "data.json"
+            app_module.save_state(data_file, {
+                "users": {
+                    "U-owner": {
+                        "line_user_id": "U-owner",
+                        "plan": "free",
+                        "membership_source": "expired",
+                        "membership_paused": True,
+                        "contacts_retain_until": (
+                            self.now - timedelta(days=1)
+                        ).isoformat(timespec="seconds"),
+                        "contacts": [{
+                            "id": "guardian-kept",
+                            "name": "媽媽",
+                            "binding_status": "accepted",
+                        }],
+                        "contacts_archived": [{
+                            "id": "guardian-restored",
+                            "name": "女兒",
+                            "binding_status": "accepted",
+                        }],
+                    }
+                }
+            })
+
+            result, code = app_module.cleanup_expired_data({
+                "DATA_FILE": data_file,
+                "CRON_NOW": self.now,
+            })
+            profile = app_module.load_state(data_file)["users"]["U-owner"]
+
+            self.assertEqual(code, 200)
+            self.assertEqual(result["contacts_restored_users"], 1)
+            self.assertEqual(profile["contacts_retain_until"], "")
+            self.assertEqual(profile["contacts_archived"], [])
+            self.assertEqual(
+                {contact["name"] for contact in profile["contacts"]},
+                {"媽媽", "女兒"},
+            )
+
     def test_beta_expiry_lapses_exactly_at_end_and_is_idempotent(self):
         state = {
             "users": {
