@@ -3802,18 +3802,21 @@
       <p class="mvp-panel-lead">適合外出、夜歸、看診或短時間需要家人知道位置時使用。先選時長再開始，時間到會自動停止，也可提前結束。</p>
       <ol class="mvp-guard-steps" aria-label="安全守護使用步驟">
         <li>先「一鍵邀請」讓家人完成 LINE 綁定（對方需加入官方帳號好友）</li>
-        <li>選擇守護時長（依方案：1／3／6／8 小時）</li>
+        <li>選擇守護時長（199：15 分鐘；399：1／3 小時；799：1／3／6／8 小時）</li>
+        <li>選擇指定 1 位、勾選多位，或全部核心守護人</li>
         <li>點「開始安全守護」，允許位置權限</li>
         <li>畫面會顯示狀態與「已通知幾位守護人」；時間到自動結束</li>
       </ol>
       <div class="mvp-guard-status" id="mvpGuardStatus" data-active="false">目前未開啟安全守護</div>
       <div class="mvp-guard-feedback" id="mvpGuardFeedback" role="status" aria-live="polite" hidden></div>
       <div class="mvp-guard-duration" id="mvpGuardDuration" role="radiogroup" aria-label="安全守護時長">
+        <label hidden><input type="radio" name="mvpSafetyGuardDuration" value="0.25"> 15 分鐘</label>
         <label><input type="radio" name="mvpSafetyGuardDuration" value="1" checked> 1 小時</label>
         <label hidden><input type="radio" name="mvpSafetyGuardDuration" value="3"> 3 小時</label>
         <label hidden><input type="radio" name="mvpSafetyGuardDuration" value="6"> 6 小時</label>
         <label hidden><input type="radio" name="mvpSafetyGuardDuration" value="8"> 8 小時</label>
       </div>
+      <div class="contact-card" id="mvpSafetyGuardTargets"></div>
       <p class="mvp-guard-upgrade" id="mvpGuardUpgradeHint" hidden>
         升級方案可享更長安全守護定位時間分享：
         <strong>399</strong> 可選 1／3 小時，
@@ -4498,18 +4501,20 @@
 
     <section class="settings" aria-label="安全守護">
       <div class="settings-title">♡ 安全守護</div>
-      <div class="helper">在指定時段分享平安狀態與位置；可隨時停止。時長依方案：免費／199＝1 小時、399＝1／3 小時、799＝1／3／6／8 小時。</div>
+      <div class="helper">在指定時段分享平安狀態與位置；可隨時停止。199 方案：15 分鐘；399 方案：1／3 小時；799 方案：1／3／6／8 小時。</div>
       <div class="safety-guard-card" id="safetyGuardCard">
         <div class="settings-title">開啟安全守護</div>
         <p class="helper">開始前請先選擇時長。安全守護開啟後，只要 LINE 頁面保持開啟，位置會自動持續更新；鎖屏或切到背景後不保證更新。</p>
         <div class="safety-guard-status" id="safetyGuardStatus" data-active="false">目前未開啟安全守護</div>
         <div class="mvp-guard-feedback" id="safetyGuardFeedback" role="status" aria-live="polite" hidden></div>
         <div class="safety-guard-duration" id="safetyGuardDuration" role="radiogroup" aria-label="安全守護時段">
+          <label hidden><input type="radio" name="safetyGuardDuration" value="0.25"> 15 分鐘</label>
           <label><input type="radio" name="safetyGuardDuration" value="1" checked> 1 小時</label>
           <label hidden><input type="radio" name="safetyGuardDuration" value="3"> 3 小時</label>
           <label hidden><input type="radio" name="safetyGuardDuration" value="6"> 6 小時</label>
           <label hidden><input type="radio" name="safetyGuardDuration" value="8"> 8 小時</label>
         </div>
+        <div class="contact-card" id="safetyGuardTargets"></div>
         <p class="mvp-guard-upgrade" id="safetyGuardUpgradeHint" hidden>
           升級方案可享更長安全守護定位時間分享：
           <strong>399</strong> 可選 1／3 小時，
@@ -5860,6 +5865,9 @@
         body.refresh_only = true;
       } else {
         body.duration = Number(opts.duration || selectedSafetyGuardDuration()) || 1;
+        body.guardian_line_user_ids = Array.isArray(opts.guardianLineUserIds)
+          ? opts.guardianLineUserIds
+          : selectedSafetyGuardGuardianIds();
       }
       const res = await fetch("/api/location/update", {
         method: "POST",
@@ -7600,6 +7608,63 @@
       ];
     }
 
+    function safetyGuardDurationLabel(value) {
+      return Number(value) === 0.25 ? "15 分鐘" : `${Number(value) || 1} 小時`;
+    }
+
+    function safetyGuardTargetCandidates() {
+      return (currentGuardianContacts() || []).filter((contact) => (
+        contactRoleOf(contact) === "guardian"
+        && isContactBound(contact)
+        && Boolean(contact.is_primary)
+        && Boolean(contactPeerLineId(contact))
+      ));
+    }
+
+    function safetyGuardTargetMode() {
+      const mvpPanel = document.getElementById("mvpGuardPanel");
+      const host = mvpPanel && !mvpPanel.hidden
+        ? document.getElementById("mvpSafetyGuardTargets")
+        : document.getElementById("safetyGuardTargets");
+      return (host || document).querySelector('input[name="safetyGuardTargetMode"]:checked')?.value || "all";
+    }
+
+    function selectedSafetyGuardGuardianIds() {
+      const eligible = new Set(safetyGuardTargetCandidates().map(contactPeerLineId));
+      const mode = safetyGuardTargetMode();
+      if (mode === "all") return Array.from(eligible);
+      const mvpPanel = document.getElementById("mvpGuardPanel");
+      const host = mvpPanel && !mvpPanel.hidden
+        ? document.getElementById("mvpSafetyGuardTargets")
+        : document.getElementById("safetyGuardTargets");
+      const checked = Array.from(
+        (host || document).querySelectorAll('input[name="safetyGuardGuardian"]:checked'),
+        (input) => String(input.value || "").trim(),
+      ).filter((value) => eligible.has(value));
+      return mode === "one" ? checked.slice(0, 1) : checked;
+    }
+
+    function renderSafetyGuardTargetPickers() {
+      const contacts = safetyGuardTargetCandidates();
+      const choices = contacts.map((contact, index) => {
+        const lineId = contactPeerLineId(contact);
+        const name = contactPeerDisplayName(contact);
+        return `<label class="guardian-target-choice"><input type="checkbox" name="safetyGuardGuardian" value="${escapeHtml(lineId)}" ${index === 0 ? "checked" : ""}> ${escapeHtml(name)}</label>`;
+      }).join("");
+      const html = `
+        <div class="settings-title">分享給誰</div>
+        <div role="radiogroup" aria-label="核心守護人選擇方式">
+          <label><input type="radio" name="safetyGuardTargetMode" value="one"> 指定 1 位核心守護人</label>
+          <label><input type="radio" name="safetyGuardTargetMode" value="many"> 勾選多位核心守護人</label>
+          <label><input type="radio" name="safetyGuardTargetMode" value="all" checked> 全部核心守護人</label>
+        </div>
+        <div class="guardian-target-list">${choices || '<span class="helper">尚未綁定核心守護人</span>'}</div>`;
+      ["mvpSafetyGuardTargets", "safetyGuardTargets"].forEach((id) => {
+        const host = document.getElementById(id);
+        if (host) host.innerHTML = html;
+      });
+    }
+
     function syncSafetyGuardDurationOptions(status) {
       const allowed = allowedSafetyGuardHours(status || currentStatusData);
       const allowedSet = new Set(allowed.map(String));
@@ -7621,6 +7686,7 @@
       ensureChecked("safetyGuardDuration");
       updateSafetyGuardStartLabels();
       updateSafetyGuardUpgradeHint(status || currentStatusData);
+      renderSafetyGuardTargetPickers();
     }
 
     function selectedSafetyGuardDuration() {
@@ -8129,11 +8195,13 @@
         if (!navigator.geolocation) throw new Error("這台裝置不支援定位。");
         const duration = selectedSafetyGuardDuration();
         setBusy(true, "正在取得定位…");
-        setSafetyGuardFeedback(`正在開啟安全守護（${duration} 小時）…請允許位置權限`, "info");
+        const guardianLineUserIds = selectedSafetyGuardGuardianIds();
+        if (!guardianLineUserIds.length) throw new Error("請至少選擇 1 位核心守護人。");
+        setSafetyGuardFeedback(`正在開啟安全守護（${safetyGuardDurationLabel(duration)}）…請允許位置權限`, "info");
         const position = await getCurrentPositionPromise({ timeout: 12000, maximumAge: 60000 }, 15000);
         setBusy(true, "開啟中…");
         const city = inferTaiwanCounty(position.coords.latitude, position.coords.longitude);
-        const data = await apiUpdateLocation(position, city, { duration });
+        const data = await apiUpdateLocation(position, city, { duration, guardianLineUserIds });
         const notify = data.guardian_notify || {};
         const notifiedCount = Number(notify.sent) || 0;
         const guard = {

@@ -184,6 +184,86 @@ class SafetyGuardTests(unittest.TestCase):
         self.assertEqual(code399, 403)
         self.assertEqual(denied399["allowed_hours"], [1, 3])
 
+    def test_paid_199_is_limited_to_fifteen_minutes(self):
+        state = alive_app.load_state(self.data_file)
+        owner = alive_app.get_profile(state, "u199")
+        owner["plan"] = "paid_199"
+        _add_bound_guardian(owner, "U_guard_199")
+        alive_app.save_state(self.data_file, state)
+
+        self.assertEqual(alive_app.allowed_safety_guard_hours(owner), [0.25])
+        body, code = alive_app.update_location(
+            self.data_file,
+            {
+                "line_user_id": "u199",
+                "latitude": 25.0,
+                "longitude": 121.5,
+                "city": "台北市",
+                "duration": 0.25,
+            },
+        )
+
+        self.assertEqual(code, 200)
+        self.assertEqual(body["safety_guard"]["duration_hours"], 0.25)
+        started = datetime.fromisoformat(body["safety_guard"]["started_at"])
+        expires = datetime.fromisoformat(body["safety_guard"]["expires_at"])
+        self.assertEqual(expires - started, timedelta(minutes=15))
+
+    def test_selected_guardians_only_notifies_eligible_selected_targets(self):
+        sent = []
+
+        def fake_sender(token, target, message):
+            sent.append(target)
+            return {"ok": True}
+
+        state = alive_app.load_state(self.data_file)
+        owner = alive_app.get_profile(state, "owner_selected")
+        owner["plan"] = "paid_799"
+        owner["contacts"] = [
+            {
+                "name": "媽媽",
+                "contact_role": "guardian",
+                "line_user_id": "U_mom",
+                "binding_status": "accepted",
+                "notify_methods": ["line"],
+                "is_primary": True,
+            },
+            {
+                "name": "姊姊",
+                "contact_role": "guardian",
+                "line_user_id": "U_sister",
+                "binding_status": "accepted",
+                "notify_methods": ["line"],
+                "is_primary": True,
+            },
+            {
+                "name": "朋友",
+                "contact_role": "guardian",
+                "line_user_id": "U_friend",
+                "binding_status": "accepted",
+                "notify_methods": ["line"],
+                "is_primary": False,
+            },
+        ]
+        alive_app.save_state(self.data_file, state)
+
+        body, code = alive_app.update_location(
+            self.data_file,
+            {
+                "line_user_id": "owner_selected",
+                "latitude": 25.0,
+                "longitude": 121.5,
+                "duration": 1,
+                "guardian_line_user_ids": ["U_sister", "U_unknown"],
+            },
+            {"LINE_CHANNEL_ACCESS_TOKEN": "token", "LINE_PUSH_SENDER": fake_sender},
+        )
+
+        self.assertEqual(code, 200)
+        self.assertEqual(sent, ["U_sister"])
+        self.assertEqual(body["guardian_notify"]["selected_target_count"], 1)
+        self.assertEqual(body["safety_guard"]["guardian_line_user_ids"], ["U_sister"])
+
     def test_safety_guard_notifies_bound_guardians(self):
         sent = []
 
