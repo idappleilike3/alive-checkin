@@ -187,6 +187,8 @@ DEFAULT_PROFILE = {
     "guardian_details_reminder_sent_at": "",
     "plan": "trial",
     "membership_source": "",
+    "free_eligibility_source": "",
+    "free_eligibility_used_at": "",
     "trial_started_at": None,
     "trial_end": None,
     "trial_policy_version": "",
@@ -1627,6 +1629,8 @@ def parse_datetime(value):
 # Fields that must survive re-login / upsert and must never be replaced by defaults.
 _PROFILE_PERSIST_KEYS = (
     "membership_source",
+    "free_eligibility_source",
+    "free_eligibility_used_at",
     "trial_started_at",
     "trial_end",
     "trial_policy_version",
@@ -1686,7 +1690,7 @@ def migrated_account_webhook_guidance(
     return ""
 
 
-def get_profile(state, line_user_id=None):
+def get_profile(state, line_user_id=None, *, start_public_trial=True):
     """Load or create per-user profile keyed by line_user_id.
 
     Existing records are merged (setdefault only). ``trial_started_at`` is set
@@ -1707,11 +1711,11 @@ def get_profile(state, line_user_id=None):
             if key in _PROFILE_PERSIST_KEYS and key in user:
                 continue
             user.setdefault(key, value)
-        if is_new or not user.get("trial_started_at"):
+        if start_public_trial and (is_new or not user.get("trial_started_at")):
             # First sight of this user: start trial clock once.
             if not user.get("trial_started_at"):
                 user["trial_started_at"] = datetime.now().isoformat(timespec="seconds")
-        if is_new:
+        if is_new and start_public_trial:
             ensure_membership_trial(user, source="public_trial")
         user["line_user_id"] = line_user_id
         return user
@@ -2241,6 +2245,8 @@ def ensure_membership_trial(profile, now=None, source="public_trial"):
     """給予目前政策的一次性 14 天體驗；同一版本永不重啟。"""
     if not isinstance(profile, dict):
         return False
+    if free_eligibility_source(profile):
+        return False
     if profile.get("trial_policy_version") == TRIAL_POLICY_VERSION:
         return False
     plan = str(profile.get("plan") or "trial")
@@ -2248,6 +2254,8 @@ def ensure_membership_trial(profile, now=None, source="public_trial"):
         return False
     now = now or current_app_time({})
     profile["membership_source"] = source
+    profile["free_eligibility_source"] = source
+    profile["free_eligibility_used_at"] = now.isoformat(timespec="seconds")
     profile["trial_started_at"] = now.isoformat(timespec="seconds")
     profile["trial_end"] = (now + timedelta(days=PUBLIC_TRIAL_DAYS)).isoformat(
         timespec="seconds"
@@ -2259,6 +2267,22 @@ def ensure_membership_trial(profile, now=None, source="public_trial"):
     profile["payment_status"] = "trial"
     clear_contacts_retain_window(profile)
     return True
+
+
+def free_eligibility_source(profile):
+    """Return the permanent first free entitlement source, including legacy data."""
+    if not isinstance(profile, dict):
+        return ""
+    recorded = str(profile.get("free_eligibility_source") or "").strip()
+    if recorded:
+        return recorded
+    cohort = str(profile.get("beta_cohort") or "").strip().upper()
+    if cohort and (
+        profile.get("beta_started_at")
+        or str(profile.get("membership_source") or "") == "beta"
+    ):
+        return f"beta_{cohort}"
+    return ""
 
 
 def migrate_existing_free_members(config):
@@ -2501,6 +2525,9 @@ def assign_beta_cohort(
             "cohort": cohort,
             "line_user_id": line_user_id,
         }
+    used_source = free_eligibility_source(profile)
+    if used_source:
+        raise ValueError("free_eligibility_already_used")
     active_count = sum(
         1
         for row in users.values()
@@ -2513,6 +2540,8 @@ def assign_beta_cohort(
         raise ValueError("cohort_full")
     now = now or current_app_time({})
     profile["membership_source"] = "beta"
+    profile["free_eligibility_source"] = f"beta_{cohort}"
+    profile["free_eligibility_used_at"] = now.isoformat(timespec="seconds")
     profile["plan"] = BETA_COHORT_PLAN[cohort]
     profile["payment_status"] = "beta"
     profile["beta_cohort"] = cohort
@@ -2537,6 +2566,29 @@ def assign_beta_cohort(
         "line_user_id": line_user_id,
         "ends_at": profile["beta_ends_at"],
     }
+
+
+def claim_beta_link(state, line_user_id, cohort, *, now=None):
+    """Claim a public capped beta link once; never switch an active member's cohort."""
+    member_id = str(line_user_id or "").strip()
+    normalized = str(cohort or "").strip().upper()
+    profile = (state.get("users") or {}).get(member_id)
+    if not isinstance(profile, dict):
+        raise ValueError("member_not_found")
+    existing = str(profile.get("beta_cohort") or "").strip().upper()
+    if (
+        existing
+        and existing != normalized
+        and not profile.get("beta_revoked_at")
+    ):
+        raise ValueError("already_in_other_cohort")
+    return assign_beta_cohort(
+        state,
+        member_id,
+        normalized,
+        now=now,
+        recruitment_source=f"public-link-{normalized.lower()}",
+    )
 
 
 def revoke_beta_cohort(state, line_user_id, *, now=None):
@@ -3738,7 +3790,14 @@ def register_line_user(data_file, payload):
         if isinstance(preserved.get("interaction_state"), dict):
             preserved["interaction_state"] = dict(preserved["interaction_state"])
 
-    user = get_profile(state, line_user_id)
+    requested_beta = str(payload.get("beta_cohort") or "").strip().upper()
+    if requested_beta and requested_beta not in {"B399", "B799"}:
+        return {"ok": False, "error": "invalid_beta_link"}, 400
+    user = get_profile(
+        state,
+        line_user_id,
+        start_public_trial=not bool(requested_beta),
+    )
     # Re-apply preserved fields after get_profile defaults (merge, don't replace).
     for key, value in preserved.items():
         if key == "trial_started_at" and value:
@@ -3767,8 +3826,24 @@ def register_line_user(data_file, payload):
     picture = str(payload.get("picture_url") or "").strip()
     if picture:
         user["picture_url"] = picture
+    if requested_beta:
+        try:
+            claim_beta_link(state, line_user_id, requested_beta)
+        except ValueError as exc:
+            reason = str(exc)
+            messages = {
+                "cohort_full": "這一組封測名額已滿",
+                "already_in_other_cohort": "你已加入另一個封測組別",
+                "free_eligibility_already_used": "你已使用過免費體驗或封測資格",
+            }
+            return {
+                "ok": False,
+                "error": reason,
+                "message": messages.get(reason, "無法加入封測"),
+            }, 409
     save_state(data_file, state)
     status = build_status(user, state)
+    status["beta_cohort"] = str(user.get("beta_cohort") or "")
     status["existing_user"] = bool(existing)
     return status, 200
 
@@ -5979,9 +6054,13 @@ def bind_emergency_contact(
     inviter_id = str(payload.get("inviter_line_user_id") or "").strip()
     contact_line_user_id = str(payload.get("contact_line_user_id") or "").strip()
     contact_display_name = str(payload.get("contact_display_name") or "LINE 聯絡人").strip()
+    contact_relationship = str(payload.get("contact_relationship") or "").strip()
+    contact_phone = str(payload.get("contact_phone") or "").strip()
     contact_picture_url = str(
         payload.get("contact_picture_url") or payload.get("picture_url") or ""
     ).strip()
+    activate_trial = bool(payload.get("activate_trial"))
+    legacy_reciprocal = "activate_trial" not in payload
     mutual_core = bool(payload.get("mutual_core"))
     if not inviter_id or not contact_line_user_id:
         return {"ok": False, "error": "缺少邀請人或守護人資料", "code": "missing_ids"}, 400
@@ -6024,11 +6103,29 @@ def bind_emergency_contact(
         return {"ok": False, "error": "邀請已超過七天，請對方重新分享", "code": "invite_expired"}, 410
     if pending_invite and not bool(payload.get("recipient_consent")):
         save_state(data_file, state)
-        return {"ok": False, "error": "請先閱讀說明並同意互相成為核心守護人", "code": "consent_required"}, 409
+        return {"ok": False, "error": "請先閱讀說明並同意成為核心守護人", "code": "consent_required"}, 409
+    if pending_invite and "activate_trial" in payload and (
+        not contact_display_name
+        or contact_display_name == "LINE 聯絡人"
+        or not contact_relationship
+        or not contact_phone
+    ):
+        return {
+            "ok": False,
+            "error": "請填寫姓名、與邀請人的關係及電話後再完成綁定",
+            "code": "guardian_profile_required",
+            "required_fields": ["name", "relationship", "phone"],
+        }, 400
     # 綁定前偵測反向：綁定後 guarding_for 一定會寫入，不可事後判斷
     is_reverse_invite = detect_reverse_invite(state, inviter_id, contact_line_user_id)
     inviter = get_profile(state, inviter_id)
-    contact_user = get_profile(state, contact_line_user_id)
+    # A person may remain a free guardian without consuming their one lifetime
+    # trial/beta eligibility. Only explicit trial opt-in may claim it.
+    contact_user = get_profile(
+        state,
+        contact_line_user_id,
+        start_public_trial=bool(activate_trial or legacy_reciprocal),
+    )
     contact_user["display_name"] = contact_display_name or contact_user.get("display_name") or "LINE 聯絡人"
     if contact_picture_url:
         contact_user["picture_url"] = contact_picture_url
@@ -6139,8 +6236,8 @@ def bind_emergency_contact(
                 "name": contact_display_name or "LINE 聯絡人",
                 "display_name": contact_display_name or "",
                 "line_display_name": contact_display_name or "",
-                "relationship": "守護人",
-                "phone": "",
+                "relationship": contact_relationship or "守護人",
+                "phone": contact_phone,
                 "line_id": contact_line_user_id,
                 "line_user_id": contact_line_user_id,
                 "picture_url": peer_picture,
@@ -6194,9 +6291,27 @@ def bind_emergency_contact(
 
     # New verified invitations are genuinely reciprocal: validate the other half
     # before saving either side, then mutate both profiles in this one state write.
-    reciprocal = bool(pending_invite)
+    reciprocal = bool(pending_invite and (activate_trial or legacy_reciprocal))
     reciprocal_contact = None
     if reciprocal:
+        if activate_trial:
+            used_source = free_eligibility_source(contact_user)
+            active_trial_source = used_source in {
+                "public_trial",
+                "transition_trial",
+                "guardian_invite_opt_in",
+            } and membership_access_active(contact_user)
+            if used_source and not active_trial_source:
+                return {
+                    "ok": False,
+                    "error": "你已使用過免費體驗或封測資格",
+                    "code": "free_eligibility_already_used",
+                }, 409
+            if not used_source:
+                ensure_membership_trial(
+                    contact_user,
+                    source="guardian_invite_opt_in",
+                )
         invitee_contacts = list(contact_user.get("contacts") or [])
         reciprocal_contact = next(
             (row for row in invitee_contacts if get_contact_line_id(row) == inviter_id), None
@@ -6234,6 +6349,10 @@ def bind_emergency_contact(
             profile["profile_completion_reminder_days"] = []
         inviter["profile_completion_peer_line_user_id"] = contact_line_user_id
         contact_user["profile_completion_peer_line_user_id"] = inviter_id
+    elif pending_invite:
+        pending_invite["status"] = "accepted"
+        pending_invite["accepted_at"] = accepted_at
+        pending_invite["invitee_line_user_id"] = contact_line_user_id
 
     # 互綁可選：兩邊互相設為核心（各受方案 core_guardian_alert_limit 約束）
     mutual_core_applied = False
@@ -6501,6 +6620,7 @@ def bind_emergency_contact(
         "is_reverse_invite": is_reverse_invite,
         "mutual_core_requested": mutual_core,
         "mutual_core_applied": mutual_core_applied,
+        "trial_opted_in": activate_trial,
         "reciprocal": reciprocal,
         "owner_guardian": bound_contact if reciprocal else None,
         "invitee_guardian": reciprocal_contact if reciprocal else None,
@@ -14860,6 +14980,12 @@ def create_app(config=None):
         """Invite landing for external browsers only (not the LIFF Endpoint)."""
         return send_from_directory(app.static_folder, "invite.html")
 
+    @app.get("/beta/399")
+    @app.get("/beta/799")
+    def beta_registration_landing():
+        """Public 21-day beta introduction; the CTA continues in verified LIFF."""
+        return send_from_directory(app.static_folder, "beta-register.html")
+
     @app.get("/guardian-guide")
     def guardian_guide():
         """Detailed guardian notice linked from the concise invite landing."""
@@ -15085,6 +15211,35 @@ def create_app(config=None):
         payload["line_user_id"] = line_user_id
         data, code = register_line_user(app.config["DATA_FILE"], payload)
         return jsonify(data), code
+
+    @app.post("/api/beta/claim")
+    def beta_claim_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        cohort = str(payload.get("beta_cohort") or "").strip().upper()
+        if cohort not in {"B399", "B799"}:
+            return jsonify({"ok": False, "error": "invalid_beta_link"}), 400
+        try:
+            result = mutate_state_atomically(
+                app.config["DATA_FILE"],
+                lambda state: claim_beta_link(state, line_user_id, cohort),
+            )
+        except ValueError as exc:
+            reason = str(exc)
+            messages = {
+                "cohort_full": "這一組封測名額已滿",
+                "already_in_other_cohort": "你已加入另一個封測組別",
+                "member_not_found": "請先完成 LINE 會員註冊",
+                "free_eligibility_already_used": "你已使用過免費體驗或封測資格",
+            }
+            return jsonify({
+                "ok": False,
+                "error": reason,
+                "message": messages.get(reason, "無法加入封測"),
+            }), 409 if reason != "member_not_found" else 404
+        return jsonify({"ok": True, **result}), 200
 
     @app.post("/api/checkin")
     def checkin():

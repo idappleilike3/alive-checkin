@@ -2415,6 +2415,27 @@
     #inviteAcceptPrompt .mutual-core-option[hidden] {
       display: none !important;
     }
+    .invite-profile-fields {
+      display: grid;
+      gap: 10px;
+      margin: 14px 0;
+      text-align: left;
+    }
+    .invite-profile-fields label {
+      display: grid;
+      gap: 5px;
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .invite-profile-fields input {
+      width: 100%;
+      min-height: 46px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      color: var(--text);
+    }
     .warning-modal {
       border: 0;
       background: linear-gradient(145deg, #991b1b, #ef4444);
@@ -4559,10 +4580,21 @@
     <div class="guardian-modal">
       <div class="line-trust"><span class="line-logo">LINE</span> LINE 官方授權綁定</div>
       <h2 id="inviteAcceptTitle">您收到一位親友的守護邀請</h2>
-      <p id="inviteAcceptBody">請先閱讀：你將收到對方的報平安、逾時未報平安、SOS 與安全守護通知。定位只在對方主動求助或啟用安全守護時通知；你可隨時解除綁定，資料只用於守護通知。登入後，請明確同意雙方互相成為核心守護人。</p>
-      <label class="setting-choice mutual-core-option" id="mutualCoreOption" hidden for="mutualCoreCheckbox">
+      <p id="inviteAcceptBody">成為核心守護人免費。你將收到對方的報平安、逾時未報平安、SOS 與安全守護通知；定位只在對方主動求助或啟用安全守護時通知，也可隨時解除綁定。</p>
+      <div class="invite-profile-fields">
+        <label>您的姓名（必填）
+          <input id="inviteGuardianName" type="text" maxlength="40" autocomplete="name" required>
+        </label>
+        <label>您與邀請人的關係（必填）
+          <input id="inviteGuardianRelationship" type="text" maxlength="20" placeholder="例如：女兒、朋友、鄰居" required>
+        </label>
+        <label>您的手機號碼（必填）
+          <input id="inviteGuardianPhone" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" placeholder="例如：0912345678" required>
+        </label>
+      </div>
+      <label class="setting-choice mutual-core-option" id="mutualCoreOption" for="mutualCoreCheckbox">
         <input type="checkbox" id="mutualCoreCheckbox">
-        <span>同時互相設為核心守護人</span>
+        <span>我也要免費體驗 14 天，同時互相設為核心守護人</span>
       </label>
       <button class="agree-btn" id="acceptGuardianInviteBtn" type="button">同意成為守護人</button>
     </div>
@@ -5129,6 +5161,8 @@
       if (/^[A-Za-z0-9_-]{32,128}$/.test(inviteToken)) out.invite_token = inviteToken;
       const friendInvite = String(read("friend_invite") || "").trim().toUpperCase();
       if (/^[A-Z0-9]{6,8}$/.test(friendInvite)) out.friend_invite = friendInvite;
+      const betaCohort = String(read("beta_cohort") || "").trim().toUpperCase();
+      if (betaCohort === "B399" || betaCohort === "B799") out.beta_cohort = betaCohort;
       for (const key of ["open", "page"]) {
         const action = String(read(key) || "").trim().toLowerCase();
         if (LOGIN_CONTINUATION_ACTIONS.has(action)) out[key] = action;
@@ -5770,6 +5804,10 @@
       if (options && options.mutual_core) {
         body.mutual_core = true;
       }
+      body.activate_trial = Boolean(options && options.activate_trial);
+      body.contact_display_name = String(options.contact_display_name || body.contact_display_name || "").trim();
+      body.contact_relationship = String(options.contact_relationship || "").trim();
+      body.contact_phone = String(options.contact_phone || "").trim();
       const res = await fetch("/api/emergency-contact/bind", {
         method: "POST",
         headers: await authHeaders(),
@@ -7364,7 +7402,14 @@
       bindInFlight = true;
       try {
         const mutualCore = Boolean(options && options.mutual_core);
-        const bindResult = await apiBindEmergencyContact(inviteFrom, { mutual_core: mutualCore });
+        const activateTrial = Boolean(options && options.activate_trial);
+        const bindResult = await apiBindEmergencyContact(inviteFrom, {
+          mutual_core: mutualCore,
+          activate_trial: activateTrial,
+          contact_display_name: options.contact_display_name,
+          contact_relationship: options.contact_relationship,
+          contact_phone: options.contact_phone
+        });
         if (bindResult?.bound || bindResult?.already_bound || bindResult?.ok) {
           bindDone = true;
           clearInviteFromUrl();
@@ -7417,10 +7462,12 @@
       const btn = $("acceptGuardianInviteBtn");
       if (titleEl) titleEl.textContent = "您收到一位親友的守護邀請";
       if (bodyEl) {
-        bodyEl.textContent = "請先閱讀：你將收到對方的報平安、逾時未報平安、SOS 與安全守護通知。定位只在對方主動求助或啟用安全守護時通知；你可隨時解除綁定，資料只用於守護通知。登入後，請明確同意雙方互相成為核心守護人。";
+        bodyEl.textContent = "成為核心守護人免費。你將收到對方的報平安、逾時未報平安、SOS 與安全守護通知；定位只在對方主動求助或啟用安全守護時通知，也可隨時解除綁定。";
       }
-      if (optionEl) optionEl.hidden = true;
+      if (optionEl) optionEl.hidden = false;
       if (checkEl) checkEl.checked = false;
+      const nameInput = $("inviteGuardianName");
+      if (nameInput && !nameInput.value) nameInput.value = lineDisplayName || "";
       if (btn) {
         btn.disabled = false;
         btn.textContent = "同意成為守護人";
@@ -7449,9 +7496,7 @@
             const optionEl = $("mutualCoreOption");
             const btn = $("acceptGuardianInviteBtn");
             if (titleEl) titleEl.textContent = "互相守護邀請";
-            if (bodyEl) {
-              bodyEl.textContent = `${name} 邀請你互相成為核心守護人。你會收到報平安、逾時、SOS 與安全守護通知；定位僅在對方主動求助／啟用安全守護時分享，可隨時解除綁定。`;
-            }
+            if (bodyEl) bodyEl.textContent = `${name} 邀請你成為核心守護人。成為守護人免費；若你也想使用自己的每日報平安，可勾選 14 天免費體驗並與 ${name} 互相守護。`;
             if (optionEl) optionEl.hidden = false;
             if (btn) btn.textContent = "確認互相設為守護人";
           }
@@ -7504,9 +7549,26 @@
         btn.disabled = true;
         btn.textContent = "綁定中…";
       }
-      const mutualCore = Boolean($("mutualCoreCheckbox") && $("mutualCoreCheckbox").checked);
+      const trialOptIn = Boolean($("mutualCoreCheckbox") && $("mutualCoreCheckbox").checked);
+      const guardianName = String($("inviteGuardianName")?.value || lineDisplayName || "").trim();
+      const guardianRelationship = String($("inviteGuardianRelationship")?.value || "").trim();
+      const guardianPhone = String($("inviteGuardianPhone")?.value || "").trim();
+      if (!guardianName || !guardianRelationship || !guardianPhone) {
+        alert("請先填寫姓名、與邀請人的關係及手機號碼。");
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "同意成為守護人";
+        }
+        return;
+      }
       try {
-        const bindResult = await completeGuardianBindOnce(inviteFrom, { mutual_core: mutualCore });
+        const bindResult = await completeGuardianBindOnce(inviteFrom, {
+          mutual_core: trialOptIn,
+          activate_trial: trialOptIn,
+          contact_display_name: guardianName,
+          contact_relationship: guardianRelationship,
+          contact_phone: guardianPhone
+        });
         if (bindResult?.skipped) return;
         if (bindResult?.bound || bindResult?.ok || bindResult?.already_bound) return;
         alert(bindResult?.error || "綁定尚未完成，請再試一次。若仍失敗，請請對方重新分享邀請連結。");
@@ -8393,15 +8455,22 @@
         linePictureUrl = profile.pictureUrl || "";
         if (!lineUserId) return false;
 
-        await fetch("/api/line/register", {
+        const betaCohort = String(getAppParam("beta_cohort") || "").trim().toUpperCase();
+        const registrationResponse = await fetch("/api/line/register", {
           method: "POST",
           headers: await authHeaders(),
           body: JSON.stringify({
             line_user_id: lineUserId,
             display_name: lineDisplayName,
-            picture_url: linePictureUrl || ""
+            picture_url: linePictureUrl || "",
+            beta_cohort: betaCohort === "B399" || betaCohort === "B799" ? betaCohort : ""
           })
         });
+        const registrationResult = await registrationResponse.json().catch(() => ({}));
+        if (!registrationResponse.ok) {
+          window.alert(registrationResult.message || "目前無法完成會員註冊");
+          return false;
+        }
         hideLineEntryGate();
 
         const inviteFrom = String(getAppParam("invite_from") || "").trim();

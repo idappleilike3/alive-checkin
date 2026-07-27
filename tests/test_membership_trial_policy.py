@@ -44,6 +44,28 @@ class MembershipTrialPolicyTests(unittest.TestCase):
         )
         self.assertEqual(profile["trial_end"], first_end)
 
+    def test_beta_history_permanently_blocks_public_trial(self):
+        profile = {
+            "line_user_id": "U-beta-history",
+            "plan": "free",
+            "membership_source": "expired",
+            "beta_cohort": "B399",
+            "beta_started_at": "2026-06-01T10:00:00",
+            "beta_ends_at": "2026-06-22T10:00:00",
+            "free_eligibility_source": "beta_B399",
+            "free_eligibility_used_at": "2026-06-01T10:00:00",
+        }
+
+        granted = app_module.ensure_membership_trial(
+            profile,
+            now=self.now,
+            source="public_trial",
+        )
+
+        self.assertFalse(granted)
+        self.assertEqual(profile["plan"], "free")
+        self.assertNotIn("trial_end", profile)
+
     def test_reregister_does_not_restart_public_trial(self):
         first, code = app_module.register_line_user(
             self.data_file, {"line_user_id": "U-once", "display_name": "小美"}
@@ -69,6 +91,8 @@ class MembershipTrialPolicyTests(unittest.TestCase):
         profile["payment_status"] = "expired"
         profile.pop("trial_policy_version", None)
         profile.pop("trial_end", None)
+        profile.pop("free_eligibility_source", None)
+        profile.pop("free_eligibility_used_at", None)
         app_module.save_state(self.data_file, state)
 
         first, code = app_module.register_line_user(
@@ -112,6 +136,8 @@ class MembershipTrialPolicyTests(unittest.TestCase):
             }
         )
         profile.pop("trial_policy_version", None)
+        profile.pop("free_eligibility_source", None)
+        profile.pop("free_eligibility_used_at", None)
 
         granted = app_module.ensure_membership_trial(
             profile, now=self.now, source="transition_trial"
@@ -143,6 +169,8 @@ class MembershipTrialPolicyTests(unittest.TestCase):
             profile["membership_source"] = "expired"
             profile.pop("trial_policy_version", None)
             profile.pop("trial_end", None)
+            profile.pop("free_eligibility_source", None)
+            profile.pop("free_eligibility_used_at", None)
         paid = app_module.get_profile(state, "U-paid")
         paid["plan"] = "paid_399"
         paid["payment_status"] = "active"
