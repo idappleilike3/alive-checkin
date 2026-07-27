@@ -296,7 +296,7 @@ PLAN_LIMITS = {
         "offline_sync_days": 0,
         "sos_enabled": True,
         "guardian_group_limit": 0,
-        "safety_guard_hours": [1],
+        "safety_guard_hours": [],
     },
     "trial": {
         "contact_limit": 3,
@@ -1881,7 +1881,7 @@ def plan_rules(profile, now=None):
 
 def allowed_safety_guard_hours(profile):
     """依方案回傳可選安全守護時數（小時）；0.25 代表 15 分鐘。"""
-    raw = plan_rules(profile).get("safety_guard_hours") or [1]
+    raw = plan_rules(profile).get("safety_guard_hours", [1])
     hours = []
     for item in raw:
         try:
@@ -1892,7 +1892,7 @@ def allowed_safety_guard_hours(profile):
             value = int(value)
         if value > 0 and value not in hours:
             hours.append(value)
-    return hours or [1]
+    return hours
 
 
 def default_reminder_times_for_count(count):
@@ -2377,6 +2377,11 @@ def plan_rules_for_effective_entitlement(profile, now=None):
     if str(profile.get("plan") or "") == "trial":
         # One labeled group test is handled separately and never enables schedules.
         rules["guardian_group_limit"] = 0
+        # The 14-day public trial may sample Safety Guard once per day,
+        # with the same 15-minute window as the paid 199 plan.
+        rules["safety_guard_hours"] = (
+            [0.25] if membership_access_active(profile, now) else []
+        )
     return rules
 
 
@@ -7697,7 +7702,32 @@ def update_location(data_file, payload, config=None):
             "message": "還沒完成綁定守護人，無法使用此功能",
         }, 403
 
+    is_trial = str(profile.get("plan") or "") == "trial"
+    trial_usage_date = now.strftime("%Y-%m-%d")
+    if (
+        is_trial
+        and not was_active
+        and profile.get("safety_guard_trial_usage_date") == trial_usage_date
+        and int(profile.get("safety_guard_trial_usage_count") or 0) >= 1
+    ):
+        return {
+            "ok": False,
+            "error": "trial safety guard daily limit reached",
+            "error_code": "trial_daily_limit_reached",
+            "message": "今天的安全守護體驗已使用，明天可以再使用 1 次",
+            "daily_limit": 1,
+        }, 429
+
     allowed_hours = allowed_safety_guard_hours(profile)
+    if not allowed_hours:
+        return {
+            "ok": False,
+            "error": "safety guard requires an active trial or paid plan",
+            "error_code": "safety_guard_upgrade_required",
+            "message": "安全守護定位需在 14 天體驗期間或升級方案後使用",
+            "allowed_hours": [],
+            "safety_guard_hours": [],
+        }, 403
     try:
         duration_hours, until_stop = _parse_safety_guard_duration(payload, allowed_hours)
     except ValueError as exc:
@@ -7752,6 +7782,9 @@ def update_location(data_file, payload, config=None):
     profile["location"]["guardian_line_user_ids"] = list(
         guardian_notify.get("selected_target_ids") or []
     )
+    if is_trial and not was_active:
+        profile["safety_guard_trial_usage_date"] = trial_usage_date
+        profile["safety_guard_trial_usage_count"] = 1
     save_state(data_file, state)
     snap = safety_guard_snapshot(profile, now)
     snap["notified_count"] = int(guardian_notify.get("sent") or 0)
