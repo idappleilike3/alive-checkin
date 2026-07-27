@@ -1493,8 +1493,10 @@
       $("incidentQueue").innerHTML = (incidents.items || []).length
         ? incidents.items.map((item) => `
           <div class="log-item">
-            <div><strong>${item.kind === "sos" ? "SOS 待確認" : "LINE 通知失敗"}</strong><br><small>${item.created_at || ""}</small></div>
-            <span>${item.notification_kind || item.incident_id || ""}</span>
+            <div><strong>${item.kind === "sos" ? `SOS｜${escapeHtml(item.owner_display_name || "會員")}` : "LINE 通知失敗"}</strong><br><small>${item.created_at || ""}</small></div>
+            <span>${item.kind === "sos"
+              ? `狀態：${escapeHtml(item.status || "等待回應")}<br>接手：${escapeHtml(item.primary_responder || "尚無")}<br>協助：${escapeHtml((item.assistants || []).join("、") || "尚無")}<br>通知成功 ${Number(item.sent_count) || 0}／失敗 ${Number(item.failed_count) || 0}｜升級第 ${Number(item.escalation_round) || 0} 輪`
+              : escapeHtml(item.notification_kind || item.incident_id || "")}</span>
             ${canResolve
               ? `<button type="button" onclick="resolveIncident('${item.kind}', '${item.incident_id}')">確認結案</button>`
               : `<span class="badge">僅查看</span>`}

@@ -3,74 +3,33 @@
     "width": 2500,
     "height": 1686
   },
-  "selected": false,
-  "name": "alive-checkin-rich-menu-v1",
-  "chatBarText": "點我打開選單",
+  "selected": true,
+  "name": "每日平安主選單-新版SOS狀態",
+  "chatBarText": "平安守護選單",
   "areas": [
     {
-      "bounds": {
-        "x": 0,
-        "y": 0,
-        "width": 1250,
-        "height": 843
-      },
-      "action": {
-        "type": "postback",
-        "label": "✅ 今日簽到",
-        "data": "action=check_in_today"
-      }
+      "bounds": { "x": 0, "y": 0, "width": 833, "height": 843 },
+      "action": { "type": "uri", "label": "報平安", "uri": "https://liff.line.me/2010848330-UAiqPPYD?open=checkin" }
     },
     {
-      "bounds": {
-        "x": 1250,
-        "y": 0,
-        "width": 1250,
-        "height": 843
-      },
-      "action": {
-        "type": "message",
-        "label": "需要幫忙",
-        "text": "需要幫忙"
-      }
+      "bounds": { "x": 833, "y": 0, "width": 834, "height": 843 },
+      "action": { "type": "uri", "label": "一鍵邀請", "uri": "https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html" }
     },
     {
-      "bounds": {
-        "x": 0,
-        "y": 843,
-        "width": 833,
-        "height": 843
-      },
-      "action": {
-        "type": "uri",
-        "label": "🛡️ 綁定守護人",
-        "uri": "https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html"
-      }
+      "bounds": { "x": 1667, "y": 0, "width": 833, "height": 843 },
+      "action": { "type": "uri", "label": "需要幫忙", "uri": "https://liff.line.me/2010848330-UAiqPPYD?open=sos" }
     },
     {
-      "bounds": {
-        "x": 833,
-        "y": 843,
-        "width": 834,
-        "height": 843
-      },
-      "action": {
-        "type": "uri",
-        "label": "👀 查看方案",
-        "uri": "https://alive-checkin.onrender.com/liff/pricing.html"
-      }
+      "bounds": { "x": 0, "y": 843, "width": 833, "height": 843 },
+      "action": { "type": "uri", "label": "使用教學", "uri": "https://liff.line.me/2010848330-UAiqPPYD?open=help" }
     },
     {
-      "bounds": {
-        "x": 1667,
-        "y": 843,
-        "width": 833,
-        "height": 843
-      },
-      "action": {
-        "type": "postback",
-        "label": "📞 聯絡客服",
-        "data": "action=contact_support"
-      }
+      "bounds": { "x": 833, "y": 843, "width": 834, "height": 843 },
+      "action": { "type": "uri", "label": "查看方案", "uri": "https://alive-checkin.onrender.com/liff/pricing.html" }
+    },
+    {
+      "bounds": { "x": 1667, "y": 843, "width": 833, "height": 843 },
+      "action": { "type": "uri", "label": "安全守護", "uri": "https://liff.line.me/2010848330-UAiqPPYD?open=guard" }
     }
   ]
 }

@@ -21,7 +21,8 @@ class BotKeywordHandlerTests(unittest.TestCase):
         self.assertIn('"聯絡家人連按3次"', source)
         self.assertIn('"SOS 確認 2"', source)
         self.assertIn("legacy_entry_commands", source)
-        self.assertIn("sos_emergency_flex", source)
+        self.assertIn("sos_warning_flex", source)
+        self.assertIn("sos_tap(state, line_user_id)", source)
         self.assertIn("_send_welcome", source)
 
     def test_unmatched_group_chat_stays_silent(self):

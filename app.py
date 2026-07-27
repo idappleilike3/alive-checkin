@@ -2867,6 +2867,7 @@ LINE_ACCEPTANCE_KINDS = (
     "family_group",
     "sos",
     "sos_cancel",
+    "sos_escalation",
     "sos_retry",
     "abuse_block",
     "group_member_change",
@@ -8452,6 +8453,417 @@ def eligible_sos_retry_recipients(event: dict) -> list[dict]:
     ]
 
 
+SOS_RESPONSE_ACTIONS = {"take_over", "assist", "contacted", "unable"}
+SOS_CLOSED_STATUSES = {"safe_closed", "cancelled", "resolved", "closed"}
+
+
+def build_sos_guardian_flex(message, event_id):
+    return {
+        "type": "flex",
+        "altText": "SOS 緊急求助，請確認是否能協助",
+        "contents": {
+            "type": "bubble",
+            "size": "mega",
+            "header": {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#D6322C",
+                "paddingAll": "lg",
+                "contents": [{
+                    "type": "text", "text": "🆘 SOS 緊急求助",
+                    "color": "#FFFFFF", "weight": "bold", "size": "xl",
+                }],
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "md",
+                "contents": [
+                    {"type": "text", "text": str(message), "wrap": True, "size": "md"},
+                    {
+                        "type": "text",
+                        "text": "「已送達」不代表已讀，請按下方回報實際處理狀態",
+                        "wrap": True, "size": "sm", "color": "#666666",
+                    },
+                ],
+            },
+            "footer": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "contents": [
+                    {
+                        "type": "button", "style": "primary", "color": "#D6322C",
+                        "action": {
+                            "type": "postback", "label": "我來聯繫",
+                            "data": f"sos:take_over:{event_id}",
+                            "displayText": "我來聯繫",
+                        },
+                    },
+                    {
+                        "type": "button", "style": "secondary",
+                        "action": {
+                            "type": "postback", "label": "已聯繫本人",
+                            "data": f"sos:contacted:{event_id}",
+                            "displayText": "已聯繫本人",
+                        },
+                    },
+                    {
+                        "type": "button", "style": "link",
+                        "action": {
+                            "type": "postback", "label": "無法處理",
+                            "data": f"sos:unable:{event_id}",
+                            "displayText": "目前無法處理",
+                        },
+                    },
+                ],
+            },
+        },
+    }
+
+
+def _sos_recipient(event, line_user_id):
+    return next(
+        (
+            row for row in (event.get("deliveries") or [])
+            if row.get("kind") == "guardian"
+            and row.get("status") == "sent"
+            and str(row.get("target") or "") == line_user_id
+        ),
+        None,
+    )
+
+
+def _sos_public_snapshot(event):
+    primary_id = str(event.get("primary_responder_id") or "")
+    assistants = set(event.get("assistant_responder_ids") or [])
+    responses = event.get("guardian_responses") or {}
+    recipients = []
+    for row in event.get("deliveries") or []:
+        if row.get("kind") not in {"guardian", "group"}:
+            continue
+        target = str(row.get("target") or "")
+        response = responses.get(target) or {}
+        recipients.append({
+            "name": str(row.get("display_name") or (
+                "核心守護人" if row.get("kind") == "guardian" else "守護群"
+            )),
+            "kind": row.get("kind"),
+            "delivery_status": row.get("status"),
+            "response_status": response.get("action") or "waiting",
+            "role": (
+                "primary" if target and target == primary_id
+                else "assistant" if target in assistants
+                else None
+            ),
+            "responded_at": response.get("responded_at"),
+        })
+    return {
+        "ok": True,
+        "event_id": event.get("event_id"),
+        "status": event.get("status") or "pending",
+        "created_at": event.get("created_at"),
+        "sent_at": event.get("sent_at"),
+        "closed_at": event.get("closed_at") or event.get("resolved_at"),
+        "escalation_round": int(event.get("escalation_round") or 0),
+        "escalation_stopped": bool(event.get("escalation_stopped")),
+        "primary_responder": next(
+            (row["name"] for row in recipients if row.get("role") == "primary"),
+            None,
+        ),
+        "assistants": [
+            row["name"] for row in recipients if row.get("role") == "assistant"
+        ],
+        "recipients": recipients,
+        "timeline": [
+            {
+                "action": item.get("action"),
+                "actor_name": item.get("actor_name"),
+                "at": item.get("at"),
+            }
+            for item in (event.get("timeline") or [])
+        ],
+    }
+
+
+def respond_to_sos_event(data_file, payload, config=None):
+    """Record a guardian response without treating delivery as acknowledgement."""
+    event_id = str((payload or {}).get("event_id") or "").strip()
+    actor_id = str((payload or {}).get("line_user_id") or "").strip()
+    action = str((payload or {}).get("action") or "").strip().casefold()
+    if not event_id or not actor_id or action not in SOS_RESPONSE_ACTIONS:
+        return {"ok": False, "error": "invalid_sos_response"}, 400
+    now = current_app_time(config or {})
+
+    def transition(state):
+        event = (state.get("sos_events") or {}).get(event_id)
+        if not event:
+            return {"ok": False, "error": "sos_event_not_found", "code": 404}
+        if str(event.get("status") or "").casefold() in SOS_CLOSED_STATUSES:
+            return {"ok": False, "error": "sos_event_closed", "code": 409}
+        delivery = _sos_recipient(event, actor_id)
+        if not delivery:
+            return {"ok": False, "error": "not_sos_recipient", "code": 403}
+        actor_name = str(
+            delivery.get("display_name")
+            or ((state.get("users") or {}).get(actor_id) or {}).get("display_name")
+            or "核心守護人"
+        )
+        responses = event.setdefault("guardian_responses", {})
+        previous = responses.get(actor_id) or {}
+        role = previous.get("role")
+        effective_action = action
+        if action in {"take_over", "assist", "contacted"}:
+            if not event.get("primary_responder_id"):
+                event["primary_responder_id"] = actor_id
+                role = "primary"
+            elif event.get("primary_responder_id") == actor_id:
+                role = "primary"
+            else:
+                role = "assistant"
+                assistants = list(event.get("assistant_responder_ids") or [])
+                if actor_id not in assistants:
+                    assistants.append(actor_id)
+                event["assistant_responder_ids"] = assistants
+            event["escalation_stopped"] = True
+            event["status"] = "contacted" if action == "contacted" else "responding"
+        else:
+            role = role or "unable"
+        responded_at = now.isoformat(timespec="seconds")
+        responses[actor_id] = {
+            "action": effective_action,
+            "role": role,
+            "display_name": actor_name,
+            "responded_at": responded_at,
+        }
+        event.setdefault("timeline", []).append({
+            "action": effective_action,
+            "actor_id": actor_id,
+            "actor_name": actor_name,
+            "at": responded_at,
+        })
+        return {
+            "ok": True,
+            "code": 200,
+            "event_id": event_id,
+            "action": effective_action,
+            "role": role,
+            "actor_name": actor_name,
+            "status": event.get("status"),
+            "snapshot": _sos_public_snapshot(event),
+        }
+
+    result = mutate_state_atomically(data_file, transition)
+    code = int(result.pop("code", 200))
+    if code == 200:
+        cfg = config or {}
+        token = cfg.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+            "LINE_CHANNEL_ACCESS_TOKEN", ""
+        )
+        if token:
+            latest = load_state(data_file)
+            event = (latest.get("sos_events") or {}).get(event_id) or {}
+            actor = result.get("actor_name") or "守護人"
+            action_text = {
+                "take_over": "已接手，正在聯繫本人",
+                "assist": "已加入協助處理",
+                "contacted": "已確認聯繫到本人",
+                "unable": "目前無法處理",
+            }[action]
+            notice = f"🆘 SOS 狀態更新：{actor}{action_text}\n事件尚未自動結案"
+            targets = [event.get("owner_line_user_id")] + [
+                row.get("target") for row in (event.get("deliveries") or [])
+                if row.get("kind") == "guardian" and row.get("status") == "sent"
+                and row.get("target") != actor_id
+            ]
+            sender = cfg.get("LINE_PUSH_SENDER") or line_push_message
+            delivered = 0
+            for target in dict.fromkeys(target for target in targets if target):
+                try:
+                    _send_line_with_retry_key(
+                        sender, token, target, notice,
+                        _line_retry_key(f"{event_id}:response:{action}:{actor_id}:{target}"),
+                    )
+                    delivered += 1
+                except Exception:
+                    continue
+            if delivered:
+                mutate_state_atomically(
+                    data_file,
+                    lambda state: record_line_message_usage(
+                        state,
+                        category="sos",
+                        owner_line_user_id=event.get("owner_line_user_id"),
+                        recipient_count=delivered,
+                        event_id=f"{event_id}:response:{action}:{actor_id}",
+                        sent_at=now,
+                    ),
+                )
+    return result, code
+
+
+def get_sos_event_status(data_file, requester_id, event_id):
+    state = load_state(data_file)
+    event = (state.get("sos_events") or {}).get(str(event_id or ""))
+    if not event:
+        return {"ok": False, "error": "sos_event_not_found"}, 404
+    requester_id = str(requester_id or "")
+    allowed = requester_id == str(event.get("owner_line_user_id") or "")
+    allowed = allowed or _sos_recipient(event, requester_id) is not None
+    if not allowed:
+        return {"ok": False, "error": "not_sos_participant"}, 403
+    return _sos_public_snapshot(event), 200
+
+
+def close_sos_as_safe(data_file, payload, config=None):
+    event_id = str((payload or {}).get("event_id") or "").strip()
+    owner_id = str((payload or {}).get("line_user_id") or "").strip()
+    now = current_app_time(config or {})
+
+    def close(state):
+        event = (state.get("sos_events") or {}).get(event_id)
+        if not event:
+            return {"ok": False, "error": "sos_event_not_found", "code": 404}
+        if owner_id != str(event.get("owner_line_user_id") or ""):
+            return {"ok": False, "error": "not_sos_owner", "code": 403}
+        if str(event.get("status") or "").casefold() in SOS_CLOSED_STATUSES:
+            return {"ok": True, "code": 200, **_sos_public_snapshot(event)}
+        closed_at = now.isoformat(timespec="seconds")
+        event["status"] = "safe_closed"
+        event["closed_at"] = closed_at
+        event["escalation_stopped"] = True
+        event.setdefault("timeline", []).append({
+            "action": "safe_closed",
+            "actor_id": owner_id,
+            "actor_name": event.get("owner_display_name") or "本人",
+            "at": closed_at,
+        })
+        return {"ok": True, "code": 200, **_sos_public_snapshot(event)}
+
+    result = mutate_state_atomically(data_file, close)
+    code = int(result.pop("code", 200))
+    if code == 200 and result.get("status") == "safe_closed":
+        cfg = config or {}
+        token = cfg.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+            "LINE_CHANNEL_ACCESS_TOKEN", ""
+        )
+        if token:
+            state = load_state(data_file)
+            event = (state.get("sos_events") or {}).get(event_id) or {}
+            sender = cfg.get("LINE_PUSH_SENDER") or line_push_message
+            notice = (
+                f"✅【SOS 已結束】{event.get('owner_display_name') or '本人'} "
+                "已確認目前安全\n本次處理紀錄已保留"
+            )
+            for row in event.get("deliveries") or []:
+                if row.get("kind") not in {"guardian", "group"}:
+                    continue
+                if row.get("status") != "sent" or not row.get("target"):
+                    continue
+                try:
+                    _send_line_with_retry_key(
+                        sender, token, row["target"], notice,
+                        _line_retry_key(f"{event_id}:safe:{row['target']}"),
+                    )
+                except Exception:
+                    continue
+    return result, code
+
+
+def process_sos_escalations(data_file, config=None, now=None):
+    """Send at most one due 3/5/10 minute SOS escalation round per cron tick."""
+    cfg = config or {}
+    current = now or current_app_time(cfg)
+    token = cfg.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+        "LINE_CHANNEL_ACCESS_TOKEN", ""
+    )
+    sender = cfg.get("LINE_PUSH_SENDER") or line_push_message
+    state = load_state(data_file)
+    sent = failed = 0
+    events_updated = 0
+    thresholds = ((1, 3), (2, 5), (3, 10))
+    for event in (state.get("sos_events") or {}).values():
+        if event.get("escalation_stopped"):
+            continue
+        if str(event.get("status") or "").casefold() in SOS_CLOSED_STATUSES:
+            continue
+        sent_at = parse_datetime(event.get("sent_at"))
+        if not sent_at:
+            continue
+        if current.tzinfo is None and sent_at.tzinfo is not None:
+            sent_at = sent_at.replace(tzinfo=None)
+        elif current.tzinfo is not None and sent_at.tzinfo is None:
+            sent_at = sent_at.replace(tzinfo=current.tzinfo)
+        elapsed_minutes = (current - sent_at).total_seconds() / 60
+        current_round = int(event.get("escalation_round") or 0)
+        due = next(
+            (
+                (round_no, minute)
+                for round_no, minute in thresholds
+                if round_no > current_round and elapsed_minutes >= minute
+            ),
+            None,
+        )
+        if not due:
+            continue
+        round_no, minute = due
+        label = (
+            "再次提醒：尚無守護人接手"
+            if round_no == 1 else
+            "備援提醒：SOS 仍無人接手"
+            if round_no == 2 else
+            "最後提醒：請立即確認本人安全"
+        )
+        message = (
+            f"⚠️【{label}】{event.get('owner_display_name') or '你的親友'} "
+            f"在 {minute} 分鐘前發出 SOS\n"
+            "若能處理請開啟原通知按「我來聯繫」；若有立即危險請撥打 119／110"
+        )
+        round_units = 0
+        for delivery in event.get("deliveries") or []:
+            if delivery.get("kind") not in {"guardian", "group"}:
+                continue
+            if delivery.get("status") != "sent" or not delivery.get("target"):
+                continue
+            try:
+                _send_line_with_retry_key(
+                    sender,
+                    token,
+                    delivery["target"],
+                    message,
+                    _line_retry_key(
+                        f"{event.get('event_id')}:escalation:{round_no}:{delivery['target']}"
+                    ),
+                )
+                sent += 1
+                round_units += max(1, int(delivery.get("recipient_count") or 1))
+            except Exception:
+                failed += 1
+        event["escalation_round"] = round_no
+        event["last_escalated_at"] = current.isoformat(timespec="seconds")
+        event.setdefault("timeline", []).append({
+            "action": f"escalation_{round_no}",
+            "actor_name": "系統",
+            "at": event["last_escalated_at"],
+        })
+        record_line_message_usage(
+            state,
+            category="sos_escalation",
+            owner_line_user_id=event.get("owner_line_user_id"),
+            recipient_count=round_units,
+            event_id=f"{event.get('event_id')}:escalation:{round_no}",
+            sent_at=current,
+        )
+        events_updated += 1
+    if events_updated:
+        save_state(data_file, state)
+    return {
+        "sent": sent,
+        "failed": failed,
+        "events_updated": events_updated,
+    }
+
+
 def _claim_sos_event_action(state, event_id, owner_id, action, now):
     """Lease cancel/retry so concurrent workers cannot duplicate LINE pushes."""
     event = (state.get("sos_events") or {}).get(event_id)
@@ -9429,11 +9841,16 @@ def trigger_sos(data_file, payload, config=None):
             f"{sos_event_id}:guardian:{target}"
         )
         try:
+            guardian_message = (
+                build_sos_guardian_flex(message, sos_event_id)
+                if sender is line_push_message
+                else message
+            )
             result = _send_line_with_retry_key(
                 sender,
                 token,
                 target,
-                message,
+                guardian_message,
                 delivery_retry_key,
             )
             append_notification_log(state, "sos", target, "sent", message, json.dumps(result, ensure_ascii=False))
@@ -11682,14 +12099,16 @@ def resolve_admin_incident(data_file, payload, actor_role):
     state = load_state(data_file)
     resolved_at = datetime.now().isoformat(timespec="seconds")
     if kind == "sos":
-        target = next(
-            (
-                item
-                for item in (state.get("sos_pending") or {}).values()
-                if str(item.get("event_id") or "") == incident_id
-            ),
-            None,
-        )
+        target = (state.get("sos_events") or {}).get(incident_id)
+        if target is None:
+            target = next(
+                (
+                    item
+                    for item in (state.get("sos_pending") or {}).values()
+                    if str(item.get("event_id") or "") == incident_id
+                ),
+                None,
+            )
     else:
         target = next(
             (
@@ -12204,9 +12623,18 @@ def admin_business_dashboard(data_file, config=None, now=None):
 
     pending_sos = [
         item
-        for item in (state.get("sos_pending") or {}).values()
-        if str(item.get("status") or "pending").casefold() not in {"resolved", "cancelled", "closed"}
+        for item in (state.get("sos_events") or {}).values()
+        if str(item.get("status") or "pending").casefold()
+        not in SOS_CLOSED_STATUSES
     ]
+    known_sos_ids = {str(item.get("event_id") or "") for item in pending_sos}
+    pending_sos.extend(
+        item
+        for item in (state.get("sos_pending") or {}).values()
+        if str(item.get("event_id") or "") not in known_sos_ids
+        and str(item.get("status") or "pending").casefold()
+        not in SOS_CLOSED_STATUSES
+    )
     delivery_failures = [
         dict(item, incident_id=str(item.get("incident_id") or f"delivery-{index}"))
         for index, item in enumerate(notification_logs)
@@ -12266,6 +12694,20 @@ def admin_business_dashboard(data_file, config=None, now=None):
                     "kind": "sos",
                     "incident_id": str(item.get("event_id") or ""),
                     "created_at": item.get("created_at"),
+                    "owner_display_name": item.get("owner_display_name") or "會員",
+                    "status": item.get("status") or "pending",
+                    "primary_responder": _sos_public_snapshot(item).get("primary_responder"),
+                    "assistants": _sos_public_snapshot(item).get("assistants"),
+                    "escalation_round": int(item.get("escalation_round") or 0),
+                    "sent_count": sum(
+                        1 for row in (item.get("deliveries") or [])
+                        if row.get("status") == "sent"
+                    ),
+                    "failed_count": sum(
+                        1 for row in (item.get("deliveries") or [])
+                        if row.get("status") == "failed"
+                    ),
+                    "timeline": _sos_public_snapshot(item).get("timeline"),
                 }
                 for item in pending_sos
                 if item.get("event_id")
@@ -12973,6 +13415,7 @@ LINE_MESSAGE_USAGE_CATEGORIES = {
     "overdue",
     "sos",
     "sos_cancel",
+    "sos_escalation",
     "smart_reminder",
     "guardian_summary",
 }
@@ -15159,6 +15602,10 @@ def run_cron_tick(config):
         "overdue_alerts": send_due_reminders,
         "guardian_group_daily_summaries": send_guardian_group_daily_summaries,
         "smart_reminders": send_smart_reminders,
+        "sos_escalations": lambda cfg: (
+            process_sos_escalations(cfg["DATA_FILE"], cfg, now=now),
+            200,
+        ),
         "sos_cleanup": cleanup_expired_sos,
     }
     for name, task in always.items():
@@ -15985,10 +16432,10 @@ def create_app(config=None):
         handler = WebhookHandler(secret)
 
         def _sos_handle(line_bot_api, line_user_id, command, reply_token=None, group_id=None):
-            """需要幫忙：回覆統一 LIFF 求助入口。
+            """需要幫忙：聊天室連續確認 3 次後送入共用 SOS 事件。
 
             command:
-              - '需要幫忙' / 'SOS' / 'sos' / '緊急求助' : 入口卡（撥打 + 通知家人）
+              - '需要幫忙' / 'SOS' / 'sos' / '緊急求助' : 累計一次確認
               - '取消需要幫忙' / 'SOS 取消' : 取消 pending
             """
             state = load_state(app.config["DATA_FILE"])
@@ -16042,35 +16489,39 @@ def create_app(config=None):
                     reply(None, "沒有待取消的需要幫忙通知")
                 return
 
-            # 入口卡：一律回緊急 Flex（不擋方案；實際通知再檢查）
+            # 聊天室保留連續 3 次確認；圖文選單則開 LIFF 的同一套 3 次流程。
             if command in entry_commands or command in legacy_entry_commands:
-                family_tel = None
-                family_label = None
-                if profile:
-                    contacts = sorted(
-                        (profile.get("contacts") or []),
-                        key=lambda c: int(c.get("priority") or 9999),
+                tap = sos_flow.sos_tap(state, line_user_id)
+                count = int((tap.get("entry") or {}).get("tap_count") or 1)
+                save_state(app.config["DATA_FILE"], state)
+                if count < 3:
+                    reply(
+                        sos_flow.sos_warning_flex(count),
+                        f"🆘 需要幫忙確認 {count}/3",
                     )
-                    for contact in contacts:
-                        phone = str(contact.get("phone") or contact.get("mobile") or "").strip()
-                        digits = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
-                        if digits:
-                            family_tel = digits
-                            family_label = contact.get("name") or contact.get("relationship") or "家人"
-                            break
-                liff_sos = (
-                    liff_entry_url(open_action="sos")
-                    if liff_entry_url
-                    else "https://liff.line.me/2010848330-UAiqPPYD?open=sos"
+                    return
+                result, status_code = trigger_sos(
+                    app.config["DATA_FILE"],
+                    {"line_user_id": line_user_id},
+                    app.config,
                 )
-                reply(
-                    sos_flow.sos_emergency_flex(
-                        family_tel=family_tel,
-                        family_label=family_label,
-                        liff_sos_uri=liff_sos,
-                    ),
-                    "🆘 需要幫忙 — 連按 3 次通知家人",
-                )
+                if status_code == 200:
+                    latest = load_state(app.config["DATA_FILE"])
+                    sos_flow.sos_mark_sent(
+                        latest, line_user_id, result.get("event_id")
+                    )
+                    save_state(app.config["DATA_FILE"], latest)
+                    reply(
+                        sos_flow.sos_sent_flex(),
+                        f"🚨 SOS 已送出，已通知 {int(result.get('sent') or 0)} 個對象",
+                    )
+                elif str(result.get("error") or "") == "no bound LINE guardians":
+                    reply(
+                        sos_flow.sos_no_guardians_flex(),
+                        sos_user_facing_error(result.get("error")),
+                    )
+                else:
+                    reply(None, sos_user_facing_error(result.get("error")))
                 return
 
             if command not in entry_commands and command not in legacy_entry_commands:
@@ -16508,6 +16959,29 @@ def create_app(config=None):
                     reply = handle_beta_feedback_postback(
                         app.config["DATA_FILE"], line_user_id, data
                     )
+                elif data.startswith("sos:"):
+                    parts = data.split(":", 2)
+                    if len(parts) == 3:
+                        result, status_code = respond_to_sos_event(
+                            app.config["DATA_FILE"],
+                            {
+                                "line_user_id": line_user_id,
+                                "action": parts[1],
+                                "event_id": parts[2],
+                            },
+                            app.config,
+                        )
+                        if status_code == 200:
+                            role_text = (
+                                "你是主要接手人"
+                                if result.get("role") == "primary"
+                                else "已有守護人先接手，你已加入協助"
+                                if result.get("role") == "assistant"
+                                else "已記錄你的回應"
+                            )
+                            reply = f"✅ {role_text}\n系統已停止重複催促；請繼續聯絡本人"
+                        else:
+                            reply = "這筆 SOS 無法更新，可能已結案或你不是本次收件人"
                 elif data.startswith("smart:"):
                     reply = handle_smart_reminder_postback(
                         app.config["DATA_FILE"], line_user_id, data, app.config
@@ -17678,6 +18152,43 @@ def create_app(config=None):
             return jsonify(err[0]), err[1]
         payload["line_user_id"] = line_user_id
         data, code = retry_sos_event(app.config["DATA_FILE"], payload, app.config)
+        return jsonify(data), code
+
+    @app.get("/api/sos/status")
+    def sos_status_api():
+        payload = {"line_user_id": request.args.get("line_user_id", "")}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = get_sos_event_status(
+            app.config["DATA_FILE"],
+            line_user_id,
+            request.args.get("event_id", ""),
+        )
+        return jsonify(data), code
+
+    @app.post("/api/sos/respond")
+    def sos_respond_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = respond_to_sos_event(
+            app.config["DATA_FILE"], payload, app.config
+        )
+        return jsonify(data), code
+
+    @app.post("/api/sos/safe")
+    def sos_safe_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = close_sos_as_safe(
+            app.config["DATA_FILE"], payload, app.config
+        )
         return jsonify(data), code
 
     @app.get("/api/bot/guardian-groups")
