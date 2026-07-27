@@ -17732,7 +17732,7 @@ class MiniClient:
             return MiniResponse({"ok": True, "safety_guard": safety_guard_snapshot(profile)})
         return MiniResponse({"error": "not found"}, 404)
 
-    def post(self, path, data=None, content_type=None, headers=None):
+    def post(self, path, data=None, content_type=None, headers=None, **kwargs):
         route, _, query = path.partition("?")
         if route == "/api/admin" or route.startswith("/api/admin/"):
             return MiniResponse({"error": "admin_not_configured"}, 503)
@@ -17744,7 +17744,10 @@ class MiniClient:
             or ""
         )
         payload = {}
-        if data and content_type == "application/json":
+        json_payload = kwargs.get("json")
+        if isinstance(json_payload, dict):
+            payload = dict(json_payload)
+        elif data and content_type == "application/json":
             payload = json.loads(data)
         if route == "/api/line/register":
             body, code = register_line_user(self.app.config["DATA_FILE"], payload)
@@ -17789,6 +17792,35 @@ class MiniClient:
         if route == "/api/payments/orders":
             body, code = create_payment_order(self.app.config["DATA_FILE"], payload, self.app.config)
             return MiniResponse(body, code)
+        if route in {"/api/payment/ecpay/notify", "/api/payment/ecpay/period-notify"}:
+            form = dict(data) if isinstance(data, dict) else payload
+            if ecpay is None:
+                return MiniResponse("0|payment module missing", 503)
+            parsed, error = ecpay.parse_notify_payload(form, self.app.config)
+            if error:
+                return MiniResponse(f"0|{error}", 400)
+            if not ecpay.notify_success(parsed):
+                return MiniResponse("1|OK", 200)
+            if route.endswith("/period-notify"):
+                parsed.update({"status": "SUCCESS", "provider": "ecpay"})
+                body, code = process_period_notification(
+                    self.app.config["DATA_FILE"], parsed, self.app.config
+                )
+            else:
+                body, code = confirm_payment_order(
+                    self.app.config["DATA_FILE"],
+                    {
+                        "order_id": parsed.get("order_id"),
+                        "transaction_id": parsed.get("transaction_id"),
+                        "provider": "ecpay",
+                    },
+                    self.app.config,
+                )
+            if code >= 400:
+                return MiniResponse(
+                    f"0|{body.get('error', 'order update failed')}", code
+                )
+            return MiniResponse("1|OK", 200)
         if route == "/api/contacts":
             body, code = save_contacts(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
