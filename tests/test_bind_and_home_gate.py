@@ -133,11 +133,29 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(rejected["code"], "consent_required")
         self.assertTrue(app_module.member_access_state(app_module.load_state(self.data_file)["users"]["U-owner"])["guardian_required"])
 
+        missing, missing_code = app_module.bind_emergency_contact(
+            self.data_file,
+            {
+                "inviter_line_user_id": "U-owner",
+                "contact_line_user_id": "U-guardian",
+                "recipient_consent": True,
+                "activate_trial": False,
+                "invite_token": invite["invite_token"],
+            },
+            config={},
+        )
+        self.assertEqual(missing_code, 400)
+        self.assertEqual(missing["code"], "guardian_profile_required")
+        self.assertEqual(missing["required_fields"], ["name", "relationship", "phone"])
+
         result, code = app_module.bind_emergency_contact(
             self.data_file,
             {
                 "inviter_line_user_id": "U-owner",
                 "contact_line_user_id": "U-guardian",
+                "contact_display_name": "小芳",
+                "contact_relationship": "女兒",
+                "contact_phone": "0912345678",
                 "recipient_consent": True,
                 "invite_token": invite["invite_token"],
             },
