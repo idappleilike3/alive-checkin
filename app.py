@@ -4341,6 +4341,70 @@ def create_payment_order(data_file, payload, config=None):
     return {"order": order, "checkout": checkout}, 201
 
 
+def validate_payment_confirmation(state, order, parsed, now):
+    """Reject mismatched or replayed gateway confirmations before entitlement changes."""
+    transaction_id = str(parsed.get("transaction_id") or "").strip()
+    received_amount = parsed.get("amount")
+    if received_amount not in (None, ""):
+        try:
+            received_amount = int(received_amount)
+        except (TypeError, ValueError):
+            received_amount = -1
+        expected_amount = int(order.get("amount") or 0)
+        if received_amount != expected_amount:
+            order.update({
+                "status": "anomaly",
+                "anomaly_code": "amount_mismatch",
+                "expected_amount": expected_amount,
+                "received_amount": received_amount,
+                "anomaly_transaction_id": transaction_id,
+                "anomaly_detected_at": now.isoformat(timespec="seconds"),
+            })
+            append_notification_log(
+                state,
+                "payment_anomaly",
+                order.get("line_user_id") or "",
+                "blocked",
+                f"{order.get('order_id')} amount mismatch",
+            )
+            return {
+                "error": "payment_amount_mismatch",
+                "order_id": order.get("order_id"),
+            }, 409
+
+    if transaction_id:
+        duplicate = next(
+            (
+                item
+                for item in state.get("orders", [])
+                if item is not order
+                and str(item.get("transaction_id") or "").strip() == transaction_id
+            ),
+            None,
+        )
+        if duplicate:
+            order.update({
+                "status": "anomaly",
+                "anomaly_code": "duplicate_transaction_id",
+                "anomaly_transaction_id": transaction_id,
+                "duplicate_of_order_id": duplicate.get("order_id"),
+                "anomaly_detected_at": now.isoformat(timespec="seconds"),
+            })
+            append_notification_log(
+                state,
+                "payment_anomaly",
+                order.get("line_user_id") or "",
+                "blocked",
+                f"{order.get('order_id')} duplicate transaction",
+            )
+            return {
+                "error": "duplicate_transaction_id",
+                "order_id": order.get("order_id"),
+                "duplicate_of_order_id": duplicate.get("order_id"),
+            }, 409
+    return None
+
+
 def process_period_notification(data_file, parsed, config=None):
     """Apply one verified NewebPay period notification exactly once."""
     order_id = str(parsed.get("order_id") or "").strip()
@@ -4361,6 +4425,11 @@ def process_period_notification(data_file, parsed, config=None):
     )
     if not order:
         return {"error": "order not found"}, 404
+    now = current_app_time(config or {})
+    integrity_error = validate_payment_confirmation(state, order, parsed, now)
+    if integrity_error:
+        save_state(data_file, state)
+        return integrity_error
     processed = order.setdefault("processed_transaction_ids", [])
     event_key = transaction_id or f"period:{parsed.get('period_no') or ''}:initial"
     if event_key in processed:
@@ -4370,7 +4439,6 @@ def process_period_notification(data_file, parsed, config=None):
     product = PAYMENT_PRODUCTS.get(order.get("plan"))
     if not product:
         return {"error": "unknown payment plan"}, 400
-    now = current_app_time(config or {})
     current_until = parse_datetime(profile.get("paid_until"))
     start_at = current_until if current_until and current_until > now else now
     profile["plan"] = order["plan"]
@@ -4667,13 +4735,17 @@ def confirm_payment_order(data_file, payload, config=None):
     if not order:
         return {"error": "order not found"}, 404
     profile = get_profile(state, order.get("line_user_id"))
+    now = current_app_time(config or {})
+    integrity_error = validate_payment_confirmation(state, order, payload, now)
+    if integrity_error:
+        save_state(data_file, state)
+        return integrity_error
     if order.get("status") == "paid":
         return {"order": order, "member": build_status(profile), "already_confirmed": True}, 200
 
     product = PAYMENT_PRODUCTS.get(order.get("plan"))
     if not product:
         return {"error": "unknown payment plan"}, 400
-    now = current_app_time(config or {})
     current_until = parse_datetime(profile.get("paid_until"))
     start_at = current_until if current_until and current_until > now else now
     paid_until = start_at + timedelta(days=product["duration_days"])
@@ -16704,6 +16776,8 @@ def create_app(config=None):
             {
                 "order_id": parsed.get("order_id"),
                 "transaction_id": parsed.get("transaction_id"),
+                "amount": parsed.get("amount"),
+                "provider": "newebpay",
             },
             app.config,
         )
@@ -16726,6 +16800,7 @@ def create_app(config=None):
             {
                 "order_id": parsed.get("order_id"),
                 "transaction_id": parsed.get("transaction_id"),
+                "amount": parsed.get("amount"),
                 "provider": "ecpay",
             },
             app.config,
