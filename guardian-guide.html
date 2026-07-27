@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <title>每日平安｜完整守護說明</title>
+  <style>
+    :root {
+      --forest: #0b5c2e;
+      --ink: #173326;
+      --muted: #5c6d63;
+      --line: #06c755;
+      --border: #d9e7dd;
+      --surface: rgba(255,255,255,0.92);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+      background:
+        radial-gradient(110% 55% at 50% -5%, #d9f5e4 0%, transparent 60%),
+        #f3f7f4;
+      color: var(--ink);
+    }
+    main {
+      width: min(620px, 100%);
+      margin: 0 auto;
+      padding: 24px 16px 52px;
+    }
+    .back {
+      display: inline-block;
+      margin-bottom: 20px;
+      color: var(--forest);
+      font-weight: 750;
+      text-underline-offset: 4px;
+    }
+    header { margin-bottom: 22px; }
+    .brand { margin: 0 0 8px; color: var(--forest); font-weight: 850; }
+    h1 { margin: 0; font-size: clamp(1.7rem, 7vw, 2.25rem); line-height: 1.3; }
+    .lead { margin: 10px 0 0; color: var(--muted); line-height: 1.65; }
+    .stack { display: grid; gap: 11px; }
+    details {
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--surface);
+    }
+    summary {
+      position: relative;
+      padding: 17px 48px 17px 17px;
+      list-style: none;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    summary::-webkit-details-marker { display: none; }
+    summary::after {
+      content: "＋";
+      position: absolute;
+      top: 14px;
+      right: 17px;
+      color: var(--forest);
+      font-size: 1.35rem;
+    }
+    details[open] summary::after { content: "－"; }
+    .body {
+      padding: 0 17px 18px;
+      color: var(--muted);
+      font-size: 0.93rem;
+      line-height: 1.75;
+    }
+    .body p { margin: 0 0 9px; }
+    .body p:last-child { margin-bottom: 0; }
+    .cta {
+      display: block;
+      margin-top: 22px;
+      padding: 16px 20px;
+      border-radius: 15px;
+      background: var(--line);
+      color: #fff;
+      font-weight: 850;
+      text-align: center;
+      text-decoration: none;
+      box-shadow: 0 10px 24px rgba(6, 199, 85, 0.22);
+    }
+    .back:focus-visible, .cta:focus-visible, summary:focus-visible {
+      outline: 3px solid rgba(6, 199, 85, 0.34);
+      outline-offset: 3px;
+    }
+    footer {
+      margin-top: 18px;
+      color: #718078;
+      font-size: 0.8rem;
+      line-height: 1.55;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <a class="back" href="/invite">← 返回邀請頁</a>
+    <header>
+      <p class="brand">每日平安</p>
+      <h1>完整守護說明</h1>
+      <p class="lead">接受邀請前，可以先了解通知、定位、解除方式與個資用途。只有你確認後，守護關係才會成立。</p>
+    </header>
+
+    <section class="stack" aria-label="核心守護人常見問題">
+      <details open>
+        <summary>核心守護人會收到什麼？</summary>
+        <div class="body">
+          <p>依使用者方案與設定，可能收到逾時未簽到、緊急 SOS，以及使用者主動分享的位置通知。</p>
+          <p>通知是協助確認安全，不代表你需要全天查看對方動態。</p>
+        </div>
+      </details>
+      <details>
+        <summary>定位會一直追蹤嗎？</summary>
+        <div class="body">
+          <p><strong>不會全天偷追蹤。</strong>只有使用者主動分享位置，或開啟「頁面開啟期間持續定位」時才會更新。</p>
+          <p>關閉頁面、停止分享或撤回手機定位權限後，持續定位就會停止。</p>
+        </div>
+      </details>
+      <details>
+        <summary>如何解除守護關係？</summary>
+        <div class="body">
+          <p>可在會員中心的守護人管理中解除守護關係。解除後，不再收到該使用者的新簽到、逾時或 SOS 通知。</p>
+          <p>若只想暫停一般提醒，可先調整通知設定，不必立即解除。</p>
+        </div>
+      </details>
+      <details>
+        <summary>個資與隱私如何使用？</summary>
+        <div class="body">
+          <p>個資只用於帳號辨識、守護關係、簽到與必要通知，不會因接受邀請而公開你的 LINE 識別資料。</p>
+          <p>位置資訊僅依使用者主動授權的功能與期間，提供給已綁定的守護人。</p>
+        </div>
+      </details>
+      <details>
+        <summary>綁定成功後要做什麼？</summary>
+        <div class="body">
+          <p><strong>綁定成功後</strong>，雙方會看到完成提示。請確認守護人名單，並用測試通知檢查手機能否正常收到 LINE 訊息。</p>
+        </div>
+      </details>
+      <details>
+        <summary>LINE 連結無法開啟怎麼辦？</summary>
+        <div class="body">
+          <p>先開啟手機 LINE，再返回邀請頁點「請用 LINE 開啟並確認」。</p>
+          <p>Android 若停在 Chrome，可使用備用 LINE 連結，或複製連結貼到 LINE 聊天室後再點開。</p>
+        </div>
+      </details>
+    </section>
+
+    <a class="cta" href="/invite">我了解了，返回邀請頁</a>
+    <footer>接受邀請不代表授權全天定位。你可隨時調整通知或解除守護關係。</footer>
+  </main>
+</body>
+</html>

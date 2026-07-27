@@ -721,6 +721,50 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("apiBindEmergencyContact(inviteFrom)", init_liff)
         self.assertIn("maybeShowInviteAcceptPrompt()", init_liff)
 
+    def test_invite_landing_is_concise_and_links_to_complete_guardian_guide(self):
+        landing = (ROOT / "invite.html").read_text(encoding="utf-8")
+        guide = (ROOT / "guardian-guide.html").read_text(encoding="utf-8")
+        backend = (ROOT / "app.py").read_text(encoding="utf-8")
+
+        self.assertIn("邀請你成為核心守護人", landing)
+        self.assertIn('aria-describedby="lineOpenHelp"', landing)
+        self.assertIn("複製 LINE 連結", landing)
+        self.assertIn("若無法開啟", landing)
+        self.assertIn('href="/guardian-guide"', landing)
+        self.assertIn("查看完整守護說明", landing)
+        self.assertNotIn("<details", landing)
+
+        self.assertIn("完整守護說明", guide)
+        self.assertIn("逾時未簽到", guide)
+        self.assertIn("緊急 SOS", guide)
+        self.assertIn("使用者主動分享的位置", guide)
+        self.assertIn("解除守護關係", guide)
+        self.assertIn("個資與隱私", guide)
+        self.assertIn("不會全天偷追蹤", guide)
+        self.assertIn("綁定成功後", guide)
+        self.assertIn('href="/invite"', guide)
+        self.assertIn('@app.get("/guardian-guide")', backend)
+        self.assertIn('send_from_directory(app.static_folder, "guardian-guide.html")', backend)
+
+    def test_invite_landing_tells_three_panel_story_and_has_safe_checkin_demo(self):
+        landing = (ROOT / "invite.html").read_text(encoding="utf-8")
+
+        self.assertIn("assets/guardian-story-mother-daughter.webp", landing)
+        self.assertIn("女兒忙著工作，心裡還是惦記媽媽", landing)
+        self.assertIn("媽媽按下「我平安」", landing)
+        self.assertIn("女兒收到消息，放心繼續生活", landing)
+        self.assertIn("我每天按一下「我平安」就可以了嗎？", landing)
+        self.assertIn("對，10 秒就好，我收到通知就放心了", landing)
+        self.assertIn("✅ 我平安", landing)
+        self.assertIn("✅ 報平安成功", landing)
+        self.assertIn('class="tap-hand"', landing)
+        self.assertIn('id="demoCheckinButton"', landing)
+        self.assertIn("點一下，體驗報平安", landing)
+        self.assertIn("今日已報平安", landing)
+        self.assertIn('type="button"', landing)
+        self.assertNotIn('fetch("/api/checkin', landing)
+        self.assertNotIn('setTimeout(function () { openLine(primaryUrl); }, 350)', landing)
+
     def test_guardian_group_intro_has_two_readable_ctas(self):
         flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
 

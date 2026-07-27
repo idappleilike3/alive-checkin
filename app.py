@@ -14790,6 +14790,11 @@ def create_app(config=None):
         """Invite landing for external browsers only (not the LIFF Endpoint)."""
         return send_from_directory(app.static_folder, "invite.html")
 
+    @app.get("/guardian-guide")
+    def guardian_guide():
+        """Detailed guardian notice linked from the concise invite landing."""
+        return send_from_directory(app.static_folder, "guardian-guide.html")
+
     @app.get("/health")
     def health():
         persist = persistence_info(app.config["DATA_FILE"])
