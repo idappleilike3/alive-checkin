@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>每日平安｜21 天封測</title>
+  <style>
+    :root { color-scheme: light; --green:#168c65; --ink:#18332c; --soft:#eef9f4; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:"Noto Sans TC",system-ui,sans-serif; color:var(--ink); background:linear-gradient(180deg,#e9f8f1,#fff); }
+    main { width:min(100% - 32px,620px); margin:28px auto; }
+    .card { background:#fff; border:1px solid #cfe9dd; border-radius:26px; padding:26px 22px; box-shadow:0 18px 48px #1c72551a; }
+    .eyebrow { color:var(--green); font-weight:800; }
+    h1 { font-size:clamp(28px,7vw,40px); line-height:1.2; margin:10px 0; }
+    .lead { font-size:18px; line-height:1.75; }
+    .benefits { display:grid; gap:12px; margin:22px 0; }
+    .benefit { padding:14px 16px; border-radius:16px; background:var(--soft); }
+    .spots { font-weight:800; color:#9b5d00; }
+    a.cta { display:block; padding:17px 16px; border-radius:16px; background:var(--green); color:#fff; text-align:center; text-decoration:none; font-size:20px; font-weight:900; }
+    small { display:block; text-align:center; margin-top:12px; color:#63746f; line-height:1.6; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card">
+      <div class="eyebrow">每日平安限定招募</div>
+      <h1 id="title">21 天封閉測試</h1>
+      <p class="lead">不用刷卡、不會自動扣款。完成 LINE 註冊後，系統會自動分入正確組別，並引導你邀請至少一位核心守護人。</p>
+      <div class="benefits">
+        <div class="benefit">✅ 21 天完整測試指定方案功能</div>
+        <div class="benefit">✅ 每日報平安、逾時提醒與 SOS</div>
+        <div class="benefit">✅ 守護人免費接收通知</div>
+      </div>
+      <p class="spots" id="spots"></p>
+      <a class="cta" id="join" href="#">用 LINE 加入 21 天封測</a>
+      <small>每人只能加入一個封測組別。額滿後連結會自動停止接受註冊。</small>
+    </section>
+  </main>
+  <script>
+    const is799 = location.pathname.endsWith("/799");
+    const cohort = is799 ? "B799" : "B399";
+    document.getElementById("title").textContent =
+      is799 ? "799 守護版｜21 天封測" : "399 安心版｜21 天封測";
+    document.getElementById("spots").textContent =
+      is799 ? "本組限額 10 人" : "本組限額 20 人";
+    document.getElementById("join").href =
+      `https://liff.line.me/2010848330-UAiqPPYD?beta_cohort=${cohort}&open=onboarding`;
+  </script>
+</body>
+</html>
