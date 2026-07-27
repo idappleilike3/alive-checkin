@@ -1,5 +1,8 @@
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import app as alive_app
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,6 +12,7 @@ class LiffFastRouteTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.page = (ROOT / "index.html").read_text(encoding="utf-8")
+        cls.client = alive_app.create_app({"TESTING": True}).test_client()
 
     def section(self, start, end):
         self.assertIn(start, self.page)
@@ -48,7 +52,7 @@ class LiffFastRouteTests(unittest.TestCase):
             self.page.index("async function initializeLiff()"):
             self.page.index("async function initLine()")
         ]
-        self.assertIn('const FIXED_LIFF_ID = "2010674803-rK98c0lo"', initializer)
+        self.assertIn('const FIXED_LIFF_ID = "2010848330-UAiqPPYD"', initializer)
         self.assertIn("await liff.init({ liffId: FIXED_LIFF_ID })", initializer)
         self.assertIn("appConfigPromise", initializer)
         self.assertLess(
@@ -90,6 +94,48 @@ class LiffFastRouteTests(unittest.TestCase):
         self.assertIn("}, 60000);", self.page)
         self.assertNotIn("}, 5000);", self.page)
         self.assertIn('document.visibilityState === "visible"', self.page)
+
+    def test_migration_page_is_served(self):
+        response = self.client.get("/liff/migrate.html")
+        self.addCleanup(response.close)
+        self.assertEqual(response.status_code, 200)
+
+    def test_account_migration_redeems_after_liff_before_member_bootstrap(self):
+        bootstrap = self.section(
+            "async function bootstrapApp()",
+            "appBootstrapPromise = bootstrapApp()",
+        )
+        self.assertIn("await redeemPendingAccountMigration()", bootstrap)
+        self.assertLess(
+            bootstrap.index("await initLine()"),
+            bootstrap.index("await redeemPendingAccountMigration()"),
+        )
+        self.assertLess(
+            bootstrap.index("await redeemPendingAccountMigration()"),
+            bootstrap.index("await initApp("),
+        )
+
+    def test_migration_redemption_reuses_member_data_without_page_reload(self):
+        redeem = self.section(
+            "async function redeemPendingAccountMigration()",
+            "function requestedAppAction()",
+        )
+        self.assertIn('fetch("/api/account-migration/redeem"', redeem)
+        self.assertIn("removeMigrationCodeFromVisibleUrl()", redeem)
+        self.assertIn("history.replaceState", self.page)
+        self.assertIn("await loadInitialMemberData()", redeem)
+        self.assertNotIn("location.reload", redeem)
+
+    def test_degraded_liff_embed_redirect_uses_query_without_extra_slash(self):
+        with patch.object(alive_app, "liff_entry_url", None):
+            response = self.client.get("/liff/onboarding")
+        self.addCleanup(response.close)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers["Location"],
+            "https://liff.line.me/2010848330-UAiqPPYD?open=onboarding",
+        )
 
 
 if __name__ == "__main__":

@@ -224,6 +224,8 @@ class PushDeliveryPolicyTests(unittest.TestCase):
                         "U-owner": {
                             "line_user_id": "U-owner",
                             "display_name": "阿明",
+                            "plan": "paid_799",
+                            "payment_status": "active",
                             "history": [],
                         }
                     },
@@ -242,6 +244,7 @@ class PushDeliveryPolicyTests(unittest.TestCase):
                 "DATA_FILE": data_file,
                 "LINE_CHANNEL_ACCESS_TOKEN": "token",
                 "LINE_PUSH_SENDER": timeout_sender,
+                "GROUP_MEMBER_IDS_FETCHER": lambda _token, _group: ["U-owner"],
                 "CRON_NOW": datetime(2026, 7, 26, 21, 0),
             }
 
@@ -299,7 +302,12 @@ class PushDeliveryPolicyTests(unittest.TestCase):
             self.assertTrue(result["system_error"])
             self.assertEqual(
                 list(result["tasks"]),
-                ["membership_transition_migration", "checkin_reminders"],
+                [
+                    "membership_transition_migration",
+                    "trial_milestone_notices",
+                    "membership_expiry",
+                    "checkin_reminders",
+                ],
             )
             self.assertEqual(calls, ["U1"])
 

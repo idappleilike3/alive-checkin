@@ -97,7 +97,7 @@ class InviteRewardRetainTests(unittest.TestCase):
         state = app_module.load_state(self.data_file)
         self.assertEqual(app_module.trial_bonus_days(state["users"]["U-inv2"]), 0)
 
-    def test_trial_expiry_keeps_contacts_thirty_days_then_archives(self):
+    def test_trial_expiry_keeps_contacts_until_verified_request(self):
         app_module.register_line_user(
             self.data_file, {"line_user_id": "U-old", "display_name": "過期用戶"}
         )
@@ -130,26 +130,26 @@ class InviteRewardRetainTests(unittest.TestCase):
         profile = state["users"]["U-old"]
         self.assertEqual(profile.get("plan"), "free")
         self.assertEqual(profile.get("payment_status"), "expired")
-        self.assertTrue(profile.get("contacts_retain_until"))
+        self.assertEqual(profile.get("contacts_retain_until"), "")
+        self.assertTrue(profile.get("membership_paused"))
         self.assertEqual(len(profile.get("contacts") or []), 1)
 
-        # Force retain window ended → soft archive
+        # Even a stale legacy retain date must not auto-delete relationships.
         profile["contacts_retain_until"] = (datetime.now() - timedelta(days=1)).isoformat(
             timespec="seconds"
         )
         app_module.save_state(self.data_file, state)
         cleaned, code2 = app_module.cleanup_expired_data({"DATA_FILE": self.data_file})
         self.assertEqual(code2, 200)
-        self.assertGreaterEqual(cleaned.get("contacts_archived_users", 0), 1)
+        self.assertEqual(cleaned.get("contacts_archived_users", 0), 0)
         state = app_module.load_state(self.data_file)
         profile = state["users"]["U-old"]
-        self.assertEqual(profile.get("contacts"), [])
-        self.assertGreaterEqual(len(profile.get("contacts_archived") or []), 1)
+        self.assertEqual(len(profile.get("contacts") or []), 1)
+        self.assertEqual(profile.get("contacts_archived") or [], [])
 
-    def test_ui_copy_mentions_invite_bonus_and_retain(self):
+    def test_ui_copy_does_not_sell_cancelled_invite_bonus(self):
         page = Path(__file__).resolve().parents[1].joinpath("index.html").read_text(encoding="utf-8")
-        self.assertIn("每成功邀請 1 位守護人", page)
-        self.assertIn("保留 30 天", page)
+        self.assertNotIn("每成功邀請 1 位守護人", page)
         self.assertIn("memberInviteMoreGuardianBtn", page)
         self.assertIn("inviteMoreGuardiansFromMember", page)
 

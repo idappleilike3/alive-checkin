@@ -1,7 +1,10 @@
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 import app as alive_app
 
@@ -10,6 +13,95 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class SchedulerTickTests(unittest.TestCase):
+    def test_cleanup_and_redemption_cannot_stale_overwrite_each_other(self):
+        with tempfile.TemporaryDirectory() as temp:
+            data_file = str(Path(temp) / "state.json")
+            old_id = "U-old-cleanup-race"
+            new_id = "U-new-cleanup-race"
+            now = datetime(2026, 7, 26, 2, 0)
+            config = {
+                "DATA_FILE": data_file,
+                "APP_TIMEZONE": "UTC",
+                "CRON_NOW": now,
+                "LEGACY_LINE_LOGIN_CHANNEL_ID": "legacy-channel",
+                "LINE_LOGIN_CHANNEL_ID": "current-channel",
+                "ACCOUNT_MIGRATION_SECRET": "test-only-migration-secret-32bytes",
+                "ACCOUNT_MIGRATION_TTL_SECONDS": 600,
+            }
+            state = alive_app.load_state(data_file)
+            state["users"][old_id] = {
+                **alive_app.DEFAULT_PROFILE,
+                "line_user_id": old_id,
+                "display_name": "Legacy member",
+            }
+            alive_app.save_state(data_file, state)
+            issued, issue_code = alive_app.create_account_migration_ticket(
+                data_file,
+                old_id,
+                config,
+                now=now,
+            )
+            self.assertEqual(issue_code, 200)
+
+            cleanup_loaded = threading.Event()
+            allow_cleanup = threading.Event()
+            redemption_finished = threading.Event()
+            real_purge = alive_app.purge_account_migration_snapshots
+
+            def pause_after_cleanup_load(state, now=None):
+                cleanup_loaded.set()
+                allow_cleanup.wait(timeout=5)
+                return real_purge(state, now=now)
+
+            def redeem():
+                try:
+                    return alive_app.redeem_account_migration_ticket(
+                        data_file,
+                        issued["migration_code"],
+                        new_id,
+                        config,
+                        now=now + timedelta(seconds=1),
+                    )
+                finally:
+                    redemption_finished.set()
+
+            with (
+                mock.patch.object(
+                    alive_app,
+                    "purge_account_migration_snapshots",
+                    side_effect=pause_after_cleanup_load,
+                ),
+                ThreadPoolExecutor(max_workers=2) as executor,
+            ):
+                cleanup_future = executor.submit(
+                    alive_app.cleanup_expired_data,
+                    config,
+                )
+                self.assertTrue(cleanup_loaded.wait(timeout=5))
+                redeem_future = executor.submit(redeem)
+                redemption_finished.wait(timeout=0.5)
+                allow_cleanup.set()
+                cleanup_result, cleanup_code = cleanup_future.result(timeout=5)
+                redeem_result, redeem_code = redeem_future.result(timeout=5)
+
+            self.assertEqual(cleanup_code, 200)
+            self.assertEqual(cleanup_result["migration_snapshots_removed"], 0)
+            self.assertEqual(redeem_code, 200)
+            self.assertTrue(redeem_result["ok"])
+            final = alive_app.load_state(data_file)
+            self.assertNotIn(old_id, final["users"])
+            self.assertIn(new_id, final["users"])
+            self.assertEqual(
+                final["account_migration_aliases"][old_id]["status"],
+                "disabled",
+            )
+            self.assertEqual(
+                next(iter(final["account_migration_tickets"].values()))["status"],
+                "used",
+            )
+            self.assertEqual(len(final["account_migration_snapshots"]), 1)
+            self.assertEqual(len(final["account_migration_audit"]), 1)
+
     def test_reminder_only_runs_in_zero_to_four_minute_window(self):
         self.assertTrue(
             alive_app.reminder_time_in_window(

@@ -48,7 +48,7 @@ def sos_emergency_flex(family_tel: str | None = None, family_label: str | None =
     family_tel／family_label 保留相容參數，入口卡不再於聊天室累計三次點擊。
     """
     _ = (family_tel, family_label)  # 相容舊呼叫端
-    uri = liff_sos_uri or "https://liff.line.me/2010674803-rK98c0lo?open=sos"
+    uri = liff_sos_uri or "https://liff.line.me/2010848330-UAiqPPYD?open=sos"
 
     return {
         "type": "bubble",
@@ -154,7 +154,7 @@ def sos_emergency_flex(family_tel: str | None = None, family_label: str | None =
 
 def sos_no_guardians_flex(invite_uri: str | None = None):
     """第三次連按後發現尚未綁定守護人：口語說明 + 一鍵邀請。"""
-    uri = invite_uri or "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html"
+    uri = invite_uri or "https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html"
     return {
         "type": "bubble",
         "size": "kilo",

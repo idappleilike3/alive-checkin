@@ -4,6 +4,8 @@ import test from "node:test";
 import vm from "node:vm";
 
 const page = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
+const migrationPage = fs.readFileSync(new URL("../liff/migrate.html", import.meta.url), "utf8");
+const migrationScript = migrationPage.match(/<script>([\s\S]*?)<\/script>/)?.[1];
 
 function section(start, end) {
   const from = page.indexOf(start);
@@ -11,6 +13,21 @@ function section(start, end) {
   assert.notEqual(from, -1, `missing start marker: ${start}`);
   assert.notEqual(to, -1, `missing end marker: ${end}`);
   return page.slice(from, to);
+}
+
+function migrationTarget(search, migrationCode = "single-use-code") {
+  assert.ok(migrationScript, "liff/migrate.html script not found");
+  const sandbox = {
+    URL,
+    URLSearchParams,
+    location: {search},
+  };
+  vm.runInNewContext(
+    `${migrationScript}\nthis.buildCurrentMigrationUrl = buildCurrentMigrationUrl;`,
+    sandbox,
+    {filename: "liff/migrate.html"},
+  );
+  return sandbox.buildCurrentMigrationUrl(migrationCode, search);
 }
 
 function functionSource(name) {
@@ -269,4 +286,441 @@ test("status error renders senior-readable retry without page reload", () => {
   listeners.click();
   assert.equal(retries, 1);
   assert.equal(page.includes("location.reload()"), false);
+});
+
+test("server guardian_required shows onboarding and blocks home, check-in, guard, and SOS routes", async () => {
+  const initSource = section("async function initApp()", "// ===== D01");
+
+  for (const openAction of ["home", "checkin", "guard", "sos"]) {
+    const events = [];
+    const sandbox = expose(initSource, ["initApp"], {
+      lineUserId: "U-member",
+      pendingMigratedMemberData: null,
+      location: { hash: "" },
+      bindTabEvents() {},
+      loadInitialMemberData: async () => ({
+        status: {
+          guardian_required: true,
+          home_ready: false,
+          contact_count: 1,
+          bound_guardian_count: 0,
+        },
+        contacts: [{ name: "阿媽", binding_status: "unbound" }],
+        onboarding: {
+          guardian_required: true,
+          home_ready: false,
+          done: false,
+          hasGuardian: true,
+          data: { guardian_required: true, home_ready: false },
+        },
+      }),
+      requestedAppAction: () => openAction,
+      isInviteeDeepLink: () => false,
+      currentGuardianContacts: () => [{ name: "阿媽", binding_status: "unbound" }],
+      hasHomeSetupComplete: () => false,
+      hasAnyGuardianOrContact: () => true,
+      syncInviteUiForBoundState() {},
+      clearShareFirstLocalFlags() {},
+      closeGuardianPrompt() {},
+      closeInviteAcceptPrompt() {},
+      showOnboarding: async () => events.push("onboarding"),
+      showTab: (tab) => events.push(`tab:${tab}`),
+      openMvpGuardPanel: () => events.push("guard"),
+      openSosFlow: () => events.push("sos"),
+      doCheckin: async () => events.push("checkin"),
+      $: () => null,
+      showMemberBootstrapError: (error) => { throw error; },
+    });
+
+    await sandbox.initApp();
+    assert.deepEqual(events, ["onboarding"], `${openAction} must stay behind the guardian gate`);
+  }
+});
+
+test("guardian_required keeps member controls locked after bootstrap data arrives", async () => {
+  const locks = [];
+  const elements = {
+    mvpSafeBtn: { disabled: true },
+    mvpGuardStartBtn: { disabled: true },
+  };
+  const sandbox = expose(
+    section("async function loadInitialMemberData()", "// 整合到 initApp"),
+    ["loadInitialMemberData"],
+    {
+      apiGetStatus: async () => ({ guardian_required: true, home_ready: false, contacts: [] }),
+      apiGetContacts: async () => ({ status: 200, data: { contacts: [], contact_limit: 1 } }),
+      fetchOnboardingState: async () => ({ guardianRequired: true, homeReady: false, data: {} }),
+      renderStatus() {},
+      syncCheckBtn() {},
+      renderSosAccess() {},
+      renderGuardians() {},
+      renderMemberCenter() {},
+      friendlyApiFailure: () => "bad status",
+      contactData: [],
+      currentContactLimit: 1,
+      lineUserId: "U-member",
+      memberBootstrapState: { statusReady: false, dataReady: false, error: null },
+      setMemberInteractionLocked: (locked) => locks.push(locked),
+      $: (id) => elements[id] || null,
+      document: { body: { removeAttribute() {} } },
+    },
+  );
+
+  await sandbox.loadInitialMemberData();
+  assert.equal(sandbox.memberBootstrapState.statusReady, false);
+  assert.equal(elements.mvpSafeBtn.disabled, true);
+  assert.equal(elements.mvpGuardStartBtn.disabled, true);
+  assert.ok(locks.every((locked) => locked === true));
+});
+
+test("guardian-required onboarding cannot be dismissed by an unbound contact", async () => {
+  const closeVisibility = [];
+  const steps = [];
+  const elements = {
+    onboardingModal: { hidden: true, dataset: {}, addEventListener() {}, scrollTop: 0 },
+    onboardingError: { hidden: true, textContent: "" },
+    obName: { value: "" },
+    obPhone: { value: "" },
+    obEmail: { value: "" },
+  };
+  const sandbox = expose(functionSource("showOnboarding"), ["showOnboarding"], {
+    currentStatusData: { guardian_required: true },
+    currentGuardianContacts: () => [{ name: "阿媽", binding_status: "unbound" }],
+    setRelationshipValue() {},
+    setOnboardingCloseVisible: (visible) => closeVisibility.push(visible),
+    showOnboardingShareStep: () => steps.push("share"),
+    showOnboardingReminderStep: () => steps.push("reminder"),
+    $: (id) => elements[id] || null,
+  });
+
+  await sandbox.showOnboarding();
+  assert.deepEqual(closeVisibility, [false]);
+  assert.deepEqual(steps, ["share"]);
+  assert.equal(elements.onboardingModal.hidden, false);
+});
+
+test("guardian_required blocks status actions even after status data is loaded", () => {
+  const gateSource = section(
+    "function requireMemberActionReady(",
+    "function showMemberBootstrapError(",
+  );
+  const sandbox = expose(gateSource, ["requireMemberActionReady"], {
+    useLocalMode: false,
+    lineUserId: "U-member",
+    memberBootstrapState: { guardianRequired: true, statusReady: true, dataReady: true },
+    showMemberBootstrapPending() {},
+    showLineLoginRequired() {},
+    readSafeDeepLinkParams: () => ({}),
+  });
+
+  assert.equal(sandbox.requireMemberActionReady("status"), false);
+});
+
+test("legacy handoff parses nested liff.state and drops the old Provider inviter ID", () => {
+  const oldProviderUserId = "U0123456789abcdef0123456789abcdef";
+  const nestedState = encodeURIComponent(
+    `/?open=guard&invite_from=${oldProviderUserId}&friend_invite=ABC1234&access_token=secret`,
+  );
+
+  assert.equal(
+    migrationTarget(`?liff.state=${nestedState}`),
+    "https://liff.line.me/2010848330-UAiqPPYD?migration_code=single-use-code&open=guard&friend_invite=ABC1234",
+  );
+});
+
+test("legacy handoff forwards only non-identity allowlisted outer parameters", () => {
+  const oldProviderUserId = "Ufedcba9876543210fedcba9876543210";
+
+  assert.equal(
+    migrationTarget(
+      `?page=member&invite_from=${oldProviderUserId}&id_token=secret&unexpected=leak`,
+    ),
+    "https://liff.line.me/2010848330-UAiqPPYD?migration_code=single-use-code&page=member",
+  );
+});
+
+test("legacy handoff never emits an old Provider user ID under an allowlisted key", () => {
+  const oldProviderUserId = "U0123456789abcdef0123456789abcdef";
+
+  for (const key of ["open", "page", "friend_invite"]) {
+    assert.equal(
+      migrationTarget(`?${key}=${oldProviderUserId}`),
+      "https://liff.line.me/2010848330-UAiqPPYD?migration_code=single-use-code",
+      `${key} must not carry a legacy LINE user ID`,
+    );
+  }
+});
+
+test("legacy handoff rejects token-like values hidden in allowlisted keys", () => {
+  for (const [key, sensitive] of [
+    ["open", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJVMTIzIn0.signature"],
+    ["page", "access_token_secret_value"],
+    ["friend_invite", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJVMTIzIn0.signature"],
+    ["friend_invite", "TOO-LONG-INVITE-CODE-SECRET"],
+  ]) {
+    assert.equal(
+      migrationTarget(`?${key}=${encodeURIComponent(sensitive)}`),
+      "https://liff.line.me/2010848330-UAiqPPYD?migration_code=single-use-code",
+      `${key} must reject sensitive or invalid values`,
+    );
+  }
+});
+
+test("logged-out LINE entry reaches explicit login without calling authenticated friendship API", async () => {
+  const calls = [];
+  const liff = {
+    isLoggedIn: () => {
+      calls.push("login");
+      return false;
+    },
+    getFriendship: async () => {
+      throw new Error("UNAUTHORIZED");
+    },
+  };
+  const sandbox = expose(functionSource("resolveLineEntryGate"), ["resolveLineEntryGate"], {
+    useLocalMode: false,
+    window: { liff },
+  });
+
+  assert.equal(await sandbox.resolveLineEntryGate(), "login");
+  assert.deepEqual(calls, ["login"]);
+});
+
+test("logged-in LINE entry verifies actual friendship before returning friend or ready", async () => {
+  for (const [friendFlag, expected] of [
+    [false, "friend"],
+    [true, "ready"],
+  ]) {
+    const calls = [];
+    const liff = {
+      isLoggedIn: () => {
+        calls.push("login");
+        return true;
+      },
+      getFriendship: async () => {
+        calls.push("friendship");
+        return { friendFlag };
+      },
+    };
+    const sandbox = expose(functionSource("resolveLineEntryGate"), ["resolveLineEntryGate"], {
+      useLocalMode: false,
+      window: { liff },
+    });
+    assert.equal(await sandbox.resolveLineEntryGate(), expected);
+    assert.deepEqual(calls, ["login", "friendship"]);
+  }
+});
+
+test("explicit login click preserves only validated invite migration and route continuation", () => {
+  const inviter = `U${"a".repeat(32)}`;
+  const migrationCode = "m".repeat(43);
+  const location = {
+    origin: "https://alive-checkin.onrender.com",
+    pathname: "/",
+    search: (
+      `?invite_from=${inviter}&friend_invite=ABC1234&open=guard`
+      + `&migration_code=${migrationCode}&friendship_status_changed=true`
+      + "&id_token=secret-token&access_token=access-secret&unexpected=leak"
+    ),
+    hash: "",
+  };
+  const loginCalls = [];
+  const listeners = {};
+  const loginButton = {
+    dataset: {},
+    addEventListener: (type, handler) => {
+      listeners[type] = handler;
+    },
+  };
+  const source = [
+    section("const LOGIN_CONTINUATION_ACTIONS", "function isInviteeDeepLink"),
+    section("function buildCleanLoginRedirectUri", "function setTheme"),
+    functionSource("bindLineEntryGate"),
+  ].join("\n");
+  const sandbox = expose(
+    source,
+    [
+      "readSafeDeepLinkParams",
+      "buildCleanLoginRedirectUri",
+      "startLineLogin",
+      "bindLineEntryGate",
+    ],
+    {
+      URLSearchParams,
+      OAUTH_PARAM_KEYS: new Set([
+        "code", "state", "liff.state", "liffClientId", "liffRedirectUri",
+        "friendship_status_changed",
+      ]),
+      location,
+      liff: {
+        login: (options) => loginCalls.push(options),
+      },
+      window: {
+        liff: {
+          login: (options) => loginCalls.push(options),
+        },
+      },
+      readAppParams: () => new URLSearchParams(location.search),
+      readSafeDeepLinkParams: undefined,
+      $: (id) => id === "lineEntryLoginBtn" ? loginButton : null,
+      showLineLoginRequired() {},
+    },
+  );
+
+  sandbox.bindLineEntryGate();
+  listeners.click();
+
+  assert.equal(loginCalls.length, 1);
+  const redirect = new URL(loginCalls[0].redirectUri);
+  assert.equal(redirect.origin, "https://alive-checkin.onrender.com");
+  assert.equal(redirect.pathname, "/");
+  assert.equal(redirect.searchParams.get("invite_from"), inviter);
+  assert.equal(redirect.searchParams.get("friend_invite"), "ABC1234");
+  assert.equal(redirect.searchParams.get("open"), "guard");
+  assert.equal(redirect.searchParams.get("migration_code"), migrationCode);
+  for (const forbidden of [
+    "friendship_status_changed", "id_token", "access_token", "unexpected",
+  ]) {
+    assert.equal(redirect.searchParams.has(forbidden), false);
+  }
+  assert.doesNotMatch(redirect.toString(), /secret-token|access-secret|leak/);
+
+  location.search = (
+    `?open=${encodeURIComponent("eyJhbGciOiJIUzI1NiJ9.payload.signature")}`
+    + `&migration_code=U${"b".repeat(32)}`
+    + "&friend_invite=access_token_secret"
+  );
+  sandbox.startLineLogin();
+  assert.equal(new URL(loginCalls[1].redirectUri).search, "");
+});
+
+test("friendship return rechecks and runs registration migration and member bootstrap once", async () => {
+  let friendFlag = false;
+  const calls = [];
+  const liff = {
+    init: async () => calls.push("init"),
+    isLoggedIn: () => {
+      calls.push("login-state");
+      return true;
+    },
+    getFriendship: async () => {
+      calls.push("friendship");
+      return { friendFlag };
+    },
+    getProfile: async () => {
+      calls.push("profile");
+      return {
+        userId: `U${"c".repeat(32)}`,
+        displayName: "測試會員",
+        pictureUrl: "",
+      };
+    },
+  };
+  const classNames = new Set(["line-entry-gated"]);
+  const elements = {
+    lineEntryGate: { hidden: false },
+    lineEntryFriendStep: { hidden: false },
+    lineEntryLoginStep: { hidden: true },
+  };
+  const source = [
+    functionSource("resolveLineEntryGate"),
+    functionSource("showLineEntryGate"),
+    functionSource("hideLineEntryGate"),
+    functionSource("initializeLiff"),
+    functionSource("recheckLineEntryGate"),
+    functionSource("resumeMemberBootstrapAfterLineEntry"),
+  ].join("\n");
+  const sandbox = expose(
+    source,
+    ["initializeLiff", "recheckLineEntryGate"],
+    {
+      useLocalMode: false,
+      window: { liff },
+      liff,
+      appConfig: {},
+      appConfigPromise: Promise.resolve({}),
+      lineUserId: "",
+      lineDisplayName: "",
+      linePictureUrl: "",
+      pendingMigratedMemberData: null,
+      memberBootstrapState: {},
+      $: (id) => elements[id] || null,
+      document: {
+        body: {
+          classList: {
+            add: (name) => classNames.add(name),
+            remove: (name) => classNames.delete(name),
+          },
+        },
+      },
+      fetch: async (url) => {
+        calls.push(url === "/api/line/register" ? "register" : "config");
+        return {
+          ok: true,
+          json: async () => ({}),
+        };
+      },
+      authHeaders: async () => ({Authorization: "Bearer current-id-token"}),
+      getAppParam: (key) => ({
+        friendship_status_changed: "true",
+        migration_code: "m".repeat(43),
+      })[key] || "",
+      isInviteeDeepLink: () => false,
+      maybeShowInviteAcceptPrompt() {},
+      readSafeDeepLinkParams: () => ({}),
+      formatLiffError: (error) => String(error && error.message || error),
+      showLineLoginRequired: () => calls.push("generic-login-error"),
+      sessionStorage: {
+        getItem: () => null,
+        removeItem() {},
+      },
+      hideInlineError: () => calls.push("clear-error"),
+      redeemPendingAccountMigration: async () => {
+        calls.push("migration");
+        return {attempted: true, succeeded: true};
+      },
+      initApp: async () => {
+        calls.push("member");
+        return true;
+      },
+      applyInitialDeepLinkRoute: () => {
+        calls.push("route");
+        return {redirected: false};
+      },
+      refreshCalendarNotes: async () => calls.push("calendar"),
+      refreshFriendLocations: async () => calls.push("friends"),
+      openRequestedPage: () => calls.push("open"),
+      renderStatus() {},
+      buildLocalStatus() {},
+      loadLocalState() {},
+    },
+  );
+
+  assert.equal(await sandbox.recheckLineEntryGate(), false);
+  assert.equal(elements.lineEntryFriendStep.hidden, false);
+  assert.equal(elements.lineEntryLoginStep.hidden, true);
+  assert.equal(calls.includes("profile"), false);
+  assert.equal(calls.includes("register"), false);
+  assert.equal(calls.includes("migration"), false);
+  assert.equal(calls.includes("member"), false);
+
+  friendFlag = true;
+  const [first, second] = await Promise.all([
+    sandbox.recheckLineEntryGate(),
+    sandbox.recheckLineEntryGate(),
+  ]);
+
+  assert.equal(first, true);
+  assert.equal(second, true);
+  assert.equal(calls.filter((value) => value === "profile").length, 1);
+  assert.equal(calls.filter((value) => value === "register").length, 1);
+  assert.equal(calls.filter((value) => value === "migration").length, 1);
+  assert.equal(calls.filter((value) => value === "member").length, 1);
+  assert.equal(calls.filter((value) => value === "clear-error").length, 1);
+  assert.equal(classNames.has("line-entry-gated"), false);
+  assert.ok(
+    calls.indexOf("friendship") < calls.indexOf("register")
+      && calls.indexOf("register") < calls.indexOf("migration")
+      && calls.indexOf("migration") < calls.indexOf("member"),
+  );
 });

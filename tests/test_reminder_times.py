@@ -22,13 +22,17 @@ class ReminderTimesTests(unittest.TestCase):
         self.assertEqual(alive_app.plan_rules({"plan": "paid_199"})["daily_reminders"], 1)
         self.assertEqual(alive_app.plan_rules({"plan": "paid_199_year"})["daily_reminders"], 2)
         self.assertEqual(alive_app.plan_rules({"plan": "paid_399"})["daily_reminders"], 2)
-        self.assertEqual(alive_app.plan_rules({"plan": "paid_399_year"})["daily_reminders"], 3)
+        self.assertEqual(alive_app.plan_rules({"plan": "paid_399_year"})["daily_reminders"], 2)
         self.assertEqual(alive_app.plan_rules({"plan": "paid_799"})["daily_reminders"], 3)
         self.assertEqual(alive_app.plan_rules({"plan": "paid_799_year"})["daily_reminders"], 3)
 
     def test_profile_falls_back_to_defaults(self):
         profile = {"plan": "paid_399"}
         self.assertEqual(alive_app.reminder_times_for_profile(profile), ["12:00", "18:00"])
+        self.assertEqual(
+            alive_app.reminder_times_for_profile({"plan": "paid_799"}),
+            ["12:00", "18:00"],
+        )
 
     def test_profile_keeps_custom_times_within_limit(self):
         profile = {"plan": "paid_799", "reminder_times": ["10:30", "15:00", "21:15", "23:00"]}

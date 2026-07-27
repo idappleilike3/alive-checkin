@@ -516,10 +516,102 @@
         <div class="stat"><strong id="overdueUsers">0</strong><span>已逾期</span></div>
         <div class="stat"><strong id="guardianGroups">0</strong><span>守護群</span></div>
         <div class="stat"><strong id="boundGuardians">0</strong><span>已綁守護人</span></div>
+        <div class="stat"><strong id="pendingGuardianInvites">0</strong><span>待接受邀請</span></div>
+        <div class="stat"><strong id="acceptedGuardianInvites">0</strong><span>已接受邀請</span></div>
+        <div class="stat"><strong id="expiredGuardianInvites">0</strong><span>已過期邀請</span></div>
         <div class="stat"><strong id="paidRevenue">NT$0</strong><span>已付款營收</span></div>
         <div class="stat"><strong id="paidOrders">0</strong><span>已付款訂單</span></div>
         <div class="stat"><strong id="pendingOrders">0</strong><span>待付款訂單</span></div>
+        <div class="stat"><strong id="lineMessagesUsed">0</strong><span>本月 LINE 訊息則數</span></div>
+        <div class="stat"><strong id="lineMessagesProjected">0</strong><span>月底預估則數</span></div>
+        <div class="stat"><strong id="falseAlarmUnits">0</strong><span>SOS 取消通知成本</span></div>
+        <div class="stat"><strong id="lineUsageAlert">正常</strong><span>LINE 額度警示</span></div>
       </div>
+
+      <section class="release-status" aria-label="21 天封閉測試名單">
+        <h2>21 天封閉測試名單</h2>
+        <p class="note">A 10 人、B399 20 人、B799 10 人。不會建立訂單，也不會自動扣款。</p>
+        <div class="stats">
+          <div class="stat"><strong id="betaCountA">0／10</strong><span>A｜完整 799 測試</span></div>
+          <div class="stat"><strong id="betaCountB399">0／20</strong><span>B399｜安心版測試</span></div>
+          <div class="stat"><strong id="betaCountB799">0／10</strong><span>B799｜家庭群組測試</span></div>
+        </div>
+        <form id="betaAssignForm" class="toolbar">
+          <label>會員 LINE ID<input id="betaLineUserId" required autocomplete="off"></label>
+          <label>測試組別
+            <select id="betaCohort">
+              <option value="A">A</option>
+              <option value="B399">B399</option>
+              <option value="B799">B799</option>
+            </select>
+          </label>
+          <label>招募來源<input id="betaSource" placeholder="認識的人／陌生測試者"></label>
+          <button type="submit">加入封測</button>
+        </form>
+        <p id="betaStatus" class="auth-status" role="status" aria-live="polite"></p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>測試者</th><th>組別／權益</th><th>剩餘</th><th>守護／提醒</th><th>推播／SOS／回饋</th><th>操作</th></tr></thead>
+            <tbody id="betaMembersBody"><tr><td colspan="6">尚未載入封測名單</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="release-status" aria-label="封測上線門檻">
+        <h2>封測上線量化門檻</h2>
+        <p id="launchGateBanner" class="auth-status">尚未載入；未通過時必須停止新增測試者。</p>
+        <div class="stats">
+          <div class="stat"><strong id="launchCheckinRate">0%</strong><span>簽到成功率（≥99%）</span></div>
+          <div class="stat"><strong id="launchMissed">0</strong><span>漏發提醒（=0）</span></div>
+          <div class="stat"><strong id="launchDuplicates">0</strong><span>重複警報（=0）</span></div>
+          <div class="stat"><strong id="launchSosRate">0%</strong><span>SOS 測試（100%）</span></div>
+          <div class="stat"><strong id="launchBindRate">0%</strong><span>守護人綁定（≥95%）</span></div>
+          <div class="stat"><strong id="launchPayment">未通過</strong><span>付款流程</span></div>
+          <div class="stat"><strong id="launchExpiry">未通過</strong><span>取消／到期／恢復</span></div>
+        </div>
+        <div id="launchFailures" class="log-list"><div class="log-item"><span>尚無推播失敗紀錄</span></div></div>
+      </section>
+
+      <section class="release-status" aria-label="LINE 半自動實機驗收">
+        <h2>LINE 半自動實機驗收</h2>
+        <p class="note">只記錄封測會員既有測試結果，不會從後台發送測試訊息。</p>
+        <div class="stats">
+          <div class="stat"><strong id="lineAcceptancePending">0</strong><span>待手機確認</span></div>
+          <div class="stat"><strong id="lineAcceptancePassed">0</strong><span>已通過</span></div>
+          <div class="stat"><strong id="lineAcceptanceFailed">0</strong><span>失敗</span></div>
+        </div>
+        <form id="lineAcceptanceForm" class="toolbar">
+          <label>封測會員 LINE ID<input id="lineAcceptanceMember" required autocomplete="off"></label>
+          <label>驗收項目
+            <select id="lineAcceptanceKind">
+              <option value="direct_message">LINE 私訊</option>
+              <option value="family_group">799 家庭守護群</option>
+              <option value="sos">SOS</option>
+              <option value="sos_cancel">SOS 取消</option>
+              <option value="sos_retry">SOS 重試</option>
+              <option value="abuse_block">惡意操作封鎖</option>
+              <option value="group_member_change">群組成員異動</option>
+            </select>
+          </label>
+          <button type="submit">建立驗收紀錄</button>
+        </form>
+        <p id="lineAcceptanceStatus" class="auth-status" role="status" aria-live="polite"></p>
+        <div id="lineAcceptanceList" class="log-list"><div class="log-item"><span>尚無驗收紀錄</span></div></div>
+      </section>
+
+      <section class="release-status" aria-label="帳號搬家狀態">
+        <h2>帳號搬家</h2>
+        <div class="release-row">
+          <strong id="migrationConfigured">尚未載入</strong>
+          <span id="migrationTotals">成功 0、失敗 0、待處理 0</span>
+          <span class="badge" id="migrationLastAttempt">尚無紀錄</span>
+        </div>
+        <div class="release-row">
+          <strong>最近結果</strong>
+          <span id="migrationCounts">尚無搬家紀錄</span>
+          <span class="badge" id="migrationFailure">無失敗原因</span>
+        </div>
+      </section>
 
       <h2 style="margin: 0 0 8px;">台灣縣市會員與訂單</h2>
       <p class="note">依會員實際分享的位置縣市統計；尚未分享位置的會員會列在「未提供」。</p>
@@ -558,9 +650,9 @@
           <span class="badge ok">已完成</span>
         </div>
         <div class="release-row">
-          <strong>藍新付款與訂單</strong>
-          <span>付款頁、Webhook、訂單金額、到期日與續費提醒仍需串接。</span>
-          <span class="badge warn">待串接</span>
+          <strong>綠界付款與訂單</strong>
+          <span>一次付款、定期定額、通知驗簽、取消續扣與退款流程已接線；待正式特店資料實機驗收。</span>
+          <span class="badge warn">待正式驗收</span>
         </div>
         <div class="release-row">
           <strong>LINE 實際發送</strong>
@@ -674,7 +766,7 @@
               <th>方案／升級狀態</th>
               <th>付款</th>
               <th>方案到期（試用／訂閱）</th>
-              <th>免費剩幾天</th>
+              <th>體驗剩幾天</th>
               <th>已綁定守護人（含 LINE ID）</th>
               <th>核心／一般／名額</th>
               <th>守護群</th>
@@ -700,10 +792,11 @@
               <th>狀態</th>
               <th>建立時間</th>
               <th>付款時間</th>
+              <th>退款</th>
             </tr>
           </thead>
           <tbody id="ordersBody">
-            <tr><td colspan="7">尚未載入訂單</td></tr>
+            <tr><td colspan="8">尚未載入訂單</td></tr>
           </tbody>
         </table>
       </div>
@@ -782,7 +875,8 @@
         finance: "財務人員",
         viewer: "僅查看"
       };
-      $("adminRoleBadge").textContent = labels[adminRole] || "僅查看";
+      const badge = $("adminRoleBadge");
+      if (badge) badge.textContent = labels[adminRole] || "僅查看";
     }
 
     function showLogin(message) {
@@ -833,6 +927,123 @@
       return (data && (data.message || data.error)) || `載入失敗（HTTP ${status}）。`;
     }
 
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      })[char]);
+    }
+
+    function renderBetaMembers(data) {
+      const counts = data.counts || {};
+      const limits = data.limits || { A: 10, B399: 20, B799: 10 };
+      $("betaCountA").textContent = `${counts.A || 0}／${limits.A || 10}`;
+      $("betaCountB399").textContent = `${counts.B399 || 0}／${limits.B399 || 20}`;
+      $("betaCountB799").textContent = `${counts.B799 || 0}／${limits.B799 || 10}`;
+      const rows = data.members || [];
+      $("betaMembersBody").innerHTML = rows.length ? rows.map((row) => `
+        ${(() => {
+          const milestones = row.milestones || {};
+          row._milestoneText = [
+            ["D1", milestones.day_1],
+            ["D7", milestones.day_7],
+            ["D14", milestones.day_14],
+            ["D21", milestones.day_21],
+          ].map(([label, passed]) => `${label} ${passed ? "✓" : "—"}`).join("・");
+          return "";
+        })()}
+        <tr>
+          <td><strong>${escapeHtml(row.display_name)}</strong><br><small>${escapeHtml(row.line_user_id)}</small><br><small>${escapeHtml(row.source || "未填來源")}</small></td>
+          <td>${escapeHtml(row.cohort)}／${escapeHtml(row.plan)}</td>
+          <td>${row.revoked ? "已移除" : `Day ${Number(row.current_day) || 0}／剩 ${Number(row.remaining_days) || 0} 天`}<br><small>${escapeHtml(row._milestoneText)}</small><br><small>${escapeHtml(row.ends_at || "")}</small></td>
+          <td>守護 ${row.guardian_count || 0} 位<br>${row.reminder_setup ? "已設提醒" : "未設提醒"}</td>
+          <td>${escapeHtml(row.push_result || "尚未測推播")}<br>${escapeHtml(row.sos_test_status || "尚未測 SOS")}<br>${escapeHtml(row.feedback_status || "pending")}</td>
+          <td><button type="button" class="secondary beta-revoke" data-line-user-id="${escapeHtml(row.line_user_id)}" ${row.revoked ? "disabled" : ""}>移除</button></td>
+        </tr>
+      `).join("") : '<tr><td colspan="6">目前沒有封測名單</td></tr>';
+      document.querySelectorAll(".beta-revoke").forEach((button) => {
+        button.addEventListener("click", () => revokeBetaMember(button.dataset.lineUserId || ""));
+      });
+    }
+
+    async function loadBetaMembers() {
+      const response = await adminFetch("/api/admin/beta-members");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(authErrorText(data, response.status));
+      renderBetaMembers(data);
+    }
+
+    function renderLineAcceptance(data) {
+      const counts = data.counts || {};
+      $("lineAcceptancePending").textContent = counts.pending || 0;
+      $("lineAcceptancePassed").textContent = counts.passed || 0;
+      $("lineAcceptanceFailed").textContent = counts.failed || 0;
+      const labels = {
+        direct_message: "LINE 私訊", family_group: "799 家庭守護群", sos: "SOS",
+        sos_cancel: "SOS 取消", sos_retry: "SOS 重試", abuse_block: "惡意操作封鎖",
+        group_member_change: "群組成員異動"
+      };
+      const rows = data.cases || [];
+      $("lineAcceptanceList").innerHTML = rows.length ? rows.map((row) => `
+        <div class="log-item">
+          <span><strong>${escapeHtml(row.display_name || "封測會員")}</strong><br><small>${escapeHtml(row.member_ref || "")}／${escapeHtml(row.cohort || "")}</small></span>
+          <span>${escapeHtml(labels[row.kind] || row.kind)}<br><small>系統：${escapeHtml(row.system_status || "awaiting_evidence")}／${escapeHtml(row.note || "尚無備註")}</small></span>
+          <span>
+            <span class="badge ${row.manual_status === "passed" ? "ok" : row.manual_status === "failed" ? "bad" : "warn"}">${escapeHtml(row.manual_status || "pending")}</span>
+            <button type="button" class="line-acceptance-review" data-case-id="${escapeHtml(row.case_id)}" data-status="passed">手機確認通過</button>
+            <button type="button" class="secondary line-acceptance-review" data-case-id="${escapeHtml(row.case_id)}" data-status="failed">手機確認失敗</button>
+          </span>
+        </div>
+      `).join("") : '<div class="log-item"><span>尚無驗收紀錄</span></div>';
+      document.querySelectorAll(".line-acceptance-review").forEach((button) => {
+        button.addEventListener("click", () => reviewLineAcceptance(button.dataset.caseId || "", button.dataset.status || ""));
+      });
+    }
+
+    async function loadLineAcceptance() {
+      const response = await adminFetch("/api/admin/line-acceptance");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(authErrorText(data, response.status));
+      renderLineAcceptance(data);
+    }
+
+    async function reviewLineAcceptance(caseId, manualStatus) {
+      const note = window.prompt("可填手機收到情形或錯誤畫面（最多 500 字）", "") ?? "";
+      const response = await adminFetch(`/api/admin/line-acceptance/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({manual_status: manualStatus, note})
+      });
+      const data = await response.json().catch(() => ({}));
+      $("lineAcceptanceStatus").textContent = response.ok ? "驗收結果已保存。" : authErrorText(data, response.status);
+      if (response.ok) await loadLineAcceptance();
+    }
+
+    async function loadLaunchReadiness() {
+      const response = await adminFetch("/api/admin/launch-readiness");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(authErrorText(data, response.status));
+      $("launchCheckinRate").textContent = `${Math.round(Number(data.checkin_success_rate || 0) * 100)}%`;
+      $("launchMissed").textContent = data.missed_required_reminders || 0;
+      $("launchDuplicates").textContent = data.duplicate_alerts || 0;
+      $("launchSosRate").textContent = `${Math.round(Number(data.sos_test_success_rate || 0) * 100)}%`;
+      $("launchBindRate").textContent = `${Math.round(Number(data.guardian_bind_success_rate || 0) * 100)}%`;
+      $("launchPayment").textContent = data.payment_flow_passed ? "通過" : "未通過";
+      $("launchExpiry").textContent = data.expiry_flow_passed ? "通過" : "未通過";
+      $("launchGateBanner").textContent = data.ready
+        ? "✅ 目前門檻通過，可依 10 人→隔日 20 人節奏開放。"
+        : "⛔ 停止新增測試者：尚有上線門檻未通過。";
+      $("launchFailures").innerHTML = (data.push_failures || []).length
+        ? data.push_failures.map((row) => `<div class="log-item"><strong>${escapeHtml(row.category || "推播")}</strong><span>${escapeHtml(row.reason || "未知原因")}</span><span>${row.critical ? "重大" : "一般"}</span></div>`).join("")
+        : '<div class="log-item"><span>尚無推播失敗紀錄</span></div>';
+    }
+
+    async function revokeBetaMember(lineUserId) {
+      const response = await adminFetch(`/api/admin/beta-members/${encodeURIComponent(lineUserId)}`, { method: "DELETE" });
+      const data = await response.json().catch(() => ({}));
+      $("betaStatus").textContent = response.ok ? "已移除封測資格，會員資料與守護關係仍保留。" : authErrorText(data, response.status);
+      if (response.ok) renderBetaMembers(data.beta || {});
+    }
+
     async function restoreAdminSession() {
       const generation = adminAuthGeneration;
       try {
@@ -856,6 +1067,64 @@
       return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
     }
 
+    function migrationFailureLabel(category) {
+      return {
+        "": "無失敗原因",
+        invalid_code: "代碼無效",
+        expired_code: "代碼已過期",
+        used_code: "代碼已使用",
+        source_missing: "舊帳號不存在",
+        unsafe_conflict: "帳號狀態衝突",
+        migration_failed: "搬家執行失敗",
+        other: "其他安全錯誤"
+      }[category] || String(category || "無失敗原因");
+    }
+
+    function renderAccountMigrations(data) {
+      const totals = data && data.totals ? data.totals : {};
+      const latest = Array.isArray(data && data.latest_events)
+        ? data.latest_events[0]
+        : null;
+      $("migrationConfigured").textContent = data && data.configured
+        ? "已設定"
+        : "尚未設定";
+      $("migrationTotals").textContent =
+        `總計 ${Number(totals.total || 0)}、成功 ${Number(totals.success || 0)}、失敗 ${Number(totals.failed || 0)}、待處理 ${Number(totals.pending || 0)}`;
+      $("migrationLastAttempt").textContent = latest
+        ? formatDate(latest.created_at)
+        : "尚無紀錄";
+      $("migrationFailure").textContent = latest
+        ? migrationFailureLabel(latest.failure_category)
+        : "無失敗原因";
+      const counts = latest && latest.counts ? latest.counts : null;
+      $("migrationCounts").textContent = counts
+        ? `簽到 ${Number(counts.checkins || 0)}、聯絡人 ${Number(counts.contacts || 0)}、群組 ${Number(counts.groups || 0)}、提醒 ${Number(counts.reminders || 0)}、訂單 ${Number(counts.orders || 0)}、申請 ${Number(counts.requests || 0)}`
+        : "尚無搬家紀錄";
+    }
+
+    function renderAccountMigrationsUnavailable() {
+      $("migrationConfigured").textContent = "暫時無法取得";
+      $("migrationTotals").textContent = "暫時無法取得";
+      $("migrationLastAttempt").textContent = "暫時無法取得";
+      $("migrationFailure").textContent = "暫時無法取得";
+      $("migrationCounts").textContent = "暫時無法取得";
+    }
+
+    async function refreshAccountMigrations() {
+      try {
+        const response = await adminFetch("/api/admin/account-migrations");
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          renderAccountMigrationsUnavailable();
+          return;
+        }
+        renderAccountMigrations(data);
+      } catch (error) {
+        if (error && error.message === "admin_session_expired") throw error;
+        renderAccountMigrationsUnavailable();
+      }
+    }
+
     function statusBadge(user) {
       if (user.is_overdue) return `<span class="badge bad">需要確認</span>`;
       if (user.status_class === "warning") return `<span class="badge warn">快到時間</span>`;
@@ -865,8 +1134,8 @@
 
     function planLabel(plan) {
       return {
-        trial: "試用（免費）",
-        free: "免費方案",
+        trial: "14 天安心體驗",
+        free: "未訂閱",
         paid_199: "已升級 199 月費",
         paid_199_year: "已升級 199 年費",
         paid_399: "已升級 399 月費",
@@ -928,9 +1197,9 @@
       if (user.trial_days_text) return user.trial_days_text;
       if (user.plan === "trial") {
         const days = Number(user.trial_days_left || 0);
-        return days > 0 ? `免費剩 ${days} 天` : "試用已結束";
+        return days > 0 ? `體驗剩 ${days} 天` : "體驗已結束";
       }
-      if (user.plan === "free") return "免費方案（無試用倒數）";
+      if (user.plan === "free") return "未訂閱（無試用倒數）";
       return "已升級（非試用）";
     }
 
@@ -961,6 +1230,8 @@
 
     async function replySupportTicket(ticketId) {
       const input = document.querySelector(`[data-support-reply="${ticketId}"]`);
+      const channel = document.querySelector(`[data-support-channel="${ticketId}"]`);
+      const status = document.querySelector(`[data-support-status="${ticketId}"]`);
       const message = input?.value.trim();
       if (!message) {
         alert("請先輸入回覆內容。");
@@ -969,12 +1240,17 @@
       const res = await adminFetch("/api/admin/support-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticket_id: ticketId, message })
+        body: JSON.stringify({
+          ticket_id: ticketId,
+          message,
+          reply_channel: channel?.value || "line",
+          status: status?.value || "waiting_user"
+        })
       });
       const data = await res.json();
       $("message").textContent = res.ok
         ? "客服回覆已送出。"
-        : data.error || "客服回覆失敗，請檢查 LINE 設定。";
+        : data.error || "客服回覆失敗，請檢查 Email／LINE 設定。";
       await refresh();
     }
 
@@ -992,6 +1268,33 @@
       $("message").textContent = res.ok
         ? `已更新 ${data.display_name || lineUserId} 的方案（守護人 ${data.preserved_contacts ?? (data.contacts || []).length} 位、好友 ${data.preserved_friends ?? (data.friends || []).length} 位已保留）。`
         : data.error || "方案更新失敗。";
+      await refresh();
+    }
+
+    async function refundPaymentOrder(orderId, paidAmount, alreadyRefunded) {
+      const remaining = Math.max(0, Number(paidAmount || 0) - Number(alreadyRefunded || 0));
+      const amountText = prompt(`可退 NT$${remaining.toLocaleString("zh-TW")}。請輸入本次退款金額：`, String(remaining));
+      if (amountText === null) return;
+      const amount = Number(amountText);
+      if (!Number.isInteger(amount) || amount <= 0 || amount > remaining) {
+        alert("退款金額必須是正整數，且不可超過可退金額。");
+        return;
+      }
+      const reason = prompt("請輸入退款原因（會寫入稽核紀錄）：", "會員申請退款");
+      if (!reason || !reason.trim()) {
+        alert("退款原因必填。");
+        return;
+      }
+      if (!confirm(`確定退款 NT$${amount.toLocaleString("zh-TW")}？送出後將向付款服務發動退款。`)) return;
+      const res = await adminFetch("/api/admin/payments/refund", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order_id: orderId, amount, reason: reason.trim() })
+      });
+      const data = await res.json().catch(() => ({}));
+      $("message").textContent = res.ok
+        ? `訂單 ${orderId} 已送出退款 NT$${amount.toLocaleString("zh-TW")}。`
+        : data.error || "退款失敗，訂單狀態未變更。";
       await refresh();
     }
 
@@ -1273,12 +1576,19 @@
         setAuthStatus(authErrorText(data, res.status), "is-err");
         return;
       }
+      await loadBetaMembers();
+      await loadLineAcceptance();
+      await loadLaunchReadiness();
       $("totalUsers").textContent = data.total_users;
       $("checkedToday").textContent = data.checked_today;
       $("warningUsers").textContent = data.warning_users;
       $("overdueUsers").textContent = data.overdue_users;
       $("guardianGroups").textContent = data.guardian_group_count || 0;
       if ($("boundGuardians")) $("boundGuardians").textContent = data.bound_guardian_total || 0;
+      const inviteCounts = data.guardian_invite_counts || {};
+      $("pendingGuardianInvites").textContent = inviteCounts.pending || 0;
+      $("acceptedGuardianInvites").textContent = inviteCounts.accepted || 0;
+      $("expiredGuardianInvites").textContent = inviteCounts.expired || 0;
       const persistNote = $("persistenceNote");
       if (persistNote) {
         const persist = data.persistence || {};
@@ -1300,6 +1610,13 @@
       $("paidRevenue").textContent = `NT$${Number(data.paid_revenue || 0).toLocaleString("zh-TW")}`;
       $("paidOrders").textContent = data.paid_order_count || 0;
       $("pendingOrders").textContent = data.pending_order_count || 0;
+      const lineUsage = data.line_message_usage || {};
+      $("lineMessagesUsed").textContent = `${lineUsage.used_units || 0}／${lineUsage.quota || "未設定"}`;
+      $("lineMessagesProjected").textContent = lineUsage.projected_units || 0;
+      $("falseAlarmUnits").textContent = lineUsage.false_alarm_units || 0;
+      $("lineUsageAlert").textContent = lineUsage.alert_level === "critical_90"
+        ? "90% 緊急"
+        : (lineUsage.alert_level === "warning_70" ? "70% 注意" : "正常");
       $("countyStatsBody").innerHTML = (data.county_stats || []).length
         ? data.county_stats.map((row) => `
           <tr>
@@ -1351,9 +1668,14 @@
             <td><span class="badge ${order.status === "paid" ? "ok" : "warn"}">${order.status === "paid" ? "已付款" : "待付款"}</span></td>
             <td>${formatDate(order.created_at)}</td>
             <td>${order.paid_at ? formatDate(order.paid_at) : "-"}</td>
+            <td>
+              ${order.status === "paid" || order.status === "partially_refunded"
+                ? `<button type="button" onclick="refundPaymentOrder('${order.order_id}', ${Number(order.amount || 0)}, ${Number(order.refunded_amount || 0)})">退款（可退 NT$${Math.max(0, Number(order.amount || 0) - Number(order.refunded_amount || 0)).toLocaleString("zh-TW")}）</button>`
+                : (order.status === "refunded" ? "已全額退款" : "-")}
+            </td>
           </tr>
         `).join("")
-        : `<tr><td colspan="7">目前沒有付款訂單</td></tr>`;
+        : `<tr><td colspan="8">目前沒有付款訂單</td></tr>`;
       $("logList").innerHTML = (data.notification_logs || []).length
         ? data.notification_logs.map((log) => `
           <div class="log-item">
@@ -1404,6 +1726,7 @@
           `).join("")
           : `<div class="reward-item"><span>尚無 LINE 邀請綁定關係</span><span></span><span></span></div>`;
       }
+      await refreshAccountMigrations();
       const ticketRes = await adminFetch("/api/admin/support-tickets");
       const ticketData = ticketRes.ok ? await ticketRes.json() : { tickets: [] };
       $("supportList").innerHTML = (ticketData.tickets || []).length
@@ -1413,12 +1736,23 @@
               <strong>${ticket.display_name || "LINE 使用者"}</strong>
               <span>${ticket.line_user_id || "-"}</span>
               <span>${ticket.created_at || ""}</span>
-              <span class="badge ${ticket.status === "replied" ? "ok" : "warn"}">${ticket.status === "replied" ? "已回覆" : "待回覆"}</span>
+              <span class="badge ${ticket.status === "resolved" ? "ok" : "warn"}">${ticket.status || "submitted"}</span>
             </div>
+            <div>${ticket.category || "其他"}｜${ticket.subject || "客服工單"}</div>
             <div>${ticket.message || ""}</div>
             ${ticket.reply ? `<small>已回覆：${ticket.reply}</small>` : ""}
-            <textarea data-support-reply="${ticket.id}" placeholder="輸入要回覆給使用者的 LINE 訊息"></textarea>
-            <button type="button" onclick="replySupportTicket('${ticket.id}')">回覆 LINE</button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+              <select data-support-channel="${ticket.id}">
+                <option value="email" ${ticket.reply_channel === "email" ? "selected" : ""}>Email</option>
+                <option value="line" ${ticket.reply_channel !== "email" ? "selected" : ""}>LINE 私訊</option>
+              </select>
+              <select data-support-status="${ticket.id}">
+                <option value="waiting_user">等待使用者回覆</option>
+                <option value="resolved">已結案</option>
+              </select>
+            </div>
+            <textarea data-support-reply="${ticket.id}" placeholder="輸入客服回覆內容"></textarea>
+            <button type="button" onclick="replySupportTicket('${ticket.id}')">送出回覆</button>
           </div>
         `).join("")
         : `<div class="support-item">目前沒有客服訊息</div>`;
@@ -1573,6 +1907,47 @@
         if (error.message !== "admin_session_expired") console.warn(error);
       }
     });
+    const betaAssignForm = $("betaAssignForm");
+    if (betaAssignForm) {
+      betaAssignForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await adminFetch("/api/admin/beta-members", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            line_user_id: $("betaLineUserId").value.trim(),
+            cohort: $("betaCohort").value,
+            source: $("betaSource").value.trim()
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        $("betaStatus").textContent = response.ok ? "已加入 21 天封閉測試。" : authErrorText(data, response.status);
+        if (response.ok) {
+          renderBetaMembers(data.beta || {});
+          $("betaLineUserId").value = "";
+        }
+      });
+    }
+    const lineAcceptanceForm = $("lineAcceptanceForm");
+    if (lineAcceptanceForm) {
+      lineAcceptanceForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await adminFetch("/api/admin/line-acceptance", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            line_user_id: $("lineAcceptanceMember").value.trim(),
+            kind: $("lineAcceptanceKind").value
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        $("lineAcceptanceStatus").textContent = response.ok ? "已建立待手機確認的驗收紀錄。" : authErrorText(data, response.status);
+        if (response.ok) {
+          $("lineAcceptanceMember").value = "";
+          await loadLineAcceptance();
+        }
+      });
+    }
     $("contactRemindBtn").addEventListener("click", sendContactReminders);
     $("remindBtn").addEventListener("click", sendReminders);
     $("renewalRemindBtn").addEventListener("click", sendRenewalReminders);

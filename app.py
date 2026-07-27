@@ -1,13 +1,22 @@
+import copy
+import base64
+import calendar
+import hashlib
+import hmac
 import json
+import math
 import os
 import re
 import secrets
+import smtplib
 import sqlite3
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from email.message import EmailMessage
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -95,9 +104,15 @@ except Exception:
     sos_flow = None
 
 try:
-    from line_auth import resolve_line_user_id
+    from line_auth import (
+        extract_id_token,
+        resolve_line_user_id,
+        verify_line_id_token_for_channel,
+    )
 except Exception:  # pragma: no cover
+    extract_id_token = None
     resolve_line_user_id = None
+    verify_line_id_token_for_channel = None
 
 try:
     import newebpay
@@ -105,14 +120,30 @@ except Exception:  # pragma: no cover
     newebpay = None
 
 try:
+    import ecpay
+except Exception:  # pragma: no cover
+    ecpay = None
+
+try:
+    from Crypto.Cipher import AES
+except Exception:  # pragma: no cover
+    AES = None
+
+try:
     import holidays_tw
 except Exception:  # pragma: no cover
     holidays_tw = None
 
 from push_delivery import (
+    classify_push_exception,
     push_attempt_allowed,
     record_push_failure,
 )
+
+
+DEFAULT_LIFF_ID = "2010848330-UAiqPPYD"
+DEFAULT_LEGACY_LIFF_ID = "2010674803-rK98c0lo"
+DEFAULT_LINE_LOGIN_CHANNEL_ID = "2010848330"
 
 
 # 逾時未報平安：會員可選 24／48／72 小時（取代舊固定 36h 主流程）
@@ -140,7 +171,7 @@ DEFAULT_PROFILE = {
     "contact_email": "",
     "grace_hours": DEFAULT_GRACE_HOURS,
     "reminder_time": "12:00",
-    "reminder_times": ["12:00"],
+    "reminder_times": ["12:00", "18:00"],
     "checkin_mode": "manual",
     "auto_checkin_on_open": False,
     "warning_cancel_minutes": DEFAULT_WARNING_CANCEL_MINUTES,
@@ -171,6 +202,8 @@ DEFAULT_PROFILE = {
     "auto_renew_requested": False,
     "auto_renew_enabled": False,
     "auto_renew_status": "off",
+    "newebpay_period_no": "",
+    "newebpay_period_order_no": "",
     # 方案／試用到期後：守護人＋緊急連絡人軟保留至 contacts_retain_until
     "plan_expired_at": "",
     "contacts_retain_until": "",
@@ -190,12 +223,31 @@ DEFAULT_PROFILE = {
     "expiry_remind_sent_date": "",
 }
 
+PLAN_RANK = {
+    "trial": 0,
+    "paid_199": 1,
+    "paid_199_year": 1,
+    "paid_399": 2,
+    "paid_399_year": 2,
+    "paid_799": 3,
+    "paid_799_year": 3,
+}
+
 # 試用／付費方案剩餘 ≤ 此天數（含已到期）才推到期提醒；每日最多一次
 EXPIRY_REMIND_WITHIN_DAYS = 3
 WEEKDAY_SHORT_ZH = ("一", "二", "三", "四", "五", "六", "日")
 
 # 正式新會員與既有 free 過渡會員皆為一次性 14 天體驗。
 PUBLIC_TRIAL_DAYS = 14
+BETA_TRIAL_DAYS = 21
+BETA_COHORT_LIMITS = {"A": 10, "B399": 20, "B799": 10}
+BETA_COHORT_PLAN = {"A": "paid_799", "B399": "paid_399", "B799": "paid_799"}
+LAUNCH_SCENARIO_STEPS = {
+    "payment": {
+        "success", "failure", "cancel", "callback_idempotent", "order_synced"
+    },
+    "expiry": {"expired", "paused", "renewed"},
+}
 TRIAL_POLICY_VERSION = "2026-07-no-invite-reward-v1"
 # 方案／試用到期後，守護人＋緊急連絡人資料再保留天數（之後軟封存）
 CONTACTS_RETAIN_DAYS = 30
@@ -211,14 +263,20 @@ DEFAULT_STATE = {
     **DEFAULT_PROFILE,
     "users": {},
     "notification_logs": [],
+    "line_message_usage": [],
     "friend_invites": {},
     "contact_rewards": [],
     "support_tickets": [],
     "privacy_requests": [],
     "beta_program_members": [],
     "backup_exports": [],
+    "r2_backup_exports": [],
     "guardian_groups": {},
     "orders": [],
+    "account_migration_tickets": {},
+    "account_migration_aliases": {},
+    "account_migration_audit": [],
+    "account_migration_snapshots": {},
 }
 
 PLAN_LIMITS = {
@@ -303,7 +361,7 @@ PLAN_LIMITS = {
         "contact_limit": 32,
         "emergency_contact_limit": 25,
         "friend_location_limit": 0,
-        "daily_reminders": 3,
+        "daily_reminders": 2,
         "channels": ["line"],
         "location_mode": "realtime",
         "core_guardian_alert_limit": 7,
@@ -421,7 +479,7 @@ def line_status_summary(status):
 def line_liff_url(open_action):
     if liff_entry_url is not None:
         return liff_entry_url(open_action=open_action)
-    liff_id = (os.environ.get("LIFF_ID") or "2010674803-rK98c0lo").strip()
+    liff_id = (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).strip()
     return f"https://liff.line.me/{liff_id}?open={open_action}"
 
 
@@ -433,7 +491,7 @@ def public_page_url(path=""):
 
 def pricing_direct_url():
     """方案頁 LIFF 直連（避免跳出 LINE 開瀏覽器，跟其他按鈕一致）。"""
-    liff_id = (os.environ.get("LIFF_ID") or "2010674803-rK98c0lo").strip() or "2010674803-rK98c0lo"
+    liff_id = (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).strip() or DEFAULT_LIFF_ID
     return f"https://liff.line.me/{liff_id}?open=pricing"
 
 
@@ -448,7 +506,7 @@ def permanent_liff_invite_url(*, invite_from="", friend_invite="", open_action=N
         params["friend_invite"] = friend_invite
     if liff_entry_url is not None:
         return liff_entry_url(open_action=open_action, **params)
-    lid = (os.environ.get("LIFF_ID") or "2010674803-rK98c0lo").strip() or "2010674803-rK98c0lo"
+    lid = (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).strip() or DEFAULT_LIFF_ID
     if open_action and not params:
         return f"https://liff.line.me/{lid}?open={open_action}"
     if open_action:
@@ -462,7 +520,7 @@ def line_app_invite_url(*, invite_from="", friend_invite="", open_action=None):
 
     Use ``?`` not ``/?`` — the slash-before-query form can make LIFF/OAuth return 400.
     """
-    lid = (os.environ.get("LIFF_ID") or "2010674803-rK98c0lo").strip() or "2010674803-rK98c0lo"
+    lid = (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).strip() or DEFAULT_LIFF_ID
     params = {}
     invite_from = str(invite_from or "").strip()
     friend_invite = str(friend_invite or "").strip()
@@ -642,8 +700,13 @@ def _ensure_pg_kv():
             "CREATE TABLE IF NOT EXISTS kv_store ("
             "  key TEXT PRIMARY KEY,"
             "  value TEXT NOT NULL,"
+            "  revision BIGINT NOT NULL DEFAULT 0,"
             "  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
             ")"
+        )
+        conn.execute(
+            "ALTER TABLE kv_store "
+            "ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0"
         )
         conn.commit()
 
@@ -744,9 +807,19 @@ def _ensure_db(db_path):
             "CREATE TABLE IF NOT EXISTS kv_store ("
             "  key TEXT PRIMARY KEY,"
             "  value TEXT NOT NULL,"
+            "  revision INTEGER NOT NULL DEFAULT 0,"
             "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))"
             ")"
         )
+        columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(kv_store)").fetchall()
+        }
+        if "revision" not in columns:
+            conn.execute(
+                "ALTER TABLE kv_store "
+                "ADD COLUMN revision INTEGER NOT NULL DEFAULT 0"
+            )
         conn.commit()
     finally:
         conn.close()
@@ -776,7 +849,11 @@ def _migrate_legacy_json(data_file, db_path):
         pass
 
 
-def _hydrate_state(saved):
+class StateConflictError(RuntimeError):
+    pass
+
+
+def _hydrate_state(saved, revision=None):
     state = {**DEFAULT_STATE, **(saved or {})}
     state["history"] = sorted(set(state.get("history") or []))
     state["users"] = state.get("users") or {}
@@ -787,6 +864,20 @@ def _hydrate_state(saved):
     state["backup_exports"] = state.get("backup_exports") or []
     state["guardian_groups"] = state.get("guardian_groups") or {}
     state["orders"] = state.get("orders") or []
+    state["account_migration_tickets"] = (
+        state.get("account_migration_tickets") or {}
+    )
+    state["account_migration_aliases"] = (
+        state.get("account_migration_aliases") or {}
+    )
+    state["account_migration_audit"] = (
+        state.get("account_migration_audit") or []
+    )
+    state["account_migration_snapshots"] = (
+        state.get("account_migration_snapshots") or {}
+    )
+    if revision is not None:
+        state["_state_revision"] = int(revision)
     return state
 
 
@@ -800,32 +891,74 @@ def _load_state_sqlite(data_file):
     conn = sqlite3.connect(str(db_path))
     try:
         row = conn.execute(
-            "SELECT value FROM kv_store WHERE key = ?", ("default",)
+            "SELECT value, revision FROM kv_store WHERE key = ?", ("default",)
         ).fetchone()
     finally:
         conn.close()
 
     if not row:
-        return _hydrate_state({})
+        return _hydrate_state({}, revision=0)
     try:
         saved = json.loads(row[0])
     except (json.JSONDecodeError, TypeError):
-        return _hydrate_state({})
-    return _hydrate_state(saved)
+        return _hydrate_state({}, revision=row[1])
+    return _hydrate_state(saved, revision=row[1])
 
 
-def _save_state_sqlite(data_file, state):
+def _save_state_sqlite(data_file, state, force=False):
     db_path = _resolve_db_path(data_file)
     _ensure_db(db_path)
-    payload = json.dumps(state, ensure_ascii=False, indent=2)
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), timeout=30)
     try:
-        conn.execute(
-            "INSERT OR REPLACE INTO kv_store (key, value, updated_at) "
-            "VALUES (?, ?, datetime('now'))",
-            ("default", payload),
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT revision FROM kv_store WHERE key = ?",
+            ("default",),
+        ).fetchone()
+        current_revision = int(row[0]) if row else 0
+        expected_revision = (state or {}).get("_state_revision")
+        if (
+            row
+            and not force
+            and expected_revision is not None
+            and int(expected_revision) != current_revision
+        ):
+            raise StateConflictError("state_conflict")
+        if (
+            not row
+            and not force
+            and expected_revision not in (None, 0)
+        ):
+            raise StateConflictError("state_conflict")
+
+        next_revision = (
+            int(expected_revision)
+            if force and expected_revision is not None
+            else current_revision + 1
         )
+        persisted = {**(state or {}), "_state_revision": next_revision}
+        payload = json.dumps(persisted, ensure_ascii=False, indent=2)
+        if row:
+            cursor = conn.execute(
+                "UPDATE kv_store "
+                "SET value = ?, revision = ?, updated_at = datetime('now') "
+                "WHERE key = ? AND revision = ?",
+                (payload, next_revision, "default", current_revision),
+            )
+            if cursor.rowcount != 1:
+                raise StateConflictError("state_conflict")
+        else:
+            conn.execute(
+                "INSERT INTO kv_store (key, value, revision, updated_at) "
+                "VALUES (?, ?, ?, datetime('now'))",
+                ("default", payload, next_revision),
+            )
         conn.commit()
+        if isinstance(state, dict):
+            state["_state_revision"] = next_revision
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -834,26 +967,55 @@ def _load_state_postgres():
     _ensure_pg_kv()
     with _pg_connect() as conn:
         row = conn.execute(
-            "SELECT value FROM kv_store WHERE key = %s", ("default",)
+            "SELECT value, revision FROM kv_store WHERE key = %s", ("default",)
         ).fetchone()
     if not row:
-        return None
+        return _hydrate_state({}, revision=0)
     try:
-        return _hydrate_state(json.loads(row[0]))
+        return _hydrate_state(json.loads(row[0]), revision=row[1])
     except (json.JSONDecodeError, TypeError, IndexError):
-        return None
+        return _hydrate_state({}, revision=row[1] if len(row) > 1 else 0)
 
 
 def _save_state_postgres(state):
     _ensure_pg_kv()
-    payload = json.dumps(state, ensure_ascii=False, indent=2)
     with _pg_connect() as conn:
-        conn.execute(
-            "INSERT INTO kv_store (key, value, updated_at) VALUES (%s, %s, NOW()) "
-            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
-            ("default", payload),
-        )
+        row = conn.execute(
+            "SELECT revision FROM kv_store WHERE key = %s FOR UPDATE",
+            ("default",),
+        ).fetchone()
+        current_revision = int(row[0]) if row else 0
+        expected_revision = (state or {}).get("_state_revision")
+        if (
+            row
+            and expected_revision is not None
+            and int(expected_revision) != current_revision
+        ):
+            raise StateConflictError("state_conflict")
+        next_revision = current_revision + 1
+        persisted = {**(state or {}), "_state_revision": next_revision}
+        payload = json.dumps(persisted, ensure_ascii=False, indent=2)
+        if row:
+            updated = conn.execute(
+                "UPDATE kv_store "
+                "SET value = %s, revision = %s, updated_at = NOW() "
+                "WHERE key = %s AND revision = %s RETURNING revision",
+                (payload, next_revision, "default", current_revision),
+            ).fetchone()
+            if not updated:
+                raise StateConflictError("state_conflict")
+            next_revision = int(updated[0])
+        else:
+            inserted = conn.execute(
+                "INSERT INTO kv_store (key, value, revision, updated_at) "
+                "VALUES (%s, %s, %s, NOW()) RETURNING revision",
+                ("default", payload, next_revision),
+            ).fetchone()
+            if inserted:
+                next_revision = int(inserted[0])
         conn.commit()
+        if isinstance(state, dict):
+            state["_state_revision"] = next_revision
 
 
 def _state_user_count(state):
@@ -889,8 +1051,8 @@ def load_state(data_file):
             if pg_state is not None and _state_user_count(pg_state) > 0:
                 # Keep a local mirror for ops/debug; never wipe Postgres on mirror fail.
                 try:
-                    _save_state_sqlite(data_file, pg_state)
-                except OSError:
+                    _save_state_sqlite(data_file, pg_state, force=True)
+                except Exception:
                     pass
                 return pg_state
 
@@ -929,6 +1091,14 @@ def save_state(data_file, state):
                 existing = _load_state_postgres()
             except Exception:
                 existing = None
+            expected_revision = (state or {}).get("_state_revision")
+            existing_revision = (existing or {}).get("_state_revision")
+            if (
+                expected_revision is not None
+                and existing_revision is not None
+                and int(expected_revision) != int(existing_revision)
+            ):
+                raise StateConflictError("state_conflict")
             if (
                 existing is not None
                 and _state_user_count(existing) > 0
@@ -946,16 +1116,123 @@ def save_state(data_file, state):
                             existing[key] = value
                     state = existing
             _save_state_postgres(state)
+        except StateConflictError:
+            raise
         except Exception:
             # Still try local write so the request does not silently discard mutations.
             _save_state_sqlite(data_file, state)
             raise
         try:
-            _save_state_sqlite(data_file, state)
-        except OSError:
+            _save_state_sqlite(data_file, state, force=True)
+        except Exception:
             pass
         return
     _save_state_sqlite(data_file, state)
+
+
+def _account_migration_serialize_state(state):
+    return json.dumps(state, ensure_ascii=False, indent=2)
+
+
+def _account_migration_state_from_row(row):
+    if not row:
+        return _hydrate_state({})
+    try:
+        revision = row[1] if len(row) > 1 else 0
+        return _hydrate_state(json.loads(row[0]), revision=revision)
+    except (json.JSONDecodeError, TypeError, IndexError):
+        return _hydrate_state({})
+
+
+def mutate_state_atomically(data_file, mutator):
+    """Mutate the authoritative state under a database transaction."""
+    if database_url():
+        _ensure_pg_kv()
+        conn = _pg_connect()
+        try:
+            conn.execute("BEGIN")
+            row = conn.execute(
+                "SELECT value, revision FROM kv_store WHERE key = %s FOR UPDATE",
+                ("default",),
+            ).fetchone()
+            state = _account_migration_state_from_row(row)
+            working = copy.deepcopy(state)
+            result = mutator(working)
+            current_revision = (
+                int(row[1])
+                if row and len(row) > 1
+                else int(working.get("_state_revision") or 0)
+            )
+            next_revision = current_revision + 1
+            working["_state_revision"] = next_revision
+            payload = _account_migration_serialize_state(working)
+            if row:
+                conn.execute(
+                    "UPDATE kv_store "
+                    "SET value = %s, revision = %s, updated_at = NOW() "
+                    "WHERE key = %s AND revision = %s",
+                    (payload, next_revision, "default", current_revision),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO kv_store (key, value, revision, updated_at) "
+                    "VALUES (%s, %s, %s, NOW())",
+                    ("default", payload, next_revision),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        try:
+            _save_state_sqlite(data_file, working, force=True)
+        except Exception:
+            pass
+        return result
+
+    db_path = _resolve_db_path(data_file)
+    _ensure_db(db_path)
+    conn = sqlite3.connect(str(db_path), timeout=30)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT value, revision FROM kv_store WHERE key = ?",
+            ("default",),
+        ).fetchone()
+        state = _account_migration_state_from_row(row)
+        working = copy.deepcopy(state)
+        result = mutator(working)
+        current_revision = (
+            int(row[1])
+            if row and len(row) > 1
+            else int(working.get("_state_revision") or 0)
+        )
+        next_revision = current_revision + 1
+        working["_state_revision"] = next_revision
+        payload = _account_migration_serialize_state(working)
+        if row:
+            cursor = conn.execute(
+                "UPDATE kv_store "
+                "SET value = ?, revision = ?, updated_at = datetime('now') "
+                "WHERE key = ? AND revision = ?",
+                (payload, next_revision, "default", current_revision),
+            )
+            if cursor.rowcount != 1:
+                raise StateConflictError("state_conflict")
+        else:
+            conn.execute(
+                "INSERT INTO kv_store (key, value, revision, updated_at) "
+                "VALUES (?, ?, ?, datetime('now'))",
+                ("default", payload, next_revision),
+            )
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def current_app_time(config=None):
@@ -1152,7 +1429,7 @@ def membership_expiry_info(profile, now=None):
             days = total
         return {
             "plan": plan,
-            "label": "免費試用",
+            "label": "14 天安心體驗",
             "days_left": days,
             "expired": days <= 0,
             "near": days <= EXPIRY_REMIND_WITHIN_DAYS,
@@ -1178,7 +1455,7 @@ def membership_expiry_info(profile, now=None):
             return None
         return {
             "plan": plan,
-            "label": "免費方案",
+            "label": "未訂閱",
             "days_left": 0,
             "expired": True,
             "near": True,
@@ -1378,6 +1655,37 @@ _PROFILE_PERSIST_KEYS = (
 )
 
 
+class AccountMigratedError(Exception):
+    """Raised when a disabled Provider identity attempts profile access."""
+
+
+def account_migrated_response():
+    return {
+        "ok": False,
+        "error": "account_migrated",
+        "action": "open_current_liff",
+    }
+
+
+def migrated_account_webhook_guidance(
+    registration_result,
+    liff_id=DEFAULT_LIFF_ID,
+):
+    """Return safe LINE guidance when an old Provider identity is disabled."""
+    data, status = registration_result or ({}, 0)
+    if (
+        status == 409
+        and isinstance(data, dict)
+        and data.get("error") == "account_migrated"
+    ):
+        return (
+            "此帳號已移轉到新版 LINE 登入，舊入口已停用。\n"
+            "請由新版入口繼續使用：\n"
+            f"https://liff.line.me/{str(liff_id or DEFAULT_LIFF_ID).strip()}"
+        )
+    return ""
+
+
 def get_profile(state, line_user_id=None):
     """Load or create per-user profile keyed by line_user_id.
 
@@ -1385,6 +1693,9 @@ def get_profile(state, line_user_id=None):
     once on first create and never restarted on later visits.
     """
     if line_user_id:
+        alias = (state.get("account_migration_aliases") or {}).get(line_user_id)
+        if isinstance(alias, dict) and alias.get("status") == "disabled":
+            raise AccountMigratedError("account_migrated")
         users = state.setdefault("users", {})
         is_new = line_user_id not in users
         user = users.setdefault(
@@ -1413,10 +1724,17 @@ def get_calendar_notes(data_file, line_user_id=None):
         return {"ok": False, "error": "missing line_user_id", "notes": {}}
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
+    if not plan_has_smart_reminders(profile):
+        return {
+            "ok": False,
+            "error": "calendar_notes_require_799",
+            "required_plan": "paid_799",
+            "notes": {},
+        }
     notes = profile.get("calendar_notes")
     if not isinstance(notes, dict):
         notes = {}
-    return {"ok": True, "notes": dict(notes)}
+    return {"ok": True, "notes": public_calendar_notes(notes)}
 
 
 def save_calendar_note(data_file, payload):
@@ -1453,6 +1771,12 @@ def save_calendar_note(data_file, payload):
 
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
+    if not plan_has_smart_reminders(profile):
+        return {
+            "ok": False,
+            "error": "calendar_notes_require_799",
+            "required_plan": "paid_799",
+        }, 403
     notes = dict(profile.get("calendar_notes") or {})
     if content or birthday_name:
         if birthday_name:
@@ -1470,24 +1794,74 @@ def save_calendar_note(data_file, payload):
         notes.pop(note_date, None)
     profile["calendar_notes"] = notes
     save_state(data_file, state)
-    return {"ok": True, "notes": notes}, 200
+    return {"ok": True, "notes": public_calendar_notes(notes)}, 200
+
+
+def calendar_note_entries(note):
+    return note if isinstance(note, list) else [note]
 
 
 def calendar_note_content(note):
+    if isinstance(note, list):
+        contents = [
+            calendar_note_content(item)
+            for item in note
+        ]
+        return "\n".join(content for content in contents if content)
     if isinstance(note, dict):
         return str(note.get("content") or "").strip()
     return str(note or "").strip()
 
 
+def calendar_note_birthdays(note):
+    birthdays = []
+    for entry in calendar_note_entries(note):
+        if not isinstance(entry, dict):
+            continue
+        birthday_name = str(entry.get("birthday_name") or "").strip()
+        if not birthday_name:
+            continue
+        birthdays.append(
+            {
+                "birthday_name": birthday_name,
+                "birthday_relationship": str(
+                    entry.get("birthday_relationship") or ""
+                ).strip(),
+                "birthday_date": str(entry.get("birthday_date") or "").strip(),
+                "birthday_yearly": bool(entry.get("birthday_yearly", True)),
+                "birthday_remind_days": int(entry.get("birthday_remind_days") or 1),
+            }
+        )
+    return birthdays
+
+
 def calendar_note_birthday(note):
-    if not isinstance(note, dict) or not str(note.get("birthday_name") or "").strip():
-        return None
+    birthdays = calendar_note_birthdays(note)
+    return birthdays[0] if birthdays else None
+
+
+def public_calendar_note(note):
+    if not isinstance(note, list):
+        if not isinstance(note, dict):
+            return copy.deepcopy(note)
+        return {
+            key: copy.deepcopy(value)
+            for key, value in note.items()
+            if key not in {"id", "migration_event_id"}
+            and not str(key).startswith("_migration")
+        }
+    public_note = {"content": calendar_note_content(note)}
+    birthdays = calendar_note_birthdays(note)
+    if birthdays:
+        public_note.update(birthdays[0])
+        public_note["birthdays"] = birthdays
+    return public_note
+
+
+def public_calendar_notes(notes):
     return {
-        "birthday_name": str(note.get("birthday_name") or "").strip(),
-        "birthday_relationship": str(note.get("birthday_relationship") or "").strip(),
-        "birthday_date": str(note.get("birthday_date") or "").strip(),
-        "birthday_yearly": bool(note.get("birthday_yearly", True)),
-        "birthday_remind_days": int(note.get("birthday_remind_days") or 1),
+        note_date: public_calendar_note(note)
+        for note_date, note in (notes or {}).items()
     }
 
 
@@ -1501,9 +1875,8 @@ def birthday_occurs_on(birthday, target_date):
     return source == target_date
 
 
-def plan_rules(profile):
-    plan = profile.get("plan") or "trial"
-    return PLAN_LIMITS.get(plan, PLAN_LIMITS["trial"])
+def plan_rules(profile, now=None):
+    return plan_rules_for_effective_entitlement(profile, now)
 
 
 def allowed_safety_guard_hours(profile):
@@ -1562,8 +1935,8 @@ def reminder_times_for_profile(profile):
             return normalized
     single = str(profile.get("reminder_time") or "").strip()
     if REMINDER_TIME_PATTERN.match(single):
-        return normalize_reminder_times([single], max_count) or default_reminder_times_for_count(max_count)
-    return default_reminder_times_for_count(max_count)
+        return normalize_reminder_times([single], max_count) or default_reminder_times_for_count(min(max_count, 2))
+    return default_reminder_times_for_count(min(max_count, 2))
 
 
 def apply_reminder_times_to_profile(profile, times=None, single=None):
@@ -1576,7 +1949,7 @@ def apply_reminder_times_to_profile(profile, times=None, single=None):
     else:
         normalized = []
     if not normalized:
-        normalized = default_reminder_times_for_count(max_count)
+        normalized = default_reminder_times_for_count(min(max_count, 2))
     profile["reminder_times"] = normalized
     profile["reminder_time"] = normalized[0]
     return normalized
@@ -1626,7 +1999,7 @@ def contact_is_bound_guardian(contact, owner_line_user_id=None):
         return False
     if contact.get("binding_status") == "accepted" or contact.get("consent_status") == "accepted":
         return bool(lid) and (not owner or lid != owner)
-    return bool(lid)
+    return False
 
 
 def contact_is_notifiable_line_guardian(contact, owner_line_user_id=None):
@@ -1706,16 +2079,91 @@ def profile_has_bound_line_guardian(profile):
     return any(contact_is_notifiable_line_guardian(c, owner) for c in contacts)
 
 
-def profile_setup_completed(profile):
-    """首次設定是否已完成：以伺服器 durable flag／守護人為準（不用只靠 localStorage）。"""
-    if not profile:
+def contact_is_reciprocal_core_guardian(state, owner_id, contact):
+    """Require a live, bilateral core-guardian relationship."""
+    if (
+        resolve_contact_role(contact) != "guardian"
+        or not bool(contact.get("is_primary"))
+        or not contact_is_bound_guardian(contact, owner_id)
+    ):
         return False
-    if profile.get("is_onboarding_completed"):
-        return True
-    istate = profile.get("interaction_state") or {}
-    if isinstance(istate, dict) and istate.get("onboarding_completed"):
-        return True
-    return profile_has_guardian(profile)
+    peer_id = get_contact_line_id(contact)
+    peer = ((state or {}).get("users") or {}).get(peer_id) or {}
+    return any(
+        get_contact_line_id(peer_contact) == owner_id
+        and resolve_contact_role(peer_contact) == "guardian"
+        and bool(peer_contact.get("is_primary"))
+        and contact_is_bound_guardian(peer_contact, peer_id)
+        for peer_contact in (peer.get("contacts") or [])
+    )
+
+
+def member_access_state(profile):
+    """Return only server-authoritative readiness for a member session.
+
+    Historical onboarding flags and ordinary contact records describe prior UI
+    progress; they do not prove that a LINE-reachable core guardian is bound.
+    Optional blockers are emitted only when this persisted profile explicitly
+    records them, never inferred from browser state.
+    """
+    profile = profile if isinstance(profile, dict) else {}
+    home_ready = profile_has_bound_line_guardian(profile)
+    state = {
+        "guardian_required": not home_ready,
+        "home_ready": home_ready,
+    }
+    for key in ("friend_required", "login_required", "migration_pending"):
+        if profile.get(key) is True:
+            state[key] = True
+    return state
+
+
+def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=False):
+    """Build the onboarding API payload from the same authoritative gate."""
+    line_user_id = str(line_user_id or "").strip()
+    if not line_user_id:
+        return {"ok": False, "error": "missing line_user_id"}, 400
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if not profile and not allow_missing_profile:
+        return {"ok": False, "error": "user not registered"}, 404
+    profile = profile or {}
+    if profile and ensure_onboarding_completed_flag(profile):
+        save_state(data_file, state)
+    access = member_access_state(profile)
+    contacts = profile.get("contacts") or []
+    has_guardian = profile_has_guardian(profile)
+    times = (
+        reminder_times_for_profile(profile)
+        if profile
+        else default_reminder_times_for_count(1)
+    )
+    daily_reminders = int(plan_rules(profile).get("daily_reminders") or 1) if profile else 1
+    return {
+        "ok": True,
+        **access,
+        "line_user_id": line_user_id,
+        "is_onboarding_completed": access["home_ready"],
+        "setup_completed": access["home_ready"],
+        "has_guardian": has_guardian,
+        "guardian_count": len(contacts),
+        "reminder_time": times[0] if times else "12:00",
+        "reminder_times": times,
+        "daily_reminders": daily_reminders,
+        "default_reminder_times": default_reminder_times_for_count(daily_reminders),
+        "grace_hours": normalize_grace_hours(profile.get("grace_hours")),
+        "warning_cancel_minutes": int(
+            profile.get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
+        ),
+        "allowed_grace_hours": list(ALLOWED_GRACE_HOURS),
+        "plan": profile.get("plan", "trial"),
+        "display_name": profile.get("display_name", ""),
+    }, 200
+
+
+def profile_setup_completed(profile):
+    """Compatibility alias for server-authoritative home readiness."""
+    return member_access_state(profile)["home_ready"]
 
 
 def ensure_onboarding_completed_flag(profile):
@@ -1727,10 +2175,10 @@ def ensure_onboarding_completed_flag(profile):
         and profile["interaction_state"].get("onboarding_completed")
     ):
         return False
-    if not profile_has_guardian(profile) and not profile.get("is_onboarding_completed"):
+    if not profile_has_bound_line_guardian(profile) and not profile.get("is_onboarding_completed"):
         return False
     changed = False
-    if profile_has_guardian(profile) or profile.get("is_onboarding_completed"):
+    if profile_has_bound_line_guardian(profile) or profile.get("is_onboarding_completed"):
         if not profile.get("is_onboarding_completed"):
             profile["is_onboarding_completed"] = True
             changed = True
@@ -1839,6 +2287,9 @@ def migrate_existing_free_members(config):
             continue
         if plan != "free":
             continue
+        if source == "expired" and profile.get("plan_expired_at"):
+            # 到期會員不是 legacy free；Cron 重跑不得再次發放體驗。
+            continue
         if ensure_membership_trial(profile, now=now, source="transition_trial"):
             migrated.append(str(profile.get("line_user_id") or ""))
             changed = True
@@ -1852,22 +2303,735 @@ def migrate_existing_free_members(config):
     }, 200
 
 
+def _comparable_datetimes(left, right):
+    if left.tzinfo is None and right.tzinfo is not None:
+        right = right.astimezone(ZoneInfo("Asia/Taipei")).replace(tzinfo=None)
+    elif left.tzinfo is not None and right.tzinfo is None:
+        left = left.astimezone(ZoneInfo("Asia/Taipei")).replace(tzinfo=None)
+    return left, right
+
+
 def membership_access_active(profile, now=None):
     """會員權益是否有效；free 僅代表未訂閱，SOS 安全政策另行判斷。"""
     if not isinstance(profile, dict):
         return False
     now = now or current_app_time({})
+    if profile.get("membership_source") == "beta":
+        if profile.get("beta_revoked_at"):
+            return False
+        started = parse_datetime(profile.get("beta_started_at"))
+        ends = parse_datetime(profile.get("beta_ends_at"))
+        if not started or not ends:
+            return False
+        comparable_now, comparable_start = _comparable_datetimes(now, started)
+        comparable_now, comparable_end = _comparable_datetimes(comparable_now, ends)
+        return comparable_start <= comparable_now < comparable_end
     plan = str(profile.get("plan") or "free")
     if plan == "trial":
         trial_end = parse_datetime(profile.get("trial_end"))
         if trial_end:
-            return now < trial_end
+            comparable_now, comparable_end = _comparable_datetimes(now, trial_end)
+            return comparable_now < comparable_end
         started_at = parse_datetime(profile.get("trial_started_at"))
         return bool(started_at and now < started_at + timedelta(days=PUBLIC_TRIAL_DAYS))
     if plan.startswith("paid_"):
         paid_until = parse_datetime(profile.get("paid_until"))
         return paid_until is None or now < paid_until
     return False
+
+
+def beta_access_active(profile, now=None):
+    """Return whether a closed-beta entitlement is currently usable."""
+    if not isinstance(profile, dict) or profile.get("membership_source") != "beta":
+        return False
+    if profile.get("beta_revoked_at"):
+        return False
+    now = now or current_app_time({})
+    started = parse_datetime(profile.get("beta_started_at"))
+    ends = parse_datetime(profile.get("beta_ends_at"))
+    if not started or not ends:
+        return False
+    comparable_now, comparable_start = _comparable_datetimes(now, started)
+    comparable_now, comparable_end = _comparable_datetimes(comparable_now, ends)
+    return comparable_start <= comparable_now < comparable_end
+
+
+def effective_entitlement_plan(profile, now=None):
+    """Active public/transition trials receive 399 core rights, never 799 rights."""
+    now = now or current_app_time({})
+    if str(profile.get("plan") or "") == "trial" and membership_access_active(profile, now):
+        return "paid_399"
+    if beta_access_active(profile, now):
+        return BETA_COHORT_PLAN.get(str(profile.get("beta_cohort") or ""), "paid_399")
+    if str(profile.get("membership_source") or "") == "beta":
+        return "free"
+    return str(profile.get("plan") or "free")
+
+
+def plan_rules_for_effective_entitlement(profile, now=None):
+    rules = copy.deepcopy(
+        PLAN_LIMITS.get(effective_entitlement_plan(profile, now), PLAN_LIMITS["free"])
+    )
+    if str(profile.get("plan") or "") == "trial":
+        # One labeled group test is handled separately and never enables schedules.
+        rules["guardian_group_limit"] = 0
+    return rules
+
+
+def claim_trial_group_test(profile, group_id, now=None):
+    now = now or current_app_time({})
+    if effective_entitlement_plan(profile, now) != "paid_399":
+        return {"claimed": False, "reason": "not_eligible"}
+    if profile.get("trial_group_test_used_at"):
+        delivery = dict(profile.get("trial_group_test_delivery") or {})
+        if (
+            delivery.get("group_id") == str(group_id or "").strip()
+            and delivery.get("status") in {"pending", "failed"}
+        ):
+            return {
+                "claimed": True,
+                "recovered": True,
+                "message": "這是測試通知：守護群綁定與推播流程已完成",
+                "retry_key": delivery.get("retry_key"),
+            }
+        return {"claimed": False, "reason": "already_used"}
+    retry_key = _line_retry_key(
+        f"trial-group-test:{profile.get('line_user_id')}:{str(group_id or '').strip()}"
+    )
+    profile["trial_group_test_used_at"] = now.isoformat(timespec="seconds")
+    profile["trial_group_test_group_id"] = str(group_id or "").strip()
+    profile["trial_group_test_delivery"] = {
+        "group_id": str(group_id or "").strip(),
+        "status": "pending",
+        "retry_key": retry_key,
+        "claimed_at": now.isoformat(timespec="seconds"),
+    }
+    return {
+        "claimed": True,
+        "message": "這是測試通知：守護群綁定與推播流程已完成",
+        "retry_key": retry_key,
+    }
+
+
+def consume_labeled_test_action(profile, action, now=None):
+    """Limit explicit test actions without changing real SOS emergency access."""
+    action = str(action or "").strip().lower()
+    if action not in {"sos", "location", "push"}:
+        return {"allowed": False, "reason": "invalid_action"}
+    now = now or current_app_time({})
+    today = now.strftime("%Y-%m-%d")
+    ledger = profile.setdefault("labeled_test_actions", {})
+    rows = [
+        row for row in (ledger.get(action) or [])
+        if str(row.get("at") or "").startswith(today)
+    ]
+    if len(rows) >= 2:
+        return {"allowed": False, "reason": "daily_limit", "used": len(rows)}
+    if rows:
+        last = parse_datetime(rows[-1].get("at"))
+        if last and (now - last).total_seconds() < 600:
+            return {
+                "allowed": False,
+                "reason": "cooldown",
+                "retry_after_seconds": int(600 - (now - last).total_seconds()),
+            }
+    rows.append({"at": now.isoformat(timespec="seconds")})
+    ledger[action] = rows
+    return {
+        "allowed": True,
+        "used": len(rows),
+        "remaining": 2 - len(rows),
+        "event_id": f"trial-test:{action}:{now.isoformat(timespec='seconds')}",
+        "message": f"這是測試通知（{action.upper()}）：未觸發真正緊急求助或持續定位。",
+    }
+
+
+def authorize_labeled_test_action(data_file, line_user_id, action, now=None):
+    """Atomically consume a bounded explicit test action for the verified member."""
+    clock = now or current_app_time({})
+
+    def mutate(state):
+        profile = (state.get("users") or {}).get(str(line_user_id or "").strip())
+        if not isinstance(profile, dict):
+            raise ValueError("member_not_found")
+        if str(profile.get("plan") or "") != "trial" or not membership_access_active(
+            profile, clock
+        ):
+            return {"allowed": False, "reason": "not_eligible"}
+        return consume_labeled_test_action(profile, action, now=clock)
+
+    try:
+        result = mutate_state_atomically(data_file, mutate)
+    except ValueError:
+        return {"allowed": False, "reason": "member_not_found"}, 404
+    return result, 200 if result.get("allowed") else 429
+
+
+def assign_beta_cohort(
+    state,
+    line_user_id,
+    cohort,
+    *,
+    now=None,
+    recruitment_source="",
+):
+    """Assign one real member to a capped 21-day beta cohort without an order."""
+    cohort = str(cohort or "").strip().upper()
+    if cohort not in BETA_COHORT_LIMITS:
+        raise ValueError("invalid_cohort")
+    users = state.setdefault("users", {})
+    profile = users.get(str(line_user_id or "").strip())
+    if not isinstance(profile, dict):
+        raise ValueError("member_not_found")
+    if (
+        profile.get("membership_source") == "beta"
+        and profile.get("beta_cohort") == cohort
+        and not profile.get("beta_revoked_at")
+    ):
+        return {
+            "assigned": False,
+            "idempotent": True,
+            "cohort": cohort,
+            "line_user_id": line_user_id,
+        }
+    active_count = sum(
+        1
+        for row in users.values()
+        if isinstance(row, dict)
+        and row.get("membership_source") == "beta"
+        and row.get("beta_cohort") == cohort
+        and not row.get("beta_revoked_at")
+    )
+    if active_count >= BETA_COHORT_LIMITS[cohort]:
+        raise ValueError("cohort_full")
+    now = now or current_app_time({})
+    profile["membership_source"] = "beta"
+    profile["plan"] = BETA_COHORT_PLAN[cohort]
+    profile["payment_status"] = "beta"
+    profile["beta_cohort"] = cohort
+    profile["beta_started_at"] = now.isoformat(timespec="seconds")
+    profile["beta_ends_at"] = (
+        now + timedelta(days=BETA_TRIAL_DAYS)
+    ).isoformat(timespec="seconds")
+    profile["beta_recruitment_source"] = str(recruitment_source or "").strip()[:80]
+    profile["beta_feedback_status"] = "pending"
+    profile["beta_revoked_at"] = None
+    profile["trial_bonus_days"] = 0
+    state.setdefault("beta_audit", []).append({
+        "action": "assign",
+        "line_user_id": str(line_user_id),
+        "cohort": cohort,
+        "at": now.isoformat(timespec="seconds"),
+    })
+    return {
+        "assigned": True,
+        "idempotent": False,
+        "cohort": cohort,
+        "line_user_id": line_user_id,
+        "ends_at": profile["beta_ends_at"],
+    }
+
+
+def revoke_beta_cohort(state, line_user_id, *, now=None):
+    """Revoke beta rights while retaining member and guardian data."""
+    profile = (state.get("users") or {}).get(str(line_user_id or "").strip())
+    if not isinstance(profile, dict):
+        raise ValueError("member_not_found")
+    now = now or current_app_time({})
+    if profile.get("beta_revoked_at"):
+        return {"revoked": False, "idempotent": True}
+    profile["beta_revoked_at"] = now.isoformat(timespec="seconds")
+    profile["membership_source"] = "expired"
+    profile["payment_status"] = "expired"
+    profile["plan"] = "free"
+    mark_entitlement_lapsed(profile, now)
+    state.setdefault("beta_audit", []).append({
+        "action": "revoke",
+        "line_user_id": str(line_user_id),
+        "cohort": profile.get("beta_cohort"),
+        "at": now.isoformat(timespec="seconds"),
+    })
+    return {"revoked": True, "idempotent": False}
+
+
+def beta_members_snapshot(state, now=None):
+    """Sanitized beta roster and exact cohort counters for the admin UI."""
+    now = now or current_app_time({})
+    rows = []
+    counts = {key: 0 for key in BETA_COHORT_LIMITS}
+    for profile in (state.get("users") or {}).values():
+        cohort = str(profile.get("beta_cohort") or "")
+        if cohort not in BETA_COHORT_LIMITS:
+            continue
+        if beta_access_active(profile, now):
+            counts[cohort] += 1
+        ends = parse_datetime(profile.get("beta_ends_at"))
+        started = parse_datetime(profile.get("beta_started_at"))
+        remaining = max(0, int(((ends - now).total_seconds() + 86399) // 86400)) if ends else 0
+        current_day = (
+            min(BETA_TRIAL_DAYS, max(1, (now.date() - started.date()).days + 1))
+            if started else 0
+        )
+        rows.append({
+            "line_user_id": str(profile.get("line_user_id") or ""),
+            "display_name": str(profile.get("display_name") or "未命名會員"),
+            "cohort": cohort,
+            "plan": str(profile.get("plan") or ""),
+            "source": str(profile.get("beta_recruitment_source") or ""),
+            "started_at": profile.get("beta_started_at"),
+            "ends_at": profile.get("beta_ends_at"),
+            "remaining_days": remaining,
+            "current_day": current_day,
+            "milestones": {
+                "day_1": current_day >= 1,
+                "day_7": current_day >= 7,
+                "day_14": current_day >= 14,
+                "day_21": current_day >= 21,
+            },
+            "feedback_status": str(profile.get("beta_feedback_status") or "pending"),
+            "guardian_count": len([
+                item for item in (profile.get("contacts") or [])
+                if contact_is_bound_guardian(item)
+            ]),
+            "reminder_setup": bool(profile.get("reminder_times") or profile.get("reminder_time")),
+            "push_result": str(profile.get("beta_push_result") or ""),
+            "sos_test_status": str(profile.get("beta_sos_test_status") or ""),
+            "revoked": bool(profile.get("beta_revoked_at")),
+            "active": beta_access_active(profile, now),
+        })
+    return {
+        "limits": dict(BETA_COHORT_LIMITS),
+        "counts": counts,
+        "total_active": sum(counts.values()),
+        "members": sorted(rows, key=lambda row: (row["cohort"], row["display_name"])),
+        "notice": "封閉測試不會建立訂單，也不會自動扣款",
+    }
+
+
+LINE_ACCEPTANCE_KINDS = (
+    "direct_message",
+    "family_group",
+    "sos",
+    "sos_cancel",
+    "sos_retry",
+    "abuse_block",
+    "group_member_change",
+)
+LINE_ACCEPTANCE_REQUIREMENTS = {
+    "A": list(LINE_ACCEPTANCE_KINDS),
+    "B399": ["direct_message", "sos", "sos_cancel", "sos_retry", "abuse_block"],
+    "B799": list(LINE_ACCEPTANCE_KINDS),
+}
+
+
+def _masked_line_ref(value):
+    raw = str(value or "").strip()
+    if len(raw) <= 6:
+        return "***"
+    return f"{raw[:3]}…{raw[-3:]}"
+
+
+def line_acceptance_snapshot(state, now=None):
+    rows = []
+    counts = {"pending": 0, "passed": 0, "failed": 0}
+    for stored in state.get("line_acceptance_cases") or []:
+        if not isinstance(stored, dict):
+            continue
+        row = dict(stored)
+        row.pop("line_user_id", None)
+        status = str(row.get("manual_status") or "pending")
+        if status not in counts:
+            status = "pending"
+            row["manual_status"] = status
+        counts[status] += 1
+        rows.append(row)
+    rows.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    return {
+        "kinds": list(LINE_ACCEPTANCE_KINDS),
+        "requirements": copy.deepcopy(LINE_ACCEPTANCE_REQUIREMENTS),
+        "counts": counts,
+        "cases": rows,
+        "notice": "本工具只記錄既有 LINE 測試證據，不會主動發送訊息",
+    }
+
+
+def create_line_acceptance_case(state, payload, now=None):
+    payload = dict(payload or {})
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    kind = str(payload.get("kind") or "").strip()
+    if kind not in LINE_ACCEPTANCE_KINDS:
+        raise ValueError("invalid_acceptance_kind")
+    profile = (state.get("users") or {}).get(line_user_id)
+    if not profile or not beta_access_active(profile, now):
+        raise ValueError("beta_member_required")
+    cohort = str(profile.get("beta_cohort") or "")
+    if kind not in LINE_ACCEPTANCE_REQUIREMENTS.get(cohort, []):
+        raise ValueError("kind_not_required_for_cohort")
+    clock = now or datetime.now()
+    case = {
+        "case_id": f"line-acceptance-{uuid.uuid4().hex}",
+        "line_user_id": line_user_id,
+        "member_ref": _masked_line_ref(line_user_id),
+        "display_name": str(profile.get("display_name") or "封測會員")[:80],
+        "cohort": cohort,
+        "kind": kind,
+        "system_status": "awaiting_evidence",
+        "manual_status": "pending",
+        "note": "",
+        "created_at": clock.isoformat(timespec="seconds"),
+        "reviewed_at": None,
+    }
+    state.setdefault("line_acceptance_cases", []).append(case)
+    state["line_acceptance_cases"] = state["line_acceptance_cases"][-500:]
+    return {"created": True, "case": {k: v for k, v in case.items() if k != "line_user_id"}}
+
+
+def review_line_acceptance_case(state, case_id, payload, now=None):
+    manual_status = str((payload or {}).get("manual_status") or "").strip()
+    if manual_status not in {"passed", "failed"}:
+        raise ValueError("invalid_manual_status")
+    note = str((payload or {}).get("note") or "").strip()
+    if len(note) > 500:
+        raise ValueError("note_too_long")
+    target = next(
+        (
+            row for row in state.get("line_acceptance_cases") or []
+            if isinstance(row, dict) and row.get("case_id") == case_id
+        ),
+        None,
+    )
+    if target is None:
+        raise ValueError("acceptance_case_not_found")
+    clock = now or datetime.now()
+    target["manual_status"] = manual_status
+    target["note"] = note
+    target["reviewed_at"] = clock.isoformat(timespec="seconds")
+    public = dict(target)
+    public.pop("line_user_id", None)
+    return {"reviewed": True, "case": public}
+
+
+def admin_assign_beta_member(data_file, payload, now=None):
+    try:
+        result = mutate_state_atomically(
+            data_file,
+            lambda state: {
+                **assign_beta_member_with_release_gate(
+                    state,
+                    payload.get("line_user_id"),
+                    payload.get("cohort"),
+                    now=now,
+                    recruitment_source=payload.get("source") or "",
+                ),
+                "beta": beta_members_snapshot(state, now),
+            },
+        )
+    except ValueError as exc:
+        error = str(exc)
+        conflict_errors = {
+            "cohort_full",
+            "a_cohort_incomplete",
+            "a_cohort_not_mature",
+            "readiness_blocked",
+            "first_release_max_10",
+            "wait_until_next_day",
+            "remaining_release_max_20",
+            "second_stage_max_30",
+        }
+        return {"ok": False, "error": error}, (
+            404 if error == "member_not_found" else 409 if error in conflict_errors else 400
+        )
+    return {"ok": True, **result}, 200
+
+
+def admin_revoke_beta_member(data_file, line_user_id, now=None):
+    try:
+        result = mutate_state_atomically(
+            data_file,
+            lambda state: {
+                **revoke_beta_cohort(state, line_user_id, now=now),
+                "beta": beta_members_snapshot(state, now),
+            },
+        )
+    except ValueError:
+        return {"ok": False, "error": "member_not_found"}, 404
+    return {"ok": True, **result}, 200
+
+
+def launch_readiness_snapshot(state, now=None):
+    """Quantified launch gates used to stop unsafe beta expansion."""
+    metrics = dict(state.get("launch_metrics") or {})
+    launch_events = [
+        row for row in (state.get("launch_events") or [])
+        if isinstance(row, dict)
+    ]
+    checkin_events = [
+        row for row in launch_events if row.get("kind") == "checkin"
+    ]
+    if checkin_events:
+        metrics["checkin_attempts"] = len(checkin_events)
+        metrics["checkin_successes"] = sum(
+            1 for row in checkin_events if row.get("success")
+        )
+    reminder_logs = [
+        row for row in (state.get("notification_logs") or [])
+        if isinstance(row, dict)
+        and row.get("kind") in {"checkin", "overdue", "contact_alert"}
+    ]
+    if reminder_logs:
+        reminder_keys = {
+            (
+                row.get("kind"),
+                row.get("line_user_id"),
+                str(row.get("message") or ""),
+            )
+            for row in reminder_logs
+        }
+        sent_keys = {
+            (
+                row.get("kind"),
+                row.get("line_user_id"),
+                str(row.get("message") or ""),
+            )
+            for row in reminder_logs
+            if row.get("status") == "sent"
+        }
+        metrics["required_reminders"] = len(reminder_keys)
+        metrics["sent_required_reminders"] = len(sent_keys)
+    delivery_events = [
+        row for row in (state.get("launch_delivery_events") or {}).values()
+        if isinstance(row, dict) and row.get("expected")
+    ]
+    if delivery_events:
+        metrics["required_reminders"] = len(delivery_events)
+        metrics["sent_required_reminders"] = sum(
+            1 for row in delivery_events if int(row.get("sent_count") or 0) == 1
+        )
+        metrics["duplicate_alerts"] = sum(
+            1 for row in delivery_events if int(row.get("sent_count") or 0) > 1
+        )
+    invites = [
+        row for row in (state.get("guardian_invites") or [])
+        if isinstance(row, dict)
+    ]
+    if invites:
+        metrics["guardian_bind_attempts"] = len(invites)
+        metrics["guardian_bind_successes"] = sum(
+            1 for row in invites if row.get("status") == "used"
+        )
+    beta_profiles = [
+        profile for profile in (state.get("users") or {}).values()
+        if isinstance(profile, dict) and profile.get("membership_source") == "beta"
+    ]
+    sos_results = [
+        str(profile.get("beta_sos_test_status") or "")
+        for profile in beta_profiles
+        if str(profile.get("beta_sos_test_status") or "")
+    ]
+    if sos_results:
+        metrics["sos_tests"] = len(sos_results)
+        metrics["sos_test_successes"] = sum(
+            1 for value in sos_results if value in {"sent", "passed", "success"}
+        )
+    scenarios = state.get("launch_validation_scenarios") or {}
+    payment_ok = any(
+        row.get("kind") == "payment"
+        and LAUNCH_SCENARIO_STEPS["payment"] <= set(row.get("steps") or [])
+        for row in scenarios.values()
+        if isinstance(row, dict)
+    )
+    expiry_ok = any(
+        row.get("kind") == "expiry"
+        and row.get("line_user_id")
+        and LAUNCH_SCENARIO_STEPS["expiry"] <= set(row.get("steps") or [])
+        for row in scenarios.values()
+        if isinstance(row, dict)
+    )
+    # Payment and expiry are launch blockers.  Only correlated scenario
+    # evidence is authoritative; legacy/manual summary booleans must not
+    # bypass the acceptance ledger.
+    metrics["payment_flow_passed"] = payment_ok
+    metrics["expiry_flow_passed"] = expiry_ok
+    checkin_attempts = max(0, int(metrics.get("checkin_attempts") or 0))
+    checkin_successes = max(0, int(metrics.get("checkin_successes") or 0))
+    required = max(0, int(metrics.get("required_reminders") or 0))
+    sent_required = max(0, int(metrics.get("sent_required_reminders") or 0))
+    sos_tests = max(0, int(metrics.get("sos_tests") or 0))
+    sos_successes = max(0, int(metrics.get("sos_test_successes") or 0))
+    bind_attempts = max(0, int(metrics.get("guardian_bind_attempts") or 0))
+    bind_successes = max(0, int(metrics.get("guardian_bind_successes") or 0))
+    failures = [
+        {
+            "category": str(row.get("category") or ""),
+            "reason": str(row.get("reason") or "")[:200],
+            "critical": bool(row.get("critical")),
+        }
+        for row in (state.get("push_failures") or [])
+        if isinstance(row, dict)
+    ]
+    for row in reminder_logs:
+        if row.get("status") not in {"failed", "retry", "blocked"}:
+            continue
+        failures.append({
+            "category": str(row.get("kind") or ""),
+            "reason": str(row.get("detail") or row.get("status") or "")[:200],
+            "critical": True,
+        })
+    for row in delivery_events:
+        if not row.get("failed") and int(row.get("sent_count") or 0) == 1:
+            continue
+        failures.append({
+            "category": str(row.get("kind") or ""),
+            "reason": (
+                "duplicate_delivery"
+                if int(row.get("sent_count") or 0) > 1
+                else "required_delivery_failed_or_missing"
+            ),
+            "critical": True,
+        })
+    checkin_rate = checkin_successes / checkin_attempts if checkin_attempts else 0.0
+    sos_rate = sos_successes / sos_tests if sos_tests else 0.0
+    bind_rate = bind_successes / bind_attempts if bind_attempts else 0.0
+    missed = max(0, required - sent_required)
+    duplicate_alerts = max(0, int(metrics.get("duplicate_alerts") or 0))
+    critical_miss = missed > 0 or any(row["critical"] for row in failures)
+    payment_ok = metrics.get("payment_flow_passed") is True
+    expiry_ok = metrics.get("expiry_flow_passed") is True
+    ready = all([
+        checkin_rate >= 0.99,
+        missed == 0,
+        duplicate_alerts == 0,
+        sos_rate >= 1.0,
+        bind_rate >= 0.95,
+        payment_ok,
+        expiry_ok,
+        not critical_miss,
+    ])
+    return {
+        "checkin_success_rate": round(checkin_rate, 4),
+        "missed_required_reminders": missed,
+        "duplicate_alerts": duplicate_alerts,
+        "sos_test_success_rate": round(sos_rate, 4),
+        "guardian_bind_success_rate": round(bind_rate, 4),
+        "payment_flow_passed": payment_ok,
+        "expiry_flow_passed": expiry_ok,
+        "push_failures": failures,
+        "critical_notification_miss": critical_miss,
+        "ready": ready,
+    }
+
+
+def record_launch_validation_step(
+    state, scenario_id, kind, step, *, line_user_id="", now=None
+):
+    scenario_id = str(scenario_id or "").strip()
+    kind = str(kind or "").strip()
+    step = str(step or "").strip()
+    if not scenario_id or kind not in LAUNCH_SCENARIO_STEPS:
+        raise ValueError("invalid_launch_scenario")
+    if step not in LAUNCH_SCENARIO_STEPS[kind]:
+        raise ValueError("invalid_launch_step")
+    scenarios = state.setdefault("launch_validation_scenarios", {})
+    row = scenarios.setdefault(scenario_id, {
+        "kind": kind,
+        "line_user_id": str(line_user_id or "").strip(),
+        "steps": [],
+    })
+    if row.get("kind") != kind:
+        raise ValueError("launch_scenario_kind_conflict")
+    if kind == "expiry" and not (
+        str(line_user_id or "").strip() or row.get("line_user_id")
+    ):
+        raise ValueError("line_user_id_required")
+    if line_user_id:
+        if row.get("line_user_id") not in {"", str(line_user_id)}:
+            raise ValueError("launch_scenario_member_conflict")
+        row["line_user_id"] = str(line_user_id)
+    row["steps"] = sorted(set(row.get("steps") or []) | {step})
+    row["updated_at"] = (now or current_app_time({})).isoformat(timespec="seconds")
+    return copy.deepcopy(row)
+
+
+def beta_release_allowed(state, requested_count, now=None):
+    now = now or current_app_time({})
+    requested_count = max(0, int(requested_count or 0))
+    snapshot = launch_readiness_snapshot(state, now)
+    if not snapshot["ready"]:
+        return False, "readiness_blocked"
+    released = sum(
+        1
+        for profile in (state.get("users") or {}).values()
+        if isinstance(profile, dict)
+        and profile.get("membership_source") == "beta"
+        and profile.get("beta_cohort") in {"B399", "B799"}
+        and not profile.get("beta_revoked_at")
+    )
+    remaining = max(0, 30 - released)
+    return (
+        (True, "second_stage_allowed")
+        if 0 < requested_count <= remaining
+        else (False, "second_stage_max_30")
+    )
+
+
+def assign_beta_member_with_release_gate(
+    state,
+    line_user_id,
+    cohort,
+    *,
+    now=None,
+    recruitment_source="",
+):
+    """Apply the A-day-7 and quantified rollout gates before any B activation."""
+    clock = now or current_app_time({})
+    cohort = str(cohort or "").strip().upper()
+    profile = (state.get("users") or {}).get(str(line_user_id or "").strip())
+    if (
+        isinstance(profile, dict)
+        and profile.get("membership_source") == "beta"
+        and profile.get("beta_cohort") == cohort
+        and not profile.get("beta_revoked_at")
+    ):
+        return assign_beta_cohort(
+            state,
+            line_user_id,
+            cohort,
+            now=clock,
+            recruitment_source=recruitment_source,
+        )
+    if cohort in {"B399", "B799"}:
+        a_started = [
+            parse_datetime(profile.get("beta_started_at"))
+            for profile in (state.get("users") or {}).values()
+            if isinstance(profile, dict)
+            and profile.get("membership_source") == "beta"
+            and profile.get("beta_cohort") == "A"
+            and not profile.get("beta_revoked_at")
+        ]
+        valid_a_started = [value for value in a_started if value]
+        if len(valid_a_started) < BETA_COHORT_LIMITS["A"]:
+            raise ValueError("a_cohort_incomplete")
+        if min(valid_a_started) > clock - timedelta(days=7):
+            raise ValueError("a_cohort_not_mature")
+        allowed, reason = beta_release_allowed(state, 1, now=clock)
+        if not allowed:
+            raise ValueError(reason)
+    result = assign_beta_cohort(
+        state,
+        line_user_id,
+        cohort,
+        now=clock,
+        recruitment_source=recruitment_source,
+    )
+    if cohort in {"B399", "B799"} and result.get("assigned"):
+        state.setdefault("beta_release_history", []).append({
+            "batch": "B",
+            "cohort": cohort,
+            "count": 1,
+            "line_user_id": str(line_user_id),
+            "released_at": clock.isoformat(timespec="seconds"),
+        })
+    return result
 
 
 def trial_days_left(profile, now=None):
@@ -1888,24 +3052,35 @@ def trial_active(profile):
 
 
 def clear_contacts_retain_window(profile):
-    """付費／試用權益恢復時，取消到期保留倒數（資料繼續留下）。"""
+    """Restore service pause flags while keeping every relationship."""
     if not isinstance(profile, dict):
         return
     profile["plan_expired_at"] = ""
     profile["contacts_retain_until"] = ""
+    was_paused = bool(profile.get("membership_paused") or profile.get("scheduled_notifications_paused"))
+    profile["membership_paused"] = False
+    profile["scheduled_notifications_paused"] = False
+    if was_paused:
+        profile["daily_checkin_reminder_enabled"] = True
 
 
 def mark_entitlement_lapsed(profile, now):
-    """方案／試用到期：開始 30 天軟保留倒數（當下不清空 contacts）。"""
+    """Pause paid services at expiry while retaining relationships indefinitely."""
     if not isinstance(profile, dict):
         return
     stamp = now.isoformat(timespec="seconds")
     if not str(profile.get("plan_expired_at") or "").strip():
         profile["plan_expired_at"] = stamp
-    if not str(profile.get("contacts_retain_until") or "").strip():
-        profile["contacts_retain_until"] = (now + timedelta(days=CONTACTS_RETAIN_DAYS)).isoformat(
-            timespec="seconds"
-        )
+    profile["contacts_retain_until"] = ""
+    profile["membership_paused"] = True
+    profile["daily_checkin_reminder_enabled"] = False
+    profile["scheduled_notifications_paused"] = True
+    location = dict(profile.get("location") or {})
+    if location:
+        location["active"] = False
+        location["sharing"] = False
+        location["ended_at"] = stamp
+        profile["location"] = location
 
 
 def contacts_retain_days_left(profile, now=None):
@@ -1917,23 +3092,164 @@ def contacts_retain_days_left(profile, now=None):
 
 
 def soft_archive_contacts_past_retain(profile, now):
-    """保留期結束後軟封存守護人／緊急連絡人（不清簽到 history）。"""
-    retain_until = parse_datetime(profile.get("contacts_retain_until"))
-    if not retain_until or retain_until >= now:
-        return False
-    contacts = list(profile.get("contacts") or [])
-    if not contacts and not profile.get("contacts_retain_until"):
-        return False
-    archived = list(profile.get("contacts_archived") or [])
-    stamp = now.isoformat(timespec="seconds")
-    for contact in contacts:
-        if not isinstance(contact, dict):
-            continue
-        archived.append({**contact, "archived_at": stamp, "archive_reason": "retain_window_ended"})
-    profile["contacts_archived"] = archived[-200:]
-    profile["contacts"] = []
-    profile["contacts_retain_until"] = ""
-    return True
+    """Relationships are never auto-archived merely because a plan expired."""
+    return False
+
+
+def restore_membership_after_renewal(profile, plan, paid_until, now=None):
+    """Restore paid service flags without requiring guardian re-invitation."""
+    now = now or current_app_time({})
+    profile["plan"] = str(plan)
+    profile["membership_source"] = "paid"
+    profile["payment_status"] = "active"
+    profile["paid_until"] = (
+        paid_until.isoformat(timespec="seconds")
+        if isinstance(paid_until, datetime)
+        else str(paid_until or "")
+    )
+    profile["membership_paused"] = False
+    profile["scheduled_notifications_paused"] = False
+    profile["daily_checkin_reminder_enabled"] = True
+    profile["renewed_at"] = now.isoformat(timespec="seconds")
+    clear_contacts_retain_window(profile)
+    return profile
+
+
+def process_verified_privacy_request(
+    state,
+    line_user_id,
+    request_type,
+    *,
+    peer_line_user_id="",
+    now=None,
+):
+    """Process a verified unlink/delete request and retain minimal legal audit."""
+    now = now or current_app_time({})
+    line_user_id = str(line_user_id or "").strip()
+    request_type = str(request_type or "").strip()
+    peer_line_user_id = str(peer_line_user_id or "").strip()
+    request_key = hashlib.sha256(
+        f"{line_user_id}:{request_type}:{peer_line_user_id}".encode("utf-8")
+    ).hexdigest()
+    requests = state.setdefault("privacy_requests", [])
+    if any(row.get("request_key") == request_key for row in requests):
+        return {"processed": True, "idempotent": True, "request_key": request_key}
+    if line_user_id not in (state.get("users") or {}):
+        raise ValueError("member_not_found")
+    if request_type == "unlink_guardian":
+        if not peer_line_user_id:
+            raise ValueError("peer_required")
+        for owner_id, peer_id in (
+            (line_user_id, peer_line_user_id),
+            (peer_line_user_id, line_user_id),
+        ):
+            profile = (state.get("users") or {}).get(owner_id)
+            if not isinstance(profile, dict):
+                continue
+            profile["contacts"] = [
+                row for row in (profile.get("contacts") or [])
+                if not (
+                    get_contact_line_id(row) == peer_id
+                    and resolve_contact_role(row) == "guardian"
+                )
+            ]
+    elif request_type == "delete_account":
+        state["users"].pop(line_user_id, None)
+        for profile in state["users"].values():
+            profile["friends"] = [
+                value for value in (profile.get("friends") or [])
+                if value != line_user_id
+            ]
+            profile["guarding_for"] = [
+                value for value in (profile.get("guarding_for") or [])
+                if value != line_user_id
+            ]
+            profile["contacts"] = [
+                row for row in (profile.get("contacts") or [])
+                if get_contact_line_id(row) != line_user_id
+            ]
+        for group_id, group in list((state.get("guardian_groups") or {}).items()):
+            if str(group.get("owner_line_user_id") or "") == line_user_id:
+                state["guardian_groups"].pop(group_id, None)
+                continue
+            for field in ("admin_line_user_ids", "member_ids_at_bind", "member_line_user_ids"):
+                if isinstance(group.get(field), list):
+                    group[field] = [
+                        value for value in group[field] if value != line_user_id
+                    ]
+        for key in (
+            "guardian_invites",
+            "friend_invites",
+            "contact_rewards",
+            "support_tickets",
+            "notification_logs",
+            "sos_logs",
+            "checkin_warnings",
+            "checkin_warning_logs",
+        ):
+            collection = state.get(key)
+            if isinstance(collection, list):
+                state[key] = [
+                    row for row in collection
+                    if not _account_migration_record_references(row, line_user_id)
+                ]
+            elif isinstance(collection, dict):
+                state[key] = {
+                    record_id: row for record_id, row in collection.items()
+                    if not _account_migration_record_references(row, line_user_id)
+                    and record_id != line_user_id
+                }
+        for key in ("sos_pending", "location_grants", "location_grant_index"):
+            collection = state.get(key)
+            if isinstance(collection, dict):
+                state[key] = {
+                    record_id: row for record_id, row in collection.items()
+                    if record_id != line_user_id
+                    and not _account_migration_record_references(row, line_user_id)
+                }
+        for order in state.get("orders") or []:
+            if str(order.get("line_user_id") or "") == line_user_id:
+                order["line_user_id"] = "deleted-user"
+                order["display_name"] = "已刪除會員"
+                order["personal_data_removed_at"] = now.isoformat(timespec="seconds")
+        def contains_deleted_identity(value):
+            if isinstance(value, dict):
+                return any(
+                    str(key) == line_user_id
+                    or contains_deleted_identity(item)
+                    for key, item in value.items()
+                )
+            if isinstance(value, (list, tuple, set)):
+                return any(contains_deleted_identity(item) for item in value)
+            return isinstance(value, str) and value == line_user_id
+
+        # Final graph sweep: operational records have no legal retention basis.
+        # Orders and the hashed privacy audit are handled separately above/below.
+        for key, collection in list(state.items()):
+            if key in {"users", "orders", "privacy_requests"}:
+                continue
+            if isinstance(collection, list):
+                state[key] = [
+                    row for row in collection
+                    if not contains_deleted_identity(row)
+                ]
+            elif isinstance(collection, dict):
+                state[key] = {
+                    record_id: row
+                    for record_id, row in collection.items()
+                    if str(record_id) != line_user_id
+                    and not contains_deleted_identity(row)
+                }
+    else:
+        raise ValueError("unsupported_request_type")
+    requests.append({
+        "id": f"privacy-{uuid.uuid4().hex[:12]}",
+        "request_key": request_key,
+        "request_type": request_type,
+        "status": "completed",
+        "completed_at": now.isoformat(timespec="seconds"),
+    })
+    return {"processed": True, "idempotent": False, "request_key": request_key}
 
 
 def apply_invite_trial_reward(inviter, reward, *, accepted_at):
@@ -1953,8 +3269,8 @@ def apply_invite_trial_reward(inviter, reward, *, accepted_at):
 def plan_type_label(profile):
     plan = str(profile.get("plan") or "trial")
     return {
-        "trial": "免費試用",
-        "free": "免費方案",
+        "trial": "14 天安心體驗",
+        "free": "未訂閱",
         "paid_199": "199 月費",
         "paid_199_year": "199 年費",
         "paid_399": "399 月費",
@@ -1965,7 +3281,7 @@ def plan_type_label(profile):
 
 
 def compute_plan_expires_at(profile):
-    """回傳方案到期 ISO 字串（試用結束日或付費 paid_until）；免費方案回空字串。"""
+    """回傳方案到期 ISO 字串（試用結束日或付費 paid_until）；未訂閱回空字串。"""
     plan = str(profile.get("plan") or "trial")
     if plan.startswith("paid"):
         return str(profile.get("paid_until") or "").strip()
@@ -2056,6 +3372,7 @@ def build_status(profile, state=None, now=None):
             enrich_contact_peer_display_name(state, row)
         normalized_contacts.append(row)
     profile["contacts"] = normalized_contacts
+    access = member_access_state(profile)
     now = now or current_app_time({})
     last = parse_last_checkin(profile.get("last_check_in"))
     grace_hours = normalize_grace_hours(profile.get("grace_hours"))
@@ -2114,6 +3431,7 @@ def build_status(profile, state=None, now=None):
 
     return {
         "ok": True,
+        **access,
         "line_user_id": profile.get("line_user_id"),
         "display_name": profile.get("display_name", ""),
         "picture_url": profile.get("picture_url", ""),
@@ -2217,6 +3535,8 @@ def build_status(profile, state=None, now=None):
         "core_guardian_alert_limit": plan_rules(profile).get("core_guardian_alert_limit", 1),
         "guardian_group_limit": plan_rules(profile).get("guardian_group_limit", 0),
         "guardian_group_member_limit": int(plan_rules(profile).get("guardian_group_member_limit") or 0),
+        "calendar_notes_enabled": plan_has_smart_reminders(profile),
+        "smart_reminders_enabled": plan_has_smart_reminders(profile),
         "safety_guard_hours": allowed_safety_guard_hours(profile),
         "guardian_group_ids": profile.get("guardian_group_ids", []),
         "guardian_groups": guardian_groups,
@@ -2251,8 +3571,8 @@ def build_status(profile, state=None, now=None):
 def _membership_label(profile):
     plan = str(profile.get("plan") or "trial")
     labels = {
-        "trial": "免費試用",
-        "free": "免費方案",
+        "trial": "14 天安心體驗",
+        "free": "未訂閱",
         "paid_199": "已升級 199 月費",
         "paid_199_year": "已升級 199 年費",
         "paid_399": "已升級 399 月費",
@@ -2267,9 +3587,9 @@ def _trial_days_text(profile):
     plan = str(profile.get("plan") or "trial")
     if plan == "trial":
         days = trial_days_left(profile)
-        return f"免費剩 {days} 天" if days > 0 else "試用已結束"
+        return f"體驗剩 {days} 天" if days > 0 else "體驗已結束"
     if plan == "free":
-        return "免費方案（無試用倒數）"
+        return "未訂閱（無體驗倒數）"
     return "已升級（非試用）"
 
 
@@ -2281,16 +3601,16 @@ def _upgrade_status(profile):
         return f"{_membership_label(profile)}｜{'使用中' if active else paymentLabel_zh(payment)}"
     if plan == "trial":
         days = trial_days_left(profile)
-        return f"試用中｜免費剩 {days} 天" if days > 0 else "試用已結束｜尚未升級"
+        return f"體驗中｜剩 {days} 天" if days > 0 else "體驗已結束｜尚未升級"
     if plan == "free":
-        return "免費方案｜尚未升級"
+        return "未訂閱｜尚未升級"
     return _membership_label(profile)
 
 
 def paymentLabel_zh(status):
     return {
         "trial": "試用中",
-        "free": "免費",
+        "free": "未訂閱",
         "active": "已付款",
         "pending": "待付款",
         "expired": "已到期",
@@ -2299,14 +3619,19 @@ def paymentLabel_zh(status):
     }.get(status, status or "未付費")
 
 
-def paid_membership_is_active(profile):
+def paid_membership_is_active(profile, now=None):
     if profile.get("payment_status") != "active":
         return False
     paid_until = str(profile.get("paid_until") or "").strip()
     if not paid_until:
         return True
     expires_at = parse_datetime(paid_until)
-    return bool(expires_at and expires_at >= datetime.now())
+    if not expires_at:
+        return False
+    comparable_expires, comparable_now = _comparable_datetimes(
+        expires_at, now or current_app_time({})
+    )
+    return comparable_expires >= comparable_now
 
 
 _WELCOME_NAME_PLACEHOLDERS = frozenset(
@@ -2388,6 +3713,9 @@ def register_line_user(data_file, payload):
     if not line_user_id:
         return {"error": "missing line_user_id"}, 400
     state = load_state(data_file)
+    alias = (state.get("account_migration_aliases") or {}).get(line_user_id)
+    if isinstance(alias, dict) and alias.get("status") == "disabled":
+        return account_migrated_response(), 409
     existing = (state.get("users") or {}).get(line_user_id)
     preserved = {}
     if isinstance(existing, dict):
@@ -2668,7 +3996,20 @@ def create_payment_order(data_file, payload, config=None):
 
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
+    recurring_requested = bool(profile.get("auto_renew_requested"))
+    payer_email = str(
+        profile.get("contact_email") or payload.get("payer_email") or ""
+    ).strip()
+    if recurring_requested and not payer_email:
+        return {"error": "payer_email_required_for_auto_renew"}, 400
     now = current_app_time(config or {})
+    cfg = config or {}
+    use_legacy_newebpay = bool(
+        newebpay is not None
+        and newebpay.newebpay_configured(cfg)
+        and not (ecpay is not None and ecpay.ecpay_configured(cfg))
+    )
+    provider = "newebpay" if use_legacy_newebpay else "ecpay"
     order = {
         "order_id": f"AC{now.strftime('%Y%m%d%H%M%S')}{secrets.token_hex(3).upper()}",
         "line_user_id": line_user_id,
@@ -2677,25 +4018,362 @@ def create_payment_order(data_file, payload, config=None):
         "amount": product["amount"],
         "currency": "TWD",
         "billing_cycle": product["billing_cycle"],
-        "provider": "newebpay",
+        "provider": provider,
         "status": "pending",
         "created_at": now.isoformat(timespec="seconds"),
         "paid_at": "",
         "transaction_id": "",
+        "recurring_requested": recurring_requested,
+        "subscription_status": (
+            "pending" if profile.get("auto_renew_requested") else "not_requested"
+        ),
+        "period_no": "",
+        "processed_transaction_ids": [],
     }
     state.setdefault("orders", []).append(order)
     save_state(data_file, state)
     checkout = None
-    if newebpay is not None:
-        checkout = newebpay.build_checkout(order, config or {})
+    if provider == "newebpay" and newebpay is not None:
+        if order["recurring_requested"]:
+            checkout = newebpay.build_period_checkout(
+                order,
+                payer_email=payer_email,
+                config=cfg,
+            )
+        else:
+            checkout = newebpay.build_checkout(order, cfg)
+    elif ecpay is not None:
+        if order["recurring_requested"]:
+            checkout = ecpay.build_period_checkout(
+                order,
+                config=cfg,
+            )
+        else:
+            checkout = ecpay.build_checkout(order, cfg)
     else:
         checkout = {
             "mode": "manual",
-            "mpg_url": None,
+            "checkout_url": None,
             "form": None,
-            "message": "藍新模組未載入；訂單已建立，請後台人工確認。",
+            "message": "安全付款模組未載入；訂單已建立，請稍後再試。",
         }
     return {"order": order, "checkout": checkout}, 201
+
+
+def process_period_notification(data_file, parsed, config=None):
+    """Apply one verified NewebPay period notification exactly once."""
+    order_id = str(parsed.get("order_id") or "").strip()
+    transaction_id = str(parsed.get("transaction_id") or "").strip()
+    if str(parsed.get("status") or "").upper() != "SUCCESS":
+        return {"accepted": True, "activated": False}, 200
+    if not order_id:
+        return {"error": "missing order_id"}, 400
+
+    state = load_state(data_file)
+    order = next(
+        (
+            item
+            for item in state.setdefault("orders", [])
+            if item.get("order_id") == order_id
+        ),
+        None,
+    )
+    if not order:
+        return {"error": "order not found"}, 404
+    processed = order.setdefault("processed_transaction_ids", [])
+    event_key = transaction_id or f"period:{parsed.get('period_no') or ''}:initial"
+    if event_key in processed:
+        return {"order": order, "already_processed": True}, 200
+
+    profile = get_profile(state, order.get("line_user_id"))
+    product = PAYMENT_PRODUCTS.get(order.get("plan"))
+    if not product:
+        return {"error": "unknown payment plan"}, 400
+    now = current_app_time(config or {})
+    current_until = parse_datetime(profile.get("paid_until"))
+    start_at = current_until if current_until and current_until > now else now
+    profile["plan"] = order["plan"]
+    profile["membership_source"] = "paid"
+    profile["payment_status"] = "active"
+    profile["billing_cycle"] = product["billing_cycle"]
+    provider = str(
+        parsed.get("provider")
+        or (
+            "newebpay"
+            if parsed.get("period_no")
+            and newebpay is not None
+            and newebpay.newebpay_configured(config or {})
+            else ""
+        )
+        or order.get("provider")
+        or "ecpay"
+    )
+    profile["payment_provider"] = provider
+    profile["paid_until"] = (
+        start_at + timedelta(days=product["duration_days"])
+    ).isoformat(timespec="seconds")
+    profile["next_billing_date"] = profile["paid_until"]
+    profile["payment_method_last4"] = str(
+        parsed.get("payment_method_last4") or ""
+    )[-4:]
+    profile["auto_renew_requested"] = True
+    profile["auto_renew_enabled"] = True
+    profile["auto_renew_status"] = "active"
+    profile["payment_period_order_no"] = order_id
+    if provider == "newebpay":
+        profile["newebpay_period_no"] = str(parsed.get("period_no") or "")
+        profile["newebpay_period_order_no"] = order_id
+    else:
+        profile["ecpay_period_order_no"] = order_id
+    profile["renewal_reminder_sent_for"] = ""
+    order["status"] = "paid"
+    order["subscription_status"] = "active"
+    order["period_no"] = str(parsed.get("period_no") or "")
+    order["transaction_id"] = transaction_id
+    order["paid_at"] = now.isoformat(timespec="seconds")
+    processed.append(event_key)
+    clear_contacts_retain_window(profile)
+    ensure_guardian_group_admin_for_user(state, profile)
+    save_state(data_file, state)
+    return {"order": order, "member": build_status(profile, state), "already_processed": False}, 200
+
+
+def _newebpay_post(url, form):
+    from urllib.parse import urlencode
+    from urllib.request import Request, urlopen
+
+    request_obj = Request(
+        url,
+        data=urlencode(form).encode("utf-8"),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    with urlopen(request_obj, timeout=15) as response:  # nosec B310
+        raw = response.read().decode("utf-8")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        from urllib.parse import parse_qs
+
+        return {key: values[0] for key, values in parse_qs(raw).items()}
+
+
+def cancel_recurring_subscription(data_file, payload, config=None):
+    """Terminate a recurring mandate; local state changes only after gateway success."""
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if not line_user_id:
+        return {"error": "missing line_user_id"}, 400
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if not profile:
+        return {"error": "user not found"}, 404
+    if not profile.get("auto_renew_enabled"):
+        return {"cancelled": False, "already_off": True}, 200
+    provider = str(
+        profile.get("payment_provider")
+        or (
+            "newebpay"
+            if profile.get("newebpay_period_order_no")
+            or profile.get("newebpay_period_no")
+            else "ecpay"
+        )
+    )
+    cfg = config or {}
+    if provider == "newebpay":
+        try:
+            gateway_request = newebpay.build_period_status_change(
+                merchant_order_no=profile.get("newebpay_period_order_no"),
+                period_no=profile.get("newebpay_period_no"),
+                action="terminate",
+                config=cfg,
+            )
+        except (RuntimeError, ValueError) as exc:
+            return {"error": str(exc)}, 400
+        poster = cfg.get("NEWEBPAY_HTTP_POSTER") or _newebpay_post
+        try:
+            response_form = poster(gateway_request["url"], gateway_request["form"])
+        except Exception:
+            return {"error": "payment_period_cancel_failed"}, 502
+        parsed, error = newebpay.parse_period_payload(response_form or {}, cfg)
+        result = (parsed or {}).get("raw", {}).get("Result") or {}
+        accepted = bool(
+            not error
+            and str((parsed or {}).get("status") or "").upper() == "SUCCESS"
+            and str(result.get("AlterType") or "").lower() == "terminate"
+        )
+    else:
+        try:
+            gateway_request = ecpay.build_period_action(
+                merchant_trade_no=(
+                    profile.get("ecpay_period_order_no")
+                    or profile.get("payment_period_order_no")
+                ),
+                action="Cancel",
+                config=cfg,
+            )
+        except (RuntimeError, ValueError) as exc:
+            return {"error": str(exc)}, 400
+        poster = cfg.get("ECPAY_HTTP_POSTER") or _newebpay_post
+        try:
+            response_form = poster(gateway_request["url"], gateway_request["form"])
+        except Exception:
+            return {"error": "payment_period_cancel_failed"}, 502
+        parsed, error = ecpay.parse_action_response(response_form, cfg)
+        accepted = bool(
+            not error and str((parsed or {}).get("status") or "") == "1"
+        )
+    if not accepted:
+        return {"error": "payment_period_cancel_rejected", "gateway": parsed}, 502
+
+    now = current_app_time(config or {}).isoformat(timespec="seconds")
+    profile["auto_renew_enabled"] = False
+    profile["auto_renew_requested"] = False
+    profile["auto_renew_status"] = "terminated"
+    profile["auto_renew_cancelled_at"] = now
+    for order in state.get("orders", []):
+        if (
+            order.get("order_id")
+            in {
+                profile.get("newebpay_period_order_no"),
+                profile.get("ecpay_period_order_no"),
+                profile.get("payment_period_order_no"),
+            }
+            or order.get("period_no") == profile.get("newebpay_period_no")
+        ):
+            order["subscription_status"] = "terminated"
+            order["subscription_terminated_at"] = now
+    save_state(data_file, state)
+    return {"cancelled": True, "effective_until": profile.get("paid_until")}, 200
+
+
+def refund_payment_order(data_file, payload, config=None):
+    """Issue a bounded credit-card refund and retain an immutable audit entry."""
+    order_id = str(payload.get("order_id") or "").strip()
+    try:
+        amount = int(payload.get("amount") or 0)
+    except (TypeError, ValueError):
+        amount = 0
+    reason = str(payload.get("reason") or "").strip()
+    requested_by = str(payload.get("requested_by") or "admin").strip()
+    if not order_id or amount <= 0 or not reason:
+        return {"error": "order_id, positive amount and reason are required"}, 400
+
+    state = load_state(data_file)
+    order = next(
+        (
+            item
+            for item in state.setdefault("orders", [])
+            if item.get("order_id") == order_id
+        ),
+        None,
+    )
+    if not order:
+        return {"error": "order not found"}, 404
+    if order.get("status") not in {"paid", "partially_refunded"}:
+        return {"error": "only paid orders can be refunded"}, 409
+    paid_amount = int(order.get("amount") or 0)
+    refunded_amount = int(order.get("refunded_amount") or 0)
+    remaining = max(0, paid_amount - refunded_amount)
+    if amount > remaining:
+        return {
+            "error": "refund amount exceeds remaining amount",
+            "remaining_amount": remaining,
+        }, 400
+    if not str(order.get("transaction_id") or "").strip():
+        return {"error": "order transaction_id is missing"}, 409
+
+    cfg = config or {}
+    provider = str(
+        order.get("provider")
+        or (
+            "newebpay"
+            if newebpay is not None
+            and newebpay.newebpay_configured(cfg)
+            and not (ecpay is not None and ecpay.ecpay_configured(cfg))
+            else "ecpay"
+        )
+    )
+    try:
+        if provider == "newebpay":
+            gateway_request = newebpay.build_credit_card_refund(
+                merchant_order_no=order_id,
+                trade_no=order.get("transaction_id"),
+                amount=amount,
+                config=cfg,
+            )
+        else:
+            gateway_request = ecpay.build_credit_action(
+                merchant_trade_no=order_id,
+                trade_no=order.get("transaction_id"),
+                amount=amount,
+                action="R",
+                config=cfg,
+            )
+    except (RuntimeError, ValueError) as exc:
+        return {"error": str(exc)}, 400
+    poster = (
+        cfg.get("NEWEBPAY_HTTP_POSTER")
+        if provider == "newebpay"
+        else cfg.get("ECPAY_HTTP_POSTER")
+    ) or _newebpay_post
+    try:
+        gateway_response = poster(
+            gateway_request["url"], gateway_request["form"]
+        )
+    except Exception:
+        return {"error": "payment_refund_failed"}, 502
+    parsed, error = (
+        newebpay.parse_credit_card_close_response(gateway_response)
+        if provider == "newebpay"
+        else ecpay.parse_action_response(gateway_response, cfg)
+    )
+    if error:
+        return {"error": error}, 502
+    success_status = (
+        str(parsed.get("status") or "").upper() == "SUCCESS"
+        if provider == "newebpay"
+        else str(parsed.get("status") or "") == "1"
+    )
+    if not success_status:
+        return {"error": "payment_refund_rejected", "gateway": parsed}, 502
+
+    now = current_app_time(config or {}).isoformat(timespec="seconds")
+    refund = {
+        "refund_id": f"RF{secrets.token_hex(6).upper()}",
+        "amount": amount,
+        "reason": reason[:500],
+        "requested_by": requested_by[:100],
+        "status": "accepted",
+        "gateway_status": parsed.get("status"),
+        "gateway_message": parsed.get("message"),
+        "created_at": now,
+    }
+    order.setdefault("refunds", []).append(refund)
+    order["refunded_amount"] = refunded_amount + amount
+    order["status"] = (
+        "refunded"
+        if order["refunded_amount"] >= paid_amount
+        else "partially_refunded"
+    )
+    order["last_refunded_at"] = now
+    profile = state.get("users", {}).get(order.get("line_user_id"))
+    if profile is not None and order["status"] == "refunded":
+        profile["payment_status"] = "refunded"
+        profile["last_refunded_order_id"] = order_id
+    append_notification_log(
+        state,
+        "payment_refund",
+        order.get("line_user_id") or "",
+        "accepted",
+        f"{order_id} refund {amount}",
+        json.dumps(refund, ensure_ascii=False),
+    )
+    save_state(data_file, state)
+    return {
+        "refund": refund,
+        "order": order,
+        "remaining_amount": max(0, paid_amount - order["refunded_amount"]),
+    }, 200
 
 
 def confirm_payment_order(data_file, payload, config=None):
@@ -2729,7 +4407,9 @@ def confirm_payment_order(data_file, payload, config=None):
     profile["payment_status"] = "active"
     profile["paid_until"] = paid_until.isoformat(timespec="seconds")
     profile["billing_cycle"] = product["billing_cycle"]
-    profile["payment_provider"] = "newebpay"
+    profile["payment_provider"] = str(
+        payload.get("provider") or order.get("provider") or "ecpay"
+    )
     profile["payment_method_last4"] = str(payload.get("payment_method_last4") or "").strip()[-4:]
     profile["next_billing_date"] = profile["paid_until"]
     profile["renewal_reminder_sent_for"] = ""
@@ -2748,16 +4428,7 @@ def confirm_payment_order(data_file, payload, config=None):
     }, 200
 
 
-def apply_expired_plan_downgrades(config):
-    """試用／付費到期：降為 free，當下保留守護人＋連絡人，並開始 30 天軟保留倒數。
-
-    若 paid_until 為空（後台剛改方案尚未寫到期日），不要當成過期清掉方案。
-    降級只改 plan／付款欄位，绝不清空 contacts／friends／guardian_group_ids。
-    保留期結束後由 cleanup_expired_data 軟封存。
-    """
-    data_file = config["DATA_FILE"]
-    state = load_state(data_file)
-    now = current_app_time(config)
+def _apply_expired_plan_downgrades_to_state(state, now):
     downgraded = []
     for profile in state.get("users", {}).values():
         plan = str(profile.get("plan") or "")
@@ -2765,8 +4436,32 @@ def apply_expired_plan_downgrades(config):
         preserved_friends = list(profile.get("friends") or [])
         preserved_groups = list(profile.get("guardian_group_ids") or [])
 
-        # 試用到期 → free，資料保留 30 天
-        if plan == "trial" and trial_days_left(profile) <= 0:
+        beta_end = parse_datetime(profile.get("beta_ends_at"))
+        if (
+            profile.get("membership_source") == "beta"
+            and beta_end
+            and not membership_access_active(profile, now)
+            and not profile.get("beta_revoked_at")
+        ):
+            profile["plan"] = "free"
+            profile["membership_source"] = "expired"
+            profile["payment_status"] = "expired"
+            profile["contacts"] = preserved_contacts
+            profile["friends"] = preserved_friends
+            profile["guardian_group_ids"] = preserved_groups
+            mark_entitlement_lapsed(profile, now)
+            downgraded.append(profile.get("line_user_id"))
+            append_notification_log(
+                state,
+                "plan_expired",
+                profile.get("line_user_id"),
+                "downgraded",
+                "beta expired -> free; relationships retained",
+            )
+            continue
+
+        # 試用到期 → 未訂閱；資料與守護關係不自動刪除
+        if plan == "trial" and not membership_access_active(profile, now):
             profile["plan"] = "free"
             profile["membership_source"] = "expired"
             profile["payment_status"] = "expired"
@@ -2792,9 +4487,10 @@ def apply_expired_plan_downgrades(config):
         if not paid_until:
             # 無到期日：保留現況，避免誤降級並讓使用者以為好友被清掉
             continue
-        if paid_until >= now:
+        comparable_until, comparable_now = _comparable_datetimes(paid_until, now)
+        if comparable_until >= comparable_now:
             continue
-        # 已過期：只降方案，保留所有綁定，並開始 30 天軟保留
+        # 已過期：暫停付費服務，但保留所有綁定直到驗證後申請解除
         if profile.get("payment_status") == "active" or paid_until:
             profile["plan"] = "free"
             profile["membership_source"] = "expired"
@@ -2816,9 +4512,153 @@ def apply_expired_plan_downgrades(config):
                 f"plan expired -> free (was {plan}); contacts kept={len(preserved_contacts)}; "
                 f"retain_until={profile.get('contacts_retain_until')}",
             )
-    if downgraded:
-        save_state(data_file, state)
+    return downgraded
+
+
+def apply_expired_plan_downgrades(config):
+    """試用／付費到期：降為 free，並在同一資料庫交易保留帳戶資料。"""
+    data_file = config["DATA_FILE"]
+    now = current_app_time(config)
+    downgraded = mutate_state_atomically(
+        data_file,
+        lambda state: _apply_expired_plan_downgrades_to_state(state, now),
+    )
     return {"downgraded": len(downgraded), "line_user_ids": downgraded}, 200
+
+
+def _claim_trial_milestone_notices(state, clock):
+    claims = []
+    lease_cutoff = clock - timedelta(minutes=15)
+    for profile in (state.get("users") or {}).values():
+        if str(profile.get("plan") or "") != "trial":
+            continue
+        started = parse_datetime(profile.get("trial_started_at"))
+        target = str(profile.get("line_user_id") or "").strip()
+        if not started or not target:
+            continue
+        elapsed_days = max(0, (clock.date() - started.date()).days)
+        completed = {
+            int(day)
+            for day in (
+                profile.get("trial_notice_days_sent")
+                or profile.pop("trial_milestone_notices_sent", [])
+            )
+            if str(day).isdigit()
+        }
+        profile["trial_notice_days_sent"] = sorted(completed)
+        active_claims = dict(profile.get("trial_notice_claims") or {})
+        for day in (7, 12, 14):
+            if elapsed_days < day or day in completed:
+                continue
+            existing = active_claims.get(str(day)) or {}
+            claimed_at = parse_datetime(existing.get("claimed_at"))
+            if claimed_at and claimed_at > lease_cutoff:
+                continue
+            claim_token = uuid.uuid4().hex
+            active_claims[str(day)] = {
+                "token": claim_token,
+                "claimed_at": clock.isoformat(timespec="seconds"),
+            }
+            claims.append({
+                "line_user_id": target,
+                "day": day,
+                "trial_started_at": started.isoformat(timespec="seconds"),
+                "claim_token": claim_token,
+            })
+        profile["trial_notice_claims"] = active_claims
+    return claims
+
+
+def _finish_trial_milestone_notice(
+    state, claim, message, status, detail=""
+):
+    profile = (state.get("users") or {}).get(claim["line_user_id"])
+    if not isinstance(profile, dict):
+        return False
+    day_key = str(claim["day"])
+    active_claims = dict(profile.get("trial_notice_claims") or {})
+    current = active_claims.get(day_key) or {}
+    if current.get("token") != claim.get("claim_token"):
+        return False
+    active_claims.pop(day_key, None)
+    profile["trial_notice_claims"] = active_claims
+    if status == "sent":
+        completed = {
+            int(day) for day in (profile.get("trial_notice_days_sent") or [])
+            if str(day).isdigit()
+        }
+        completed.add(int(claim["day"]))
+        profile["trial_notice_days_sent"] = sorted(completed)
+    append_notification_log(
+        state,
+        "trial_milestone",
+        claim["line_user_id"],
+        status,
+        message,
+        detail,
+    )
+    return True
+
+
+def send_trial_milestone_notices(config, now=None):
+    """Claim, deliver and atomically finalize each 14-day experience milestone."""
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+        "LINE_CHANNEL_ACCESS_TOKEN", ""
+    )
+    if not token:
+        return {
+            "sent": 0,
+            "skipped": 0,
+            "error": "LINE_CHANNEL_ACCESS_TOKEN is not set",
+        }, 400
+    clock = now or current_app_time(config)
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    messages = {
+        7: "14 天安心體驗已進行 7 天。可到會員中心確認守護人與提醒設定是否完整。",
+        12: "14 天安心體驗還剩 2 天。到期後一般提醒會暫停，守護關係與資料仍會保留。",
+        14: "14 天安心體驗今天到期。系統不會自動扣款；可到會員中心選擇適合的守護方案。",
+    }
+    sent = 0
+    skipped = 0
+    results = []
+    claims = mutate_state_atomically(
+        config["DATA_FILE"],
+        lambda state: _claim_trial_milestone_notices(state, clock),
+    )
+    for claim in claims:
+        target = claim["line_user_id"]
+        day = claim["day"]
+        message = messages[day]
+        retry_key = _line_retry_key(
+            f"trial-milestone:{target}:{claim['trial_started_at']}:{day}"
+        )
+        status = "sent"
+        detail = ""
+        try:
+            _send_line_with_retry_key(sender, token, target, message, retry_key)
+            sent += 1
+        except Exception as exc:
+            status = "failed"
+            detail = str(exc)[:400]
+            skipped += 1
+        mutate_state_atomically(
+            config["DATA_FILE"],
+            lambda state, current_claim=claim, current_message=message,
+            current_status=status, current_detail=detail:
+                _finish_trial_milestone_notice(
+                    state,
+                    current_claim,
+                    current_message,
+                    current_status,
+                    current_detail,
+                ),
+        )
+        results.append({
+            "line_user_id": target,
+            "day": day,
+            "status": status,
+        })
+    return {"sent": sent, "skipped": skipped, "results": results}, 200
 
 
 def send_renewal_reminders(config):
@@ -3048,7 +4888,7 @@ def complete_guardian_contact(contact):
         str(contact.get("name") or "").strip()
         and str(contact.get("relationship") or "").strip()
         and str(contact.get("phone") or "").strip()
-        and (str(contact.get("line_id") or "").strip() or contact.get("consent_status") == "accepted")
+        and (get_contact_line_id(contact) or contact.get("consent_status") == "accepted")
     )
 
 
@@ -3290,18 +5130,142 @@ def update_single_contact(data_file, line_user_id, contact_id, contact_payload):
 
 
 def delete_single_contact(data_file, line_user_id, contact_id):
-    """刪除單一聯絡人,回傳 (status_code, response_dict)。"""
-    state = load_state(data_file)
-    profile = state.get("users", {}).get(line_user_id)
-    if not profile:
-        return {"error": "user not registered", "line_user_id": line_user_id}, 404
-    existing = profile.get("contacts") or []
-    new_contacts = [c for c in existing if str(c.get("id") or "") != contact_id]
-    if len(new_contacts) == len(existing):
-        return {"error": "contact_not_found", "contact_id": contact_id}, 404
-    profile["contacts"] = new_contacts
-    save_state(data_file, state)
-    return {"deleted": True, "contact_id": contact_id, "contacts": new_contacts}, 200
+    """Atomically remove a contact and the reciprocal guardian relationship."""
+    result = {}
+
+    def remove_relationship(state):
+        profile = (state.get("users") or {}).get(line_user_id)
+        if not isinstance(profile, dict):
+            result.update(
+                {"error": "user not registered", "line_user_id": line_user_id}
+            )
+            return
+        existing = list(profile.get("contacts") or [])
+        removed = next(
+            (
+                contact
+                for contact in existing
+                if str(contact.get("id") or "") == contact_id
+            ),
+            None,
+        )
+        if removed is None:
+            result.update(
+                {"error": "contact_not_found", "contact_id": contact_id}
+            )
+            return
+
+        peer_id = get_contact_line_id(removed)
+        is_reciprocal_guardian = bool(
+            peer_id
+            and resolve_contact_role(removed) == "guardian"
+            and contact_is_bound_guardian(removed, line_user_id)
+        )
+        profile["contacts"] = [
+            contact
+            for contact in existing
+            if str(contact.get("id") or "") != contact_id
+        ]
+        if profile["contacts"] and not any(
+            bool(contact.get("is_primary"))
+            for contact in profile["contacts"]
+            if resolve_contact_role(contact) == "guardian"
+        ):
+            next_guardian = next(
+                (
+                    contact
+                    for contact in profile["contacts"]
+                    if resolve_contact_role(contact) == "guardian"
+                ),
+                None,
+            )
+            if next_guardian is not None:
+                next_guardian["is_primary"] = True
+
+        if is_reciprocal_guardian:
+            profile["guarding_for"] = [
+                value
+                for value in (profile.get("guarding_for") or [])
+                if str(value or "") != peer_id
+            ]
+            profile["guarding_details"] = [
+                row
+                for row in (profile.get("guarding_details") or [])
+                if str((row or {}).get("line_user_id") or "") != peer_id
+            ]
+            peer = (state.get("users") or {}).get(peer_id)
+            if isinstance(peer, dict):
+                peer["contacts"] = [
+                    contact
+                    for contact in (peer.get("contacts") or [])
+                    if get_contact_line_id(contact) != line_user_id
+                ]
+                peer["guarding_for"] = [
+                    value
+                    for value in (peer.get("guarding_for") or [])
+                    if str(value or "") != line_user_id
+                ]
+                peer["guarding_details"] = [
+                    row
+                    for row in (peer.get("guarding_details") or [])
+                    if str((row or {}).get("line_user_id") or "") != line_user_id
+                ]
+                if peer["contacts"] and not any(
+                    bool(contact.get("is_primary"))
+                    for contact in peer["contacts"]
+                    if resolve_contact_role(contact) == "guardian"
+                ):
+                    next_peer_guardian = next(
+                        (
+                            contact
+                            for contact in peer["contacts"]
+                            if resolve_contact_role(contact) == "guardian"
+                        ),
+                        None,
+                    )
+                    if next_peer_guardian is not None:
+                        next_peer_guardian["is_primary"] = True
+
+                if (
+                    str(peer.get("profile_completion_peer_line_user_id") or "")
+                    == line_user_id
+                ):
+                    peer["profile_completion_required"] = False
+                    peer["profile_completion_cancelled_at"] = iso_now()
+                    for key in (
+                        "profile_completion_peer_line_user_id",
+                        "profile_completion_bound_at",
+                        "profile_completion_reminder_days",
+                    ):
+                        peer.pop(key, None)
+
+            if (
+                str(profile.get("profile_completion_peer_line_user_id") or "")
+                == peer_id
+            ):
+                profile["profile_completion_required"] = False
+                profile["profile_completion_cancelled_at"] = iso_now()
+                for key in (
+                    "profile_completion_peer_line_user_id",
+                    "profile_completion_bound_at",
+                    "profile_completion_reminder_days",
+                ):
+                    profile.pop(key, None)
+
+        result.update(
+            {
+                "deleted": True,
+                "contact_id": contact_id,
+                "contacts": copy.deepcopy(profile["contacts"]),
+            }
+        )
+
+    mutate_state_atomically(data_file, remove_relationship)
+    if result.get("error") == "user not registered":
+        return result, 404
+    if result.get("error") == "contact_not_found":
+        return result, 404
+    return result, 200
 
 
 
@@ -3480,6 +5444,92 @@ def apply_is_primary_to_contact_line(profile, contact_line_user_id, *, make_core
     return True
 
 
+GUARDIAN_INVITE_EXPIRY_DAYS = 7
+PROFILE_COMPLETION_REMINDER_DAYS = (0, 1, 3, 7)
+
+
+def create_guardian_invite(data_file, inviter_line_user_id, payload, now=None):
+    """Persist only the pre-share nickname/relationship; no contact is bound here."""
+    inviter_id = str(inviter_line_user_id or "").strip()
+    if not inviter_id:
+        return {"ok": False, "error": "missing inviter", "code": "missing_ids"}, 400
+    payload = payload if isinstance(payload, dict) else {}
+    display_name = str(payload.get("display_name") or payload.get("contact_display_name") or "親友").strip()
+    relationship = str(payload.get("relationship") or "守護人").strip()
+    now = now or current_app_time({})
+    state = load_state(data_file)
+    get_profile(state, inviter_id)
+    invite_token = secrets.token_urlsafe(32)
+    invite = {
+        "id": secrets.token_urlsafe(12),
+        "invite_token": invite_token,
+        "inviter_line_user_id": inviter_id,
+        "display_name": display_name,
+        "relationship": relationship,
+        "status": "pending",
+        "created_at": now.isoformat(timespec="seconds"),
+        "expires_at": (now + timedelta(days=GUARDIAN_INVITE_EXPIRY_DAYS)).isoformat(timespec="seconds"),
+    }
+    state.setdefault("guardian_invites", []).append(invite)
+    state["guardian_invites"] = state["guardian_invites"][-100:]
+    save_state(data_file, state)
+    return {"ok": True, **invite}, 201
+
+
+def _guardian_invite_for_token(state, inviter_id, invite_token, now=None):
+    """Resolve exactly one invite token and normalize its lifecycle state."""
+    now = now or current_app_time({})
+    token = str(invite_token or "").strip()
+    if not token:
+        return None, "invalid"
+    for invite in reversed(state.get("guardian_invites") or []):
+        if not isinstance(invite, dict):
+            continue
+        if invite.get("inviter_line_user_id") != inviter_id:
+            continue
+        if not secrets.compare_digest(str(invite.get("invite_token") or ""), token):
+            continue
+        if invite.get("status") == "accepted":
+            return invite, "used"
+        if invite.get("status") == "expired":
+            return invite, "expired"
+        try:
+            expiry = datetime.fromisoformat(str(invite.get("expires_at") or ""))
+        except ValueError:
+            expiry = now
+        if expiry <= now:
+            invite["status"] = "expired"
+            return invite, "expired"
+        if invite.get("status") != "pending":
+            return invite, "invalid"
+        return invite, "pending"
+    return None, "invalid"
+
+
+def _pending_guardian_invite(state, inviter_id, now=None, invite_token=""):
+    now = now or current_app_time({})
+    if str(invite_token or "").strip():
+        invite, status = _guardian_invite_for_token(
+            state, inviter_id, invite_token, now
+        )
+        return invite if status == "pending" else None
+    rows = state.get("guardian_invites") or []
+    for invite in reversed(rows):
+        if not isinstance(invite, dict) or invite.get("inviter_line_user_id") != inviter_id:
+            continue
+        if invite.get("status") != "pending":
+            continue
+        try:
+            expiry = datetime.fromisoformat(str(invite.get("expires_at") or ""))
+        except ValueError:
+            expiry = now
+        if expiry <= now:
+            invite["status"] = "expired"
+            continue
+        return invite
+    return None
+
+
 def invite_bind_preview(data_file, payload):
     """Preview guardian invite: is_reverse_invite + inviter display name for LIFF modal."""
     inviter_id = str(
@@ -3506,6 +5556,25 @@ def invite_bind_preview(data_file, payload):
     inviter_name = str(inviter.get("display_name") or "").strip() or "親友"
     inviter_rules = plan_rules(inviter or {"plan": "trial"})
     invitee_rules = plan_rules(invitee or {"plan": "trial"})
+    inviter_invites = [
+        row for row in (state.get("guardian_invites") or [])
+        if isinstance(row, dict) and row.get("inviter_line_user_id") == inviter_id
+    ]
+    invite_token = str(payload.get("invite_token") or "").strip()
+    pending = None
+    if inviter_invites:
+        matched, invite_status = _guardian_invite_for_token(
+            state, inviter_id, invite_token
+        )
+        if invite_status == "used":
+            save_state(data_file, state)
+            return {"ok": False, "error": "邀請已使用", "code": "invite_used"}, 410
+        if invite_status == "expired":
+            save_state(data_file, state)
+            return {"ok": False, "error": "邀請已超過七天，請對方重新分享", "code": "invite_expired"}, 410
+        if invite_status != "pending":
+            return {"ok": False, "error": "邀請連結無效", "code": "invalid_invite_token"}, 403
+        pending = matched
     return {
         "ok": True,
         "is_reverse_invite": is_reverse,
@@ -3519,6 +5588,10 @@ def invite_bind_preview(data_file, payload):
         "invitee_core_guardian_alert_limit": int(
             invitee_rules.get("core_guardian_alert_limit") or 1
         ),
+        "invite_status": (pending or {}).get("status") or "legacy",
+        "guardian_purpose": "你會收到對方的報平安、逾時未報平安、SOS 與安全守護通知。",
+        "privacy_explanation": "定位只在對方主動求助或啟用安全守護時通知；你可隨時解除綁定，資料只用於守護通知。",
+        "requires_reciprocal_consent": bool(pending),
         "message": (
             f"{inviter_name} 已是你的守護對象／已加入，是否互相設為守護人？"
             if is_reverse
@@ -3540,7 +5613,8 @@ def build_bind_success_notices(inviter, contacts, inviter_id, guardian_name, *, 
         "✅ 綁定成功\n\n"
         f"對方：{guardian_name}（已成為你的守護人）\n"
         f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n\n"
-        "之後若你逾時未報平安或發出 SOS，系統會透過 LINE 私訊通知對方。"
+        "之後若你逾時未報平安或發出 SOS，系統會透過 LINE 私訊通知對方。\n"
+        "請點「完成資料」補齊自己的聯絡資料；LINE 通知已立即啟用。"
     )
     guardian_notice = (
         f"✅ 綁定成功\n\n"
@@ -3756,7 +5830,145 @@ def backfill_bind_notify(config, *, dry_run=False, limit=0):
     }, 200
 
 
-def bind_emergency_contact(data_file, payload, config=None):
+def retry_pending_bind_notifications(config):
+    """Retry only the failed side of a recent guardian bind, up to 3 attempts."""
+    token = (
+        config.get("LINE_CHANNEL_ACCESS_TOKEN")
+        or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+        or os.environ.get("CHANNEL_ACCESS_TOKEN", "")
+    )
+    if not token:
+        return {
+            "sent": 0,
+            "failed": 0,
+            "skipped": 0,
+            "error": "LINE_CHANNEL_ACCESS_TOKEN is not set",
+        }, 400
+    data_file = config["DATA_FILE"]
+    state = load_state(data_file)
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    now = current_app_time(config)
+    outcomes = []
+
+    for inviter_id, inviter, contact, guardian_id in iter_accepted_line_bind_pairs(
+        state
+    ):
+        if inviter.get("membership_paused") or not membership_access_active(
+            inviter, now
+        ):
+            continue
+        status_map = contact.get("bind_notify_status")
+        if not isinstance(status_map, dict):
+            continue
+        guardian_name = (
+            str(contact.get("name") or "").strip()
+            or ((state.get("users") or {}).get(guardian_id) or {}).get(
+                "display_name"
+            )
+            or "守護人"
+        )
+        inviter_notice, guardian_notice = build_bind_success_notices(
+            inviter,
+            inviter.get("contacts") or [],
+            inviter_id,
+            guardian_name,
+            invite_reward_applied=False,
+        )
+        for who, target, message in (
+            ("inviter", inviter_id, inviter_notice),
+            ("guardian", guardian_id, guardian_notice),
+        ):
+            entry = status_map.get(who) or {}
+            attempts = int(entry.get("attempts") or 0)
+            if (
+                entry.get("status") == "sent"
+                or not entry.get("retryable")
+                or attempts >= 3
+            ):
+                continue
+            try:
+                result = sender(token, target, message)
+                outcomes.append(
+                    {
+                        "inviter_id": inviter_id,
+                        "guardian_id": guardian_id,
+                        "who": who,
+                        "target": target,
+                        "status": "sent",
+                        "detail": json.dumps(result, ensure_ascii=False),
+                    }
+                )
+            except Exception as exc:
+                failure = classify_push_exception(exc)
+                outcomes.append(
+                    {
+                        "inviter_id": inviter_id,
+                        "guardian_id": guardian_id,
+                        "who": who,
+                        "target": target,
+                        "status": "failed",
+                        "detail": str(exc)[:400],
+                        "retryable": failure.kind
+                        in {"transient", "rate_limited"},
+                    }
+                )
+
+    now_stamp = current_app_time(config).isoformat(timespec="seconds")
+
+    def merge_retry_results(latest):
+        for outcome in outcomes:
+            latest_inviter = (latest.get("users") or {}).get(
+                outcome["inviter_id"]
+            ) or {}
+            latest_contact = next(
+                (
+                    row
+                    for row in (latest_inviter.get("contacts") or [])
+                    if get_contact_line_id(row) == outcome["guardian_id"]
+                ),
+                None,
+            )
+            if latest_contact is None:
+                continue
+            latest_status = latest_contact.setdefault("bind_notify_status", {})
+            entry = dict(latest_status.get(outcome["who"]) or {})
+            entry["attempts"] = int(entry.get("attempts") or 0) + 1
+            entry["status"] = outcome["status"]
+            if outcome["status"] == "failed":
+                entry["retryable"] = bool(outcome.get("retryable"))
+            else:
+                entry["retryable"] = False
+                entry["sent_at"] = now_stamp
+            latest_status[outcome["who"]] = entry
+            append_notification_log(
+                latest,
+                "binding_complete",
+                outcome["target"],
+                outcome["status"],
+                "綁定完成通知補送",
+                outcome["detail"],
+            )
+            if all(
+                (latest_status.get(key) or {}).get("status") == "sent"
+                for key in ("inviter", "guardian")
+            ):
+                latest_contact["bind_notify_sent_at"] = now_stamp
+
+    if outcomes:
+        mutate_state_atomically(data_file, merge_retry_results)
+    sent = sum(1 for row in outcomes if row["status"] == "sent")
+    failed = sum(1 for row in outcomes if row["status"] == "failed")
+    return {
+        "sent": sent,
+        "failed": failed,
+        "skipped": 0,
+        "results": outcomes,
+    }, 200
+
+
+def bind_emergency_contact(
+    data_file, payload, config=None, *, _state_conflict_retries=1
+):
     inviter_id = str(payload.get("inviter_line_user_id") or "").strip()
     contact_line_user_id = str(payload.get("contact_line_user_id") or "").strip()
     contact_display_name = str(payload.get("contact_display_name") or "LINE 聯絡人").strip()
@@ -3770,6 +5982,42 @@ def bind_emergency_contact(data_file, payload, config=None):
         return {"ok": False, "error": "不能綁定自己成為守護人", "code": "self_bind"}, 400
 
     state = load_state(data_file)
+    invite_token = str(payload.get("invite_token") or "").strip()
+    inviter_invites = [
+        row for row in (state.get("guardian_invites") or [])
+        if isinstance(row, dict) and row.get("inviter_line_user_id") == inviter_id
+    ]
+    pending_invite = None
+    invite_status = "legacy"
+    if inviter_invites:
+        pending_invite, invite_status = _guardian_invite_for_token(
+            state,
+            inviter_id,
+            invite_token,
+            current_app_time(config or {}),
+        )
+        if invite_status == "used":
+            return {"ok": False, "error": "邀請已使用", "code": "invite_used"}, 410
+        if invite_status == "expired":
+            save_state(data_file, state)
+            return {"ok": False, "error": "邀請已超過七天，請對方重新分享", "code": "invite_expired"}, 410
+        if invite_status != "pending":
+            return {"ok": False, "error": "邀請連結無效", "code": "invalid_invite_token"}, 403
+    expired_invite = next(
+        (
+            row for row in (state.get("guardian_invites") or [])
+            if isinstance(row, dict)
+            and row.get("inviter_line_user_id") == inviter_id
+            and row.get("status") == "expired"
+        ),
+        None,
+    )
+    if not inviter_invites and not pending_invite and expired_invite:
+        save_state(data_file, state)
+        return {"ok": False, "error": "邀請已超過七天，請對方重新分享", "code": "invite_expired"}, 410
+    if pending_invite and not bool(payload.get("recipient_consent")):
+        save_state(data_file, state)
+        return {"ok": False, "error": "請先閱讀說明並同意互相成為核心守護人", "code": "consent_required"}, 409
     # 綁定前偵測反向：綁定後 guarding_for 一定會寫入，不可事後判斷
     is_reverse_invite = detect_reverse_invite(state, inviter_id, contact_line_user_id)
     inviter = get_profile(state, inviter_id)
@@ -3937,6 +6185,49 @@ def bind_emergency_contact(data_file, payload, config=None):
         )
     contact_user["guarding_details"] = details
 
+    # New verified invitations are genuinely reciprocal: validate the other half
+    # before saving either side, then mutate both profiles in this one state write.
+    reciprocal = bool(pending_invite)
+    reciprocal_contact = None
+    if reciprocal:
+        invitee_contacts = list(contact_user.get("contacts") or [])
+        reciprocal_contact = next(
+            (row for row in invitee_contacts if get_contact_line_id(row) == inviter_id), None
+        )
+        if reciprocal_contact is None:
+            invitee_limit = int(plan_rules(contact_user).get("core_guardian_alert_limit") or 1)
+            invitee_guardians = sum(1 for row in invitee_contacts if resolve_contact_role(row) == "guardian")
+            if invitee_guardians >= invitee_limit:
+                return {"ok": False, "error": CONTACT_LIMIT_MESSAGE, "code": "contact_limit", "message": CONTACT_LIMIT_MESSAGE}, 400
+            reciprocal_contact = {
+                "id": f"line-{inviter_id}", "name": inviter_name, "display_name": inviter_name,
+                "line_display_name": inviter_name, "relationship": "守護人", "phone": "", "line_id": inviter_id,
+                "line_user_id": inviter_id, "picture_url": inviter_picture, "email": "", "available_time": "",
+                "notify_methods": ["line"], "priority": len(invitee_contacts) + 1,
+                "consent_status": "accepted", "binding_status": "accepted", "accepted_at": accepted_at,
+                "invited_by": contact_line_user_id, "contact_role": "guardian", "note": "雙方同意核心守護綁定",
+            }
+            invitee_contacts.append(reciprocal_contact)
+        reciprocal_contact["is_primary"] = True
+        for row in invitee_contacts:
+            if row is not reciprocal_contact and get_contact_line_id(row) == inviter_id:
+                row["is_primary"] = True
+        contact_user["contacts"] = invitee_contacts
+        if contact_line_user_id not in (inviter.get("guarding_for") or []):
+            inviter["guarding_for"] = [*(inviter.get("guarding_for") or []), contact_line_user_id]
+        bound_owner = next((row for row in contacts if get_contact_line_id(row) == contact_line_user_id), None)
+        if bound_owner is not None:
+            bound_owner["is_primary"] = True
+        pending_invite["status"] = "accepted"
+        pending_invite["accepted_at"] = accepted_at
+        pending_invite["invitee_line_user_id"] = contact_line_user_id
+        for profile in (inviter, contact_user):
+            profile["profile_completion_required"] = True
+            profile["profile_completion_bound_at"] = accepted_at
+            profile["profile_completion_reminder_days"] = []
+        inviter["profile_completion_peer_line_user_id"] = contact_line_user_id
+        contact_user["profile_completion_peer_line_user_id"] = inviter_id
+
     # 互綁可選：兩邊互相設為核心（各受方案 core_guardian_alert_limit 約束）
     mutual_core_applied = False
     if is_reverse_invite and mutual_core:
@@ -3983,11 +6274,31 @@ def bind_emergency_contact(data_file, payload, config=None):
             inviter, reward, accepted_at=accepted_at
         )
 
+    # Relationship and consumed invite must be durable before either party sees
+    # a success notification. Notification attempts are logged in a second save.
+    try:
+        save_state(data_file, state)
+    except StateConflictError:
+        if _state_conflict_retries <= 0:
+            return {
+                "ok": False,
+                "error": "綁定狀態剛剛有更新，請重新開啟邀請連結",
+                "code": "state_conflict",
+            }, 409
+        return bind_emergency_contact(
+            data_file,
+            payload,
+            config,
+            _state_conflict_retries=_state_conflict_retries - 1,
+        )
+
     inviter_notified = False
     guardian_notified = False
     sent = 0
     notify_errors = []
     notify_hint = ""
+    notification_log_start = len(state.get("notification_logs") or [])
+    usage_start = len(state.get("line_message_usage") or [])
     # 首次綁定成功：一定推播雙方（重複綁定不狂推）
     if config and not was_duplicate:
         token = (
@@ -4065,7 +6376,104 @@ def bind_emergency_contact(data_file, payload, config=None):
             elif not inviter_notified and not guardian_notified:
                 notify_hint = "雙方 LINE 通知皆未送出；請確認已加入「每日平安」官方帳號好友。"
 
-    save_state(data_file, state)
+    if sent:
+        record_line_message_usage(
+            state,
+            category="binding",
+            owner_line_user_id=inviter_id,
+            recipient_count=sent,
+            event_id=str((pending_invite or {}).get("id") or f"{inviter_id}:{contact_line_user_id}:{accepted_at}"),
+            sent_at=parse_datetime(accepted_at) or current_app_time(config or {}),
+        )
+    delivery_logs = copy.deepcopy(
+        (state.get("notification_logs") or [])[notification_log_start:]
+    )
+    delivery_usage = copy.deepcopy(
+        (state.get("line_message_usage") or [])[usage_start:]
+    )
+    bind_notify_status = None
+    if config and not was_duplicate:
+        failed_by_who = {
+            str(row.get("who") or ""): row
+            for row in notify_errors
+            if isinstance(row, dict)
+        }
+        bind_notify_status = {
+            "inviter": {
+                "status": "sent" if inviter_notified else "failed",
+                "attempts": 1,
+                "retryable": (
+                    classify_push_exception(
+                        RuntimeError(
+                            (failed_by_who.get("inviter") or {}).get("error") or ""
+                        )
+                    ).kind in {"transient", "rate_limited"}
+                ),
+            },
+            "guardian": {
+                "status": "sent" if guardian_notified else "failed",
+                "attempts": 1,
+                "retryable": (
+                    classify_push_exception(
+                        RuntimeError(
+                            (failed_by_who.get("guardian") or {}).get("error") or ""
+                        )
+                    ).kind in {"transient", "rate_limited"}
+                ),
+            },
+        }
+
+    if (
+        delivery_logs
+        or delivery_usage
+        or bind_notify_status
+        or (inviter_notified and guardian_notified)
+    ):
+        def merge_delivery_results(latest):
+            if delivery_logs:
+                logs = list(latest.get("notification_logs") or [])
+                logs.extend(delivery_logs)
+                latest["notification_logs"] = logs[-100:]
+            if delivery_usage:
+                ledger = list(latest.get("line_message_usage") or [])
+                known_keys = {
+                    str(row.get("key") or "")
+                    for row in ledger
+                    if isinstance(row, dict)
+                }
+                for row in delivery_usage:
+                    key = str(row.get("key") or "")
+                    if key and key not in known_keys:
+                        ledger.append(row)
+                        known_keys.add(key)
+                latest["line_message_usage"] = ledger[-10000:]
+            if inviter_notified and guardian_notified:
+                latest_inviter = (latest.get("users") or {}).get(inviter_id) or {}
+                latest_contact = next(
+                    (
+                        row
+                        for row in (latest_inviter.get("contacts") or [])
+                        if get_contact_line_id(row) == contact_line_user_id
+                    ),
+                    None,
+                )
+                if latest_contact is not None:
+                    latest_contact["bind_notify_sent_at"] = accepted_at
+            latest_inviter = (latest.get("users") or {}).get(inviter_id) or {}
+            latest_contact = next(
+                (
+                    row
+                    for row in (latest_inviter.get("contacts") or [])
+                    if get_contact_line_id(row) == contact_line_user_id
+                ),
+                None,
+            )
+            if latest_contact is not None and bind_notify_status:
+                latest_contact["bind_notify_status"] = copy.deepcopy(
+                    bind_notify_status
+                )
+
+        mutate_state_atomically(data_file, merge_delivery_results)
     bound_contact = next(
         (contact for contact in contacts if get_contact_line_id(contact) == contact_line_user_id),
         None,
@@ -4076,6 +6484,8 @@ def bind_emergency_contact(data_file, payload, config=None):
             f"互綁完成！你與「{inviter_name}」已互相設為守護人。"
             + ("（已同時設為核心守護人）" if mutual_core_applied else "")
         )
+    owner_notice = {"status": "sent" if inviter_notified else "failed"}
+    invitee_notice = {"status": "sent" if guardian_notified else "failed"}
     return {
         "ok": True,
         "bound": True,
@@ -4084,6 +6494,11 @@ def bind_emergency_contact(data_file, payload, config=None):
         "is_reverse_invite": is_reverse_invite,
         "mutual_core_requested": mutual_core,
         "mutual_core_applied": mutual_core_applied,
+        "reciprocal": reciprocal,
+        "owner_guardian": bound_contact if reciprocal else None,
+        "invitee_guardian": reciprocal_contact if reciprocal else None,
+        "owner_notice": owner_notice,
+        "invitee_notice": invitee_notice,
         "inviter_display_name": inviter_name,
         "message": bind_message,
         "contact": bound_contact,
@@ -4288,6 +6703,14 @@ def plan_includes_guardian_group(profile) -> bool:
     return int(plan_rules(profile or {}).get("guardian_group_limit") or 0) > 0
 
 
+def guardian_group_entitlement_active(profile, now=None):
+    if not plan_includes_guardian_group(profile):
+        return False
+    if str((profile or {}).get("membership_source") or "") == "beta":
+        return membership_access_active(profile, now)
+    return paid_membership_is_active(profile)
+
+
 def normalize_guardian_group_preferences(raw=None):
     """Product defaults: 私訊提醒 ON、群組提醒 OFF、每日群組摘要 OFF。"""
     prefs = dict(DEFAULT_GUARDIAN_GROUP_PREFERENCES)
@@ -4295,6 +6718,10 @@ def normalize_guardian_group_preferences(raw=None):
         for key in DEFAULT_GUARDIAN_GROUP_PREFERENCES:
             if key in raw:
                 prefs[key] = bool(raw.get(key))
+        summary_time = str(raw.get("daily_summary_time") or "").strip()
+        if REMINDER_TIME_PATTERN.match(summary_time):
+            prefs["daily_summary_time"] = summary_time
+    prefs.setdefault("daily_summary_time", "21:00")
     return prefs
 
 
@@ -4359,6 +6786,35 @@ def owned_active_guardian_groups(state, profile):
         row["preferences"] = normalize_guardian_group_preferences(group.get("preferences"))
         out.append(row)
     return out
+
+
+def guardian_group_settings_for_user(data_file, line_user_id):
+    """Return the signed-in member's editable guardian-group settings."""
+    state = load_state(data_file)
+    profile = (state.get("users") or {}).get(str(line_user_id or "").strip())
+    if not profile:
+        return {"error": "user not registered"}, 404
+    groups = []
+    for group in owned_active_guardian_groups(state, profile):
+        groups.append({
+            "group_id": group["group_id"],
+            "group_name": str(group.get("group_name") or "LINE 守護群"),
+            "member_count": group.get("member_count_last_refresh")
+            or group.get("member_count_at_bind"),
+            "status": group.get("status"),
+            "preferences": normalize_guardian_group_preferences(
+                group.get("preferences")
+            ),
+        })
+    return {
+        "ok": True,
+        "plan": profile.get("plan") or "trial",
+        "guardian_group_limit": int(
+            plan_rules(profile).get("guardian_group_limit") or 0
+        ),
+        "guardian_group_count": len(groups),
+        "groups": groups,
+    }, 200
 
 
 def should_notify_private_guardians(state, profile):
@@ -4449,7 +6905,7 @@ def bind_guardian_group(data_file, payload):
             profile["guardian_group_ids"] = group_ids
             sync_owned_guardian_group_ids(state, profile)
             save_state(data_file, state)
-            return {
+            response = {
                 "bound": True,
                 "already_bound": True,
                 "group_id": group_id,
@@ -4458,13 +6914,55 @@ def bind_guardian_group(data_file, payload):
                 "guardian_group_ids": list(profile.get("guardian_group_ids") or []),
                 "is_group_admin": True,
                 "should_leave": False,
-            }, 200
+            }
+            delivery = dict(profile.get("trial_group_test_delivery") or {})
+            if (
+                bool(payload.get("trial_test"))
+                and delivery.get("group_id") == group_id
+                and delivery.get("status") in {"pending", "failed"}
+            ):
+                response.update({
+                    "trial_test": True,
+                    "trial_test_message": "這是測試通知：守護群綁定與推播流程已完成",
+                    "trial_test_retry_key": delivery.get("retry_key"),
+                    "trial_test_recovered": True,
+                })
+            return response, 200
         return {
             "error": "group is already bound to another member",
             "should_leave": False,
         }, 409
 
-    eligible = profile.get("plan") in {"paid_799", "paid_799_year"} and paid_membership_is_active(profile)
+    trial_test = bool(payload.get("trial_test"))
+    trial_test_eligible = (
+        trial_test
+        and str(profile.get("plan") or "") == "trial"
+        and membership_access_active(profile)
+    )
+    trial_claim = None
+    if trial_test_eligible:
+        def claim_group_test(current_state):
+            current_profile = (current_state.get("users") or {}).get(line_user_id)
+            if not isinstance(current_profile, dict):
+                raise ValueError("member_not_found")
+            if (
+                str(current_profile.get("plan") or "") != "trial"
+                or not membership_access_active(current_profile)
+            ):
+                raise ValueError("trial_group_test_not_eligible")
+            claim = claim_trial_group_test(current_profile, group_id)
+            if not claim.get("claimed"):
+                raise ValueError("trial_group_test_already_used")
+            return claim
+
+        try:
+            trial_claim = mutate_state_atomically(data_file, claim_group_test)
+        except ValueError as exc:
+            return {"error": str(exc), "should_leave": True}, 409
+        state = load_state(data_file)
+        profile = get_profile(state, line_user_id)
+        groups = state.setdefault("guardian_groups", {})
+    eligible = guardian_group_entitlement_active(profile) or trial_test_eligible
     if not eligible:
         return {
             "error": "guardian groups require an active paid_799 membership",
@@ -4473,7 +6971,7 @@ def bind_guardian_group(data_file, payload):
         }, 403
 
     group_ids = list(dict.fromkeys(profile.get("guardian_group_ids") or []))
-    group_limit = plan_rules(profile).get("guardian_group_limit", 0)
+    group_limit = 1 if trial_test_eligible else plan_rules(profile).get("guardian_group_limit", 0)
     if len(group_ids) >= group_limit:
         return {
             "error": f"guardian_group_limit exceeded: {group_limit}",
@@ -4524,7 +7022,7 @@ def bind_guardian_group(data_file, payload):
     profile["guardian_group_ids"] = group_ids
     sync_owned_guardian_group_ids(state, profile)
     save_state(data_file, state)
-    return {
+    response = {
         "bound": True,
         "already_bound": False,
         "group_id": group_id,
@@ -4533,7 +7031,13 @@ def bind_guardian_group(data_file, payload):
         "guardian_group_ids": list(profile.get("guardian_group_ids") or group_ids),
         "is_group_admin": True,
         "should_leave": False,
-    }, 200
+    }
+    if trial_claim and trial_claim.get("claimed"):
+        response["trial_test"] = True
+        response["trial_test_message"] = trial_claim["message"]
+        response["trial_test_retry_key"] = trial_claim.get("retry_key")
+        response["trial_test_recovered"] = bool(trial_claim.get("recovered"))
+    return response, 200
 
 
 def update_guardian_group_preferences(data_file, payload):
@@ -4553,6 +7057,11 @@ def update_guardian_group_preferences(data_file, payload):
     for key in DEFAULT_GUARDIAN_GROUP_PREFERENCES:
         if key in payload:
             preferences[key] = bool(payload.get(key))
+    if "daily_summary_time" in payload:
+        summary_time = str(payload.get("daily_summary_time") or "").strip()
+        if not REMINDER_TIME_PATTERN.match(summary_time):
+            return {"error": "invalid daily_summary_time format, use HH:MM"}, 400
+        preferences["daily_summary_time"] = summary_time
     group["preferences"] = preferences
     save_state(data_file, state)
     return {"ok": True, "group_id": group_id, "preferences": preferences}, 200
@@ -4565,6 +7074,63 @@ def _member_checked_today(profile, today):
     if today in history:
         return True
     return any(str(item.get("date", "")) == today for item in history if isinstance(item, dict))
+
+
+def eligible_guardian_group_summary_members(state, group, current_member_ids):
+    """Return current LINE group members who still belong to the owner's safety circle.
+
+    The owner is eligible while present in the LINE group. Other rows require a
+    live reciprocal core-guardian relationship at send time; a historical group
+    snapshot or mere LINE group membership is never enough.
+    """
+    users = (state or {}).get("users") or {}
+    owner_id = str((group or {}).get("owner_line_user_id") or "").strip()
+    owner = users.get(owner_id) or {}
+    if (
+        not owner_id
+        or not guardian_group_entitlement_active(owner)
+    ):
+        return []
+
+    current_ids = {
+        str(uid or "").strip()
+        for uid in (current_member_ids or [])
+        if str(uid or "").strip()
+    }
+    eligible_ids = {owner_id}
+    for contact in owner.get("contacts") or []:
+        if (
+            resolve_contact_role(contact) != "guardian"
+            or not bool(contact.get("is_primary"))
+            or not contact_is_bound_guardian(contact, owner_id)
+        ):
+            continue
+        peer_id = get_contact_line_id(contact)
+        peer = users.get(peer_id) or {}
+        reciprocal = any(
+            get_contact_line_id(peer_contact) == owner_id
+            and resolve_contact_role(peer_contact) == "guardian"
+            and bool(peer_contact.get("is_primary"))
+            and contact_is_bound_guardian(peer_contact, peer_id)
+            for peer_contact in (peer.get("contacts") or [])
+        )
+        if reciprocal:
+            eligible_ids.add(peer_id)
+
+    rows = []
+    for uid in current_member_ids or []:
+        uid = str(uid or "").strip()
+        if not uid or uid not in current_ids or uid not in eligible_ids:
+            continue
+        profile = users.get(uid)
+        if not isinstance(profile, dict):
+            continue
+        rows.append({
+            "line_user_id": uid,
+            "name": profile.get("display_name") or profile.get("name") or "LINE 成員",
+            "profile": profile,
+        })
+    return rows
 
 
 def build_owner_today_safety_roster(state, profile, config=None, now=None):
@@ -5236,6 +7802,506 @@ def collect_phone_only_contacts(contacts):
     return out
 
 
+def _sos_false_alarm_times(profile, now):
+    times = []
+    for raw in profile.get("sos_false_alarm_at") or []:
+        try:
+            parsed = datetime.fromisoformat(str(raw))
+        except (TypeError, ValueError):
+            continue
+        if parsed <= now and parsed >= now - timedelta(days=7):
+            times.append(parsed)
+    return sorted(times)
+
+
+def sos_abuse_state(profile: dict, now: datetime) -> dict:
+    """Return the graded SOS safety policy without removing emergency access."""
+    false_alarms = _sos_false_alarm_times(profile or {}, now)
+    in_24h = [item for item in false_alarms if item >= now - timedelta(hours=24)]
+    if len(false_alarms) >= 3:
+        expires_at = false_alarms[-1] + timedelta(days=7)
+        if expires_at > now:
+            return {
+                "mode": "restricted",
+                "expires_at": expires_at.isoformat(timespec="seconds"),
+                "reason": "repeated_false_alarm",
+                "false_alarm_count_7d": len(false_alarms),
+                "false_alarm_count_24h": len(in_24h),
+            }
+    if len(in_24h) >= 2:
+        expires_at = in_24h[-1] + timedelta(days=3)
+        if expires_at > now:
+            return {
+                "mode": "observation",
+                "expires_at": expires_at.isoformat(timespec="seconds"),
+                "reason": "two_false_alarms_24h",
+                "false_alarm_count_7d": len(false_alarms),
+                "false_alarm_count_24h": len(in_24h),
+            }
+    return {
+        "mode": "normal",
+        "expires_at": None,
+        "reason": None,
+        "false_alarm_count_7d": len(false_alarms),
+        "false_alarm_count_24h": len(in_24h),
+    }
+
+
+def eligible_sos_retry_recipients(event: dict) -> list[dict]:
+    """Retry only failed recipients; successful deliveries are idempotently excluded."""
+    return [
+        dict(item)
+        for item in (event or {}).get("deliveries") or []
+        if item.get("status") in {"failed", "pending"}
+    ]
+
+
+def _claim_sos_event_action(state, event_id, owner_id, action, now):
+    """Lease cancel/retry so concurrent workers cannot duplicate LINE pushes."""
+    event = (state.get("sos_events") or {}).get(event_id)
+    if not event:
+        return {"claimed": False, "reason": "not_found"}
+    if event.get("owner_line_user_id") != owner_id:
+        return {"claimed": False, "reason": "forbidden"}
+    claim_key = "action_claim"
+    existing = event.get(claim_key) or {}
+    claimed_at = parse_datetime(existing.get("claimed_at"))
+    if claimed_at and now - claimed_at < timedelta(minutes=2):
+        return {"claimed": False, "reason": "busy"}
+    claim_token = uuid.uuid4().hex
+    event[claim_key] = {
+        "token": claim_token,
+        "action": action,
+        "claimed_at": now.isoformat(timespec="seconds"),
+    }
+    return {
+        "claimed": True,
+        "claim_token": claim_token,
+        "event": copy.deepcopy(event),
+    }
+
+
+def _release_sos_event_action(data_file, event_id, claim_token):
+    """Release only the lease owned by this request."""
+    def release(latest):
+        latest_event = (latest.get("sos_events") or {}).get(event_id) or {}
+        active = latest_event.get("action_claim") or {}
+        if active.get("token") == claim_token:
+            latest_event.pop("action_claim", None)
+
+    mutate_state_atomically(data_file, release)
+
+
+def cancel_sos_event(data_file, payload, config=None):
+    """Cancel a delivered SOS and notify only its successful original recipients."""
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    event_id = str(payload.get("event_id") or "").strip()
+    if not line_user_id or not event_id:
+        return {"error": "missing line_user_id or event_id"}, 400
+    now = current_app_time(config or {})
+    claim = mutate_state_atomically(
+        data_file,
+        lambda current: _claim_sos_event_action(
+            current, event_id, line_user_id, "cancel", now
+        ),
+    )
+    if not claim.get("claimed"):
+        reason = claim.get("reason")
+        if reason == "not_found":
+            return {"error": "SOS event not found"}, 404
+        if reason == "forbidden":
+            return {"error": "not SOS event owner"}, 403
+        return {"error": "SOS cancellation already in progress"}, 409
+    claim_token = claim["claim_token"]
+    state = load_state(data_file)
+    event = (state.get("sos_events") or {}).get(event_id) or claim["event"]
+    if event.get("status") == "cancelled" and not int(event.get("cancel_failed") or 0):
+        _release_sos_event_action(data_file, event_id, claim_token)
+        return {
+            "ok": True,
+            "event_id": event_id,
+            "status": "cancelled",
+            "cancel_sent": int(event.get("cancel_sent") or 0),
+            "idempotent": True,
+        }, 200
+
+    sent_at = parse_datetime(event.get("sent_at"))
+    if not sent_at or now - sent_at > timedelta(minutes=10):
+        _release_sos_event_action(data_file, event_id, claim_token)
+        return {"error": "SOS cancellation window expired"}, 409
+
+    profile = (state.get("users") or {}).get(line_user_id) or {}
+    reason = str(payload.get("reason") or "誤觸").strip()[:80]
+    message = (
+        f"✅【SOS 已取消】{profile.get('display_name') or '你的親友'} 已回報目前安全\n"
+        f"原因：{reason}\n原 SOS 紀錄仍會保留供安全查核"
+    )
+    token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
+    notification_log_start = len(state.get("notification_logs") or [])
+    usage_start = len(state.get("line_message_usage") or [])
+    cancel_results = []
+    cancel_sent = 0
+    cancel_failed = 0
+    previous_cancel = event.get("cancel_deliveries") or []
+    source_deliveries = previous_cancel if previous_cancel else (event.get("deliveries") or [])
+    for delivery in source_deliveries:
+        wanted_statuses = {"failed"} if previous_cancel else {"sent"}
+        if delivery.get("status") not in wanted_statuses or delivery.get("kind") == "self":
+            continue
+        target = delivery.get("target")
+        if not target:
+            continue
+        try:
+            result = _send_line_with_retry_key(
+                sender,
+                token,
+                target,
+                message,
+                _line_retry_key(f"{event_id}:cancel:{target}"),
+            )
+            cancel_results.append({
+                "kind": delivery.get("kind"),
+                "target": target,
+                "status": "sent",
+                "recipient_count": max(1, int(delivery.get("recipient_count") or 1)),
+            })
+            append_notification_log(
+                state, "sos_cancel", target, "sent", message,
+                json.dumps(result, ensure_ascii=False),
+            )
+            cancel_sent += 1
+        except Exception as exc:
+            cancel_results.append({
+                "kind": delivery.get("kind"),
+                "target": target,
+                "status": "failed",
+                "recipient_count": max(1, int(delivery.get("recipient_count") or 1)),
+            })
+            append_notification_log(state, "sos_cancel", target, "failed", message, str(exc))
+            cancel_failed += 1
+
+    combined_cancel_results = [
+        copy.deepcopy(item)
+        for item in previous_cancel
+        if item.get("status") == "sent"
+    ] + cancel_results
+    cancel_sent_total = sum(
+        1 for item in combined_cancel_results if item.get("status") == "sent"
+    )
+    cancel_failed_total = sum(
+        1 for item in combined_cancel_results if item.get("status") == "failed"
+    )
+    event["status"] = "cancelled" if cancel_failed_total == 0 else "cancel_partial"
+    event["cancelled_at"] = now.isoformat(timespec="seconds")
+    event["cancel_reason"] = reason
+    event["cancel_deliveries"] = combined_cancel_results
+    event["cancel_sent"] = cancel_sent_total
+    event["cancel_failed"] = cancel_failed_total
+    if not previous_cancel:
+        profile.setdefault("sos_false_alarm_at", []).append(now.isoformat(timespec="seconds"))
+    policy = sos_abuse_state(profile, now)
+    profile["sos_abuse_mode"] = policy["mode"]
+    profile["sos_abuse_expires_at"] = policy["expires_at"]
+    pending = (state.get("sos_pending") or {}).get(line_user_id)
+    if pending and pending.get("event_id") == event_id:
+        pending["stage"] = event["status"]
+        pending["cancelled_at"] = event["cancelled_at"]
+    cancel_units = 0
+    for item in cancel_results:
+        if item.get("status") != "sent":
+            continue
+        if item.get("kind") == "group":
+            cancel_units += max(1, int(item.get("recipient_count") or 1))
+        else:
+            cancel_units += 1
+    record_line_message_usage(
+        state,
+        category="sos_cancel",
+        owner_line_user_id=line_user_id,
+        recipient_count=cancel_units,
+        event_id=f"{event_id}:cancel:{claim_token}",
+        sent_at=now,
+    )
+    event_snapshot = copy.deepcopy(event)
+    false_alarm_at = now.isoformat(timespec="seconds") if not previous_cancel else None
+    pending_snapshot = copy.deepcopy(pending) if pending else None
+    new_logs = copy.deepcopy((state.get("notification_logs") or [])[notification_log_start:])
+    new_usage = copy.deepcopy((state.get("line_message_usage") or [])[usage_start:])
+
+    def finish_cancel(latest):
+        latest_event = (latest.get("sos_events") or {}).get(event_id)
+        if not latest_event:
+            return
+        active_claim = latest_event.get("action_claim") or {}
+        if active_claim.get("token") != claim_token:
+            return
+        latest.setdefault("sos_events", {})[event_id] = copy.deepcopy(event_snapshot)
+        latest["sos_events"][event_id].pop("action_claim", None)
+        latest_profile = (latest.get("users") or {}).get(line_user_id) or {}
+        if false_alarm_at:
+            false_alarms = list(latest_profile.get("sos_false_alarm_at") or [])
+            if false_alarm_at not in false_alarms:
+                false_alarms.append(false_alarm_at)
+            latest_profile["sos_false_alarm_at"] = false_alarms
+        latest_policy = sos_abuse_state(latest_profile, now)
+        latest_profile["sos_abuse_mode"] = latest_policy["mode"]
+        latest_profile["sos_abuse_expires_at"] = latest_policy["expires_at"]
+        if pending_snapshot:
+            latest.setdefault("sos_pending", {})[line_user_id] = copy.deepcopy(pending_snapshot)
+        logs = list(latest.get("notification_logs") or [])
+        logs.extend(new_logs)
+        latest["notification_logs"] = logs[-100:]
+        ledger = list(latest.get("line_message_usage") or [])
+        known = {str(row.get("key") or "") for row in ledger if isinstance(row, dict)}
+        for row in new_usage:
+            key = str(row.get("key") or "")
+            if key and key not in known:
+                ledger.append(row)
+                known.add(key)
+        latest["line_message_usage"] = ledger[-10000:]
+
+    mutate_state_atomically(data_file, finish_cancel)
+    return {
+        "ok": cancel_failed_total == 0,
+        "event_id": event_id,
+        "status": event["status"],
+        "cancel_sent": cancel_sent_total,
+        "cancel_failed": cancel_failed_total,
+        "abuse": policy,
+    }, 200 if cancel_failed_total == 0 else 502
+
+
+def retry_sos_event(data_file, payload, config=None):
+    """Retry only failed original recipients and never duplicate successful delivery."""
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    event_id = str(payload.get("event_id") or "").strip()
+    if not line_user_id or not event_id:
+        return {"error": "missing line_user_id or event_id"}, 400
+    now = current_app_time(config or {})
+    claim = mutate_state_atomically(
+        data_file,
+        lambda current: _claim_sos_event_action(
+            current, event_id, line_user_id, "retry", now
+        ),
+    )
+    if not claim.get("claimed"):
+        reason = claim.get("reason")
+        if reason == "not_found":
+            return {"error": "SOS event not found"}, 404
+        if reason == "forbidden":
+            return {"error": "not SOS event owner"}, 403
+        return {"error": "SOS retry already in progress"}, 409
+    claim_token = claim["claim_token"]
+    state = load_state(data_file)
+    event = (state.get("sos_events") or {}).get(event_id) or claim["event"]
+    if (
+        event.get("status") in {"cancelled", "cancel_partial"}
+        or event.get("cancel_deliveries")
+        or event.get("cancelled_at")
+    ):
+        def release_retry_claim(latest):
+            latest_event = (latest.get("sos_events") or {}).get(event_id) or {}
+            active = latest_event.get("action_claim") or {}
+            if active.get("token") == claim_token:
+                latest_event.pop("action_claim", None)
+
+        mutate_state_atomically(data_file, release_retry_claim)
+        return {"error": "cancelled SOS cannot be retried"}, 409
+
+    token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
+    notification_log_start = len(state.get("notification_logs") or [])
+    usage_start = len(state.get("line_message_usage") or [])
+    message = str(event.get("message") or "🚨【SOS 緊急求助】請立即聯絡本人並確認安全")
+    retried_sent = 0
+    retried_failed = 0
+    retried_units = 0
+    retried_guardian_or_group_sent = 0
+    retried_guardian_or_group_failed = 0
+    for delivery in event.get("deliveries") or []:
+        if delivery.get("status") not in {"failed", "pending"}:
+            continue
+        target = delivery.get("target")
+        try:
+            if delivery.get("kind") == "group":
+                group = (state.get("guardian_groups") or {}).get(target) or {}
+                push_sos_to_guardian_group(
+                    token,
+                    target,
+                    message,
+                    sender=sender,
+                    member_ids=list(group.get("member_ids_at_bind") or []),
+                    retry_key=delivery.get("retry_key")
+                    or f"{event_id}:group:{target}",
+                )
+                retried_units += max(1, int(delivery.get("recipient_count") or 1))
+            else:
+                _send_line_with_retry_key(
+                    sender,
+                    token,
+                    target,
+                    str(delivery.get("message") or message),
+                    delivery.get("retry_key")
+                    or _line_retry_key(f"{event_id}:guardian:{target}"),
+                )
+                retried_units += 1
+            delivery["status"] = "sent"
+            delivery["retried_at"] = current_app_time(config or {}).isoformat(timespec="seconds")
+            append_notification_log(state, "sos_retry", target, "sent", message, event_id)
+            retried_sent += 1
+            if delivery.get("kind") != "self":
+                retried_guardian_or_group_sent += 1
+        except Exception as exc:
+            delivery["retry_error"] = classify_line_push_error(exc)
+            append_notification_log(state, "sos_retry", target, "failed", message, str(exc))
+            retried_failed += 1
+            if delivery.get("kind") != "self":
+                retried_guardian_or_group_failed += 1
+    event["retry_count"] = int(event.get("retry_count") or 0) + 1
+    remaining = [
+        row for row in (event.get("deliveries") or [])
+        if row.get("status") in {"failed", "pending"}
+    ]
+    if retried_guardian_or_group_sent and not event.get("sent_at"):
+        event["sent_at"] = now.isoformat(timespec="seconds")
+    event["status"] = (
+        "sent"
+        if not remaining and event.get("sent_at")
+        else "partial" if event.get("sent_at") else "delivery_failed"
+    )
+    record_line_message_usage(
+        state,
+        category="sos",
+        owner_line_user_id=line_user_id,
+        recipient_count=retried_units,
+        event_id=f"{event_id}:retry:{event['retry_count']}",
+        sent_at=current_app_time(config or {}),
+    )
+    event_snapshot = copy.deepcopy(event)
+    new_logs = copy.deepcopy((state.get("notification_logs") or [])[notification_log_start:])
+    new_usage = copy.deepcopy((state.get("line_message_usage") or [])[usage_start:])
+
+    def finish_retry(latest):
+        latest_event = (latest.get("sos_events") or {}).get(event_id)
+        if not latest_event:
+            return
+        active_claim = latest_event.get("action_claim") or {}
+        if active_claim.get("token") != claim_token:
+            return
+        latest.setdefault("sos_events", {})[event_id] = copy.deepcopy(event_snapshot)
+        latest["sos_events"][event_id].pop("action_claim", None)
+        if event_snapshot.get("sent_at"):
+            latest.setdefault("sos_pending", {})[line_user_id] = {
+                "stage": event_snapshot.get("status") or "sent",
+                "tap_count": 3,
+                "first_tap_at": event_snapshot.get("created_at") or event_snapshot["sent_at"],
+                "last_tap_at": event_snapshot.get("sent_at"),
+                "sent_at": event_snapshot.get("sent_at"),
+                "event_id": event_id,
+            }
+        logs = list(latest.get("notification_logs") or [])
+        logs.extend(new_logs)
+        latest["notification_logs"] = logs[-100:]
+        ledger = list(latest.get("line_message_usage") or [])
+        known = {str(row.get("key") or "") for row in ledger if isinstance(row, dict)}
+        for row in new_usage:
+            key = str(row.get("key") or "")
+            if key and key not in known:
+                ledger.append(row)
+                known.add(key)
+        latest["line_message_usage"] = ledger[-10000:]
+
+    mutate_state_atomically(data_file, finish_retry)
+    return {
+        "ok": retried_failed == 0,
+        "event_id": event_id,
+        "retried_sent": retried_sent,
+        "retried_failed": retried_failed,
+        "recipient_retried_sent": retried_guardian_or_group_sent,
+        "recipient_retried_failed": retried_guardian_or_group_failed,
+        "deliveries": [
+            {
+                "kind": row.get("kind"),
+                "name": row.get("display_name") or (
+                    "本人" if row.get("kind") == "self"
+                    else "守護群" if row.get("kind") == "group"
+                    else "核心守護人"
+                ),
+                "status": row.get("status"),
+                "error_hint": row.get("retry_error") or row.get("error_hint"),
+            }
+            for row in (event.get("deliveries") or [])
+        ],
+    }, (
+        200
+        if retried_guardian_or_group_sent or (
+            not retried_guardian_or_group_failed and bool(event.get("sent_at"))
+        )
+        else 502
+    )
+
+
+def _claim_sos_delivery(
+    state,
+    line_user_id,
+    now_dt,
+    daily_limit=3,
+    cooldown_sec=300,
+    long_confirm=False,
+    reason="",
+):
+    """Atomically reserve one SOS attempt before any external notification is sent."""
+    profile = (state.get("users") or {}).get(line_user_id)
+    if not profile:
+        return {"claimed": False, "reason": "member_not_found"}
+    previous_event_id = str(profile.get("last_sos_event_id") or "").strip()
+    previous_event = (state.get("sos_events") or {}).get(previous_event_id) or {}
+    if previous_event.get("status") == "sending" and any(
+        row.get("status") == "pending"
+        for row in (previous_event.get("deliveries") or [])
+    ):
+        return {
+            "claimed": False,
+            "reason": "recover_pending",
+            "event_id": previous_event_id,
+        }
+    latest_abuse = sos_abuse_state(profile, now_dt)
+    if latest_abuse["mode"] == "observation" and (
+        not long_confirm or not str(reason or "").strip()
+    ):
+        return {
+            "claimed": False,
+            "reason": "long_confirmation_required",
+            "abuse": latest_abuse,
+        }
+    today_str = now_dt.strftime("%Y-%m-%d")
+    sos_log = profile.get("sos_daily_log") or {}
+    if sos_log.get("date") != today_str:
+        sos_log = {"date": today_str, "count": 0}
+    if int(sos_log.get("count") or 0) >= int(daily_limit):
+        return {
+            "claimed": False,
+            "reason": "daily_limit",
+            "count": int(sos_log.get("count") or 0),
+        }
+    last_sos = parse_datetime(profile.get("last_sos_at"))
+    if last_sos:
+        elapsed = (now_dt - last_sos).total_seconds()
+        if elapsed < int(cooldown_sec):
+            return {
+                "claimed": False,
+                "reason": "cooldown",
+                "wait_sec": max(1, int(int(cooldown_sec) - elapsed)),
+            }
+    profile["last_sos_at"] = now_dt.isoformat(timespec="seconds")
+    profile["sos_daily_log"] = {
+        "date": today_str,
+        "count": int(sos_log.get("count") or 0) + 1,
+    }
+    return {"claimed": True}
+
+
 def trigger_sos(data_file, payload, config=None):
     """
     🔴 P0 FIX v0.5:加 3 層防護
@@ -5260,6 +8326,20 @@ def trigger_sos(data_file, payload, config=None):
     # === P0 FIX:3 層防護 ===
     now_dt = current_app_time(config or {})
     today_str = now_dt.strftime("%Y-%m-%d")
+    abuse = sos_abuse_state(profile, now_dt)
+    profile["sos_abuse_mode"] = abuse["mode"]
+    profile["sos_abuse_expires_at"] = abuse["expires_at"]
+    if abuse["mode"] == "observation" and (
+        not payload.get("long_confirm") or not str(payload.get("reason") or "").strip()
+    ):
+        return {
+            "error": "long confirmation required",
+            "abuse_mode": "observation",
+            "expires_at": abuse["expires_at"],
+            "requires_reason": True,
+            "emergency_numbers_available": True,
+            "emergency_numbers": ["119", "110"],
+        }, 428
 
     # 防護 1:每日上限 3 次
     SOS_DAILY_LIMIT = 3
@@ -5285,7 +8365,17 @@ def trigger_sos(data_file, payload, config=None):
                 ))
             except Exception:
                 pass
-        save_state(data_file, state)
+        def append_limit_audit(latest):
+            latest_profile = (latest.get("users") or {}).get(line_user_id)
+            if latest_profile is None:
+                return
+            latest_profile.setdefault("sos_abuse_log", []).append({
+                "at": now_dt.isoformat(timespec="seconds"),
+                "reason": "daily_limit_exceeded",
+                "count_today": sos_log.get("count", 0),
+            })
+
+        mutate_state_atomically(data_file, append_limit_audit)
         return {
             "error": f"daily SOS limit reached ({SOS_DAILY_LIMIT})",
             "limit": SOS_DAILY_LIMIT,
@@ -5299,9 +8389,21 @@ def trigger_sos(data_file, payload, config=None):
         try:
             last_sos_dt = datetime.fromisoformat(last_sos_str)
             elapsed = (now_dt - last_sos_dt).total_seconds()
-            if elapsed < SOS_COOLDOWN_SEC:
+            pending_event = (
+                (state.get("sos_events") or {}).get(
+                    str(profile.get("last_sos_event_id") or "")
+                )
+                or {}
+            )
+            recovery_pending = (
+                pending_event.get("status") == "sending"
+                and any(
+                    row.get("status") == "pending"
+                    for row in (pending_event.get("deliveries") or [])
+                )
+            )
+            if elapsed < SOS_COOLDOWN_SEC and not recovery_pending:
                 wait_sec = int(SOS_COOLDOWN_SEC - elapsed)
-                save_state(data_file, state)
                 return {
                     "error": f"SOS cooldown active, wait {wait_sec}s",
                     "cooldown_remaining_sec": wait_sec,
@@ -5314,6 +8416,8 @@ def trigger_sos(data_file, payload, config=None):
         return {"error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
 
     limit = int(rules.get("core_guardian_alert_limit") or 1)
+    if abuse["mode"] == "restricted":
+        limit = 1
     # 核心守護人（is_primary）優先收到 SOS；其餘依 priority
     # 與安全守護相同：只用 contact_is_bound_guardian，排除本人 ID／緊急聯絡人
     contacts = sorted(
@@ -5323,9 +8427,172 @@ def trigger_sos(data_file, payload, config=None):
     phone_contacts = collect_phone_only_contacts(contacts)
     line_contacts = []
     for contact in contacts:
-        if resolve_contact_role(contact) == "emergency":
+        if not contact_is_reciprocal_core_guardian(
+            state, line_user_id, contact
+        ):
             continue
-        if not contact_is_bound_guardian(contact, line_user_id):
+        target = get_contact_line_id(contact)
+        if not target or target == line_user_id:
+            continue
+        methods = contact.get("notify_methods")
+        if methods is not None and len(methods) == 0:
+            methods = ["line"]
+        if "line" not in (methods or ["line"]):
+            continue
+        if abuse["mode"] == "restricted" and not contact.get("is_primary"):
+            continue
+        row = dict(contact)
+        row["line_id"] = target
+        line_contacts.append(row)
+        if len(line_contacts) >= limit:
+            break
+
+    active_group_ids = []
+    if rules.get("guardian_group_limit") and abuse["mode"] != "restricted":
+        groups = state.get("guardian_groups", {})
+        active_group_ids = [
+            group_id for group_id in (profile.get("guardian_group_ids") or [])
+            if groups.get(group_id, {}).get("owner_line_user_id") == line_user_id
+            and groups.get(group_id, {}).get("status") == "active"
+        ][: int(rules.get("guardian_group_limit") or 0)]
+
+    # 個人守護人或守護群任一可送；兩者都沒有才拒絕（方案本身不會自動綁定對象）
+    if not line_contacts and not active_group_ids:
+        return {
+            "error": "no bound LINE guardians",
+            "sent": 0,
+            "phone_only_count": len(phone_contacts),
+            "phone_contacts": phone_contacts[:5],
+            "has_bound_guardian": profile_has_bound_line_guardian(profile),
+        }, 400
+
+    claim = mutate_state_atomically(
+        data_file,
+        lambda current_state: _claim_sos_delivery(
+            current_state,
+            line_user_id,
+            now_dt,
+            daily_limit=SOS_DAILY_LIMIT,
+            cooldown_sec=SOS_COOLDOWN_SEC,
+            long_confirm=bool(payload.get("long_confirm")),
+            reason=str(payload.get("reason") or ""),
+        ),
+    )
+    if not claim.get("claimed"):
+        if claim.get("reason") == "member_not_found":
+            return {"error": "member not found"}, 404
+        if claim.get("reason") == "daily_limit":
+            return {
+                "error": f"daily SOS limit reached ({SOS_DAILY_LIMIT})",
+                "limit": SOS_DAILY_LIMIT,
+                "resets_at": f"{today_str}T23:59:59+08:00",
+            }, 429
+        if claim.get("reason") == "recover_pending":
+            recovered, recovered_code = retry_sos_event(
+                data_file,
+                {
+                    "line_user_id": line_user_id,
+                    "event_id": claim.get("event_id"),
+                },
+                config,
+            )
+            if recovered_code == 200:
+                recovered_deliveries = recovered.get("deliveries") or []
+                guardian_rows = [
+                    {
+                        "name": row.get("name") or "核心守護人",
+                        "status": row.get("status"),
+                        "error_hint": row.get("error_hint"),
+                    }
+                    for row in recovered_deliveries
+                    if row.get("kind") == "guardian"
+                ]
+                group_rows = [
+                    {
+                        "name": row.get("name") or "守護群",
+                        "status": row.get("status"),
+                        "error_hint": row.get("error_hint"),
+                    }
+                    for row in recovered_deliveries
+                    if row.get("kind") == "group"
+                ]
+                self_rows = [
+                    row for row in recovered_deliveries
+                    if row.get("kind") == "self"
+                ]
+                recovered_sent = sum(
+                    1 for row in guardian_rows + group_rows
+                    if row.get("status") == "sent"
+                )
+                recovered_failed = sum(
+                    1 for row in guardian_rows + group_rows
+                    if row.get("status") == "failed"
+                )
+                return {
+                    "sent": recovered_sent,
+                    "failed": recovered_failed,
+                    "group_sent": sum(1 for row in group_rows if row.get("status") == "sent"),
+                    "group_failed": sum(1 for row in group_rows if row.get("status") == "failed"),
+                    "guardian_limit": len(guardian_rows),
+                    "self": {
+                        "status": self_rows[0].get("status")
+                        if self_rows else "not_sent"
+                    },
+                    "guardians": guardian_rows,
+                    "groups": group_rows,
+                    "results": guardian_rows + group_rows,
+                    "location_attached": False,
+                    "phone_only_count": 0,
+                    "phone_contacts": [],
+                    "event_id": claim.get("event_id"),
+                    "sent_at": current_app_time(config or {}).isoformat(timespec="seconds"),
+                    "location_updated_at": None,
+                    "cancel_available": recovered_sent > 0,
+                    "abuse_mode": abuse["mode"],
+                    "abuse_expires_at": abuse["expires_at"],
+                    "emergency_numbers_available": True,
+                    "emergency_numbers": ["119", "110"],
+                    "recovered": True,
+                }, 200
+            return recovered, recovered_code
+        if claim.get("reason") == "long_confirmation_required":
+            latest_abuse = claim.get("abuse") or {}
+            return {
+                "error": "long confirmation required",
+                "abuse_mode": "observation",
+                "expires_at": latest_abuse.get("expires_at"),
+                "requires_reason": True,
+                "emergency_numbers_available": True,
+                "emergency_numbers": ["119", "110"],
+            }, 428
+        return {
+            "error": f"SOS cooldown active, wait {int(claim.get('wait_sec') or 1)}s",
+            "cooldown_remaining_sec": int(claim.get("wait_sec") or 1),
+        }, 429
+
+    # Continue from the claimed revision so the final audit write cannot overwrite
+    # the reservation or conflict merely because this request made the claim.
+    state = load_state(data_file)
+    profile = (state.get("users") or {}).get(line_user_id) or profile
+    notification_log_start = len(state.get("notification_logs") or [])
+    usage_start = len(state.get("line_message_usage") or [])
+    # Rebuild the emergency fan-out from the post-claim authoritative snapshot.
+    # A guardian may have been unbound, or a group disabled, between the first
+    # request read and the atomic claim.
+    rules = plan_rules(profile)
+    limit = 1 if abuse["mode"] == "restricted" else int(
+        rules.get("core_guardian_alert_limit") or 1
+    )
+    contacts = sorted(
+        profile.get("contacts") or [],
+        key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
+    )
+    phone_contacts = collect_phone_only_contacts(contacts)
+    line_contacts = []
+    for contact in contacts:
+        if not contact_is_reciprocal_core_guardian(
+            state, line_user_id, contact
+        ):
             continue
         target = get_contact_line_id(contact)
         if not target or target == line_user_id:
@@ -5340,18 +8607,15 @@ def trigger_sos(data_file, payload, config=None):
         line_contacts.append(row)
         if len(line_contacts) >= limit:
             break
-
     active_group_ids = []
-    if rules.get("guardian_group_limit"):
-        groups = state.get("guardian_groups", {})
+    if rules.get("guardian_group_limit") and abuse["mode"] != "restricted":
+        groups = state.get("guardian_groups") or {}
         active_group_ids = [
-            group_id for group_id in (profile.get("guardian_group_ids") or [])
+            group_id
+            for group_id in (profile.get("guardian_group_ids") or [])
             if groups.get(group_id, {}).get("owner_line_user_id") == line_user_id
             and groups.get(group_id, {}).get("status") == "active"
-            and guardian_group_preference(groups.get(group_id), "notify_group_on_overdue")
         ][: int(rules.get("guardian_group_limit") or 0)]
-
-    # 個人守護人或守護群任一可送；兩者都沒有才拒絕（方案本身不會自動綁定對象）
     if not line_contacts and not active_group_ids:
         return {
             "error": "no bound LINE guardians",
@@ -5395,6 +8659,134 @@ def trigger_sos(data_file, payload, config=None):
         f"請立即聯絡本人並確認安全。若有立即危險，請撥打 119。{location_text}\n\n"
         "本通知不會自動聯絡警消，請依現場狀況主動求助。"
     )
+    group_delivery_members = {}
+    group_member_getter = (config or {}).get("GROUP_MEMBER_IDS_GETTER")
+    for group_id in active_group_ids:
+        group_info = (state.get("guardian_groups") or {}).get(group_id) or {}
+        try:
+            if callable(group_member_getter):
+                current_ids = group_member_getter(token, group_id)
+            elif ((config or {}).get("LINE_PUSH_SENDER") or line_push_message) is line_push_message:
+                current_ids = get_group_member_ids(token, group_id)
+            else:
+                current_ids = list(group_info.get("member_ids_at_bind") or [])
+        except Exception:
+            current_ids = list(group_info.get("member_ids_at_bind") or [])
+        group_delivery_members[group_id] = list(dict.fromkeys(current_ids or []))
+
+    requested_units = len(line_contacts) + sum(
+        max(1, len(group_delivery_members.get(group_id) or []))
+        for group_id in active_group_ids
+    )
+    budget = line_push_budget_decision(
+        state,
+        owner_line_user_id=line_user_id,
+        requested_units=requested_units,
+        now=now_dt,
+        monthly_hard_cap=int(
+            (config or {}).get("LINE_MONTHLY_MESSAGE_HARD_CAP")
+            or os.environ.get("LINE_MONTHLY_MESSAGE_HARD_CAP")
+            or (config or {}).get("LINE_MONTHLY_MESSAGE_QUOTA")
+            or os.environ.get("LINE_MONTHLY_MESSAGE_QUOTA")
+            or 200
+        ),
+        member_daily_hard_cap=int(
+            (config or {}).get("LINE_MEMBER_DAILY_MESSAGE_HARD_CAP")
+            or os.environ.get("LINE_MEMBER_DAILY_MESSAGE_HARD_CAP")
+            or 20
+        ),
+        emergency=True,
+    )
+    remaining_budget = int(budget.get("allowed_units") or 0)
+    line_contacts = line_contacts[:remaining_budget]
+    remaining_budget -= len(line_contacts)
+    budgeted_groups = []
+    for group_id in active_group_ids:
+        group_units = max(1, len(group_delivery_members.get(group_id) or []))
+        if group_units > remaining_budget:
+            continue
+        budgeted_groups.append(group_id)
+        remaining_budget -= group_units
+    active_group_ids = budgeted_groups
+    if budget.get("reason"):
+        append_notification_log(
+            state,
+            "sos",
+            line_user_id,
+            "budget_limited",
+            "SOS 額外推播已依成本上限縮減",
+            json.dumps(budget, ensure_ascii=False),
+        )
+
+    self_confirmation = (
+        "✅ SOS 通知流程已完成\n"
+        "請留意下方通知明細；若是誤觸或目前已安全，"
+        "請在 10 分鐘內回到 SOS 畫面取消通知"
+    )
+    prepared_deliveries = [
+        {
+            "kind": "guardian",
+            "target": contact["line_id"],
+            "display_name": str(
+                contact.get("name") or contact.get("relationship") or "核心守護人"
+            ),
+            "status": "pending",
+            "retry_key": _line_retry_key(
+                f"{sos_event_id}:guardian:{contact['line_id']}"
+            ),
+        }
+        for contact in line_contacts
+    ] + [
+        {
+            "kind": "group",
+            "target": group_id,
+            "display_name": str(
+                ((state.get("guardian_groups") or {}).get(group_id) or {}).get("group_name")
+                or ((state.get("guardian_groups") or {}).get(group_id) or {}).get("name")
+                or "守護群"
+            ),
+            "recipient_count": max(1, len(group_delivery_members.get(group_id) or [])),
+            "status": "pending",
+            "retry_key": f"{sos_event_id}:group:{group_id}",
+        }
+        for group_id in active_group_ids
+    ] + [{
+        "kind": "self",
+        "target": line_user_id,
+        "display_name": "本人",
+        "recipient_count": 1,
+        "status": "pending",
+        "message": self_confirmation,
+        "retry_key": _line_retry_key(f"{sos_event_id}:self:{line_user_id}"),
+    }]
+
+    def persist_sos_outbox(latest):
+        latest_profile = (latest.get("users") or {}).get(line_user_id)
+        if latest_profile is None:
+            return
+        latest_profile["last_sos_event_id"] = sos_event_id
+        if location:
+            stored_location = dict(latest_profile.get("location") or {})
+            stored_location.update(copy.deepcopy(location))
+            latest_profile["location"] = stored_location
+        latest.setdefault("sos_events", {})[sos_event_id] = {
+            "event_id": sos_event_id,
+            "owner_line_user_id": line_user_id,
+            "owner_display_name": profile.get("display_name") or "會員",
+            "status": "sending",
+            "created_at": now_dt.isoformat(timespec="seconds"),
+            "sent_at": None,
+            "deliveries": copy.deepcopy(prepared_deliveries),
+            "message": message,
+            "location_attached": bool(location_text),
+            "abuse_mode": abuse["mode"],
+        }
+
+    mutate_state_atomically(data_file, persist_sos_outbox)
+    state = load_state(data_file)
+    profile = (state.get("users") or {}).get(line_user_id) or profile
+    notification_log_start = len(state.get("notification_logs") or [])
+    usage_start = len(state.get("line_message_usage") or [])
 
     sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
     sent = 0
@@ -5403,6 +8795,9 @@ def trigger_sos(data_file, payload, config=None):
     group_sent = 0
     group_failed = 0
     results = []
+    deliveries = []
+    guardian_results = []
+    group_results = []
     print(
         f"[sos] trigger user={line_user_id[:8]} line_targets={len(line_contacts)} "
         f"groups={len(active_group_ids)} loc={bool(location_text)} phone_only={len(phone_contacts)}",
@@ -5410,13 +8805,34 @@ def trigger_sos(data_file, payload, config=None):
     )
     for contact in line_contacts:
         target = contact["line_id"]
+        delivery_retry_key = _line_retry_key(
+            f"{sos_event_id}:guardian:{target}"
+        )
         try:
-            result = sender(token, target, message)
+            result = _send_line_with_retry_key(
+                sender,
+                token,
+                target,
+                message,
+                delivery_retry_key,
+            )
             append_notification_log(state, "sos", target, "sent", message, json.dumps(result, ensure_ascii=False))
             sent += 1
             if sent_at is None:
                 sent_at = current_app_time(config or {}).isoformat(timespec="seconds")
             results.append({"line_user_id": target, "status": "sent"})
+            deliveries.append({
+                "kind": "guardian",
+                "target": target,
+                "display_name": str(contact.get("name") or contact.get("relationship") or "核心守護人"),
+                "recipient_count": 1,
+                "status": "sent",
+                "retry_key": delivery_retry_key,
+            })
+            guardian_results.append({
+                "name": str(contact.get("name") or contact.get("relationship") or "核心守護人"),
+                "status": "sent",
+            })
             print(f"[sos] push ok target={str(target)[:8]}", flush=True)
         except Exception as exc:
             append_notification_log(state, "sos", target, "failed", message, str(exc))
@@ -5426,18 +8842,33 @@ def trigger_sos(data_file, payload, config=None):
                 "status": "failed",
                 "error_hint": classify_line_push_error(exc),
             })
+            deliveries.append({
+                "kind": "guardian",
+                "target": target,
+                "display_name": str(contact.get("name") or contact.get("relationship") or "核心守護人"),
+                "recipient_count": 1,
+                "status": "failed",
+                "retry_key": delivery_retry_key,
+            })
+            guardian_results.append({
+                "name": str(contact.get("name") or contact.get("relationship") or "核心守護人"),
+                "status": "failed",
+                "error_hint": classify_line_push_error(exc),
+            })
             print(f"[sos] push FAIL target={str(target)[:8]} err={str(exc)[:180]}", flush=True)
 
     for group_id in active_group_ids:
+        delivery_retry_key = f"{sos_event_id}:group:{group_id}"
         try:
             group_info = (state.get("guardian_groups") or {}).get(group_id) or {}
-            member_ids = list(group_info.get("member_ids_at_bind") or [])
+            member_ids = list(group_delivery_members.get(group_id) or [])
             result, mention_mode, _payload = push_sos_to_guardian_group(
                 token,
                 group_id,
                 message,
                 sender=sender,
                 member_ids=member_ids,
+                retry_key=delivery_retry_key,
             )
             append_notification_log(
                 state,
@@ -5456,40 +8887,175 @@ def trigger_sos(data_file, payload, config=None):
                 "status": "sent",
                 "mention": mention_mode,
             })
+            deliveries.append({
+                "kind": "group",
+                "target": group_id,
+                "display_name": str(group_info.get("group_name") or group_info.get("name") or "守護群"),
+                "recipient_count": max(1, len(member_ids)),
+                "status": "sent",
+                "retry_key": delivery_retry_key,
+            })
+            group_results.append({
+                "name": str(group_info.get("group_name") or group_info.get("name") or "守護群"),
+                "status": "sent",
+                "mention": mention_mode,
+            })
             print(f"[sos] group push ok group={str(group_id)[:8]} mention={mention_mode}", flush=True)
         except Exception as exc:
             append_notification_log(state, "sos_guardian_group", group_id, "failed", message, str(exc))
             failed += 1
             group_failed += 1
             results.append({"group_id": group_id, "status": "failed"})
+            deliveries.append({
+                "kind": "group",
+                "target": group_id,
+                "display_name": str(group_info.get("group_name") or group_info.get("name") or "守護群"),
+                "recipient_count": max(1, len(group_delivery_members.get(group_id) or [])),
+                "status": "failed",
+                "retry_key": delivery_retry_key,
+            })
+            group_info = (state.get("guardian_groups") or {}).get(group_id) or {}
+            group_results.append({
+                "name": str(group_info.get("group_name") or group_info.get("name") or "守護群"),
+                "status": "failed",
+                "error_hint": classify_line_push_error(exc),
+            })
             print(f"[sos] group push FAIL group={str(group_id)[:8]} err={str(exc)[:180]}", flush=True)
 
-    profile["last_sos_at"] = current_app_time(config or {}).isoformat(timespec="seconds")
-    # 🔴 P0 FIX:累計今日 SOS 計數
-    sos_log["count"] = sos_log.get("count", 0) + 1
-    profile["sos_daily_log"] = sos_log
-    profile["last_sos_event_id"] = sos_event_id
-    save_state(data_file, state)
-    code = 200 if sent else 502
-    pending = (state.get("sos_pending") or {}).get(line_user_id) or {}
-    cancel_available = (
-        sent > 0
-        and pending.get("stage") == "sent"
-        and pending.get("event_id") == sos_event_id
-    )
-    if cancel_available:
+    self_result = {"status": "not_sent"}
+    self_delivery = copy.deepcopy(prepared_deliveries[-1])
+    if sent:
+        confirmation = (
+            f"✅ SOS 已送出\n"
+            f"已通知 {sent} 個守護對象，失敗 {failed} 個\n"
+            f"{'已附上這次取得的位置' if location_text else '這次未附即時位置'}\n"
+            "若是誤觸或目前已安全，請在 10 分鐘內回到 SOS 畫面取消通知"
+        )
         try:
-            pending_sent_at = datetime.fromisoformat(str(pending.get("sent_at") or ""))
-            cancel_available = (now_dt - pending_sent_at).total_seconds() <= 600
-        except (TypeError, ValueError):
-            cancel_available = False
+            result = _send_line_with_retry_key(
+                sender,
+                token,
+                line_user_id,
+                confirmation,
+                _line_retry_key(f"{sos_event_id}:self:{line_user_id}"),
+            )
+            append_notification_log(
+                state, "sos_self_confirmation", line_user_id, "sent",
+                confirmation, json.dumps(result, ensure_ascii=False),
+            )
+            self_result = {"status": "sent"}
+            self_delivery["status"] = "sent"
+        except Exception as exc:
+            append_notification_log(
+                state, "sos_self_confirmation", line_user_id, "failed",
+                confirmation, str(exc),
+            )
+            self_result = {
+                "status": "failed",
+                "error_hint": classify_line_push_error(exc),
+            }
+            self_delivery["status"] = "failed"
+            self_delivery["error_hint"] = self_result["error_hint"]
+    deliveries.append(self_delivery)
+
+    profile["last_sos_event_id"] = sos_event_id
+    state.setdefault("sos_events", {})[sos_event_id] = {
+        "event_id": sos_event_id,
+        "owner_line_user_id": line_user_id,
+        "owner_display_name": profile.get("display_name") or "會員",
+        "status": "sent" if sent else "delivery_failed",
+        "created_at": now_dt.isoformat(timespec="seconds"),
+        "sent_at": sent_at,
+        "deliveries": deliveries,
+        "message": message,
+        "location_attached": bool(location_text),
+        "abuse_mode": abuse["mode"],
+        "push_budget": budget,
+    }
+    sos_units = 0
+    for delivery in deliveries:
+        if delivery.get("status") != "sent":
+            continue
+        if delivery.get("kind") == "group":
+            sos_units += max(1, int(delivery.get("recipient_count") or 1))
+        elif delivery.get("kind") == "self":
+            continue
+        else:
+            sos_units += 1
+    if self_result.get("status") == "sent":
+        sos_units += 1
+    record_line_message_usage(
+        state,
+        category="sos",
+        owner_line_user_id=line_user_id,
+        recipient_count=sos_units,
+        event_id=sos_event_id,
+        sent_at=now_dt,
+    )
+    code = 200 if sent else 502
+    cancel_available = sent > 0
+    pending_event = None
+    if cancel_available:
+        pending_event = {
+            "stage": "sent",
+            "tap_count": 3,
+            "first_tap_at": now_dt.isoformat(timespec="seconds"),
+            "last_tap_at": now_dt.isoformat(timespec="seconds"),
+            "sent_at": sent_at,
+            "event_id": sos_event_id,
+        }
+    event_record = copy.deepcopy(state["sos_events"][sos_event_id])
+    delivery_logs = copy.deepcopy(
+        (state.get("notification_logs") or [])[notification_log_start:]
+    )
+    delivery_usage = copy.deepcopy(
+        (state.get("line_message_usage") or [])[usage_start:]
+    )
+    profile_patch = {
+        "last_sos_event_id": sos_event_id,
+    }
+    if location:
+        profile_patch["location"] = copy.deepcopy(profile.get("location") or location)
+
+    def merge_sos_delivery(latest):
+        latest_profile = (latest.get("users") or {}).get(line_user_id)
+        if latest_profile is not None:
+            latest_profile.update(copy.deepcopy(profile_patch))
+            latest_policy = sos_abuse_state(latest_profile, now_dt)
+            latest_profile["sos_abuse_mode"] = latest_policy["mode"]
+            latest_profile["sos_abuse_expires_at"] = latest_policy["expires_at"]
+        latest.setdefault("sos_events", {})[sos_event_id] = copy.deepcopy(event_record)
+        if pending_event:
+            latest.setdefault("sos_pending", {})[line_user_id] = copy.deepcopy(pending_event)
+        if delivery_logs:
+            logs = list(latest.get("notification_logs") or [])
+            logs.extend(copy.deepcopy(delivery_logs))
+            latest["notification_logs"] = logs[-100:]
+        if delivery_usage:
+            ledger = list(latest.get("line_message_usage") or [])
+            known_keys = {
+                str(row.get("key") or "")
+                for row in ledger
+                if isinstance(row, dict)
+            }
+            for row in delivery_usage:
+                key = str(row.get("key") or "")
+                if key and key not in known_keys:
+                    ledger.append(copy.deepcopy(row))
+                    known_keys.add(key)
+            latest["line_message_usage"] = ledger[-10000:]
+
+    mutate_state_atomically(data_file, merge_sos_delivery)
     return {
         "sent": sent,
         "failed": failed,
         "group_sent": group_sent,
         "group_failed": group_failed,
         "guardian_limit": limit,
-        "results": results,
+        "self": self_result,
+        "guardians": guardian_results,
+        "groups": group_results,
+        "results": [*guardian_results, *group_results],
         "location_attached": bool(location_text),
         "phone_only_count": len(phone_contacts),
         "phone_contacts": phone_contacts[:5],
@@ -5497,6 +9063,10 @@ def trigger_sos(data_file, payload, config=None):
         "sent_at": sent_at,
         "location_updated_at": location.get("updated_at") if location_text else None,
         "cancel_available": cancel_available,
+        "abuse_mode": abuse["mode"],
+        "abuse_expires_at": abuse["expires_at"],
+        "emergency_numbers_available": True,
+        "emergency_numbers": ["119", "110"],
     }, code
 
 
@@ -5695,23 +9265,87 @@ def create_support_ticket(data_file, payload):
         return {"error": "missing line_user_id or message"}, 400
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
+    email = str(payload.get("email") or profile.get("contact_email") or "").strip()
+    reply_channel = str(payload.get("reply_channel") or "").strip().lower()
+    if not reply_channel:
+        reply_channel = "email" if email else "line"
+    if reply_channel not in {"email", "line"}:
+        return {"error": "invalid reply_channel"}, 400
+    if reply_channel == "email" and not re.match(
+        r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email
+    ):
+        return {"error": "valid email required"}, 400
     ticket = {
         "id": secrets.token_urlsafe(8),
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "line_user_id": line_user_id,
         "display_name": str(payload.get("display_name") or profile.get("display_name") or "LINE 使用者"),
+        "email": email,
+        "reply_channel": reply_channel,
+        "category": str(payload.get("category") or "其他").strip()[:40],
+        "subject": str(payload.get("subject") or "").strip()[:120],
         "message": message[:1000],
-        "status": "open",
+        "status": "submitted",
         "plan": profile.get("plan", "trial"),
         "last_check_in": profile.get("last_check_in"),
         "reply": "",
         "replied_at": "",
+        "delivery_log": [],
     }
     tickets = state.setdefault("support_tickets", [])
     tickets.append(ticket)
     state["support_tickets"] = tickets[-200:]
     save_state(data_file, state)
-    return {"ticket": ticket}, 200
+    return {"ticket": ticket}, 201
+
+
+def member_support_tickets(data_file, line_user_id):
+    owner_id = str(line_user_id or "").strip()
+    if not owner_id:
+        return {"error": "missing line_user_id"}, 400
+    state = load_state(data_file)
+    tickets = [
+        ticket
+        for ticket in reversed(state.get("support_tickets", [])[-200:])
+        if str(ticket.get("line_user_id") or "") == owner_id
+    ]
+    return {"tickets": tickets}, 200
+
+
+def send_support_email(to_email, subject, message, config=None):
+    config = config or {}
+    host = str(config.get("SMTP_HOST") or os.environ.get("SMTP_HOST") or "").strip()
+    username = str(
+        config.get("SMTP_USERNAME") or os.environ.get("SMTP_USERNAME") or ""
+    ).strip()
+    password = str(
+        config.get("SMTP_PASSWORD") or os.environ.get("SMTP_PASSWORD") or ""
+    )
+    from_email = str(
+        config.get("SUPPORT_FROM_EMAIL")
+        or os.environ.get("SUPPORT_FROM_EMAIL")
+        or username
+    ).strip()
+    if not host or not username or not password or not from_email:
+        raise RuntimeError("support_email_not_configured")
+    port = int(config.get("SMTP_PORT") or os.environ.get("SMTP_PORT") or 587)
+    use_tls = str(
+        config.get("SMTP_USE_TLS")
+        if config.get("SMTP_USE_TLS") is not None
+        else os.environ.get("SMTP_USE_TLS", "true")
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    email = EmailMessage()
+    email["From"] = from_email
+    email["To"] = to_email
+    email["Subject"] = subject
+    email.set_content(message)
+    factory = config.get("SMTP_FACTORY") or smtplib.SMTP
+    with factory(host, port, timeout=10) as smtp:
+        if use_tls:
+            smtp.starttls()
+        smtp.login(username, password)
+        smtp.send_message(email)
+    return {"sent": True, "provider": "smtp"}
 
 
 def admin_support_tickets(data_file):
@@ -5729,15 +9363,51 @@ def admin_reply_support_ticket(data_file, payload, config=None):
     ticket = next((item for item in state.get("support_tickets", []) if item.get("id") == ticket_id), None)
     if not ticket:
         return {"error": "ticket not found"}, 404
-    token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-    sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
-    if not token:
-        return {"error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
-    result = sender(token, ticket["line_user_id"], message)
-    ticket["status"] = "replied"
+    reply_channel = str(
+        payload.get("reply_channel") or ticket.get("reply_channel") or "line"
+    ).lower()
+    now = datetime.now().isoformat(timespec="seconds")
+    delivery = {"channel": reply_channel, "status": "failed", "created_at": now}
+    try:
+        if reply_channel == "email":
+            email = str(ticket.get("email") or "").strip()
+            sender = (config or {}).get("SUPPORT_EMAIL_SENDER") or send_support_email
+            if not email:
+                return {"error": "ticket email is missing"}, 400
+            result = sender(
+                email,
+                str(ticket.get("subject") or "每日平安客服回覆"),
+                message,
+                config or {},
+            )
+            target = email
+        elif reply_channel == "line":
+            target = str(ticket.get("line_user_id") or "")
+            if target.startswith(("C", "R")):
+                return {"error": "line_private_reply_required"}, 400
+            token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+            sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
+            if not token:
+                return {"error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
+            result = sender(token, target, message)
+        else:
+            return {"error": "invalid reply_channel"}, 400
+    except Exception:
+        delivery["target"] = str(ticket.get("email") or ticket.get("line_user_id") or "")
+        ticket.setdefault("delivery_log", []).append(delivery)
+        save_state(data_file, state)
+        return {"error": "support_delivery_failed", "ticket": ticket}, 502
+    delivery.update({"status": "sent", "target": target})
+    ticket.setdefault("delivery_log", []).append(delivery)
+    ticket["status"] = (
+        "resolved"
+        if str(payload.get("status") or "") == "resolved"
+        else "waiting_user"
+    )
+    ticket["reply_channel"] = reply_channel
     ticket["reply"] = message[:1000]
-    ticket["replied_at"] = datetime.now().isoformat(timespec="seconds")
-    append_notification_log(state, "support_reply", ticket["line_user_id"], "sent", message, json.dumps(result, ensure_ascii=False))
+    ticket["replied_at"] = now
+    append_notification_log(state, "support_reply", target, "sent", message, json.dumps(result, ensure_ascii=False))
     save_state(data_file, state)
     return {"ticket": ticket, "result": result}, 200
 
@@ -5890,6 +9560,1195 @@ def admin_security_ready(config):
     )
     session_secret = str(config.get("ADMIN_SESSION_SECRET") or "").strip()
     return bool(password and len(session_secret) >= 32)
+
+
+def account_migration_ready(config):
+    legacy_channel = str(
+        config.get("LEGACY_LINE_LOGIN_CHANNEL_ID") or ""
+    ).strip()
+    current_channel = str(config.get("LINE_LOGIN_CHANNEL_ID") or "").strip()
+    secret = str(config.get("ACCOUNT_MIGRATION_SECRET") or "").strip()
+    return bool(
+        legacy_channel
+        and current_channel
+        and len(secret.encode("utf-8")) >= 32
+    )
+
+
+ACCOUNT_MIGRATION_TICKET_RETENTION_DAYS = 30
+ACCOUNT_MIGRATION_TICKET_MAX_PER_SOURCE = 20
+ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX = 2000
+ACCOUNT_MIGRATION_AUDIT_RETENTION_DAYS = 90
+ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX = 1000
+ACCOUNT_MIGRATION_START_WINDOW_SECONDS = 600
+ACCOUNT_MIGRATION_START_MAX_PER_WINDOW = 5
+ACCOUNT_MIGRATION_INVALID_REDEEM_WINDOW_SECONDS = 600
+ACCOUNT_MIGRATION_INVALID_REDEEM_MAX_PER_WINDOW = 30
+
+
+def _account_migration_now(now=None):
+    value = now or datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _account_migration_datetime(value):
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return _account_migration_now(parsed)
+
+
+def purge_account_migration_history(state, now=None):
+    current = _account_migration_now(now)
+    ticket_cutoff = current - timedelta(
+        days=ACCOUNT_MIGRATION_TICKET_RETENTION_DAYS
+    )
+    audit_cutoff = current - timedelta(
+        days=ACCOUNT_MIGRATION_AUDIT_RETENTION_DAYS
+    )
+    tickets = state.get("account_migration_tickets") or {}
+    active_tickets = []
+    history_tickets = []
+    for key, ticket in tickets.items():
+        if not isinstance(ticket, dict):
+            continue
+        created = _account_migration_datetime(ticket.get("created_at"))
+        expires = _account_migration_datetime(ticket.get("expires_at"))
+        status = str(ticket.get("status") or "")
+        if status == "pending" and expires and expires > current:
+            active_tickets.append((key, ticket))
+        elif created and created >= ticket_cutoff:
+            history_tickets.append((key, ticket))
+    history_tickets.sort(
+        key=lambda item: str(item[1].get("created_at") or ""),
+        reverse=True,
+    )
+    history_capacity = max(
+        0,
+        ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX - len(active_tickets),
+    )
+    # Capacity is a write/history bound, never a reason to invalidate an
+    # inherited, unused ticket that has not expired.
+    retained_tickets = active_tickets + history_tickets[:history_capacity]
+    state["account_migration_tickets"] = dict(retained_tickets)
+
+    audit = [
+        event
+        for event in (state.get("account_migration_audit") or [])
+        if isinstance(event, dict)
+        and (
+            _account_migration_datetime(event.get("created_at"))
+            and _account_migration_datetime(event.get("created_at"))
+            >= audit_cutoff
+        )
+    ][-ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX:]
+    removed = {
+        "tickets": len(tickets) - len(state["account_migration_tickets"]),
+        "audit": len(state.get("account_migration_audit") or []) - len(audit),
+    }
+    state["account_migration_audit"] = audit
+    return removed
+
+
+def account_migration_code_digest(code, secret):
+    return hmac.new(
+        str(secret or "").encode("utf-8"),
+        str(code or "").encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def validate_account_migration_ticket(state, code, secret, now=None):
+    """Return a pending ticket or a fixed safe error category.
+
+    This helper only validates ticket state. Task 4 performs consumption and
+    profile mutation together inside the atomic persistence boundary.
+    """
+    raw_code = str(code or "").strip()
+    signing_secret = str(secret or "").strip()
+    if not raw_code or not signing_secret:
+        return None, "invalid_code"
+
+    expected_digest = account_migration_code_digest(raw_code, signing_secret)
+    matched = None
+    for ticket in (state.get("account_migration_tickets") or {}).values():
+        candidate = str((ticket or {}).get("code_digest") or "")
+        if secrets.compare_digest(candidate, expected_digest):
+            matched = ticket
+
+    if not isinstance(matched, dict):
+        return None, "invalid_code"
+    status = str(matched.get("status") or "")
+    if status == "used":
+        return None, "used_code"
+    expires_at = _account_migration_datetime(matched.get("expires_at"))
+    if status == "expired" or not expires_at:
+        return None, "expired_code"
+    if _account_migration_now(now) >= expires_at:
+        return None, "expired_code"
+    if status != "pending":
+        return None, "invalid_code"
+
+    old_line_user_id = str(matched.get("old_line_user_id") or "")
+    users = state.get("users") or {}
+    aliases = state.get("account_migration_aliases") or {}
+    if old_line_user_id not in users or old_line_user_id in aliases:
+        return None, "source_missing"
+    return matched, None
+
+
+def create_account_migration_ticket(
+    data_file,
+    old_line_user_id,
+    config,
+    now=None,
+):
+    if not account_migration_ready(config):
+        return {"ok": False, "error": "migration_unavailable"}, 503
+
+    verified_old_id = str(old_line_user_id or "").strip()
+    current = _account_migration_now(now)
+    current_iso = current.isoformat(timespec="seconds")
+    ttl_seconds = int(config.get("ACCOUNT_MIGRATION_TTL_SECONDS") or 600)
+    raw_code = secrets.token_urlsafe(32)
+    ticket_id = f"amt_{secrets.token_urlsafe(12)}"
+
+    def mutate(state):
+        purge_account_migration_history(state, current)
+        users = state.get("users") or {}
+        aliases = state.get("account_migration_aliases") or {}
+        if (
+            not verified_old_id
+            or verified_old_id not in users
+            or verified_old_id in aliases
+        ):
+            return {"ok": False, "error": "account_not_found"}, 404
+        tickets = state.setdefault("account_migration_tickets", {})
+        recent_cutoff = current - timedelta(
+            seconds=ACCOUNT_MIGRATION_START_WINDOW_SECONDS
+        )
+        recent = [
+            ticket for ticket in tickets.values()
+            if isinstance(ticket, dict)
+            and ticket.get("old_line_user_id") == verified_old_id
+            and (
+                _account_migration_datetime(ticket.get("created_at"))
+                and _account_migration_datetime(ticket.get("created_at"))
+                >= recent_cutoff
+            )
+        ]
+        source_tickets = [
+            ticket for ticket in tickets.values()
+            if isinstance(ticket, dict)
+            and ticket.get("old_line_user_id") == verified_old_id
+        ]
+        if (
+            len(recent) >= ACCOUNT_MIGRATION_START_MAX_PER_WINDOW
+            or len(source_tickets) >= ACCOUNT_MIGRATION_TICKET_MAX_PER_SOURCE
+            or len(tickets) >= ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX
+        ):
+            return {"ok": False, "error": "rate_limited"}, 429
+        for ticket in tickets.values():
+            if (
+                isinstance(ticket, dict)
+                and ticket.get("old_line_user_id") == verified_old_id
+                and ticket.get("status") == "pending"
+            ):
+                ticket["status"] = "expired"
+                ticket["expires_at"] = current_iso
+        tickets[ticket_id] = {
+            "ticket_id": ticket_id,
+            "code_digest": account_migration_code_digest(
+                raw_code,
+                config.get("ACCOUNT_MIGRATION_SECRET"),
+            ),
+            "old_line_user_id": verified_old_id,
+            "created_at": current_iso,
+            "expires_at": (
+                current + timedelta(seconds=ttl_seconds)
+            ).isoformat(timespec="seconds"),
+            "used_at": "",
+            "status": "pending",
+        }
+        return {
+            "ok": True,
+            "migration_code": raw_code,
+            "expires_in": ttl_seconds,
+        }, 200
+
+    return mutate_state_atomically(data_file, mutate)
+
+
+def account_migration_ticket_status(
+    data_file,
+    old_line_user_id,
+    config,
+    now=None,
+):
+    safe_status = {
+        "ok": True,
+        "configured": account_migration_ready(config),
+        "pending": False,
+        "expires_in": 0,
+    }
+    if not safe_status["configured"]:
+        return safe_status
+
+    verified_old_id = str(old_line_user_id or "").strip()
+    state = load_state(data_file)
+    current = _account_migration_now(now)
+    remaining = 0
+    users = state.get("users") or {}
+    aliases = state.get("account_migration_aliases") or {}
+    source_exists = verified_old_id in users and verified_old_id not in aliases
+    for ticket in (state.get("account_migration_tickets") or {}).values():
+        if (
+            not isinstance(ticket, dict)
+            or ticket.get("old_line_user_id") != verified_old_id
+            or ticket.get("status") != "pending"
+        ):
+            continue
+        expires_at = _account_migration_datetime(ticket.get("expires_at"))
+        if not source_exists or not expires_at or current >= expires_at:
+            continue
+        remaining = max(remaining, int((expires_at - current).total_seconds()))
+
+    safe_status["pending"] = remaining > 0
+    safe_status["expires_in"] = remaining
+    return safe_status
+
+
+_MIGRATION_PROFILE_LIST_KEYS = {
+    "contacts": ("id", "accepted_invite_id", "invite_id"),
+    "contacts_archived": ("id", "accepted_invite_id", "invite_id"),
+    "smart_reminders": ("id",),
+    "guarding_details": ("id", "line_user_id"),
+}
+
+_MIGRATION_PREFERENCE_KEYS = {
+    "preferences",
+    "interaction_state",
+    "smart_reminder_defaults",
+    "grace_hours",
+    "reminder_time",
+    "reminder_times",
+    "checkin_mode",
+    "auto_checkin_on_open",
+    "warning_cancel_minutes",
+    "alert_channels",
+    "attach_location_on_alert",
+    "contact_capacity_reminder_enabled",
+    "daily_checkin_reminder_enabled",
+    "guardian_details_reminder_enabled",
+    "expiry_remind_opt_out",
+}
+
+_MIGRATION_ENTITLEMENT_KEYS = {
+    "plan",
+    "membership_source",
+    "trial_started_at",
+    "trial_end",
+    "trial_policy_version",
+    "trial_notice_days_sent",
+    "trial_bonus_days",
+    "payment_status",
+    "paid_until",
+    "billing_cycle",
+    "payment_provider",
+    "payment_method_last4",
+    "next_billing_date",
+    "auto_renew_requested",
+    "auto_renew_enabled",
+    "auto_renew_status",
+    "plan_expired_at",
+    "contacts_retain_until",
+}
+
+
+def _migration_value_blank(value):
+    return value is None or value == "" or value == [] or value == {}
+
+
+def _migration_timestamp(value):
+    if not value:
+        return None
+    return _account_migration_datetime(value)
+
+
+def _migration_record_timestamp(record):
+    if not isinstance(record, dict):
+        return None
+    for key in ("updated_at", "accepted_at", "created_at"):
+        parsed = _migration_timestamp(record.get(key))
+        if parsed:
+            return parsed
+    return None
+
+
+def _migration_preference_timestamp(profile, key, value):
+    if isinstance(value, dict):
+        nested = _migration_timestamp(value.get("updated_at"))
+        if nested:
+            return nested
+    return (
+        _migration_timestamp((profile or {}).get(f"{key}_updated_at"))
+        or _migration_timestamp((profile or {}).get("preferences_updated_at"))
+    )
+
+
+def _migration_choose_record(legacy, current):
+    legacy_time = _migration_record_timestamp(legacy)
+    current_time = _migration_record_timestamp(current)
+    if current_time and (not legacy_time or current_time > legacy_time):
+        return copy.deepcopy(current)
+    return copy.deepcopy(legacy)
+
+
+def _migration_stable_value(record, keys):
+    if not isinstance(record, dict):
+        return ""
+    for key in keys:
+        value = str(record.get(key) or "").strip()
+        if value:
+            return f"{key}:{value}"
+    return ""
+
+
+def _merge_migration_records(legacy_rows, current_rows, keys, prefix):
+    merged = []
+    positions = {}
+    used_ids = {
+        str(row.get("id") or "").strip()
+        for row in [*(legacy_rows or []), *(current_rows or [])]
+        if isinstance(row, dict) and str(row.get("id") or "").strip()
+    }
+    generated_index = 0
+
+    for source_name, rows in (("legacy", legacy_rows or []), ("current", current_rows or [])):
+        for row in rows:
+            if not isinstance(row, dict):
+                row = {"value": copy.deepcopy(row)}
+            else:
+                row = copy.deepcopy(row)
+            stable = _migration_stable_value(row, keys)
+            if stable and stable in positions:
+                position = positions[stable]
+                if source_name == "current":
+                    merged[position] = _migration_choose_record(
+                        merged[position],
+                        row,
+                    )
+                continue
+            if not stable:
+                generated_index += 1
+                generated = f"migration-{prefix}-{generated_index:04d}"
+                while generated in used_ids:
+                    generated_index += 1
+                    generated = f"migration-{prefix}-{generated_index:04d}"
+                row["id"] = generated
+                used_ids.add(generated)
+                stable = f"id:{generated}"
+            positions[stable] = len(merged)
+            merged.append(row)
+    return merged
+
+
+def _migration_history_date(value):
+    if isinstance(value, dict):
+        raw = (
+            value.get("date")
+            or value.get("checkin_date")
+            or value.get("checked_at")
+            or value.get("created_at")
+        )
+    else:
+        raw = value
+    text = str(raw or "").strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return text
+    return date_string_in_taipei(text)
+
+
+def _merge_migration_history(legacy_rows, current_rows):
+    by_date = {}
+    undated = []
+    for row in [*(legacy_rows or []), *(current_rows or [])]:
+        normalized = _migration_history_date(row)
+        if normalized:
+            by_date[normalized] = normalized
+        else:
+            undated.append(copy.deepcopy(row))
+    return [*sorted(by_date), *undated]
+
+
+def _merge_migration_calendar_notes(legacy_notes, current_notes):
+    if isinstance(legacy_notes, dict) or isinstance(current_notes, dict):
+        merged = copy.deepcopy(legacy_notes) if isinstance(legacy_notes, dict) else {}
+        used_ids = set()
+        for notes in (legacy_notes, current_notes):
+            for value in (notes or {}).values() if isinstance(notes, dict) else []:
+                values = value if isinstance(value, list) else [value]
+                for item in values:
+                    if isinstance(item, dict) and item.get("id"):
+                        used_ids.add(str(item["id"]))
+        generated_index = 0
+
+        def normalized_note_records(value):
+            nonlocal generated_index
+            values = value if isinstance(value, list) else [value]
+            records = []
+            for item in values:
+                if isinstance(item, dict):
+                    record = copy.deepcopy(item)
+                else:
+                    record = {"content": str(item or "")}
+                if not str(record.get("id") or "").strip():
+                    generated_index += 1
+                    generated = f"migration-calendar-note-{generated_index:04d}"
+                    while generated in used_ids:
+                        generated_index += 1
+                        generated = f"migration-calendar-note-{generated_index:04d}"
+                    record["id"] = generated
+                    used_ids.add(generated)
+                records.append(record)
+            return records
+
+        for key, current_value in (
+            current_notes.items() if isinstance(current_notes, dict) else []
+        ):
+            if key not in merged:
+                merged[key] = copy.deepcopy(current_value)
+                continue
+            combined = []
+            positions = {}
+            for record in [
+                *normalized_note_records(merged[key]),
+                *normalized_note_records(current_value),
+            ]:
+                stable = str(record["id"])
+                if stable in positions:
+                    position = positions[stable]
+                    combined[position] = _migration_choose_record(
+                        combined[position],
+                        record,
+                    )
+                    continue
+                positions[stable] = len(combined)
+                combined.append(record)
+            merged[key] = combined[0] if len(combined) == 1 else combined
+        return merged
+    return _merge_migration_records(
+        legacy_notes or [],
+        current_notes or [],
+        ("id",),
+        "calendar-note",
+    )
+
+
+def _migration_entitlement_active(profile, now):
+    plan = str((profile or {}).get("plan") or "")
+    if plan not in PLAN_RANK:
+        return False
+    if plan == "trial":
+        expires_at = _migration_timestamp((profile or {}).get("trial_end"))
+        return bool(expires_at and expires_at > now)
+    if str((profile or {}).get("payment_status") or "") != "active":
+        return False
+    expires_at = _migration_timestamp((profile or {}).get("paid_until"))
+    return expires_at is None or expires_at > now
+
+
+def _migration_entitlement_expiry(profile):
+    plan = str((profile or {}).get("plan") or "")
+    key = "trial_end" if plan == "trial" else "paid_until"
+    return _migration_timestamp((profile or {}).get(key))
+
+
+def _migration_choose_entitlement(legacy_profile, current_profile, now):
+    candidates = [
+        profile
+        for profile in (legacy_profile or {}, current_profile or {})
+        if _migration_entitlement_active(profile, now)
+    ]
+    if not candidates:
+        return legacy_profile or current_profile or {}
+
+    def entitlement_key(profile):
+        expiry = _migration_entitlement_expiry(profile)
+        expiry_score = expiry.timestamp() if expiry else float("inf")
+        return (PLAN_RANK.get(str(profile.get("plan") or ""), -1), expiry_score)
+
+    return max(candidates, key=entitlement_key)
+
+
+def _migration_location_active(location, now):
+    if not isinstance(location, dict):
+        return False
+    if not location.get("active") and not location.get("sharing"):
+        return False
+    if location.get("until_stop"):
+        return True
+    expires_at = _migration_timestamp(location.get("expires_at"))
+    return bool(expires_at and expires_at > now)
+
+
+def _merge_migration_location(legacy_location, current_location, now):
+    legacy_active = _migration_location_active(legacy_location, now)
+    current_active = _migration_location_active(current_location, now)
+    if legacy_active and current_active:
+        return _migration_choose_record(legacy_location, current_location)
+    if current_active:
+        return copy.deepcopy(current_location)
+    if legacy_active:
+        return copy.deepcopy(legacy_location)
+    return {}
+
+
+def merge_migration_profiles(old_profile, new_profile, now=None):
+    """Deterministically merge two verified Provider profiles.
+
+    Stable business identifiers drive collection deduplication. Display names
+    and other human-readable attributes are never identity keys.
+    """
+    legacy = copy.deepcopy(old_profile or {})
+    current = copy.deepcopy(new_profile or {})
+    current_now = _account_migration_now(now)
+    merged = copy.deepcopy(legacy)
+
+    for key, value in current.items():
+        if key in {
+            "line_user_id",
+            "history",
+            "calendar_notes",
+            "location",
+            "friends",
+            "guardian_group_ids",
+            "guarding_for",
+            "smart_reminder_sent_keys",
+            *_MIGRATION_PROFILE_LIST_KEYS,
+            *_MIGRATION_ENTITLEMENT_KEYS,
+            *_MIGRATION_PREFERENCE_KEYS,
+        }:
+            continue
+        if key == "display_name" and is_placeholder_display_name(value):
+            continue
+        if _migration_value_blank(value):
+            continue
+        if key in DEFAULT_PROFILE and value == DEFAULT_PROFILE.get(key):
+            continue
+        merged[key] = copy.deepcopy(value)
+
+    merged["history"] = _merge_migration_history(
+        legacy.get("history"),
+        current.get("history"),
+    )
+    for key, stable_keys in _MIGRATION_PROFILE_LIST_KEYS.items():
+        merged[key] = _merge_migration_records(
+            legacy.get(key),
+            current.get(key),
+            stable_keys,
+            key.replace("_", "-"),
+        )
+    merged["calendar_notes"] = _merge_migration_calendar_notes(
+        legacy.get("calendar_notes"),
+        current.get("calendar_notes"),
+    )
+    for key in (
+        "friends",
+        "guardian_group_ids",
+        "guarding_for",
+        "smart_reminder_sent_keys",
+    ):
+        merged[key] = list(
+            dict.fromkeys([*(legacy.get(key) or []), *(current.get(key) or [])])
+        )
+
+    for key in _MIGRATION_PREFERENCE_KEYS:
+        legacy_value = legacy.get(key)
+        current_value = current.get(key)
+        legacy_time = _migration_preference_timestamp(legacy, key, legacy_value)
+        current_time = _migration_preference_timestamp(current, key, current_value)
+        if current_time and (not legacy_time or current_time > legacy_time):
+            merged[key] = copy.deepcopy(current_value)
+        elif key in legacy:
+            merged[key] = copy.deepcopy(legacy_value)
+        elif key in current:
+            merged[key] = copy.deepcopy(current_value)
+
+    entitlement = _migration_choose_entitlement(legacy, current, current_now)
+    for key in _MIGRATION_ENTITLEMENT_KEYS:
+        if key in entitlement:
+            merged[key] = copy.deepcopy(entitlement[key])
+
+    merged["location"] = _merge_migration_location(
+        legacy.get("location"),
+        current.get("location"),
+        current_now,
+    )
+    merged["line_user_id"] = str(current.get("line_user_id") or "").strip()
+    return merged
+
+
+_MIGRATION_REFERENCE_SCALAR_FIELDS = {
+    "line_user_id",
+    "line_id",
+    "owner_line_user_id",
+    "member_line_user_id",
+    "requester_line_user_id",
+    "payer_line_user_id",
+    "recipient_line_user_id",
+    "inviter_line_user_id",
+    "contact_line_user_id",
+    "guardian_line_user_id",
+    "acceptor_line_user_id",
+    "grantee_line_user_id",
+    "accepted_by",
+    "invited_by",
+    "target",
+}
+
+_MIGRATION_REFERENCE_LIST_FIELDS = {
+    "admin_line_user_ids",
+    "member_ids_at_bind",
+    "member_line_user_ids",
+    "member_user_ids",
+    "members",
+    "friends",
+    "guarding_for",
+}
+
+_MIGRATION_TOP_LEVEL_COLLECTION_KEYS = {
+    "orders": ("order_id", "merchant_order_id", "merchant_trade_no"),
+    "payment_records": ("transaction_id", "order_id", "merchant_order_id"),
+    "payments": ("transaction_id", "order_id", "merchant_order_id"),
+    "support_tickets": ("id", "ticket_id"),
+    "privacy_requests": ("id", "request_id"),
+    "notification_logs": ("id", "log_id", "event_id"),
+    "checkin_warnings": ("id", "event_id", "log_id"),
+    "checkin_warning_logs": ("id", "event_id", "log_id"),
+    "sos_logs": ("id", "event_id", "log_id"),
+    "contact_rewards": ("id", "reward_id"),
+}
+
+_MIGRATION_INDEX_KEYS = {
+    "sos_pending",
+    "location_grants",
+    "checkin_warning_index",
+    "location_grant_index",
+}
+
+
+def _reindex_migration_record(record, old_id, new_id, migration_event_id):
+    if not isinstance(record, dict):
+        return False
+    changed = False
+    for key, value in list(record.items()):
+        if key in _MIGRATION_REFERENCE_SCALAR_FIELDS:
+            if str(value or "") == old_id:
+                record[key] = new_id
+                changed = True
+            continue
+        if key in _MIGRATION_REFERENCE_LIST_FIELDS and isinstance(value, list):
+            replaced = []
+            list_changed = False
+            for item in value:
+                if isinstance(item, dict):
+                    nested_changed = _reindex_migration_record(
+                        item,
+                        old_id,
+                        new_id,
+                        migration_event_id,
+                    )
+                    list_changed = list_changed or nested_changed
+                    replaced.append(item)
+                elif str(item or "") == old_id:
+                    replaced.append(new_id)
+                    list_changed = True
+                else:
+                    replaced.append(item)
+            if list_changed:
+                deduped = []
+                seen_scalars = set()
+                for item in replaced:
+                    if isinstance(item, dict):
+                        deduped.append(item)
+                        continue
+                    marker = str(item)
+                    if marker in seen_scalars:
+                        continue
+                    seen_scalars.add(marker)
+                    deduped.append(item)
+                record[key] = deduped
+                changed = True
+            continue
+        if isinstance(value, dict):
+            changed = (
+                _reindex_migration_record(
+                    value,
+                    old_id,
+                    new_id,
+                    migration_event_id,
+                )
+                or changed
+            )
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    changed = (
+                        _reindex_migration_record(
+                            item,
+                            old_id,
+                            new_id,
+                            migration_event_id,
+                        )
+                        or changed
+                    )
+    if changed:
+        record["migration_event_id"] = migration_event_id
+    return changed
+
+
+def _dedupe_migration_collection(rows, stable_keys, prefix, migration_event_id):
+    deduped = []
+    positions = {}
+    used_ids = {
+        str(row.get("id") or "").strip()
+        for row in rows
+        if isinstance(row, dict) and str(row.get("id") or "").strip()
+    }
+    generated_index = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            deduped.append(row)
+            continue
+        stable = _migration_stable_value(row, stable_keys)
+        if not stable:
+            generated_index += 1
+            generated = f"migration-{prefix}-{generated_index:04d}"
+            while generated in used_ids:
+                generated_index += 1
+                generated = f"migration-{prefix}-{generated_index:04d}"
+            row["id"] = generated
+            used_ids.add(generated)
+            deduped.append(row)
+            continue
+        if stable not in positions:
+            positions[stable] = len(deduped)
+            deduped.append(row)
+            continue
+
+        position = positions[stable]
+        previous = deduped[position]
+        winner = _migration_choose_record(previous, row)
+        loser = row if winner == previous else previous
+        combined = copy.deepcopy(loser)
+        combined.update(winner)
+        combined["migration_event_id"] = migration_event_id
+        deduped[position] = combined
+    return deduped
+
+
+def reindex_account_references(
+    state,
+    old_id,
+    new_id,
+    migration_event_id,
+    now=None,
+):
+    """Replace exact account references without rewriting historical prose."""
+    source_id = str(old_id or "").strip()
+    target_id = str(new_id or "").strip()
+    if not source_id or not target_id:
+        raise ValueError("missing_identity")
+    if source_id == target_id:
+        raise ValueError("same_identity")
+
+    event_id = str(migration_event_id or "").strip()
+    if not event_id:
+        raise ValueError("missing_migration_event")
+    reindexed_records = 0
+
+    for user_id, profile in (state.get("users") or {}).items():
+        if user_id in {source_id, target_id} or not isinstance(profile, dict):
+            continue
+        if _reindex_migration_record(profile, source_id, target_id, event_id):
+            reindexed_records += 1
+
+    for group in (state.get("guardian_groups") or {}).values():
+        if isinstance(group, dict) and _reindex_migration_record(
+            group,
+            source_id,
+            target_id,
+            event_id,
+        ):
+            reindexed_records += 1
+
+    for invite in (state.get("friend_invites") or {}).values():
+        if isinstance(invite, dict) and _reindex_migration_record(
+            invite,
+            source_id,
+            target_id,
+            event_id,
+        ):
+            reindexed_records += 1
+
+    for collection_key, stable_keys in _MIGRATION_TOP_LEVEL_COLLECTION_KEYS.items():
+        rows = state.get(collection_key) or []
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if _reindex_migration_record(
+                row,
+                source_id,
+                target_id,
+                event_id,
+            ):
+                reindexed_records += 1
+        state[collection_key] = _dedupe_migration_collection(
+            rows,
+            stable_keys,
+            collection_key.replace("_", "-"),
+            event_id,
+        )
+
+    for index_key in _MIGRATION_INDEX_KEYS:
+        index = state.get(index_key) or {}
+        if not isinstance(index, dict):
+            continue
+        was_rekeyed = source_id in index
+        if source_id in index:
+            source_record = index.pop(source_id)
+            if target_id in index:
+                index[target_id] = _migration_choose_record(
+                    source_record,
+                    index[target_id],
+                )
+            else:
+                index[target_id] = source_record
+        record = index.get(target_id)
+        if isinstance(record, dict):
+            changed = _reindex_migration_record(
+                record,
+                source_id,
+                target_id,
+                event_id,
+            )
+            if changed or was_rekeyed:
+                record["migration_event_id"] = event_id
+                reindexed_records += 1
+        state[index_key] = index
+
+    return {"ok": True, "reindexed_records": reindexed_records}
+
+
+def create_account_migration_alias(state, old_id, new_id, now=None):
+    source_id = str(old_id or "").strip()
+    target_id = str(new_id or "").strip()
+    if not source_id or not target_id:
+        raise ValueError("missing_identity")
+    if source_id == target_id:
+        raise ValueError("same_identity")
+    current_iso = _account_migration_now(now).isoformat(timespec="seconds")
+    state.setdefault("account_migration_aliases", {})[source_id] = {
+        "target_line_user_id": target_id,
+        "created_at": current_iso,
+        "status": "disabled",
+    }
+    return state["account_migration_aliases"][source_id]
+
+
+def _account_migration_record_references(record, line_user_id):
+    if not isinstance(record, dict):
+        return False
+    return any(
+        str(record.get(key) or "") == line_user_id
+        for key in _MIGRATION_REFERENCE_SCALAR_FIELDS
+    )
+
+
+def _account_migration_safe_counts(state, profile, line_user_id):
+    def owned_count(collection_key):
+        return sum(
+            1
+            for record in (state.get(collection_key) or [])
+            if _account_migration_record_references(record, line_user_id)
+        )
+
+    return {
+        "checkins": len(profile.get("history") or []),
+        "contacts": len(profile.get("contacts") or []),
+        "groups": len(profile.get("guardian_group_ids") or []),
+        "reminders": len(profile.get("smart_reminders") or []),
+        "orders": owned_count("orders"),
+        "requests": (
+            owned_count("support_tickets")
+            + owned_count("privacy_requests")
+        ),
+    }
+
+
+def _append_account_migration_failure_audit(state, category, now):
+    purge_account_migration_history(state, now)
+    state.setdefault("account_migration_audit", []).append({
+        "event_id": f"ame_{secrets.token_urlsafe(12)}",
+        "status": "failed",
+        "created_at": now.isoformat(timespec="seconds"),
+        "failure_category": str(category),
+        "counts": {
+            "checkins": 0,
+            "contacts": 0,
+            "groups": 0,
+            "reminders": 0,
+            "orders": 0,
+            "requests": 0,
+        },
+    })
+    state["account_migration_audit"] = state["account_migration_audit"][
+        -ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX:
+    ]
+
+
+def _account_migration_snapshot(
+    state,
+    ticket,
+    old_line_user_id,
+    new_line_user_id,
+    event_id,
+    now,
+):
+    users = state.get("users") or {}
+    affected_users = {}
+    for user_id, profile in users.items():
+        if (
+            user_id in {old_line_user_id, new_line_user_id}
+            or not isinstance(profile, dict)
+        ):
+            continue
+        reindexed_probe = copy.deepcopy(profile)
+        if _reindex_migration_record(
+            reindexed_probe,
+            old_line_user_id,
+            new_line_user_id,
+            event_id,
+        ):
+            affected_users[user_id] = copy.deepcopy(profile)
+    affected_keys = {
+        "guardian_groups",
+        "friend_invites",
+        "account_migration_aliases",
+        *_MIGRATION_TOP_LEVEL_COLLECTION_KEYS,
+        *_MIGRATION_INDEX_KEYS,
+    }
+    snapshot_id = f"ams_{secrets.token_urlsafe(12)}"
+    return snapshot_id, {
+        "snapshot_id": snapshot_id,
+        "event_id": event_id,
+        "created_at": now.isoformat(timespec="seconds"),
+        "purge_after": (now + timedelta(days=30)).isoformat(timespec="seconds"),
+        "old_profile": copy.deepcopy(users.get(old_line_user_id)),
+        "new_profile": (
+            copy.deepcopy(users.get(new_line_user_id))
+            if new_line_user_id in users
+            else None
+        ),
+        "migration_ticket": copy.deepcopy(ticket),
+        "affected_users": affected_users,
+        "affected_top_level_records": {
+            key: copy.deepcopy(state.get(key))
+            for key in sorted(affected_keys)
+            if key in state
+        },
+    }
+
+
+def redeem_account_migration_ticket(
+    data_file,
+    code,
+    new_line_user_id,
+    config,
+    now=None,
+):
+    if not account_migration_ready(config):
+        return {"ok": False, "error": "migration_unavailable"}, 503
+
+    current = _account_migration_now(now)
+    verified_new_id = str(new_line_user_id or "").strip()
+    raw_code = str(code or "").strip()
+
+    def mutate(state):
+        purge_account_migration_history(state, current)
+        invalid_cutoff = current - timedelta(
+            seconds=ACCOUNT_MIGRATION_INVALID_REDEEM_WINDOW_SECONDS
+        )
+        invalid_recent = sum(
+            1
+            for event in (state.get("account_migration_audit") or [])
+            if isinstance(event, dict)
+            and event.get("failure_category") == "invalid_code"
+            and (
+                _account_migration_datetime(event.get("created_at"))
+                and _account_migration_datetime(event.get("created_at"))
+                >= invalid_cutoff
+            )
+        )
+        if invalid_recent >= ACCOUNT_MIGRATION_INVALID_REDEEM_MAX_PER_WINDOW:
+            return {"ok": False, "error": "rate_limited"}, 429
+        ticket, ticket_error = validate_account_migration_ticket(
+            state,
+            raw_code,
+            config.get("ACCOUNT_MIGRATION_SECRET"),
+            now=current,
+        )
+        error_statuses = {
+            "invalid_code": 404,
+            "expired_code": 410,
+            "used_code": 409,
+            "source_missing": 404,
+        }
+        if ticket_error:
+            _append_account_migration_failure_audit(
+                state,
+                ticket_error,
+                current,
+            )
+            return (
+                {"ok": False, "error": ticket_error},
+                error_statuses.get(ticket_error, 409),
+            )
+
+        old_line_user_id = str(ticket.get("old_line_user_id") or "").strip()
+        aliases = state.get("account_migration_aliases") or {}
+        if (
+            not verified_new_id
+            or old_line_user_id == verified_new_id
+            or verified_new_id in aliases
+        ):
+            _append_account_migration_failure_audit(
+                state,
+                "unsafe_conflict",
+                current,
+            )
+            return {"ok": False, "error": "unsafe_conflict"}, 409
+
+        users = state.setdefault("users", {})
+        old_profile = users.get(old_line_user_id)
+        if not isinstance(old_profile, dict):
+            _append_account_migration_failure_audit(
+                state,
+                "source_missing",
+                current,
+            )
+            return {"ok": False, "error": "source_missing"}, 404
+        new_profile = users.get(verified_new_id)
+        if new_profile is not None and not isinstance(new_profile, dict):
+            _append_account_migration_failure_audit(
+                state,
+                "unsafe_conflict",
+                current,
+            )
+            return {"ok": False, "error": "unsafe_conflict"}, 409
+
+        event_id = f"ame_{secrets.token_urlsafe(12)}"
+        snapshot_id, snapshot = _account_migration_snapshot(
+            state,
+            ticket,
+            old_line_user_id,
+            verified_new_id,
+            event_id,
+            current,
+        )
+        state.setdefault("account_migration_snapshots", {})[snapshot_id] = snapshot
+
+        merged_profile = merge_migration_profiles(
+            old_profile,
+            new_profile or {
+                **DEFAULT_PROFILE,
+                "line_user_id": verified_new_id,
+            },
+            now=current,
+        )
+        reindex_account_references(
+            state,
+            old_line_user_id,
+            verified_new_id,
+            event_id,
+            now=current,
+        )
+        _reindex_migration_record(
+            merged_profile,
+            old_line_user_id,
+            verified_new_id,
+            event_id,
+        )
+        users[verified_new_id] = merged_profile
+        users.pop(old_line_user_id, None)
+        create_account_migration_alias(
+            state,
+            old_line_user_id,
+            verified_new_id,
+            now=current,
+        )
+
+        ticket["status"] = "used"
+        ticket["used_at"] = current.isoformat(timespec="seconds")
+        ticket["migration_event_id"] = event_id
+        counts = _account_migration_safe_counts(
+            state,
+            merged_profile,
+            verified_new_id,
+        )
+        state.setdefault("account_migration_audit", []).append({
+            "event_id": event_id,
+            "status": "success",
+            "created_at": current.isoformat(timespec="seconds"),
+            "failure_category": "",
+            "counts": counts,
+        })
+        return {
+            "ok": True,
+            "status": "migrated",
+            "counts": counts,
+        }, 200
+
+    try:
+        return mutate_state_atomically(data_file, mutate)
+    except Exception:
+        try:
+            mutate_state_atomically(
+                data_file,
+                lambda state: _append_account_migration_failure_audit(
+                    state,
+                    "migration_failed",
+                    current,
+                ),
+            )
+        except Exception:
+            pass
+        return {"ok": False, "error": "migration_failed"}, 500
+
+
+def purge_account_migration_snapshots(state, now=None):
+    current = _account_migration_now(now)
+    snapshots = state.get("account_migration_snapshots") or {}
+    retained = {}
+    removed = 0
+    for snapshot_id, snapshot in snapshots.items():
+        purge_after = _account_migration_datetime(
+            (snapshot or {}).get("purge_after")
+            if isinstance(snapshot, dict)
+            else None
+        )
+        if purge_after and purge_after <= current:
+            removed += 1
+            continue
+        retained[snapshot_id] = snapshot
+    state["account_migration_snapshots"] = retained
+    return removed
 
 
 def admin_password_matches(config, candidate):
@@ -6756,6 +11615,25 @@ def admin_summary(data_file, config=None, now=None):
         key=lambda item: (-item["revenue"], -item["members"], item["county"]),
     )
     persist = persistence_info(data_file)
+    guardian_invites = []
+    for row in reversed((state.get("guardian_invites") or [])[-100:]):
+        if not isinstance(row, dict):
+            continue
+        guardian_invites.append({
+            "id": row.get("id") or "",
+            "inviter_line_user_id": row.get("inviter_line_user_id") or "",
+            "display_name": row.get("display_name") or "",
+            "relationship": row.get("relationship") or "",
+            "status": row.get("status") or "",
+            "created_at": row.get("created_at") or "",
+            "expires_at": row.get("expires_at") or "",
+            "accepted_at": row.get("accepted_at") or "",
+            "invitee_line_user_id": row.get("invitee_line_user_id") or "",
+        })
+    quota = int((config or {}).get("LINE_MONTHLY_MESSAGE_QUOTA") or os.environ.get("LINE_MONTHLY_MESSAGE_QUOTA") or 200)
+    line_usage = monthly_line_message_usage(
+        state, status_now.strftime("%Y-%m"), quota, status_now
+    )
     return {
         "total_users": len(users),
         "overdue_users": sum(1 for user in users if user["is_overdue"]),
@@ -6765,6 +11643,11 @@ def admin_summary(data_file, config=None, now=None):
         "guardian_groups": guardian_groups,
         "bound_guardian_total": sum(int(user.get("bound_guardian_count") or 0) for user in users),
         "invite_edges": list(reversed(invite_edges[-100:])),
+        "guardian_invites": guardian_invites,
+        "guardian_invite_counts": {
+            status: sum(1 for row in guardian_invites if row.get("status") == status)
+            for status in ("pending", "accepted", "expired")
+        },
         "orders": orders,
         "paid_order_count": len(paid_orders),
         "paid_revenue": sum(int(order.get("amount") or 0) for order in paid_orders),
@@ -6773,13 +11656,208 @@ def admin_summary(data_file, config=None, now=None):
         "users": users,
         "contact_rewards": list(reversed(state.get("contact_rewards", [])[-20:])),
         "notification_logs": list(reversed(state.get("notification_logs", [])[-20:])),
+        "line_message_usage": line_usage,
         "display_names_hydrated": hydrated,
         "persistence": persist,
     }
 
 
+_MIGRATION_ADMIN_COUNT_KEYS = (
+    "checkins",
+    "contacts",
+    "groups",
+    "reminders",
+    "orders",
+    "requests",
+)
+_MIGRATION_ADMIN_FAILURE_CATEGORIES = {
+    "",
+    "invalid_code",
+    "expired_code",
+    "used_code",
+    "source_missing",
+    "unsafe_conflict",
+    "migration_failed",
+}
+
+
+def admin_account_migrations(data_file, config, now=None):
+    """Return a read-only, allowlisted operational migration summary."""
+    state = load_state(data_file)
+    current = _account_migration_now(now)
+    audit = state.get("account_migration_audit") or []
+    successes = sum(
+        1
+        for event in audit
+        if isinstance(event, dict) and event.get("status") == "success"
+    )
+    failures = sum(
+        1
+        for event in audit
+        if isinstance(event, dict) and event.get("status") == "failed"
+    )
+    pending = sum(
+        1
+        for ticket in (state.get("account_migration_tickets") or {}).values()
+        if (
+            isinstance(ticket, dict)
+            and ticket.get("status") == "pending"
+            and (
+                _account_migration_datetime(ticket.get("expires_at"))
+                and current
+                < _account_migration_datetime(ticket.get("expires_at"))
+            )
+        )
+    )
+    latest_events = []
+    for event in reversed(audit[-10:]):
+        if not isinstance(event, dict):
+            continue
+        status = (
+            event.get("status")
+            if event.get("status") in {"success", "failed"}
+            else "failed"
+        )
+        failure_category = str(event.get("failure_category") or "")
+        if failure_category not in _MIGRATION_ADMIN_FAILURE_CATEGORIES:
+            failure_category = "other"
+        created_at = _account_migration_datetime(event.get("created_at"))
+        raw_counts = (
+            event.get("counts")
+            if isinstance(event.get("counts"), dict)
+            else {}
+        )
+        counts = {}
+        for key in _MIGRATION_ADMIN_COUNT_KEYS:
+            try:
+                counts[key] = max(0, int(raw_counts.get(key) or 0))
+            except (TypeError, ValueError):
+                counts[key] = 0
+        latest_events.append({
+            "status": status,
+            "created_at": (
+                created_at.isoformat(timespec="seconds")
+                if created_at
+                else ""
+            ),
+            "failure_category": failure_category,
+            "counts": counts,
+        })
+    return {
+        "configured": account_migration_ready(config),
+        "totals": {
+            "total": successes + failures + pending,
+            "success": successes,
+            "failed": failures,
+            "pending": pending,
+        },
+        "latest_events": latest_events,
+    }
+
+
 def backup_root(data_file):
     return Path(data_file).parent / "backups"
+
+
+def _r2_backup_key(raw):
+    try:
+        key = base64.urlsafe_b64decode(str(raw).encode())
+    except Exception:
+        key = b""
+    return key if len(key) == 32 else None
+
+
+def _default_r2_uploader(bucket, object_key, body, content_type, metadata, config):
+    import boto3
+
+    client = boto3.client(
+        "s3",
+        endpoint_url=config.get("R2_ENDPOINT"),
+        aws_access_key_id=config.get("R2_ACCESS_KEY_ID"),
+        aws_secret_access_key=config.get("R2_SECRET_ACCESS_KEY"),
+        region_name="auto",
+    )
+    return client.put_object(
+        Bucket=bucket,
+        Key=object_key,
+        Body=body,
+        ContentType=content_type,
+        Metadata=metadata,
+    )
+
+
+def create_r2_encrypted_backup(config):
+    bucket = str(config.get("R2_BUCKET") or "").strip()
+    key = _r2_backup_key(config.get("R2_BACKUP_ENCRYPTION_KEY") or "")
+    uploader = config.get("R2_UPLOADER") or _default_r2_uploader
+    if not bucket or key is None or AES is None:
+        return {"error": "r2_backup_not_configured"}, 503
+    if uploader is _default_r2_uploader and not all(
+        str(config.get(name) or "").strip()
+        for name in ("R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY")
+    ):
+        return {"error": "r2_backup_not_configured"}, 503
+    state = load_state(config["DATA_FILE"])
+    created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    backup_id = (
+        f"r2-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-"
+        f"{secrets.token_hex(3)}"
+    )
+    snapshot = {
+        key_name: value
+        for key_name, value in state.items()
+        if key_name not in {"backup_exports", "r2_backup_exports"}
+    }
+    plaintext = json.dumps(
+        {"backup_id": backup_id, "created_at": created_at, "snapshot": snapshot},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode()
+    cipher = AES.new(key, AES.MODE_GCM)
+    ciphertext, tag = cipher.encrypt_and_digest(plaintext)
+    envelope = json.dumps(
+        {
+            "version": 1,
+            "algorithm": "AES-256-GCM",
+            "nonce": base64.b64encode(cipher.nonce).decode(),
+            "tag": base64.b64encode(tag).decode(),
+            "ciphertext": base64.b64encode(ciphertext).decode(),
+        },
+        separators=(",", ":"),
+    ).encode()
+    object_key = f"alive-checkin/{created_at[:10]}/{backup_id}.json.aesgcm"
+    metadata = {
+        "encryption": "AES-256-GCM",
+        "backup-id": backup_id,
+        "sha256": hashlib.sha256(envelope).hexdigest(),
+    }
+    try:
+        result = uploader(
+            bucket,
+            object_key,
+            envelope,
+            "application/octet-stream",
+            metadata,
+            config,
+        )
+    except Exception:
+        return {"error": "r2_backup_upload_failed"}, 502
+    etag = str((result or {}).get("etag") or (result or {}).get("ETag") or "")
+    etag = etag.strip('"')
+    backup = {
+        "id": backup_id,
+        "created_at": created_at,
+        "bucket": bucket,
+        "object_key": object_key,
+        "etag": etag,
+        "sha256": metadata["sha256"],
+        "encryption": metadata["encryption"],
+        "user_count": len(snapshot.get("users", {})),
+    }
+    state.setdefault("r2_backup_exports", []).append(backup)
+    state["r2_backup_exports"] = state["r2_backup_exports"][-100:]
+    save_state(config["DATA_FILE"], state)
+    return {"backup": backup}, 201
 
 
 def create_admin_backup(data_file):
@@ -6871,7 +11949,16 @@ def build_sos_group_member_mentions_message(alert_text: str, member_user_ids=Non
     }
 
 
-def push_sos_to_guardian_group(token, group_id, alert_text, *, sender=None, member_ids=None):
+def _send_line_with_retry_key(sender, token, target, message, retry_key):
+    """Use LINE retry keys in production while keeping simple injected test senders."""
+    if sender is line_push_message:
+        return sender(token, target, message, retry_key=retry_key)
+    return sender(token, target, message)
+
+
+def push_sos_to_guardian_group(
+    token, group_id, alert_text, *, sender=None, member_ids=None, retry_key=None
+):
     """推送群組 SOS，優先 @all；失敗再 mention 已知成員；最後純文字加 @全體 前綴。"""
     push = sender or line_push_message
     gid = str(group_id or "").strip()
@@ -6879,24 +11966,37 @@ def push_sos_to_guardian_group(token, group_id, alert_text, *, sender=None, memb
         raise ValueError("missing group_id for SOS group push")
     primary = build_sos_group_mention_message(alert_text)
     try:
-        result = push(token, gid, primary)
+        result = _send_line_with_retry_key(
+            push, token, gid, primary,
+            _line_retry_key(f"{retry_key}:all") if retry_key else None,
+        )
         return result, "all", primary
-    except Exception:
+    except Exception as exc:
+        if classify_push_exception(exc).kind != "message":
+            raise
         fallback_ids = list(member_ids or [])
         if not fallback_ids:
             fallback_ids = get_group_member_ids(token, gid) or []
         secondary = build_sos_group_member_mentions_message(alert_text, fallback_ids)
         try:
-            result = push(token, gid, secondary)
+            result = _send_line_with_retry_key(
+                push, token, gid, secondary,
+                _line_retry_key(f"{retry_key}:members") if retry_key else None,
+            )
             mode = "members" if isinstance(secondary, dict) else "text"
             return result, mode, secondary
-        except Exception:
+        except Exception as exc:
+            if classify_push_exception(exc).kind != "message":
+                raise
             plain = "🚨【@全體 緊急SOS】\n" + str(alert_text or "").strip()
-            result = push(token, gid, plain)
+            result = _send_line_with_retry_key(
+                push, token, gid, plain,
+                _line_retry_key(f"{retry_key}:text") if retry_key else None,
+            )
             return result, "text", plain
 
 
-def line_push_message(token, line_user_id, message):
+def line_push_message(token, line_user_id, message, *, retry_key=None):
     """推訊息給單一 LINE 用戶。
 
     message 可以是:
@@ -6914,19 +12014,31 @@ def line_push_message(token, line_user_id, message):
         {"to": to_id, "messages": [msg_obj]},
         ensure_ascii=False,
     ).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json; charset=UTF-8",
+        "Authorization": f"Bearer {token}",
+    }
+    if retry_key:
+        headers["X-Line-Retry-Key"] = str(retry_key)
     req = urllib.request.Request(
         "https://api.line.me/v2/bot/message/push",
         data=body,
-        headers={
-            "Content-Type": "application/json; charset=UTF-8",
-            "Authorization": f"Bearer {token}",
-        },
+        headers=headers,
         method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as res:
             return {"ok": 200 <= res.status < 300, "status": res.status}
     except urllib.error.HTTPError as exc:
+        if exc.code == 409 and exc.headers.get("X-Line-Accepted-Request-Id"):
+            return {
+                "ok": True,
+                "status": 409,
+                "idempotent_replay": True,
+                "accepted_request_id": exc.headers.get(
+                    "X-Line-Accepted-Request-Id"
+                ),
+            }
         err_body = ""
         try:
             err_body = exc.read().decode("utf-8", errors="replace")[:500]
@@ -6961,6 +12073,158 @@ def append_notification_log(state, kind, line_user_id, status, message, detail=N
     state["notification_logs"] = logs[-100:]
 
 
+LINE_MESSAGE_USAGE_CATEGORIES = {
+    "binding",
+    "checkin",
+    "overdue",
+    "sos",
+    "sos_cancel",
+    "smart_reminder",
+    "guardian_summary",
+}
+
+
+def record_line_message_usage(
+    state: dict,
+    *,
+    category: str,
+    owner_line_user_id: str,
+    recipient_count: int,
+    event_id: str,
+    sent_at: datetime,
+) -> dict:
+    """Idempotently record delivered LINE recipient units."""
+    category = str(category or "").strip()
+    if category not in LINE_MESSAGE_USAGE_CATEGORIES:
+        raise ValueError("invalid LINE message usage category")
+    units = max(0, int(recipient_count or 0))
+    if units <= 0:
+        return {"recorded": False, "units": 0}
+    owner = str(owner_line_user_id or "").strip()
+    event_id = str(event_id or "").strip()
+    if not owner or not event_id:
+        raise ValueError("owner_line_user_id and event_id are required")
+    ledger = state.setdefault("line_message_usage", [])
+    key = f"{category}:{event_id}"
+    existing = next((row for row in ledger if row.get("key") == key), None)
+    if existing:
+        return {**existing, "recorded": False, "idempotent": True}
+    row = {
+        "key": key,
+        "category": category,
+        "owner_line_user_id": owner,
+        "recipient_count": units,
+        "units": units,
+        "event_id": event_id,
+        "sent_at": sent_at.isoformat(timespec="seconds"),
+    }
+    ledger.append(row)
+    state["line_message_usage"] = ledger[-10000:]
+    return {**row, "recorded": True, "idempotent": False}
+
+
+def line_push_budget_decision(
+    state: dict,
+    *,
+    owner_line_user_id: str,
+    requested_units: int,
+    now: datetime,
+    monthly_hard_cap: int,
+    member_daily_hard_cap: int,
+    emergency: bool = False,
+) -> dict:
+    """Apply pre-send hard caps while retaining one primary SOS delivery."""
+    owner = str(owner_line_user_id or "").strip()
+    requested = max(0, int(requested_units or 0))
+    monthly_cap = max(0, int(monthly_hard_cap or 0))
+    daily_cap = max(0, int(member_daily_hard_cap or 0))
+    month_prefix = now.strftime("%Y-%m-")
+    day_prefix = now.strftime("%Y-%m-%d")
+    rows = state.get("line_message_usage") or []
+    monthly_used = sum(
+        max(0, int(row.get("units") or row.get("recipient_count") or 0))
+        for row in rows
+        if str(row.get("sent_at") or "").startswith(month_prefix)
+    )
+    member_daily_used = sum(
+        max(0, int(row.get("units") or row.get("recipient_count") or 0))
+        for row in rows
+        if str(row.get("owner_line_user_id") or "") == owner
+        and str(row.get("sent_at") or "").startswith(day_prefix)
+    )
+    monthly_remaining = max(0, monthly_cap - monthly_used)
+    daily_remaining = max(0, daily_cap - member_daily_used)
+    allowed_units = min(requested, monthly_remaining, daily_remaining)
+    reason = None
+    if allowed_units < requested:
+        reason = (
+            "monthly_hard_cap"
+            if monthly_remaining <= daily_remaining
+            else "member_daily_hard_cap"
+        )
+    if emergency and requested > 0 and allowed_units < 1:
+        allowed_units = 1
+        reason = "emergency_primary_only"
+    return {
+        "allowed": allowed_units > 0 or requested == 0,
+        "reason": reason,
+        "requested_units": requested,
+        "allowed_units": allowed_units,
+        "monthly_used": monthly_used,
+        "monthly_hard_cap": monthly_cap,
+        "member_daily_used": member_daily_used,
+        "member_daily_hard_cap": daily_cap,
+    }
+
+
+def monthly_line_message_usage(state: dict, year_month: str, quota: int, now: datetime) -> dict:
+    """Aggregate delivered recipient units for the requested calendar month."""
+    category_totals = {key: 0 for key in sorted(LINE_MESSAGE_USAGE_CATEGORIES)}
+    member_map = {}
+    rows = []
+    for row in state.get("line_message_usage") or []:
+        if not str(row.get("sent_at") or "").startswith(f"{year_month}-"):
+            continue
+        units = max(0, int(row.get("units") or row.get("recipient_count") or 0))
+        if units <= 0:
+            continue
+        rows.append(row)
+        category = str(row.get("category") or "")
+        if category in category_totals:
+            category_totals[category] += units
+        owner = str(row.get("owner_line_user_id") or "")
+        member_map[owner] = member_map.get(owner, 0) + units
+    used = sum(category_totals.values())
+    try:
+        month_days = calendar.monthrange(now.year, now.month)[1]
+    except Exception:
+        month_days = 30
+    elapsed_days = max(1, now.day)
+    projected = int(math.ceil(used * month_days / elapsed_days))
+    quota = max(0, int(quota or 0))
+    ratio = (used / quota) if quota else 0
+    alert = "critical_90" if quota and ratio >= 0.9 else (
+        "warning_70" if quota and ratio >= 0.7 else "normal"
+    )
+    members = [
+        {"line_user_id": uid[:6] + "..." + uid[-4:] if len(uid) > 10 else uid, "units": units}
+        for uid, units in sorted(member_map.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    return {
+        "year_month": year_month,
+        "quota": quota,
+        "used_units": used,
+        "remaining_units": max(0, quota - used) if quota else None,
+        "usage_percent": round(ratio * 100, 1) if quota else None,
+        "projected_units": projected,
+        "alert_level": alert,
+        "category_totals": category_totals,
+        "member_totals": members,
+        "false_alarm_units": category_totals["sos_cancel"],
+        "records": len(rows),
+    }
+
+
 def _clear_push_delivery_failure(recipient, delivery_key):
     attempts = dict(recipient.get("push_delivery_attempts") or {})
     attempts.pop(delivery_key, None)
@@ -6968,6 +12232,24 @@ def _clear_push_delivery_failure(recipient, delivery_key):
         recipient["push_delivery_attempts"] = attempts
     else:
         recipient.pop("push_delivery_attempts", None)
+
+
+def _record_launch_delivery(state, delivery_key, kind, target, status):
+    ledger = state.setdefault("launch_delivery_events", {})
+    ledger_key = f"{kind}:{target}:{delivery_key}"
+    event = ledger.setdefault(ledger_key, {
+        "kind": str(kind),
+        "target": str(target),
+        "expected": True,
+        "sent_count": 0,
+        "failed": False,
+    })
+    if status == "sent":
+        event["sent_count"] = int(event.get("sent_count") or 0) + 1
+    elif status == "failed":
+        event["failed"] = True
+    event["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    return event
 
 
 def _record_scheduled_push_failure(
@@ -6981,6 +12263,9 @@ def _record_scheduled_push_failure(
     now,
 ):
     failure = record_push_failure(recipient, delivery_key, exc, now)
+    _record_launch_delivery(
+        state, delivery_key, kind, line_user_id, "failed"
+    )
     append_notification_log(
         state,
         kind,
@@ -7018,6 +12303,9 @@ def send_due_reminders(config):
         profile = state.get("users", {}).get(user["line_user_id"])
         if not profile:
             continue
+        if profile.get("membership_paused") or not membership_access_active(profile, now):
+            skipped += 1
+            continue
         if profile.get("last_overdue_alert_date") == today:
             skipped += 1
             continue
@@ -7028,6 +12316,9 @@ def send_due_reminders(config):
             location_link = f"\n最後位置：https://www.google.com/maps?q={location['latitude']},{location['longitude']}"
         message = f"❤️ 今天一切都好嗎？\n點一下「我平安」，讓家人放心。{location_link}"
         delivery_key = f"overdue:{today}"
+        _record_launch_delivery(
+            state, delivery_key, "overdue", user["line_user_id"], "expected"
+        )
         if profile.get("last_overdue_member_alert_date") == today:
             skipped += 1
         elif not push_attempt_allowed(profile, delivery_key):
@@ -7036,6 +12327,9 @@ def send_due_reminders(config):
             try:
                 result = sender(token, user["line_user_id"], message)
                 _clear_push_delivery_failure(profile, delivery_key)
+                _record_launch_delivery(
+                    state, delivery_key, "overdue", user["line_user_id"], "sent"
+                )
                 profile["last_overdue_member_alert_date"] = today
                 append_notification_log(state, "overdue", user["line_user_id"], "sent", message, json.dumps(result, ensure_ascii=False))
                 sent += 1
@@ -7063,7 +12357,7 @@ def send_due_reminders(config):
             f"【需要幫忙】{profile.get('display_name') or '家人'} 超過時間尚未回報平安，請協助確認是否一切都好。"
             f"{location_link}"
         )
-        rules = plan_rules(profile)
+        rules = plan_rules(profile, now)
         notify_private = should_notify_private_guardians(state, profile)
         if notify_private:
             alert_limit = int(rules.get("core_guardian_alert_limit") or 1)
@@ -7203,23 +12497,33 @@ def send_guardian_group_daily_summaries(config):
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
     now = current_app_time(config)
     today = now.strftime("%Y-%m-%d")
-    # 預設 21:00 後才推群組摘要，避免白天洗版
-    if now.hour < 21:
-        return {"sent": 0, "skipped": 0, "deferred_until": "21:00", "date": today}, 200
-
     users = state.get("users") or {}
     groups = state.get("guardian_groups") or {}
     sent = 0
     skipped = 0
     results = []
     system_error = False
+    deferred = 0
+    member_fetcher = config.get("GROUP_MEMBER_IDS_FETCHER") or get_group_member_ids
     for group_id, group in list(groups.items()):
         if not isinstance(group, dict) or group.get("status") != "active":
             skipped += 1
             continue
+        owner = users.get(str(group.get("owner_line_user_id") or "").strip()) or {}
+        if (
+            not guardian_group_entitlement_active(owner, now)
+        ):
+            skipped += 1
+            results.append({"group_id": group_id, "status": "owner_not_eligible"})
+            continue
         prefs = normalize_guardian_group_preferences(group.get("preferences"))
         if not prefs.get("daily_admin_summary"):
             skipped += 1
+            continue
+        summary_time = str(prefs.get("daily_summary_time") or "21:00")
+        current_hm = now.strftime("%H:%M")
+        if current_hm < summary_time:
+            deferred += 1
             continue
         if group.get("last_daily_summary_date") == today:
             skipped += 1
@@ -7228,19 +12532,107 @@ def send_guardian_group_daily_summaries(config):
         if not push_attempt_allowed(group, delivery_key):
             skipped += 1
             continue
-        owner_id = str(group.get("owner_line_user_id") or "").strip()
-        owner = users.get(owner_id) or {}
-        member_ids = [owner_id] if owner_id else []
-        for uid in group.get("member_ids_at_bind") or []:
-            if uid not in member_ids:
-                member_ids.append(uid)
+        claim_result = mutate_state_atomically(
+            config["DATA_FILE"],
+            lambda current_state: _claim_guardian_group_summary(
+                current_state, group_id, today, now
+            ),
+        )
+        if not claim_result.get("claimed"):
+            skipped += 1
+            results.append({"group_id": group_id, "status": "already_claimed"})
+            continue
+        claim_token = claim_result["claim_token"]
+        try:
+            current_ids = None
+            member_error = None
+            for _attempt in range(3):
+                try:
+                    current_ids = member_fetcher(token, group_id)
+                    if current_ids is not None:
+                        member_error = None
+                        break
+                    member_error = RuntimeError("LINE member list unavailable")
+                except Exception as exc:
+                    member_error = exc
+            if current_ids is None:
+                mutate_state_atomically(
+                    config["DATA_FILE"],
+                    lambda current_state: _finish_guardian_group_summary(
+                        current_state,
+                        group_id,
+                        today,
+                        now,
+                        claim_token=claim_token,
+                        release_only=True,
+                        audit_kind="guardian_group_member_refresh",
+                        audit_status="failed",
+                        audit_detail=str(member_error or "member refresh failed")[:400],
+                    ),
+                )
+                skipped += 1
+                results.append({
+                    "group_id": group_id,
+                    "status": "member_refresh_failed",
+                    "error": str(member_error or "")[:400],
+                })
+                continue
+        except Exception:
+            mutate_state_atomically(
+                config["DATA_FILE"],
+                lambda current_state: _finish_guardian_group_summary(
+                    current_state,
+                    group_id,
+                    today,
+                    now,
+                    claim_token=claim_token,
+                    release_only=True,
+                ),
+            )
+            raise
+        member_ids = list(dict.fromkeys(
+            str(uid or "").strip() for uid in current_ids if str(uid or "").strip()
+        ))
+        prepared = mutate_state_atomically(
+            config["DATA_FILE"],
+            lambda current_state: _prepare_guardian_group_summary(
+                current_state,
+                group_id,
+                today,
+                now,
+                claim_token,
+                member_ids,
+            ),
+        )
+        eligible_members = prepared.get("eligible_members") or []
+        if not prepared.get("ready"):
+            skipped += 1
+            results.append({
+                "group_id": group_id,
+                "status": prepared.get("reason") or "no_longer_eligible",
+            })
+            continue
+        if not eligible_members:
+            mutate_state_atomically(
+                config["DATA_FILE"],
+                lambda current_state: _finish_guardian_group_summary(
+                    current_state,
+                    group_id,
+                    today,
+                    now,
+                    claim_token=claim_token,
+                    release_only=True,
+                    member_ids=member_ids,
+                ),
+            )
+            skipped += 1
+            results.append({"group_id": group_id, "status": "no_eligible_members"})
+            continue
         checked = []
         unchecked = []
-        for uid in member_ids:
-            if not uid:
-                continue
-            profile = users.get(uid) or {}
-            name = profile.get("display_name") or profile.get("name") or "LINE 成員"
+        for member in eligible_members:
+            profile = member["profile"]
+            name = member["name"]
             (checked if _member_checked_today(profile, today) else unchecked).append(name)
         message = (
             f"📊 今日平安摘要（{today}）\n"
@@ -7249,47 +12641,214 @@ def send_guardian_group_daily_summaries(config):
             "（此為選用群組摘要；關閉後只會私訊核心守護人。）"
         )
         try:
-            result = sender(token, group_id, message)
-            _clear_push_delivery_failure(group, delivery_key)
-            append_notification_log(
-                state,
-                "guardian_group_daily_summary",
-                group_id,
-                "sent",
-                message,
-                json.dumps(result, ensure_ascii=False),
+            if sender is line_push_message:
+                result = sender(
+                    token,
+                    group_id,
+                    message,
+                    retry_key=_line_retry_key(delivery_key),
+                )
+            else:
+                result = sender(token, group_id, message)
+            mutate_state_atomically(
+                config["DATA_FILE"],
+                lambda current_state: _finish_guardian_group_summary(
+                    current_state,
+                    group_id,
+                    today,
+                    now,
+                    claim_token=claim_token,
+                    sent=True,
+                    message=message,
+                    result=result,
+                    member_ids=member_ids,
+                ),
             )
-            group["last_daily_summary_date"] = today
-            groups[group_id] = group
             sent += 1
             results.append({"group_id": group_id, "result": result})
         except Exception as exc:
-            failure = _record_scheduled_push_failure(
-                state,
-                group,
-                delivery_key,
-                "guardian_group_daily_summary",
-                group_id,
-                message,
-                exc,
-                now,
+            failure = mutate_state_atomically(
+                config["DATA_FILE"],
+                lambda current_state: _finish_guardian_group_summary(
+                    current_state,
+                    group_id,
+                    today,
+                    now,
+                    claim_token=claim_token,
+                    message=message,
+                    error=exc,
+                    member_ids=member_ids,
+                ),
             )
-            groups[group_id] = group
             skipped += 1
             results.append({"group_id": group_id, "error": str(exc)})
             if failure["kind"] == "system":
                 system_error = True
                 break
 
-    state["guardian_groups"] = groups
-    save_state(config["DATA_FILE"], state)
     return {
         "sent": sent,
         "skipped": skipped,
+        "deferred": deferred,
         "results": results,
         "date": today,
         "system_error": system_error,
     }, 200
+
+
+def _line_retry_key(delivery_key):
+    """Stable UUID accepted by LINE for idempotent retries of one logical push."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"daily-peace:{delivery_key}"))
+
+
+def _claim_guardian_group_summary(state, group_id, today, now):
+    group = (state.get("guardian_groups") or {}).get(group_id)
+    if not isinstance(group, dict):
+        return {"claimed": False, "reason": "group_not_found"}
+    owner = (state.get("users") or {}).get(
+        str(group.get("owner_line_user_id") or "").strip()
+    ) or {}
+    prefs = normalize_guardian_group_preferences(group.get("preferences"))
+    if (
+        group.get("status") != "active"
+        or not prefs.get("daily_admin_summary")
+        or not guardian_group_entitlement_active(owner, now)
+    ):
+        return {"claimed": False, "reason": "no_longer_eligible"}
+    if group.get("last_daily_summary_date") == today:
+        return {"claimed": False}
+    claims = dict(group.get("daily_summary_claims") or {})
+    existing = claims.get(today) or {}
+    if existing:
+        claimed_at = None
+        try:
+            claimed_at = datetime.fromisoformat(str(existing.get("claimed_at") or ""))
+        except (TypeError, ValueError):
+            claimed_at = None
+        if claimed_at is not None and (now - claimed_at).total_seconds() < 900:
+            return {"claimed": False, "reason": "active_claim"}
+    claim_token = secrets.token_hex(16)
+    claims[today] = {
+        "claimed_at": now.isoformat(timespec="seconds"),
+        "claim_token": claim_token,
+    }
+    group["daily_summary_claims"] = claims
+    return {
+        "claimed": True,
+        "recovered": bool(existing),
+        "claim_token": claim_token,
+    }
+
+
+def _prepare_guardian_group_summary(
+    state, group_id, today, now, claim_token, member_ids
+):
+    group = (state.get("guardian_groups") or {}).get(group_id)
+    claim = ((group or {}).get("daily_summary_claims") or {}).get(today) or {}
+    if not isinstance(group, dict) or claim.get("claim_token") != claim_token:
+        return {"ready": False, "reason": "claim_lost"}
+    owner = (state.get("users") or {}).get(
+        str(group.get("owner_line_user_id") or "").strip()
+    ) or {}
+    prefs = normalize_guardian_group_preferences(group.get("preferences"))
+    if (
+        group.get("status") != "active"
+        or not prefs.get("daily_admin_summary")
+        or not guardian_group_entitlement_active(owner, now)
+    ):
+        _finish_guardian_group_summary(
+            state,
+            group_id,
+            today,
+            now,
+            claim_token=claim_token,
+            release_only=True,
+        )
+        return {"ready": False, "reason": "no_longer_eligible"}
+    group["member_ids_last_summary"] = list(member_ids)
+    group["member_ids_last_summary_at"] = now.isoformat(timespec="seconds")
+    return {
+        "ready": True,
+        "eligible_members": eligible_guardian_group_summary_members(
+            state, group, member_ids
+        ),
+    }
+
+
+def _finish_guardian_group_summary(
+    state,
+    group_id,
+    today,
+    now,
+    *,
+    claim_token,
+    sent=False,
+    release_only=False,
+    message="",
+    result=None,
+    error=None,
+    member_ids=None,
+    audit_kind=None,
+    audit_status=None,
+    audit_detail=None,
+):
+    group = (state.get("guardian_groups") or {}).get(group_id)
+    if not isinstance(group, dict):
+        return {"kind": "permanent", "retry": False}
+    claims = dict(group.get("daily_summary_claims") or {})
+    claim = claims.get(today) or {}
+    if claim.get("claim_token") != claim_token:
+        return {"kind": "claim_lost", "retry": False}
+    claims.pop(today, None)
+    if claims:
+        group["daily_summary_claims"] = claims
+    else:
+        group.pop("daily_summary_claims", None)
+    if member_ids is not None:
+        group["member_ids_last_summary"] = list(member_ids)
+        group["member_ids_last_summary_at"] = now.isoformat(timespec="seconds")
+    if audit_kind:
+        append_notification_log(
+            state,
+            audit_kind,
+            group_id,
+            audit_status or "failed",
+            "",
+            audit_detail,
+        )
+    if release_only:
+        return {"released": True}
+    delivery_key = f"guardian_group_daily_summary:{today}:{group_id}"
+    if sent:
+        _clear_push_delivery_failure(group, delivery_key)
+        append_notification_log(
+            state,
+            "guardian_group_daily_summary",
+            group_id,
+            "sent",
+            message,
+            json.dumps(result, ensure_ascii=False),
+        )
+        record_line_message_usage(
+            state,
+            category="guardian_summary",
+            owner_line_user_id=group.get("owner_line_user_id") or group_id,
+            recipient_count=max(1, len(member_ids or [])),
+            event_id=delivery_key,
+            sent_at=now,
+        )
+        group["last_daily_summary_date"] = today
+        return {"sent": True}
+    return _record_scheduled_push_failure(
+        state,
+        group,
+        delivery_key,
+        "guardian_group_daily_summary",
+        group_id,
+        message,
+        error,
+        now,
+    )
 
 
 def send_missing_contact_reminders(config):
@@ -7313,6 +12872,9 @@ def send_missing_contact_reminders(config):
         if not line_user_id:
             skipped += 1
             continue
+        if user.get("membership_paused") or not membership_access_active(user, now):
+            skipped += 1
+            continue
         contact_count = len(user.get("contacts") or [])
         contact_limit = plan_rules(user)["contact_limit"]
         reminder_enabled = bool(user.get("contact_capacity_reminder_enabled", False))
@@ -7326,7 +12888,7 @@ def send_missing_contact_reminders(config):
                 skipped += 1
                 continue
             link_text = (
-                f"\n前往我的守護資料：{liff_entry_url(open_action='member') if liff_entry_url else 'https://liff.line.me/2010674803-rK98c0lo?open=member'}"
+                f"\n前往我的守護資料：{liff_entry_url(open_action='member') if liff_entry_url else 'https://liff.line.me/2010848330-UAiqPPYD?open=member'}"
             )
             message = (
                 "你的 799 守護方案還少一份必要資料。請在『我的守護資料』完成至少 1 位守護人的姓名、關係與電話，"
@@ -7362,7 +12924,7 @@ def send_missing_contact_reminders(config):
         if today in sent_dates:
             continue
         link_text = (
-            f"\n一鍵邀請守護人：{share_invite_liff_url() if share_invite_liff_url else 'https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html'}"
+            f"\n一鍵邀請守護人：{share_invite_liff_url() if share_invite_liff_url else 'https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html'}"
         )
         if contact_count == 0:
             message = (
@@ -7413,56 +12975,106 @@ def send_missing_contact_reminders(config):
 
 def cleanup_expired_data(config):
     data_file = config["DATA_FILE"]
-    downgrade_result, _ = apply_expired_plan_downgrades(config)
-    state = load_state(data_file)
     now = current_app_time(config)
     invite_cutoff = now - timedelta(days=7)
     notification_cutoff = now - timedelta(days=90)
-    expired_locations_removed = 0
-    contacts_archived = 0
+    migration_cleanup_now = now
+    if migration_cleanup_now.tzinfo is None:
+        timezone_name = (
+            config.get("APP_TIMEZONE")
+            or os.environ.get("APP_TIMEZONE")
+            or "Asia/Taipei"
+        )
+        try:
+            app_timezone = ZoneInfo(str(timezone_name))
+        except Exception:
+            app_timezone = timezone.utc
+        migration_cleanup_now = migration_cleanup_now.replace(
+            tzinfo=app_timezone
+        ).astimezone(timezone.utc)
 
-    for profile in state.get("users", {}).values():
-        if soft_archive_contacts_past_retain(profile, now):
-            contacts_archived += 1
-        location = profile.get("location") or {}
-        if not location:
-            continue
-        # Keep until_stop sessions until the user stops; expire timed sessions by clock.
-        if location.get("until_stop") and (location.get("sharing") or location.get("active")):
-            continue
-        expires_at = parse_datetime(location.get("expires_at"))
-        if expires_at and expires_at < now:
-            profile["location"] = {
-                **location,
-                "sharing": False,
-                "active": False,
-                "ended_at": location.get("ended_at") or now.isoformat(timespec="seconds"),
-            }
-            expired_locations_removed += 1
+    def at_or_after(value, cutoff):
+        parsed = parse_datetime(value)
+        if parsed is None:
+            return True
+        comparable_parsed, comparable_cutoff = _comparable_datetimes(
+            parsed, cutoff
+        )
+        return comparable_parsed >= comparable_cutoff
 
-    invites_before = len(state.get("friend_invites", {}))
-    state["friend_invites"] = {
-        code: invite for code, invite in state.get("friend_invites", {}).items()
-        if not parse_datetime(invite.get("created_at"))
-        or parse_datetime(invite.get("created_at")) >= invite_cutoff
-    }
+    def mutate(state):
+        downgraded = _apply_expired_plan_downgrades_to_state(state, now)
+        migration_history_removed = purge_account_migration_history(
+            state,
+            now=migration_cleanup_now,
+        )
+        expired_locations_removed = 0
+        contacts_archived = 0
+        migration_snapshots_removed = purge_account_migration_snapshots(
+            state,
+            now=migration_cleanup_now,
+        )
 
-    logs_before = len(state.get("notification_logs", []))
-    state["notification_logs"] = [
-        log for log in state.get("notification_logs", [])
-        if not parse_datetime(log.get("created_at"))
-        or parse_datetime(log.get("created_at")) >= notification_cutoff
-    ][-100:]
-    save_state(data_file, state)
-    return {
-        "cleaned_at": now.isoformat(timespec="seconds"),
-        "expired_locations_removed": expired_locations_removed,
-        "expired_invites_removed": invites_before - len(state["friend_invites"]),
-        "old_notification_logs_removed": logs_before - len(state["notification_logs"]),
-        "contacts_archived_users": contacts_archived,
-        "orders_removed": 0,
-        "plans_downgraded": downgrade_result.get("downgraded", 0),
-    }, 200
+        for profile in state.get("users", {}).values():
+            if soft_archive_contacts_past_retain(profile, now):
+                contacts_archived += 1
+            location = profile.get("location") or {}
+            if not location:
+                continue
+            if location.get("until_stop") and (
+                location.get("sharing") or location.get("active")
+            ):
+                continue
+            expires_at = parse_datetime(location.get("expires_at"))
+            location_expired = False
+            if expires_at:
+                comparable_expires, comparable_now = _comparable_datetimes(
+                    expires_at, now
+                )
+                location_expired = comparable_expires < comparable_now
+            if location_expired:
+                profile["location"] = {
+                    **location,
+                    "sharing": False,
+                    "active": False,
+                    "ended_at": (
+                        location.get("ended_at")
+                        or now.isoformat(timespec="seconds")
+                    ),
+                }
+                expired_locations_removed += 1
+
+        invites_before = len(state.get("friend_invites", {}))
+        state["friend_invites"] = {
+            code: invite
+            for code, invite in state.get("friend_invites", {}).items()
+            if at_or_after(invite.get("created_at"), invite_cutoff)
+        }
+
+        logs_before = len(state.get("notification_logs", []))
+        state["notification_logs"] = [
+            log
+            for log in state.get("notification_logs", [])
+            if at_or_after(log.get("created_at"), notification_cutoff)
+        ][-100:]
+        return {
+            "cleaned_at": now.isoformat(timespec="seconds"),
+            "expired_locations_removed": expired_locations_removed,
+            "expired_invites_removed": (
+                invites_before - len(state["friend_invites"])
+            ),
+            "old_notification_logs_removed": (
+                logs_before - len(state["notification_logs"])
+            ),
+            "contacts_archived_users": contacts_archived,
+            "migration_snapshots_removed": migration_snapshots_removed,
+            "migration_tickets_removed": migration_history_removed["tickets"],
+            "migration_audit_removed": migration_history_removed["audit"],
+            "orders_removed": 0,
+            "plans_downgraded": len(downgraded),
+        }, 200
+
+    return mutate_state_atomically(data_file, mutate)
 
 
 def reminder_time_in_window(reminder_time, now, late_minutes=4):
@@ -7497,12 +13109,12 @@ def build_daily_checkin_flex(now, target_time=""):
     guard_uri = (
         liff_entry_url(open_action="guard")
         if liff_entry_url
-        else "https://liff.line.me/2010674803-rK98c0lo?open=guard"
+        else "https://liff.line.me/2010848330-UAiqPPYD?open=guard"
     )
     sos_uri = (
         liff_entry_url(open_action="sos")
         if liff_entry_url
-        else "https://liff.line.me/2010674803-rK98c0lo?open=sos"
+        else "https://liff.line.me/2010848330-UAiqPPYD?open=sos"
     )
     body_contents = [
         {
@@ -7691,6 +13303,9 @@ def send_checkin_reminders(config):
         if user.get("line_push_blocked"):
             skipped += 1
             continue
+        if user.get("membership_paused") or not membership_access_active(user, now):
+            skipped += 1
+            continue
         if not bool(user.get("daily_checkin_reminder_enabled", True)):
             skipped += 1
             continue
@@ -7726,6 +13341,9 @@ def send_checkin_reminders(config):
         # 同一五分鐘時間窗只推一次；較早漏掉的時段不補送也不標記。
         target_time = due_unsent[-1]
         delivery_key = f"checkin:{today}:{target_time}"
+        _record_launch_delivery(
+            state, delivery_key, "checkin", line_user_id, "expected"
+        )
         if not push_attempt_allowed(user, delivery_key):
             skipped += 1
             continue
@@ -7733,8 +13351,19 @@ def send_checkin_reminders(config):
         try:
             result = sender(token, line_user_id, message)
             _clear_push_delivery_failure(user, delivery_key)
+            _record_launch_delivery(
+                state, delivery_key, "checkin", line_user_id, "sent"
+            )
             _mark_checkin_reminder_slots(user, today, times, due_unsent)
             append_notification_log(state, "checkin", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
+            record_line_message_usage(
+                state,
+                category="checkin",
+                owner_line_user_id=line_user_id,
+                recipient_count=1,
+                event_id=delivery_key,
+                sent_at=now,
+            )
             sent += 1
             results.append({"line_user_id": line_user_id, "reminder_time": target_time, "result": result})
             # 方案即將／已到期：同日最多附帶一次提醒（不洗版）
@@ -7890,6 +13519,12 @@ def send_birthday_reminders(config):
         if not line_user_id:
             skipped += 1
             continue
+        if not plan_has_smart_reminders(user, now=now):
+            skipped += 1
+            continue
+        if user.get("membership_paused") or not membership_access_active(user, now):
+            skipped += 1
+            continue
         if user.get("line_push_blocked"):
             blocked += 1
             skipped += 1
@@ -7899,52 +13534,55 @@ def send_birthday_reminders(config):
             continue
         sent_keys = set(user.get("birthday_reminder_sent_keys") or [])
         for note_date, note in notes.items():
-            birthday = calendar_note_birthday(note)
-            if not birthday:
-                continue
-            try:
-                remind_days = int(birthday.get("birthday_remind_days") or 1)
-            except (TypeError, ValueError):
-                remind_days = 1
-            target_date = today_date + timedelta(days=remind_days)
-            if not birthday_occurs_on(birthday, target_date):
-                continue
-            sent_key = f"{today_key}:{note_date}:{remind_days}"
-            if sent_key in sent_keys:
-                continue
-            delivery_key = f"birthday:{sent_key}"
-            if not push_attempt_allowed(user, delivery_key):
-                skipped += 1
-                continue
-            who = birthday.get("birthday_relationship") or birthday.get("birthday_name") or "家人"
-            when_text = "今天" if remind_days == 0 else ("明天" if remind_days == 1 else f"{remind_days} 天後")
-            message = f"{when_text}是{who}生日，記得跟他說聲生日快樂。也可以順手確認他今天平安。"
-            try:
-                result = sender(token, line_user_id, message)
-                _clear_push_delivery_failure(user, delivery_key)
-                sent_keys.add(sent_key)
-                user["birthday_reminder_sent_keys"] = sorted(sent_keys)[-80:]
-                append_notification_log(state, "birthday", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
-                sent += 1
-                results.append({"line_user_id": line_user_id, "birthday": who, "remind_days": remind_days})
-            except Exception as exc:
-                failure = _record_scheduled_push_failure(
-                    state,
-                    user,
-                    delivery_key,
-                    "birthday",
-                    line_user_id,
-                    message,
-                    exc,
-                    now,
+            for birthday_index, birthday in enumerate(calendar_note_birthdays(note)):
+                try:
+                    remind_days = int(birthday.get("birthday_remind_days") or 1)
+                except (TypeError, ValueError):
+                    remind_days = 1
+                target_date = today_date + timedelta(days=remind_days)
+                if not birthday_occurs_on(birthday, target_date):
+                    continue
+                birthday_suffix = f":{birthday_index}" if birthday_index else ""
+                sent_key = (
+                    f"{today_key}:{note_date}:{remind_days}{birthday_suffix}"
                 )
-                if failure["status"] == "blocked":
-                    blocked += 1
-                skipped += 1
-                results.append({"line_user_id": line_user_id, "birthday": who, "error": str(exc)})
-                if failure["kind"] == "system":
-                    system_error = True
-                    break
+                if sent_key in sent_keys:
+                    continue
+                delivery_key = f"birthday:{sent_key}"
+                if not push_attempt_allowed(user, delivery_key):
+                    skipped += 1
+                    continue
+                who = birthday.get("birthday_relationship") or birthday.get("birthday_name") or "家人"
+                when_text = "今天" if remind_days == 0 else ("明天" if remind_days == 1 else f"{remind_days} 天後")
+                message = f"{when_text}是{who}生日，記得跟他說聲生日快樂。也可以順手確認他今天平安。"
+                try:
+                    result = sender(token, line_user_id, message)
+                    _clear_push_delivery_failure(user, delivery_key)
+                    sent_keys.add(sent_key)
+                    user["birthday_reminder_sent_keys"] = sorted(sent_keys)[-80:]
+                    append_notification_log(state, "birthday", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
+                    sent += 1
+                    results.append({"line_user_id": line_user_id, "birthday": who, "remind_days": remind_days})
+                except Exception as exc:
+                    failure = _record_scheduled_push_failure(
+                        state,
+                        user,
+                        delivery_key,
+                        "birthday",
+                        line_user_id,
+                        message,
+                        exc,
+                        now,
+                    )
+                    if failure["status"] == "blocked":
+                        blocked += 1
+                    skipped += 1
+                    results.append({"line_user_id": line_user_id, "birthday": who, "error": str(exc)})
+                    if failure["kind"] == "system":
+                        system_error = True
+                        break
+            if system_error:
+                break
         if system_error:
             break
 
@@ -7976,10 +13614,10 @@ SMART_REMINDER_CATEGORIES = {
 }
 
 
-def plan_has_smart_reminders(profile):
+def plan_has_smart_reminders(profile, now=None):
     plan = str((profile or {}).get("plan") or "trial")
-    return plan in {"paid_799", "paid_799_year"} and (
-        str((profile or {}).get("payment_status") or "") == "active" or paid_membership_is_active(profile or {})
+    return plan in {"paid_799", "paid_799_year"} and paid_membership_is_active(
+        profile or {}, now=now
     )
 
 
@@ -8022,6 +13660,9 @@ def normalize_smart_reminder(raw, index=0):
     rid = str(raw.get("id") or "").strip() or f"sr_{secrets.token_hex(6)}"
     notify_private = True  # product: 智能提醒只走私訊
     notify_group = False
+    delivery_target = str(raw.get("delivery_target") or "private").strip()
+    if not (delivery_target == "private" or delivery_target.startswith("guardian:")):
+        delivery_target = str(raw.get("delivery_target") or "private").strip()
     return {
         "id": rid,
         "target_name": str(raw.get("target_name") or "").strip() or f"對象{index + 1}",
@@ -8036,6 +13677,7 @@ def normalize_smart_reminder(raw, index=0):
         "note": str(raw.get("note") or "").strip()[:200],
         "notify_private": notify_private,
         "notify_group": notify_group,
+        "delivery_target": delivery_target,
         "eve_remind": bool(raw.get("eve_remind", True)),
         "created_at": str(raw.get("created_at") or datetime.now().isoformat(timespec="seconds")),
         "updated_at": str(raw.get("updated_at") or ""),
@@ -8175,6 +13817,36 @@ def build_smart_reminder_flex(reminder, *, mode="day"):
     }
 
 
+def build_smart_reminder_digest(reminders, *, mode="day"):
+    reminders = list(reminders or [])
+    if len(reminders) == 1:
+        return build_smart_reminder_flex(reminders[0], mode=mode)
+    when = "明天" if mode == "eve" else "今天"
+    lines = [
+        f"{item.get('emoji') or '🗓️'} {item.get('target_name') or '對象'}："
+        f"{item.get('category_label') or '提醒'}"
+        for item in reminders
+    ]
+    return {
+        "type": "flex",
+        "altText": f"{when}有 {len(reminders)} 個提醒",
+        "contents": {
+            "type": "bubble",
+            "size": "mega",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "md",
+                "contents": [
+                    {"type": "text", "text": f"🗓️ {when}有 {len(reminders)} 個提醒", "weight": "bold", "size": "xl", "wrap": True},
+                    {"type": "text", "text": "\n".join(lines), "size": "md", "wrap": True},
+                    {"type": "text", "text": "同一時段已合併成一則，避免重複打擾", "size": "xs", "color": "#888888", "wrap": True},
+                ],
+            },
+        },
+    }
+
+
 def is_checkin_postback(data):
     """Daily push / Flex 「我平安」 postback."""
     text = str(data or "").strip()
@@ -8258,13 +13930,41 @@ def get_smart_reminders_payload(data_file, line_user_id):
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
     entitled = plan_has_smart_reminders(profile)
+    recovering = str(profile.get("account_migration_status") or "").lower() in {
+        "pending", "recovering", "in_progress"
+    }
+    today = datetime.now().strftime("%Y-%m-%d")
+    usage = (profile.get("smart_reminder_daily_usage") or {}).get(today) or {}
+    bound_guardians = []
+    for contact in profile.get("contacts") or []:
+        if not contact_is_bound_guardian(contact, line_user_id):
+            continue
+        guardian_id = get_contact_line_id(contact)
+        if not guardian_id:
+            continue
+        bound_guardians.append({
+            "line_user_id": guardian_id,
+            "name": contact.get("name") or contact.get("display_name") or "核心守護人",
+            "is_primary": bool(contact.get("is_primary")),
+        })
     return {
         "ok": True,
         "entitled": entitled,
+        "state": "entitled" if entitled else ("recovering" if recovering else "upgrade_required"),
         "plan": profile.get("plan") or "trial",
-        "upgrade_hint": None if entitled else "智能提醒為 799 守護版功能，升級後可設定生日／紀念日／回診等生活提醒（僅私訊，不進守護群）。",
+        "upgrade_hint": None if entitled else (
+            "帳號資料正在恢復，完成後會自動取回既有智慧提醒"
+            if recovering else
+            "智能提醒為 799 守護版功能，升級後可設定生日／紀念日／回診等生活提醒（不進守護群）。"
+        ),
         "reminders": list_smart_reminders(profile) if entitled else [],
         "defaults": profile.get("smart_reminder_defaults") or {"notify_private": True, "notify_group": False},
+        "bound_guardians": bound_guardians if entitled else [],
+        "daily_usage": {
+            "private": int(usage.get("private") or 0),
+            "guardian": int(usage.get("guardian") or 0),
+        },
+        "daily_limits": {"private": 2, "guardian": 1},
         "categories": [
             {"id": key, "emoji": meta["emoji"], "label": meta["label"]}
             for key, meta in SMART_REMINDER_CATEGORIES.items()
@@ -8280,6 +13980,20 @@ def save_smart_reminder(data_file, payload):
     profile = get_profile(state, line_user_id)
     if not plan_has_smart_reminders(profile):
         return {"ok": False, "error": "smart_reminders_require_799", "upgrade_hint": "請升級 799 守護版"}, 403
+    delivery_target = str(payload.get("delivery_target") or "private").strip()
+    if delivery_target.startswith("group:"):
+        return {"ok": False, "error": "guardian_group_target_not_allowed"}, 400
+    if delivery_target != "private":
+        if not delivery_target.startswith("guardian:"):
+            return {"ok": False, "error": "invalid_delivery_target"}, 400
+        target_id = delivery_target.split(":", 1)[1]
+        allowed = {
+            get_contact_line_id(contact)
+            for contact in profile.get("contacts") or []
+            if contact_is_bound_guardian(contact, line_user_id)
+        }
+        if target_id not in allowed:
+            return {"ok": False, "error": "guardian_target_not_bound"}, 400
     reminder = normalize_smart_reminder(payload, 0)
     reminder["updated_at"] = current_app_time({}).isoformat(timespec="seconds")
     rows = list_smart_reminders(profile)
@@ -8317,7 +14031,7 @@ def delete_smart_reminder(data_file, line_user_id, reminder_id):
 
 
 def send_smart_reminders(config):
-    """Push due smart reminders via LINE private message (never guardian group by default)."""
+    """Push merged, capped smart reminders to self or one bound core guardian."""
     token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     if not token:
         return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
@@ -8332,101 +14046,114 @@ def send_smart_reminders(config):
     sent = 0
     skipped = 0
     results = []
-    # Day-of：達到使用者設定的 remind_time 後推播（預設 09:00）；eve 仍約 20:00
     now_hm = now.strftime("%H:%M")
-    day_window = True  # 改由各筆 remind_time 判斷
     eve_window = now.hour >= 20
     system_error = False
 
     for user in state.get("users", {}).values():
         line_user_id = user.get("line_user_id")
-        if not line_user_id or not plan_has_smart_reminders(user):
+        if (
+            not line_user_id
+            or user.get("membership_paused")
+            or not membership_access_active(user, now)
+            or not plan_has_smart_reminders(user)
+        ):
             skipped += 1
             continue
         sent_keys = set(user.get("smart_reminder_sent_keys") or [])
         snooze = user.get("smart_reminder_snooze") or {}
+        daily_all = user.setdefault("smart_reminder_daily_usage", {})
+        usage = daily_all.setdefault(today_key, {"private": 0, "guardian": 0})
+        # Keep only a compact rolling window.
+        user["smart_reminder_daily_usage"] = {
+            key: value for key, value in daily_all.items() if key >= (today_date - timedelta(days=7)).isoformat()
+        }
+        bound_guardians = {
+            get_contact_line_id(contact)
+            for contact in user.get("contacts") or []
+            if contact_is_bound_guardian(contact, line_user_id)
+        }
+        due_groups = {}
         for reminder in list_smart_reminders(user):
             rid = reminder.get("id")
             remind_hm = str(reminder.get("remind_time") or "09:00").strip()
             if not REMINDER_TIME_PATTERN.match(remind_hm):
                 remind_hm = "09:00"
-            # Day-of
-            if day_window and now_hm >= remind_hm and smart_reminder_occurs_on(reminder, today_date):
+            target_spec = str(reminder.get("delivery_target") or "private")
+            if target_spec == "private":
+                target_kind, target_id = "private", line_user_id
+            elif target_spec.startswith("guardian:"):
+                target_kind, target_id = "guardian", target_spec.split(":", 1)[1]
+                if target_id not in bound_guardians:
+                    skipped += 1
+                    continue
+            else:
+                skipped += 1
+                continue
+            if now_hm >= remind_hm and smart_reminder_occurs_on(reminder, today_date):
                 key = f"{today_key}:{rid}:day"
                 snooze_until = parse_datetime(snooze.get("until")) if snooze.get("id") == rid else None
                 if key in sent_keys and not (snooze_until and now >= snooze_until):
                     continue
                 if snooze_until and now < snooze_until:
                     continue
-                if not reminder.get("notify_private", True):
-                    continue
-                delivery_key = f"smart_reminder:{key}"
-                if not push_attempt_allowed(user, delivery_key):
-                    skipped += 1
-                    continue
-                message = build_smart_reminder_flex(reminder, mode="day")
-                try:
-                    result = sender(token, line_user_id, message)
-                    _clear_push_delivery_failure(user, delivery_key)
-                    sent_keys.add(key)
-                    if snooze.get("id") == rid:
-                        user["smart_reminder_snooze"] = {}
-                    append_notification_log(state, "smart_reminder", line_user_id, "sent", message.get("altText"), json.dumps(result, ensure_ascii=False))
-                    sent += 1
-                    results.append({"line_user_id": line_user_id, "id": rid, "mode": "day"})
-                except Exception as exc:
-                    failure = _record_scheduled_push_failure(
-                        state,
-                        user,
-                        delivery_key,
-                        "smart_reminder",
-                        line_user_id,
-                        message.get("altText"),
-                        exc,
-                        now,
-                    )
-                    skipped += 1
-                    results.append({"line_user_id": line_user_id, "id": rid, "error": str(exc)})
-                    if failure["kind"] == "system":
-                        system_error = True
-                        break
-            if system_error:
-                break
-            # Eve (night before)
+                due_groups.setdefault(("day", remind_hm, target_kind, target_id), []).append((key, reminder))
             if eve_window and reminder.get("eve_remind", True) and smart_reminder_occurs_on(reminder, tomorrow):
                 key = f"{today_key}:{rid}:eve"
                 if key in sent_keys:
                     continue
-                if not reminder.get("notify_private", True):
-                    continue
-                delivery_key = f"smart_reminder:{key}"
-                if not push_attempt_allowed(user, delivery_key):
-                    skipped += 1
-                    continue
-                message = build_smart_reminder_flex(reminder, mode="eve")
-                try:
-                    result = sender(token, line_user_id, message)
-                    _clear_push_delivery_failure(user, delivery_key)
-                    sent_keys.add(key)
-                    append_notification_log(state, "smart_reminder", line_user_id, "sent", message.get("altText"), json.dumps(result, ensure_ascii=False))
-                    sent += 1
-                    results.append({"line_user_id": line_user_id, "id": rid, "mode": "eve"})
-                except Exception as exc:
-                    failure = _record_scheduled_push_failure(
-                        state,
-                        user,
-                        delivery_key,
-                        "smart_reminder",
-                        line_user_id,
-                        message.get("altText"),
-                        exc,
-                        now,
-                    )
-                    skipped += 1
-                    results.append({"line_user_id": line_user_id, "id": rid, "error": str(exc)})
-                    if failure["kind"] == "system":
-                        system_error = True
-                        break
+                due_groups.setdefault(("eve", "20:00", target_kind, target_id), []).append((key, reminder))
+
+        for (mode, slot, target_kind, target_id), entries in sorted(due_groups.items()):
+            limit = 2 if target_kind == "private" else 1
+            if int(usage.get(target_kind) or 0) >= limit:
+                skipped += len(entries)
+                continue
+            keys = [key for key, _reminder in entries]
+            reminders = [reminder for _key, reminder in entries]
+            delivery_key = f"smart_reminder:{today_key}:{mode}:{slot}:{target_kind}:{target_id}"
+            if not push_attempt_allowed(user, delivery_key):
+                skipped += len(entries)
+                continue
+            message = build_smart_reminder_digest(reminders, mode=mode)
+            try:
+                result = sender(token, target_id, message)
+                _clear_push_delivery_failure(user, delivery_key)
+                sent_keys.update(keys)
+                usage[target_kind] = int(usage.get(target_kind) or 0) + 1
+                if snooze.get("id") in {r.get("id") for r in reminders}:
+                    user["smart_reminder_snooze"] = {}
+                append_notification_log(
+                    state, "smart_reminder", target_id, "sent",
+                    message.get("altText"), json.dumps(result, ensure_ascii=False),
+                )
+                record_line_message_usage(
+                    state,
+                    category="smart_reminder",
+                    owner_line_user_id=line_user_id,
+                    recipient_count=1,
+                    event_id=delivery_key,
+                    sent_at=now,
+                )
+                sent += 1
+                results.append({
+                    "line_user_id": line_user_id,
+                    "target": target_kind,
+                    "recipient": target_id,
+                    "ids": [r.get("id") for r in reminders],
+                    "mode": mode,
+                    "merged_count": len(reminders),
+                })
+            except Exception as exc:
+                failure = _record_scheduled_push_failure(
+                    state, user, delivery_key, "smart_reminder", target_id,
+                    message.get("altText"), exc, now,
+                )
+                skipped += len(entries)
+                results.append({"line_user_id": line_user_id, "ids": [r.get("id") for r in reminders], "error": str(exc)})
+                if failure["kind"] == "system":
+                    system_error = True
+                    break
         user["smart_reminder_sent_keys"] = sorted(sent_keys)[-120:]
         if system_error:
             break
@@ -8447,18 +14174,90 @@ def cleanup_expired_sos(config):
     return {"removed": len(removed)}, 200
 
 
+def send_profile_completion_reminders(config):
+    """Private, retryable reminders at bind, +24h, day 3, and day 7 only."""
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not token:
+        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
+    state = load_state(config["DATA_FILE"])
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    now = current_app_time(config)
+    sent = skipped = 0
+    results = []
+    for profile in (state.get("users") or {}).values():
+        if not isinstance(profile, dict) or not profile.get("profile_completion_required"):
+            continue
+        if profile.get("membership_paused") or not membership_access_active(profile, now):
+            skipped += 1
+            continue
+        completion_peer = str(
+            profile.get("profile_completion_peer_line_user_id") or ""
+        ).strip()
+        completion_contacts = [
+            contact
+            for contact in (profile.get("contacts") or [])
+            if isinstance(contact, dict)
+            and resolve_contact_role(contact) == "guardian"
+            and (
+                not completion_peer
+                or get_contact_line_id(contact) == completion_peer
+            )
+        ]
+        if any(complete_guardian_contact(contact) for contact in completion_contacts):
+            profile["profile_completion_required"] = False
+            profile["profile_completion_completed_at"] = now.isoformat(timespec="seconds")
+            skipped += 1
+            continue
+        try:
+            bound_at = datetime.fromisoformat(str(profile.get("profile_completion_bound_at") or ""))
+        except ValueError:
+            skipped += 1
+            continue
+        elapsed_days = max(0, (now.date() - bound_at.date()).days)
+        already = {int(day) for day in (profile.get("profile_completion_reminder_days") or [])}
+        due = [day for day in PROFILE_COMPLETION_REMINDER_DAYS if day <= elapsed_days and day not in already]
+        for day in due:
+            message = "已完成核心守護綁定。請私訊「每日平安」完成自己的聯絡資料；LINE 通知已可使用，電話聯絡會在資料完成後啟用。"
+            try:
+                result = sender(token, profile.get("line_user_id"), message)
+                append_notification_log(state, "profile_completion", profile.get("line_user_id"), "sent", message, json.dumps(result, ensure_ascii=False))
+                already.add(day)
+                sent += 1
+                results.append({"line_user_id": profile.get("line_user_id"), "day": day, "status": "sent"})
+            except Exception as exc:
+                append_notification_log(state, "profile_completion", profile.get("line_user_id"), "failed", message, str(exc)[:400])
+                results.append({"line_user_id": profile.get("line_user_id"), "day": day, "status": "failed"})
+        profile["profile_completion_reminder_days"] = sorted(already)
+    save_state(config["DATA_FILE"], state)
+    return {"sent": sent, "skipped": skipped, "results": results}, 200
+
+
 def run_cron_tick(config):
     now = current_app_time(config)
     results = {}
+    slot = now.strftime("%H:%M")
 
     migration_data, migration_code = migrate_existing_free_members(config)
     results["membership_transition_migration"] = {
         "status": migration_code,
         "result": migration_data,
     }
+    # 每次 Cron 都先補送到期里程碑，再執行到期降級；claim/outbox 會防重。
+    milestone_data, milestone_code = send_trial_milestone_notices(config)
+    results["trial_milestone_notices"] = {
+        "status": milestone_code,
+        "result": milestone_data,
+    }
+    expiry_data, expiry_code = apply_expired_plan_downgrades(config)
+    results["membership_expiry"] = {
+        "status": expiry_code,
+        "result": expiry_data,
+    }
 
     always = {
         "checkin_reminders": send_checkin_reminders,
+        "binding_notification_retries": retry_pending_bind_notifications,
+        "profile_completion_reminders": send_profile_completion_reminders,
         "overdue_alerts": send_due_reminders,
         "guardian_group_daily_summaries": send_guardian_group_daily_summaries,
         "smart_reminders": send_smart_reminders,
@@ -8486,10 +14285,8 @@ def run_cron_tick(config):
         "09:00": ("birthday_reminders", send_birthday_reminders),
         "09:05": ("contact_reminders", send_missing_contact_reminders),
         "10:00": ("renewal_reminders", send_renewal_reminders),
-        "10:15": ("membership_expiry", apply_expired_plan_downgrades),
         "02:30": ("data_cleanup", cleanup_expired_data),
     }
-    slot = now.strftime("%H:%M")
     if slot in daily:
         name, task = daily[slot]
         data, code = task(config)
@@ -8530,7 +14327,12 @@ def app_config(config):
         or ""
     ).strip()
     return {
-        "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID", ""),
+        "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID,
+        "legacy_liff_id": (
+            config.get("LEGACY_LIFF_ID")
+            or os.environ.get("LEGACY_LIFF_ID")
+            or DEFAULT_LEGACY_LIFF_ID
+        ),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
         "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gh",
@@ -8542,6 +14344,7 @@ def app_config(config):
             else os.environ.get("REQUIRE_LIFF_AUTH", "0")
         ).strip().lower()
         in {"1", "true", "yes", "on"},
+        "ecpay_ready": bool(ecpay and ecpay.ecpay_configured(config)),
         "newebpay_ready": bool(newebpay and newebpay.newebpay_configured(config)),
         "sms_live": bool(
             (config.get("SMSKING_USERNAME") or os.environ.get("SMSKING_USERNAME") or "").strip()
@@ -8550,12 +14353,226 @@ def app_config(config):
     }
 
 
+def authenticated_line_user(payload=None, *, args=None, headers=None, config=None):
+    """Resolve one caller identity; never trust a route's requested member ID."""
+    payload = payload or {}
+    args = args or {}
+    headers = headers or {}
+    if resolve_line_user_id is None:
+        claimed = str(payload.get("line_user_id") or args.get("line_user_id") or "").strip()
+        if not claimed:
+            return None, ({"ok": False, "error": "missing line_user_id"}, 400)
+        return claimed, None
+    return resolve_line_user_id(
+        headers=headers,
+        payload=payload,
+        args=args,
+        config=config or {},
+    )
+
+
+def update_onboarding_reminder(data_file, line_user_id, payload):
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id)
+    max_count = int(plan_rules(profile).get("daily_reminders") or 1)
+    if "reminder_times" in payload:
+        raw = payload.get("reminder_times")
+        if not isinstance(raw, list) or not raw:
+            return {"ok": False, "error": "reminder_times must be a non-empty list"}, 400
+        normalized = normalize_reminder_times(raw, max_count)
+        if not normalized:
+            return {"ok": False, "error": "invalid reminder_times format, use HH:MM"}, 400
+        times = apply_reminder_times_to_profile(profile, times=normalized)
+    else:
+        reminder_time = (payload.get("reminder_time") or "").strip()
+        if not REMINDER_TIME_PATTERN.match(reminder_time):
+            return {"ok": False, "error": "invalid reminder_time format, use HH:MM"}, 400
+        times = apply_reminder_times_to_profile(profile, single=reminder_time)
+    if "daily_checkin_reminder_enabled" in payload:
+        profile["daily_checkin_reminder_enabled"] = bool(
+            payload.get("daily_checkin_reminder_enabled")
+        )
+    if "grace_hours" in payload:
+        profile["grace_hours"] = normalize_grace_hours(payload.get("grace_hours"))
+    else:
+        profile["grace_hours"] = normalize_grace_hours(profile.get("grace_hours"))
+    save_state(data_file, state)
+    return {
+        "ok": True,
+        "reminder_time": times[0],
+        "reminder_times": times,
+        "daily_reminders": max_count,
+        "daily_checkin_reminder_enabled": bool(
+            profile.get("daily_checkin_reminder_enabled", True)
+        ),
+        "grace_hours": normalize_grace_hours(profile.get("grace_hours")),
+        "warning_cancel_minutes": int(
+            profile.get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
+        ),
+        "allowed_grace_hours": list(ALLOWED_GRACE_HOURS),
+    }, 200
+
+
+def complete_onboarding_for_user(data_file, line_user_id, payload):
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if not profile:
+        return {"ok": False, "error": "user not registered"}, 404
+    access = member_access_state(profile)
+    if access["guardian_required"]:
+        return {
+            "ok": False,
+            "error": "guardian_required",
+            "message": "必須先完成至少 1 位可接收 LINE 通知的核心守護人綁定",
+            **access,
+        }, 400
+    profile["is_onboarding_completed"] = True
+    if "reminder_times" in payload or payload.get("reminder_time"):
+        apply_reminder_times_to_profile(
+            profile,
+            times=payload.get("reminder_times"),
+            single=payload.get("reminder_time"),
+        )
+    else:
+        apply_reminder_times_to_profile(profile)
+    istate = get_or_create_interaction_state(profile)
+    istate["onboarding_completed"] = True
+    if "add_first_guardian" not in istate["completed_steps"]:
+        istate["completed_steps"].append("add_first_guardian")
+    if "set_reminder_time" not in istate["completed_steps"]:
+        istate["completed_steps"].append("set_reminder_time")
+    if not istate.get("pending_steps"):
+        istate["pending_steps"] = [
+            "explore_app",
+            "read_help",
+            "add_more_guardians_if_paid",
+        ]
+    istate["last_interaction_at"] = datetime.now().isoformat(timespec="seconds")
+    save_state(data_file, state)
+    times = reminder_times_for_profile(profile)
+    return {
+        "ok": True,
+        **member_access_state(profile),
+        "is_onboarding_completed": True,
+        "setup_completed": True,
+        "reminder_time": times[0],
+        "reminder_times": times,
+        "interaction_state": istate,
+    }, 200
+
+
+def checkin_for_user(data_file, line_user_id, payload, config=None):
+    payload = dict(payload or {})
+    payload["line_user_id"] = line_user_id
+    now = current_app_time(config or {})
+    event_id = f"checkin:{line_user_id}:{uuid.uuid4().hex}"
+    mutate_state_atomically(
+        data_file,
+        lambda current_state: current_state.setdefault(
+            "launch_events", []
+        ).append({
+            "id": event_id,
+            "kind": "checkin",
+            "success": False,
+            "at": now.isoformat(timespec="seconds"),
+        }),
+    )
+    state = load_state(data_file)
+    if line_user_id not in state.get("users", {}):
+        register_line_user(
+            data_file,
+            {
+                "line_user_id": line_user_id,
+                "display_name": str(payload.get("display_name") or "LINE 使用者"),
+            },
+        )
+        state = load_state(data_file)
+    access = member_access_state(state.get("users", {}).get(line_user_id))
+    if access["guardian_required"]:
+        return {
+            "ok": False,
+            "error": "guardian_required",
+            "message": "必須先完成至少 1 位可接收 LINE 通知的核心守護人綁定",
+            **access,
+        }, 400
+    status = record_checkin(data_file, payload)
+    mutate_state_atomically(
+        data_file,
+        lambda current_state: next(
+            (
+                row.update({"success": True})
+                for row in current_state.get("launch_events") or []
+                if row.get("id") == event_id
+            ),
+            None,
+        ),
+    )
+    status["ok"] = True
+    return status, 200
+
+
+def status_for_user(data_file, line_user_id, display_name=""):
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if not profile:
+        data, code = register_line_user(
+            data_file,
+            {
+                "line_user_id": line_user_id,
+                "display_name": str(display_name or "").strip() or "LINE 使用者",
+            },
+        )
+        if code != 200:
+            return data, code
+        if isinstance(data, dict):
+            data["auto_registered"] = True
+        return data, 200
+    dirty = scrub_self_line_ids_on_contacts(profile)
+    dirty = ensure_onboarding_completed_flag(profile) or dirty
+    today = today_string()
+    if profile_is_today_checked(profile) and today not in set(profile.get("history") or []):
+        hist = set(profile.get("history") or [])
+        hist.add(today)
+        profile["history"] = sorted(hist)
+        dirty = True
+    before_groups = list(profile.get("guardian_group_ids") or [])
+    sync_owned_guardian_group_ids(state, profile)
+    if list(profile.get("guardian_group_ids") or []) != before_groups:
+        dirty = True
+    if dirty:
+        save_state(data_file, state)
+    return build_status(profile, state), 200
+
+
 def create_app(config=None):
     if Flask is None:
         return MiniApp(config)
 
+    supplied_config = config or {}
+    liff_id = (
+        supplied_config.get("LIFF_ID")
+        or os.environ.get("LIFF_ID")
+        or DEFAULT_LIFF_ID
+    ).strip() or DEFAULT_LIFF_ID
+    explicit_channel_id = (
+        supplied_config.get("LINE_LOGIN_CHANNEL_ID")
+        or os.environ.get("LINE_LOGIN_CHANNEL_ID")
+        or os.environ.get("LINE_Login_Channel_ID")
+        or ""
+    ).strip()
+    line_login_channel_id = (
+        explicit_channel_id
+        or liff_id.split("-", 1)[0]
+        or DEFAULT_LINE_LOGIN_CHANNEL_ID
+    )
+
     app = Flask(__name__, static_folder=".", static_url_path="")
     app._start_time = datetime.now()  # 2026-07-21 patch 17: 供 /api/bot/status 計算 uptime
+
+    @app.errorhandler(AccountMigratedError)
+    def _account_migrated_error(_error):
+        return jsonify(account_migrated_response()), 409
+
     app.config.update(
         DATA_FILE=resolve_data_file(os.environ.get("DATA_FILE")),
         ADMIN_PASSWORD=os.environ.get("ADMIN_PASSWORD", ""),
@@ -8581,17 +14598,21 @@ def create_app(config=None):
             or ""
         ),
         # Accept odd casing from Render UI typos (LINE_Login_Channel_ID etc.)
-        LINE_LOGIN_CHANNEL_ID=(
-            os.environ.get("LINE_LOGIN_CHANNEL_ID")
-            or os.environ.get("LINE_Login_Channel_ID")
-            or ""
-        ),
+        LINE_LOGIN_CHANNEL_ID=line_login_channel_id,
         LINE_LOGIN_CHANNEL_SECRET=(
             os.environ.get("LINE_LOGIN_CHANNEL_SECRET")
             or os.environ.get("LINE_Login_CHANNEL_SECRET")
             or ""
         ),
-        LIFF_ID=os.environ.get("LIFF_ID", ""),
+        LEGACY_LINE_LOGIN_CHANNEL_ID=os.environ.get(
+            "LEGACY_LINE_LOGIN_CHANNEL_ID", "2010674803"
+        ),
+        LEGACY_LIFF_ID=os.environ.get(
+            "LEGACY_LIFF_ID", DEFAULT_LEGACY_LIFF_ID
+        ),
+        ACCOUNT_MIGRATION_SECRET=os.environ.get("ACCOUNT_MIGRATION_SECRET", ""),
+        ACCOUNT_MIGRATION_TTL_SECONDS=600,
+        LIFF_ID=liff_id,
         APP_PUBLIC_URL=os.environ.get("APP_PUBLIC_URL", ""),
         APP_TIMEZONE=os.environ.get("APP_TIMEZONE", "Asia/Taipei"),
         GA4_PROPERTY_ID=os.environ.get("GA4_PROPERTY_ID", ""),
@@ -8610,8 +14631,26 @@ def create_app(config=None):
         NEWEBPAY_HASH_IV=os.environ.get("NEWEBPAY_HASH_IV", ""),
         NEWEBPAY_STAGE=os.environ.get("NEWEBPAY_STAGE", "sandbox"),
         NEWEBPAY_MPG_URL=os.environ.get("NEWEBPAY_MPG_URL", ""),
+        ECPAY_MERCHANT_ID=os.environ.get("ECPAY_MERCHANT_ID", ""),
+        ECPAY_HASH_KEY=os.environ.get("ECPAY_HASH_KEY", ""),
+        ECPAY_HASH_IV=os.environ.get("ECPAY_HASH_IV", ""),
+        ECPAY_STAGE=os.environ.get("ECPAY_STAGE", "sandbox"),
+        ECPAY_PERIOD_TIMES=os.environ.get("ECPAY_PERIOD_TIMES", "99"),
         SMSKING_USERNAME=os.environ.get("SMSKING_USERNAME", ""),
         SMSKING_PASSWORD=os.environ.get("SMSKING_PASSWORD", ""),
+        SMTP_HOST=os.environ.get("SMTP_HOST", ""),
+        SMTP_PORT=os.environ.get("SMTP_PORT", "587"),
+        SMTP_USERNAME=os.environ.get("SMTP_USERNAME", ""),
+        SMTP_PASSWORD=os.environ.get("SMTP_PASSWORD", ""),
+        SMTP_USE_TLS=os.environ.get("SMTP_USE_TLS", "true"),
+        SUPPORT_FROM_EMAIL=os.environ.get("SUPPORT_FROM_EMAIL", ""),
+        R2_ENDPOINT=os.environ.get("R2_ENDPOINT", ""),
+        R2_ACCESS_KEY_ID=os.environ.get("R2_ACCESS_KEY_ID", ""),
+        R2_SECRET_ACCESS_KEY=os.environ.get("R2_SECRET_ACCESS_KEY", ""),
+        R2_BUCKET=os.environ.get("R2_BUCKET", ""),
+        R2_BACKUP_ENCRYPTION_KEY=os.environ.get(
+            "R2_BACKUP_ENCRYPTION_KEY", ""
+        ),
     )
     if config:
         app.config.update(config)
@@ -8722,20 +14761,10 @@ def create_app(config=None):
         """Resolve LINE user from verified id_token when required."""
         payload = payload if payload is not None else (request.get_json(silent=True) or {})
         args = request.args if use_args else {}
-        if resolve_line_user_id is None:
-            claimed = str(
-                (payload or {}).get("line_user_id")
-                or (args.get("line_user_id") if use_args else "")
-                or ""
-            ).strip()
-            if not claimed:
-                return None, ({"ok": False, "error": "missing line_user_id"}, 400)
-            return claimed, None
-        headers = {key: value for key, value in request.headers.items()}
-        return resolve_line_user_id(
-            headers=headers,
-            payload=payload or {},
+        return authenticated_line_user(
+            payload,
             args=args,
+            headers={key: value for key, value in request.headers.items()},
             config=app.config,
         )
 
@@ -8815,11 +14844,11 @@ def create_app(config=None):
             lid = (
                 app.config.get("LIFF_ID")
                 or os.environ.get("LIFF_ID")
-                or "2010674803-rK98c0lo"
+                or DEFAULT_LIFF_ID
             ).strip()
             target = f"https://liff.line.me/{lid}"
             if open_action:
-                target += f"/?open={open_action}"
+                target += f"?open={open_action}"
             elif fragment:
                 target += f"#{fragment.lstrip('#')}"
         if redirect is not None:
@@ -8833,6 +14862,11 @@ def create_app(config=None):
         """專用一鍵分享頁（給 LIFF 子路徑直連；不經 SPA home）。"""
         return send_from_directory(app.static_folder, "liff/share-invite.html")
 
+    @app.get("/liff/migrate.html")
+    def liff_migration_handoff_page():
+        """Legacy LIFF handoff that asks users to explicitly reauthorize."""
+        return send_from_directory(app.static_folder, "liff/migrate.html")
+
     # 2026-07-21 patch 24: Onboarding 流程 API
     @app.get("/liff/onboarding")
     def liff_onboarding():
@@ -8841,84 +14875,27 @@ def create_app(config=None):
     @app.get("/api/onboarding/state")
     def onboarding_state_api():
         """取得使用者 onboarding 狀態(守護人是否綁定 + 提醒時間)。"""
-        line_user_id = request.args.get("line_user_id", "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
-        state = load_state(app.config["DATA_FILE"])
-        profile = state.get("users", {}).get(line_user_id, {})
-        contacts = profile.get("contacts") or []
-        if profile and ensure_onboarding_completed_flag(profile):
-            save_state(app.config["DATA_FILE"], state)
-        has_guardian = profile_has_guardian(profile)
-        setup_done = profile_setup_completed(profile)
-        times = reminder_times_for_profile(profile) if profile else default_reminder_times_for_count(1)
-        daily_reminders = int(plan_rules(profile).get("daily_reminders") or 1) if profile else 1
-        grace = normalize_grace_hours((profile or {}).get("grace_hours"))
-        warn_m = int(
-            (profile or {}).get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = onboarding_status_payload(
+            app.config["DATA_FILE"],
+            line_user_id,
+            allow_missing_profile=True,
         )
-        return jsonify({
-            "ok": True,
-            "line_user_id": line_user_id,
-            "has_guardian": has_guardian,
-            "guardian_count": len(contacts),
-            "reminder_time": times[0] if times else None,
-            "reminder_times": times,
-            "daily_reminders": daily_reminders,
-            "daily_checkin_reminder_enabled": bool(profile.get("daily_checkin_reminder_enabled", True)) if profile else True,
-            "default_reminder_times": default_reminder_times_for_count(daily_reminders),
-            "grace_hours": grace,
-            "warning_cancel_minutes": warn_m,
-            "allowed_grace_hours": list(ALLOWED_GRACE_HOURS),
-            "plan": profile.get("plan"),
-            "is_onboarding_completed": setup_done,
-            "setup_completed": setup_done,
-        })
+        return jsonify(data), code
 
     @app.post("/api/onboarding/reminder")
     def onboarding_reminder_api():
         """設定使用者每日提醒時間(支援單一或多時段)。"""
         data = request.get_json(silent=True) or {}
-        line_user_id = (data.get("line_user_id") or "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
-        state = load_state(app.config["DATA_FILE"])
-        profile = get_profile(state, line_user_id)
-        max_count = int(plan_rules(profile).get("daily_reminders") or 1)
-        if "reminder_times" in data:
-            raw = data.get("reminder_times")
-            if not isinstance(raw, list) or not raw:
-                return jsonify({"ok": False, "error": "reminder_times must be a non-empty list"}), 400
-            normalized = normalize_reminder_times(raw, max_count)
-            if not normalized:
-                return jsonify({"ok": False, "error": "invalid reminder_times format, use HH:MM"}), 400
-            times = apply_reminder_times_to_profile(profile, times=normalized)
-            if "daily_checkin_reminder_enabled" in data:
-                profile["daily_checkin_reminder_enabled"] = bool(data.get("daily_checkin_reminder_enabled"))
-        else:
-            reminder_time = (data.get("reminder_time") or "").strip()
-            if not REMINDER_TIME_PATTERN.match(reminder_time):
-                return jsonify({"ok": False, "error": "invalid reminder_time format, use HH:MM"}), 400
-            times = apply_reminder_times_to_profile(profile, single=reminder_time)
-        if "daily_checkin_reminder_enabled" in data:
-            profile["daily_checkin_reminder_enabled"] = bool(data.get("daily_checkin_reminder_enabled"))
-        if "grace_hours" in data:
-            profile["grace_hours"] = normalize_grace_hours(data.get("grace_hours"))
-        else:
-            profile["grace_hours"] = normalize_grace_hours(profile.get("grace_hours"))
-        save_state(app.config["DATA_FILE"], state)
-        return jsonify({
-            "ok": True,
-            "reminder_time": times[0],
-            "reminder_times": times,
-            "daily_reminders": max_count,
-            "daily_checkin_reminder_enabled": bool(profile.get("daily_checkin_reminder_enabled", True)),
-            "grace_hours": normalize_grace_hours(profile.get("grace_hours")),
-            "warning_cancel_minutes": int(
-                profile.get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
-            ),
-            "allowed_grace_hours": list(ALLOWED_GRACE_HOURS),
-        })
+        line_user_id, err = _authenticated_line_user(data)
+        if err:
+            return jsonify(err[0]), err[1]
+        result, code = update_onboarding_reminder(
+            app.config["DATA_FILE"], line_user_id, data
+        )
+        return jsonify(result), code
 
     @app.get("/liff/guardian")
     def liff_guardian():
@@ -9017,38 +14994,12 @@ def create_app(config=None):
         line_user_id, err = _authenticated_line_user({}, use_args=True)
         if err:
             return jsonify(err[0]), err[1]
-        display_name = (request.args.get("display_name") or "").strip()
-        state = load_state(app.config["DATA_FILE"])
-        profile = state.get("users", {}).get(line_user_id)
-        if not profile:
-            data, code = register_line_user(
-                app.config["DATA_FILE"],
-                {
-                    "line_user_id": line_user_id,
-                    "display_name": display_name or "LINE 使用者",
-                },
-            )
-            if code != 200:
-                return jsonify(data), code
-            if isinstance(data, dict):
-                data["auto_registered"] = True
-            return jsonify(data)
-        dirty = scrub_self_line_ids_on_contacts(profile)
-        dirty = ensure_onboarding_completed_flag(profile) or dirty
-        # Heal Taipei-day history if last_check_in already proves today (鬼打牆根因之一)
-        today = today_string()
-        if profile_is_today_checked(profile) and today not in set(profile.get("history") or []):
-            hist = set(profile.get("history") or [])
-            hist.add(today)
-            profile["history"] = sorted(hist)
-            dirty = True
-        before_groups = list(profile.get("guardian_group_ids") or [])
-        sync_owned_guardian_group_ids(state, profile)
-        if list(profile.get("guardian_group_ids") or []) != before_groups:
-            dirty = True
-        if dirty:
-            save_state(app.config["DATA_FILE"], state)
-        return jsonify(build_status(profile, state))
+        data, code = status_for_user(
+            app.config["DATA_FILE"],
+            line_user_id,
+            request.args.get("display_name"),
+        )
+        return jsonify(data), code
 
     @app.post("/api/line/register")
     def line_register():
@@ -9066,20 +15017,10 @@ def create_app(config=None):
         line_user_id, err = _authenticated_line_user(payload)
         if err:
             return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        state = load_state(app.config["DATA_FILE"])
-        if line_user_id not in state.get("users", {}):
-            # 與 /api/status 相同：已驗證身分即可補註冊，避免 wipe 後無法簽到
-            register_line_user(
-                app.config["DATA_FILE"],
-                {
-                    "line_user_id": line_user_id,
-                    "display_name": str(payload.get("display_name") or "LINE 使用者"),
-                },
-            )
-        status = record_checkin(app.config["DATA_FILE"], payload)
-        status["ok"] = True
-        return jsonify(status)
+        result, code = checkin_for_user(
+            app.config["DATA_FILE"], line_user_id, payload, app.config
+        )
+        return jsonify(result), code
 
     @app.post("/callback")
     def line_callback():
@@ -9180,7 +15121,7 @@ def create_app(config=None):
                 liff_sos = (
                     liff_entry_url(open_action="sos")
                     if liff_entry_url
-                    else "https://liff.line.me/2010674803-rK98c0lo?open=sos"
+                    else "https://liff.line.me/2010848330-UAiqPPYD?open=sos"
                 )
                 reply(
                     sos_flow.sos_emergency_flex(
@@ -9222,12 +15163,12 @@ def create_app(config=None):
             setup_uri = (
                 liff_entry_url(open_action="onboarding")
                 if liff_entry_url
-                else "https://liff.line.me/2010674803-rK98c0lo?open=onboarding"
+                else "https://liff.line.me/2010848330-UAiqPPYD?open=onboarding"
             )
             pricing_uri = (
                 pricing_direct_url()
                 if pricing_direct_url
-                else "https://liff.line.me/2010674803-rK98c0lo?open=pricing"
+                else "https://liff.line.me/2010848330-UAiqPPYD?open=pricing"
             )
             welcome_fallback = (
                 f"{greeting}\n\n"
@@ -9236,7 +15177,7 @@ def create_app(config=None):
                 "開始使用前兩個步驟：\n"
                 "① 新增 1 位守護人\n"
                 "② 設定每日提醒時間\n\n"
-                "🎁 完成設定即可享 7 天免費安心體驗\n"
+                "🎁 首次註冊可享一次 14 天安心體驗\n"
                 "緊急狀況請直接撥打 119 或 110\n\n"
                 f"立即開始設定：{setup_uri}\n"
                 f"查看方案：{pricing_uri}\n"
@@ -9302,6 +15243,24 @@ def create_app(config=None):
                     )
                 )
             return messages
+
+        def _reply_migrated_account(reply_token, registration_result):
+            guidance = migrated_account_webhook_guidance(
+                registration_result,
+                app.config.get("LIFF_ID") or DEFAULT_LIFF_ID,
+            )
+            if not guidance:
+                return False
+            try:
+                line_bot_api.reply_message(
+                    reply_token,
+                    TextSendMessage(text=guidance),
+                )
+            except Exception as exc:
+                app.logger.exception(
+                    "migrated account guidance reply failed: %s", exc
+                )
+            return True
 
         def _enrich_bind_result_for_flex(result, line_user_id):
             """補上資訊卡：管理人／核心守護人／緊急聯絡人／群組成員／提醒時間。"""
@@ -9470,13 +15429,17 @@ def create_app(config=None):
             if line_user_id:
                 # Follow 當下就寫入 users，之後開 LIFF 不會因缺 row 而 404
                 try:
-                    register_line_user(
+                    registration_result = register_line_user(
                         app.config["DATA_FILE"],
                         {
                             "line_user_id": line_user_id,
                             "display_name": display_name or "",
                         },
                     )
+                    if _reply_migrated_account(
+                        event.reply_token, registration_result
+                    ):
+                        return
                     reactivate_line_push_for_follow(app.config["DATA_FILE"], line_user_id)
                 except Exception as exc:
                     app.logger.exception("FollowEvent register failed: %s", exc)
@@ -9656,13 +15619,17 @@ def create_app(config=None):
                 )
                 if line_user_id:
                     try:
-                        register_line_user(
+                        registration_result = register_line_user(
                             app.config["DATA_FILE"],
                             {
                                 "line_user_id": line_user_id,
                                 "display_name": display_name or "LINE 使用者",
                             },
                         )
+                        if _reply_migrated_account(
+                            event.reply_token, registration_result
+                        ):
+                            return
                     except Exception as exc:
                         app.logger.exception("welcome keyword register failed: %s", exc)
                 _send_welcome(
@@ -9683,10 +15650,14 @@ def create_app(config=None):
                     )
                     return
                 try:
-                    register_line_user(
+                    registration_result = register_line_user(
                         app.config["DATA_FILE"],
                         {"line_user_id": line_user_id, "display_name": "LINE 使用者"},
                     )
+                    if _reply_migrated_account(
+                        event.reply_token, registration_result
+                    ):
+                        return
                 except Exception as exc:
                     app.logger.exception("invite keyword register failed: %s", exc)
                 if FlexSendMessage is not None and share_invite_flex is not None:
@@ -9713,7 +15684,7 @@ def create_app(config=None):
                 share_page = (
                     share_invite_liff_url()
                     if share_invite_liff_url
-                    else "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html"
+                    else "https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html"
                 )
                 line_bot_api.reply_message(
                     event.reply_token,
@@ -10065,6 +16036,18 @@ def create_app(config=None):
         data, code = save_billing_preferences(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
+    @app.post("/api/billing/cancel")
+    def billing_cancel_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = cancel_recurring_subscription(
+            app.config["DATA_FILE"], payload, app.config
+        )
+        return jsonify(data), code
+
     @app.post("/api/payments/orders")
     def payment_orders_api():
         payload = request.get_json(silent=True) or {}
@@ -10105,6 +16088,62 @@ def create_app(config=None):
             return jsonify(data), code
         return Response("SUCCESS", mimetype="text/plain"), 200
 
+    @app.post("/api/payment/ecpay/notify")
+    def ecpay_webhook():
+        form = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
+        if ecpay is None:
+            return Response("0|payment module missing", mimetype="text/plain"), 503
+        parsed, error = ecpay.parse_notify_payload(form, app.config)
+        if error:
+            return Response(f"0|{error}", mimetype="text/plain"), 400
+        if not ecpay.notify_success(parsed):
+            return Response("1|OK", mimetype="text/plain"), 200
+        data, code = confirm_payment_order(
+            app.config["DATA_FILE"],
+            {
+                "order_id": parsed.get("order_id"),
+                "transaction_id": parsed.get("transaction_id"),
+                "provider": "ecpay",
+            },
+            app.config,
+        )
+        if code >= 400:
+            return Response(f"0|{data.get('error', 'order update failed')}", mimetype="text/plain"), code
+        return Response("1|OK", mimetype="text/plain"), 200
+
+    @app.post("/api/payment/ecpay/period-notify")
+    def ecpay_period_webhook():
+        form = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
+        if ecpay is None:
+            return Response("0|payment module missing", mimetype="text/plain"), 503
+        parsed, error = ecpay.parse_notify_payload(form, app.config)
+        if error:
+            return Response(f"0|{error}", mimetype="text/plain"), 400
+        if not ecpay.notify_success(parsed):
+            return Response("1|OK", mimetype="text/plain"), 200
+        parsed.update({"status": "SUCCESS", "provider": "ecpay"})
+        data, code = process_period_notification(
+            app.config["DATA_FILE"], parsed, app.config
+        )
+        if code >= 400:
+            return Response(f"0|{data.get('error', 'order update failed')}", mimetype="text/plain"), code
+        return Response("1|OK", mimetype="text/plain"), 200
+
+    @app.post("/api/payment/newebpay/period-notify")
+    def newebpay_period_webhook():
+        form = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
+        if newebpay is None:
+            return jsonify({"error": "newebpay module missing"}), 503
+        parsed, error = newebpay.parse_period_payload(form, app.config)
+        if error:
+            return jsonify({"error": error}), 400
+        data, code = process_period_notification(
+            app.config["DATA_FILE"], parsed, app.config
+        )
+        if code >= 400:
+            return jsonify(data), code
+        return Response("SUCCESS", mimetype="text/plain"), 200
+
     @app.route("/payment-success", methods=["GET", "POST"])
     def payment_success_page():
         # 藍新 ReturnURL 常以 POST 帶回付款結果；與 GET 同樣回傳 SPA。
@@ -10129,11 +16168,22 @@ def create_app(config=None):
 
     @app.get("/api/calendar-notes")
     def calendar_notes_get():
-        return jsonify(get_calendar_notes(app.config["DATA_FILE"], request.args.get("line_user_id")))
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
+        data = get_calendar_notes(
+            app.config["DATA_FILE"], line_user_id
+        )
+        return jsonify(data), 200 if data.get("ok") else 403
 
     @app.post("/api/calendar-notes")
     def calendar_notes_post():
-        data, code = save_calendar_note(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = save_calendar_note(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
     @app.post("/api/contacts/add")
@@ -10180,35 +16230,13 @@ def create_app(config=None):
     @app.get("/api/onboarding")
     def onboarding_get():
         """回傳使用者 onboarding 狀態。"""
-        line_user_id = (request.args.get("line_user_id") or "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
-        state = load_state(app.config["DATA_FILE"])
-        profile = state.get("users", {}).get(line_user_id)
-        if not profile:
-            return jsonify({"ok": False, "error": "user not registered"}), 404
-        if ensure_onboarding_completed_flag(profile):
-            save_state(app.config["DATA_FILE"], state)
-        contacts = profile.get("contacts") or []
-        has_guardian = profile_has_guardian(profile)
-        setup_done = profile_setup_completed(profile)
-        times = reminder_times_for_profile(profile)
-        return jsonify({
-            "ok": True,
-            "line_user_id": line_user_id,
-            "is_onboarding_completed": setup_done,
-            "setup_completed": setup_done,
-            "has_guardian": has_guardian,
-            "guardian_count": len(contacts),
-            "reminder_time": times[0] if times else "12:00",
-            "reminder_times": times,
-            "daily_reminders": int(plan_rules(profile).get("daily_reminders") or 1),
-            "default_reminder_times": default_reminder_times_for_count(
-                plan_rules(profile).get("daily_reminders") or 1
-            ),
-            "plan": profile.get("plan", "trial"),
-            "display_name": profile.get("display_name", ""),
-        })
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = onboarding_status_payload(
+            app.config["DATA_FILE"], line_user_id
+        )
+        return jsonify(data), code
 
     @app.get("/api/interaction-state")
     def interaction_state_get():
@@ -10330,51 +16358,13 @@ def create_app(config=None):
     def onboarding_complete():
         """標記 onboarding 完成(必須至少有 1 位守護人)。"""
         payload = request.get_json(silent=True) or {}
-        line_user_id = (payload.get("line_user_id") or "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
-        state = load_state(app.config["DATA_FILE"])
-        profile = state.get("users", {}).get(line_user_id)
-        if not profile:
-            return jsonify({"ok": False, "error": "user not registered"}), 404
-        contacts = profile.get("contacts") or []
-        has_guardian = profile_has_guardian(profile)
-        if not has_guardian:
-            return jsonify({
-                "ok": False,
-                "error": "guardian_required",
-                "message": "必須先新增至少 1 位守護人"
-            }), 400
-        profile["is_onboarding_completed"] = True
-        # 儲存提醒時段(多時段優先;未提供則套用方案預設)
-        if "reminder_times" in payload or payload.get("reminder_time"):
-            apply_reminder_times_to_profile(
-                profile,
-                times=payload.get("reminder_times"),
-                single=payload.get("reminder_time"),
-            )
-        else:
-            apply_reminder_times_to_profile(profile)
-        # 初始化互動狀態,標記完成步驟
-        istate = get_or_create_interaction_state(profile)
-        istate["onboarding_completed"] = True
-        if "add_first_guardian" not in istate["completed_steps"]:
-            istate["completed_steps"].append("add_first_guardian")
-        if "set_reminder_time" not in istate["completed_steps"]:
-            istate["completed_steps"].append("set_reminder_time")
-        if not istate.get("pending_steps"):
-            istate["pending_steps"] = ["explore_app", "read_help", "add_more_guardians_if_paid"]
-        istate["last_interaction_at"] = datetime.now().isoformat(timespec="seconds")
-        save_state(app.config["DATA_FILE"], state)
-        times = reminder_times_for_profile(profile)
-        return jsonify({
-            "ok": True,
-            "is_onboarding_completed": True,
-            "setup_completed": True,
-            "reminder_time": times[0],
-            "reminder_times": times,
-            "interaction_state": istate,
-        }), 200
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        result, code = complete_onboarding_for_user(
+            app.config["DATA_FILE"], line_user_id, payload
+        )
+        return jsonify(result), code
 
     @app.get("/api/emergency-contact/invite-preview")
     def emergency_contact_invite_preview_api():
@@ -10383,29 +16373,130 @@ def create_app(config=None):
             return jsonify(err[0]), err[1]
         payload = {
             "invite_from": request.args.get("invite_from") or request.args.get("from") or "",
+            "invite_token": request.args.get("invite_token") or "",
             "line_user_id": line_user_id,
         }
         data, code = invite_bind_preview(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
+    @app.post("/api/emergency-contact/invite")
+    def emergency_contact_invite_create_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = create_guardian_invite(
+            app.config["DATA_FILE"], line_user_id, payload
+        )
+        return jsonify(data), code
+
     @app.post("/api/emergency-contact/bind")
     def emergency_contact_bind_api():
-        data, code = bind_emergency_contact(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["contact_line_user_id"] = line_user_id
+        data, code = bind_emergency_contact(app.config["DATA_FILE"], payload, app.config)
         return jsonify(data), code
 
     @app.post("/api/guardian-groups/bind")
     def guardian_groups_bind_api():
-        data, code = bind_guardian_group(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = bind_guardian_group(app.config["DATA_FILE"], payload)
+        if code == 200 and data.get("trial_test_message"):
+            token = app.config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+                "LINE_CHANNEL_ACCESS_TOKEN", ""
+            )
+            if not token:
+                return jsonify({
+                    **data,
+                    "trial_test_delivery": "failed",
+                    "error": "LINE_CHANNEL_ACCESS_TOKEN is not set",
+                }), 503
+            sender = app.config.get("LINE_PUSH_SENDER") or line_push_message
+            retry_key = data.get("trial_test_retry_key") or _line_retry_key(
+                f"trial-group-test:{line_user_id}:{payload.get('group_id')}"
+            )
+            try:
+                _send_line_with_retry_key(
+                    sender,
+                    token,
+                    payload.get("group_id"),
+                    data["trial_test_message"],
+                    retry_key,
+                )
+                data["trial_test_delivery"] = "sent"
+                mutate_state_atomically(
+                    app.config["DATA_FILE"],
+                    lambda state: (
+                        (state.get("users") or {}).get(line_user_id, {}).setdefault(
+                            "trial_group_test_delivery", {}
+                        ).update({
+                            "status": "sent",
+                            "sent_at": current_app_time(app.config).isoformat(
+                                timespec="seconds"
+                            ),
+                        }),
+                        record_line_message_usage(
+                            state,
+                            category="trial_group_test",
+                            owner_line_user_id=line_user_id,
+                            recipient_count=1,
+                            event_id=retry_key,
+                        ),
+                    )[-1],
+                )
+            except Exception as exc:
+                data["trial_test_delivery"] = "failed"
+                data["error"] = "測試通知暫時無法送出，請稍後再試。"
+                mutate_state_atomically(
+                    app.config["DATA_FILE"],
+                    lambda state: (state.get("users") or {}).get(
+                        line_user_id, {}
+                    ).setdefault("trial_group_test_delivery", {}).update({
+                        "status": "failed",
+                        "last_error": str(exc)[:200],
+                    }),
+                )
+                app.logger.warning("trial group test delivery failed: %s", exc)
+                return jsonify(data), 502
         return jsonify(data), code
 
     @app.post("/api/guardian-groups/unbind")
     def guardian_groups_unbind_api():
-        data, code = unbind_guardian_group(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = unbind_guardian_group(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
     @app.post("/api/guardian-groups/preferences")
     def guardian_groups_preferences_api():
-        data, code = update_guardian_group_preferences(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = update_guardian_group_preferences(
+            app.config["DATA_FILE"], payload
+        )
+        return jsonify(data), code
+
+    @app.get("/api/guardian-groups/settings")
+    def guardian_groups_settings_api():
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = guardian_group_settings_for_user(
+            app.config["DATA_FILE"], line_user_id
+        )
         return jsonify(data), code
 
     # ===== 2026-07-20 蝦董 added: 測試頁 endpoints =====
@@ -10566,6 +16657,71 @@ def create_app(config=None):
         data, code = trigger_sos(app.config["DATA_FILE"], payload, app.config)
         return jsonify(data), code
 
+    @app.post("/api/trial/test-action")
+    def trial_test_action_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = authorize_labeled_test_action(
+            app.config["DATA_FILE"],
+            line_user_id,
+            payload.get("action"),
+        )
+        if code == 200 and data.get("allowed"):
+            token = app.config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+                "LINE_CHANNEL_ACCESS_TOKEN", ""
+            )
+            if not token:
+                return jsonify({
+                    **data,
+                    "allowed": False,
+                    "reason": "push_unavailable",
+                }), 503
+            sender = app.config.get("LINE_PUSH_SENDER") or line_push_message
+            retry_key = _line_retry_key(data["event_id"])
+            try:
+                _send_line_with_retry_key(
+                    sender, token, line_user_id, data["message"], retry_key
+                )
+                mutate_state_atomically(
+                    app.config["DATA_FILE"],
+                    lambda state: record_line_message_usage(
+                        state,
+                        category=f"trial_{payload.get('action')}_test",
+                        owner_line_user_id=line_user_id,
+                        recipient_count=1,
+                        event_id=data["event_id"],
+                    ),
+                )
+                data["delivery"] = "sent"
+            except Exception as exc:
+                app.logger.warning("trial test delivery failed: %s", exc)
+                data["delivery"] = "failed"
+                data["reason"] = "push_failed"
+                return jsonify(data), 502
+        return jsonify(data), code
+
+    @app.post("/api/sos/cancel")
+    def sos_cancel_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = cancel_sos_event(app.config["DATA_FILE"], payload, app.config)
+        return jsonify(data), code
+
+    @app.post("/api/sos/retry")
+    def sos_retry_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = retry_sos_event(app.config["DATA_FILE"], payload, app.config)
+        return jsonify(data), code
+
     @app.get("/api/bot/guardian-groups")
     def bot_guardian_groups_api():
         """2026-07-21 patch 22: 返回所有守護群清單(供 bot_admin.html)。"""
@@ -10592,7 +16748,7 @@ def create_app(config=None):
 
     @app.get("/api/bot/sos-pending")
     def bot_sos_pending_api():
-        """2026-07-21 patch 22: 返回所有 SOS 預約狀態。"""
+        """Return SOS progress, delivery events and graded safety restrictions."""
         denied = _admin_guard()
         if denied:
             return denied
@@ -10613,7 +16769,34 @@ def create_app(config=None):
             })
         # active 在前(警告/warning),sent,cancelled 在後
         out.sort(key=lambda x: (x.get("stage", "") not in ("warning_1", "warning_2", "warning_3"), x.get("last_tap_at") or ""))
-        return jsonify({"pending": out, "total": len(out)})
+        events = []
+        for event in (state.get("sos_events") or {}).values():
+            owner = str(event.get("owner_line_user_id") or "")
+            deliveries = event.get("deliveries") or []
+            events.append({
+                "event_id": event.get("event_id"),
+                "owner_id": owner[:6] + "..." + owner[-4:] if owner else None,
+                "owner_display_name": event.get("owner_display_name"),
+                "status": event.get("status"),
+                "sent_at": event.get("sent_at"),
+                "cancelled_at": event.get("cancelled_at"),
+                "sent": sum(1 for item in deliveries if item.get("status") == "sent"),
+                "failed": sum(1 for item in deliveries if item.get("status") == "failed"),
+                "abuse_mode": event.get("abuse_mode") or "normal",
+            })
+        events.sort(key=lambda item: item.get("sent_at") or "", reverse=True)
+        abuse = {"observation": 0, "restricted": 0}
+        for profile in (state.get("users") or {}).values():
+            mode = sos_abuse_state(profile, current_app_time(app.config)).get("mode")
+            if mode in abuse:
+                abuse[mode] += 1
+        return jsonify({
+            "pending": out,
+            "total": len(out),
+            "events": events[:50],
+            "event_total": len(events),
+            "abuse": abuse,
+        })
 
     @app.get("/api/bot/recent-events")
     def bot_recent_events_api():
@@ -10678,6 +16861,82 @@ def create_app(config=None):
         data, code = delete_personal_history(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
+    def _migration_verified_subject(payload, channel_key):
+        if not account_migration_ready(app.config):
+            return None, ({"ok": False, "error": "migration_unavailable"}, 503)
+        if extract_id_token is None or verify_line_id_token_for_channel is None:
+            return None, ({"ok": False, "error": "migration_unavailable"}, 503)
+        token = extract_id_token(
+            {key: value for key, value in request.headers.items()},
+            payload,
+            {},
+        )
+        subject = verify_line_id_token_for_channel(
+            token,
+            app.config.get(channel_key),
+        )
+        if not subject:
+            return None, ({"ok": False, "error": "invalid_token"}, 401)
+        return subject, None
+
+    @app.after_request
+    def _disable_account_migration_response_caching(response):
+        if request.path.startswith("/api/account-migration/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.post("/api/account-migration/start")
+    def account_migration_start_api():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"ok": False, "error": "invalid_request"}), 400
+        old_line_user_id, err = _migration_verified_subject(
+            payload,
+            "LEGACY_LINE_LOGIN_CHANNEL_ID",
+        )
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = create_account_migration_ticket(
+            app.config["DATA_FILE"],
+            old_line_user_id,
+            app.config,
+        )
+        return jsonify(data), code
+
+    @app.get("/api/account-migration/status")
+    def account_migration_status_api():
+        old_line_user_id, err = _migration_verified_subject(
+            {},
+            "LEGACY_LINE_LOGIN_CHANNEL_ID",
+        )
+        if err:
+            return jsonify(err[0]), err[1]
+        data = account_migration_ticket_status(
+            app.config["DATA_FILE"],
+            old_line_user_id,
+            app.config,
+        )
+        return jsonify(data)
+
+    @app.post("/api/account-migration/redeem")
+    def account_migration_redeem_api():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"ok": False, "error": "invalid_request"}), 400
+        new_line_user_id, err = _migration_verified_subject(
+            payload,
+            "LINE_LOGIN_CHANNEL_ID",
+        )
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = redeem_account_migration_ticket(
+            app.config["DATA_FILE"],
+            payload.get("migration_code"),
+            new_line_user_id,
+            app.config,
+        )
+        return jsonify(data), code
+
     @app.post("/api/account/privacy-request")
     def account_privacy_request_api():
         payload = request.get_json(silent=True) or {}
@@ -10694,6 +16953,81 @@ def create_app(config=None):
         if denied:
             return denied
         return jsonify(admin_summary(app.config["DATA_FILE"], app.config))
+
+    @app.get("/api/admin/account-migrations")
+    def admin_account_migrations_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        return jsonify(
+            admin_account_migrations(
+                app.config["DATA_FILE"],
+                app.config,
+            )
+        )
+
+    @app.get("/api/admin/beta-members")
+    def admin_beta_members_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        return jsonify(beta_members_snapshot(load_state(app.config["DATA_FILE"])))
+
+    @app.get("/api/admin/line-acceptance")
+    def admin_line_acceptance_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        return jsonify(
+            line_acceptance_snapshot(load_state(app.config["DATA_FILE"]))
+        )
+
+    @app.post("/api/admin/line-acceptance")
+    def admin_line_acceptance_create_api():
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        try:
+            result = mutate_state_atomically(
+                app.config["DATA_FILE"],
+                lambda state: create_line_acceptance_case(state, payload),
+            )
+        except ValueError as exc:
+            return _admin_mutation_response(
+                "line_acceptance.create",
+                {"ok": False, "error": str(exc)},
+                400,
+            )
+        return _admin_mutation_response(
+            "line_acceptance.create",
+            {"ok": True, **result},
+        )
+
+    @app.patch("/api/admin/line-acceptance/<case_id>")
+    def admin_line_acceptance_review_api(case_id):
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        try:
+            result = mutate_state_atomically(
+                app.config["DATA_FILE"],
+                lambda state: review_line_acceptance_case(
+                    state, case_id, payload
+                ),
+            )
+        except ValueError as exc:
+            error = str(exc)
+            return _admin_mutation_response(
+                "line_acceptance.review",
+                {"ok": False, "error": error},
+                404 if error == "acceptance_case_not_found" else 400,
+            )
+        return _admin_mutation_response(
+            "line_acceptance.review",
+            {"ok": True, **result},
+        )
 
     @app.get("/api/admin/business-dashboard")
     def admin_business_dashboard_api():
@@ -10718,6 +17052,64 @@ def create_app(config=None):
             app.config["DATA_FILE"], request.get_json(silent=True) or {}
         )
         return _admin_mutation_response("beta.assign", data, code)
+
+    @app.post("/api/admin/beta-members")
+    def admin_beta_member_assign_api():
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
+        data, code = admin_assign_beta_member(
+            app.config["DATA_FILE"], request.get_json(silent=True) or {}
+        )
+        return _admin_mutation_response("beta.assign", data, code)
+
+    @app.delete("/api/admin/beta-members/<line_user_id>")
+    def admin_beta_member_revoke_api(line_user_id):
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
+        data, code = admin_revoke_beta_member(
+            app.config["DATA_FILE"], line_user_id
+        )
+        return _admin_mutation_response("beta.revoke", data, code)
+
+    @app.get("/api/admin/launch-readiness")
+    def admin_launch_readiness_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        return jsonify(
+            launch_readiness_snapshot(load_state(app.config["DATA_FILE"]))
+        )
+
+    @app.post("/api/admin/launch-validation")
+    def admin_launch_validation_api():
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        try:
+            scenario = mutate_state_atomically(
+                app.config["DATA_FILE"],
+                lambda state: record_launch_validation_step(
+                    state,
+                    payload.get("scenario_id"),
+                    payload.get("kind"),
+                    payload.get("step"),
+                    line_user_id=payload.get("line_user_id") or "",
+                ),
+            )
+        except ValueError as exc:
+            return _admin_mutation_response(
+                "launch_validation.record",
+                {"ok": False, "error": str(exc)},
+                400,
+            )
+        return _admin_mutation_response(
+            "launch_validation.record",
+            {"ok": True, "scenario": scenario},
+            200,
+        )
 
     @app.post("/api/admin/beta-program/update")
     def admin_beta_program_update_api():
@@ -10755,6 +17147,26 @@ def create_app(config=None):
             return denied
         return jsonify(admin_support_tickets(app.config["DATA_FILE"]))
 
+    @app.get("/api/support/tickets")
+    def member_support_tickets_api():
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = member_support_tickets(
+            app.config["DATA_FILE"], line_user_id
+        )
+        return jsonify(data), code
+
+    @app.post("/api/support/tickets")
+    def member_support_ticket_create_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = create_support_ticket(app.config["DATA_FILE"], payload)
+        return jsonify(data), code
+
     @app.get("/api/admin/backups")
     def admin_backups_list_api():
         denied = _admin_guard()
@@ -10769,6 +17181,14 @@ def create_app(config=None):
             return denied
         data, code = create_admin_backup(app.config["DATA_FILE"])
         return _admin_mutation_response("backup.create", data, code)
+
+    @app.post("/api/admin/backups/r2")
+    def admin_r2_backup_create_api():
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
+        data, code = create_r2_encrypted_backup(app.config)
+        return _admin_mutation_response("backup.r2.create", data, code)
 
     @app.get("/api/admin/backups/<backup_id>")
     def admin_backups_download_api(backup_id):
@@ -10825,6 +17245,18 @@ def create_app(config=None):
             return denied
         data, code = confirm_payment_order(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
         return _admin_mutation_response("payment.confirm", data, code)
+
+    @app.post("/api/admin/payments/refund")
+    def admin_payment_refund_api():
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        payload["requested_by"] = "admin_session"
+        data, code = refund_payment_order(
+            app.config["DATA_FILE"], payload, app.config
+        )
+        return _admin_mutation_response("payment.refund", data, code)
 
     @app.post("/api/cron/tick")
     def cron_tick_api():
@@ -11129,12 +17561,16 @@ def create_app(config=None):
 
 
 class MiniResponse:
-    def __init__(self, data, status_code=200):
+    def __init__(self, data, status_code=200, headers=None):
         self._data = data
         self.status_code = status_code
+        self.headers = headers or {}
 
     def get_json(self):
         return self._data
+
+    def close(self):
+        return None
 
     def get_data(self, as_text=False):
         if isinstance(self._data, bytes):
@@ -11149,11 +17585,12 @@ class MiniClient:
     def __init__(self, app):
         self.app = app
 
-    def get(self, path):
+    def get(self, path, headers=None):
         route, _, query = path.partition("?")
         if route == "/api/admin" or route.startswith("/api/admin/"):
             return MiniResponse({"error": "admin_not_configured"}, 503)
         params = dict(urllib.parse.parse_qsl(query))
+        headers = headers or {}
         if route == "/api/config":
             return MiniResponse(app_config(self.app.config))
         if route == "/health":
@@ -11166,8 +17603,59 @@ class MiniClient:
             return MiniResponse({"error": "not found"}, 404)
         if route in ("/terms", "/privacy"):
             return MiniResponse({"ok": True})
+        if route == "/liff/migrate.html":
+            return MiniResponse({"ok": True})
+        if route == "/liff/onboarding":
+            liff_id = str(self.app.config.get("LIFF_ID") or DEFAULT_LIFF_ID).strip()
+            return MiniResponse(
+                {"ok": True},
+                302,
+                {"Location": f"https://liff.line.me/{liff_id}?open=onboarding"},
+            )
         if route == "/api/status":
-            return MiniResponse(self.app.status(params.get("line_user_id")))
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            body, code = status_for_user(
+                self.app.config["DATA_FILE"],
+                line_user_id,
+                params.get("display_name"),
+            )
+            return MiniResponse(body, code)
+        if route == "/api/onboarding":
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            body, code = onboarding_status_payload(
+                self.app.config["DATA_FILE"], line_user_id
+            )
+            return MiniResponse(body, code)
+        if route == "/api/onboarding/state":
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            body, code = onboarding_status_payload(
+                self.app.config["DATA_FILE"],
+                line_user_id,
+                allow_missing_profile=True,
+            )
+            return MiniResponse(body, code)
+        if route == "/api/guardian-groups/settings":
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            body, code = guardian_group_settings_for_user(
+                self.app.config["DATA_FILE"], line_user_id
+            )
+            return MiniResponse(body, code)
         if route == "/api/admin/summary":
             denied = admin_auth_error_payload(self.app.config, params.get("password", ""))
             if denied:
@@ -11178,6 +17666,16 @@ class MiniClient:
             if not admin_allowed(self.app.config, params.get("password", "")):
                 return MiniResponse({"error": "unauthorized"}, 401)
             return MiniResponse(admin_support_tickets(self.app.config["DATA_FILE"]))
+        if route == "/api/support/tickets":
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            body, code = member_support_tickets(
+                self.app.config["DATA_FILE"], line_user_id
+            )
+            return MiniResponse(body, code)
         if route == "/api/admin/backups":
             if not admin_allowed(self.app.config, params.get("password", "")):
                 return MiniResponse({"error": "unauthorized"}, 401)
@@ -11191,16 +17689,39 @@ class MiniClient:
         if route == "/api/contacts":
             return MiniResponse(get_contacts(self.app.config["DATA_FILE"], params.get("line_user_id")))
         if route == "/api/emergency-contact/invite-preview":
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
             body, code = invite_bind_preview(
                 self.app.config["DATA_FILE"],
                 {
                     "invite_from": params.get("invite_from") or params.get("from") or "",
-                    "line_user_id": params.get("line_user_id") or "",
+                    "invite_token": params.get("invite_token") or "",
+                    "line_user_id": line_user_id,
                 },
             )
             return MiniResponse(body, code)
         if route == "/api/calendar-notes":
-            return MiniResponse(get_calendar_notes(self.app.config["DATA_FILE"], params.get("line_user_id")))
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            body = get_calendar_notes(self.app.config["DATA_FILE"], line_user_id)
+            return MiniResponse(body, 200 if body.get("ok") else 403)
+        if route == "/api/smart-reminders":
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            return MiniResponse(
+                get_smart_reminders_payload(
+                    self.app.config["DATA_FILE"], line_user_id
+                )
+            )
         if route == "/api/friends/locations":
             return MiniResponse(friend_locations(self.app.config["DATA_FILE"], params.get("line_user_id")))
         if route == "/api/location/status":
@@ -11229,7 +17750,35 @@ class MiniClient:
             body, code = register_line_user(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
         if route == "/api/checkin":
-            return MiniResponse(record_checkin(self.app.config["DATA_FILE"], payload))
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            result, code = checkin_for_user(
+                self.app.config["DATA_FILE"], line_user_id, payload, self.app.config
+            )
+            return MiniResponse(result, code)
+        if route == "/api/onboarding/reminder":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            result, code = update_onboarding_reminder(
+                self.app.config["DATA_FILE"], line_user_id, payload
+            )
+            return MiniResponse(result, code)
+        if route == "/api/onboarding/complete":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            result, code = complete_onboarding_for_user(
+                self.app.config["DATA_FILE"], line_user_id, payload
+            )
+            return MiniResponse(result, code)
         if route == "/api/warning/cancel":
             return MiniResponse(cancel_warning(self.app.config["DATA_FILE"], payload, self.app.config))
         if route == "/api/settings":
@@ -11244,15 +17793,77 @@ class MiniClient:
             body, code = save_contacts(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
         if route == "/api/calendar-notes":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["line_user_id"] = line_user_id
             body, code = save_calendar_note(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
+        if route == "/api/smart-reminders":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["line_user_id"] = line_user_id
+            body, code = save_smart_reminder(self.app.config["DATA_FILE"], payload)
+            return MiniResponse(body, code)
+        if route in {"/api/cron/smart-reminders", "/api/cron/birthday-reminders"}:
+            if not cron_allowed(self.app.config, cron_secret):
+                return MiniResponse({"error": "unauthorized"}, 401)
+            task = (
+                send_smart_reminders
+                if route.endswith("smart-reminders")
+                else send_birthday_reminders
+            )
+            body, code = task(self.app.config)
+            return MiniResponse(body, code)
         if route == "/api/emergency-contact/bind":
+            line_user_id, err = authenticated_line_user(payload, args=params, headers=headers, config=self.app.config)
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["contact_line_user_id"] = line_user_id
             body, code = bind_emergency_contact(self.app.config["DATA_FILE"], payload, self.app.config)
             return MiniResponse(body, code)
+        if route == "/api/emergency-contact/invite":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            body, code = create_guardian_invite(
+                self.app.config["DATA_FILE"], line_user_id, payload
+            )
+            return MiniResponse(body, code)
         if route == "/api/guardian-groups/bind":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["line_user_id"] = line_user_id
             body, code = bind_guardian_group(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
+        if route == "/api/guardian-groups/preferences":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["line_user_id"] = line_user_id
+            body, code = update_guardian_group_preferences(
+                self.app.config["DATA_FILE"], payload
+            )
+            return MiniResponse(body, code)
         if route == "/api/guardian-groups/unbind":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["line_user_id"] = line_user_id
             body, code = unbind_guardian_group(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
         if route == "/api/friends/invite":
@@ -11269,6 +17880,12 @@ class MiniClient:
             return MiniResponse(body, code)
         if route == "/api/sos":
             body, code = trigger_sos(self.app.config["DATA_FILE"], payload, self.app.config)
+            return MiniResponse(body, code)
+        if route == "/api/sos/cancel":
+            body, code = cancel_sos_event(self.app.config["DATA_FILE"], payload, self.app.config)
+            return MiniResponse(body, code)
+        if route == "/api/sos/retry":
+            body, code = retry_sos_event(self.app.config["DATA_FILE"], payload, self.app.config)
             return MiniResponse(body, code)
         if route == "/api/account/delete":
             body, code = delete_account(self.app.config["DATA_FILE"], payload)
@@ -11369,6 +17986,34 @@ class MiniClient:
                 return MiniResponse({"error": "unauthorized"}, 401)
             body, code = admin_reply_support_ticket(self.app.config["DATA_FILE"], payload, self.app.config)
             return MiniResponse(body, code)
+        if route == "/api/support/tickets":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["line_user_id"] = line_user_id
+            body, code = create_support_ticket(
+                self.app.config["DATA_FILE"], payload
+            )
+            return MiniResponse(body, code)
+        return MiniResponse({"error": "not found"}, 404)
+
+    def delete(self, path, headers=None):
+        route, _, query = path.partition("?")
+        params = dict(urllib.parse.parse_qsl(query))
+        headers = headers or {}
+        if route.startswith("/api/smart-reminders/"):
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            reminder_id = route.rsplit("/", 1)[-1]
+            body, code = delete_smart_reminder(
+                self.app.config["DATA_FILE"], line_user_id, reminder_id
+            )
+            return MiniResponse(body, code)
         return MiniResponse({"error": "not found"}, 404)
 
 
@@ -11382,7 +18027,17 @@ class MiniApp:
             "ADMIN_OPEN": os.environ.get("ADMIN_OPEN", ""),
             "LINE_CHANNEL_ACCESS_TOKEN": os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
             "LINE_CHANNEL_SECRET": os.environ.get("LINE_CHANNEL_SECRET", ""),
-            "LIFF_ID": os.environ.get("LIFF_ID", ""),
+            "LIFF_ID": os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID,
+            "LINE_LOGIN_CHANNEL_ID": (
+                os.environ.get("LINE_LOGIN_CHANNEL_ID")
+                or (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).split("-", 1)[0]
+                or DEFAULT_LINE_LOGIN_CHANNEL_ID
+            ),
+            "LEGACY_LINE_LOGIN_CHANNEL_ID": os.environ.get(
+                "LEGACY_LINE_LOGIN_CHANNEL_ID", "2010674803"
+            ),
+            "LEGACY_LIFF_ID": os.environ.get("LEGACY_LIFF_ID", DEFAULT_LEGACY_LIFF_ID),
+            "ACCOUNT_MIGRATION_SECRET": os.environ.get("ACCOUNT_MIGRATION_SECRET", ""),
             "APP_PUBLIC_URL": os.environ.get("APP_PUBLIC_URL", ""),
             "APP_TIMEZONE": os.environ.get("APP_TIMEZONE", "Asia/Taipei"),
             "CRON_SECRET": os.environ.get("CRON_SECRET", ""),
@@ -11429,6 +18084,14 @@ class MiniApp:
             def route(handler):
                 return urllib.parse.urlsplit(handler.path).path
 
+            def authenticated_user(handler, payload=None, params=None):
+                return authenticated_line_user(
+                    payload or {},
+                    args=params or {},
+                    headers=dict(handler.headers.items()),
+                    config=config,
+                )
+
             def do_GET(handler):
                 route = handler.route()
                 if route == "/api/admin" or route.startswith("/api/admin/"):
@@ -11439,22 +18102,31 @@ class MiniApp:
                 if route == "/health":
                     return handler.send_json({"ok": True})
                 if route == "/api/status":
-                    line_user_id = (params.get("line_user_id") or "").strip()
-                    if not line_user_id:
-                        return handler.send_json({"ok": False, "error": "missing line_user_id"}, 400)
-                    state = load_state(data_file)
-                    if line_user_id not in state.get("users", {}):
-                        data, code = register_line_user(
-                            data_file,
-                            {
-                                "line_user_id": line_user_id,
-                                "display_name": params.get("display_name") or "LINE 使用者",
-                            },
-                        )
-                        if isinstance(data, dict):
-                            data["auto_registered"] = True
-                        return handler.send_json(data, code)
-                    return handler.send_json(build_status(state["users"][line_user_id], state))
+                    line_user_id, err = handler.authenticated_user(params=params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    data, code = status_for_user(
+                        data_file,
+                        line_user_id,
+                        params.get("display_name"),
+                    )
+                    return handler.send_json(data, code)
+                if route == "/api/onboarding":
+                    line_user_id, err = handler.authenticated_user(params=params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    data, code = onboarding_status_payload(data_file, line_user_id)
+                    return handler.send_json(data, code)
+                if route == "/api/onboarding/state":
+                    line_user_id, err = handler.authenticated_user(params=params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    data, code = onboarding_status_payload(
+                        data_file,
+                        line_user_id,
+                        allow_missing_profile=True,
+                    )
+                    return handler.send_json(data, code)
                 if route == "/api/admin/summary":
                     denied = admin_auth_error_payload(config, params.get("password", ""))
                     if denied:
@@ -11464,16 +18136,33 @@ class MiniApp:
                 if route == "/api/contacts":
                     return handler.send_json(get_contacts(data_file, params.get("line_user_id")))
                 if route == "/api/emergency-contact/invite-preview":
+                    line_user_id, err = handler.authenticated_user({}, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
                     data, code = invite_bind_preview(
                         data_file,
                         {
                             "invite_from": params.get("invite_from") or params.get("from") or "",
-                            "line_user_id": params.get("line_user_id") or "",
+                            "invite_token": params.get("invite_token") or "",
+                            "line_user_id": line_user_id,
                         },
                     )
                     return handler.send_json(data, code)
                 if route == "/api/calendar-notes":
-                    return handler.send_json(get_calendar_notes(data_file, params.get("line_user_id")))
+                    line_user_id, err = handler.authenticated_user(params=params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    body = get_calendar_notes(data_file, line_user_id)
+                    return handler.send_json(
+                        body, status=200 if body.get("ok") else 403
+                    )
+                if route == "/api/smart-reminders":
+                    line_user_id, err = handler.authenticated_user(params=params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    return handler.send_json(
+                        get_smart_reminders_payload(data_file, line_user_id)
+                    )
                 if route == "/api/friends/locations":
                     return handler.send_json(friend_locations(data_file, params.get("line_user_id")))
                 if route == "/api/location/status":
@@ -11558,7 +18247,29 @@ class MiniApp:
                     data, code = register_line_user(data_file, payload)
                     return handler.send_json(data, code)
                 if route == "/api/checkin":
-                    return handler.send_json(record_checkin(data_file, payload))
+                    line_user_id, err = handler.authenticated_user(payload, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    data, code = checkin_for_user(
+                        data_file, line_user_id, payload, config
+                    )
+                    return handler.send_json(data, code)
+                if route == "/api/onboarding/reminder":
+                    line_user_id, err = handler.authenticated_user(payload, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    data, code = update_onboarding_reminder(
+                        data_file, line_user_id, payload
+                    )
+                    return handler.send_json(data, code)
+                if route == "/api/onboarding/complete":
+                    line_user_id, err = handler.authenticated_user(payload, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    data, code = complete_onboarding_for_user(
+                        data_file, line_user_id, payload
+                    )
+                    return handler.send_json(data, code)
                 if route == "/api/warning/cancel":
                     return handler.send_json(cancel_warning(data_file, payload, config))
                 if route == "/api/settings":
@@ -11573,10 +18284,46 @@ class MiniApp:
                     data, code = save_contacts(data_file, payload)
                     return handler.send_json(data, code)
                 if route == "/api/calendar-notes":
+                    line_user_id, err = handler.authenticated_user(payload, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    payload["line_user_id"] = line_user_id
                     data, code = save_calendar_note(data_file, payload)
                     return handler.send_json(data, code)
+                if route == "/api/smart-reminders":
+                    line_user_id, err = handler.authenticated_user(payload, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    payload["line_user_id"] = line_user_id
+                    data, code = save_smart_reminder(data_file, payload)
+                    return handler.send_json(data, code)
+                if route in {
+                    "/api/cron/smart-reminders",
+                    "/api/cron/birthday-reminders",
+                }:
+                    if not cron_allowed(config, handler.cron_secret()):
+                        return handler.send_json({"error": "unauthorized"}, 401)
+                    task = (
+                        send_smart_reminders
+                        if route.endswith("smart-reminders")
+                        else send_birthday_reminders
+                    )
+                    data, code = task(config)
+                    return handler.send_json(data, code)
                 if route == "/api/emergency-contact/bind":
+                    line_user_id, err = handler.authenticated_user(payload, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    payload["contact_line_user_id"] = line_user_id
                     data, code = bind_emergency_contact(data_file, payload, config)
+                    return handler.send_json(data, code)
+                if route == "/api/emergency-contact/invite":
+                    line_user_id, err = handler.authenticated_user(payload, params)
+                    if err:
+                        return handler.send_json(err[0], err[1])
+                    data, code = create_guardian_invite(
+                        data_file, line_user_id, payload
+                    )
                     return handler.send_json(data, code)
                 if route == "/api/guardian-groups/bind":
                     data, code = bind_guardian_group(data_file, payload)
@@ -11598,6 +18345,12 @@ class MiniApp:
                     return handler.send_json(data, code)
                 if route == "/api/sos":
                     data, code = trigger_sos(data_file, payload, config)
+                    return handler.send_json(data, code)
+                if route == "/api/sos/cancel":
+                    data, code = cancel_sos_event(data_file, payload, config)
+                    return handler.send_json(data, code)
+                if route == "/api/sos/retry":
+                    data, code = retry_sos_event(data_file, payload, config)
                     return handler.send_json(data, code)
                 if route == "/api/account/delete":
                     data, code = delete_account(data_file, payload)

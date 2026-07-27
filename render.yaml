@@ -15,7 +15,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: LIFF_ID
-        value: 2010674803-rK98c0lo
+        value: 2010848330-UAiqPPYD
       - key: APP_PUBLIC_URL
         value: https://alive-checkin.onrender.com/
       - key: APP_TIMEZONE
@@ -44,17 +44,25 @@ services:
       - key: LINE_CHANNEL_SECRET
         sync: false
       - key: LINE_LOGIN_CHANNEL_ID
-        sync: false
+        value: 2010848330
+      - key: LEGACY_LINE_LOGIN_CHANNEL_ID
+        value: 2010674803
+      - key: LEGACY_LIFF_ID
+        value: 2010674803-rK98c0lo
+      - key: ACCOUNT_MIGRATION_SECRET
+        generateValue: true
       - key: CRON_SECRET
         sync: false
-      - key: NEWEBPAY_MERCHANT_ID
+      - key: ECPAY_MERCHANT_ID
         sync: false
-      - key: NEWEBPAY_HASH_KEY
+      - key: ECPAY_HASH_KEY
         sync: false
-      - key: NEWEBPAY_HASH_IV
+      - key: ECPAY_HASH_IV
         sync: false
-      - key: NEWEBPAY_STAGE
+      - key: ECPAY_STAGE
         value: sandbox
+      - key: ECPAY_PERIOD_TIMES
+        value: "99"
       # Never wipe Render Environment Variables — LINE token/secret/LIFF_ID
       # missing makes /callback return 503 and messaging die.
   - type: cron

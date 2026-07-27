@@ -80,7 +80,7 @@
 </head>
 <body>
   <button id="tapLayer" type="button" aria-label="再試一次" disabled></button>
-  <p id="hint">分享完成後，請按下方按鈕回到原本頁面。</p>
+  <p id="hint">分享完成後，請按下方按鈕回到原本頁面。受邀親友會先看到守護用途、通知內容、定位限制、解除方式與個資用途說明，再自行加入官方帳號、登入並同意互相成為核心守護人。</p>
   <div id="actions">
     <button id="retry" type="button">再分享一次</button>
     <button id="doneHome" type="button">完成，返回原位置</button>
@@ -88,8 +88,8 @@
 
   <script>
     // W250724bn：分享成功／按完成鈕 → 跳回 endpoint 原位置（勿用 liff.line.me origin）
-    const LIFF_ID = "2010674803-rK98c0lo";
-    const AUTO_SHARE_KEY = "alive_share_invite_auto_v1";
+    const LIFF_ID = "2010848330-UAiqPPYD";
+    const SHARE_REOPEN_MESSAGE = "請從 LINE App 重新開啟「一鍵邀請守護人」再試一次";
     const DONE_KEY = "alive_share_invite_done_v1";
     const RETURN_KEY = "alive_share_invite_return_v1";
     const tapLayer = document.getElementById("tapLayer");
@@ -98,31 +98,15 @@
     const actions = document.getElementById("actions");
     const hint = document.getElementById("hint");
 
-    let inviteText = "";
     let myUserId = "";
     let ready = false;
     let sharing = false;
     let shareBlocked = false;
+    let autoShareAttempted = false;
+    let activeInviteToken = "";
 
     function sanitizeUserId(raw) {
       return String(raw || "").trim().replace(/[^a-zA-Z0-9_-]/g, "");
-    }
-
-    function buildInviteText(userId) {
-      const safeId = sanitizeUserId(userId);
-      const bindUrl = safeId
-        ? ("https://line.me/R/app/" + LIFF_ID + "?invite_from=" + encodeURIComponent(safeId))
-        : ("https://line.me/R/app/" + LIFF_ID + "?open=onboarding");
-      return (
-        "我想邀請你成為「每日平安」的守護人\n" +
-        "有緊急或我沒報平安時，系統會通知你\n" +
-        "請先加入 LINE 官方帳號「每日平安」，再點下面連結完成綁定\n" +
-        bindUrl
-      );
-    }
-
-    function buildNativeShareUrl(text) {
-      return "https://line.me/R/share?text=" + encodeURIComponent(String(text || ""));
     }
 
     function buildSafeRedirectUri() {
@@ -203,18 +187,6 @@
       return appPublicOrigin() + resolveReturnPathOnly();
     }
 
-    function homeUrl() {
-      return appPublicOrigin() + "/#home";
-    }
-
-    function markAutoShareTried() {
-      try { sessionStorage.setItem(AUTO_SHARE_KEY, "1"); } catch (_) {}
-    }
-
-    function hasAutoShareTried() {
-      try { return sessionStorage.getItem(AUTO_SHARE_KEY) === "1"; } catch (_) { return false; }
-    }
-
     function markShareDone() {
       try { sessionStorage.setItem(DONE_KEY, "1"); } catch (_) {}
     }
@@ -249,61 +221,54 @@
       try { alert(String(msg || "暫時無法分享")); } catch (_) {}
     }
 
-    function openNativeShare() {
-      if (!inviteText) inviteText = buildInviteText(myUserId);
-      const shareUrl = buildNativeShareUrl(inviteText);
-      try {
-        if (
-          window.liff &&
-          typeof liff.openWindow === "function" &&
-          typeof liff.isInClient === "function" &&
-          liff.isInClient()
-        ) {
-          liff.openWindow({ url: shareUrl, external: false });
-          return true;
-        }
-        window.location.assign(shareUrl);
-        return true;
-      } catch (error) {
-        alertFail((error && error.message) ? error.message : error);
-        return false;
+    async function createGuardianInvite() {
+      const idToken = (window.liff && typeof liff.getIDToken === "function")
+        ? String(liff.getIDToken() || "")
+        : "";
+      const response = await fetch("/api/emergency-contact/invite", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(idToken ? { "Authorization": `Bearer ${idToken}` } : {}),
+        },
+        body: JSON.stringify({ line_user_id: myUserId }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.invite_token) {
+        throw new Error(data.error || "invite_create_failed");
       }
+      activeInviteToken = String(data.invite_token);
+      return activeInviteToken;
     }
 
-    async function tryShareTargetPicker() {
-      if (!window.liff || typeof liff.shareTargetPicker !== "function") return false;
+    async function openGuardianShare(inviterId) {
+      const safeId = sanitizeUserId(inviterId);
       try {
-        if (typeof liff.isInClient === "function" && !liff.isInClient()) return false;
-        if (typeof liff.isApiAvailable === "function" && !liff.isApiAvailable("shareTargetPicker")) return false;
-        const result = await liff.shareTargetPicker([{ type: "text", text: inviteText }]);
-        if (result) {
-          goNextStep();
-          return true;
+        if (!safeId || !window.liff || typeof liff.shareTargetPicker !== "function") {
+          throw new Error("shareTargetPicker unavailable");
         }
-        // 使用者取消：仍顯示完成／返回，不要卡在邀請頁
-        showPostShareUi();
-        return false;
-      } catch (error) {
-        alertFail((error && error.message) ? error.message : error);
+        const inviteToken = await createGuardianInvite();
+        const bindUrl = `https://line.me/R/app/${LIFF_ID}?invite_from=${encodeURIComponent(safeId)}&invite_token=${encodeURIComponent(inviteToken)}`;
+        const result = await liff.shareTargetPicker([{
+          type: "text",
+          text: `想邀請你成為我的每日平安守護人。\n${bindUrl}`,
+        }]);
+        return Boolean(result);
+      } catch (_) {
+        alertFail(SHARE_REOPEN_MESSAGE);
         return false;
       }
     }
 
     async function openShare() {
       if (sharing || shareBlocked || !ready) return;
-      if (!inviteText) inviteText = buildInviteText(myUserId);
       sharing = true;
       tapLayer.disabled = true;
       hidePostShareUi();
       try {
-        if (openNativeShare()) {
-          // openWindow 不會離開本頁：立刻給「完成／返回原位置」
-          markAutoShareTried();
-          showPostShareUi();
-          return;
-        }
-        const ok = await tryShareTargetPicker();
-        if (!ok) showPostShareUi();
+        await openGuardianShare(myUserId);
+        // 分享完成或使用者取消後都留在專用頁，讓使用者自行決定何時返回。
+        showPostShareUi();
       } finally {
         sharing = false;
         if (!shareBlocked) tapLayer.disabled = false;
@@ -319,7 +284,6 @@
     }
 
     async function initializeLiff() {
-      inviteText = buildInviteText("");
       resolveReturnUrl();
       try {
         if (!window.liff) throw new Error("LIFF SDK 未載入");
@@ -329,8 +293,8 @@
           try {
             liff.login({ redirectUri: buildSafeRedirectUri() });
           } catch (_) {
-            try { liff.login(); } catch (e2) {
-              alertFail(e2 && e2.message ? e2.message : e2);
+            try { liff.login(); } catch (_) {
+              alertFail(SHARE_REOPEN_MESSAGE);
               showPostShareUi();
             }
           }
@@ -345,8 +309,6 @@
         } catch (_) {
           myUserId = "";
         }
-        inviteText = buildInviteText(myUserId);
-
         if (inviteFrom && myUserId && inviteFrom !== myUserId) {
           shareBlocked = true;
           alertFail("這是別人的邀請連結，請回官方帳號完成綁定");
@@ -357,24 +319,22 @@
 
         ready = true;
 
-        // 已分享過／從 R/share 返回：直接給下一步，不要再自動開分享迴圈
-        if (hasAutoShareTried()) {
+        // 同一次文件載入只自動開一次；新的 Flex 邀請載入新頁時會重新自動開啟。
+        if (autoShareAttempted) {
           showPostShareUi();
           return;
         }
 
-        markAutoShareTried();
-        openNativeShare();
-        showPostShareUi();
-      } catch (error) {
-        alertFail((error && error.message) ? error.message : error);
+        autoShareAttempted = true;
+        await openShare();
+      } catch (_) {
+        alertFail(SHARE_REOPEN_MESSAGE);
         showPostShareUi();
       }
     }
 
     window.addEventListener("pageshow", function (event) {
       if (event && event.persisted && !shareBlocked) {
-        markAutoShareTried();
         showPostShareUi();
       }
     });

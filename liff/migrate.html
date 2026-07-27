@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>每日平安登入服務已更新</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      min-height: 100dvh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: linear-gradient(145deg, #e8f8ee, #f7fcf8);
+      color: #1f2937;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif;
+    }
+    main {
+      width: min(100%, 420px);
+      padding: 32px 24px;
+      text-align: center;
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 12px 36px rgba(22, 101, 52, 0.14);
+    }
+    h1 { margin: 0 0 16px; color: #087f23; font-size: 24px; }
+    p { margin: 0; line-height: 1.7; font-size: 16px; }
+    .invite-warning { margin-top: 14px; color: #92400e; }
+    .handoff-button {
+      display: block;
+      width: 100%;
+      margin-top: 28px;
+      padding: 15px 20px;
+      border: 0;
+      border-radius: 12px;
+      background: #00b900;
+      color: #fff;
+      font-size: 17px;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .handoff-button:disabled { opacity: 0.65; cursor: wait; }
+    .migration-status { margin-top: 18px; min-height: 54px; font-weight: 700; }
+  </style>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+</head>
+<body>
+  <main>
+    <h1>安全搬回你的每日平安資料</h1>
+    <p>系統會先確認舊帳號，再請你開啟新版。原有資料不會在這一步被刪除。</p>
+    <p class="invite-warning">舊版守護人邀請不會移轉；請邀請人從新版重新分享邀請。</p>
+    <p id="migrationStatus" class="migration-status" role="status" aria-live="polite">準備登入…</p>
+    <button id="startMigrationBtn" class="handoff-button" type="button">開始安全搬家</button>
+    <a id="openNewLiff" class="handoff-button" href="https://liff.line.me/2010848330-UAiqPPYD" hidden>開啟新版每日平安</a>
+  </main>
+  <script>
+    const LEGACY_LIFF_ID = "2010674803-rK98c0lo";
+    const NEW_LIFF_URL = "https://liff.line.me/2010848330-UAiqPPYD";
+    const SAFE_KEYS = ["open", "page", "friend_invite"];
+    const SAFE_ACTIONS = new Set([
+      "home", "checkin", "guard", "safety", "sos", "member", "profile",
+      "guardians", "history", "status", "pricing", "plans", "plan",
+      "help", "faq", "terms", "privacy", "onboarding", "bind",
+      "share-invite", "invite", "onboarding/invite"
+    ]);
+    let legacyMigrationBusy = false;
+
+    function parseLiffStateParams(params, value) {
+      let raw = String(value || "").trim();
+      if (!raw) return;
+      try { raw = decodeURIComponent(raw); } catch (_) {}
+      raw = raw.replace(/^#/, "");
+      if (raw.startsWith("/")) {
+        const queryIndex = raw.indexOf("?");
+        raw = queryIndex >= 0 ? raw.slice(queryIndex + 1) : "";
+      }
+      raw = raw.replace(/^\?/, "");
+      if (!raw || !raw.includes("=")) return;
+      new URLSearchParams(raw).forEach((nestedValue, nestedKey) => {
+        params.set(nestedKey, nestedValue);
+      });
+    }
+
+    function readSourceParams(search = location.search) {
+      const params = new URLSearchParams();
+      try {
+        new URLSearchParams(search).forEach((value, key) => {
+          if (String(key) === "liff.state") parseLiffStateParams(params, value);
+          else params.set(key, value);
+        });
+      } catch (_) {}
+      return params;
+    }
+
+    function isLineUserId(value) {
+      return /^U[0-9a-f]{32}$/i.test(String(value || "").trim());
+    }
+
+    function safeDestinationValue(key, value) {
+      const normalized = String(value || "").trim();
+      if (!normalized || isLineUserId(normalized)) return "";
+      if (key === "open" || key === "page") {
+        const action = normalized.toLowerCase();
+        return SAFE_ACTIONS.has(action) ? action : "";
+      }
+      if (key === "friend_invite") {
+        return /^[A-Z0-9]{6,8}$/i.test(normalized) ? normalized.toUpperCase() : "";
+      }
+      return "";
+    }
+
+    function buildCurrentMigrationUrl(migrationCode, search = location.search) {
+      const target = new URL(NEW_LIFF_URL);
+      target.searchParams.set("migration_code", String(migrationCode || "").trim());
+      const source = readSourceParams(search);
+      for (const key of SAFE_KEYS) {
+        const value = safeDestinationValue(key, source.get(key));
+        if (value) target.searchParams.set(key, value);
+      }
+      return target.toString();
+    }
+
+    function setLegacyMigrationState(state, message) {
+      const status = document.getElementById("migrationStatus");
+      const button = document.getElementById("startMigrationBtn");
+      const nextLink = document.getElementById("openNewLiff");
+      if (status) {
+        status.dataset.state = state;
+        status.textContent = message;
+      }
+      if (button) {
+        button.disabled = state === "verifying";
+        button.textContent = state === "verifying"
+          ? "正在安全驗證…"
+          : (state === "ready-to-start" || state === "preparing" || state === "login"
+            ? "開始安全搬家"
+            : "再試一次");
+        button.hidden = state === "ready";
+      }
+      if (nextLink) nextLink.hidden = state !== "ready";
+    }
+
+    async function startLegacyMigration() {
+      if (legacyMigrationBusy) return {ok: false, skipped: true};
+      legacyMigrationBusy = true;
+      setLegacyMigrationState("verifying", "正在驗證舊帳號，請稍候…");
+      try {
+        const idToken = String(liff.getIDToken() || "").trim();
+        if (!idToken) throw new Error("missing_token");
+        const response = await fetch("/api/account-migration/start", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({}),
+        });
+        const data = await response.json().catch(() => ({}));
+        const migrationCode = String(data.migration_code || "").trim();
+        if (!response.ok || !migrationCode) {
+          if (response.status === 404) {
+            setLegacyMigrationState(
+              "error",
+              "找不到可搬家的舊帳號資料。請確認你使用原本的 LINE 帳號後再試一次。",
+            );
+          } else {
+            setLegacyMigrationState("error", "暫時無法產生搬家連結，請稍後再試一次。");
+          }
+          return {ok: false};
+        }
+        const nextLink = document.getElementById("openNewLiff");
+        if (nextLink) nextLink.href = buildCurrentMigrationUrl(migrationCode);
+        setLegacyMigrationState("ready", "舊帳號已確認。請在 10 分鐘內開啟新版完成搬家。");
+        return {ok: true};
+      } catch (_) {
+        setLegacyMigrationState("error", "網路暫時不穩，請稍後再試一次。");
+        return {ok: false};
+      } finally {
+        legacyMigrationBusy = false;
+        const button = document.getElementById("startMigrationBtn");
+        if (button && !button.hidden) button.disabled = false;
+      }
+    }
+
+    async function initializeLegacyMigration() {
+      setLegacyMigrationState("preparing", "準備登入…");
+      try {
+        await liff.init({liffId: LEGACY_LIFF_ID});
+        if (!liff.isLoggedIn()) {
+          setLegacyMigrationState("login", "請先完成 LINE 登入，再回來繼續搬家。");
+          liff.login();
+          return {ok: false, login: true};
+        }
+        setLegacyMigrationState("ready-to-start", "已登入舊版。請按下方按鈕開始安全搬家。");
+        return {ok: true};
+      } catch (_) {
+        setLegacyMigrationState("error", "LINE 登入暫時無法使用，請稍後再試一次。");
+        return {ok: false};
+      }
+    }
+
+    if (typeof window !== "undefined" && typeof document !== "undefined") {
+      const button = document.getElementById("startMigrationBtn");
+      if (button) button.addEventListener("click", () => startLegacyMigration());
+      Promise.resolve().then(() => initializeLegacyMigration());
+    }
+  </script>
+</body>
+</html>

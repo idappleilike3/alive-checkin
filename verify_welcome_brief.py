@@ -5,11 +5,11 @@ import re
 import sys
 
 sys.path.insert(0, ".")
-os.environ.setdefault("LIFF_ID", "2010674803-rK98c0lo")
+os.environ.setdefault("LIFF_ID", "2010848330-UAiqPPYD")
 import guardian_group_flex as g
 
-EXPECTED_BIND = "https://liff.line.me/2010674803-rK98c0lo?open=onboarding"
-EXPECTED_HOME = "https://liff.line.me/2010674803-rK98c0lo#home"
+EXPECTED_BIND = "https://liff.line.me/2010848330-UAiqPPYD?open=onboarding"
+EXPECTED_HOME = "https://liff.line.me/2010848330-UAiqPPYD#home"
 
 w = g.welcome_flex()
 ws = json.dumps(w, ensure_ascii=False)

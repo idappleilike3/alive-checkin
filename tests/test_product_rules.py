@@ -1,9 +1,12 @@
 ﻿import ast
+import re
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+NEW_LIFF_ID = "2010848330-UAiqPPYD"
+NEW_CHANNEL_ID = "2010848330"
 
 
 def load_plan_limits():
@@ -16,6 +19,61 @@ def load_plan_limits():
 
 
 class ProductRulesTests(unittest.TestCase):
+    def test_guardian_share_creates_server_invite_and_carries_unique_token(self):
+        share_page = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
+        member_page = (ROOT / "index.html").read_text(encoding="utf-8")
+        invite_page = (ROOT / "invite.html").read_text(encoding="utf-8")
+        self.assertIn('fetch("/api/emergency-contact/invite"', share_page)
+        self.assertIn("data.invite_token", share_page)
+        self.assertIn("&invite_token=", share_page)
+        self.assertIn("body.invite_token = inviteToken", member_page)
+        self.assertIn('qs.set("invite_token", inviteToken)', member_page)
+        self.assertIn('"invite_from", "from", "invite_token"', member_page)
+        self.assertIn('q.set("invite_token", inviteToken)', invite_page)
+
+    def test_no_production_entry_uses_legacy_liff_id(self):
+        allowed = {
+            ROOT / "liff" / "migrate.html",
+            ROOT / "docs" / "superpowers",
+            ROOT / ".superpowers",
+            ROOT / "tests",
+        }
+        offenders = []
+        for path in ROOT.rglob("*"):
+            if not path.is_file() or path.suffix not in {".py", ".html", ".json", ".yaml", ".md"}:
+                continue
+            if any(str(path).startswith(str(prefix)) for prefix in allowed):
+                continue
+            source = path.read_text(encoding="utf-8")
+            if path == ROOT / "app.py":
+                source = source.replace(
+                    'DEFAULT_LEGACY_LIFF_ID = "2010674803-rK98c0lo"',
+                    "",
+                )
+            elif path == ROOT / "render.yaml":
+                source = source.replace(
+                    "      - key: LEGACY_LIFF_ID\n"
+                    "        value: 2010674803-rK98c0lo",
+                    "",
+                )
+            if "2010674803-rK98c0lo" in source:
+                offenders.append(str(path.relative_to(ROOT)))
+        self.assertEqual(offenders, [])
+
+    def test_render_uses_new_line_login_provider(self):
+        render = (ROOT / "render.yaml").read_text(encoding="utf-8")
+        self.assertIn(f"value: {NEW_LIFF_ID}", render)
+        self.assertIn(f"value: {NEW_CHANNEL_ID}", render)
+
+    def test_legacy_migration_page_matches_controlled_server_default(self):
+        source = (ROOT / "liff" / "migrate.html").read_text(encoding="utf-8")
+        match = re.search(r'const LEGACY_LIFF_ID = "([^"]+)";', source)
+        self.assertIsNotNone(match)
+
+        import app as alive_app
+
+        self.assertEqual(match.group(1), alive_app.DEFAULT_LEGACY_LIFF_ID)
+
     def test_paid_plan_limits_match_public_pricing(self):
         plans = load_plan_limits()
 
@@ -25,7 +83,7 @@ class ProductRulesTests(unittest.TestCase):
             "paid_199": (6, 1, 0, 0, 2, 4),
             "paid_199_year": (13, 2, 0, 0, 3, 10),
             "paid_399": (20, 2, 0, 0, 5, 15),
-            "paid_399_year": (32, 3, 0, 0, 7, 25),
+            "paid_399_year": (32, 2, 0, 0, 7, 25),
             "paid_799": (45, 3, 0, 1, 10, 35),
             "paid_799_year": (65, 3, 0, 3, 15, 50),
         }
@@ -41,6 +99,29 @@ class ProductRulesTests(unittest.TestCase):
                 self.assertEqual(plans[plan]["emergency_contact_limit"], emergency_limit)
                 self.assertEqual(plans[plan]["channels"], ["line"])
                 self.assertNotIn("sms", plans[plan]["channels"])
+
+    def test_399_and_799_reminder_limits_and_public_copy_match_decision(self):
+        plans = load_plan_limits()
+        self.assertEqual(plans["paid_399"]["daily_reminders"], 2)
+        self.assertEqual(plans["paid_399_year"]["daily_reminders"], 2)
+        self.assertEqual(plans["paid_799"]["daily_reminders"], 3)
+        self.assertEqual(plans["paid_799_year"]["daily_reminders"], 3)
+
+        pricing = (ROOT / "liff" / "pricing.html").read_text(encoding="utf-8")
+        member = (ROOT / "liff" / "member.html").read_text(encoding="utf-8")
+        help_page = (ROOT / "help.html").read_text(encoding="utf-8")
+        self.assertIn("399 月費／年費：每日可選 1～2 次", pricing)
+        self.assertIn("799 月費／年費：每日可選 1～3 次", pricing)
+        self.assertIn("預設 12:00、18:00", pricing)
+        self.assertIn("完成今日簽到後，當天剩餘提醒自動停止", pricing)
+        self.assertNotIn("邀請成功每位 +7 天", pricing)
+        self.assertNotIn("方案到期後資料保留 30 天", pricing)
+        self.assertIn('class="guardian-row contact-card', member)
+        self.assertIn("data-contact-toggle", member)
+        self.assertIn('aria-expanded="false"', member)
+        self.assertIn("399 月費／年費每日可選 1～2 次", help_page)
+        self.assertIn("799 月費／年費每日可選 1～3 次", help_page)
+        self.assertIn("當天剩餘提醒就會自動停止", help_page)
 
     def test_removed_reminder_settings_do_not_hide_guardian_or_location_tools(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -140,7 +221,7 @@ class ProductRulesTests(unittest.TestCase):
             pricing,
         )
         self.assertIn(
-            "<tr><td>LINE 私聊預警／日</td><td>1 次</td><td>1 次</td><td>2 次</td><td>2 次</td><td>3 次</td><td>3 次</td><td>3 次</td></tr>",
+            "<tr><td>LINE 私聊預警／日</td><td>1 次</td><td>1 次</td><td>2 次</td><td>1～2 次</td><td>1～2 次</td><td>1～3 次</td><td>1～3 次</td></tr>",
             pricing,
         )
         self.assertNotIn("簡訊預警", pricing)
@@ -202,13 +283,21 @@ class ProductRulesTests(unittest.TestCase):
                 self.assertEqual(plans[plan]["trajectory_days"], 0)
                 self.assertFalse(plans[plan]["realtime_tracking"])
 
+    def test_sos_result_ui_lists_safe_guardian_and_group_names(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("function formatSosRecipientNames(result)", page)
+        self.assertIn("result.guardians", page)
+        self.assertIn("result.groups", page)
+        self.assertIn("通知明細", page)
+
     def test_mvp_home_has_exactly_four_primary_actions(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("每日平安", page)
         self.assertIn("每天 10 秒，報個平安", page)
         self.assertIn("平常不打擾，有事才通知守護人", page)
-        self.assertIn("每成功邀請 1 位守護人", page)
-        self.assertIn("免費延長 7 天；方案到期後守護人與聯絡人資料保留 30 天", page)
+        self.assertNotIn("每成功邀請 1 位守護人", page)
+        self.assertNotIn("免費延長 7 天；方案到期後守護人與聯絡人資料保留 30 天", page)
         self.assertIn('id="mvpSafeBtn"', page)
         self.assertIn('id="mvpGuardBtn"', page)
         self.assertIn('name="mvpSafetyGuardDuration"', page)
@@ -275,15 +364,14 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("儲存續扣", page)
         self.assertNotIn("有效的 799 守護版會員，可連續按 3 次", page)
 
-    def test_export_my_data_supports_liff_json_csv(self):
+    def test_privacy_requests_require_verified_contact_path(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
-        self.assertIn("function exportMyData(", page)
-        self.assertIn("function buildExportCsv(", page)
-        self.assertIn("function shareOrDownloadBlob(", page)
-        self.assertIn("liff.openWindow", page)
-        self.assertIn("application/json", page)
-        self.assertIn("text/csv", page)
-        self.assertIn('id="exportMyDataBtn"', page)
+        self.assertIn("隱私權申請", page)
+        self.assertIn("alivecheckin.tw@gmail.com", page)
+        self.assertIn("LINE 身分確認", page)
+        self.assertNotIn('id="exportMyDataBtn"', page)
+        self.assertNotIn('id="deleteCheckinHistoryBtn"', page)
+        self.assertNotIn('id="deleteAccountBtn"', page)
 
     def test_member_unbound_guardian_shows_one_tap_invite(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -332,7 +420,7 @@ class ProductRulesTests(unittest.TestCase):
         ]
         self.assertIn("apiGetContacts(lineUserId)", refresh_contacts)
 
-    def test_liff_initialization_requires_line_login_before_member_use(self):
+    def test_liff_initialization_requires_official_friend_then_explicit_login_before_member_use(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         init_line = page[
             page.index("async function initializeLiff()") : page.index("const LUNAR_DAY_NAMES")
@@ -343,9 +431,15 @@ class ProductRulesTests(unittest.TestCase):
             'await liff.init({ liffId: FIXED_LIFF_ID });',
             init_line,
         )
-        self.assertIn("if (!liff.isLoggedIn())", init_line)
-        self.assertIn("liff.login();", init_line)
-        self.assertNotIn("liff.login({ redirectUri:", init_line)
+        self.assertIn("resolveLineEntryGate", init_line)
+        self.assertIn("getFriendship", page)
+        self.assertIn('id="lineEntryGate"', page)
+        self.assertIn('id="lineEntryAddFriend"', page)
+        self.assertIn('id="lineEntryLoginBtn"', page)
+        self.assertNotIn("liff.login();", init_line)
+        self.assertIn("startLineLogin", page)
+        self.assertNotIn("liff.login({ redirectUri })", init_line)
+        self.assertIn("liff.login({ redirectUri })", page)
         # NEVER gate login behind !isInClient (breaks Android Chrome / OAuth return)
         self.assertNotIn("if (inClient)", init_line)
         self.assertNotIn("withLoginOnExternalBrowser", init_line)
@@ -384,12 +478,11 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("liff.login({ redirectUri: buildSafeRedirectUri() })", page)
         self.assertNotIn("redirectUri: window.location.href", page)
         self.assertIn("alertFail", page)
-        self.assertIn("line.me/R/share?text=", page)
-        self.assertIn("openNativeShare()", page)
-        self.assertIn("liff.openWindow", page)
-        self.assertIn("alive_share_invite_auto_v1", page)
-        self.assertIn("hasAutoShareTried", page)
-        self.assertIn("請先加入 LINE 官方帳號「每日平安」", page)
+        self.assertNotIn("line.me/R/share?text=", page)
+        self.assertIn("openGuardianShare", page)
+        self.assertNotIn("alive_share_invite_auto_v1", page)
+        self.assertNotIn("hasAutoShareTried", page)
+        self.assertIn("let autoShareAttempted = false", page)
         # 禁止教學中間頁文案
         self.assertNotIn("分享給好友", page)
         self.assertNotIn("請點下面大按鈕", page)
@@ -401,13 +494,36 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("autoShareOnce", page)
         init_fn = page[page.index("async function initializeLiff()") :]
         self.assertNotIn("shareTargetPicker", init_fn)
-        self.assertIn("openNativeShare()", init_fn)
+        self.assertIn("await openShare()", init_fn)
         self.assertNotIn("clipboard", page)
-        self.assertIn("https://line.me/R/app/\" + LIFF_ID + \"?invite_from=", page)
-        self.assertIn('const LIFF_ID = "2010674803-rK98c0lo"', page)
+        self.assertIn("https://line.me/R/app/${LIFF_ID}?invite_from=", page)
+        self.assertIn('const LIFF_ID = "2010848330-UAiqPPYD"', page)
         self.assertIn("W250724ir", page)
         self.assertIn("resolveReturnUrl", page)
         self.assertIn("appPublicOrigin", page)
+
+    def test_share_invite_sdk_failures_use_reopen_message_and_auto_share_is_page_scoped(self):
+        """Raw SDK errors and a session-wide latch would respectively confuse users and block later invitations."""
+        page = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
+        init_fn = page[page.index("async function initializeLiff()") :]
+
+        self.assertIn('const SHARE_REOPEN_MESSAGE = "請從 LINE App 重新開啟「一鍵邀請守護人」再試一次"', page)
+        self.assertIn("alertFail(SHARE_REOPEN_MESSAGE)", init_fn)
+        self.assertNotIn("alertFail((error && error.message) ? error.message : error)", init_fn)
+        self.assertNotIn("sessionStorage.setItem(AUTO_SHARE_KEY", page)
+        self.assertIn("if (autoShareAttempted)", init_fn)
+        self.assertIn("autoShareAttempted = true", init_fn)
+
+    def test_guardian_invite_uses_direct_share_target_picker(self):
+        """Removing the picker would make the one-tap guardian invite unusable in LINE."""
+        page = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
+        home = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("async function openGuardianShare(inviterId)", page)
+        self.assertIn("await liff.shareTargetPicker([", page)
+        self.assertNotIn('location.replace("/?open=home")', page)
+        self.assertNotIn('params.set("open", hash)', home)
+        self.assertIn("請從 LINE App 重新開啟「一鍵邀請守護人」再試一次", page)
         self.assertIn("完成，返回原位置", page)
         self.assertIn('params.get("return")', page)
 
@@ -419,28 +535,30 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("url.searchParams.set", page)
         self.assertIn("parseLiffStateParams", page)
         self.assertIn('String(key) === "liff.state"', page)
-        self.assertIn('"invite_from", "friend_invite", "open"', page)
+        self.assertIn("sanitizeLoginContinuationParams", page)
+        self.assertIn('read("migration_code")', page)
         self.assertIn("https://alive-checkin.onrender.com/liff/pricing.html", rich_menu)
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=checkin", rich_menu)
+        base = "https://liff.line.me/2010848330-UAiqPPYD"
+        self.assertIn(f"{base}?open=checkin", rich_menu)
         # 一鍵邀請：直連空白 share-invite（自動 R/share），無教學大按鈕文案頁
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html", rich_menu)
-        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=share-invite", rich_menu)
+        self.assertIn(f"{base}/liff/share-invite.html", rich_menu)
+        self.assertNotIn(f"{base}/?open=share-invite", rich_menu)
         # 「需要幫忙」統一進永久 LIFF SOS 入口，不再在聊天室分三次確認
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=sos", rich_menu)
-        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=sos", rich_menu)
+        self.assertIn(f"{base}?open=sos", rich_menu)
+        self.assertNotIn(f"{base}/?open=sos", rich_menu)
         self.assertNotIn('"type": "message", "label": "需要幫忙"', rich_menu)
         self.assertIn('"label": "需要幫忙"', rich_menu)
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=help", rich_menu)
-        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo?open=pricing", rich_menu)
-        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo/?open=pricing", rich_menu)
-        self.assertIn("https://liff.line.me/2010674803-rK98c0lo?open=guard", rich_menu)
+        self.assertIn(f"{base}?open=help", rich_menu)
+        self.assertNotIn(f"{base}?open=pricing", rich_menu)
+        self.assertNotIn(f"{base}/?open=pricing", rich_menu)
+        self.assertIn(f"{base}?open=guard", rich_menu)
         self.assertIn('url += "?" + urlencode(params, safe="/")', flex)
         self.assertNotIn('url += "/?" + urlencode(params, safe="/")', flex)
         self.assertIn("line_native_share_url", flex)
         self.assertIn("share_invite_flex", flex)
         self.assertIn("請先加入 LINE 官方帳號「每日平安」", flex)
         self.assertIn("有緊急或我沒報平安時，系統會通知你", flex)
-        self.assertNotIn("https://liff.line.me/2010674803-rK98c0lo#open=", rich_menu)
+        self.assertNotIn(f"{base}#open=", rich_menu)
         self.assertNotIn("https://alive-checkin.onrender.com/help.html", rich_menu)
         self.assertNotIn('"type": "message", "label": "SOS 求救"', rich_menu)
         self.assertNotIn('"label": "連按SOS"', rich_menu)
@@ -533,8 +651,8 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('faq: "faq.html"', page)
         self.assertIn("wantsShareInvite", page)
         self.assertIn("tryLineShareTargetPicker", page)
-        self.assertIn("liff.login()", page)
-        self.assertNotIn('liff.login({ redirectUri:', page)
+        self.assertIn("liff.login({ redirectUri })", page)
+        self.assertIn("buildCleanLoginRedirectUri", page)
         self.assertIn('@app.get("/faq")', backend)
         self.assertIn('@app.get("/help")', backend)
         self.assertIn('@app.get("/pricing")', backend)
@@ -574,9 +692,9 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("改用 LINE 好友分享", page)
         self.assertNotIn('id="shareInviteFallbackCopyBtn"', page)
         self.assertNotIn("請貼到 LINE 給家人", page)
-        # login 不帶 redirectUri（Android/iOS 參數才不會丟）
-        self.assertIn("liff.login()", page)
-        self.assertNotIn("liff.login({ redirectUri:", page)
+        # Explicit login preserves only validated same-origin continuation state.
+        self.assertIn("liff.login({ redirectUri })", page)
+        self.assertIn("sanitizeLoginContinuationParams", page)
         self.assertIn('buildPublicAppUrl({ from: safeId }, "/invite")', page)
         self.assertIn('@app.get("/invite")', backend)
         self.assertIn('send_from_directory(app.static_folder, "invite.html")', backend)
@@ -632,7 +750,7 @@ class ProductRulesTests(unittest.TestCase):
         group_flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
         sos_flow = (ROOT / "sos_flow.py").read_text(encoding="utf-8")
         page = (ROOT / "index.html").read_text(encoding="utf-8")
-        uri = "https://liff.line.me/2010674803-rK98c0lo?open=sos"
+        uri = "https://liff.line.me/2010848330-UAiqPPYD?open=sos"
 
         self.assertIn(f'"uri": "{uri}"', rich_menu)
         self.assertIn('_uri_button("需要幫忙", liff_entry_url(open_action="sos")', group_flex)
@@ -647,7 +765,26 @@ class ProductRulesTests(unittest.TestCase):
             : page.index("let sosLocationPromise")
         ]
         self.assertNotIn("apiUpdateLocation(", refresh_block)
-        self.assertEqual(page.count("openSosModal();"), 1)
+        route_block = page[
+            page.index("function openRequestedPage()")
+            : page.index("function clearInviteFromUrl()")
+        ]
+        self.assertIn('if (action === "sos")', route_block)
+        self.assertIn("openSosFlow();", route_block)
+        self.assertNotIn('showTab("home");\n        openSosFlow();', route_block)
+        bootstrap_sos = page[
+            page.index('} else if (openAction === "sos") {')
+            : page.index("} else if (isGuardOpen)", page.index('} else if (openAction === "sos") {'))
+        ]
+        self.assertNotIn('showTab("home")', bootstrap_sos)
+        self.assertIn("openSosFlow();", bootstrap_sos)
+        bind_block = page[
+            page.index("function bindMvpHome()")
+            : page.index("function bindTabEvents()")
+        ]
+        self.assertIn('sosBtn.addEventListener("click", openSosFlow)', bind_block)
+        self.assertIn('guardSosBtn.addEventListener("click", openSosFlow)', bind_block)
+        self.assertNotIn('addEventListener("click", openSosModal)', bind_block)
         self.assertIn("result.sent_at", page)
         self.assertIn("result.cancel_available", page)
         self.assertIn("發送時間", page)
@@ -738,6 +875,32 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("欢迎", onboarding)
         self.assertNotIn("关系", onboarding)
         self.assertIn(".onboarding-submit", page)
+
+    def test_active_surfaces_use_one_14_day_experience_not_permanent_free(self):
+        surfaces = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (
+                ROOT / "index.html",
+                ROOT / "admin.html",
+                ROOT / "pricing.html",
+                ROOT / "liff" / "pricing.html",
+                ROOT / "liff" / "onboarding.html",
+            )
+        )
+        for cancelled in (
+            "7 天安心體驗",
+            "7 天免費安心體驗",
+            "7 天試用",
+            "免費方案",
+            "免費版",
+            "NT$0 / 永久",
+        ):
+            self.assertNotIn(cancelled, surfaces)
+        self.assertIn("14 天安心體驗", surfaces)
+        self.assertIn("不自動扣款", surfaces)
+        self.assertIn("199", surfaces)
+        self.assertIn("399", surfaces)
+        self.assertIn("799", surfaces)
 
 
 if __name__ == "__main__":

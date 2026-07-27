@@ -37,7 +37,7 @@ RED_WARN = "#D6322C"
 ORANGE = "#E08E00"
 
 # 與 render.yaml / 正式 /api/config 一致。禁止把帶 code=&state= 的 OAuth callback 當永久連結。
-DEFAULT_LIFF_ID = "2010674803-rK98c0lo"
+DEFAULT_LIFF_ID = "2010848330-UAiqPPYD"
 PUBLIC_BASE = "https://alive-checkin.onrender.com"
 
 
@@ -123,9 +123,8 @@ def line_native_share_url(text: str) -> str:
 
 
 def share_invite_flex(invite_from: str, *, nickname: str = ""):
-    """一鍵邀請回覆：整張卡片 URI＝line.me/R/share（無教學文案大按鈕頁）。"""
-    text = guardian_invite_share_text(invite_from, nickname=nickname)
-    share_uri = line_native_share_url(text)
+    """一鍵邀請回覆：開啟專用 LIFF 頁並直接使用 shareTargetPicker。"""
+    share_uri = share_invite_liff_url()
     return {
         "type": "bubble",
         "action": {"type": "uri", "label": "傳給家人", "uri": share_uri},

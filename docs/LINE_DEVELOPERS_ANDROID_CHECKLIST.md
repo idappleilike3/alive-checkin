@@ -10,7 +10,7 @@
    - 不可填 `http://`、本機、或帶 `code=` / `state=` 的一次性 OAuth URL
 
 2. **LIFF ID**  
-   目前正式：`2010674803-rK98c0lo`  
+   目前正式：`2010848330-UAiqPPYD`
    與 Render 環境變數 `LIFF_ID`、`/api/config` 回傳值必須相同
 
 3. **LIFF Size**  
@@ -21,8 +21,8 @@
 
 5. **shareTargetPicker（一鍵分享必開）**  
    LINE Developers → 該 LIFF → **開啟「分享目標選擇器 / shareTargetPicker」**  
-   - 未開：按鈕仍可按，但只會走「複製邀請訊息」備援  
-   - 一鍵邀請 URI：`https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html`
+   - 未開或 SDK 失敗：顯示「請從 LINE App 重新開啟『一鍵邀請守護人』再試一次」，不會複製邀請內容或改走剪貼簿備援
+   - 一鍵邀請 URI：`https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html`
 
 6. **分享連結型態**  
    - 正確：`https://line.me/R/app/{LIFF_ID}?invite_from=...` 或 `https://liff.line.me/{LIFF_ID}?...`（用 `?` 不要用 `/?`）  
@@ -40,9 +40,9 @@
 ## 重測步驟（一鍵分享）
 
 1. 用 **Android** 與 **iPhone** 各測一次，務必在 **LINE App 內**開啟  
-2. 點歡迎詞或圖文選單「一鍵邀請」→ 應進專用頁（大綠鈕「一鍵分享守護人」），**不要**先看到首頁再跳  
-3. 點大按鈕 → 應跳出 LINE 選好友分享；若沒跳出，應出現複製提示／錯誤 `alert`  
-4. 對方收到的連結應為：`https://line.me/R/app/2010674803-rK98c0lo?invite_from=...`  
+2. 點歡迎詞或圖文選單「一鍵邀請」→ 專用頁載入後應自動跳出 LINE 選好友，不會先顯示首頁或綠色預分享按鈕
+3. 分享完成或取消後可按「再分享一次」重開 picker；若 SDK 失敗，應顯示重新從 LINE App 開啟的提示，且不得出現複製／剪貼簿備援
+4. 對方收到的連結應為：`https://line.me/R/app/2010848330-UAiqPPYD?invite_from=...`
    （不要再用 `liff.line.me/.../?invite_from=` 的 `/?` 形式，容易 LIFF／OAuth 400）
 5. 對照 `/api/config` 的 `deploy_version`（內部戳，歡迎 Flex 不會顯示黃底版本）
 

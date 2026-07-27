@@ -111,6 +111,8 @@ class NotifyChannelPrefsTests(unittest.TestCase):
                 **alive_app.DEFAULT_PROFILE,
                 "line_user_id": "U-owner",
                 "display_name": "阿明",
+                "plan": "paid_799",
+                "payment_status": "active",
                 "history": [evening.strftime("%Y-%m-%d")],
             }
             state["guardian_groups"] = {
@@ -127,6 +129,7 @@ class NotifyChannelPrefsTests(unittest.TestCase):
                     "DATA_FILE": data_file,
                     "LINE_CHANNEL_ACCESS_TOKEN": "token",
                     "LINE_PUSH_SENDER": fake_sender,
+                    "GROUP_MEMBER_IDS_FETCHER": lambda _token, _group: ["U-owner"],
                     "CRON_NOW": morning,
                 }
             )
@@ -139,6 +142,7 @@ class NotifyChannelPrefsTests(unittest.TestCase):
                     "DATA_FILE": data_file,
                     "LINE_CHANNEL_ACCESS_TOKEN": "token",
                     "LINE_PUSH_SENDER": fake_sender,
+                    "GROUP_MEMBER_IDS_FETCHER": lambda _token, _group: ["U-owner"],
                     "CRON_NOW": evening,
                 }
             )

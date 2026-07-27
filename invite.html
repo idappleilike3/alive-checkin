@@ -130,9 +130,10 @@
   </main>
   <script>
     (function () {
-      var DEFAULT_LIFF_ID = "2010674803-rK98c0lo";
+      var DEFAULT_LIFF_ID = "2010848330-UAiqPPYD";
       var params = new URLSearchParams(location.search);
       var inviteFrom = (params.get("from") || params.get("invite_from") || params.get("invite") || "").trim();
+      var inviteToken = (params.get("invite_token") || "").trim();
       var friendInvite = (params.get("friend_invite") || "").trim();
       var openAction = (params.get("open") || "").trim();
       var statusEl = document.getElementById("status");
@@ -147,6 +148,7 @@
       function buildQuery() {
         var q = new URLSearchParams();
         if (inviteFrom) q.set("invite_from", inviteFrom);
+        if (inviteToken) q.set("invite_token", inviteToken);
         if (friendInvite) q.set("friend_invite", friendInvite);
         if (openAction) q.set("open", openAction);
         if (!inviteFrom && !friendInvite && !openAction) q.set("open", "onboarding");

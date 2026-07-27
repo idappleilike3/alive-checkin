@@ -614,6 +614,33 @@
       color: #166534;
     }
     .inline-error[hidden] { display: none; }
+    .account-migration-card {
+      margin: 16px 0;
+      padding: 18px;
+      border: 2px solid #86d7a2;
+      border-radius: 16px;
+      background: #f0fdf4;
+      color: #14532d;
+      text-align: left;
+      font-size: 17px;
+      line-height: 1.65;
+    }
+    .account-migration-card h2 { margin: 0 0 8px; font-size: 22px; }
+    .account-migration-card p { margin: 0 0 10px; }
+    .account-migration-card ul { margin: 0 0 12px; padding-left: 24px; }
+    .account-migration-card button,
+    .account-migration-card a {
+      display: inline-block;
+      min-height: 48px;
+      padding: 11px 18px;
+      border: 0;
+      border-radius: 12px;
+      background: #087f23;
+      color: #fff;
+      font-size: 17px;
+      font-weight: 700;
+      text-decoration: none;
+    }
     .check-btn:disabled,
     .reload-btn:disabled {
       opacity: 0.55;
@@ -695,6 +722,39 @@
     }
     .member-subpanel-body { margin-top: 10px; }
     .member-subpanel-body[hidden] { display: none; }
+    .member-contact-card-toggle {
+      width: 100%;
+      min-height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 0;
+      background: transparent;
+      padding: 12px 0;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .member-contact-card-toggle:focus-visible {
+      outline: 3px solid #0f766e;
+      outline-offset: 3px;
+      border-radius: 10px;
+    }
+    .member-contact-card-chevron {
+      flex: 0 0 auto;
+      color: #0f766e;
+      font-size: 22px;
+      transition: transform 0.15s;
+    }
+    .member-contact-card-toggle[aria-expanded="true"] .member-contact-card-chevron {
+      transform: rotate(180deg);
+    }
+    .member-contact-card-body[hidden] { display: none; }
+    @media (prefers-reduced-motion: reduce) {
+      .member-contact-card-chevron { transition: none; }
+    }
     .daily-remind-toggle-row {
       display: flex;
       align-items: center;
@@ -2078,6 +2138,44 @@
       gap: 12px;
     }
     .onboarding-form[hidden] { display: none !important; }
+    #lineEntryGate {
+      position: fixed;
+      inset: 0;
+      z-index: 120;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(15, 23, 42, 0.62);
+    }
+    #lineEntryGate[hidden] { display: none !important; }
+    .line-entry-card {
+      width: min(100%, 430px);
+      padding: 28px 24px;
+      border: 2px solid #86efac;
+      border-radius: 22px;
+      background: #fff;
+      color: #17324d;
+      text-align: left;
+      box-shadow: 0 22px 56px rgba(15, 23, 42, 0.28);
+    }
+    .line-entry-card h2 { margin-bottom: 12px; font-size: 25px; line-height: 1.4; }
+    .line-entry-card p { margin: 0 0 18px; font-size: 17px; line-height: 1.7; }
+    .line-entry-actions { display: grid; gap: 12px; }
+    .line-entry-actions a,
+    .line-entry-actions button {
+      min-height: 54px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      font: inherit;
+      font-size: 18px;
+      font-weight: 900;
+      text-align: center;
+      cursor: pointer;
+    }
+    .line-entry-actions a { color: #fff; background: #06c755; text-decoration: none; }
+    .line-entry-actions button { border: 2px solid #0b8b54; color: #075f3a; background: #effdf5; }
+    body.line-entry-gated > main > :not(#lineEntryGate) { visibility: hidden; }
     .share-invite-fallback {
       display: grid;
       gap: 10px;
@@ -3595,6 +3693,7 @@
           <a class="family" id="sosDialPrimary" href="tel:" hidden>第一聯絡人</a>
         </div>
         <p class="sos-feedback" id="sosFeedback" aria-live="polite"></p>
+        <button class="action-btn" id="sosCancelSentBtn" type="button" hidden>我已安全／取消通知</button>
         <a class="sos-upgrade-link" id="sosUpgradeLink" href="https://alive-checkin.onrender.com/liff/pricing.html">查看守護方案</a>
         <div class="actions">
           <button class="action-btn" id="sosConfirmCancel" type="button">關閉</button>
@@ -3606,6 +3705,34 @@
       <button class="theme-btn" data-theme="neon" type="button">霓虹</button>
       <button class="theme-btn" data-theme="cute" type="button">可愛</button>
     </div>
+
+    <div id="accountMigrationCard" class="account-migration-card" role="status" aria-live="polite" hidden>
+      <h2 id="accountMigrationTitle">正在安全搬家</h2>
+      <p id="accountMigrationMessage">請稍候，正在確認你的帳號。</p>
+      <div id="accountMigrationSummary"></div>
+      <button id="retryAccountMigrationBtn" type="button" hidden>再試一次</button>
+      <a id="accountMigrationAction" href="https://liff.line.me/2010848330-UAiqPPYD?open=member" hidden>開啟新版會員中心</a>
+    </div>
+
+    <section id="lineEntryGate" hidden aria-live="polite">
+      <div class="line-entry-card" role="dialog" aria-modal="true" aria-labelledby="lineEntryTitle">
+        <div id="lineEntryFriendStep">
+          <h2 id="lineEntryTitle">先加入「每日平安」官方帳號好友</h2>
+          <p>加入好友後，我們才能在需要時傳送平安與守護通知。加入完成後，請回到這裡重新確認。</p>
+          <div class="line-entry-actions">
+            <a id="lineEntryAddFriend" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener">加入每日平安官方帳號</a>
+            <button id="lineEntryRecheckFriendBtn" type="button">我已加入，重新確認</button>
+          </div>
+        </div>
+        <div id="lineEntryLoginStep" hidden>
+          <h2>使用 LINE 一鍵登入</h2>
+          <p>請按一下登入。登入後，系統會立即確認官方帳號好友狀態，再安全帶回你的會員資料與守護設定。</p>
+          <div class="line-entry-actions">
+            <button id="lineEntryLoginBtn" type="button">使用 LINE 一鍵登入</button>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <section class="mvp-home" id="mvpHome" aria-label="每日平安首頁">
       <div class="mvp-brand">每日平安</div>
@@ -3654,8 +3781,8 @@
       </div>
       <div class="mvp-reward-card" id="mvpRewardInviteCard" aria-label="綁定守護人獎勵">
         <div>
-          <strong>每成功邀請 1 位守護人</strong>
-          <span>免費延長 7 天；方案到期後守護人與聯絡人資料保留 30 天</span>
+          <strong>邀請信任的親友一起守護</strong>
+          <span>對方登入 LINE 並同意後，才會完成雙向綁定</span>
         </div>
         <button class="mvp-reward-btn share-contact-invite-btn" type="button">一鍵邀請守護人</button>
       </div>
@@ -3946,7 +4073,7 @@
         <div class="status-row"><span class="status-label">⏰ 上次簽到</span><span class="status-value" id="lastDate">--</span></div>
         <div class="status-row"><span class="status-label">♡ 目前狀態</span><span class="status-value" id="statusText">--</span></div>
         <div class="plan-strip" id="planStrip" data-plan-tone="trial">
-          <div class="plan-chip plan-state-chip"><strong id="planStateLabel">7 天安心體驗</strong><span id="planDetailText">還有 7 天完整體驗</span></div>
+          <div class="plan-chip plan-state-chip"><strong id="planStateLabel">14 天安心體驗</strong><span id="planDetailText">還有 14 天完整體驗</span></div>
           <div class="plan-chip"><strong id="contactLimit">1</strong><span>核心守護人</span></div>
         </div>
         <div class="guardian-status-grid">
@@ -3974,7 +4101,7 @@
           <button id="nextMonth" type="button" aria-label="下一個月">&#8250;</button>
         </div>
         <div class="calendar-grid" id="calendarGrid"></div>
-        <div class="helper" style="margin-top:10px;">綠色是已簽到，紅點是有記事。點日期可查看節日或新增記事。</div>
+        <div class="helper" id="calendarPlanHint" style="margin-top:10px;">綠色是已簽到。備忘錄只開放 799 樂年方案使用。</div>
       </div>
     </section>
 
@@ -4042,13 +4169,13 @@
             <h4>👨‍👩‍👧 守護人（Guardian）</h4>
             <p><span class="role-label">用途</span>　平常每天守護你的人。</p>
             <p><span class="role-label">會收到</span>　未報平安通知、SOS、安全守護、可查看平安狀態（若有授權）。</p>
-            <p><span class="role-label">免費版建議</span>　1 位守護人（配偶／父母／子女足夠）。</p>
+            <p><span class="role-label">體驗期建議</span>　1 位守護人（配偶／父母／子女足夠）。</p>
           </article>
           <article class="member-role-card" aria-label="緊急聯絡人說明">
             <h4>☎️ 緊急聯絡人（Emergency Contact）</h4>
             <p><span class="role-label">用途</span>　電話備援：緊急時可手動撥打（不會自動群發）。</p>
             <p><span class="role-label">會收到</span>　不會自動推播；與守護人的 LINE 通知分開。</p>
-            <p><span class="role-label">免費版建議</span>　2 位（爸媽，或配偶＋好友）。可先填姓名與電話。</p>
+            <p><span class="role-label">體驗期建議</span>　2 位（爸媽，或配偶＋好友）。可先填姓名與電話。</p>
           </article>
         </div>
 
@@ -4072,7 +4199,7 @@
             <div class="member-role-bind-intro" id="memberGuardianBindIntro" aria-label="核心守護人說明">
               <p><strong>用途</strong>：平常每天守護你的人，需完成 LINE 綁定。</p>
               <p><strong>會收到</strong>：未報平安通知、SOS、安全守護、可查看平安狀態（若有授權）。</p>
-              <p id="memberGuardianPlanTip"><strong>免費版建議</strong>：1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。</p>
+              <p id="memberGuardianPlanTip"><strong>體驗期建議</strong>：1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。</p>
             </div>
             <div class="member-quota-line" id="memberGuardianQuotaLine">核心守護人 0/1</div>
             <div class="member-core-line" id="memberCoreGeneralLine">可新增 1 位・已新增 0 位</div>
@@ -4087,7 +4214,7 @@
                 <button class="action-btn primary" id="memberInviteMoreGuardianBtn" type="button">再邀請一位守護人</button>
                 <button class="action-btn" id="memberLimitUpgradeBtn" type="button">立即升級</button>
               </div>
-              <p class="helper" id="memberInviteRewardHint" style="margin-top:8px;">每成功邀請 1 位新守護人 → 免費延長 7 天；方案到期後守護人與聯絡人資料保留 30 天。</p>
+              <p class="helper" id="memberInviteRewardHint" style="margin-top:8px;">對方登入 LINE 並同意後，才會完成雙向綁定。</p>
             </div>
             <div class="member-data-actions" id="memberGuardianInviteActions">
               <button class="action-btn primary share-contact-invite-btn" id="memberReinviteGuardianBtn" type="button">一鍵邀請守護人</button>
@@ -4103,7 +4230,7 @@
             <h3>緊急聯絡人</h3>
             <div class="member-role-bind-intro" id="memberEmergencyBindIntro" aria-label="緊急聯絡人說明">
               <p><strong>用途</strong>：電話備援，緊急時可手動撥打（不會自動群發簡訊／推播）。</p>
-              <p id="memberEmergencyPlanTip"><strong>免費版建議</strong>：2 位（爸媽，或配偶＋好友）。可先填姓名與電話。</p>
+              <p id="memberEmergencyPlanTip"><strong>體驗期建議</strong>：2 位（爸媽，或配偶＋好友）。可先填姓名與電話。</p>
             </div>
             <div class="member-quota-line" id="memberEmergencyQuotaLine">緊急聯絡人 0/2</div>
             <div class="member-data-list" id="memberEmergencyList">
@@ -4179,8 +4306,16 @@
             <div class="member-data-row"><span>付費週期</span><strong id="memberBillingCycle">尚未付費</strong></div>
             <div class="member-data-row"><span>付款狀態</span><strong id="memberPaymentStatus">尚未付費</strong></div>
             <div class="member-data-row"><span>使用期限</span><strong id="memberBillingExpiry">尚未設定</strong></div>
+            <div class="member-data-row"><span>自動續費</span><strong id="memberAutoRenewStatus">未開啟</strong></div>
           </div>
-          <div class="member-advanced-note">付款會前往藍新金流安全頁面完成；平台不會保存完整信用卡號，只保留付款結果、授權狀態與必要的卡號末四碼。續扣選項請於藍新付款頁自行選擇。</div>
+          <label class="daily-remind-toggle-row" for="memberAutoRenewRequested">
+            <input type="checkbox" id="memberAutoRenewRequested">
+            <span>本次付款建立自動續費委託</span>
+          </label>
+          <div class="member-data-actions">
+            <button class="action-btn" id="memberCancelAutoRenewBtn" type="button" onclick="cancelAutoRenew()" hidden>取消後續自動扣款</button>
+          </div>
+          <div class="member-advanced-note">付款會前往受保護的安全付款頁面完成；平台不會保存完整信用卡號。取消自動續費不會提前終止已付款期限。</div>
         </div>
 
         <div class="member-data-section">
@@ -4200,14 +4335,44 @@
           </div>
         </div>
 
-        <div class="member-data-section">
-          <h3>我的資料管理</h3>
-          <div class="helper">所有會員都能匯出及刪除自己的個人資料，不會因方案不同而限制基本權利。可下載 JSON／CSV（個人資料、聯絡人、簽到紀錄）。</div>
-          <div class="member-data-actions">
-            <button class="action-btn" id="exportMyDataBtn" type="button">匯出我的資料</button>
-            <button class="action-btn" id="deleteCheckinHistoryBtn" type="button">刪除簽到紀錄</button>
-            <button class="action-btn danger-action" id="deleteAccountBtn" type="button">刪除帳號與個人資料</button>
+        <div class="member-data-section" id="memberSupportSection">
+          <h3>聯絡客服</h3>
+          <p class="helper">客服內容只會回覆到你的 Email 或 LINE 私訊，不會傳到守護群。</p>
+          <form id="memberSupportForm" style="display:grid;gap:10px;margin-top:12px;">
+            <label>問題分類
+              <select id="memberSupportCategory" required>
+                <option>帳號</option><option>付款退款</option><option>方案續費</option>
+                <option>簽到提醒</option><option>守護人</option><option>SOS</option>
+                <option>技術問題</option><option>隱私權</option><option>其他</option>
+              </select>
+            </label>
+            <label>主旨
+              <input id="memberSupportSubject" maxlength="120" required placeholder="請簡短說明問題">
+            </label>
+            <label>留言內容
+              <textarea id="memberSupportMessage" maxlength="1000" required rows="5" placeholder="請寫下問題與希望我們協助的內容"></textarea>
+            </label>
+            <label>Email
+              <input id="memberSupportEmail" type="email" placeholder="使用 Email 回覆時必填">
+            </label>
+            <label>希望回覆方式
+              <select id="memberSupportReplyChannel">
+                <option value="email">Email</option>
+                <option value="line">LINE 私訊</option>
+              </select>
+            </label>
+            <button class="action-btn primary" id="memberSupportSubmitBtn" type="submit">送出客服工單</button>
+            <div class="helper" id="memberSupportFeedback" role="status"></div>
+          </form>
+          <h3 style="margin-top:20px;">我的客服紀錄</h3>
+          <div class="member-data-list" id="memberSupportList">
+            <div class="member-data-row"><span>客服紀錄</span><strong>載入中</strong></div>
           </div>
+        </div>
+
+        <div class="member-data-section">
+          <h3>隱私權申請</h3>
+          <div class="helper">需要查詢、更正、匯出、解除守護關係或刪除帳號時，請寄信至 <a href="mailto:alivecheckin.tw@gmail.com">alivecheckin.tw@gmail.com</a>。客服完成 LINE 身分確認後才會處理，避免他人冒用你的帳號。</div>
         </div>
       </div>
     </section>
@@ -4227,7 +4392,7 @@
             <li>核心守護人 2 位、緊急聯絡人 4 位</li>
             <li>LINE 私聊預警 1 次／日</li>
             <li>安全守護 1 小時</li>
-            <li>SOS、月曆備忘</li>
+            <li>SOS（不含備忘錄與智慧提醒）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="199-month">選擇 199 月費</button>
         </article>
@@ -4240,7 +4405,7 @@
             <li>核心守護人 3 位、緊急聯絡人 10 位</li>
             <li>LINE 私聊預警 2 次／日</li>
             <li>安全守護 1 小時</li>
-            <li>SOS、月曆備忘</li>
+            <li>SOS（不含備忘錄與智慧提醒）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="199-year">選擇 199 年費</button>
         </article>
@@ -4252,7 +4417,7 @@
             <li>核心守護人 5 位、緊急聯絡人 15 位</li>
             <li>LINE 私聊預警 2 次／日</li>
             <li>安全守護 1／3 小時</li>
-            <li>SOS、月曆備忘</li>
+            <li>SOS（不含備忘錄與智慧提醒）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="399-month">選擇 399 月費</button>
         </article>
@@ -4265,17 +4430,17 @@
             <li>核心守護人 7 位、緊急聯絡人 25 位</li>
             <li>LINE 私聊預警 3 次／日</li>
             <li>安全守護 1／3 小時</li>
-            <li>SOS、月曆備忘</li>
+            <li>SOS（不含備忘錄與智慧提醒）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="399-year">選擇 399 年費</button>
         </article>
         <article class="price-card plan-card tier-799 billing-month premium-month-card" data-plan-tier="799" data-billing-cycle="month">
           <div class="price-head"><strong>799 守護版</strong><span class="plan-cycle-badge">月費方案</span></div>
           <div class="plan-price">NT$799 <small>／月</small></div>
-          <div class="plan-card-note">解鎖更完整守護（基本 SOS／1 位守護人通知免費版已含）。</div>
+          <div class="plan-card-note">解鎖更完整守護（基礎 SOS 在到期後仍保留）。</div>
           <ul>
             <li>核心守護人 10 位、緊急聯絡人 35 位</li>
-            <li>早中晚、多階段、智慧提醒</li>
+            <li>早中晚、多階段、備忘錄、智慧提醒</li>
             <li>安全守護 1／3／6／8 小時</li>
             <li>守護群最多 1 群／50 人（僅安全事件）</li>
           </ul>
@@ -4288,16 +4453,16 @@
           <div class="plan-card-note"><s>月付一年 NT$9,588</s>，平均每月約 NT$666。</div>
           <ul>
             <li>核心守護人 15 位、緊急聯絡人 50 位</li>
-            <li>早中晚、多階段、智慧提醒</li>
+            <li>早中晚、多階段、備忘錄、智慧提醒</li>
             <li>安全守護 1／3／6／8 小時</li>
             <li>守護群最多 3 群／50 人（僅安全事件）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="799-year">選擇 799 年費</button>
-          <div class="annual-proof">799 解鎖更完整守護；SOS／1 位守護人通知免費版已含。</div>
+          <div class="annual-proof">799 解鎖更完整守護；基礎 SOS 在到期後仍保留。</div>
         </article>
       </div>
       <div class="payment-order-notice" id="paymentOrderNotice" role="status" aria-live="polite" hidden></div>
-      <div class="helper" style="margin-top:10px;">年費採付 10 個月送 2 個月（等同年繳享 12 個月）。藍新金流設定完成後可線上付款自動開通；尚未設定時訂單會進入待確認，由後台人工開通。</div>
+      <div class="helper" style="margin-top:10px;">年費採付 10 個月送 2 個月（等同年繳享 12 個月）。付款完成後會自動開通；若付款服務暫時無法使用，系統不會扣款。</div>
     </section>
 
     <section class="settings" aria-label="安心守護邀請任務" hidden>
@@ -4306,11 +4471,11 @@
       <div class="helper">分享邀請給聯絡人後，對方只要用 LINE 同意綁定，就能成為你的守護人。</div>
       <div class="pricing-grid">
         <article class="price-card">
-          <div class="price-head"><strong>邀請守護人</strong><span>成功 +7 天</span></div>
+          <div class="price-head"><strong>邀請守護人</strong><span>雙方同意後綁定</span></div>
           <ul>
-            <li>每成功邀請 1 位新守護人 → 免費延長 7 天</li>
+            <li>對方登入 LINE 並同意後，完成雙向守護綁定</li>
             <li>同一人重複綁定不會重複加碼</li>
-            <li>方案到期後，守護人與聯絡人資料保留 30 天</li>
+            <li>綁定完成後可在會員中心管理或解除</li>
           </ul>
           <button class="price-btn" id="shareContactInviteBtn" type="button">一鍵邀請守護人</button>
         </article>
@@ -4389,7 +4554,7 @@
     <div class="guardian-modal">
       <div class="line-trust"><span class="line-logo">LINE</span> LINE 官方授權綁定</div>
       <h2 id="inviteAcceptTitle">您收到一位親友的守護邀請</h2>
-      <p id="inviteAcceptBody">點擊同意即可在緊急時接收位置通知，無需下載 APP。您只會收到這位親友的安全守護提醒，不會被公開個人資料。</p>
+      <p id="inviteAcceptBody">請先閱讀：你將收到對方的報平安、逾時未報平安、SOS 與安全守護通知。定位只在對方主動求助或啟用安全守護時通知；你可隨時解除綁定，資料只用於守護通知。登入後，請明確同意雙方互相成為核心守護人。</p>
       <label class="setting-choice mutual-core-option" id="mutualCoreOption" hidden for="mutualCoreCheckbox">
         <input type="checkbox" id="mutualCoreCheckbox">
         <span>同時互相設為核心守護人</span>
@@ -4495,7 +4660,8 @@
   <div class="modal-backdrop" id="smartReminderEditorModal" hidden>
     <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="smartReminderEditorTitle">
       <h2 id="smartReminderEditorTitle">新增智能提醒</h2>
-      <p class="helper">選擇類型、日期與提醒時間。儲存後只會私訊通知你。</p>
+      <p class="helper">選擇類型、日期與提醒時間。預設只通知自己，也可指定一位已綁定核心守護人；不會送到守護群。</p>
+      <p class="helper" id="smartReminderDailyUsage">今日智慧提醒已使用 0／2 則</p>
       <div class="smart-editor-fields">
         <label for="smartReminderName">對象名稱
           <input id="smartReminderName" type="text" maxlength="40" placeholder="例如：媽媽" autocomplete="name">
@@ -4515,6 +4681,11 @@
         </label>
         <label for="smartReminderTime">提醒時間
           <input id="smartReminderTime" type="time" value="09:00">
+        </label>
+        <label for="smartReminderDeliveryTarget">通知對象
+          <select id="smartReminderDeliveryTarget">
+            <option value="private">只通知自己（預設）</option>
+          </select>
         </label>
         <label for="smartReminderNote">備註（選填）
           <input id="smartReminderNote" type="text" maxlength="80" placeholder="可留空">
@@ -4589,12 +4760,13 @@
     let memberBootstrapState = {
       statusReady: false,
       dataReady: false,
+      guardianRequired: false,
       inFlight: null,
       error: null
     };
 
     const $ = (id) => document.getElementById(id);
-    const DEFAULT_LIFF_ID = "2010674803-rK98c0lo";
+    const DEFAULT_LIFF_ID = "2010848330-UAiqPPYD";
     const OAUTH_PARAM_KEYS = new Set([
       "code", "state", "liff.state", "liffClientId", "liffRedirectUri", "friendship_status_changed"
     ]);
@@ -4641,6 +4813,163 @@
 
     function getAppParam(key) {
       return String(readAppParams().get(key) || "").trim();
+    }
+
+    let pendingAccountMigrationCode = "";
+    let accountMigrationInFlight = null;
+    let pendingMigratedMemberData = null;
+
+    function accountMigrationElement(id) {
+      return document.getElementById(id);
+    }
+
+    function removeMigrationCodeFromVisibleUrl() {
+      const safeParams = new URLSearchParams();
+      for (const key of ["open", "page", "friend_invite"]) {
+        const value = getAppParam(key);
+        if (value) safeParams.set(key, value);
+      }
+      const query = safeParams.toString();
+      const cleanUrl = `${location.pathname || "/"}${query ? `?${query}` : ""}`;
+      history.replaceState(null, "", cleanUrl);
+    }
+
+    function safeMigrationCount(value) {
+      const count = Number(value);
+      return Number.isFinite(count) && count >= 0 ? Math.floor(count) : 0;
+    }
+
+    function safeMigrationPlanLabel(status) {
+      const plan = String(status?.plan || "").trim();
+      return {
+        trial: "安心體驗",
+        free: "未訂閱",
+        paid_199: "基礎版",
+        paid_199_year: "基礎版（年繳）",
+        paid_399: "進階版",
+        paid_399_year: "進階版（年繳）",
+        paid_799: "尊榮版",
+        paid_799_year: "尊榮版（年繳）"
+      }[plan] || "原有方案";
+    }
+
+    function showAccountMigrationState(state, options = {}) {
+      const card = accountMigrationElement("accountMigrationCard");
+      const title = accountMigrationElement("accountMigrationTitle");
+      const message = accountMigrationElement("accountMigrationMessage");
+      const summary = accountMigrationElement("accountMigrationSummary");
+      const retry = accountMigrationElement("retryAccountMigrationBtn");
+      const action = accountMigrationElement("accountMigrationAction");
+      if (card) {
+        card.hidden = false;
+        card.dataset.state = state;
+      }
+      if (title) title.textContent = options.title || "";
+      if (message) message.textContent = options.message || "";
+      if (summary) summary.innerHTML = options.summary || "";
+      if (retry) {
+        retry.hidden = !options.retry;
+        retry.onclick = options.retry ? () => redeemPendingAccountMigration() : null;
+      }
+      if (action) {
+        action.hidden = !options.action;
+        action.href = options.actionHref || "";
+        action.textContent = options.actionText || "開啟新版會員中心";
+      }
+    }
+
+    function showAccountMigrationFailure(errorCode) {
+      if (errorCode === "expired_code") {
+        const legacyLiffId = String(appConfig.legacy_liff_id || "").trim();
+        const legacyLiffUrl = /^\d{10}-[A-Za-z0-9]+$/.test(legacyLiffId)
+          ? `https://liff.line.me/${legacyLiffId}`
+          : "";
+        showAccountMigrationState("expired", {
+          title: "搬家連結已過期",
+          message: legacyLiffUrl
+            ? "這個安全搬家連結已超過使用時間，請回舊版重新驗證。"
+            : "這個安全搬家連結已過期，舊版入口暫時無法確認；請稍後重試或聯絡官方帳號。",
+          action: Boolean(legacyLiffUrl),
+          actionHref: legacyLiffUrl,
+          actionText: "回舊版重新驗證"
+        });
+        return;
+      }
+      if (errorCode === "used_code") {
+        showAccountMigrationState("used", {
+          title: "搬家連結已使用",
+          message: "這個連結已完成使用，請到新版會員中心查看目前資料。",
+          action: true,
+          actionHref: "https://liff.line.me/2010848330-UAiqPPYD?open=member",
+          actionText: "開啟新版會員中心"
+        });
+        return;
+      }
+      showAccountMigrationState("error", {
+        title: "暫時無法完成搬家",
+        message: "資料仍安全保留，請確認網路後再試一次。",
+        retry: true
+      });
+    }
+
+    async function redeemPendingAccountMigration() {
+      const migrationCode = pendingAccountMigrationCode || getAppParam("migration_code");
+      if (!migrationCode) return { attempted: false, succeeded: false };
+      pendingAccountMigrationCode = migrationCode;
+      if (accountMigrationInFlight) return accountMigrationInFlight;
+
+      accountMigrationInFlight = (async () => {
+        showAccountMigrationState("working", {
+          title: "正在安全搬家",
+          message: "正在確認新舊帳號，請稍候。"
+        });
+        try {
+          const idToken = String(liff.getIDToken() || "").trim();
+          if (!idToken) throw new Error("missing_current_token");
+          const request = fetch("/api/account-migration/redeem", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${idToken}`
+            },
+            body: JSON.stringify({ migration_code: migrationCode })
+          });
+          removeMigrationCodeFromVisibleUrl();
+          const response = await request;
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || !data.ok) {
+            if (String(data.error || "") === "expired_code") {
+              await appConfigPromise;
+            }
+            showAccountMigrationFailure(String(data.error || ""));
+            return { attempted: true, succeeded: false };
+          }
+          const counts = data.counts || {};
+          const initialData = await loadInitialMemberData();
+          const planLabel = safeMigrationPlanLabel(initialData?.status || {});
+          const summary = [
+            `<li>目前方案 ${planLabel}</li>`,
+            `<li>平安紀錄 ${safeMigrationCount(counts.checkins)} 筆</li>`,
+            `<li>守護聯絡人 ${safeMigrationCount(counts.contacts)} 位</li>`,
+            `<li>守護群組 ${safeMigrationCount(counts.groups)} 個</li>`,
+            `<li>智能提醒 ${safeMigrationCount(counts.reminders)} 項</li>`
+          ].join("");
+          showAccountMigrationState("success", {
+            title: "帳號搬家完成",
+            message: "原有方案與可移轉資料已安全帶到新版。",
+            summary: `<ul>${summary}</ul>`
+          });
+          pendingAccountMigrationCode = "";
+          pendingMigratedMemberData = initialData;
+          return { attempted: true, succeeded: true, initialData };
+        } catch (_) {
+          showAccountMigrationFailure("");
+          return { attempted: true, succeeded: false };
+        } finally {
+          accountMigrationInFlight = null;
+        }
+      })();
+      return accountMigrationInFlight;
     }
 
     function requestedAppAction() {
@@ -4776,14 +5105,41 @@
       return buildPublicAppUrl({ from: safeId }, "/invite");
     }
 
-    function readSafeDeepLinkParams() {
-      const src = readAppParams();
+    const LOGIN_CONTINUATION_ACTIONS = new Set([
+      "home", "checkin", "guard", "safety", "sos", "member", "profile",
+      "guardians", "history", "status", "pricing", "plans", "plan",
+      "help", "faq", "terms", "privacy", "onboarding", "bind",
+      "share-invite", "invite", "onboarding/invite"
+    ]);
+
+    function sanitizeLoginContinuationParams(source = {}) {
+      const read = (key) => {
+        if (source instanceof URLSearchParams) return source.get(key);
+        return source && source[key];
+      };
       const out = {};
-      ["invite_from", "friend_invite", "open"].forEach((key) => {
-        const value = String(src.get(key) || "").trim();
-        if (value) out[key] = value;
-      });
+      const inviteFrom = String(read("invite_from") || "").trim();
+      if (/^U[0-9a-f]{32}$/i.test(inviteFrom)) out.invite_from = inviteFrom;
+      const inviteToken = String(read("invite_token") || "").trim();
+      if (/^[A-Za-z0-9_-]{32,128}$/.test(inviteToken)) out.invite_token = inviteToken;
+      const friendInvite = String(read("friend_invite") || "").trim().toUpperCase();
+      if (/^[A-Z0-9]{6,8}$/.test(friendInvite)) out.friend_invite = friendInvite;
+      for (const key of ["open", "page"]) {
+        const action = String(read(key) || "").trim().toLowerCase();
+        if (LOGIN_CONTINUATION_ACTIONS.has(action)) out[key] = action;
+      }
+      const migrationCode = String(read("migration_code") || "").trim();
+      if (
+        /^[A-Za-z0-9_-]{32,128}$/.test(migrationCode)
+        && !/^U[0-9a-f]{32}$/i.test(migrationCode)
+      ) {
+        out.migration_code = migrationCode;
+      }
       return out;
+    }
+
+    function readSafeDeepLinkParams() {
+      return sanitizeLoginContinuationParams(readAppParams());
     }
 
     function isInviteeDeepLink() {
@@ -4793,7 +5149,10 @@
 
     function buildCleanLoginRedirectUri(extraParams = {}) {
       // Endpoint 必須是 LINE Console 允許的 origin；query 只保留業務參數
-      const params = { ...readSafeDeepLinkParams(), ...(extraParams || {}) };
+      const params = sanitizeLoginContinuationParams({
+        ...readSafeDeepLinkParams(),
+        ...sanitizeLoginContinuationParams(extraParams || {})
+      });
       const endpoint = `${location.origin}${location.pathname || "/"}`;
       const qs = new URLSearchParams(params).toString();
       // LINE Login redirectUri 不帶 fragment，避免邀請連結登入時被 LINE 判定 400。
@@ -4806,10 +5165,13 @@
         return false;
       }
       try {
-        // 使用者指定標準：絕對不要自己帶 redirectUri，LINE 會完美跳回當前頁（含參數）
-        liff.login();
+        const redirectUri = buildCleanLoginRedirectUri(extraParams);
+        liff.login({ redirectUri });
       } catch (_) {
-        try { liff.login(); } catch (e2) {
+        try {
+          const redirectUri = buildCleanLoginRedirectUri(extraParams);
+          liff.login({ redirectUri });
+        } catch (e2) {
           showLineLoginRequired(extraParams, { detail: String(e2 && e2.message || e2) });
           return false;
         }
@@ -4907,7 +5269,7 @@
         ...state,
         plan: state.plan || "trial",
         payment_status: state.payment_status || "trial",
-        trial_days_left: state.trial_days_left ?? 7,
+        trial_days_left: state.trial_days_left ?? 14,
         contact_limit: state.contact_limit || 1,
         history: Array.from(new Set(state.history || [])).sort(),
         is_today_checked: (state.history || []).includes(getToday()),
@@ -4997,7 +5359,10 @@
     async function apiGetCalendarNotes() {
       if (useLocalMode) return { ok: true, notes: loadLocalState().calendar_notes || {} };
       if (!lineUserId) return { ok: true, notes: {} };
-      const res = await fetch(`/api/calendar-notes?line_user_id=${encodeURIComponent(lineUserId)}`);
+      const res = await fetch(
+        await withAuthQuery(`/api/calendar-notes?line_user_id=${encodeURIComponent(lineUserId)}`),
+        { headers: await authHeaders() }
+      );
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error || "calendar notes failed");
       return data;
@@ -5080,11 +5445,130 @@
       return data;
     }
 
+    async function apiSaveBillingPreferences(autoRenewRequested) {
+      const res = await fetch("/api/billing/preferences", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({
+          line_user_id: lineUserId,
+          auto_renew_requested: Boolean(autoRenewRequested)
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "billing preferences failed");
+      return data;
+    }
+
+    async function cancelAutoRenew() {
+      if (!confirm("確定取消後續自動扣款？已付款的使用期限不受影響。")) return;
+      const button = $("memberCancelAutoRenewBtn");
+      button.disabled = true;
+      try {
+        const res = await fetch("/api/billing/cancel", {
+          method: "POST",
+          headers: await authHeaders(),
+          body: JSON.stringify({ line_user_id: lineUserId })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "cancel billing failed");
+        await refresh();
+      } catch (_error) {
+        alert("取消自動續費失敗，請聯絡客服協助。");
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function apiCreateSupportTicket(payload) {
+      const res = await fetch("/api/support/tickets", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ ...payload, line_user_id: lineUserId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "support ticket failed");
+      await loadMemberSupportTickets();
+      return data;
+    }
+
+    async function apiGetSupportTickets() {
+      const res = await fetch(
+        await withAuthQuery(`/api/support/tickets?line_user_id=${encodeURIComponent(lineUserId)}`),
+        { headers: await authHeaders() }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "support tickets failed");
+      return data;
+    }
+
+    function renderMemberSupportTickets(tickets) {
+      const list = document.getElementById("memberSupportList");
+      if (!list) return;
+      const labels = {
+        submitted: "已送出",
+        processing: "處理中",
+        waiting_user: "等待你回覆",
+        resolved: "已結案"
+      };
+      list.innerHTML = tickets.length
+        ? tickets.map((ticket) => `
+          <div class="member-data-row" style="display:block;">
+            <strong>${escapeHtml(ticket.category || "其他")}｜${escapeHtml(ticket.subject || "客服工單")}</strong>
+            <p>${escapeHtml(ticket.message || "")}</p>
+            <small>工單 ${escapeHtml(ticket.id || "-")}・${escapeHtml(labels[ticket.status] || ticket.status || "已送出")}</small>
+            ${ticket.reply ? `<p><strong>客服回覆：</strong>${escapeHtml(ticket.reply)}</p>` : ""}
+          </div>
+        `).join("")
+        : '<div class="member-data-row"><span>客服紀錄</span><strong>目前沒有工單</strong></div>';
+    }
+
+    async function loadMemberSupportTickets() {
+      if (!lineUserId) return;
+      try {
+        const data = await apiGetSupportTickets();
+        renderMemberSupportTickets(data.tickets || []);
+      } catch (_error) {
+        const feedback = document.getElementById("memberSupportFeedback");
+        if (feedback) feedback.textContent = "客服紀錄暫時無法載入，請稍後再試";
+      }
+    }
+
+    async function submitMemberSupportTicket(event) {
+      event.preventDefault();
+      const feedback = $("memberSupportFeedback");
+      const button = $("memberSupportSubmitBtn");
+      const replyChannel = $("memberSupportReplyChannel").value;
+      const email = $("memberSupportEmail").value.trim();
+      if (replyChannel === "email" && !email) {
+        feedback.textContent = "選擇 Email 回覆時，請填寫 Email";
+        return;
+      }
+      button.disabled = true;
+      feedback.textContent = "正在送出";
+      try {
+        const data = await apiCreateSupportTicket({
+          category: $("memberSupportCategory").value,
+          subject: $("memberSupportSubject").value.trim(),
+          message: $("memberSupportMessage").value.trim(),
+          email,
+          reply_channel: replyChannel
+        });
+        feedback.textContent = `已送出，工單編號：${data.ticket.id}`;
+        $("memberSupportMessage").value = "";
+      } catch (_error) {
+        feedback.textContent = "送出失敗，請稍後再試";
+      } finally {
+        button.disabled = false;
+      }
+    }
+
     function submitNewebpayCheckout(checkout) {
-      if (!checkout || checkout.mode !== "newebpay" || !checkout.mpg_url || !checkout.form) return false;
+      if (!checkout || !checkout.form) return false;
+      const gatewayUrl = checkout.checkout_url;
+      if (!gatewayUrl || !checkout.form) return false;
       const form = document.createElement("form");
       form.method = "POST";
-      form.action = checkout.mpg_url;
+      form.action = gatewayUrl;
       form.acceptCharset = "UTF-8";
       Object.entries(checkout.form).forEach(([key, value]) => {
         const input = document.createElement("input");
@@ -5108,6 +5592,26 @@
       const data = await res.json();
       if (!res.ok) {
         const error = new Error(data.error || "sos failed");
+        error.status = res.status;
+        error.details = data;
+        throw error;
+      }
+      return data;
+    }
+
+    async function apiCancelSos(eventId, reason) {
+      const res = await fetch("/api/sos/cancel", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({
+          line_user_id: lineUserId,
+          event_id: eventId,
+          reason: reason || "誤觸"
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const error = new Error(data.error || "sos cancel failed");
         error.status = res.status;
         error.details = data;
         throw error;
@@ -5253,8 +5757,11 @@
         inviter_line_user_id: inviterLineUserId,
         contact_line_user_id: lineUserId,
         contact_display_name: lineDisplayName || "LINE 聯絡人",
-        contact_picture_url: linePictureUrl || (currentStatusData && currentStatusData.picture_url) || ""
+        contact_picture_url: linePictureUrl || (currentStatusData && currentStatusData.picture_url) || "",
+        recipient_consent: true
       };
+      const inviteToken = String(getAppParam("invite_token") || "").trim();
+      if (inviteToken) body.invite_token = inviteToken;
       if (options && options.mutual_core) {
         body.mutual_core = true;
       }
@@ -5286,6 +5793,8 @@
         invite_from: inviterLineUserId,
         line_user_id: lineUserId,
       });
+      const inviteToken = String(getAppParam("invite_token") || "").trim();
+      if (inviteToken) qs.set("invite_token", inviteToken);
       const res = await fetch(await withAuthQuery(`/api/emergency-contact/invite-preview?${qs.toString()}`), {
         headers: await authHeaders(),
       });
@@ -5393,8 +5902,8 @@
 
     function planLabel(plan) {
       return {
-        trial: "7 天試用",
-        free: "免費版",
+        trial: "14 天安心體驗",
+        free: "未訂閱",
         paid_199: "199 活著價",
         paid_199_year: "199 活著價年費",
         paid_399: "399 安心版",
@@ -5414,8 +5923,8 @@
       }
       if (plan === "free") {
         return {
-          state: "基本守護",
-          detail: "基礎功能持續可用",
+          state: "服務已暫停",
+          detail: "可查看資料、求助電話與基礎 SOS；一般提醒已暫停",
           tone: "free"
         };
       }
@@ -5607,15 +6116,15 @@
         paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 7, emergencies: 25, detail: "核心 7／緊急 25、LINE 預警 3 次／日、安全守護 1／3 小時、SOS、月曆。" },
         paid_799: { cycle: "799 守護版｜月費進階", contacts: 10, emergencies: 35, detail: "核心 10／緊急 35、早中晚與多階段、安全守護 1／3／6／8、智慧提醒、1 個守護群。" },
         paid_799_year: { cycle: "799 守護版｜年費進階", contacts: 15, emergencies: 50, detail: "核心 15／緊急 50、付 10 個月送 2 個月、早中晚與多階段、3 個守護群、智慧提醒。" },
-        free: { cycle: "基本守護｜免費方案", contacts: 1, emergencies: 2, detail: "核心 1／緊急 2、LINE 預警 1 次／日、安全守護 1 小時、SOS、月曆；邀請 +7 天、保留 30 天。" },
-        trial: { cycle: "安心體驗", contacts: 1, emergencies: 2, detail: "試用同免費：核心 1／緊急 2、安全守護 1 小時、SOS。799 進階才解鎖早中晚與守護群。" }
+        free: { cycle: "未訂閱", contacts: 1, emergencies: 2, detail: "一般提醒已暫停；仍可查看資料、求助電話與基礎 SOS。" },
+        trial: { cycle: "14 天安心體驗", contacts: 1, emergencies: 2, detail: "體驗 399 核心權益；可另做一次標示為測試的守護群通知，不開放一般群組排程。" }
       }[plan] || { cycle: "尚未選擇方案", contacts: 1, emergencies: 2, detail: "請先選擇適合你的守護方案。" };
     }
 
     function planQuotaLabel(plan) {
       const p = plan || "trial";
-      if (p === "trial") return "試用方案";
-      if (p === "free") return "免費方案";
+      if (p === "trial") return "14 天安心體驗";
+      if (p === "free") return "未訂閱";
       if (String(p).startsWith("paid_199")) return "199 方案";
       if (String(p).startsWith("paid_399")) return "399 方案";
       if (String(p).startsWith("paid_799")) return "799 方案";
@@ -5766,11 +6275,13 @@
         });
         const data = await res.json();
         smartReminderCache = data || smartReminderCache;
-        const entitled = Boolean(data.entitled) || planIs799(plan);
+        const entitled = Boolean(data.entitled);
         if (hint) {
-          hint.textContent = entitled
-            ? "生活提醒只傳到 LINE 私訊（預設）。守護群只收安全事件，不會收到生日等提醒。"
-            : "智能提醒為 799 守護版功能。免費／399 僅顯示升級說明。";
+          hint.textContent = data.state === "recovering"
+            ? "帳號資料正在安全恢復，完成後會自動取回既有智慧提醒，不需要重新購買。"
+            : (entitled
+              ? "生活提醒預設只通知自己，也可選一位已綁核心守護人。守護群不會收到生日等生活提醒。"
+              : "智能提醒為 799 守護版功能。免費／399 僅顯示升級說明。");
         }
         if (upgrade) upgrade.hidden = entitled;
         if (controls) controls.hidden = !entitled;
@@ -5782,7 +6293,7 @@
               <div class="member-guardian-manage-meta">
                 <span class="guardian-manage-name">${escapeHtml(r.emoji || "🗓️")} ${escapeHtml(r.target_name || "")}</span>
                 <span>${escapeHtml(r.category_label || r.category || "")} ／ ${escapeHtml(String(r.month || ""))}/${escapeHtml(String(r.day || ""))}${r.remind_time ? ` ／ ${escapeHtml(r.remind_time)}` : ""}</span>
-                <small>私訊</small>
+                <small>${String(r.delivery_target || "private").startsWith("guardian:") ? "核心守護人私訊" : "只通知自己"}</small>
               </div>
               <div class="member-guardian-manage-actions">
                 <button class="action-btn smart-edit-btn" type="button" data-id="${escapeHtml(r.id)}">編輯</button>
@@ -5839,6 +6350,22 @@
       if ($("smartReminderCustomTitle")) $("smartReminderCustomTitle").value = existing ? (existing.custom_title || "") : "";
       if ($("smartReminderNote")) $("smartReminderNote").value = existing ? (existing.note || "") : "";
       if ($("smartReminderTime")) $("smartReminderTime").value = existing && existing.remind_time ? existing.remind_time : "09:00";
+      const targetSelect = $("smartReminderDeliveryTarget");
+      if (targetSelect) {
+        const guardians = smartReminderCache.bound_guardians || [];
+        targetSelect.innerHTML = [
+          '<option value="private">只通知自己（預設）</option>',
+          ...guardians.map((g) => `<option value="guardian:${escapeHtml(g.line_user_id)}">通知核心守護人：${escapeHtml(g.name || "守護人")}</option>`)
+        ].join("");
+        targetSelect.value = existing && existing.delivery_target ? existing.delivery_target : "private";
+        if (!targetSelect.value) targetSelect.value = "private";
+      }
+      const usageEl = $("smartReminderDailyUsage");
+      if (usageEl) {
+        const usage = smartReminderCache.daily_usage || {};
+        const limits = smartReminderCache.daily_limits || { private: 2, guardian: 1 };
+        usageEl.textContent = `今日智慧提醒：自己已使用 ${Number(usage.private) || 0}／${Number(limits.private) || 2} 則；核心守護人 ${Number(usage.guardian) || 0}／${Number(limits.guardian) || 1} 則`;
+      }
       const yearly = $("smartReminderYearly");
       if (yearly) {
         const isYearly = !(existing && existing.year);
@@ -5869,6 +6396,7 @@
       const dateVal = String(($("smartReminderDate") && $("smartReminderDate").value) || "").trim();
       const timeVal = String(($("smartReminderTime") && $("smartReminderTime").value) || "09:00").trim();
       const note = String(($("smartReminderNote") && $("smartReminderNote").value) || "").trim();
+      const deliveryTarget = String(($("smartReminderDeliveryTarget") && $("smartReminderDeliveryTarget").value) || "private");
       const yearly = Boolean($("smartReminderYearly") && $("smartReminderYearly").checked);
       if (!name) {
         alert("請填寫對象名稱");
@@ -5895,6 +6423,7 @@
         yearly,
         remind_time: timeVal || "09:00",
         note,
+        delivery_target: deliveryTarget,
         notify_private: true,
         notify_group: false,
         eve_remind: true,
@@ -5947,6 +6476,8 @@
       }
       return list.map((contact, index) => {
         const cid = escapeHtml(contact.id || "");
+        const cardKey = String(contact.id || index).replace(/[^a-zA-Z0-9_-]/g, "") || String(index);
+        const bodyId = `member-contact-body-${cardKey}-${index}`;
         const bound = isContactBound(contact);
         const tier = contact.is_primary || (index === 0 && !list.some((c) => c.is_primary))
           ? "核心"
@@ -5961,15 +6492,20 @@
             </div>`;
         return `
           <div class="member-guardian-manage-row" data-id="${cid}">
-            <div class="member-guardian-manage-meta">
-              <div class="member-guardian-manage-head">${guardianAvatarHtml(contact)}<span class="guardian-manage-name">${escapeHtml(nick)}</span></div>
+            <button class="member-contact-card-toggle" type="button" aria-expanded="false" aria-controls="${bodyId}" data-contact-card-toggle="${bodyId}">
+              <span class="member-guardian-manage-head">${guardianAvatarHtml(contact)}<span class="guardian-manage-meta"><span class="guardian-manage-name">${escapeHtml(nick)}</span><small>${escapeHtml(contact.relationship || "關係未設定")}・${tier}${contact.is_primary ? "・主要" : ""}</small></span></span>
+              <span class="member-contact-card-chevron" aria-hidden="true">⌄</span>
+            </button>
+            <div class="member-contact-card-body" id="${bodyId}" hidden>
+              <div class="member-guardian-manage-meta">
               <span>${escapeHtml(contact.relationship || "關係未設定")} ／ ${escapeHtml(contact.phone || contact.email || "未填電話")} ／ ${tier}${contact.is_primary ? "／主要" : ""}</span>
               ${statusHtml}
               ${added ? `<small>新增日期：${escapeHtml(added)}</small>` : ""}
-            </div>
-            <div class="member-guardian-manage-actions">
-              <button class="action-btn member-edit-guardian" type="button" data-id="${cid}" aria-label="編輯">編輯</button>
-              <button class="action-btn danger-action member-delete-guardian" type="button" data-id="${cid}" aria-label="刪除">刪除</button>
+              </div>
+              <div class="member-guardian-manage-actions">
+                <button class="action-btn member-edit-guardian" type="button" data-id="${cid}" aria-label="編輯">編輯</button>
+                <button class="action-btn danger-action member-delete-guardian" type="button" data-id="${cid}" aria-label="解除守護關係">解除守護關係</button>
+              </div>
             </div>
           </div>`;
       }).join("");
@@ -6046,10 +6582,13 @@
       $("memberExpiryText").textContent = status.paid_until
         ? `使用期限 ${status.paid_until}`
         : memberPlan === "trial"
-          ? (status.trial_days_text || `免費剩 ${status.trial_days_left ?? 7} 天`)
+          ? (status.trial_days_text || `體驗剩 ${status.trial_days_left ?? 14} 天`)
           : "尚未設定到期日";
       $("memberLineAccount").textContent = lineUserId || status.line_user_id ? "LINE 已綁定" : "尚未綁定 LINE";
       $("memberContactEmail").textContent = status.contact_email || "尚未填寫";
+      if ($("memberSupportEmail") && !$("memberSupportEmail").value) {
+        $("memberSupportEmail").value = status.contact_email || "";
+      }
       $("memberGuardianQuota").textContent = `核心守護人 ${shownCore}/${coreLimit}`;
       const quotaLine = $("memberGuardianQuotaLine");
       if (quotaLine) quotaLine.textContent = `核心守護人 ${shownCore}/${coreLimit}`;
@@ -6063,14 +6602,14 @@
       if (guardianTip) {
         guardianTip.hidden = isPaidPlan;
         if (!isPaidPlan) {
-          guardianTip.innerHTML = `<strong>免費版建議</strong>：1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。`;
+          guardianTip.innerHTML = `<strong>體驗期建議</strong>：1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。`;
         }
       }
       const emergencyTip = $("memberEmergencyPlanTip");
       if (emergencyTip) {
         emergencyTip.hidden = isPaidPlan;
         if (!isPaidPlan) {
-          emergencyTip.innerHTML = `<strong>免費版建議</strong>：2 位（爸媽，或配偶＋好友）。可先填姓名與電話。`;
+          emergencyTip.innerHTML = `<strong>體驗期建議</strong>：2 位（爸媽，或配偶＋好友）。可先填姓名與電話。`;
         } else {
           emergencyTip.hidden = false;
           emergencyTip.innerHTML = `<strong>方案名額</strong>：最多 ${emergencyLimit} 位電話備援。可先填姓名與電話。`;
@@ -6090,6 +6629,15 @@
         expired: "方案已到期"
       }[status.payment_status] || "尚未付費";
       $("memberBillingExpiry").textContent = status.paid_until || (memberPlan === "trial" ? "試用中" : "尚未設定");
+      $("memberAutoRenewStatus").textContent = {
+        active: "已開啟",
+        pending_gateway: "等待自動續費授權完成",
+        cancellation_pending: "取消處理中",
+        terminated: "已取消",
+        off: "未開啟"
+      }[status.auto_renew_status] || "未開啟";
+      $("memberAutoRenewRequested").checked = Boolean(status.auto_renew_requested);
+      $("memberCancelAutoRenewBtn").hidden = !status.auto_renew_enabled;
       const benefits = memberPlanBenefits(memberPlan);
       $("memberPlanCycle").textContent = benefits.cycle;
       $("memberPlanBenefits").textContent = `${benefits.contacts} 位`;
@@ -6098,7 +6646,7 @@
       const atLimit = totalCount >= coreLimit;
       const limitBanner = $("memberGuardianLimitBanner");
       if (limitBanner) {
-        // 已有 ≥1 位守護人時顯示橫幅（含再邀請），名額未滿也顯示以便再邀拿 +7 天
+        // 已有 ≥1 位守護人時顯示橫幅；名額未滿也顯示，方便繼續建立守護圈。
         const showBanner = totalCount >= 1;
         limitBanner.hidden = !showBanner;
         if (showBanner) {
@@ -6107,8 +6655,8 @@
           if (title) title.textContent = `你已經有 ${totalCount} 位守護人囉`;
           if (body) {
             body.textContent = atLimit
-              ? `${planQuotaLabel(memberPlan)}最多 ${coreLimit} 位核心守護人。仍可點「再邀請」了解升級名額；成功邀請也可延長免費天數（需有名額）。`
-              : `${planQuotaLabel(memberPlan)}上限 ${coreLimit} 位核心守護人。再成功邀請 1 位新守護人可免費延長 7 天。`;
+              ? `${planQuotaLabel(memberPlan)}最多 ${coreLimit} 位核心守護人。仍可點「再邀請」了解升級名額。`
+              : `${planQuotaLabel(memberPlan)}上限 ${coreLimit} 位核心守護人。`;
           }
           const upgradeBtn = $("memberLimitUpgradeBtn");
           if (upgradeBtn) upgradeBtn.hidden = !atLimit;
@@ -6136,7 +6684,7 @@
         const retainHint = $("memberInviteRewardHint");
         if (retainHint && Number(status.contacts_retain_days_left) >= 0) {
           retainHint.textContent =
-            `方案已到期：守護人與聯絡人資料尚可保留約 ${status.contacts_retain_days_left} 天（之後將軟封存）。每成功邀請 1 位新守護人仍可延長免費使用。`;
+            `方案已到期：請查看方案並續約，以恢復完整守護服務。`;
         }
       }
       renderMemberDailyReminderUi();
@@ -6152,6 +6700,22 @@
           const inviteBtn = event.target.closest(".member-invite-guardian, .one-tap-invite-btn");
           const editBtn = event.target.closest(".member-edit-guardian");
           const deleteBtn = event.target.closest(".member-delete-guardian");
+          const toggleBtn = event.target.closest("[data-contact-card-toggle]");
+          if (toggleBtn) {
+            event.preventDefault();
+            const opening = toggleBtn.getAttribute("aria-expanded") !== "true";
+            listEl.querySelectorAll("[data-contact-card-toggle]").forEach((other) => {
+              other.setAttribute("aria-expanded", "false");
+              const otherBody = document.getElementById(other.dataset.contactCardToggle || "");
+              if (otherBody) otherBody.hidden = true;
+            });
+            if (opening) {
+              toggleBtn.setAttribute("aria-expanded", "true");
+              const body = document.getElementById(toggleBtn.dataset.contactCardToggle || "");
+              if (body) body.hidden = false;
+            }
+            return;
+          }
           if (inviteBtn) {
             event.preventDefault();
             openShareInviteForContact();
@@ -6186,6 +6750,7 @@
       const isPaid = String(status.plan || "").startsWith("paid_");
       $("memberUpgradeBtn").hidden = isPaid;
       renderSosAccess();
+      await loadMemberSupportTickets();
       const guardianGroupIds = status.guardian_group_ids || [];
       const guardianGroups = status.guardian_groups || [];
       const groupById = Object.fromEntries(guardianGroups.map((group) => [group.group_id, group]));
@@ -6246,7 +6811,7 @@
       if (isMemberRoleIntroDismissed()) return false;
       const plan = String((status && status.plan) || "trial");
       const isFreeOrTrial = plan === "trial" || plan === "free" || !String(plan).startsWith("paid_");
-      // 付費（含 799）不顯示「免費體驗小教室／免費版建議」
+      // 付費（含 799）不顯示體驗期引導
       return isFreeOrTrial;
     }
 
@@ -6537,7 +7102,6 @@
       const hash = String(returnHash || currentShareReturnHash() || "home").replace(/^#/, "") || "home";
       const params = new URLSearchParams();
       params.set("return", `/#${hash}`);
-      params.set("open", hash);
       return `/liff/share-invite.html?${params.toString()}`;
     }
 
@@ -6687,20 +7251,23 @@
       button.disabled = true;
       button.textContent = "建立訂單中…";
       try {
+        await apiSaveBillingPreferences($("memberAutoRenewRequested")?.checked);
         const result = await apiCreatePaymentOrder(plan);
         const order = result.order || result;
         const checkout = result.checkout || {};
         if (submitNewebpayCheckout(checkout)) {
           notice.hidden = false;
-          notice.textContent = `訂單 ${order.order_id} 已建立，正在前往藍新付款…`;
+          notice.textContent = `訂單 ${order.order_id} 已建立，正在前往安全付款頁面…`;
           return;
         }
         notice.hidden = false;
-        notice.textContent = `訂單 ${order.order_id} 已建立，金額 NT$${Number(order.amount).toLocaleString("zh-TW")}。${checkout.message || "藍新金鑰尚未設定，目前不會扣款；後台可人工確認開通。"}`;
+        notice.textContent = `訂單 ${order.order_id} 已建立，金額 NT$${Number(order.amount).toLocaleString("zh-TW")}。${checkout.message || "付款服務尚未設定，目前不會扣款。"}`;
         notice.scrollIntoView({ behavior: "smooth", block: "center" });
       } catch (error) {
         notice.hidden = false;
-        notice.textContent = "訂單暫時無法建立，請稍後再試，或聯絡客服協助。";
+        notice.textContent = error?.message === "payer_email_required_for_auto_renew"
+          ? "要開啟自動續費，請先在會員中心填寫聯絡信箱；或取消勾選自動續費後再付款。"
+          : "訂單暫時無法建立，請稍後再試，或聯絡客服協助。";
       } finally {
         button.disabled = false;
         button.textContent = originalText;
@@ -6752,7 +7319,7 @@
       try {
         const url = new URL(window.location.href);
         let changed = false;
-        ["invite_from", "from"].forEach((key) => {
+        ["invite_from", "from", "invite_token"].forEach((key) => {
           if (url.searchParams.has(key)) {
             url.searchParams.delete(key);
             changed = true;
@@ -6761,7 +7328,7 @@
         const rawHash = String(url.hash || "").replace(/^#/, "");
         if (rawHash && rawHash.includes("=")) {
           const hp = new URLSearchParams(rawHash);
-          ["invite_from", "from"].forEach((key) => {
+          ["invite_from", "from", "invite_token"].forEach((key) => {
             if (hp.has(key)) {
               hp.delete(key);
               changed = true;
@@ -6842,7 +7409,7 @@
       const btn = $("acceptGuardianInviteBtn");
       if (titleEl) titleEl.textContent = "您收到一位親友的守護邀請";
       if (bodyEl) {
-        bodyEl.textContent = "點擊同意即可在緊急時接收位置通知，無需下載 APP。您只會收到這位親友的安全守護提醒，不會被公開個人資料。";
+        bodyEl.textContent = "請先閱讀：你將收到對方的報平安、逾時未報平安、SOS 與安全守護通知。定位只在對方主動求助或啟用安全守護時通知；你可隨時解除綁定，資料只用於守護通知。登入後，請明確同意雙方互相成為核心守護人。";
       }
       if (optionEl) optionEl.hidden = true;
       if (checkEl) checkEl.checked = false;
@@ -6875,7 +7442,7 @@
             const btn = $("acceptGuardianInviteBtn");
             if (titleEl) titleEl.textContent = "互相守護邀請";
             if (bodyEl) {
-              bodyEl.textContent = `${name} 已是你的守護對象／已加入，是否互相設為守護人？`;
+              bodyEl.textContent = `${name} 邀請你互相成為核心守護人。你會收到報平安、逾時、SOS 與安全守護通知；定位僅在對方主動求助／啟用安全守護時分享，可隨時解除綁定。`;
             }
             if (optionEl) optionEl.hidden = false;
             if (btn) btn.textContent = "確認互相設為守護人";
@@ -6916,11 +7483,11 @@
         } catch (_) {}
       }
       if (!lineUserId && window.liff && !liff.isLoggedIn()) {
-        startLineLogin({ invite_from: inviteFrom });
+        startLineLogin({ invite_from: inviteFrom, invite_token: getAppParam("invite_token") });
         return;
       }
       if (!lineUserId) {
-        showLineLoginRequired({ invite_from: inviteFrom });
+        showLineLoginRequired({ invite_from: inviteFrom, invite_token: getAppParam("invite_token") });
         alert("請先用 LINE 登入，系統會自動帶回這份守護邀請。");
         return;
       }
@@ -7520,10 +8087,74 @@
       return msg || "LIFF 初始化失敗";
     }
 
+    async function resolveLineEntryGate() {
+      if (useLocalMode) return "ready";
+      const sdk = window.liff;
+      if (!sdk || typeof sdk.getFriendship !== "function" || typeof sdk.isLoggedIn !== "function") {
+        throw new Error("LIFF SDK 無法確認官方帳號好友狀態");
+      }
+      if (!sdk.isLoggedIn()) return "login";
+      const friendship = await sdk.getFriendship();
+      if (!friendship || friendship.friendFlag !== true) return "friend";
+      return "ready";
+    }
+
+    function showLineEntryGate(step) {
+      const gate = $("lineEntryGate");
+      if (!gate) return;
+      const friendStep = $("lineEntryFriendStep");
+      const loginStep = $("lineEntryLoginStep");
+      const isFriendStep = step === "friend";
+      if (friendStep) friendStep.hidden = !isFriendStep;
+      if (loginStep) loginStep.hidden = isFriendStep;
+      gate.hidden = false;
+      document.body.classList.add("line-entry-gated");
+    }
+
+    function hideLineEntryGate() {
+      const gate = $("lineEntryGate");
+      if (gate) gate.hidden = true;
+      document.body.classList.remove("line-entry-gated");
+    }
+
+    async function recheckLineEntryGate() {
+      if (recheckLineEntryGate.inFlight) return recheckLineEntryGate.inFlight;
+      const task = (async () => {
+        try {
+          // initializeLiff performs a fresh logged-in friendship check before registration.
+          const lineReady = await initializeLiff();
+          if (!lineReady) return false;
+          hideInlineError();
+          return await resumeMemberBootstrapAfterLineEntry();
+        } catch (error) {
+          showLineLoginRequired(readSafeDeepLinkParams(), { detail: formatLiffError(error) });
+          return false;
+        }
+      })();
+      recheckLineEntryGate.inFlight = task;
+      try {
+        return await task;
+      } finally {
+        recheckLineEntryGate.inFlight = null;
+      }
+    }
+
+    function bindLineEntryGate() {
+      const recheckButton = $("lineEntryRecheckFriendBtn");
+      const loginButton = $("lineEntryLoginBtn");
+      if (recheckButton && recheckButton.dataset.bound !== "true") {
+        recheckButton.dataset.bound = "true";
+        recheckButton.addEventListener("click", () => recheckLineEntryGate());
+      }
+      if (loginButton && loginButton.dataset.bound !== "true") {
+        loginButton.dataset.bound = "true";
+        loginButton.addEventListener("click", () => startLineLogin(readSafeDeepLinkParams()));
+      }
+    }
+
     /**
-     * 標準 LIFF 初始化（使用者指定）：
-     * liff.init({ liffId }) → 未登入則 liff.login()（不帶 redirectUri）→ return
-     * 已登入後才讀 invite_from / friend_invite / open= 並跑業務邏輯。
+     * LIFF 初始化後，未登入者只顯示明確登入按鈕；登入後才查官方好友。
+     * 只有登入與實際好友狀態都通過，才讀取 profile 或開始會員／搬家業務。
      */
     async function initializeLiff() {
       if (useLocalMode) return true;
@@ -7532,7 +8163,7 @@
         return false;
       }
       try {
-        const FIXED_LIFF_ID = "2010674803-rK98c0lo";
+        const FIXED_LIFF_ID = "2010848330-UAiqPPYD";
         window.__LIFF_ID__ = FIXED_LIFF_ID;
 
         // 1) 先 init（不要先判斷 isInClient）
@@ -7545,13 +8176,14 @@
           })
           .catch(() => ({}));
 
-        // 2) 未登入：絕對不要自己帶 redirectUri
-        if (!liff.isLoggedIn()) {
-          liff.login();
+        // 2) 未登入無權呼叫 getFriendship；登入後才以實際結果判斷好友狀態。
+        const entryStep = await resolveLineEntryGate();
+        if (entryStep !== "ready") {
+          showLineEntryGate(entryStep);
           return false;
         }
 
-        // 3) 只有登入後才讀 deep link、跑守護人邀請業務
+        // 3) 只有好友且登入後才讀 deep link、跑守護人邀請業務
         const profile = await liff.getProfile();
         lineUserId = profile.userId || "";
         lineDisplayName = profile.displayName || "";
@@ -7567,6 +8199,7 @@
             picture_url: linePictureUrl || ""
           })
         });
+        hideLineEntryGate();
 
         const inviteFrom = String(getAppParam("invite_from") || "").trim();
         if (inviteFrom && inviteFrom !== lineUserId) {
@@ -7775,6 +8408,10 @@
     }
 
     function openCalendarNote(dateText) {
+      if (!(currentStatusData && currentStatusData.calendar_notes_enabled === true)) {
+        alert("備忘錄只開放 799 樂年方案使用");
+        return;
+      }
       selectedCalendarDate = dateText;
       const date = new Date(`${dateText}T12:00:00`);
       const lunar = lunarInfo(date);
@@ -8034,7 +8671,7 @@
         const goUpgrade = confirm(
           `你已經有 ${totalCount} 位守護人囉（目前方案上限 ${limit} 位）。\n\n` +
           `升級方案可增加守護人名額；補差額即可升級，不必重設聯絡人。\n` +
-          `另有 7 天考慮期；每成功邀請 1 位新守護人也可免費延長 7 天。\n\n` +
+          `對方登入 LINE 並同意後，才會完成雙向守護綁定。\n\n` +
           `按「確定」查看方案與價目。`
         );
         if (goUpgrade) openUpgradePlans();
@@ -8116,6 +8753,7 @@
 
     function hasActiveSosAccess() {
       // SOS 不依方案／價格分級：登入後即可用（後端另有每日上限／冷卻）
+      if (currentStatusData && currentStatusData.guardian_required === true) return false;
       return Boolean(lineUserId || (currentStatusData && currentStatusData.sos_enabled !== false));
     }
 
@@ -8169,11 +8807,22 @@
     function openSosModal() {
       $("sosConfirmModal").hidden = false;
       $("sosFeedback").textContent = "";
+      $("sosCancelSentBtn").hidden = true;
       renderSosAccess();
     }
 
     function openSosFlow() {
+      if (currentStatusData && currentStatusData.guardian_required === true) {
+        $("sosConfirmModal").hidden = false;
+        renderSosAccess();
+        const holdButton = $("sosHoldButton");
+        if (holdButton) holdButton.disabled = true;
+        $("sosFeedback").textContent =
+          "尚未綁定可通知的核心守護人，系統不能代你推播；有立即危險請先撥 119 或 110";
+        return false;
+      }
       openSosModal();
+      return true;
     }
 
     function triggerSos() {
@@ -8192,11 +8841,11 @@
         : "（這次沒附上即時位置，請用電話告訴家人你在哪）";
       let msg = "";
       if (sent > 0 && failed === 0) {
-        msg = `已通知 ${sent} 位 LINE 守護人${locHint}`;
+        msg = `已通知 ${sent} 個守護對象${locHint}`;
       } else if (sent > 0 && failed > 0) {
-        msg = `已通知 ${sent} 位 LINE 守護人，另有 ${failed} 位推播失敗${locHint}`;
+        msg = `已通知 ${sent} 個守護對象，另有 ${failed} 個推播失敗${locHint}`;
       } else {
-        msg = "系統未能推播給 LINE 守護人";
+        msg = "系統未能推播給守護對象";
       }
       if (phoneOnly > 0) {
         msg += `。另有 ${phoneOnly} 位僅有電話的緊急聯絡人，請用下方撥號聯絡（無法自動 LINE 通知）`;
@@ -8209,7 +8858,22 @@
         : "";
       if (sentAt) msg += `。發送時間 ${sentAt}`;
       if (result && result.cancel_available) msg += "。10 分鐘內可取消通知";
+      const recipientNames = formatSosRecipientNames(result);
+      if (recipientNames) msg += `。通知明細：${recipientNames}`;
       return msg;
+    }
+
+    function formatSosRecipientNames(result) {
+      const rows = [
+        ...(Array.isArray(result && result.guardians) ? result.guardians : []),
+        ...(Array.isArray(result && result.groups) ? result.groups : []),
+      ];
+      return rows
+        .map((row) => {
+          const name = String(row && row.name || "守護對象").trim();
+          return `${name}：${row && row.status === "sent" ? "已通知" : "通知失敗"}`;
+        })
+        .join("、");
     }
 
     function revealSosPhoneDials(phoneContacts) {
@@ -8256,10 +8920,34 @@
           sosPayload.longitude = locationMeta.longitude;
           if (locationMeta.city) sosPayload.city = locationMeta.city;
         }
-        const result = await apiTriggerSos(sosPayload);
+        let result;
+        try {
+          result = await apiTriggerSos(sosPayload);
+        } catch (firstError) {
+          if (firstError && firstError.status === 428) {
+            const reason = window.prompt("為了避免誤觸，請簡短填寫目前需要的協助，再確認送出");
+            if (!reason || !reason.trim()) {
+              feedback.textContent = "尚未送出。若有立即危險，請先撥打 119 或 110";
+              label.textContent = "聯絡家人連按3次";
+              return false;
+            }
+            result = await apiTriggerSos({
+              ...sosPayload,
+              long_confirm: true,
+              reason: reason.trim()
+            });
+          } else {
+            throw firstError;
+          }
+        }
         revealSosPhoneDials(result.phone_contacts);
         feedback.textContent = formatSosResultFeedback(result, locationMeta);
         label.textContent = "SOS 已送出";
+        const cancelSentBtn = $("sosCancelSentBtn");
+        if (cancelSentBtn && result.cancel_available && result.event_id) {
+          cancelSentBtn.hidden = false;
+          cancelSentBtn.dataset.eventId = result.event_id;
+        }
         if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
       } catch (error) {
         const details = (error && error.details) || {};
@@ -8429,7 +9117,7 @@
 
       const planView = planPresentation(data.plan, data.trial_days_left);
       $("planStateLabel").textContent = data.plan === "trial"
-        ? "7 天安心體驗"
+        ? "14 天安心體驗"
         : planLabel(data.plan);
       $("planDetailText").textContent = planView.detail;
       $("planStrip").dataset.planTone = planView.tone;
@@ -9056,31 +9744,29 @@
 
     async function fetchOnboardingState() {
       if (!lineUserId) {
-        return { done: false, hasGuardian: false, ok: false };
+        return { done: false, homeReady: false, guardianRequired: false, hasGuardian: false, ok: false };
       }
       try {
         const res = await apiGetOnboarding(lineUserId);
         if (res.status !== 200 || !res.data) {
-          return { done: false, hasGuardian: currentGuardianContacts().length > 0, ok: false };
+          return { done: false, homeReady: false, guardianRequired: false, hasGuardian: false, ok: false };
         }
         const hasGuardian = (
           res.data.has_guardian === true
           || Number(res.data.guardian_count || 0) > 0
-          || currentGuardianContacts().length > 0
         );
-        const done = (
-          res.data.setup_completed === true
-          || res.data.is_onboarding_completed === true
-          || hasGuardian
-        );
+        const guardianRequired = res.data.guardian_required === true;
+        const homeReady = res.data.home_ready === true && !guardianRequired;
         return {
-          done,
+          done: homeReady,
+          homeReady,
+          guardianRequired,
           hasGuardian,
           ok: true,
           data: res.data,
         };
       } catch (e) {
-        return { done: false, hasGuardian: currentGuardianContacts().length > 0, ok: false };
+        return { done: false, homeReady: false, guardianRequired: false, hasGuardian: false, ok: false };
       }
     }
 
@@ -9101,11 +9787,12 @@
       $("obEmail").value = "";
 
       const contacts = currentGuardianContacts();
-      const canDismiss = contacts.length > 0;
+      const guardianRequired = currentStatusData && currentStatusData.guardian_required === true;
+      const canDismiss = !guardianRequired && contacts.length > 0;
       setOnboardingCloseVisible(canDismiss);
 
       // 已有 ≥1 位守護人：不要再強制「新增守護人」，直接進提醒步驟（可按 X 關閉）
-      if (contacts.length > 0) {
+      if (contacts.length > 0 && !guardianRequired) {
         showOnboardingReminderStep();
       } else {
         showOnboardingShareStep();
@@ -9303,6 +9990,7 @@
 
     function setMemberInteractionLocked(locked) {
       const ids = [
+        "checkBtn", "mvpSafeBtn", "mvpGuardStartBtn", "sosHoldButton",
         "saveDailyReminderBtn", "smartReminderSaveBtn",
         "deleteCheckinHistoryBtn", "deleteAccountBtn",
         "saveGuardianBtn", "confirmDeleteGuardianBtn",
@@ -9338,6 +10026,10 @@
         showLineLoginRequired(readSafeDeepLinkParams());
         return false;
       }
+      if (memberBootstrapState.guardianRequired) {
+        showMemberBootstrapPending("請先完成至少 1 位核心守護人的 LINE 綁定。");
+        return false;
+      }
       const ready = scope === "data"
         ? memberBootstrapState.dataReady
         : memberBootstrapState.statusReady;
@@ -9353,6 +10045,7 @@
     function showMemberBootstrapError(error) {
       memberBootstrapState.statusReady = false;
       memberBootstrapState.dataReady = false;
+      memberBootstrapState.guardianRequired = false;
       memberBootstrapState.error = error || new Error("member_bootstrap_failed");
       setMemberInteractionLocked(true);
       const errBox = $("inlineError");
@@ -9373,6 +10066,7 @@
       if (memberBootstrapState.inFlight) return memberBootstrapState.inFlight;
       memberBootstrapState.statusReady = false;
       memberBootstrapState.dataReady = false;
+      memberBootstrapState.guardianRequired = false;
       memberBootstrapState.error = null;
       setMemberInteractionLocked(true);
       hideInlineError();
@@ -9400,10 +10094,18 @@
       }
       renderStatus(status);
       syncCheckBtn(status);
-      memberBootstrapState.statusReady = true;
+      memberBootstrapState.guardianRequired = status.guardian_required === true;
+      memberBootstrapState.statusReady = !memberBootstrapState.guardianRequired;
       memberBootstrapState.error = null;
-      if ($("mvpSafeBtn")) $("mvpSafeBtn").disabled = false;
-      if ($("mvpGuardStartBtn")) $("mvpGuardStartBtn").disabled = false;
+      setMemberInteractionLocked(memberBootstrapState.guardianRequired);
+      if ($("mvpSafeBtn")) {
+        $("mvpSafeBtn").disabled = memberBootstrapState.guardianRequired;
+        if (!memberBootstrapState.guardianRequired) $("mvpSafeBtn").disabled = false;
+      }
+      if ($("mvpGuardStartBtn")) {
+        $("mvpGuardStartBtn").disabled = memberBootstrapState.guardianRequired;
+        if (!memberBootstrapState.guardianRequired) $("mvpGuardStartBtn").disabled = false;
+      }
       renderSosAccess();
 
       const contactsPayload = await contactsPromise;
@@ -9423,8 +10125,14 @@
       }
 
       const onboarding = await onboardingPromise;
-      memberBootstrapState.dataReady = true;
-      setMemberInteractionLocked(false);
+      memberBootstrapState.guardianRequired = (
+        memberBootstrapState.guardianRequired
+        || onboarding.guardianRequired === true
+        || onboarding.data?.guardian_required === true
+      );
+      memberBootstrapState.statusReady = !memberBootstrapState.guardianRequired;
+      memberBootstrapState.dataReady = !memberBootstrapState.guardianRequired;
+      setMemberInteractionLocked(memberBootstrapState.guardianRequired);
       document.body.removeAttribute("aria-busy");
       return { status, contacts: contactData, onboarding };
     }
@@ -9442,7 +10150,8 @@
       }
 
       try {
-        const initialData = await loadInitialMemberData();
+        const initialData = pendingMigratedMemberData || await loadInitialMemberData();
+        pendingMigratedMemberData = null;
         const status = initialData.status;
         const onboardingState = initialData.onboarding;
 
@@ -9462,22 +10171,22 @@
         const isGuardOpen = openAction === "guard";
         const forceOnboarding = openAction === "onboarding" || openAction === "bind" || isOnboardingInvite;
         const inviteeMode = isInviteeDeepLink();
-        const contactsNow = currentGuardianContacts();
-        const homeReady = hasHomeSetupComplete(contactsNow);
-        const hasGuardians = (
-          homeReady
-          || hasAnyGuardianOrContact(contactsNow)
-          || onboardingState.hasGuardian
-          || Number(onboardingState.data?.guardian_count || 0) > 0
-          || Number(status.bound_guardian_count || 0) > 0
-          || Number(status.contact_count || 0) > 0
-          || contactsNow.length > 0
+        const guardianRequired = (
+          status.guardian_required === true
+          || onboardingState.guardianRequired === true
+          || onboardingState.data?.guardian_required === true
         );
-        // ≥1 LINE 綁定 或 ≥1 聯絡人 → 直接進首頁／功能，不再彈「未綁定／一鍵邀請」
-        const setupDone = homeReady || onboardingState.done || hasGuardians;
+        const homeReady = !guardianRequired && (
+          status.home_ready === true
+          || onboardingState.homeReady === true
+          || onboardingState.data?.home_ready === true
+        );
+        // Compatibility aliases: neither may unlock a route beyond server homeReady.
+        const hasGuardians = homeReady;
+        const setupDone = homeReady;
         const wantsInviteShare = wantsShareInvite;
-        syncInviteUiForBoundState(homeReady || hasGuardians);
-        if ((homeReady || hasGuardians) && !inviteeMode) {
+        syncInviteUiForBoundState(homeReady);
+        if (homeReady && !inviteeMode) {
           clearShareFirstLocalFlags();
           closeGuardianPrompt();
           closeInviteAcceptPrompt();
@@ -9498,14 +10207,17 @@
           // 一鍵邀請：已綁定仍可再邀（rich menu share-invite／invite）
           // 但 onboarding/invite 教學路徑：已有 ≥1 綁定守護人 → 進首頁，不再推「邀請家人加入」
           clearShareFirstLocalFlags();
-          if ((homeReady || hasGuardians) && isOnboardingInvite) {
+          if (homeReady && isOnboardingInvite) {
             if (typeof showTab === "function") showTab("home");
           } else {
             location.replace(buildShareInvitePageUrl("home"));
             return;
           }
+        } else if (guardianRequired) {
+          await showOnboarding();
+          return true;
         } else if (homeReady || hasGuardians || setupDone) {
-          // 已有 ≥1 LINE 守護人或 ≥1 聯絡人：絕不 showOnboarding／share-invite
+          // Only the server-confirmed bound LINE guardian unlocks member routes.
           clearShareFirstLocalFlags();
           const preservesRequestedScreen = [
             "member", "guardians", "history", "sos", "guard", "checkin"
@@ -9513,8 +10225,9 @@
           if (!preservesRequestedScreen && typeof showTab === "function") showTab("home");
         } else {
           await showOnboarding();
+          return true;
         }
-        if ((homeReady || hasGuardians) && forceOnboarding && !wantsInviteShare) {
+        if (homeReady && forceOnboarding && !wantsInviteShare) {
           if (typeof showTab === "function") showTab("home");
         } else if (openAction === "member" && !forceOnboarding && typeof showTab === "function") {
           showTab("member");
@@ -9525,18 +10238,17 @@
         } else if (openAction === "history" && !forceOnboarding && typeof showTab === "function") {
           showTab("history");
         } else if (openAction === "sos") {
-          if (typeof showTab === "function") showTab("home");
           openSosFlow();
         } else if (isGuardOpen) {
           const onboardingOpen = $("onboardingModal") && !$("onboardingModal").hidden;
-          if (homeReady || hasGuardians || !onboardingOpen) {
+          if (homeReady || !onboardingOpen) {
             openMvpGuardPanel();
           }
         } else if (openAction === "call" || openAction === "family") {
           openMvpCallPanel();
         } else if (isCheckinOpen && typeof showTab === "function") {
           showTab("home");
-          if (openAction === "checkin" && (homeReady || hasGuardians)) {
+          if (openAction === "checkin" && homeReady) {
             setTimeout(() => {
               if (currentStatusData && currentStatusData.is_today_checked) {
                 syncCheckBtn(currentStatusData);
@@ -9727,9 +10439,9 @@
       if (safeBtn) safeBtn.addEventListener("click", () => doCheckin());
       if (guardBtn) guardBtn.addEventListener("click", openMvpGuardPanel);
       if (callBtn) callBtn.addEventListener("click", openMvpCallPanel);
-      if (sosBtn) sosBtn.addEventListener("click", openSosModal);
+      if (sosBtn) sosBtn.addEventListener("click", openSosFlow);
       const guardSosBtn = $("mvpGuardSosBtn");
-      if (guardSosBtn) guardSosBtn.addEventListener("click", openSosModal);
+      if (guardSosBtn) guardSosBtn.addEventListener("click", openSosFlow);
       if (guardBack) guardBack.addEventListener("click", showMvpHomeOnly);
       if (callBack) callBack.addEventListener("click", showMvpHomeOnly);
       if (guardStart) guardStart.addEventListener("click", () => {
@@ -9787,6 +10499,7 @@
       const holdButton = $("sosHoldButton");
       const holdProgress = $("sosHoldProgress");
       const holdLabel = $("sosHoldLabel");
+      const cancelSentBtn = $("sosCancelSentBtn");
       if (!fab || !modal || !cancelBtn || !holdButton || fab.dataset.bound === "true") return;
       fab.dataset.bound = "true";
       let sosTapCount = 0;
@@ -9823,6 +10536,32 @@
 
       fab.addEventListener("click", openSosFlow);
       cancelBtn.addEventListener("click", () => { resetSosTap(); modal.hidden = true; });
+      if (cancelSentBtn) {
+        cancelSentBtn.addEventListener("click", async () => {
+          const eventId = cancelSentBtn.dataset.eventId || "";
+          if (!eventId) return;
+          const reason = window.prompt("請選填取消原因，例如：誤觸、已由家人聯絡確認", "誤觸") || "誤觸";
+          cancelSentBtn.disabled = true;
+          try {
+            const result = await apiCancelSos(eventId, reason);
+            const cancelFailed = Number(result.cancel_failed) || 0;
+            $("sosFeedback").textContent = cancelFailed > 0
+              ? `已通知 ${Number(result.cancel_sent) || 0} 位，另有 ${cancelFailed} 位取消通知失敗，請直接聯絡對方`
+              : `已通知 ${Number(result.cancel_sent) || 0} 位原收件人：目前安全，原 SOS 紀錄會保留`;
+            cancelSentBtn.hidden = cancelFailed === 0;
+          } catch (error) {
+            const details = (error && error.details) || {};
+            const failed = Number(details.cancel_failed) || 0;
+            $("sosFeedback").textContent = failed > 0
+              ? `已有 ${Number(details.cancel_sent) || 0} 位收到取消，但 ${failed} 位仍失敗；請直接聯絡對方，稍後可再按一次重試`
+              : error.status === 409
+                ? "取消處理中或已超過 10 分鐘；請直接聯絡家人報平安"
+                : "取消通知暫時失敗，請直接聯絡家人報平安";
+          } finally {
+            cancelSentBtn.disabled = false;
+          }
+        });
+      }
       modal.addEventListener("click", (event) => {
         if (event.target === modal) { resetSosTap(); modal.hidden = true; }
       });
@@ -9847,7 +10586,7 @@
         const count = (cdata.contacts || []).length;
         const limit = cdata.contact_limit || 1;
         // 判斷:399/799 + 未填滿 + 沒被 dismiss
-        if (limit <= 1) return; // 免費版不再催
+        if (limit <= 1) return; // 未訂閱／體驗基準不再催
         if (count >= limit) return;
         const pref = istate.guardian_reminder_preference || "";
         if (pref === "dismissed") return;
@@ -9980,9 +10719,9 @@
     if (memberRoleIntroDismiss) {
       memberRoleIntroDismiss.addEventListener("click", dismissMemberRoleIntro);
     }
-    $("exportMyDataBtn").addEventListener("click", exportMyData);
-    $("deleteCheckinHistoryBtn").addEventListener("click", deleteCheckinHistory);
-    $("deleteAccountBtn").addEventListener("click", deleteAccountAndData);
+    if ($("exportMyDataBtn")) $("exportMyDataBtn").addEventListener("click", exportMyData);
+    if ($("deleteCheckinHistoryBtn")) $("deleteCheckinHistoryBtn").addEventListener("click", deleteCheckinHistory);
+    if ($("deleteAccountBtn")) $("deleteAccountBtn").addEventListener("click", deleteAccountAndData);
     document.querySelectorAll(".member-contact-tab").forEach((btn) => {
       btn.addEventListener("click", () => {
         setMemberContactTab(btn.getAttribute("data-contact-tab") || "core");
@@ -10062,6 +10801,8 @@
     }
     const saveDailyReminderBtn = $("saveDailyReminderBtn");
     if (saveDailyReminderBtn) saveDailyReminderBtn.addEventListener("click", saveMemberDailyReminder);
+    const memberSupportForm = $("memberSupportForm");
+    if (memberSupportForm) memberSupportForm.addEventListener("submit", submitMemberSupportTicket);
     const smartReminderCategory = $("smartReminderCategory");
     if (smartReminderCategory) {
       smartReminderCategory.addEventListener("change", syncSmartReminderCustomTitleVisibility);
@@ -10118,12 +10859,34 @@
 
     setTheme(localStorage.getItem("preferred_theme") || "classic");
     maybePrefillFriendInvite();
+    bindLineEntryGate();
     // 勿在 lineUserId 就緒前顯示同意視窗（會造成「要點兩次」）
+
+    async function resumeMemberBootstrapAfterLineEntry() {
+      const hasPendingMigration = Boolean(getAppParam("migration_code"));
+      const migration = hasPendingMigration
+        ? await redeemPendingAccountMigration()
+        : { attempted: false, succeeded: false };
+      const memberReady = await initApp();
+      if (!memberReady) return false;
+      if (hasPendingMigration && migration.succeeded) {
+        const migratedRoute = applyInitialDeepLinkRoute();
+        if (migratedRoute.redirected) return true;
+      }
+      if (useLocalMode) renderStatus(buildLocalStatus(loadLocalState()));
+      await refreshCalendarNotes();
+      if (!useLocalMode) {
+        refreshFriendLocations().catch(() => {});
+      }
+      openRequestedPage();
+      return true;
+    }
 
     async function bootstrapApp() {
       appBootstrapComplete = false;
       memberBootstrapState.statusReady = false;
       memberBootstrapState.dataReady = false;
+      memberBootstrapState.guardianRequired = false;
       memberBootstrapState.error = null;
       setMemberInteractionLocked(true);
       // 導覽與基本操作不依賴 LINE 身分；先綁定再套用 deep link，畫面不必等網路。
@@ -10132,8 +10895,11 @@
       bindMvpHome();
       bindGuardianCompletePrompt();
       bindGuardianEvents();
-      const initialRoute = applyInitialDeepLinkRoute();
-      if (initialRoute.redirected) return;
+      const hasPendingMigration = Boolean(getAppParam("migration_code"));
+      if (!hasPendingMigration) {
+        const initialRoute = applyInitialDeepLinkRoute();
+        if (initialRoute.redirected) return;
+      }
       try {
         const lineReady = lineUserId ? true : await initLine();
         if (!useLocalMode && (!lineReady || !lineUserId)) {
@@ -10142,8 +10908,15 @@
           return;
         }
 
+        const migration = hasPendingMigration
+          ? await redeemPendingAccountMigration()
+          : { attempted: false, succeeded: false };
         const memberReady = await initApp();
         if (!memberReady) return;
+        if (hasPendingMigration && migration.succeeded) {
+          const migratedRoute = applyInitialDeepLinkRoute();
+          if (migratedRoute.redirected) return;
+        }
         if (useLocalMode) renderStatus(buildLocalStatus(loadLocalState()));
         await refreshCalendarNotes();
         if (!useLocalMode) {

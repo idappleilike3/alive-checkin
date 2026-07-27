@@ -10,7 +10,20 @@ class AdminCoreGuardianTests(unittest.TestCase):
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
         data_file = str(Path(temp_dir.name) / "state.json")
-        save_state(data_file, {"users": {profile["line_user_id"]: profile}})
+        users = {profile["line_user_id"]: profile}
+        for contact in profile.get("contacts") or []:
+            peer_id = contact.get("line_id") or contact.get("line_user_id")
+            if peer_id and contact.get("is_primary"):
+                users[peer_id] = {
+                    "line_user_id": peer_id,
+                    "contacts": [{
+                        "line_user_id": profile["line_user_id"],
+                        "binding_status": "accepted",
+                        "contact_role": "guardian",
+                        "is_primary": True,
+                    }],
+                }
+        save_state(data_file, {"users": users})
         return data_file
 
     def test_admin_can_switch_core_guardian(self):
@@ -72,6 +85,7 @@ class AdminCoreGuardianTests(unittest.TestCase):
                     "line_id": "U-core",
                     "priority": 2,
                     "is_primary": True,
+                    "binding_status": "accepted",
                     "notify_methods": ["line"],
                 },
             ],
@@ -83,7 +97,7 @@ class AdminCoreGuardianTests(unittest.TestCase):
         })
         self.assertEqual(status, 200)
         self.assertEqual(result["sent"], 1)
-        self.assertEqual(messages, ["U-core"])
+        self.assertEqual(messages, ["U-core", "U-free"])
 
 
 if __name__ == "__main__":

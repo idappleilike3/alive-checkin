@@ -1,6 +1,9 @@
+import os
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+import guardian_group_flex
 import sos_flow
 from guardian_group_flex import pricing_direct_url, share_invite_liff_url, welcome_flex
 
@@ -38,7 +41,7 @@ class BotKeywordHandlerTests(unittest.TestCase):
         self.assertEqual(primary_buttons[0]["action"]["label"], "開啟需要幫忙")
 
     def test_sos_no_guardians_flex_has_invite(self):
-        flex = sos_flow.sos_no_guardians_flex("https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html")
+        flex = sos_flow.sos_no_guardians_flex("https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html")
         blob = str(flex)
         self.assertIn("還沒綁定守護人喔", blob)
         self.assertIn("邀請家人加入", blob)
@@ -77,8 +80,17 @@ class BotKeywordHandlerTests(unittest.TestCase):
         )
         self.assertEqual(
             share_invite_liff_url(),
-            "https://liff.line.me/2010674803-rK98c0lo/liff/share-invite.html",
+            "https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html",
         )
+
+    def test_liff_link_helpers_preserve_function_parameters(self):
+        with patch.dict(os.environ, {"LIFF_ID": "2010848330-UAiqPPYD"}):
+            url = guardian_group_flex.liff_entry_url(
+                open_action="onboarding",
+                invite_from="U-new-provider",
+            )
+        self.assertIn("?open=onboarding", url)
+        self.assertIn("invite_from=U-new-provider", url)
 
     def test_welcome_flex_omits_placeholder_name(self):
         from guardian_group_flex import welcome_greeting_text
@@ -121,6 +133,39 @@ class BotKeywordHandlerTests(unittest.TestCase):
         )
         self.assertIsNone(
             app_mod.resolve_welcome_display_name(hint="LINE 使用者")
+        )
+
+    def test_migrated_alias_guidance_is_safe_and_handlers_short_circuit(self):
+        import app as app_mod
+
+        guidance = app_mod.migrated_account_webhook_guidance(
+            ({"ok": False, "error": "account_migrated"}, 409)
+        )
+        self.assertIn("新版", guidance)
+        self.assertIn("https://liff.line.me/2010848330-UAiqPPYD", guidance)
+        self.assertNotIn("U-old", guidance)
+
+        source = (ROOT / "app.py").read_text(encoding="utf-8")
+        follow = source.split("def handle_follow(event):", 1)[1].split(
+            "@handler.add(MemberJoinedEvent)", 1
+        )[0]
+        welcome = source.split("# 歡迎詞關鍵字", 1)[1].split(
+            "# 一鍵邀請", 1
+        )[0]
+        invite = source.split("# 一鍵邀請：", 1)[1].split(
+            "# fallback：純文字附上原生分享網址", 1
+        )[0]
+        self.assertLess(
+            follow.index("_reply_migrated_account"),
+            follow.index("_send_welcome"),
+        )
+        self.assertLess(
+            welcome.index("_reply_migrated_account"),
+            welcome.index("_send_welcome"),
+        )
+        self.assertLess(
+            invite.index("_reply_migrated_account"),
+            invite.index("share_invite_flex"),
         )
 
 

@@ -9,6 +9,10 @@ import line_auth
 import newebpay
 
 
+ROOT = Path(__file__).resolve().parents[1]
+NEW_LIFF_ID = "2010848330-UAiqPPYD"
+
+
 class CronSecretTests(unittest.TestCase):
     def test_empty_cron_secret_is_rejected(self):
         self.assertFalse(alive_app.cron_allowed({"CRON_SECRET": ""}, ""))
@@ -20,6 +24,38 @@ class CronSecretTests(unittest.TestCase):
 
 
 class LineAuthTests(unittest.TestCase):
+    def test_app_defaults_expose_new_liff_and_line_login_provider(self):
+        with mock.patch.dict(
+            alive_app.os.environ,
+            {"LIFF_ID": "", "LINE_LOGIN_CHANNEL_ID": "", "LINE_Login_Channel_ID": ""},
+        ):
+            self.assertEqual(alive_app.app_config({"LIFF_ID": ""})["liff_id"], NEW_LIFF_ID)
+            app = alive_app.create_app()
+            self.assertEqual(app.config["LINE_LOGIN_CHANNEL_ID"], "2010848330")
+            response = app.test_client().get("/api/config")
+            custom_liff_app = alive_app.create_app({"LIFF_ID": "2010999999-custom"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["liff_id"], NEW_LIFF_ID)
+        self.assertEqual(custom_liff_app.config["LINE_LOGIN_CHANNEL_ID"], "2010999999")
+
+    def test_public_config_exposes_legacy_liff_id_without_migration_secret(self):
+        app = alive_app.create_app(
+            {
+                "LEGACY_LIFF_ID": "2010674803-custom",
+                "ACCOUNT_MIGRATION_SECRET": "server-secret-must-not-leak-123456",
+            }
+        )
+
+        data = app.test_client().get("/api/config").get_json()
+
+        self.assertEqual(data["legacy_liff_id"], "2010674803-custom")
+        self.assertNotIn("migration_secret", str(data).lower())
+
+    def test_production_liff_default_is_new_provider(self):
+        source = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
+        self.assertIn(f'DEFAULT_LIFF_ID = "{NEW_LIFF_ID}"', source)
+
     def test_channel_id_from_liff_id(self):
         self.assertEqual(
             line_auth.line_login_channel_id({"LIFF_ID": "2010674803-rK98c0lo"}),

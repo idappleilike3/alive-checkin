@@ -235,6 +235,57 @@ class SmartReminderTests(unittest.TestCase):
         self.assertTrue(ok["reminder"]["notify_private"])
         self.assertFalse(ok["reminder"]["notify_group"])
 
+    def test_beta_799_cannot_use_formal_smart_reminders(self):
+        state = app.load_state(self.data_file)
+        profile = app.get_profile(state, "U-beta-799")
+        profile.update({
+            "plan": "paid_799",
+            "payment_status": "beta",
+            "membership_source": "beta",
+            "beta_cohort": "A",
+            "beta_started_at": "2026-07-27T09:00:00",
+            "beta_ends_at": "2099-01-01T00:00:00",
+        })
+        app.save_state(self.data_file, state)
+
+        result, code = app.save_smart_reminder(
+            self.data_file,
+            {
+                "line_user_id": "U-beta-799",
+                "target_name": "媽媽",
+                "category": "birthday",
+                "month": 7,
+                "day": 27,
+            },
+        )
+
+        self.assertEqual(code, 403)
+        self.assertEqual(result["error"], "smart_reminders_require_799")
+
+    def test_expired_799_cannot_use_smart_reminders(self):
+        state = app.load_state(self.data_file)
+        profile = app.get_profile(state, "U-expired-799")
+        profile.update({
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": "2020-01-01T00:00:00",
+        })
+        app.save_state(self.data_file, state)
+
+        result, code = app.save_smart_reminder(
+            self.data_file,
+            {
+                "line_user_id": "U-expired-799",
+                "target_name": "媽媽",
+                "category": "birthday",
+                "month": 7,
+                "day": 27,
+            },
+        )
+
+        self.assertEqual(code, 403)
+        self.assertEqual(result["error"], "smart_reminders_require_799")
+
     def test_smart_push_private_only(self):
         sent = []
 
@@ -275,6 +326,130 @@ class SmartReminderTests(unittest.TestCase):
         self.assertEqual(sent[0][0], "U799s")
         self.assertEqual(sent[0][1]["type"], "flex")
 
+    def test_payload_lists_only_bound_core_guardians_and_today_usage(self):
+        state = app.load_state(self.data_file)
+        profile = app.get_profile(state, "U799")
+        profile.update({
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": "2099-01-01",
+            "contacts": [
+                {"line_user_id": "U-bound", "name": "媽媽", "binding_status": "accepted", "is_primary": True},
+                {"line_user_id": "U-wait", "name": "弟弟", "binding_status": "pending", "is_primary": True},
+            ],
+            "smart_reminder_daily_usage": {
+                datetime.now().strftime("%Y-%m-%d"): {"private": 1, "guardian": 1}
+            },
+        })
+        app.save_state(self.data_file, state)
+        payload = app.get_smart_reminders_payload(self.data_file, "U799")
+        self.assertEqual(payload["state"], "entitled")
+        self.assertEqual(payload["daily_limits"], {"private": 2, "guardian": 1})
+        self.assertEqual(payload["daily_usage"]["private"], 1)
+        self.assertEqual([g["line_user_id"] for g in payload["bound_guardians"]], ["U-bound"])
+
+    def test_save_rejects_group_and_unbound_guardian_targets(self):
+        state = app.load_state(self.data_file)
+        profile = app.get_profile(state, "U799")
+        profile.update({
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": "2099-01-01",
+            "contacts": [{"line_user_id": "U-bound", "binding_status": "accepted", "is_primary": True}],
+        })
+        app.save_state(self.data_file, state)
+        group, group_code = app.save_smart_reminder(self.data_file, {
+            "line_user_id": "U799", "target_name": "媽媽", "month": 7, "day": 27,
+            "delivery_target": "group:C-1",
+        })
+        self.assertEqual(group_code, 400)
+        self.assertEqual(group["error"], "guardian_group_target_not_allowed")
+        stale, stale_code = app.save_smart_reminder(self.data_file, {
+            "line_user_id": "U799", "target_name": "媽媽", "month": 7, "day": 27,
+            "delivery_target": "guardian:U-stale",
+        })
+        self.assertEqual(stale_code, 400)
+        self.assertEqual(stale["error"], "guardian_target_not_bound")
+
+    def test_same_slot_private_reminders_merge_and_private_daily_cap_is_two(self):
+        sent = []
+        now = datetime(2026, 7, 27, 9, 0, 0)
+        state = app.load_state(self.data_file)
+        profile = app.get_profile(state, "U799")
+        profile.update({
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": "2099-01-01",
+            "smart_reminders": [
+                {"id": "one", "target_name": "媽媽", "month": 7, "day": 27, "remind_time": "09:00"},
+                {"id": "two", "target_name": "爸爸", "month": 7, "day": 27, "remind_time": "09:00"},
+            ],
+        })
+        app.save_state(self.data_file, state)
+        result, code = app.send_smart_reminders({
+            "DATA_FILE": self.data_file,
+            "LINE_CHANNEL_ACCESS_TOKEN": "x",
+            "LINE_PUSH_SENDER": lambda _token, target, message: sent.append((target, message)) or {"ok": True},
+            "CRON_NOW": now,
+        })
+        self.assertEqual(code, 200)
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(len(sent), 1)
+        self.assertIn("2 個提醒", sent[0][1]["altText"])
+
+        state = app.load_state(self.data_file)
+        state["users"]["U799"]["smart_reminders"].append(
+            {"id": "three", "target_name": "回診", "month": 7, "day": 27, "remind_time": "10:00"}
+        )
+        app.save_state(self.data_file, state)
+        app.send_smart_reminders({
+            "DATA_FILE": self.data_file,
+            "LINE_CHANNEL_ACCESS_TOKEN": "x",
+            "LINE_PUSH_SENDER": lambda _token, target, message: sent.append((target, message)) or {"ok": True},
+            "CRON_NOW": now.replace(hour=10),
+        })
+        self.assertEqual(len(sent), 2)
+
+        state = app.load_state(self.data_file)
+        state["users"]["U799"]["smart_reminders"].append(
+            {"id": "four", "target_name": "吃藥", "month": 7, "day": 27, "remind_time": "11:00"}
+        )
+        app.save_state(self.data_file, state)
+        app.send_smart_reminders({
+            "DATA_FILE": self.data_file,
+            "LINE_CHANNEL_ACCESS_TOKEN": "x",
+            "LINE_PUSH_SENDER": lambda _token, target, message: sent.append((target, message)) or {"ok": True},
+            "CRON_NOW": now.replace(hour=11),
+        })
+        self.assertEqual(len(sent), 2)
+
+    def test_selected_guardian_receives_at_most_one_smart_reminder_per_day(self):
+        sent = []
+        now = datetime(2026, 7, 27, 9, 0, 0)
+        state = app.load_state(self.data_file)
+        profile = app.get_profile(state, "U799")
+        profile.update({
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": "2099-01-01",
+            "contacts": [{"line_user_id": "U-guardian", "binding_status": "accepted", "is_primary": True}],
+            "smart_reminders": [
+                {"id": "one", "target_name": "媽媽", "month": 7, "day": 27, "remind_time": "09:00", "delivery_target": "guardian:U-guardian"},
+                {"id": "two", "target_name": "爸爸", "month": 7, "day": 27, "remind_time": "10:00", "delivery_target": "guardian:U-guardian"},
+            ],
+        })
+        app.save_state(self.data_file, state)
+        config = {
+            "DATA_FILE": self.data_file,
+            "LINE_CHANNEL_ACCESS_TOKEN": "x",
+            "LINE_PUSH_SENDER": lambda _token, target, message: sent.append((target, message)) or {"ok": True},
+            "CRON_NOW": now,
+        }
+        app.send_smart_reminders(config)
+        config["CRON_NOW"] = now.replace(hour=10)
+        app.send_smart_reminders(config)
+        self.assertEqual([target for target, _message in sent], ["U-guardian"])
+
 
 class InviteButtonCleanupTests(unittest.TestCase):
     def test_member_center_keeps_wait_row_invite_only(self):
@@ -303,7 +478,7 @@ class InviteButtonCleanupTests(unittest.TestCase):
         self.assertIn("one-tap-invite-btn", page)
         self.assertIn("reinviteGuardianBtn", page)
         self.assertIn("再邀請一位守護人", page)
-        self.assertIn("免費延長 7 天", page)
+        self.assertNotIn("免費延長 7 天", page)
         self.assertNotIn("shareInviteBtn", page)
         self.assertIn("智能提醒", page)
         self.assertIn("smartRemindersPanel", page)
@@ -318,7 +493,10 @@ class InviteButtonCleanupTests(unittest.TestCase):
         self.assertIn("dailyCheckinReminderEnabled", page)
         self.assertNotIn("smartReminderNotifyGroup", page)
         # 智能提醒不再提供群組推播勾選；守護群偏好仍可有「群組提醒（選用）」
-        self.assertNotIn("選擇守護人", page)
+        self.assertIn('id="smartReminderDeliveryTarget"', page)
+        self.assertIn("只通知自己（預設）", page)
+        self.assertIn("通知核心守護人", page)
+        self.assertIn("今日智慧提醒", page)
         self.assertIn("核心守護人", page)
         self.assertIn("148px + env(safe-area-inset-bottom", page)
         self.assertIn("72px + env(safe-area-inset-bottom", page)
