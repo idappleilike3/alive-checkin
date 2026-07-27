@@ -1,1 +1,1 @@
-Render deploy trigger for complete app and assets commit 30dce40 at 2026-07-27 23:00 Asia/Taipei
+Render deploy trigger for verified optimized assets commit 7ccf7ed at 2026-07-27 23:15 Asia/Taipei
