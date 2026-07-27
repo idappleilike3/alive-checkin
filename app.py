@@ -2867,6 +2867,7 @@ LINE_ACCEPTANCE_KINDS = (
     "family_group",
     "sos",
     "sos_cancel",
+    "sos_escalation",
     "sos_retry",
     "abuse_block",
     "group_member_change",
@@ -8452,6 +8453,417 @@ def eligible_sos_retry_recipients(event: dict) -> list[dict]:
     ]
 
 
+SOS_RESPONSE_ACTIONS = {"take_over", "assist", "contacted", "unable"}
+SOS_CLOSED_STATUSES = {"safe_closed", "cancelled", "resolved", "closed"}
+
+
+def build_sos_guardian_flex(message, event_id):
+    return {
+        "type": "flex",
+        "altText": "SOS ç·Šæ€¥æ±‚åŠ©ï¼Œè«‹ç¢ºèªæ˜¯å¦èƒ½å”åŠ©",
+        "contents": {
+            "type": "bubble",
+            "size": "mega",
+            "header": {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#D6322C",
+                "paddingAll": "lg",
+                "contents": [{
+                    "type": "text", "text": "ğŸ†˜ SOS ç·Šæ€¥æ±‚åŠ©",
+                    "color": "#FFFFFF", "weight": "bold", "size": "xl",
+                }],
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "md",
+                "contents": [
+                    {"type": "text", "text": str(message), "wrap": True, "size": "md"},
+                    {
+                        "type": "text",
+                        "text": "ã€Œå·²é€é”ã€ä¸ä»£è¡¨å·²è®€ï¼Œè«‹æŒ‰ä¸‹æ–¹å›å ±å¯¦éš›è™•ç†ç‹€æ…‹",
+                        "wrap": True, "size": "sm", "color": "#666666",
+                    },
+                ],
+            },
+            "footer": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "contents": [
+                    {
+                        "type": "button", "style": "primary", "color": "#D6322C",
+                        "action": {
+                            "type": "postback", "label": "æˆ‘ä¾†è¯ç¹«",
+                            "data": f"sos:take_over:{event_id}",
+                            "displayText": "æˆ‘ä¾†è¯ç¹«",
+                        },
+                    },
+                    {
+                        "type": "button", "style": "secondary",
+                        "action": {
+                            "type": "postback", "label": "å·²è¯ç¹«æœ¬äºº",
+                            "data": f"sos:contacted:{event_id}",
+                            "displayText": "å·²è¯ç¹«æœ¬äºº",
+                        },
+                    },
+                    {
+                        "type": "button", "style": "link",
+                        "action": {
+                            "type": "postback", "label": "ç„¡æ³•è™•ç†",
+                            "data": f"sos:unable:{event_id}",
+                            "displayText": "ç›®å‰ç„¡æ³•è™•ç†",
+                        },
+                    },
+                ],
+            },
+        },
+    }
+
+
+def _sos_recipient(event, line_user_id):
+    return next(
+        (
+            row for row in (event.get("deliveries") or [])
+            if row.get("kind") == "guardian"
+            and row.get("status") == "sent"
+            and str(row.get("target") or "") == line_user_id
+        ),
+        None,
+    )
+
+
+def _sos_public_snapshot(event):
+    primary_id = str(event.get("primary_responder_id") or "")
+    assistants = set(event.get("assistant_responder_ids") or [])
+    responses = event.get("guardian_responses") or {}
+    recipients = []
+    for row in event.get("deliveries") or []:
+        if row.get("kind") not in {"guardian", "group"}:
+            continue
+        target = str(row.get("target") or "")
+        response = responses.get(target) or {}
+        recipients.append({
+            "name": str(row.get("display_name") or (
+                "æ ¸å¿ƒå®ˆè­·äºº" if row.get("kind") == "guardian" else "å®ˆè­·ç¾¤"
+            )),
+            "kind": row.get("kind"),
+            "delivery_status": row.get("status"),
+            "response_status": response.get("action") or "waiting",
+            "role": (
+                "primary" if target and target == primary_id
+                else "assistant" if target in assistants
+                else None
+            ),
+            "responded_at": response.get("responded_at"),
+        })
+    return {
+        "ok": True,
+        "event_id": event.get("event_id"),
+        "status": event.get("status") or "pending",
+        "created_at": event.get("created_at"),
+        "sent_at": event.get("sent_at"),
+        "closed_at": event.get("closed_at") or event.get("resolved_at"),
+        "escalation_round": int(event.get("escalation_round") or 0),
+        "escalation_stopped": bool(event.get("escalation_stopped")),
+        "primary_responder": next(
+            (row["name"] for row in recipients if row.get("role") == "primary"),
+            None,
+        ),
+        "assistants": [
+            row["name"] for row in recipients if row.get("role") == "assistant"
+        ],
+        "recipients": recipients,
+        "timeline": [
+            {
+                "action": item.get("action"),
+                "actor_name": item.get("actor_name"),
+                "at": item.get("at"),
+            }
+            for item in (event.get("timeline") or [])
+        ],
+    }
+
+
+def respond_to_sos_event(data_file, payload, config=None):
+    """Record a guardian response without treating delivery as acknowledgement."""
+    event_id = str((payload or {}).get("event_id") or "").strip()
+    actor_id = str((payload or {}).get("line_user_id") or "").strip()
+    action = str((payload or {}).get("action") or "").strip().casefold()
+    if not event_id or not actor_id or action not in SOS_RESPONSE_ACTIONS:
+        return {"ok": False, "error": "invalid_sos_response"}, 400
+    now = current_app_time(config or {})
+
+    def transition(state):
+        event = (state.get("sos_events") or {}).get(event_id)
+        if not event:
+            return {"ok": False, "error": "sos_event_not_found", "code": 404}
+        if str(event.get("status") or "").casefold() in SOS_CLOSED_STATUSES:
+            return {"ok": False, "error": "sos_event_closed", "code": 409}
+        delivery = _sos_recipient(event, actor_id)
+        if not delivery:
+            return {"ok": False, "error": "not_sos_recipient", "code": 403}
+        actor_name = str(
+            delivery.get("display_name")
+            or ((state.get("users") or {}).get(actor_id) or {}).get("display_name")
+            or "æ ¸å¿ƒå®ˆè­·äºº"
+        )
+        responses = event.setdefault("guardian_responses", {})
+        previous = responses.get(actor_id) or {}
+        role = previous.get("role")
+        effective_action = action
+        if action in {"take_over", "assist", "contacted"}:
+            if not event.get("primary_responder_id"):
+                event["primary_responder_id"] = actor_id
+                role = "primary"
+            elif event.get("primary_responder_id") == actor_id:
+                role = "primary"
+            else:
+                role = "assistant"
+                assistants = list(event.get("assistant_responder_ids") or [])
+                if actor_id not in assistants:
+                    assistants.append(actor_id)
+                event["assistant_responder_ids"] = assistants
+            event["escalation_stopped"] = True
+            event["status"] = "contacted" if action == "contacted" else "responding"
+        else:
+            role = role or "unable"
+        responded_at = now.isoformat(timespec="seconds")
+        responses[actor_id] = {
+            "action": effective_action,
+            "role": role,
+            "display_name": actor_name,
+            "responded_at": responded_at,
+        }
+        event.setdefault("timeline", []).append({
+            "action": effective_action,
+            "actor_id": actor_id,
+            "actor_name": actor_name,
+            "at": responded_at,
+        })
+        return {
+            "ok": True,
+            "code": 200,
+            "event_id": event_id,
+            "action": effective_action,
+            "role": role,
+            "actor_name": actor_name,
+            "status": event.get("status"),
+            "snapshot": _sos_public_snapshot(event),
+        }
+
+    result = mutate_state_atomically(data_file, transition)
+    code = int(result.pop("code", 200))
+    if code == 200:
+        cfg = config or {}
+        token = cfg.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+            "LINE_CHANNEL_ACCESS_TOKEN", ""
+        )
+        if token:
+            latest = load_state(data_file)
+            event = (latest.get("sos_events") or {}).get(event_id) or {}
+            actor = result.get("actor_name") or "å®ˆè­·äºº"
+            action_text = {
+                "take_over": "å·²æ¥æ‰‹ï¼Œæ­£åœ¨è¯ç¹«æœ¬äºº",
+                "assist": "å·²åŠ å…¥å”åŠ©è™•ç†",
+                "contacted": "å·²ç¢ºèªè¯ç¹«åˆ°æœ¬äºº",
+                "unable": "ç›®å‰ç„¡æ³•è™•ç†",
+            }[action]
+            notice = f"ğŸ†˜ SOS ç‹€æ…‹æ›´æ–°ï¼š{actor}{action_text}\näº‹ä»¶å°šæœªè‡ªå‹•çµæ¡ˆ"
+            targets = [event.get("owner_line_user_id")] + [
+                row.get("target") for row in (event.get("deliveries") or [])
+                if row.get("kind") == "guardian" and row.get("status") == "sent"
+                and row.get("target") != actor_id
+            ]
+            sender = cfg.get("LINE_PUSH_SENDER") or line_push_message
+            delivered = 0
+            for target in dict.fromkeys(target for target in targets if target):
+                try:
+                    _send_line_with_retry_key(
+                        sender, token, target, notice,
+                        _line_retry_key(f"{event_id}:response:{action}:{actor_id}:{target}"),
+                    )
+                    delivered += 1
+                except Exception:
+                    continue
+            if delivered:
+                mutate_state_atomically(
+                    data_file,
+                    lambda state: record_line_message_usage(
+                        state,
+                        category="sos",
+                        owner_line_user_id=event.get("owner_line_user_id"),
+                        recipient_count=delivered,
+                        event_id=f"{event_id}:response:{action}:{actor_id}",
+                        sent_at=now,
+                    ),
+                )
+    return result, code
+
+
+def get_sos_event_status(data_file, requester_id, event_id):
+    state = load_state(data_file)
+    event = (state.get("sos_events") or {}).get(str(event_id or ""))
+    if not event:
+        return {"ok": False, "error": "sos_event_not_found"}, 404
+    requester_id = str(requester_id or "")
+    allowed = requester_id == str(event.get("owner_line_user_id") or "")
+    allowed = allowed or _sos_recipient(event, requester_id) is not None
+    if not allowed:
+        return {"ok": False, "error": "not_sos_participant"}, 403
+    return _sos_public_snapshot(event), 200
+
+
+def close_sos_as_safe(data_file, payload, config=None):
+    event_id = str((payload or {}).get("event_id") or "").strip()
+    owner_id = str((payload or {}).get("line_user_id") or "").strip()
+    now = current_app_time(config or {})
+
+    def close(state):
+        event = (state.get("sos_events") or {}).get(event_id)
+        if not event:
+            return {"ok": False, "error": "sos_event_not_found", "code": 404}
+        if owner_id != str(event.get("owner_line_user_id") or ""):
+            return {"ok": False, "error": "not_sos_owner", "code": 403}
+        if str(event.get("status") or "").casefold() in SOS_CLOSED_STATUSES:
+            return {"ok": True, "code": 200, **_sos_public_snapshot(event)}
+        closed_at = now.isoformat(timespec="seconds")
+        event["status"] = "safe_closed"
+        event["closed_at"] = closed_at
+        event["escalation_stopped"] = True
+        event.setdefault("timeline", []).append({
+            "action": "safe_closed",
+            "actor_id": owner_id,
+            "actor_name": event.get("owner_display_name") or "æœ¬äºº",
+            "at": closed_at,
+        })
+        return {"ok": True, "code": 200, **_sos_public_snapshot(event)}
+
+    result = mutate_state_atomically(data_file, close)
+    code = int(result.pop("code", 200))
+    if code == 200 and result.get("status") == "safe_closed":
+        cfg = config or {}
+        token = cfg.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+            "LINE_CHANNEL_ACCESS_TOKEN", ""
+        )
+        if token:
+            state = load_state(data_file)
+            event = (state.get("sos_events") or {}).get(event_id) or {}
+            sender = cfg.get("LINE_PUSH_SENDER") or line_push_message
+            notice = (
+                f"âœ…ã€SOS å·²çµæŸã€‘{event.get('owner_display_name') or 'æœ¬äºº'} "
+                "å·²ç¢ºèªç›®å‰å®‰å…¨\næœ¬æ¬¡è™•ç†ç´€éŒ„å·²ä¿ç•™"
+            )
+            for row in event.get("deliveries") or []:
+                if row.get("kind") not in {"guardian", "group"}:
+                    continue
+                if row.get("status") != "sent" or not row.get("target"):
+                    continue
+                try:
+                    _send_line_with_retry_key(
+                        sender, token, row["target"], notice,
+                        _line_retry_key(f"{event_id}:safe:{row['target']}"),
+                    )
+                except Exception:
+                    continue
+    return result, code
+
+
+def process_sos_escalations(data_file, config=None, now=None):
+    """Send at most one due 3/5/10 minute SOS escalation round per cron tick."""
+    cfg = config or {}
+    current = now or current_app_time(cfg)
+    token = cfg.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+        "LINE_CHANNEL_ACCESS_TOKEN", ""
+    )
+    sender = cfg.get("LINE_PUSH_SENDER") or line_push_message
+    state = load_state(data_file)
+    sent = failed = 0
+    events_updated = 0
+    thresholds = ((1, 3), (2, 5), (3, 10))
+    for event in (state.get("sos_events") or {}).values():
+        if event.get("escalation_stopped"):
+            continue
+        if str(event.get("status") or "").casefold() in SOS_CLOSED_STATUSES:
+            continue
+        sent_at = parse_datetime(event.get("sent_at"))
+        if not sent_at:
+            continue
+        if current.tzinfo is None and sent_at.tzinfo is not None:
+            sent_at = sent_at.replace(tzinfo=None)
+        elif current.tzinfo is not None and sent_at.tzinfo is None:
+            sent_at = sent_at.replace(tzinfo=current.tzinfo)
+        elapsed_minutes = (current - sent_at).total_seconds() / 60
+        current_round = int(event.get("escalation_round") or 0)
+        due = next(
+            (
+                (round_no, minute)
+                for round_no, minute in thresholds
+                if round_no > current_round and elapsed_minutes >= minute
+            ),
+            None,
+        )
+        if not due:
+            continue
+        round_no, minute = due
+        label = (
+            "å†æ¬¡æé†’ï¼šå°šç„¡å®ˆè­·äººæ¥æ‰‹"
+            if round_no == 1 else
+            "å‚™æ´æé†’ï¼šSOS ä»ç„¡äººæ¥æ‰‹"
+            if round_no == 2 else
+            "æœ€å¾Œæé†’ï¼šè«‹ç«‹å³ç¢ºèªæœ¬äººå®‰å…¨"
+        )
+        message = (
+            f"âš ï¸ã€{label}ã€‘{event.get('owner_display_name') or 'ä½ çš„è¦ªå‹'} "
+            f"åœ¨ {minute} åˆ†é˜å‰ç™¼å‡º SOS\n"
+            "è‹¥èƒ½è™•ç†è«‹é–‹å•ŸåŸé€šçŸ¥æŒ‰ã€Œæˆ‘ä¾†è¯ç¹«ã€ï¼›è‹¥æœ‰ç«‹å³å±éšªè«‹æ’¥æ‰“ 119ï¼110"
+        )
+        round_units = 0
+        for delivery in event.get("deliveries") or []:
+            if delivery.get("kind") not in {"guardian", "group"}:
+                continue
+            if delivery.get("status") != "sent" or not delivery.get("target"):
+                continue
+            try:
+                _send_line_with_retry_key(
+                    sender,
+                    token,
+                    delivery["target"],
+                    message,
+                    _line_retry_key(
+                        f"{event.get('event_id')}:escalation:{round_no}:{delivery['target']}"
+                    ),
+                )
+                sent += 1
+                round_units += max(1, int(delivery.get("recipient_count") or 1))
+            except Exception:
+                failed += 1
+        event["escalation_round"] = round_no
+        event["last_escalated_at"] = current.isoformat(timespec="seconds")
+        event.setdefault("timeline", []).append({
+            "action": f"escalation_{round_no}",
+            "actor_name": "ç³»çµ±",
+            "at": event["last_escalated_at"],
+        })
+        record_line_message_usage(
+            state,
+            category="sos_escalation",
+            owner_line_user_id=event.get("owner_line_user_id"),
+            recipient_count=round_units,
+            event_id=f"{event.get('event_id')}:escalation:{round_no}",
+            sent_at=current,
+        )
+        events_updated += 1
+    if events_updated:
+        save_state(data_file, state)
+    return {
+        "sent": sent,
+        "failed": failed,
+        "events_updated": events_updated,
+    }
+
+
 def _claim_sos_event_action(state, event_id, owner_id, action, now):
     """Lease cancel/retry so concurrent workers cannot duplicate LINE pushes."""
     event = (state.get("sos_events") or {}).get(event_id)
@@ -9369,10100 +9781,89 @@ def trigger_sos(data_file, payload, config=None):
             "status": "pending",
             "retry_key": f"{sos_event_id}:group:{group_id}",
         }
-        for group_id in active_group_ids
-    ] + [{
-        "kind": "self",
-        "target": line_user_id,
-        "display_name": "æœ¬äºº",
-        "recipient_count": 1,
-        "status": "pending",
-        "message": self_confirmation,
-        "retry_key": _line_retry_key(f"{sos_event_id}:self:{line_user_id}"),
-    }]
-
-    def persist_sos_outbox(latest):
-        latest_profile = (latest.get("users") or {}).get(line_user_id)
-        if latest_profile is None:
-            return
-        latest_profile["last_sos_event_id"] = sos_event_id
-        if location:
-            stored_location = dict(latest_profile.get("location") or {})
-            stored_location.update(copy.deepcopy(location))
-            latest_profile["location"] = stored_location
-        latest.setdefault("sos_events", {})[sos_event_id] = {
-            "event_id": sos_event_id,
-            "owner_line_user_id": line_user_id,
-            "owner_display_name": profile.get("display_name") or "æœƒå“¡",
-            "status": "sending",
-            "created_at": now_dt.isoformat(timespec="seconds"),
-            "sent_at": None,
-            "deliveries": copy.deepcopy(prepared_deliveries),
-            "message": message,
-            "location_attached": bool(location_text),
-            "abuse_mode": abuse["mode"],
-        }
-
-    mutate_state_atomically(data_file, persist_sos_outbox)
-    state = load_state(data_file)
-    profile = (state.get("users") or {}).get(line_user_id) or profile
-    notification_log_start = len(state.get("notification_logs") or [])
-    usage_start = len(state.get("line_message_usage") or [])
-
-    sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
-    sent = 0
-    sent_at = None
-    failed = 0
-    group_sent = 0
-    group_failed = 0
-    results = []
-    deliveries = []
-    guardian_results = []
-    group_results = []
-    print(
-        f"[sos] trigger user={line_user_id[:8]} line_targets={len(line_contacts)} "
-        f"groups={len(active_group_ids)} loc={bool(location_text)} phone_only={len(phone_contacts)}",
-        flush=True,
-    )
-    for contact in line_contacts:
-        target = contact["line_id"]
-        delivery_retry_key = _line_retry_key(
-            f"{sos_event_id}:guardian:{target}"
-        )
-        try:
-            result = _send_line_with_retry_key(
-                sender,
-                token,
-                target,
-                message,
-                delivery_retry_key,
-            )
-            append_notification_log(state, "sos", target, "sent", message, json.dumps(result, ensure_ascii=False))
-            sent += 1
-            if sent_at is None:
-                sent_at = current_app_time(config or {}).isoformat(timespec="seconds")
-            results.append({"line_user_id": target, "status": "sent"})
-            deliveries.append({
-                "kind": "guardian",
-                "target": target,
-                "display_name": str(contact.get("name") or contact.get("relationship") or "æ ¸å¿ƒå®ˆè­·äºº"),
-                "recipient_count": 1,
-                "status": "sent",
-                "retry_key": delivery_retry_key,
-            })
-            guardian_results.append({
-                "name": str(contact.get("name") or contact.get("relationship") or "æ ¸å¿ƒå®ˆè­·äºº"),
-                "status": "sent",
-            })
-            print(f"[sos] push ok target={str(target)[:8]}", flush=True)
-        except Exception as exc:
-            append_notification_log(state, "sos", target, "failed", message, str(exc))
-            failed += 1
-            results.append({
-                "line_user_id": target,
-                "status": "failed",
-                "error_hint": classify_line_push_error(exc),
-            })
-            deliveries.append({
-                "kind": "guardian",
-                "target": target,
-                "display_name": str(contact.get("name") or contact.get("relationship") or "æ ¸å¿ƒå®ˆè­·äºº"),
-                "recipient_count": 1,
-                "status": "failed",
-                "retry_key": delivery_retry_key,
-            })
-            guardian_results.append({
-                "name": str(contact.get("name") or contact.get("relationship") or "æ ¸å¿ƒå®ˆè­·äºº"),
-                "status": "failed",
-                "error_hint": classify_line_push_error(exc),
-            })
-            print(f"[sos] push FAIL target={str(target)[:8]} err={str(exc)[:180]}", flush=True)
-
-    for group_id in active_group_ids:
-        delivery_retry_key = f"{sos_event_id}:group:{group_id}"
-        try:
-            group_info = (state.get("guardian_groups") or {}).get(group_id) or {}
-            member_ids = list(group_delivery_members.get(group_id) or [])
-            result, mention_mode, _payload = push_sos_to_guardian_group(
-                token,
-                group_id,
-                message,
-                sender=sender,
-                member_ids=member_ids,
-                retry_key=delivery_retry_key,
-            )
-            append_notification_log(
-                state,
-                "sos_guardian_group",
-                group_id,
-                "sent",
-                message,
-                json.dumps({"result": result, "mention": mention_mode}, ensure_ascii=False),
-            )
-            sent += 1
-            if sent_at is None:
-                sent_at = current_app_time(config or {}).isoformat(timespec="seconds")
-            group_sent += 1
-            results.append({
-                "group_id": group_id,
-                "status": "sent",
-                "mention": mention_mode,
-            })
-            deliveries.append({
-                "kind": "group",
-                "target": group_id,
-                "display_name": str(group_info.get("group_name") or group_info.get("name") or "å®ˆè­·ç¾¤"),
-                "recipient_count": max(1, len(member_ids)),
-                "status": "sent",
-                "retry_key": delivery_retry_key,
-            })
-            group_results.append({
-                "name": str(group_info.get("group_name") or group_info.get("name") or "å®ˆè­·ç¾¤"),
-                "status": "sent",
-                "mention": mention_mode,
-            })
-            print(f"[sos] group push ok group={str(group_id)[:8]} mention={mention_mode}", flush=True)
-        except Exception as exc:
-            append_notification_log(state, "sos_guardian_group", group_id, "failed", message, str(exc))
-            failed += 1
-            group_failed += 1
-            results.append({"group_id": group_id, "status": "failed"})
-            deliveries.append({
-                "kind": "group",
-                "target": group_id,
-                "display_name": str(group_info.get("group_name") or group_info.get("name") or "å®ˆè­·ç¾¤"),
-                "recipient_count": max(1, len(group_delivery_members.get(group_id) or [])),
-                "status": "failed",
-                "retry_key": delivery_retry_key,
-            })
-            group_info = (state.get("guardian_groups") or {}).get(group_id) or {}
-            group_results.append({
-                "name": str(group_info.get("group_name") or group_info.get("name") or "å®ˆè­·ç¾¤"),
-                "status": "failed",
-                "error_hint": classify_line_push_error(exc),
-            })
-            print(f"[sos] group push FAIL group={str(group_id)[:8]} err={str(exc)[:180]}", flush=True)
-
-    self_result = {"status": "not_sent"}
-    self_delivery = copy.deepcopy(prepared_deliveries[-1])
-    if sent:
-        confirmation = (
-            f"âœ… SOS å·²é€å‡º\n"
-            f"å·²é€šçŸ¥ {sent} å€‹å®ˆè­·å°è±¡ï¼Œå¤±æ•— {failed} å€‹\n"
-            f"{'å·²é™„ä¸Šé€™æ¬¡å–å¾—çš„ä½ç½®' if location_text else 'é€™æ¬¡æœªé™„å³æ™‚ä½ç½®'}\n"
-            "è‹¥æ˜¯èª¤è§¸æˆ–ç›®å‰å·²å®‰å…¨ï¼Œè«‹åœ¨ 10 åˆ†é˜å…§å›åˆ° SOS ç•«é¢å–æ¶ˆé€šçŸ¥"
-        )
-        try:
-            result = _send_line_with_retry_key(
-                sender,
-                token,
-                line_user_id,
-                confirmation,
-                _line_retry_key(f"{sos_event_id}:self:{line_user_id}"),
-            )
-            append_notification_log(
-                state, "sos_self_confirmation", line_user_id, "sent",
-                confirmation, json.dumps(result, ensure_ascii=False),
-            )
-            self_result = {"status": "sent"}
-            self_delivery["status"] = "sent"
-        except Exception as exc:
-            append_notification_log(
-                state, "sos_self_confirmation", line_user_id, "failed",
-                confirmation, str(exc),
-            )
-            self_result = {
-                "status": "failed",
-                "error_hint": classify_line_push_error(exc),
-            }
-            self_delivery["status"] = "failed"
-            self_delivery["error_hint"] = self_result["error_hint"]
-    deliveries.append(self_delivery)
-
-    profile["last_sos_event_id"] = sos_event_id
-    state.setdefault("sos_events", {})[sos_event_id] = {
-        "event_id": sos_event_id,
-        "owner_line_user_id": line_user_id,
-        "owner_display_name": profile.get("display_name") or "æœƒå“¡",
-        "status": "sent" if sent else "delivery_failed",
-        "created_at": now_dt.isoformat(timespec="seconds"),
-        "sent_at": sent_at,
-        "deliveries": deliveries,
-        "message": message,
-        "location_attached": bool(location_text),
-        "abuse_mode": abuse["mode"],
-        "push_budget": budget,
-    }
-    sos_units = 0
-    for delivery in deliveries:
-        if delivery.get("status") != "sent":
-            continue
-        if delivery.get("kind") == "group":
-            sos_units += max(1, int(delivery.get("recipient_count") or 1))
-        elif delivery.get("kind") == "self":
-            continue
-        else:
-            sos_units += 1
-    if self_result.get("status") == "sent":
-        sos_units += 1
-    record_line_message_usage(
-        state,
-        category="sos",
-        owner_line_user_id=line_user_id,
-        recipient_count=sos_units,
-        event_id=sos_event_id,
-        sent_at=now_dt,
-    )
-    code = 200 if sent else 502
-    cancel_available = sent > 0
-    pending_event = None
-    if cancel_available:
-        pending_event = {
-            "stage": "sent",
-            "tap_count": 3,
-            "first_tap_at": now_dt.isoformat(timespec="seconds"),
-            "last_tap_at": now_dt.isoformat(timespec="seconds"),
-            "sent_at": sent_at,
-            "event_id": sos_event_id,
-        }
-    event_record = copy.deepcopy(state["sos_events"][sos_event_id])
-    delivery_logs = copy.deepcopy(
-        (state.get("notification_logs") or [])[notification_log_start:]
-    )
-    delivery_usage = copy.deepcopy(
-        (state.get("line_message_usage") or [])[usage_start:]
-    )
-    profile_patch = {
-        "last_sos_event_id": sos_event_id,
-    }
-    if location:
-        profile_patch["location"] = copy.deepcopy(profile.get("location") or location)
-
-    def merge_sos_delivery(latest):
-        latest_profile = (latest.get("users") or {}).get(line_user_id)
-        if latest_profile is not None:
-            latest_profile.update(copy.deepcopy(profile_patch))
-            latest_policy = sos_abuse_state(latest_profile, now_dt)
-            latest_profile["sos_abuse_mode"] = latest_policy["mode"]
-            latest_profile["sos_abuse_expires_at"] = latest_policy["expires_at"]
-        latest.setdefault("sos_events", {})[sos_event_id] = copy.deepcopy(event_record)
-        if pending_event:
-            latest.setdefault("sos_pending", {})[line_user_id] = copy.deepcopy(pending_event)
-        if delivery_logs:
-            logs = list(latest.get("notification_logs") or [])
-            logs.extend(copy.deepcopy(delivery_logs))
-            latest["notification_logs"] = logs[-100:]
-        if delivery_usage:
-            ledger = list(latest.get("line_message_usage") or [])
-            known_keys = {
-                str(row.get("key") or "")
-                for row in ledger
-                if isinstance(row, dict)
-            }
-            for row in delivery_usage:
-                key = str(row.get("key") or "")
-                if key and key not in known_keys:
-                    ledger.append(copy.deepcopy(row))
-                    known_keys.add(key)
-            latest["line_message_usage"] = ledger[-10000:]
-
-    mutate_state_atomically(data_file, merge_sos_delivery)
-    return {
-        "sent": sent,
-        "failed": failed,
-        "group_sent": group_sent,
-        "group_failed": group_failed,
-        "guardian_limit": limit,
-        "self": self_result,
-        "guardians": guardian_results,
-        "groups": group_results,
-        "results": [*guardian_results, *group_results],
-        "location_attached": bool(location_text),
-        "phone_only_count": len(phone_contacts),
-        "phone_contacts": phone_contacts[:5],
-        "event_id": sos_event_id,
-        "sent_at": sent_at,
-        "location_updated_at": location.get("updated_at") if location_text else None,
-        "cancel_available": cancel_available,
-        "abuse_mode": abuse["mode"],
-        "abuse_expires_at": abuse["expires_at"],
-        "emergency_numbers_available": True,
-        "emergency_numbers": ["119", "110"],
-    }, code
-
-
-def friend_locations(data_file, line_user_id):
-    state = load_state(data_file)
-    profile = get_profile(state, line_user_id)
-    now = datetime.now()
-    friends = []
-    for friend_id in profile.get("friends") or []:
-        friend = state.get("users", {}).get(friend_id)
-        if not friend:
-            continue
-        location = friend.get("location") or {}
-        if not _location_session_active(location, now):
-            continue
-        snap = safety_guard_snapshot(friend, now)
-        friends.append(
-            {
-                "line_user_id": friend_id,
-                "display_name": friend.get("display_name", "LINE ä½¿ç”¨è€…"),
-                "latitude": location.get("latitude"),
-                "longitude": location.get("longitude"),
-                "city": location.get("city", ""),
-                "updated_at": location.get("updated_at"),
-                "expires_at": location.get("expires_at"),
-                "started_at": location.get("started_at"),
-                "until_stop": bool(location.get("until_stop")),
-                "safety_status": snap.get("safety_status"),
-                "is_today_checked": snap.get("is_today_checked"),
-                "mode": "safety_guard",
-            }
-        )
-    return {"friends": friends}
-
-
-def admin_update_user_plan(data_file, payload):
-    """å¾Œå°èª¿æ•´æ–¹æ¡ˆï¼šåªæ”¹æ–¹æ¡ˆï¼ä»˜æ¬¾æ¬„ä½ï¼Œç»ä¸æ¸…ç©ºå®ˆè­·äººã€å¥½å‹æˆ–å®ˆè­·ç¾¤ã€‚"""
-    line_user_id = str(payload.get("line_user_id") or "").strip()
-    if not line_user_id:
-        return {"error": "missing line_user_id"}, 400
-    plan = str(payload.get("plan") or "trial")
-    if plan not in PLAN_LIMITS:
-        return {"error": "unknown plan"}, 400
-    state = load_state(data_file)
-    profile = get_profile(state, line_user_id)
-
-    # å‡ç´šå‰å¿«ç…§ï¼šç¢ºä¿å¾ŒçºŒé‚è¼¯ä¸æœƒèª¤æ¸…ç¶å®šè³‡æ–™
-    preserved_contacts = list(profile.get("contacts") or [])
-    preserved_friends = list(profile.get("friends") or [])
-    preserved_groups = list(profile.get("guardian_group_ids") or [])
-    preserved_onboarding = bool(profile.get("is_onboarding_completed"))
-    preserved_reminder_times = list(profile.get("reminder_times") or [])
-    preserved_reminder_time = profile.get("reminder_time")
-
-    profile["plan"] = plan
-    if plan.startswith("paid_"):
-        profile["membership_source"] = "paid"
-        profile["trial_policy_version"] = TRIAL_POLICY_VERSION
-        profile["trial_bonus_days"] = 0
-    elif plan == "free":
-        profile["membership_source"] = "expired"
-    elif plan == "trial" and not str(profile.get("membership_source") or ""):
-        profile["membership_source"] = "public_trial"
-    profile["payment_status"] = str(
-        payload.get("payment_status") or ("trial" if plan == "trial" else "active")
-    )
-
-    paid_until = str(payload.get("paid_until") or "").strip()
-    if not paid_until:
-        paid_until = str(profile.get("paid_until") or "").strip()
-    # å¾Œå°æ”¹æˆä»˜è²»æ–¹æ¡ˆä½†æœªå¡«åˆ°æœŸæ—¥æ™‚ï¼Œè‡ªå‹•è£œåˆç†åˆ°æœŸæ—¥ï¼Œé¿å…è¢«éæœŸé™ç´šæ’ç¨‹ç«‹åˆ»æ‰“å› free
-    if plan.startswith("paid_") and not paid_until:
-        product = PAYMENT_PRODUCTS.get(plan) or {}
-        days = int(product.get("duration_days") or (365 if "year" in plan else 30))
-        paid_until = (datetime.now() + timedelta(days=days)).isoformat(timespec="seconds")
-        profile["billing_cycle"] = product.get("billing_cycle") or (
-            "yearly" if "year" in plan else "monthly"
-        )
-    if paid_until:
-        profile["paid_until"] = paid_until
-        profile["next_billing_date"] = paid_until
-    elif plan in ("trial", "free"):
-        # æ˜ç¢ºé™ç‚ºè©¦ç”¨ï¼å…è²»æ™‚æ‰æ¸…åˆ°æœŸæ—¥ï¼›ä»˜è²»å‡ç´šçµ•ä¸å› ç©ºå­—ä¸²æ¸…æ‰
-        if "paid_until" in payload:
-            profile["paid_until"] = ""
-
-    # æ˜ç¢ºå¯«å›ç¶å®šè³‡æ–™ï¼ˆé˜²æ­¢ä»»ä½•ä¸­é–“æ­¥é©Ÿèª¤æ”¹ï¼‰
-    profile["contacts"] = preserved_contacts
-    profile["friends"] = preserved_friends
-    profile["guardian_group_ids"] = preserved_groups
-    if preserved_onboarding:
-        profile["is_onboarding_completed"] = True
-    if preserved_reminder_times:
-        profile["reminder_times"] = preserved_reminder_times
-    if preserved_reminder_time:
-        profile["reminder_time"] = preserved_reminder_time
-
-    # ä»˜è²»ï¼é‡æ–°é–‹é€šè©¦ç”¨ï¼šå–æ¶ˆ 30 å¤©è»Ÿä¿ç•™å€’æ•¸ï¼ˆè³‡æ–™çºŒç•™ï¼‰
-    if plan.startswith("paid_") or (plan == "trial" and trial_days_left(profile) > 0):
-        clear_contacts_retain_window(profile)
-
-    # å¾Œå°å‡ç´šåˆ°å«å®ˆè­·ç¾¤æ–¹æ¡ˆï¼šè‡ªå‹•æˆäºˆå®ˆè­·ç¾¤ç®¡ç†å“¡
-    admin_granted = ensure_guardian_group_admin_for_user(state, profile)
-
-    save_state(data_file, state)
-    status = build_status(profile, state)
-    status["preserved_contacts"] = len(preserved_contacts)
-    status["preserved_friends"] = len(preserved_friends)
-    status["preserved_guardian_groups"] = len(preserved_groups)
-    status["guardian_group_admin_granted"] = admin_granted
-    return status, 200
-
-
-def admin_set_core_guardian(data_file, payload):
-    """å¾Œå°æŒ‡å®šï¼å–æ¶ˆæ ¸å¿ƒå®ˆè­·äººï¼ˆis_primaryï¼‰ã€‚å¯åŒæ™‚æŒ‡å®šå¤šä½ï¼Œä¸Šé™ä¾æ–¹æ¡ˆ core_guardian_alert_limitã€‚"""
-    line_user_id = str(payload.get("line_user_id") or "").strip()
-    if not line_user_id:
-        return {"error": "missing line_user_id"}, 400
-    contact_id = str(payload.get("contact_id") or "").strip()
-    contact_line_id = str(
-        payload.get("contact_line_user_id") or payload.get("guardian_line_user_id") or ""
-    ).strip()
-    if not contact_id and not contact_line_id:
-        return {"error": "missing contact_id or contact_line_user_id"}, 400
-    make_core = payload.get("is_primary")
-    if make_core is None:
-        make_core = True
-    make_core = bool(make_core)
-
-    state = load_state(data_file)
-    profile = state.get("users", {}).get(line_user_id)
-    if not profile:
-        return {"error": "member not found"}, 404
-    contacts = list(profile.get("contacts") or [])
-    if not contacts:
-        return {"error": "no contacts"}, 400
-
-    target_idx = None
-    for i, c in enumerate(contacts):
-        cid = str(c.get("id") or "")
-        lid = str(c.get("line_id") or c.get("line_user_id") or "")
-        if contact_id and cid == contact_id:
-            target_idx = i
-            break
-        if contact_line_id and lid == contact_line_id:
-            target_idx = i
-            break
-    if target_idx is None:
-        return {"error": "contact_not_found"}, 404
-
-    limit = int(plan_rules(profile).get("core_guardian_alert_limit") or 1)
-    now = iso_now()
-    if make_core:
-        contacts[target_idx]["is_primary"] = True
-        contacts[target_idx]["updated_at"] = now
-        # è¶…éæ–¹æ¡ˆæ ¸å¿ƒäººæ•¸æ™‚ï¼Œä¾ priority ä¿ç•™è¼ƒå‰é¢çš„æ ¸å¿ƒ
-        core_idxs = [
-            i for i, c in enumerate(contacts)
-            if bool(c.get("is_primary"))
-        ]
-        if len(core_idxs) > limit:
-            core_idxs_sorted = sorted(
-                core_idxs,
-                key=lambda i: int(contacts[i].get("priority") or 9999),
-            )
-            keep = set(core_idxs_sorted[:limit])
-            # ç¢ºä¿å‰›æŒ‡å®šçš„ç›®æ¨™ä¸€å®šç•™ä¸‹
-            if target_idx not in keep:
-                keep = set(core_idxs_sorted[: max(0, limit - 1)] + [target_idx])
-                keep = set(list(keep)[:limit])
-            for i, c in enumerate(contacts):
-                if bool(c.get("is_primary")) and i not in keep:
-                    c["is_primary"] = False
-                    c["updated_at"] = now
-    else:
-        contacts[target_idx]["is_primary"] = False
-        contacts[target_idx]["updated_at"] = now
-        # ä¸å¯å…¨éƒ¨æ²’æœ‰æ ¸å¿ƒï¼šè‹¥ç„¡äººæ˜¯æ ¸å¿ƒï¼ŒæŠŠé †ä½æœ€é«˜è€…è£œå›
-        if contacts and not any(bool(c.get("is_primary")) for c in contacts):
-            ranked = sorted(range(len(contacts)), key=lambda i: int(contacts[i].get("priority") or 9999))
-            contacts[ranked[0]]["is_primary"] = True
-            contacts[ranked[0]]["updated_at"] = now
-
-    profile["contacts"] = contacts
-    save_state(data_file, state)
-    status = build_status(profile, state)
-    status["ok"] = True
-    status["updated_contact"] = contacts[target_idx]
-    return status, 200
-
-
-def create_support_ticket(data_file, payload):
-    line_user_id = str(payload.get("line_user_id") or "").strip()
-    message = str(payload.get("message") or "").strip()
-    if not line_user_id or not message:
-        return {"error": "missing line_user_id or message"}, 400
-    state = load_state(data_file)
-    profile = get_profile(state, line_user_id)
-    email = str(payload.get("email") or profile.get("contact_email") or "").strip()
-    reply_channel = str(payload.get("reply_channel") or "").strip().lower()
-    if not reply_channel:
-        reply_channel = "email" if email else "line"
-    if reply_channel not in {"email", "line"}:
-        return {"error": "invalid reply_channel"}, 400
-    if reply_channel == "email" and not re.match(
-        r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email
-    ):
-        return {"error": "valid email required"}, 400
-    ticket = {
-        "id": secrets.token_urlsafe(8),
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "line_user_id": line_user_id,
-        "display_name": str(payload.get("display_name") or profile.get("display_name") or "LINE ä½¿ç”¨è€…"),
-        "email": email,
-        "reply_channel": reply_channel,
-        "category": str(payload.get("category") or "å…¶ä»–").strip()[:40],
-        "subject": str(payload.get("subject") or "").strip()[:120],
-        "message": message[:1000],
-        "status": "submitted",
-        "plan": profile.get("plan", "trial"),
-        "last_check_in": profile.get("last_check_in"),
-        "reply": "",
-        "replied_at": "",
-        "delivery_log": [],
-    }
-    tickets = state.setdefault("support_tickets", [])
-    tickets.append(ticket)
-    state["support_tickets"] = tickets[-200:]
-    save_state(data_file, state)
-    return {"ticket": ticket}, 201
-
-
-def member_support_tickets(data_file, line_user_id):
-    owner_id = str(line_user_id or "").strip()
-    if not owner_id:
-        return {"error": "missing line_user_id"}, 400
-    state = load_state(data_file)
-    tickets = [
-        ticket
-        for ticket in reversed(state.get("support_tickets", [])[-200:])
-        if str(ticket.get("line_user_id") or "") == owner_id
-    ]
-    return {"tickets": tickets}, 200
-
-
-def send_support_email(to_email, subject, message, config=None):
-    config = config or {}
-    host = str(config.get("SMTP_HOST") or os.environ.get("SMTP_HOST") or "").strip()
-    username = str(
-        config.get("SMTP_USERNAME") or os.environ.get("SMTP_USERNAME") or ""
-    ).strip()
-    password = str(
-        config.get("SMTP_PASSWORD") or os.environ.get("SMTP_PASSWORD") or ""
-    )
-    from_email = str(
-        config.get("SUPPORT_FROM_EMAIL")
-        or os.environ.get("SUPPORT_FROM_EMAIL")
-        or username
-    ).strip()
-    if not host or not username or not password or not from_email:
-        raise RuntimeError("support_email_not_configured")
-    port = int(config.get("SMTP_PORT") or os.environ.get("SMTP_PORT") or 587)
-    use_tls = str(
-        config.get("SMTP_USE_TLS")
-        if config.get("SMTP_USE_TLS") is not None
-        else os.environ.get("SMTP_USE_TLS", "true")
-    ).strip().lower() in {"1", "true", "yes", "on"}
-    email = EmailMessage()
-    email["From"] = from_email
-    email["To"] = to_email
-    email["Subject"] = subject
-    email.set_content(message)
-    factory = config.get("SMTP_FACTORY") or smtplib.SMTP
-    with factory(host, port, timeout=10) as smtp:
-        if use_tls:
-            smtp.starttls()
-        smtp.login(username, password)
-        smtp.send_message(email)
-    return {"sent": True, "provider": "smtp"}
-
-
-def admin_support_tickets(data_file):
-    state = load_state(data_file)
-    tickets = list(reversed(state.get("support_tickets", [])[-100:]))
-    return {"tickets": tickets}
-
-
-def admin_reply_support_ticket(data_file, payload, config=None):
-    ticket_id = str(payload.get("ticket_id") or "").strip()
-    message = str(payload.get("message") or "").strip()
-    if not ticket_id or not message:
-        return {"error": "missing ticket_id or message"}, 400
-    state = load_state(data_file)
-    ticket = next((item for item in state.get("support_tickets", []) if item.get("id") == ticket_id), None)
-    if not ticket:
-        return {"error": "ticket not found"}, 404
-    reply_channel = str(
-        payload.get("reply_channel") or ticket.get("reply_channel") or "line"
-    ).lower()
-    now = datetime.now().isoformat(timespec="seconds")
-    delivery = {"channel": reply_channel, "status": "failed", "created_at": now}
-    try:
-        if reply_channel == "email":
-            email = str(ticket.get("email") or "").strip()
-            sender = (config or {}).get("SUPPORT_EMAIL_SENDER") or send_support_email
-            if not email:
-                return {"error": "ticket email is missing"}, 400
-            result = sender(
-                email,
-                str(ticket.get("subject") or "æ¯æ—¥å¹³å®‰å®¢æœå›è¦†"),
-                message,
-                config or {},
-            )
-            target = email
-        elif reply_channel == "line":
-            target = str(ticket.get("line_user_id") or "")
-            if target.startswith(("C", "R")):
-                return {"error": "line_private_reply_required"}, 400
-            token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-            sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
-            if not token:
-                return {"error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
-            result = sender(token, target, message)
-        else:
-            return {"error": "invalid reply_channel"}, 400
-    except Exception:
-        delivery["target"] = str(ticket.get("email") or ticket.get("line_user_id") or "")
-        ticket.setdefault("delivery_log", []).append(delivery)
-        save_state(data_file, state)
-        return {"error": "support_delivery_failed", "ticket": ticket}, 502
-    delivery.update({"status": "sent", "target": target})
-    ticket.setdefault("delivery_log", []).append(delivery)
-    ticket["status"] = (
-        "resolved"
-        if str(payload.get("status") or "") == "resolved"
-        else "waiting_user"
-    )
-    ticket["reply_channel"] = reply_channel
-    ticket["reply"] = message[:1000]
-    ticket["replied_at"] = now
-    append_notification_log(state, "support_reply", target, "sent", message, json.dumps(result, ensure_ascii=False))
-    save_state(data_file, state)
-    return {"ticket": ticket, "result": result}, 200
-
-
-def export_account_data(data_file, payload):
-    line_user_id = str(payload.get("line_user_id") or "").strip()
-    if not line_user_id:
-        return {"error": "missing line_user_id"}, 400
-    state = load_state(data_file)
-    profile = state.get("users", {}).get(line_user_id)
-    if profile is None:
-        return {"error": "user not found"}, 404
-
-    return {
-        "exported_at": datetime.now().isoformat(timespec="seconds"),
-        "member": profile,
-        "orders": [order for order in state.get("orders", []) if order.get("line_user_id") == line_user_id],
-        "support_tickets": [ticket for ticket in state.get("support_tickets", []) if ticket.get("line_user_id") == line_user_id],
-        "guardian_groups": [
-            group for group in state.get("guardian_groups", {}).values()
-            if group.get("owner_line_user_id") == line_user_id
-        ],
-        "contact_rewards": [
-            reward for reward in state.get("contact_rewards", [])
-            if line_user_id in {reward.get("inviter_line_user_id"), reward.get("contact_line_user_id")}
-        ],
-        "notification_logs": [
-            log for log in state.get("notification_logs", [])
-            if line_user_id in {log.get("line_user_id"), log.get("target")}
-        ],
-    }, 200
-
-
-def delete_account(data_file, payload):
-    line_user_id = str(payload.get("line_user_id") or "").strip()
-    if not line_user_id:
-        return {"error": "missing line_user_id"}, 400
-    state = load_state(data_file)
-    removed = state.get("users", {}).pop(line_user_id, None)
-    if removed is None:
-        return {"deleted": False, "line_user_id": line_user_id}, 200
-
-    for profile in state.get("users", {}).values():
-        profile["friends"] = [friend_id for friend_id in (profile.get("friends") or []) if friend_id != line_user_id]
-        for contact in profile.get("contacts") or []:
-            if contact.get("line_id") == line_user_id:
-                contact["line_id"] = ""
-                contact["consent_status"] = "revoked"
-                contact["note"] = "å°æ–¹å·²åˆªé™¤å¹³å°å¸³è™Ÿ"
-
-    state["friend_invites"] = {
-        code: invite for code, invite in state.get("friend_invites", {}).items()
-        if invite.get("line_user_id") != line_user_id
-    }
-    state["guardian_groups"] = {
-        group_id: group for group_id, group in state.get("guardian_groups", {}).items()
-        if group.get("owner_line_user_id") != line_user_id
-    }
-    state["contact_rewards"] = [
-        reward for reward in state.get("contact_rewards", [])
-        if line_user_id not in {reward.get("inviter_line_user_id"), reward.get("contact_line_user_id")}
-    ]
-    state["support_tickets"] = [
-        ticket for ticket in state.get("support_tickets", []) if ticket.get("line_user_id") != line_user_id
-    ]
-    state["notification_logs"] = [
-        log for log in state.get("notification_logs", [])
-        if line_user_id not in {log.get("line_user_id"), log.get("target")}
-    ]
-    for order in state.get("orders", []):
-        if order.get("line_user_id") == line_user_id:
-            order["line_user_id"] = "deleted-user"
-            order["display_name"] = "å·²åˆªé™¤æœƒå“¡"
-            order["personal_data_removed_at"] = datetime.now().isoformat(timespec="seconds")
-    save_state(data_file, state)
-    return {"deleted": bool(removed), "line_user_id": line_user_id}, 200
-
-
-def delete_personal_history(data_file, payload):
-    line_user_id = str(payload.get("line_user_id") or "").strip()
-    record_type = str(payload.get("record_type") or "checkins").strip()
-    if not line_user_id:
-        return {"error": "missing line_user_id"}, 400
-    if record_type != "checkins":
-        return {"error": "unsupported record_type"}, 400
-
-    state = load_state(data_file)
-    profile = state.get("users", {}).get(line_user_id)
-    if profile is None:
-        return {"error": "user not found"}, 404
-
-    removed_count = len(profile.get("history") or [])
-    profile["history"] = []
-    profile["last_check_in"] = None
-    profile["last_warning_cancelled_at"] = None
-    save_state(data_file, state)
-    return {
-        "deleted": True,
-        "record_type": record_type,
-        "removed_count": removed_count,
-        "line_user_id": line_user_id,
-    }, 200
-
-
-def _normalize_admin_password(value):
-    """Strip whitespace / paste junk so env file CRLF and zero-width chars don't break login."""
-    text = str(value or "")
-    for ch in ("\ufeff", "\u200b", "\u200c", "\u200d", "\u2060"):
-        text = text.replace(ch, "")
-    # Normalize common unicode dashes to ASCII hyphen (copy/paste from chat)
-    for ch in ("\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\ufe58", "\ufe63", "\uff0d"):
-        text = text.replace(ch, "-")
-    return text.strip()
-
-
-def _env_flag_on(name, config=None):
-    raw = os.environ.get(name)
-    if raw is None and config is not None:
-        raw = config.get(name, "")
-    return str(raw or "").strip().lower() in ("1", "true", "yes", "on")
-
-
-def admin_open_mode(config=None):
-    """Legacy compatibility hook; secure admin never permits open mode."""
-    return False
-
-
-def admin_allowed(config, password):
-    return admin_password_matches(config, password)
-
-
-def admin_auth_error_payload(config, password):
-    """Return (payload, http_status) when auth fails; None when allowed."""
-    if not admin_security_ready(config):
-        return {"error": "admin_not_configured"}, 503
-    if not admin_allowed(config, password):
-        return {"error": "unauthorized"}, 401
-    return None
-
-
-def admin_security_ready(config):
-    password = any(
-        _normalize_admin_password(config.get(name, ""))
-        for name in (
-            "ADMIN_PASSWORD",
-            "ADMIN_OPERATIONS_PASSWORD",
-            "ADMIN_FINANCE_PASSWORD",
-            "ADMIN_VIEWER_PASSWORD",
-        )
-    )
-    session_secret = str(config.get("ADMIN_SESSION_SECRET") or "").strip()
-    return bool(password and len(session_secret) >= 32)
-
-
-def account_migration_ready(config):
-    legacy_channel = str(
-        config.get("LEGACY_LINE_LOGIN_CHANNEL_ID") or ""
-    ).strip()
-    current_channel = str(config.get("LINE_LOGIN_CHANNEL_ID") or "").strip()
-    secret = str(config.get("ACCOUNT_MIGRATION_SECRET") or "").strip()
-    return bool(
-        legacy_channel
-        and current_channel
-        and len(secret.encode("utf-8")) >= 32
-    )
-
-
-ACCOUNT_MIGRATION_TICKET_RETENTION_DAYS = 30
-ACCOUNT_MIGRATION_TICKET_MAX_PER_SOURCE = 20
-ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX = 2000
-ACCOUNT_MIGRATION_AUDIT_RETENTION_DAYS = 90
-ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX = 1000
-ACCOUNT_MIGRATION_START_WINDOW_SECONDS = 600
-ACCOUNT_MIGRATION_START_MAX_PER_WINDOW = 5
-ACCOUNT_MIGRATION_INVALID_REDEEM_WINDOW_SECONDS = 600
-ACCOUNT_MIGRATION_INVALID_REDEEM_MAX_PER_WINDOW = 30
-
-
-def _account_migration_now(now=None):
-    value = now or datetime.now(timezone.utc)
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
-def _account_migration_datetime(value):
-    try:
-        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    return _account_migration_now(parsed)
-
-
-def purge_account_migration_history(state, now=None):
-    current = _account_migration_now(now)
-    ticket_cutoff = current - timedelta(
-        days=ACCOUNT_MIGRATION_TICKET_RETENTION_DAYS
-    )
-    audit_cutoff = current - timedelta(
-        days=ACCOUNT_MIGRATION_AUDIT_RETENTION_DAYS
-    )
-    tickets = state.get("account_migration_tickets") or {}
-    active_tickets = []
-    history_tickets = []
-    for key, ticket in tickets.items():
-        if not isinstance(ticket, dict):
-            continue
-        created = _account_migration_datetime(ticket.get("created_at"))
-        expires = _account_migration_datetime(ticket.get("expires_at"))
-        status = str(ticket.get("status") or "")
-        if status == "pending" and expires and expires > current:
-            active_tickets.append((key, ticket))
-        elif created and created >= ticket_cutoff:
-            history_tickets.append((key, ticket))
-    history_tickets.sort(
-        key=lambda item: str(item[1].get("created_at") or ""),
-        reverse=True,
-    )
-    history_capacity = max(
-        0,
-        ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX - len(active_tickets),
-    )
-    # Capacity is a write/history bound, never a reason to invalidate an
-    # inherited, unused ticket that has not expired.
-    retained_tickets = active_tickets + history_tickets[:history_capacity]
-    state["account_migration_tickets"] = dict(retained_tickets)
-
-    audit = [
-        event
-        for event in (state.get("account_migration_audit") or [])
-        if isinstance(event, dict)
-        and (
-            _account_migration_datetime(event.get("created_at"))
-            and _account_migration_datetime(event.get("created_at"))
-            >= audit_cutoff
-        )
-    ][-ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX:]
-    removed = {
-        "tickets": len(tickets) - len(state["account_migration_tickets"]),
-        "audit": len(state.get("account_migration_audit") or []) - len(audit),
-    }
-    state["account_migration_audit"] = audit
-    return removed
-
-
-def account_migration_code_digest(code, secret):
-    return hmac.new(
-        str(secret or "").encode("utf-8"),
-        str(code or "").encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-
-
-def validate_account_migration_ticket(state, code, secret, now=None):
-    """Return a pending ticket or a fixed safe error category.
-
-    This helper only validates ticket state. Task 4 performs consumption and
-    profile mutation together inside the atomic persistence boundary.
-    """
-    raw_code = str(code or "").strip()
-    signing_secret = str(secret or "").strip()
-    if not raw_code or not signing_secret:
-        return None, "invalid_code"
-
-    expected_digest = account_migration_code_digest(raw_code, signing_secret)
-    matched = None
-    for ticket in (state.get("account_migration_tickets") or {}).values():
-        candidate = str((ticket or {}).get("code_digest") or "")
-        if secrets.compare_digest(candidate, expected_digest):
-            matched = ticket
-
-    if not isinstance(matched, dict):
-        return None, "invalid_code"
-    status = str(matched.get("status") or "")
-    if status == "used":
-        return None, "used_code"
-    expires_at = _account_migration_datetime(matched.get("expires_at"))
-    if status == "expired" or not expires_at:
-        return None, "expired_code"
-    if _account_migration_now(now) >= expires_at:
-        return None, "expired_code"
-    if status != "pending":
-        return None, "invalid_code"
-
-    old_line_user_id = str(matched.get("old_line_user_id") or "")
-    users = state.get("users") or {}
-    aliases = state.get("account_migration_aliases") or {}
-    if old_line_user_id not in users or old_line_user_id in aliases:
-        return None, "source_missing"
-    return matched, None
-
-
-def create_account_migration_ticket(
-    data_file,
-    old_line_user_id,
-    config,
-    now=None,
-):
-    if not account_migration_ready(config):
-        return {"ok": False, "error": "migration_unavailable"}, 503
-
-    verified_old_id = str(old_line_user_id or "").strip()
-    current = _account_migration_now(now)
-    current_iso = current.isoformat(timespec="seconds")
-    ttl_seconds = int(config.get("ACCOUNT_MIGRATION_TTL_SECONDS") or 600)
-    raw_code = secrets.token_urlsafe(32)
-    ticket_id = f"amt_{secrets.token_urlsafe(12)}"
-
-    def mutate(state):
-        purge_account_migration_history(state, current)
-        users = state.get("users") or {}
-        aliases = state.get("account_migration_aliases") or {}
-        if (
-            not verified_old_id
-            or verified_old_id not in users
-            or verified_old_id in aliases
-        ):
-            return {"ok": False, "error": "account_not_found"}, 404
-        tickets = state.setdefault("account_migration_tickets", {})
-        recent_cutoff = current - timedelta(
-            seconds=ACCOUNT_MIGRATION_START_WINDOW_SECONDS
-        )
-        recent = [
-            ticket for ticket in tickets.values()
-            if isinstance(ticket, dict)
-            and ticket.get("old_line_user_id") == verified_old_id
-            and (
-                _account_migration_datetime(ticket.get("created_at"))
-                and _account_migration_datetime(ticket.get("created_at"))
-                >= recent_cutoff
-            )
-        ]
-        source_tickets = [
-            ticket for ticket in tickets.values()
-            if isinstance(ticket, dict)
-            and ticket.get("old_line_user_id") == verified_old_id
-        ]
-        if (
-            len(recent) >= ACCOUNT_MIGRATION_START_MAX_PER_WINDOW
-            or len(source_tickets) >= ACCOUNT_MIGRATION_TICKET_MAX_PER_SOURCE
-            or len(tickets) >= ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX
-        ):
-            return {"ok": False, "error": "rate_limited"}, 429
-        for ticket in tickets.values():
-            if (
-                isinstance(ticket, dict)
-                and ticket.get("old_line_user_id") == verified_old_id
-                and ticket.get("status") == "pending"
-            ):
-                ticket["status"] = "expired"
-                ticket["expires_at"] = current_iso
-        tickets[ticket_id] = {
-            "ticket_id": ticket_id,
-            "code_digest": account_migration_code_digest(
-                raw_code,
-                config.get("ACCOUNT_MIGRATION_SECRET"),
-            ),
-            "old_line_user_id": verified_old_id,
-            "created_at": current_iso,
-            "expires_at": (
-                current + timedelta(seconds=ttl_seconds)
-            ).isoformat(timespec="seconds"),
-            "used_at": "",
-            "status": "pending",
-        }
-        return {
-            "ok": True,
-            "migration_code": raw_code,
-            "expires_in": ttl_seconds,
-        }, 200
-
-    return mutate_state_atomically(data_file, mutate)
-
-
-def account_migration_ticket_status(
-    data_file,
-    old_line_user_id,
-    config,
-    now=None,
-):
-    safe_status = {
-        "ok": True,
-        "configured": account_migration_ready(config),
-        "pending": False,
-        "expires_in": 0,
-    }
-    if not safe_status["configured"]:
-        return safe_status
-
-    verified_old_id = str(old_line_user_id or "").strip()
-    state = load_state(data_file)
-    current = _account_migration_now(now)
-    remaining = 0
-    users = state.get("users") or {}
-    aliases = state.get("account_migration_aliases") or {}
-    source_exists = verified_old_id in users and verified_old_id not in aliases
-    for ticket in (state.get("account_migration_tickets") or {}).values():
-        if (
-            not isinstance(ticket, dict)
-            or ticket.get("old_line_user_id") != verified_old_id
-            or ticket.get("status") != "pending"
-        ):
-            continue
-        expires_at = _account_migration_datetime(ticket.get("expires_at"))
-        if not source_exists or not expires_at or current >= expires_at:
-            continue
-        remaining = max(remaining, int((expires_at - current).total_seconds()))
-
-    safe_status["pending"] = remaining > 0
-    safe_status["expires_in"] = remaining
-    return safe_status
-
-
-_MIGRATION_PROFILE_LIST_KEYS = {
-    "contacts": ("id", "accepted_invite_id", "invite_id"),
-    "contacts_archived": ("id", "accepted_invite_id", "invite_id"),
-    "smart_reminders": ("id",),
-    "guarding_details": ("id", "line_user_id"),
-}
-
-_MIGRATION_PREFERENCE_KEYS = {
-    "preferences",
-    "interaction_state",
-    "smart_reminder_defaults",
-    "grace_hours",
-    "reminder_time",
-    "reminder_times",
-    "checkin_mode",
-    "auto_checkin_on_open",
-    "warning_cancel_minutes",
-    "alert_channels",
-    "attach_location_on_alert",
-    "contact_capacity_reminder_enabled",
-    "daily_checkin_reminder_enabled",
-    "guardian_details_reminder_enabled",
-    "expiry_remind_opt_out",
-}
-
-_MIGRATION_ENTITLEMENT_KEYS = {
-    "plan",
-    "membership_source",
-    "trial_started_at",
-    "trial_end",
-    "trial_policy_version",
-    "trial_notice_days_sent",
-    "trial_bonus_days",
-    "payment_status",
-    "paid_until",
-    "billing_cycle",
-    "payment_provider",
-    "payment_method_last4",
-    "next_billing_date",
-    "auto_renew_requested",
-    "auto_renew_enabled",
-    "auto_renew_status",
-    "plan_expired_at",
-    "contacts_retain_until",
-}
-
-
-def _migration_value_blank(value):
-    return value is None or value == "" or value == [] or value == {}
-
-
-def _migration_timestamp(value):
-    if not value:
-        return None
-    return _account_migration_datetime(value)
-
-
-def _migration_record_timestamp(record):
-    if not isinstance(record, dict):
-        return None
-    for key in ("updated_at", "accepted_at", "created_at"):
-        parsed = _migration_timestamp(record.get(key))
-        if parsed:
-            return parsed
-    return None
-
-
-def _migration_preference_timestamp(profile, key, value):
-    if isinstance(value, dict):
-        nested = _migration_timestamp(value.get("updated_at"))
-        if nested:
-            return nested
-    return (
-        _migration_timestamp((profile or {}).get(f"{key}_updated_at"))
-        or _migration_timestamp((profile or {}).get("preferences_updated_at"))
-    )
-
-
-def _migration_choose_record(legacy, current):
-    legacy_time = _migration_record_timestamp(legacy)
-    current_time = _migration_record_timestamp(current)
-    if current_time and (not legacy_time or current_time > legacy_time):
-        return copy.deepcopy(current)
-    return copy.deepcopy(legacy)
-
-
-def _migration_stable_value(record, keys):
-    if not isinstance(record, dict):
-        return ""
-    for key in keys:
-        value = str(record.get(key) or "").strip()
-        if value:
-            return f"{key}:{value}"
-    return ""
-
-
-def _merge_migration_records(legacy_rows, current_rows, keys, prefix):
-    merged = []
-    positions = {}
-    used_ids = {
-        str(row.get("id") or "").strip()
-        for row in [*(legacy_rows or []), *(current_rows or [])]
-        if isinstance(row, dict) and str(row.get("id") or "").strip()
-    }
-    generated_index = 0
-
-    for source_name, rows in (("legacy", legacy_rows or []), ("current", current_rows or [])):
-        for row in rows:
-            if not isinstance(row, dict):
-                row = {"value": copy.deepcopy(row)}
-            else:
-                row = copy.deepcopy(row)
-            stable = _migration_stable_value(row, keys)
-            if stable and stable in positions:
-                position = positions[stable]
-                if source_name == "current":
-                    merged[position] = _migration_choose_record(
-                        merged[position],
-                        row,
-                    )
-                continue
-            if not stable:
-                generated_index += 1
-                generated = f"migration-{prefix}-{generated_index:04d}"
-                while generated in used_ids:
-                    generated_index += 1
-                    generated = f"migration-{prefix}-{generated_index:04d}"
-                row["id"] = generated
-                used_ids.add(generated)
-                stable = f"id:{generated}"
-            positions[stable] = len(merged)
-            merged.append(row)
-    return merged
-
-
-def _migration_history_date(value):
-    if isinstance(value, dict):
-        raw = (
-            value.get("date")
-            or value.get("checkin_date")
-            or value.get("checked_at")
-            or value.get("created_at")
-        )
-    else:
-        raw = value
-    text = str(raw or "").strip()
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
-        return text
-    return date_string_in_taipei(text)
-
-
-def _merge_migration_history(legacy_rows, current_rows):
-    by_date = {}
-    undated = []
-    for row in [*(legacy_rows or []), *(current_rows or [])]:
-        normalized = _migration_history_date(row)
-        if normalized:
-            by_date[normalized] = normalized
-        else:
-            undated.append(copy.deepcopy(row))
-    return [*sorted(by_date), *undated]
-
-
-def _merge_migration_calendar_notes(legacy_notes, current_notes):
-    if isinstance(legacy_notes, dict) or isinstance(current_notes, dict):
-        merged = copy.deepcopy(legacy_notes) if isinstance(legacy_notes, dict) else {}
-        used_ids = set()
-        for notes in (legacy_notes, current_notes):
-            for value in (notes or {}).values() if isinstance(notes, dict) else []:
-                values = value if isinstance(value, list) else [value]
-                for item in values:
-                    if isinstance(item, dict) and item.get("id"):
-                        used_ids.add(str(item["id"]))
-        generated_index = 0
-
-        def normalized_note_records(value):
-            nonlocal generated_index
-            values = value if isinstance(value, list) else [value]
-            records = []
-            for item in values:
-                if isinstance(item, dict):
-                    record = copy.deepcopy(item)
-                else:
-                    record = {"content": str(item or "")}
-                if not str(record.get("id") or "").strip():
-                    generated_index += 1
-                    generated = f"migration-calendar-note-{generated_index:04d}"
-                    while generated in used_ids:
-                        generated_index += 1
-                        generated = f"migration-calendar-note-{generated_index:04d}"
-                    record["id"] = generated
-                    used_ids.add(generated)
-                records.append(record)
-            return records
-
-        for key, current_value in (
-            current_notes.items() if isinstance(current_notes, dict) else []
-        ):
-            if key not in merged:
-                merged[key] = copy.deepcopy(current_value)
-                continue
-            combined = []
-            positions = {}
-            for record in [
-                *normalized_note_records(merged[key]),
-                *normalized_note_records(current_value),
-            ]:
-                stable = str(record["id"])
-                if stable in positions:
-                    position = positions[stable]
-                    combined[position] = _migration_choose_record(
-                        combined[position],
-                        record,
-                    )
-                    continue
-                positions[stable] = len(combined)
-                combined.append(record)
-            merged[key] = combined[0] if len(combined) == 1 else combined
-        return merged
-    return _merge_migration_records(
-        legacy_notes or [],
-        current_notes or [],
-        ("id",),
-        "calendar-note",
-    )
-
-
-def _migration_entitlement_active(profile, now):
-    plan = str((profile or {}).get("plan") or "")
-    if plan not in PLAN_RANK:
-        return False
-    if plan == "trial":
-        expires_at = _migration_timestamp((profile or {}).get("trial_end"))
-        return bool(expires_at and expires_at > now)
-    if str((profile or {}).get("payment_status") or "") != "active":
-        return False
-    expires_at = _migration_timestamp((profile or {}).get("paid_until"))
-    return expires_at is None or expires_at > now
-
-
-def _migration_entitlement_expiry(profile):
-    plan = str((profile or {}).get("plan") or "")
-    key = "trial_end" if plan == "trial" else "paid_until"
-    return _migration_timestamp((profile or {}).get(key))
-
-
-def _migration_choose_entitlement(legacy_profile, current_profile, now):
-    candidates = [
-        profile
-        for profile in (legacy_profile or {}, current_profile or {})
-        if _migration_entitlement_active(profile, now)
-    ]
-    if not candidates:
-        return legacy_profile or current_profile or {}
-
-    def entitlement_key(profile):
-        expiry = _migration_entitlement_expiry(profile)
-        expiry_score = expiry.timestamp() if expiry else float("inf")
-        return (PLAN_RANK.get(str(profile.get("plan") or ""), -1), expiry_score)
-
-    return max(candidates, key=entitlement_key)
-
-
-def _migration_location_active(location, now):
-    if not isinstance(location, dict):
-        return False
-    if not location.get("active") and not location.get("sharing"):
-        return False
-    if location.get("until_stop"):
-        return True
-    expires_at = _migration_timestamp(location.get("expires_at"))
-    return bool(expires_at and expires_at > now)
-
-
-def _merge_migration_location(legacy_location, current_location, now):
-    legacy_active = _migration_location_active(legacy_location, now)
-    current_active = _migration_location_active(current_location, now)
-    if legacy_active and current_active:
-        return _migration_choose_record(legacy_location, current_location)
-    if current_active:
-        return copy.deepcopy(current_location)
-    if legacy_active:
-        return copy.deepcopy(legacy_location)
-    return {}
-
-
-def merge_migration_profiles(old_profile, new_profile, now=None):
-    """Deterministically merge two verified Provider profiles.
-
-    Stable business identifiers drive collection deduplication. Display names
-    and other human-readable attributes are never identity keys.
-    """
-    legacy = copy.deepcopy(old_profile or {})
-    current = copy.deepcopy(new_profile or {})
-    current_now = _account_migration_now(now)
-    merged = copy.deepcopy(legacy)
-
-    for key, value in current.items():
-        if key in {
-            "line_user_id",
-            "history",
-            "calendar_notes",
-            "location",
-            "friends",
-            "guardian_group_ids",
-            "guarding_for",
-            "smart_reminder_sent_keys",
-            *_MIGRATION_PROFILE_LIST_KEYS,
-            *_MIGRATION_ENTITLEMENT_KEYS,
-            *_MIGRATION_PREFERENCE_KEYS,
-        }:
-            continue
-        if key == "display_name" and is_placeholder_display_name(value):
-            continue
-        if _migration_value_blank(value):
-            continue
-        if key in DEFAULT_PROFILE and value == DEFAULT_PROFILE.get(key):
-            continue
-        merged[key] = copy.deepcopy(value)
-
-    merged["history"] = _merge_migration_history(
-        legacy.get("history"),
-        current.get("history"),
-    )
-    for key, stable_keys in _MIGRATION_PROFILE_LIST_KEYS.items():
-        merged[key] = _merge_migration_records(
-            legacy.get(key),
-            current.get(key),
-            stable_keys,
-            key.replace("_", "-"),
-        )
-    merged["calendar_notes"] = _merge_migration_calendar_notes(
-        legacy.get("calendar_notes"),
-        current.get("calendar_notes"),
-    )
-    for key in (
-        "friends",
-        "guardian_group_ids",
-        "guarding_for",
-        "smart_reminder_sent_keys",
-    ):
-        merged[key] = list(
-            dict.fromkeys([*(legacy.get(key) or []), *(current.get(key) or [])])
-        )
-
-    for key in _MIGRATION_PREFERENCE_KEYS:
-        legacy_value = legacy.get(key)
-        current_value = current.get(key)
-        legacy_time = _migration_preference_timestamp(legacy, key, legacy_value)
-        current_time = _migration_preference_timestamp(current, key, current_value)
-        if current_time and (not legacy_time or current_time > legacy_time):
-            merged[key] = copy.deepcopy(current_value)
-        elif key in legacy:
-            merged[key] = copy.deepcopy(legacy_value)
-        elif key in current:
-            merged[key] = copy.deepcopy(current_value)
-
-    entitlement = _migration_choose_entitlement(legacy, current, current_now)
-    for key in _MIGRATION_ENTITLEMENT_KEYS:
-        if key in entitlement:
-            merged[key] = copy.deepcopy(entitlement[key])
-
-    merged["location"] = _merge_migration_location(
-        legacy.get("location"),
-        current.get("location"),
-        current_now,
-    )
-    merged["line_user_id"] = str(current.get("line_user_id") or "").strip()
-    return merged
-
-
-_MIGRATION_REFERENCE_SCALAR_FIELDS = {
-    "line_user_id",
-    "line_id",
-    "owner_line_user_id",
-    "member_line_user_id",
-    "requester_line_user_id",
-    "payer_line_user_id",
-    "recipient_line_user_id",
-    "inviter_line_user_id",
-    "contact_line_user_id",
-    "guardian_line_user_id",
-    "acceptor_line_user_id",
-    "grantee_line_user_id",
-    "accepted_by",
-    "invited_by",
-    "target",
-}
-
-_MIGRATION_REFERENCE_LIST_FIELDS = {
-    "admin_line_user_ids",
-    "member_ids_at_bind",
-    "member_line_user_ids",
-    "member_user_ids",
-    "members",
-    "friends",
-    "guarding_for",
-}
-
-_MIGRATION_TOP_LEVEL_COLLECTION_KEYS = {
-    "orders": ("order_id", "merchant_order_id", "merchant_trade_no"),
-    "payment_records": ("transaction_id", "order_id", "merchant_order_id"),
-    "payments": ("transaction_id", "order_id", "merchant_order_id"),
-    "support_tickets": ("id", "ticket_id"),
-    "privacy_requests": ("id", "request_id"),
-    "notification_logs": ("id", "log_id", "event_id"),
-    "checkin_warnings": ("id", "event_id", "log_id"),
-    "checkin_warning_logs": ("id", "event_id", "log_id"),
-    "sos_logs": ("id", "event_id", "log_id"),
-    "contact_rewards": ("id", "reward_id"),
-}
-
-_MIGRATION_INDEX_KEYS = {
-    "sos_pending",
-    "location_grants",
-    "checkin_warning_index",
-    "location_grant_index",
-}
-
-
-def _reindex_migration_record(record, old_id, new_id, migration_event_id):
-    if not isinstance(record, dict):
-        return False
-    changed = False
-    for key, value in list(record.items()):
-        if key in _MIGRATION_REFERENCE_SCALAR_FIELDS:
-            if str(value or "") == old_id:
-                record[key] = new_id
-                changed = True
-            continue
-        if key in _MIGRATION_REFERENCE_LIST_FIELDS and isinstance(value, list):
-            replaced = []
-            list_changed = False
-            for item in value:
-                if isinstance(item, dict):
-                    nested_changed = _reindex_migration_record(
-                        item,
-                        old_id,
-                        new_id,
-                        migration_event_id,
-                    )
-                    list_changed = list_changed or nested_changed
-                    replaced.append(item)
-                elif str(item or "") == old_id:
-                    replaced.append(new_id)
-                    list_changed = True
-                else:
-                    replaced.append(item)
-            if list_changed:
-                deduped = []
-                seen_scalars = set()
-                for item in replaced:
-                    if isinstance(item, dict):
-                        deduped.append(item)
-                        continue
-                    marker = str(item)
-                    if marker in seen_scalars:
-                        continue
-                    seen_scalars.add(marker)
-                    deduped.append(item)
-                record[key] = deduped
-                changed = True
-            continue
-        if isinstance(value, dict):
-            changed = (
-                _reindex_migration_record(
-                    value,
-                    old_id,
-                    new_id,
-                    migration_event_id,
-                )
-                or changed
-            )
-        elif isinstance(value, list):
-            for item in value:
-                if isinstance(item, dict):
-                    changed = (
-                        _reindex_migration_record(
-                            item,
-                            old_id,
-                            new_id,
-                            migration_event_id,
-                        )
-                        or changed
-                    )
-    if changed:
-        record["migration_event_id"] = migration_event_id
-    return changed
-
-
-def _dedupe_migration_collection(rows, stable_keys, prefix, migration_event_id):
-    deduped = []
-    positions = {}
-    used_ids = {
-        str(row.get("id") or "").strip()
-        for row in rows
-        if isinstance(row, dict) and str(row.get("id") or "").strip()
-    }
-    generated_index = 0
-    for row in rows:
-        if not isinstance(row, dict):
-            deduped.append(row)
-            continue
-        stable = _migration_stable_value(row, stable_keys)
-        if not stable:
-            generated_index += 1
-            generated = f"migration-{prefix}-{generated_index:04d}"
-            while generated in used_ids:
-                generated_index += 1
-                generated = f"migration-{prefix}-{generated_index:04d}"
-            row["id"] = generated
-            used_ids.add(generated)
-            deduped.append(row)
-            continue
-        if stable not in positions:
-            positions[stable] = len(deduped)
-            deduped.append(row)
-            continue
-
-        position = positions[stable]
-        previous = deduped[position]
-        winner = _migration_choose_record(previous, row)
-        loser = row if winner == previous else previous
-        combined = copy.deepcopy(loser)
-        combined.update(winner)
-        combined["migration_event_id"] = migration_event_id
-        deduped[position] = combined
-    return deduped
-
-
-def reindex_account_references(
-    state,
-    old_id,
-    new_id,
-    migration_event_id,
-    now=None,
-):
-    """Replace exact account references without rewriting historical prose."""
-    source_id = str(old_id or "").strip()
-    target_id = str(new_id or "").strip()
-    if not source_id or not target_id:
-        raise ValueError("missing_identity")
-    if source_id == target_id:
-        raise ValueError("same_identity")
-
-    event_id = str(migration_event_id or "").strip()
-    if not event_id:
-        raise ValueError("missing_migration_event")
-    reindexed_records = 0
-
-    for user_id, profile in (state.get("users") or {}).items():
-        if user_id in {source_id, target_id} or not isinstance(profile, dict):
-            continue
-        if _reindex_migration_record(profile, source_id, target_id, event_id):
-            reindexed_records += 1
-
-    for group in (state.get("guardian_groups") or {}).values():
-        if isinstance(group, dict) and _reindex_migration_record(
-            group,
-            source_id,
-            target_id,
-            event_id,
-        ):
-            reindexed_records += 1
-
-    for invite in (state.get("friend_invites") or {}).values():
-        if isinstance(invite, dict) and _reindex_migration_record(
-            invite,
-            source_id,
-            target_id,
-            event_id,
-        ):
-            reindexed_records += 1
-
-    for collection_key, stable_keys in _MIGRATION_TOP_LEVEL_COLLECTION_KEYS.items():
-        rows = state.get(collection_key) or []
-        if not isinstance(rows, list):
-            continue
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            if _reindex_migration_record(
-                row,
-                source_id,
-                target_id,
-                event_id,
-            ):
-                reindexed_records += 1
-        state[collection_key] = _dedupe_migration_collection(
-            rows,
-            stable_keys,
-            collection_key.replace("_", "-"),
-            event_id,
-        )
-
-    for index_key in _MIGRATION_INDEX_KEYS:
-        index = state.get(index_key) or {}
-        if not isinstance(index, dict):
-            continue
-        was_rekeyed = source_id in index
-        if source_id in index:
-            source_record = index.pop(source_id)
-            if target_id in index:
-                index[target_id] = _migration_choose_record(
-                    source_record,
-                    index[target_id],
-                )
-            else:
-                index[target_id] = source_record
-        record = index.get(target_id)
-        if isinstance(record, dict):
-            changed = _reindex_migration_record(
-                record,
-                source_id,
-                target_id,
-                event_id,
-            )
-            if changed or was_rekeyed:
-                record["migration_event_id"] = event_id
-                reindexed_records += 1
-        state[index_key] = index
-
-    return {"ok": True, "reindexed_records": reindexed_records}
-
-
-def create_account_migration_alias(state, old_id, new_id, now=None):
-    source_id = str(old_id or "").strip()
-    target_id = str(new_id or "").strip()
-    if not source_id or not target_id:
-        raise ValueError("missing_identity")
-    if source_id == target_id:
-        raise ValueError("same_identity")
-    current_iso = _account_migration_now(now).isoformat(timespec="seconds")
-    state.setdefault("account_migration_aliases", {})[source_id] = {
-        "target_line_user_id": target_id,
-        "created_at": current_iso,
-        "status": "disabled",
-    }
-    return state["account_migration_aliases"][source_id]
-
-
-def _account_migration_record_references(record, line_user_id):
-    if not isinstance(record, dict):
-        return False
-    return any(
-        str(record.get(key) or "") == line_user_id
-        for key in _MIGRATION_REFERENCE_SCALAR_FIELDS
-    )
-
-
-def _account_migration_safe_counts(state, profile, line_user_id):
-    def owned_count(collection_key):
-        return sum(
-            1
-            for record in (state.get(collection_key) or [])
-            if _account_migration_record_references(record, line_user_id)
-        )
-
-    return {
-        "checkins": len(profile.get("history") or []),
-        "contacts": len(profile.get("contacts") or []),
-        "groups": len(profile.get("guardian_group_ids") or []),
-        "reminders": len(profile.get("smart_reminders") or []),
-        "orders": owned_count("orders"),
-        "requests": (
-            owned_count("support_tickets")
-            + owned_count("privacy_requests")
-        ),
-    }
-
-
-def _append_account_migration_failure_audit(state, category, now):
-    purge_account_migration_history(state, now)
-    state.setdefault("account_migration_audit", []).append({
-        "event_id": f"ame_{secrets.token_urlsafe(12)}",
-        "status": "failed",
-        "created_at": now.isoformat(timespec="seconds"),
-        "failure_category": str(category),
-        "counts": {
-            "checkins": 0,
-            "contacts": 0,
-            "groups": 0,
-            "reminders": 0,
-            "orders": 0,
-            "requests": 0,
-        },
-    })
-    state["account_migration_audit"] = state["account_migration_audit"][
-        -ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX:
-    ]
-
-
-def _account_migration_snapshot(
-    state,
-    ticket,
-    old_line_user_id,
-    new_line_user_id,
-    event_id,
-    now,
-):
-    users = state.get("users") or {}
-    affected_users = {}
-    for user_id, profile in users.items():
-        if (
-            user_id in {old_line_user_id, new_line_user_id}
-            or not isinstance(profile, dict)
-        ):
-            continue
-        reindexed_probe = copy.deepcopy(profile)
-        if _reindex_migration_record(
-            reindexed_probe,
-            old_line_user_id,
-            new_line_user_id,
-            event_id,
-        ):
-            affected_users[user_id] = copy.deepcopy(profile)
-    affected_keys = {
-        "guardian_groups",
-        "friend_invites",
-        "account_migration_aliases",
-        *_MIGRATION_TOP_LEVEL_COLLECTION_KEYS,
-        *_MIGRATION_INDEX_KEYS,
-    }
-    snapshot_id = f"ams_{secrets.token_urlsafe(12)}"
-    return snapshot_id, {
-        "snapshot_id": snapshot_id,
-        "event_id": event_id,
-        "created_at": now.isoformat(timespec="seconds"),
-        "purge_after": (now + timedelta(days=30)).isoformat(timespec="seconds"),
-        "old_profile": copy.deepcopy(users.get(old_line_user_id)),
-        "new_profile": (
-            copy.deepcopy(users.get(new_line_user_id))
-            if new_line_user_id in users
-            else None
-        ),
-        "migration_ticket": copy.deepcopy(ticket),
-        "affected_users": affected_users,
-        "affected_top_level_records": {
-            key: copy.deepcopy(state.get(key))
-            for key in sorted(affected_keys)
-            if key in state
-        },
-    }
-
-
-def redeem_account_migration_ticket(
-    data_file,
-    code,
-    new_line_user_id,
-    config,
-    now=None,
-):
-    if not account_migration_ready(config):
-        return {"ok": False, "error": "migration_unavailable"}, 503
-
-    current = _account_migration_now(now)
-    verified_new_id = str(new_line_user_id or "").strip()
-    raw_code = str(code or "").strip()
-
-    def mutate(state):
-        purge_account_migration_history(state, current)
-        invalid_cutoff = current - timedelta(
-            seconds=ACCOUNT_MIGRATION_INVALID_REDEEM_WINDOW_SECONDS
-        )
-        invalid_recent = sum(
-            1
-            for event in (state.get("account_migration_audit") or [])
-            if isinstance(event, dict)
-            and event.get("failure_category") == "invalid_code"
-            and (
-                _account_migration_datetime(event.get("created_at"))
-                and _account_migration_datetime(event.get("created_at"))
-                >= invalid_cutoff
-            )
-        )
-        if invalid_recent >= ACCOUNT_MIGRATION_INVALID_REDEEM_MAX_PER_WINDOW:
-            return {"ok": False, "error": "rate_limited"}, 429
-        ticket, ticket_error = validate_account_migration_ticket(
-            state,
-            raw_code,
-            config.get("ACCOUNT_MIGRATION_SECRET"),
-            now=current,
-        )
-        error_statuses = {
-            "invalid_code": 404,
-            "expired_code": 410,
-            "used_code": 409,
-            "source_missing": 404,
-        }
-        if ticket_error:
-            _append_account_migration_failure_audit(
-                state,
-                ticket_error,
-                current,
-            )
-            return (
-                {"ok": False, "error": ticket_error},
-                error_statuses.get(ticket_error, 409),
-            )
-
-        old_line_user_id = str(ticket.get("old_line_user_id") or "").strip()
-        aliases = state.get("account_migration_aliases") or {}
-        if (
-            not verified_new_id
-            or old_line_user_id == verified_new_id
-            or verified_new_id in aliases
-        ):
-            _append_account_migration_failure_audit(
-                state,
-                "unsafe_conflict",
-                current,
-            )
-            return {"ok": False, "error": "unsafe_conflict"}, 409
-
-        users = state.setdefault("users", {})
-        old_profile = users.get(old_line_user_id)
-        if not isinstance(old_profile, dict):
-            _append_account_migration_failure_audit(
-                state,
-                "source_missing",
-                current,
-            )
-            return {"ok": False, "error": "source_missing"}, 404
-        new_profile = users.get(verified_new_id)
-        if new_profile is not None and not isinstance(new_profile, dict):
-            _append_account_migration_failure_audit(
-                state,
-                "unsafe_conflict",
-                current,
-            )
-            return {"ok": False, "error": "unsafe_conflict"}, 409
-
-        event_id = f"ame_{secrets.token_urlsafe(12)}"
-        snapshot_id, snapshot = _account_migration_snapshot(
-            state,
-            ticket,
-            old_line_user_id,
-            verified_new_id,
-            event_id,
-            current,
-        )
-        state.setdefault("account_migration_snapshots", {})[snapshot_id] = snapshot
-
-        merged_profile = merge_migration_profiles(
-            old_profile,
-            new_profile or {
-                **DEFAULT_PROFILE,
-                "line_user_id": verified_new_id,
-            },
-            now=current,
-        )
-        reindex_account_references(
-            state,
-            old_line_user_id,
-            verified_new_id,
-            event_id,
-            now=current,
-        )
-        _reindex_migration_record(
-            merged_profile,
-            old_line_user_id,
-            verified_new_id,
-            event_id,
-        )
-        users[verified_new_id] = merged_profile
-        users.pop(old_line_user_id, None)
-        create_account_migration_alias(
-            state,
-            old_line_user_id,
-            verified_new_id,
-            now=current,
-        )
-
-        ticket["status"] = "used"
-        ticket["used_at"] = current.isoformat(timespec="seconds")
-        ticket["migration_event_id"] = event_id
-        counts = _account_migration_safe_counts(
-            state,
-            merged_profile,
-            verified_new_id,
-        )
-        state.setdefault("account_migration_audit", []).append({
-            "event_id": event_id,
-            "status": "success",
-            "created_at": current.isoformat(timespec="seconds"),
-            "failure_category": "",
-            "counts": counts,
-        })
-        return {
-            "ok": True,
-            "status": "migrated",
-            "counts": counts,
-        }, 200
-
-    try:
-        return mutate_state_atomically(data_file, mutate)
-    except Exception:
-        try:
-            mutate_state_atomically(
-                data_file,
-                lambda state: _append_account_migration_failure_audit(
-                    state,
-                    "migration_failed",
-                    current,
-                ),
-            )
-        except Exception:
-            pass
-        return {"ok": False, "error": "migration_failed"}, 500
-
-
-def purge_account_migration_snapshots(state, now=None):
-    current = _account_migration_now(now)
-    snapshots = state.get("account_migration_snapshots") or {}
-    retained = {}
-    removed = 0
-    for snapshot_id, snapshot in snapshots.items():
-        purge_after = _account_migration_datetime(
-            (snapshot or {}).get("purge_after")
-            if isinstance(snapshot, dict)
-            else None
-        )
-        if purge_after and purge_after <= current:
-            removed += 1
-            continue
-        retained[snapshot_id] = snapshot
-    state["account_migration_snapshots"] = retained
-    return removed
-
-
-def admin_password_matches(config, candidate):
-    return admin_role_for_password(config, candidate) is not None
-
-
-ADMIN_ROLE_PERMISSIONS = {
-    "super_admin": {
-        "backup.manage",
-        "beta.manage",
-        "incident.manage",
-        "member.manage",
-        "notification.manage",
-        "order.manage",
-        "privacy.manage",
-        "support.manage",
-        "system.manage",
-    },
-    "operations": {
-        "beta.manage",
-        "incident.manage",
-        "member.manage",
-        "notification.manage",
-        "privacy.manage",
-        "support.manage",
-    },
-    "finance": {"order.manage"},
-    "viewer": set(),
-}
-
-
-def admin_role_for_password(config, candidate):
-    if not admin_security_ready(config):
-        return None
-    got = _normalize_admin_password(candidate)
-    if not got:
-        return None
-    role_passwords = (
-        ("super_admin", "ADMIN_PASSWORD"),
-        ("operations", "ADMIN_OPERATIONS_PASSWORD"),
-        ("finance", "ADMIN_FINANCE_PASSWORD"),
-        ("viewer", "ADMIN_VIEWER_PASSWORD"),
-    )
-    for role, config_name in role_passwords:
-        expected = _normalize_admin_password(config.get(config_name, ""))
-        if expected and secrets.compare_digest(expected, got):
-            return role
-    return None
-
-
-def admin_permissions_for_role(role):
-    return sorted(ADMIN_ROLE_PERMISSIONS.get(str(role or ""), set()))
-
-
-ADMIN_LOGIN_ATTEMPTS = {}
-
-
-def _admin_login_attempts(client_key, now=None):
-    now = now or datetime.now()
-    cutoff = now - timedelta(minutes=10)
-    recent = [
-        value for value in ADMIN_LOGIN_ATTEMPTS.get(client_key, [])
-        if value >= cutoff
-    ]
-    ADMIN_LOGIN_ATTEMPTS[client_key] = recent
-    return recent
-
-
-def admin_login_rate_limited(client_key, now=None):
-    return len(_admin_login_attempts(client_key, now)) >= 5
-
-
-def record_admin_login_failure(client_key, now=None):
-    now = now or datetime.now()
-    recent = _admin_login_attempts(client_key, now)
-    recent.append(now)
-    ADMIN_LOGIN_ATTEMPTS[client_key] = recent[-5:]
-
-
-_ADMIN_AUDIT_SENSITIVE_KEY_PARTS = (
-    "password",
-    "passwd",
-    "token",
-    "secret",
-    "csrf",
-    "authorization",
-    "cookie",
-    "email",
-    "phone",
-    "mobile",
-    "address",
-    "lineuserid",
-    "userid",
-    "displayname",
-    "fullname",
-    "latitude",
-    "longitude",
-    "location",
-    "ipaddress",
-    "remoteaddr",
-)
-
-
-def _sanitize_admin_audit_metadata(value):
-    if isinstance(value, dict):
-        cleaned = {}
-        for key, item in value.items():
-            compact_key = re.sub(r"[^a-z0-9]", "", str(key).casefold())
-            if (
-                compact_key in {"name", "username"}
-                or any(
-                    part in compact_key
-                    for part in _ADMIN_AUDIT_SENSITIVE_KEY_PARTS
-                )
-            ):
-                continue
-            cleaned[str(key)] = _sanitize_admin_audit_metadata(item)
-        return cleaned
-    if isinstance(value, (list, tuple, set)):
-        return [_sanitize_admin_audit_metadata(item) for item in value]
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    return str(value)
-
-
-def append_admin_audit(data_file, action, status, metadata=None):
-    state = load_state(data_file)
-    logs = list(state.get("admin_audit_logs") or [])
-    logs.append({
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "action": str(action),
-        "status": str(status),
-        "metadata": _sanitize_admin_audit_metadata(dict(metadata or {})),
-    })
-    state["admin_audit_logs"] = logs[-200:]
-    save_state(data_file, state)
-
-
-ADMIN_TEST_CENTER_TESTS = {
-    "daily_greeting": ("æ¯æ—¥å•å€™æ¨æ’­", "line"),
-    "trial_14_notice": ("14 å¤©é«”é©—æé†’", "line"),
-    "beta_21_notice": ("21 å¤©å°æ¸¬æé†’", "line"),
-    "paid_expiry_notice": ("ä»˜è²»æ–¹æ¡ˆåˆ°æœŸæé†’", "line"),
-    "payment_restore": ("ä»˜æ¬¾å¾Œæ¢å¾©åŸè¨­å®š", "simulation"),
-    "sos_location": ("SOSã€å–æ¶ˆèˆ‡å®šä½é€šçŸ¥", "line"),
-    "guardian_invite": ("æ ¸å¿ƒå®ˆè­·äººé‚€è«‹ç¶å®š", "line"),
-    "beta_feedback_1900": ("19:00 å°æ¸¬è©¢å•", "line"),
-    "stop_renewal_notice": ("ä¸å†æé†’æˆ‘", "simulation"),
-    "r2_backup": ("R2 åŠ å¯†å‚™ä»½", "r2"),
-}
-
-
-def _test_line_user_ids(config):
-    raw = config.get("TEST_LINE_USER_IDS") or ""
-    if isinstance(raw, (list, tuple, set)):
-        values = raw
-    else:
-        values = str(raw).split(",")
-    return [str(value).strip() for value in values if str(value).strip()]
-
-
-def _masked_test_account(line_user_id):
-    digest = hashlib.sha256(str(line_user_id).encode("utf-8")).hexdigest()[:8]
-    return {"id": digest, "label": f"æ¸¬è©¦å¸³è™Ÿ â€¦{digest[-4:]}"}
-
-
-def _test_center_integrations(config):
-    configured = lambda key: bool(str(config.get(key) or "").strip())
-    return {
-        "line": {
-            "configured": configured("LINE_CHANNEL_ACCESS_TOKEN"),
-            "label": "LINE æ¨æ’­",
-        },
-        "r2": {
-            "configured": all(configured(key) for key in (
-                "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY",
-                "R2_BUCKET", "R2_BACKUP_ENCRYPTION_KEY",
-            )),
-            "label": "R2 åŠ å¯†å‚™ä»½",
-        },
-        "ga4": {
-            "configured": configured("GA4_MEASUREMENT_ID")
-            and configured("GA4_PROPERTY_ID")
-            and configured("GA4_SERVICE_ACCOUNT_JSON"),
-            "label": "GA4 å ±è¡¨",
-        },
-        "payment": {
-            "configured": (
-                all(configured(key) for key in (
-                    "ECPAY_MERCHANT_ID", "ECPAY_HASH_KEY", "ECPAY_HASH_IV",
-                ))
-                or all(configured(key) for key in (
-                    "NEWEBPAY_MERCHANT_ID", "NEWEBPAY_HASH_KEY", "NEWEBPAY_HASH_IV",
-                ))
-            ),
-            "live": (
-                str(config.get("ECPAY_STAGE") or "sandbox").lower() == "production"
-                or str(config.get("NEWEBPAY_STAGE") or "sandbox").lower() == "production"
-            ),
-            "label": "é‡‘æµ",
-        },
-    }
-
-
-def admin_test_center_status(data_file, config):
-    state = load_state(data_file)
-    accounts = _test_line_user_ids(config)
-    return {
-        "test_mode": True,
-        "test_accounts": [_masked_test_account(item) for item in accounts],
-        "integrations": _test_center_integrations(config),
-        "tests": [
-            {"id": test_id, "label": label, "kind": kind}
-            for test_id, (label, kind) in ADMIN_TEST_CENTER_TESTS.items()
-        ],
-        "recent_runs": list(reversed(state.get("test_center_runs") or []))[:20],
-    }
-
-
-def _test_center_message(test_id):
-    label = ADMIN_TEST_CENTER_TESTS[test_id][0]
-    details = {
-        "daily_greeting": "é€™æ˜¯æ¯æ—¥å•å€™æ¨æ’­æ¸¬è©¦ï¼Œè«‹ç¢ºèªæ–‡å­—èˆ‡æŒ‰éˆ•é¡¯ç¤ºæ­£å¸¸ã€‚",
-        "trial_14_notice": "é€™æ˜¯ 14 å¤©é«”é©—ç¬¬ 7ï¼12ï¼14 å¤©æé†’é è¦½ã€‚",
-        "beta_21_notice": "é€™æ˜¯ 21 å¤©å°æ¸¬ç¬¬ 18ï¼20ï¼21 å¤©æé†’é è¦½ã€‚",
-        "paid_expiry_notice": "é€™æ˜¯ä»˜è²»æ–¹æ¡ˆåˆ°æœŸå‰ 7ï¼3ï¼1 å¤©èˆ‡åˆ°æœŸæ—¥æé†’é è¦½ã€‚",
-        "sos_location": "é€™æ˜¯ SOSã€å–æ¶ˆ SOS èˆ‡å®šä½é€šçŸ¥çš„å®‰å…¨é è¦½ï¼Œä¸æœƒå»ºç«‹çœŸå¯¦äº‹ä»¶ã€‚",
-        "guardian_invite": "é€™æ˜¯æ ¸å¿ƒå®ˆè­·äººé‚€è«‹èˆ‡ç¶å®šèªªæ˜é è¦½ã€‚",
-        "beta_feedback_1900": "é€™æ˜¯æ¯å¤© 19:00 å°æ¸¬ä½¿ç”¨è©¢å•é è¦½ã€‚",
-    }
-    return f"ã€æ¸¬è©¦æ¨¡å¼ã€‘{label}\n{details.get(test_id, 'å®‰å…¨æ¸¬è©¦é è¦½')}\nä¸æœƒæ‰£æ¬¾ã€ä¸æœƒè®Šæ›´æ–¹æ¡ˆã€‚"
-
-
-def run_admin_test(data_file, config, payload):
-    payload = payload if isinstance(payload, dict) else {}
-    test_id = str(payload.get("test_id") or "").strip()
-    line_user_id = str(payload.get("line_user_id") or "").strip()
-    if test_id not in ADMIN_TEST_CENTER_TESTS:
-        return {"ok": False, "error": "unknown_test"}, 400
-    allowed = _test_line_user_ids(config)
-    account_id = str(payload.get("account_id") or "").strip()
-    if not line_user_id and account_id:
-        line_user_id = next(
-            (
-                item for item in allowed
-                if _masked_test_account(item)["id"] == account_id
-            ),
-            "",
-        )
-    if line_user_id not in allowed:
-        return {"ok": False, "error": "test_recipient_not_allowed"}, 403
-    label, kind = ADMIN_TEST_CENTER_TESTS[test_id]
-    status = "success"
-    error = ""
-    result = {"ok": True, "test_id": test_id, "label": label, "test_mode": True}
-    try:
-        if kind == "line":
-            token = str(config.get("LINE_CHANNEL_ACCESS_TOKEN") or "").strip()
-            if not token:
-                raise ValueError("line_not_configured")
-            sender = config.get("LINE_PUSH_SENDER") or line_push_message
-            sender(token, line_user_id, _test_center_message(test_id))
-            result["sent"] = True
-        elif kind == "r2":
-            backup, code = create_r2_encrypted_backup(config)
-            if code >= 400:
-                raise ValueError(str(backup.get("error") or "r2_backup_failed"))
-            result["backup"] = {
-                "key": str(backup.get("key") or ""),
-                "created_at": str(backup.get("created_at") or ""),
-            }
-        else:
-            result["simulated"] = True
-            result["message"] = (
-                "ä»˜æ¬¾å¾Œæ¢å¾©åŸè¨­å®šæ¨¡æ“¬æˆåŠŸï¼›æœªå‘¼å«é‡‘æµã€æœªæ”¹æ–¹æ¡ˆã€‚"
-                if test_id == "payment_restore"
-                else "ä¸å†æé†’åå¥½æ¨¡æ“¬æˆåŠŸï¼›æœªä¿®æ”¹æ­£å¼æœƒå“¡è³‡æ–™ã€‚"
-            )
-    except Exception as exc:
-        status = "failed"
-        error = classify_line_push_error(exc)
-        result = {
-            "ok": False,
-            "error": error,
-            "test_id": test_id,
-            "test_mode": True,
-        }
-
-    state = load_state(data_file)
-    runs = list(state.get("test_center_runs") or [])
-    runs.append({
-        "id": uuid.uuid4().hex[:12],
-        "test_id": test_id,
-        "label": label,
-        "target": _masked_test_account(line_user_id)["label"],
-        "status": status,
-        "error": error,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-    })
-    state["test_center_runs"] = runs[-100:]
-    save_state(data_file, state)
-    return result, (200 if status == "success" else 502)
-
-
-def resolve_admin_incident(data_file, payload, actor_role):
-    kind = str((payload or {}).get("kind") or "").strip().casefold()
-    incident_id = str((payload or {}).get("incident_id") or "").strip()
-    note = str((payload or {}).get("resolution_note") or "").strip()[:500]
-    if kind not in {"sos", "delivery"} or not incident_id:
-        return {"ok": False, "error": "invalid_incident"}, 400
-    state = load_state(data_file)
-    resolved_at = datetime.now().isoformat(timespec="seconds")
-    if kind == "sos":
-        target = next(
-            (
-                item
-                for item in (state.get("sos_pending") or {}).values()
-                if str(item.get("event_id") or "") == incident_id
-            ),
-            None,
-        )
-    else:
-        target = next(
-            (
-                item
-                for index, item in enumerate(state.get("notification_logs") or [])
-                if str(item.get("incident_id") or f"delivery-{index}") == incident_id
-                and item.get("status") in {"failed", "error"}
-            ),
-            None,
-        )
-    if target is None:
-        return {"ok": False, "error": "incident_not_found"}, 404
-    target["status"] = "resolved"
-    target["resolved_at"] = resolved_at
-    target["resolved_by_role"] = str(actor_role or "unknown")
-    if note:
-        target["resolution_note"] = note
-    save_state(data_file, state)
-    return {"ok": True, "kind": kind, "incident_id": incident_id, "resolved_at": resolved_at}, 200
-
-
-def _line_channel_access_token(config=None):
-    cfg = config or {}
-    return (
-        cfg.get("LINE_CHANNEL_ACCESS_TOKEN")
-        or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
-        or os.environ.get("CHANNEL_ACCESS_TOKEN")
-        or ""
-    ).strip()
-
-
-def deploy_default_rich_menu(config=None, root_dir=None):
-    """ç”¨ä¼ºæœå™¨ä¸Šçš„ LINE_CHANNEL_ACCESS_TOKEN å»ºç«‹ä¸¦è¨­ç‚ºé è¨­åœ–æ–‡é¸å–®ã€‚
-
-    ä¸å›å‚³ï¼ä¸ log tokenã€‚æˆåŠŸå› (payload, 200)ï¼›å¤±æ•—å› (error, http_code)ã€‚
-    """
-    token = _line_channel_access_token(config)
-    if not token:
-        return {"ok": False, "error": "LINE_CHANNEL_ACCESS_TOKEN not configured"}, 503
-
-    root = Path(root_dir) if root_dir else Path(__file__).resolve().parent
-    config_path = root / "line-rich-menu-config.json"
-    image_path = root / "line-rich-menu.png"
-    if not config_path.exists():
-        return {"ok": False, "error": f"missing {config_path.name}"}, 500
-    if not image_path.exists():
-        return {"ok": False, "error": f"missing {image_path.name}"}, 500
-
-    menu_config = json.loads(config_path.read_text(encoding="utf-8"))
-
-    def _request(method, url, body=None, content_type="application/json"):
-        data = None
-        headers = {"Authorization": f"Bearer {token}"}
-        if body is not None:
-            if content_type == "application/json":
-                data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-            else:
-                data = body
-            headers["Content-Type"] = content_type
-        req = urllib.request.Request(url, data=data, method=method, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                raw = resp.read().decode("utf-8", errors="replace")
-                code = int(getattr(resp, "status", 200) or 200)
-                parsed = json.loads(raw) if raw.strip() else {}
-                return code, parsed
-        except urllib.error.HTTPError as exc:
-            err_body = exc.read().decode("utf-8", errors="replace")
-            return int(exc.code), {"error": err_body}
-
-    code, created = _request("POST", "https://api.line.me/v2/bot/richmenu", menu_config)
-    if code != 200 or not created.get("richMenuId"):
-        return {
-            "ok": False,
-            "step": "create",
-            "http": code,
-            "error": created.get("error") or created,
-        }, 502
-
-    rich_menu_id = created["richMenuId"]
-    code, uploaded = _request(
-        "POST",
-        f"https://api-data.line.me/v2/bot/richmenu/{rich_menu_id}/content",
-        image_path.read_bytes(),
-        content_type="image/png",
-    )
-    if code not in (200, 204):
-        return {
-            "ok": False,
-            "step": "upload_image",
-            "richMenuId": rich_menu_id,
-            "http": code,
-            "error": uploaded.get("error") or uploaded,
-        }, 502
-
-    code, defaulted = _request(
-        "POST",
-        f"https://api.line.me/v2/bot/user/all/richmenu/{rich_menu_id}",
-    )
-    if code not in (200, 204):
-        return {
-            "ok": False,
-            "step": "set_default",
-            "richMenuId": rich_menu_id,
-            "http": code,
-            "error": defaulted.get("error") or defaulted,
-        }, 502
-
-    return {
-        "ok": True,
-        "richMenuId": rich_menu_id,
-        "name": menu_config.get("name"),
-        "chatBarText": menu_config.get("chatBarText"),
-        "image_bytes": image_path.stat().st_size,
-        "areas": [
-            {
-                "label": (area.get("action") or {}).get("label"),
-                "type": (area.get("action") or {}).get("type"),
-                "uri": (area.get("action") or {}).get("uri"),
-                "text": (area.get("action") or {}).get("text"),
-            }
-            for area in (menu_config.get("areas") or [])
-        ],
-    }, 200
-
-
-def inspect_default_rich_menu(config=None):
-    """æŸ¥è©¢ç›®å‰é è¨­åœ–æ–‡é¸å–®ï¼ˆå«å„å€å¡Š URIï¼‰ã€‚ä¸å›å‚³ tokenã€‚"""
-    token = _line_channel_access_token(config)
-    if not token:
-        return {"ok": False, "error": "LINE_CHANNEL_ACCESS_TOKEN not configured"}, 503
-
-    def _request(method, url):
-        req = urllib.request.Request(
-            url, method=method, headers={"Authorization": f"Bearer {token}"}
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                raw = resp.read().decode("utf-8", errors="replace")
-                code = int(getattr(resp, "status", 200) or 200)
-                parsed = json.loads(raw) if raw.strip() else {}
-                return code, parsed
-        except urllib.error.HTTPError as exc:
-            err_body = exc.read().decode("utf-8", errors="replace")
-            return int(exc.code), {"error": err_body}
-
-    code, default = _request("GET", "https://api.line.me/v2/bot/user/all/richmenu")
-    if code != 200 or not isinstance(default, dict) or not default.get("richMenuId"):
-        return {
-            "ok": False,
-            "step": "get_default",
-            "http": code,
-            "error": default.get("error") if isinstance(default, dict) else default,
-        }, 502
-
-    rich_menu_id = default["richMenuId"]
-    code, detail = _request("GET", f"https://api.line.me/v2/bot/richmenu/{rich_menu_id}")
-    if code != 200 or not isinstance(detail, dict):
-        return {
-            "ok": False,
-            "step": "get_detail",
-            "richMenuId": rich_menu_id,
-            "http": code,
-            "error": detail.get("error") if isinstance(detail, dict) else detail,
-        }, 502
-
-    areas = []
-    invite_uri = None
-    invite_text = None
-    invite_type = None
-    for area in detail.get("areas") or []:
-        action = area.get("action") or {}
-        item = {
-            "label": action.get("label"),
-            "type": action.get("type"),
-            "uri": action.get("uri"),
-            "text": action.get("text"),
-        }
-        areas.append(item)
-        if action.get("label") == "ä¸€éµé‚€è«‹":
-            invite_uri = action.get("uri")
-            invite_text = action.get("text")
-            invite_type = action.get("type")
-
-    # W250724aï¼šåœ–æ–‡é¸å–®ä¸€éµé‚€è«‹ â†’ ç©ºç™½ LIFFï¼›é¦–æ¬¡è‡ªå‹• R/shareï¼Œè¿”å›åªé¡¯ç¤ºå†è©¦ï¼ˆé˜²è¿´åœˆï¼‰
-    # ä»ç›¸å®¹èˆŠç‰ˆ messageã€Œä¸€éµé‚€è«‹ã€â†’ Bot Flex
-    invite_ok = (
-        bool(invite_uri)
-        and "share-invite.html" in str(invite_uri)
-        and "open=share" not in str(invite_uri)
-    ) or (
-        invite_type == "message"
-        and str(invite_text or "").strip() in {"ä¸€éµé‚€è«‹", "ä¸€éµé‚€è«‹å®ˆè­·äºº"}
-    )
-
-    return {
-        "ok": True,
-        "richMenuId": rich_menu_id,
-        "name": detail.get("name"),
-        "chatBarText": detail.get("chatBarText"),
-        "areas": areas,
-        "invite_uri": invite_uri,
-        "invite_text": invite_text,
-        "invite_type": invite_type,
-        "invite_uri_ok": invite_ok,
-    }, 200
-
-
-def cron_allowed(config, secret):
-    expected = (config.get("CRON_SECRET") or os.environ.get("CRON_SECRET", "") or "").strip()
-    provided = str(secret or "").strip()
-    # Empty CRON_SECRET must never authorize â€” fail closed.
-    if not expected:
-        return False
-    return secrets.compare_digest(expected, provided)
-
-
-def _positive_percentage(config, name, default):
-    raw = config.get(name) if hasattr(config, "get") else None
-    if raw in (None, ""):
-        raw = os.environ.get(name, "")
-    try:
-        value = int(str(raw or default))
-    except (TypeError, ValueError):
-        return default
-    return value if 1 <= value <= 100 else default
-
-
-def line_message_budget_status(state, config=None, now=None):
-    """Return system-recorded LINE usage without exposing configuration values."""
-    cfg = config if config is not None and hasattr(config, "get") else {}
-    generated_at = now or current_app_time(cfg)
-    try:
-        message_limit = max(
-            1,
-            int(str(cfg.get("LINE_MONTHLY_MESSAGE_LIMIT")
-                    or os.environ.get("LINE_MONTHLY_MESSAGE_LIMIT", "")
-                    or 200)),
-        )
-    except (TypeError, ValueError):
-        message_limit = 200
-    warning_percent = _positive_percentage(
-        cfg, "LINE_MESSAGE_WARNING_PERCENT", 80
-    )
-    hard_stop_percent = _positive_percentage(
-        cfg, "LINE_MESSAGE_HARD_STOP_PERCENT", 100
-    )
-    month_key = generated_at.strftime("%Y-%m")
-    monthly_logs = [
-        item
-        for item in (state.get("notification_logs") or [])
-        if not str(item.get("created_at") or "")
-        or str(item.get("created_at") or "").startswith(month_key)
-    ]
-    used = len(monthly_logs)
-    usage_percent = round(used / message_limit * 100, 1)
-    hard_stop_active = usage_percent >= hard_stop_percent
-    if used >= message_limit:
-        status = "exceeded"
-    elif usage_percent >= warning_percent:
-        status = "warning"
-    else:
-        status = "healthy"
-    return {
-        "month": month_key,
-        "used": used,
-        "limit": message_limit,
-        "remaining": max(0, message_limit - used),
-        "usage_percent": usage_percent,
-        "warning_percent": warning_percent,
-        "hard_stop_percent": hard_stop_percent,
-        "hard_stop_active": hard_stop_active,
-        "status": status,
-    }
-
-
-def line_non_emergency_push_allowed(state, config=None, now=None):
-    return not line_message_budget_status(state, config, now)["hard_stop_active"]
-
-
-def line_push_allowed_for_kind(state, config, kind, now=None):
-    emergency_kinds = {"sos", "safety_guard", "guardian_sos", "emergency"}
-    if str(kind or "").strip().casefold() in emergency_kinds:
-        return True
-    return line_non_emergency_push_allowed(state, config, now)
-
-
-def line_budget_blocked_response(state, config, now=None):
-    budget = line_message_budget_status(state, config, now)
-    return {
-        "sent": 0,
-        "skipped": 0,
-        "error": "line_non_emergency_budget_hard_stop",
-        "line_budget": budget,
-    }, 429
-
-
-BETA_COHORTS = {
-    "known_10": {"label": "èªè­˜æœƒå“¡ 10 äºº", "capacity": 10},
-    "standard_20": {"label": "ä¸€èˆ¬æœƒå“¡ 20 äºº", "capacity": 20},
-    "family_group_10": {"label": "å®¶åº­ç¾¤çµ„ 10 äºº", "capacity": 10},
-}
-BETA_ACTIVE_STATUSES = {"active", "waitlisted"}
-BETA_STATUSES = BETA_ACTIVE_STATUSES | {"completed", "withdrawn"}
-
-
-def admin_beta_summary(data_file, now=None):
-    state = load_state(data_file)
-    members = list(state.get("beta_program_members") or [])
-    current = now or current_app_time({})
-    cohorts = {}
-    for key, definition in BETA_COHORTS.items():
-        cohort_members = [row for row in members if row.get("cohort") == key]
-        active = sum(
-            1 for row in cohort_members if row.get("status") in BETA_ACTIVE_STATUSES
-        )
-        cohorts[key] = {
-            **definition,
-            "active": active,
-            "completed": sum(
-                1 for row in cohort_members if row.get("status") == "completed"
-            ),
-            "remaining": max(0, definition["capacity"] - active),
-        }
-    return {
-        "duration_days": 21,
-        "generated_at": current.isoformat(timespec="seconds"),
-        "cohorts": cohorts,
-        "members": list(reversed(members[-100:])),
-    }
-
-
-def assign_beta_member(data_file, payload, now=None):
-    line_user_id = str((payload or {}).get("line_user_id") or "").strip()
-    cohort = str((payload or {}).get("cohort") or "").strip()
-    if not line_user_id or cohort not in BETA_COHORTS:
-        return {"ok": False, "error": "invalid_beta_assignment"}, 400
-    state = load_state(data_file)
-    profile = (state.get("users") or {}).get(line_user_id)
-    if profile is None:
-        return {"ok": False, "error": "member_not_found"}, 404
-    members = state.setdefault("beta_program_members", [])
-    existing = next(
-        (
-            row for row in members
-            if row.get("line_user_id") == line_user_id
-            and row.get("status") in BETA_ACTIVE_STATUSES
-        ),
-        None,
-    )
-    if existing:
-        return {"ok": False, "error": "beta_member_already_assigned"}, 409
-    active_count = sum(
-        1 for row in members
-        if row.get("cohort") == cohort
-        and row.get("status") in BETA_ACTIVE_STATUSES
-    )
-    if active_count >= BETA_COHORTS[cohort]["capacity"]:
-        return {"ok": False, "error": "beta_cohort_full"}, 409
-    started = now or current_app_time({})
-    member = {
-        "line_user_id": line_user_id,
-        "display_name": str(profile.get("display_name") or "æœªå–å¾—æš±ç¨±"),
-        "cohort": cohort,
-        "status": "active",
-        "starts_at": started.isoformat(timespec="seconds"),
-        "ends_at": (started + timedelta(days=21)).isoformat(timespec="seconds"),
-        "outcome_note": "",
-    }
-    members.append(member)
-    state["beta_program_members"] = members[-200:]
-    save_state(data_file, state)
-    return {"ok": True, "member": member}, 200
-
-
-def update_beta_member(data_file, payload, now=None):
-    line_user_id = str((payload or {}).get("line_user_id") or "").strip()
-    status = str((payload or {}).get("status") or "").strip().casefold()
-    if not line_user_id or status not in BETA_STATUSES:
-        return {"ok": False, "error": "invalid_beta_update"}, 400
-    state = load_state(data_file)
-    member = next(
-        (
-            row for row in reversed(state.get("beta_program_members") or [])
-            if row.get("line_user_id") == line_user_id
-            and row.get("status") in BETA_ACTIVE_STATUSES
-        ),
-        None,
-    )
-    if member is None:
-        return {"ok": False, "error": "beta_member_not_found"}, 404
-    member["status"] = status
-    member["updated_at"] = (now or current_app_time({})).isoformat(
-        timespec="seconds"
-    )
-    note = str((payload or {}).get("outcome_note") or "").strip()[:500]
-    if note:
-        member["outcome_note"] = note
-    save_state(data_file, state)
-    return {"ok": True, "member": member}, 200
-
-
-def admin_privacy_requests(data_file):
-    state = load_state(data_file)
-    requests = list(reversed((state.get("privacy_requests") or [])[-100:]))
-    statuses = ("pending", "in_progress", "completed", "rejected")
-    return {
-        "requests": requests,
-        "counts": {
-            status: sum(1 for row in requests if row.get("status") == status)
-            for status in statuses
-        },
-    }
-
-
-def create_privacy_request(data_file, payload, now=None):
-    line_user_id = str((payload or {}).get("line_user_id") or "").strip()
-    request_type = str((payload or {}).get("request_type") or "").strip().casefold()
-    if not line_user_id or request_type not in {
-        "export", "deletion", "correction", "inquiry"
-    }:
-        return {"ok": False, "error": "invalid_privacy_request"}, 400
-    state = load_state(data_file)
-    if line_user_id not in (state.get("users") or {}):
-        return {"ok": False, "error": "member_not_found"}, 404
-    requests = state.setdefault("privacy_requests", [])
-    if any(
-        row.get("line_user_id") == line_user_id
-        and row.get("request_type") == request_type
-        and row.get("status") in {"pending", "in_progress"}
-        for row in requests
-    ):
-        return {"ok": False, "error": "privacy_request_already_open"}, 409
-    created = now or current_app_time({})
-    privacy_request = {
-        "id": f"privacy-{secrets.token_hex(8)}",
-        "line_user_id": line_user_id,
-        "request_type": request_type,
-        "summary": str((payload or {}).get("summary") or "").strip()[:500],
-        "status": "pending",
-        "created_at": created.isoformat(timespec="seconds"),
-    }
-    requests.append(privacy_request)
-    state["privacy_requests"] = requests[-200:]
-    save_state(data_file, state)
-    return {"ok": True, "request": privacy_request}, 201
-
-
-def update_privacy_request(data_file, payload, actor_role):
-    request_id = str((payload or {}).get("request_id") or "").strip()
-    status = str((payload or {}).get("status") or "").strip().casefold()
-    note = str((payload or {}).get("resolution_note") or "").strip()[:1000]
-    if not request_id or status not in {
-        "pending", "in_progress", "completed", "rejected"
-    }:
-        return {"ok": False, "error": "invalid_privacy_update"}, 400
-    if status in {"completed", "rejected"} and not note:
-        return {"ok": False, "error": "resolution_note_required"}, 400
-    state = load_state(data_file)
-    privacy_request = next(
-        (
-            row for row in (state.get("privacy_requests") or [])
-            if str(row.get("id") or "") == request_id
-        ),
-        None,
-    )
-    if privacy_request is None:
-        return {"ok": False, "error": "privacy_request_not_found"}, 404
-    privacy_request["status"] = status
-    privacy_request["updated_at"] = datetime.now().isoformat(timespec="seconds")
-    privacy_request["resolved_by_role"] = str(actor_role or "unknown")
-    if note:
-        privacy_request["resolution_note"] = note
-    save_state(data_file, state)
-    return {"ok": True, "request": privacy_request}, 200
-
-
-def admin_business_dashboard(data_file, config=None, now=None):
-    """Aggregate non-sensitive commercial metrics for the protected admin UI."""
-    state = load_state(data_file)
-    cfg = config if config is not None and hasattr(config, "get") else {}
-    generated_at = now or current_app_time(cfg)
-    users = list((state.get("users") or {}).values())
-    notification_logs = list(state.get("notification_logs") or [])
-    sent = sum(1 for item in notification_logs if item.get("status") == "sent")
-    failed = sum(1 for item in notification_logs if item.get("status") in {"failed", "error"})
-    delivery_total = sent + failed
-
-    def configured(name):
-        return bool(str(cfg.get(name) or os.environ.get(name, "") or "").strip())
-
-    ga4_measurement_id = str(
-        cfg.get("GA4_MEASUREMENT_ID")
-        or os.environ.get("GA4_MEASUREMENT_ID", "")
-        or "G-7LT14XLHFM"
-    ).strip()
-    ga4_property = configured("GA4_PROPERTY_ID")
-    ga4_credentials = configured("GA4_SERVICE_ACCOUNT_JSON")
-    line_token = configured("LINE_CHANNEL_ACCESS_TOKEN")
-    line_secret = configured("LINE_CHANNEL_SECRET")
-    liff_id = configured("LIFF_ID")
-    public_url = str(
-        cfg.get("APP_PUBLIC_URL")
-        or os.environ.get("APP_PUBLIC_URL", "")
-        or "https://alive-checkin.onrender.com"
-    ).strip().rstrip("/")
-    wordpress_site = configured("WORDPRESS_SITE_URL")
-    wordpress_user = configured("WORDPRESS_USERNAME")
-    wordpress_password = configured("WORDPRESS_APPLICATION_PASSWORD")
-
-    line_budget = line_message_budget_status(state, cfg, generated_at)
-
-    pending_sos = [
-        item
-        for item in (state.get("sos_pending") or {}).values()
-        if str(item.get("status") or "pending").casefold() not in {"resolved", "cancelled", "closed"}
-    ]
-    delivery_failures = [
-        dict(item, incident_id=str(item.get("incident_id") or f"delivery-{index}"))
-        for index, item in enumerate(notification_logs)
-        if item.get("status") in {"failed", "error"}
-    ]
-    public_pages = ("index.html", "pricing.html", "help.html", "privacy.html", "terms.html")
-    project_root = Path(__file__).resolve().parent
-    seo_pages = []
-    for filename in public_pages:
-        path = project_root / filename
-        source = path.read_text(encoding="utf-8") if path.exists() else ""
-        lowered = source.lower()
-        checks = {
-            "title": "<title" in lowered,
-            "description": 'name="description"' in lowered or "name='description'" in lowered,
-            "canonical": 'rel="canonical"' in lowered or "rel='canonical'" in lowered,
-            "robots": 'name="robots"' in lowered or "name='robots'" in lowered,
-            "structured_data": "application/ld+json" in lowered,
-        }
-        seo_pages.append(
-            {
-                "page": filename,
-                "checks": checks,
-                "passed": sum(1 for value in checks.values() if value),
-                "total": len(checks),
-            }
-        )
-
-    return {
-        "generated_at": generated_at.isoformat(),
-        "funnel": {
-            "registered_members": len(users),
-            "members_with_guardian": sum(
-                1
-                for user in users
-                if any(get_contact_line_id(contact) for contact in (user.get("contacts") or []))
-            ),
-            "active_paid_members": sum(
-                1
-                for user in users
-                if str(user.get("plan") or "").startswith("paid_")
-                and user.get("payment_status") == "active"
-            ),
-        },
-        "delivery": {
-            "sent": sent,
-            "failed": failed,
-            "total": delivery_total,
-            "success_rate": round((sent / delivery_total * 100), 1) if delivery_total else None,
-        },
-        "incidents": {
-            "open_sos": len(pending_sos),
-            "delivery_failures": len(delivery_failures),
-            "total_open": len(pending_sos) + len(delivery_failures),
-            "items": [
-                {
-                    "kind": "sos",
-                    "incident_id": str(item.get("event_id") or ""),
-                    "created_at": item.get("created_at"),
-                }
-                for item in pending_sos
-                if item.get("event_id")
-            ] + [
-                {
-                    "kind": "delivery",
-                    "incident_id": item["incident_id"],
-                    "created_at": item.get("created_at"),
-                    "notification_kind": item.get("kind"),
-                }
-                for item in delivery_failures
-            ],
-        },
-        "line_budget": line_budget,
-        "integrations": {
-            "line": {
-                "configured": line_token,
-                "messaging_ready": line_token and line_secret,
-                "token_configured": line_token,
-                "secret_configured": line_secret,
-                "liff_configured": liff_id,
-                "webhook_configured": bool(public_url and line_secret),
-                "webhook_url": f"{public_url}/api/line/webhook" if public_url else "",
-            },
-            "ga4": {
-                # Keep the legacy key as report-access status for existing clients.
-                "configured": ga4_property and ga4_credentials,
-                "tracking_configured": bool(re.fullmatch(r"G-[A-Z0-9]+", ga4_measurement_id)),
-                "reporting_configured": ga4_property and ga4_credentials,
-                "measurement_id": ga4_measurement_id,
-                "property_configured": ga4_property,
-                "credentials_configured": ga4_credentials,
-            },
-            "wordpress": {
-                "configured": wordpress_site and wordpress_user and wordpress_password,
-                "site_configured": wordpress_site,
-                "username_configured": wordpress_user,
-                "application_password_configured": wordpress_password,
-            },
-        },
-        "seo": {
-            "pages": seo_pages,
-            "passed": sum(row["passed"] for row in seo_pages),
-            "total": sum(row["total"] for row in seo_pages),
-        },
-    }
-
-
-def admin_summary(data_file, config=None, now=None):
-    state = load_state(data_file)
-    status_now = now or current_app_time(config or {})
-    token = ""
-    if config is not None and hasattr(config, "get"):
-        token = str(config.get("LINE_CHANNEL_ACCESS_TOKEN") or "").strip()
-    if not token:
-        token = str(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN") or "").strip()
-
-    # å¾Œå°è¼‰å…¥æ™‚è£œé½Šã€ŒLINE ä½¿ç”¨è€…ã€ä½”ä½åç¨±ï¼ˆæœ€å¤šæ‰“ 40 æ¬¡ LINE profileï¼Œé¿å…é€¾æ™‚ï¼‰
-    hydrated = 0
-    dirty = False
-    for user in (state.get("users") or {}).values():
-        if hydrated >= 40:
-            break
-        if not is_placeholder_display_name(user.get("display_name")):
-            continue
-        before = str(user.get("display_name") or "")
-        ensure_user_display_name(user, token=token)
-        if str(user.get("display_name") or "") != before:
-            hydrated += 1
-            dirty = True
-    if dirty:
-        save_state(data_file, state)
-
-    users = []
-    invite_edges = []
-    for user in state.get("users", {}).values():
-        status = build_status(user, state, now=status_now)
-        latest_checkin = (status.get("checkin_records") or [])[-1:] or [{}]
-        status["last_checkin_area"] = str(
-            latest_checkin[0].get("area")
-            or (user.get("location") or {}).get("city")
-            or "æœªæä¾›"
-        ).strip()
-        # å¾Œå°é¡¯ç¤ºåç¨±ï¼šçµ•ä¸ç©ºç™½ï¼›ä»æ˜¯ä½”ä½æ™‚è‡³å°‘é™„çŸ­ ID æ–¹ä¾¿è¾¨è­˜
-        name = str(status.get("display_name") or "").strip()
-        if is_placeholder_display_name(name):
-            short = str(status.get("line_user_id") or "")[-6:] or "?"
-            status["display_name"] = f"æœªå–å¾—æš±ç¨±ï¼ˆâ€¦{short}ï¼‰"
-            status["display_name_missing"] = True
-        else:
-            status["display_name_missing"] = False
-        users.append(status)
-        inviter_id = status.get("line_user_id") or ""
-        inviter_name = status.get("display_name") or ""
-        for contact in status.get("contacts") or []:
-            guardian_id = get_contact_line_id(contact)
-            if not guardian_id:
-                continue
-            if guardian_id == inviter_id:
-                continue
-            invite_edges.append(
-                {
-                    "inviter_line_user_id": inviter_id,
-                    "inviter_display_name": inviter_name,
-                    "guardian_line_user_id": guardian_id,
-                    "guardian_display_name": contact.get("name") or "",
-                    "binding_status": contact.get("binding_status") or "",
-                    "accepted_at": contact.get("accepted_at") or contact.get("updated_at") or "",
-                }
-            )
-    users.sort(key=lambda item: (not item["is_overdue"], item.get("display_name") or ""))
-    users_by_id = {
-        str(user.get("line_user_id") or ""): user
-        for user in users
-        if user.get("line_user_id")
-    }
-    daily_push_rows = {}
-    persisted_daily_pushes = state.get("daily_push_member_stats") or {}
-    if isinstance(persisted_daily_pushes, dict):
-        for key, item in persisted_daily_pushes.items():
-            if isinstance(item, dict):
-                daily_push_rows[str(key)] = dict(item)
-    # Backfill recent legacy logs that predate the persistent daily counters.
-    for log in state.get("notification_logs") or []:
-        line_user_id = str(log.get("line_user_id") or "").strip()
-        created_at = str(log.get("created_at") or "")
-        date = created_at[:10]
-        if not line_user_id or len(date) != 10:
-            continue
-        key = f"{date}|{line_user_id}"
-        if key in daily_push_rows:
-            continue
-        matching = [
-            row
-            for row in (state.get("notification_logs") or [])
-            if str(row.get("line_user_id") or "").strip() == line_user_id
-            and str(row.get("created_at") or "")[:10] == date
-        ]
-        daily_push_rows[key] = {
-            "date": date,
-            "line_user_id": line_user_id,
-            "sent_count": sum(1 for row in matching if row.get("status") == "sent"),
-            "failed_count": sum(
-                1 for row in matching if row.get("status") in {"failed", "error", "blocked"}
-            ),
-            "total_count": len(matching),
-            "kinds": sorted({
-                str(row.get("kind") or "other") for row in matching
-            }),
-            "last_push_at": max(
-                (str(row.get("created_at") or "") for row in matching),
-                default="",
-            ),
-        }
-    daily_push_member_stats = []
-    for item in daily_push_rows.values():
-        member = users_by_id.get(str(item.get("line_user_id") or ""), {})
-        daily_push_member_stats.append({
-            **item,
-            "display_name": member.get("display_name") or "æœªå–å¾—æš±ç¨±",
-            "plan": member.get("plan") or "free",
-            "expires_at": member.get("plan_expires_at") or "",
-        })
-    daily_push_member_stats.sort(
-        key=lambda item: (item.get("date") or "", item.get("last_push_at") or ""),
-        reverse=True,
-    )
-    guardian_groups = list(state.get("guardian_groups", {}).values())
-    guardian_groups.sort(key=lambda item: item.get("created_at", ""), reverse=True)
-    orders = list(reversed(state.get("orders", [])[-100:]))
-    paid_orders = [order for order in orders if order.get("status") == "paid"]
-    county_rows = {}
-
-    def county_row(county):
-        return county_rows.setdefault(
-            county or "æœªæä¾›",
-            {"county": county or "æœªæä¾›", "members": 0, "orders": 0, "paid_orders": 0, "revenue": 0},
-        )
-
-    for profile in state.get("users", {}).values():
-        latest = [
-            row for row in (profile.get("checkin_records") or [])
-            if isinstance(row, dict)
-        ]
-        county = str(
-            (latest[-1].get("area") if latest else "")
-            or (profile.get("location") or {}).get("city")
-            or "æœªæä¾›"
-        ).strip()
-        county_row(county)["members"] += 1
-
-    for order in orders:
-        profile = state.get("users", {}).get(order.get("line_user_id"), {})
-        latest = [
-            row for row in (profile.get("checkin_records") or [])
-            if isinstance(row, dict)
-        ]
-        county = str(
-            (latest[-1].get("area") if latest else "")
-            or (profile.get("location") or {}).get("city")
-            or "æœªæä¾›"
-        ).strip()
-        row = county_row(county)
-        row["orders"] += 1
-        if order.get("status") == "paid":
-            row["paid_orders"] += 1
-            row["revenue"] += int(order.get("amount") or 0)
-
-    county_stats = sorted(
-        county_rows.values(),
-        key=lambda item: (-item["revenue"], -item["members"], item["county"]),
-    )
-    persist = persistence_info(data_file)
-    guardian_invites = []
-    for row in reversed((state.get("guardian_invites") or [])[-100:]):
-        if not isinstance(row, dict):
-            continue
-        guardian_invites.append({
-            "id": row.get("id") or "",
-            "inviter_line_user_id": row.get("inviter_line_user_id") or "",
-            "display_name": row.get("display_name") or "",
-            "relationship": row.get("relationship") or "",
-            "status": row.get("status") or "",
-            "created_at": row.get("created_at") or "",
-            "expires_at": row.get("expires_at") or "",
-            "accepted_at": row.get("accepted_at") or "",
-            "invitee_line_user_id": row.get("invitee_line_user_id") or "",
-        })
-    quota = int((config or {}).get("LINE_MONTHLY_MESSAGE_QUOTA") or os.environ.get("LINE_MONTHLY_MESSAGE_QUOTA") or 200)
-    line_usage = monthly_line_message_usage(
-        state, status_now.strftime("%Y-%m"), quota, status_now
-    )
-    return {
-        "total_users": len(users),
-        "overdue_users": sum(1 for user in users if user["is_overdue"]),
-        "warning_users": sum(1 for user in users if user["status_class"] == "warning"),
-        "checked_today": sum(1 for user in users if user["is_today_checked"]),
-        "guardian_group_count": len(guardian_groups),
-        "guardian_groups": guardian_groups,
-        "bound_guardian_total": sum(int(user.get("bound_guardian_count") or 0) for user in users),
-        "invite_edges": list(reversed(invite_edges[-100:])),
-        "guardian_invites": guardian_invites,
-        "guardian_invite_counts": {
-            status: sum(1 for row in guardian_invites if row.get("status") == status)
-            for status in ("pending", "accepted", "expired")
-        },
-        "orders": orders,
-        "paid_order_count": len(paid_orders),
-        "paid_revenue": sum(int(order.get("amount") or 0) for order in paid_orders),
-        "pending_order_count": sum(1 for order in orders if order.get("status") == "pending"),
-        "county_stats": county_stats,
-        "users": users,
-        "contact_rewards": list(reversed(state.get("contact_rewards", [])[-20:])),
-        "notification_logs": list(reversed(state.get("notification_logs", [])[-20:])),
-        "daily_push_member_stats": daily_push_member_stats[:500],
-        "line_message_usage": line_usage,
-        "display_names_hydrated": hydrated,
-        "persistence": persist,
-    }
-
-
-_MIGRATION_ADMIN_COUNT_KEYS = (
-    "checkins",
-    "contacts",
-    "groups",
-    "reminders",
-    "orders",
-    "requests",
-)
-_MIGRATION_ADMIN_FAILURE_CATEGORIES = {
-    "",
-    "invalid_code",
-    "expired_code",
-    "used_code",
-    "source_missing",
-    "unsafe_conflict",
-    "migration_failed",
-}
-
-
-def admin_account_migrations(data_file, config, now=None):
-    """Return a read-only, allowlisted operational migration summary."""
-    state = load_state(data_file)
-    current = _account_migration_now(now)
-    audit = state.get("account_migration_audit") or []
-    successes = sum(
-        1
-        for event in audit
-        if isinstance(event, dict) and event.get("status") == "success"
-    )
-    failures = sum(
-        1
-        for event in audit
-        if isinstance(event, dict) and event.get("status") == "failed"
-    )
-    pending = sum(
-        1
-        for ticket in (state.get("account_migration_tickets") or {}).values()
-        if (
-            isinstance(ticket, dict)
-            and ticket.get("status") == "pending"
-            and (
-                _account_migration_datetime(ticket.get("expires_at"))
-                and current
-                < _account_migration_datetime(ticket.get("expires_at"))
-            )
-        )
-    )
-    latest_events = []
-    for event in reversed(audit[-10:]):
-        if not isinstance(event, dict):
-            continue
-        status = (
-            event.get("status")
-            if event.get("status") in {"success", "failed"}
-            else "failed"
-        )
-        failure_category = str(event.get("failure_category") or "")
-        if failure_category not in _MIGRATION_ADMIN_FAILURE_CATEGORIES:
-            failure_category = "other"
-        created_at = _account_migration_datetime(event.get("created_at"))
-        raw_counts = (
-            event.get("counts")
-            if isinstance(event.get("counts"), dict)
-            else {}
-        )
-        counts = {}
-        for key in _MIGRATION_ADMIN_COUNT_KEYS:
-            try:
-                counts[key] = max(0, int(raw_counts.get(key) or 0))
-            except (TypeError, ValueError):
-                counts[key] = 0
-        latest_events.append({
-            "status": status,
-            "created_at": (
-                created_at.isoformat(timespec="seconds")
-                if created_at
-                else ""
-            ),
-            "failure_category": failure_category,
-            "counts": counts,
-        })
-    return {
-        "configured": account_migration_ready(config),
-        "totals": {
-            "total": successes + failures + pending,
-            "success": successes,
-            "failed": failures,
-            "pending": pending,
-        },
-        "latest_events": latest_events,
-    }
-
-
-def backup_root(data_file):
-    return Path(data_file).parent / "backups"
-
-
-def _r2_backup_key(raw):
-    try:
-        key = base64.urlsafe_b64decode(str(raw).encode())
-    except Exception:
-        key = b""
-    return key if len(key) == 32 else None
-
-
-def _default_r2_uploader(bucket, object_key, body, content_type, metadata, config):
-    import boto3
-
-    client = boto3.client(
-        "s3",
-        endpoint_url=config.get("R2_ENDPOINT"),
-        aws_access_key_id=config.get("R2_ACCESS_KEY_ID"),
-        aws_secret_access_key=config.get("R2_SECRET_ACCESS_KEY"),
-        region_name="auto",
-    )
-    return client.put_object(
-        Bucket=bucket,
-        Key=object_key,
-        Body=body,
-        ContentType=content_type,
-        Metadata=metadata,
-    )
-
-
-def create_r2_encrypted_backup(config):
-    bucket = str(config.get("R2_BUCKET") or "").strip()
-    key = _r2_backup_key(config.get("R2_BACKUP_ENCRYPTION_KEY") or "")
-    uploader = config.get("R2_UPLOADER") or _default_r2_uploader
-    if not bucket or key is None or AES is None:
-        return {"error": "r2_backup_not_configured"}, 503
-    if uploader is _default_r2_uploader and not all(
-        str(config.get(name) or "").strip()
-        for name in ("R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY")
-    ):
-        return {"error": "r2_backup_not_configured"}, 503
-    state = load_state(config["DATA_FILE"])
-    created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    backup_id = (
-        f"r2-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-"
-        f"{secrets.token_hex(3)}"
-    )
-    snapshot = {
-        key_name: value
-        for key_name, value in state.items()
-        if key_name not in {"backup_exports", "r2_backup_exports"}
-    }
-    plaintext = json.dumps(
-        {"backup_id": backup_id, "created_at": created_at, "snapshot": snapshot},
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ).encode()
-    cipher = AES.new(key, AES.MODE_GCM)
-    ciphertext, tag = cipher.encrypt_and_digest(plaintext)
-    envelope = json.dumps(
-        {
-            "version": 1,
-            "algorithm": "AES-256-GCM",
-            "nonce": base64.b64encode(cipher.nonce).decode(),
-            "tag": base64.b64encode(tag).decode(),
-            "ciphertext": base64.b64encode(ciphertext).decode(),
-        },
-        separators=(",", ":"),
-    ).encode()
-    object_key = f"alive-checkin/{created_at[:10]}/{backup_id}.json.aesgcm"
-    metadata = {
-        "encryption": "AES-256-GCM",
-        "backup-id": backup_id,
-        "sha256": hashlib.sha256(envelope).hexdigest(),
-    }
-    try:
-        result = uploader(
-            bucket,
-            object_key,
-            envelope,
-            "application/octet-stream",
-            metadata,
-            config,
-        )
-    except Exception:
-        return {"error": "r2_backup_upload_failed"}, 502
-    etag = str((result or {}).get("etag") or (result or {}).get("ETag") or "")
-    etag = etag.strip('"')
-    backup = {
-        "id": backup_id,
-        "created_at": created_at,
-        "bucket": bucket,
-        "object_key": object_key,
-        "etag": etag,
-        "sha256": metadata["sha256"],
-        "encryption": metadata["encryption"],
-        "user_count": len(snapshot.get("users", {})),
-    }
-    state.setdefault("r2_backup_exports", []).append(backup)
-    state["r2_backup_exports"] = state["r2_backup_exports"][-100:]
-    save_state(config["DATA_FILE"], state)
-    return {"backup": backup}, 201
-
-
-def create_admin_backup(data_file):
-    state = load_state(data_file)
-    created_at = datetime.now().isoformat(timespec="seconds")
-    backup_id = f"backup-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
-    filename = f"{backup_id}.json"
-    snapshot = {key: value for key, value in state.items() if key != "backup_exports"}
-    backup = {
-        "id": backup_id,
-        "created_at": created_at,
-        "filename": filename,
-        "user_count": len(snapshot.get("users", {})),
-    }
-    root = backup_root(data_file)
-    root.mkdir(parents=True, exist_ok=True)
-    (root / filename).write_text(
-        json.dumps({"backup": backup, "snapshot": snapshot}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    state.setdefault("backup_exports", []).append(backup)
-    state["backup_exports"] = state["backup_exports"][-50:]
-    save_state(data_file, state)
-    return {"backup": backup}, 200
-
-
-def list_admin_backups(data_file):
-    state = load_state(data_file)
-    return {"backups": list(reversed(state.get("backup_exports", [])))}
-
-
-def read_admin_backup(data_file, backup_id):
-    state = load_state(data_file)
-    backup = next((item for item in state.get("backup_exports", []) if item.get("id") == backup_id), None)
-    if not backup:
-        return {"error": "backup not found"}, 404
-    path = backup_root(data_file) / backup.get("filename", "")
-    if not path.exists():
-        return {"error": "backup file missing"}, 404
-    try:
-        return json.loads(path.read_text(encoding="utf-8")), 200
-    except (json.JSONDecodeError, OSError):
-        return {"error": "backup file unreadable"}, 500
-
-
-def build_sos_group_mention_message(alert_text: str):
-    """ç¾¤çµ„ SOSï¼šç”¨ textV2 + mentionee type=allï¼ˆ@å…¨é«”ï¼‰ï¼Œç›¡å¯èƒ½è®“æ¯ä½æˆå“¡æ”¶åˆ°é€šçŸ¥ã€‚"""
-    body = str(alert_text or "").strip()
-    return {
-        "type": "textV2",
-        "text": "{everyone}\nğŸš¨ã€@å…¨é«” ç·Šæ€¥SOSã€‘\n" + body,
-        "substitution": {
-            "everyone": {
-                "type": "mention",
-                "mentionee": {"type": "all"},
-            }
-        },
-    }
-
-
-def build_sos_group_member_mentions_message(alert_text: str, member_user_ids=None):
-    """@all å¤±æ•—æ™‚å‚™æ´ï¼šmention å·²çŸ¥æˆå“¡ userIdï¼ˆå–®å‰‡æœ€å¤š 20 äººï¼‰ã€‚"""
-    body = str(alert_text or "").strip()
-    ids = []
-    seen = set()
-    for uid in member_user_ids or []:
-        u = str(uid or "").strip()
-        if not u or u in seen or not u.startswith("U"):
-            continue
-        seen.add(u)
-        ids.append(u)
-        if len(ids) >= 20:
-            break
-    if not ids:
-        return "ğŸš¨ã€@å…¨é«” ç·Šæ€¥SOSã€‘\n" + body
-    substitution = {}
-    parts = []
-    for i, uid in enumerate(ids):
-        key = f"m{i}"
-        parts.append("{" + key + "}")
-        substitution[key] = {
-            "type": "mention",
-            "mentionee": {"type": "user", "userId": uid},
-        }
-    return {
-        "type": "textV2",
-        "text": " ".join(parts) + "\nğŸš¨ã€@å…¨é«” ç·Šæ€¥SOSã€‘\n" + body,
-        "substitution": substitution,
-    }
-
-
-def _send_line_with_retry_key(sender, token, target, message, retry_key):
-    """Use LINE retry keys in production while keeping simple injected test senders."""
-    if sender is line_push_message:
-        return sender(token, target, message, retry_key=retry_key)
-    return sender(token, target, message)
-
-
-def push_sos_to_guardian_group(
-    token, group_id, alert_text, *, sender=None, member_ids=None, retry_key=None
-):
-    """æ¨é€ç¾¤çµ„ SOSï¼Œå„ªå…ˆ @allï¼›å¤±æ•—å† mention å·²çŸ¥æˆå“¡ï¼›æœ€å¾Œç´”æ–‡å­—åŠ  @å…¨é«” å‰ç¶´ã€‚"""
-    push = sender or line_push_message
-    gid = str(group_id or "").strip()
-    if not gid:
-        raise ValueError("missing group_id for SOS group push")
-    primary = build_sos_group_mention_message(alert_text)
-    try:
-        result = _send_line_with_retry_key(
-            push, token, gid, primary,
-            _line_retry_key(f"{retry_key}:all") if retry_key else None,
-        )
-        return result, "all", primary
-    except Exception as exc:
-        if classify_push_exception(exc).kind != "message":
-            raise
-        fallback_ids = list(member_ids or [])
-        if not fallback_ids:
-            fallback_ids = get_group_member_ids(token, gid) or []
-        secondary = build_sos_group_member_mentions_message(alert_text, fallback_ids)
-        try:
-            result = _send_line_with_retry_key(
-                push, token, gid, secondary,
-                _line_retry_key(f"{retry_key}:members") if retry_key else None,
-            )
-            mode = "members" if isinstance(secondary, dict) else "text"
-            return result, mode, secondary
-        except Exception as exc:
-            if classify_push_exception(exc).kind != "message":
-                raise
-            plain = "ğŸš¨ã€@å…¨é«” ç·Šæ€¥SOSã€‘\n" + str(alert_text or "").strip()
-            result = _send_line_with_retry_key(
-                push, token, gid, plain,
-                _line_retry_key(f"{retry_key}:text") if retry_key else None,
-            )
-            return result, "text", plain
-
-
-def line_push_message(token, line_user_id, message, *, retry_key=None):
-    """æ¨è¨Šæ¯çµ¦å–®ä¸€ LINE ç”¨æˆ¶ã€‚
-
-    message å¯ä»¥æ˜¯:
-    - str: ç´”æ–‡å­—è¨Šæ¯
-    - dict ä¸”å¸¶ "type" key: ç›´æ¥ä½œç‚º LINE message object (ä¾‹å¦‚ flex)
-    """
-    to_id = str(line_user_id or "").strip()
-    if not to_id:
-        raise ValueError("missing line_user_id for push")
-    if isinstance(message, dict) and message.get("type"):
-        msg_obj = message
-    else:
-        msg_obj = {"type": "text", "text": str(message)}
-    body = json.dumps(
-        {"to": to_id, "messages": [msg_obj]},
-        ensure_ascii=False,
-    ).encode("utf-8")
-    headers = {
-        "Content-Type": "application/json; charset=UTF-8",
-        "Authorization": f"Bearer {token}",
-    }
-    if retry_key:
-        headers["X-Line-Retry-Key"] = str(retry_key)
-    req = urllib.request.Request(
-        "https://api.line.me/v2/bot/message/push",
-        data=body,
-        headers=headers,
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as res:
-            return {"ok": 200 <= res.status < 300, "status": res.status}
-    except urllib.error.HTTPError as exc:
-        if exc.code == 409 and exc.headers.get("X-Line-Accepted-Request-Id"):
-            return {
-                "ok": True,
-                "status": 409,
-                "idempotent_replay": True,
-                "accepted_request_id": exc.headers.get(
-                    "X-Line-Accepted-Request-Id"
-                ),
-            }
-        err_body = ""
-        try:
-            err_body = exc.read().decode("utf-8", errors="replace")[:500]
-        except Exception:
-            err_body = ""
-        # Re-raise with LINE body so cron/backfill can surface the real cause.
-        raise urllib.error.HTTPError(
-            exc.url,
-            exc.code,
-            f"{exc.reason}: {err_body}" if err_body else exc.reason,
-            exc.headers,
-            None,
-        ) from exc
-
-
-def append_notification_log(state, kind, line_user_id, status, message, detail=None):
-    logs = state.setdefault("notification_logs", [])
-    if isinstance(message, dict):
-        message_text = str(message.get("altText") or message.get("type") or message)[:120]
-    else:
-        message_text = str(message or "")[:120]
-    created_at = datetime.now().isoformat(timespec="seconds")
-    logs.append(
-        {
-            "created_at": created_at,
-            "kind": kind,
-            "line_user_id": line_user_id,
-            "status": status,
-            "message": message_text,
-            "detail": detail or "",
-        }
-    )
-    state["notification_logs"] = logs[-100:]
-    member_id = str(line_user_id or "").strip()
-    date = created_at[:10]
-    if member_id:
-        stats = state.setdefault("daily_push_member_stats", {})
-        key = f"{date}|{member_id}"
-        row = stats.setdefault(
-            key,
-            {
-                "date": date,
-                "line_user_id": member_id,
-                "sent_count": 0,
-                "failed_count": 0,
-                "total_count": 0,
-                "kinds": [],
-                "last_push_at": created_at,
-            },
-        )
-        row["total_count"] = int(row.get("total_count") or 0) + 1
-        if status == "sent":
-            row["sent_count"] = int(row.get("sent_count") or 0) + 1
-        elif status in {"failed", "error", "blocked"}:
-            row["failed_count"] = int(row.get("failed_count") or 0) + 1
-        row["kinds"] = sorted(set(row.get("kinds") or []) | {str(kind or "other")})
-        row["last_push_at"] = created_at
-        # Keep roughly one year of daily/member aggregates without growing forever.
-        if len(stats) > 20000:
-            for old_key in sorted(stats)[: len(stats) - 20000]:
-                stats.pop(old_key, None)
-
-
-LINE_MESSAGE_USAGE_CATEGORIES = {
-    "binding",
-    "checkin",
-    "overdue",
-    "sos",
-    "sos_cancel",
-    "smart_reminder",
-    "guardian_summary",
-}
-
-
-def record_line_message_usage(
-    state: dict,
-    *,
-    category: str,
-    owner_line_user_id: str,
-    recipient_count: int,
-    event_id: str,
-    sent_at: datetime,
-) -> dict:
-    """Idempotently record delivered LINE recipient units."""
-    category = str(category or "").strip()
-    if category not in LINE_MESSAGE_USAGE_CATEGORIES:
-        raise ValueError("invalid LINE message usage category")
-    units = max(0, int(recipient_count or 0))
-    if units <= 0:
-        return {"recorded": False, "units": 0}
-    owner = str(owner_line_user_id or "").strip()
-    event_id = str(event_id or "").strip()
-    if not owner or not event_id:
-        raise ValueError("owner_line_user_id and event_id are required")
-    ledger = state.setdefault("line_message_usage", [])
-    key = f"{category}:{event_id}"
-    existing = next((row for row in ledger if row.get("key") == key), None)
-    if existing:
-        return {**existing, "recorded": False, "idempotent": True}
-    row = {
-        "key": key,
-        "category": category,
-        "owner_line_user_id": owner,
-        "recipient_count": units,
-        "units": units,
-        "event_id": event_id,
-        "sent_at": sent_at.isoformat(timespec="seconds"),
-    }
-    ledger.append(row)
-    state["line_message_usage"] = ledger[-10000:]
-    return {**row, "recorded": True, "idempotent": False}
-
-
-def line_push_budget_decision(
-    state: dict,
-    *,
-    owner_line_user_id: str,
-    requested_units: int,
-    now: datetime,
-    monthly_hard_cap: int,
-    member_daily_hard_cap: int,
-    emergency: bool = False,
-) -> dict:
-    """Apply pre-send hard caps while retaining one primary SOS delivery."""
-    owner = str(owner_line_user_id or "").strip()
-    requested = max(0, int(requested_units or 0))
-    monthly_cap = max(0, int(monthly_hard_cap or 0))
-    daily_cap = max(0, int(member_daily_hard_cap or 0))
-    month_prefix = now.strftime("%Y-%m-")
-    day_prefix = now.strftime("%Y-%m-%d")
-    rows = state.get("line_message_usage") or []
-    monthly_used = sum(
-        max(0, int(row.get("units") or row.get("recipient_count") or 0))
-        for row in rows
-        if str(row.get("sent_at") or "").startswith(month_prefix)
-    )
-    member_daily_used = sum(
-        max(0, int(row.get("units") or row.get("recipient_count") or 0))
-        for row in rows
-        if str(row.get("owner_line_user_id") or "") == owner
-        and str(row.get("sent_at") or "").startswith(day_prefix)
-    )
-    monthly_remaining = max(0, monthly_cap - monthly_used)
-    daily_remaining = max(0, daily_cap - member_daily_used)
-    allowed_units = min(requested, monthly_remaining, daily_remaining)
-    reason = None
-    if allowed_units < requested:
-        reason = (
-            "monthly_hard_cap"
-            if monthly_remaining <= daily_remaining
-            else "member_daily_hard_cap"
-        )
-    if emergency and requested > 0 and allowed_units < 1:
-        allowed_units = 1
-        reason = "emergency_primary_only"
-    return {
-        "allowed": allowed_units > 0 or requested == 0,
-        "reason": reason,
-        "requested_units": requested,
-        "allowed_units": allowed_units,
-        "monthly_used": monthly_used,
-        "monthly_hard_cap": monthly_cap,
-        "member_daily_used": member_daily_used,
-        "member_daily_hard_cap": daily_cap,
-    }
-
-
-def monthly_line_message_usage(state: dict, year_month: str, quota: int, now: datetime) -> dict:
-    """Aggregate delivered recipient units for the requested calendar month."""
-    category_totals = {key: 0 for key in sorted(LINE_MESSAGE_USAGE_CATEGORIES)}
-    member_map = {}
-    rows = []
-    for row in state.get("line_message_usage") or []:
-        if not str(row.get("sent_at") or "").startswith(f"{year_month}-"):
-            continue
-        units = max(0, int(row.get("units") or row.get("recipient_count") or 0))
-        if units <= 0:
-            continue
-        rows.append(row)
-        category = str(row.get("category") or "")
-        if category in category_totals:
-            category_totals[category] += units
-        owner = str(row.get("owner_line_user_id") or "")
-        member_map[owner] = member_map.get(owner, 0) + units
-    used = sum(category_totals.values())
-    try:
-        month_days = calendar.monthrange(now.year, now.month)[1]
-    except Exception:
-        month_days = 30
-    elapsed_days = max(1, now.day)
-    projected = int(math.ceil(used * month_days / elapsed_days))
-    quota = max(0, int(quota or 0))
-    ratio = (used / quota) if quota else 0
-    alert = "critical_90" if quota and ratio >= 0.9 else (
-        "warning_70" if quota and ratio >= 0.7 else "normal"
-    )
-    members = [
-        {"line_user_id": uid[:6] + "..." + uid[-4:] if len(uid) > 10 else uid, "units": units}
-        for uid, units in sorted(member_map.items(), key=lambda item: (-item[1], item[0]))
-    ]
-    return {
-        "year_month": year_month,
-        "quota": quota,
-        "used_units": used,
-        "remaining_units": max(0, quota - used) if quota else None,
-        "usage_percent": round(ratio * 100, 1) if quota else None,
-        "projected_units": projected,
-        "alert_level": alert,
-        "category_totals": category_totals,
-        "member_totals": members,
-        "false_alarm_units": category_totals["sos_cancel"],
-        "records": len(rows),
-    }
-
-
-def _clear_push_delivery_failure(recipient, delivery_key):
-    attempts = dict(recipient.get("push_delivery_attempts") or {})
-    attempts.pop(delivery_key, None)
-    if attempts:
-        recipient["push_delivery_attempts"] = attempts
-    else:
-        recipient.pop("push_delivery_attempts", None)
-
-
-def _record_launch_delivery(state, delivery_key, kind, target, status):
-    ledger = state.setdefault("launch_delivery_events", {})
-    ledger_key = f"{kind}:{target}:{delivery_key}"
-    event = ledger.setdefault(ledger_key, {
-        "kind": str(kind),
-        "target": str(target),
-        "expected": True,
-        "sent_count": 0,
-        "failed": False,
-    })
-    if status == "sent":
-        event["sent_count"] = int(event.get("sent_count") or 0) + 1
-    elif status == "failed":
-        event["failed"] = True
-    event["updated_at"] = datetime.now().isoformat(timespec="seconds")
-    return event
-
-
-def _record_scheduled_push_failure(
-    state,
-    recipient,
-    delivery_key,
-    kind,
-    line_user_id,
-    message,
-    exc,
-    now,
-):
-    failure = record_push_failure(recipient, delivery_key, exc, now)
-    _record_launch_delivery(
-        state, delivery_key, kind, line_user_id, "failed"
-    )
-    append_notification_log(
-        state,
-        kind,
-        line_user_id,
-        failure["status"],
-        message,
-        str(exc),
-    )
-    return failure
-
-
-def log_notification(data_file, kind, line_user_id, status, message, detail=None):
-    state = load_state(data_file)
-    append_notification_log(state, kind, line_user_id, status, message, detail)
-    save_state(data_file, state)
-
-
-def send_due_reminders(config):
-    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-    if not token:
-        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
-
-    now = current_app_time(config)
-    summary = admin_summary(config["DATA_FILE"], config, now=now)
-    sender = config.get("LINE_PUSH_SENDER") or line_push_message
-    state = load_state(config["DATA_FILE"])
-    today = now.strftime("%Y-%m-%d")
-    sent = 0
-    skipped = 0
-    results = []
-    system_error = False
-    for user in summary["users"]:
-        if not user["is_overdue"]:
-            continue
-        profile = state.get("users", {}).get(user["line_user_id"])
-        if not profile:
-            continue
-        if profile.get("membership_paused") or not membership_access_active(profile, now):
-            skipped += 1
-            continue
-        if profile.get("last_overdue_alert_date") == today:
-            skipped += 1
-            continue
-        retry_pending = False
-        location = profile.get("location") or {}
-        location_link = ""
-        if profile.get("attach_location_on_alert") and location.get("latitude") and location.get("longitude"):
-            location_link = f"\næœ€å¾Œä½ç½®ï¼šhttps://www.google.com/maps?q={location['latitude']},{location['longitude']}"
-        message = f"â¤ï¸ ä»Šå¤©ä¸€åˆ‡éƒ½å¥½å—ï¼Ÿ\né»ä¸€ä¸‹ã€Œæˆ‘å¹³å®‰ã€ï¼Œè®“å®¶äººæ”¾å¿ƒã€‚{location_link}"
-        delivery_key = f"overdue:{today}"
-        _record_launch_delivery(
-            state, delivery_key, "overdue", user["line_user_id"], "expected"
-        )
-        if profile.get("last_overdue_member_alert_date") == today:
-            skipped += 1
-        elif not push_attempt_allowed(profile, delivery_key):
-            skipped += 1
-        else:
-            try:
-                result = sender(token, user["line_user_id"], message)
-                _clear_push_delivery_failure(profile, delivery_key)
-                _record_launch_delivery(
-                    state, delivery_key, "overdue", user["line_user_id"], "sent"
-                )
-                profile["last_overdue_member_alert_date"] = today
-                append_notification_log(state, "overdue", user["line_user_id"], "sent", message, json.dumps(result, ensure_ascii=False))
-                sent += 1
-                results.append({"line_user_id": user["line_user_id"], "result": result})
-            except Exception as exc:
-                failure = _record_scheduled_push_failure(
-                    state,
-                    profile,
-                    delivery_key,
-                    "overdue",
-                    user["line_user_id"],
-                    message,
-                    exc,
-                    now,
-                )
-                retry_pending = retry_pending or failure["retry"]
-                skipped += 1
-                results.append({"line_user_id": user["line_user_id"], "error": str(exc)})
-                if failure["kind"] == "system":
-                    system_error = True
-        if system_error:
-            break
-
-        contact_message = (
-            f"ã€éœ€è¦å¹«å¿™ã€‘{profile.get('display_name') or 'å®¶äºº'} è¶…éæ™‚é–“å°šæœªå›å ±å¹³å®‰ï¼Œè«‹å”åŠ©ç¢ºèªæ˜¯å¦ä¸€åˆ‡éƒ½å¥½ã€‚"
-            f"{location_link}"
-        )
-        rules = plan_rules(profile, now)
-        notify_private = should_notify_private_guardians(state, profile)
-        if notify_private:
-            alert_limit = int(rules.get("core_guardian_alert_limit") or 1)
-            contacts = sorted(
-                profile.get("contacts") or [],
-                key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
-            )
-            line_contacts = [
-                contact for contact in contacts
-                if (contact.get("line_id") or contact.get("line_user_id"))
-                and "line" in (contact.get("notify_methods") or ["line"])
-            ][:alert_limit]
-            for contact in line_contacts:
-                target = contact.get("line_id") or contact.get("line_user_id")
-                contact_delivery_key = f"contact_alert:{today}:{target}"
-                if contact.get("last_overdue_contact_alert_date") == today:
-                    skipped += 1
-                    continue
-                if not push_attempt_allowed(contact, contact_delivery_key):
-                    skipped += 1
-                    continue
-                try:
-                    result = sender(token, target, contact_message)
-                    _clear_push_delivery_failure(contact, contact_delivery_key)
-                    contact["last_overdue_contact_alert_date"] = today
-                    append_notification_log(state, "contact_alert", target, "sent", contact_message, json.dumps(result, ensure_ascii=False))
-                    sent += 1
-                    results.append({"line_user_id": target, "result": result})
-                except Exception as exc:
-                    failure = _record_scheduled_push_failure(
-                        state,
-                        contact,
-                        contact_delivery_key,
-                        "contact_alert",
-                        target,
-                        contact_message,
-                        exc,
-                        now,
-                    )
-                    retry_pending = retry_pending or failure["retry"]
-                    skipped += 1
-                    results.append({"line_user_id": target, "error": str(exc)})
-                    if failure["kind"] == "system":
-                        system_error = True
-                        break
-                for method in (contact.get("notify_methods") or ["line"]):
-                    if method in {"sms", "phone"}:
-                        detail = contact.get("phone") or "missing phone"
-                        append_notification_log(
-                            state,
-                            f"{method}_contact_alert",
-                            user["line_user_id"],
-                            "skipped_not_live",
-                            contact_message,
-                            detail,
-                        )
-            if system_error:
-                break
-        if system_error:
-            break
-
-        group_limit = int(rules.get("guardian_group_limit") or 0)
-        if group_limit > 0:
-            groups = state.get("guardian_groups", {})
-            active_group_ids = [
-                group_id for group_id in (profile.get("guardian_group_ids") or [])
-                if groups.get(group_id, {}).get("owner_line_user_id") == user["line_user_id"]
-                and groups.get(group_id, {}).get("status") == "active"
-                and guardian_group_preference(groups.get(group_id), "notify_group_on_overdue")
-            ][:group_limit]
-            group_message = (
-                f"ã€å¤±è¯é è­¦ã€‘{profile.get('display_name') or 'æˆå“¡'} å·²è¶…éå¹³å®‰ç°½åˆ°æ™‚é–“ï¼Œ"
-                f"è«‹ç¾¤å…§å”åŠ©ç¢ºèªã€‚{location_link}"
-            )
-            for group_id in active_group_ids:
-                group = groups.get(group_id) or {}
-                group_delivery_key = f"overdue_guardian_group:{today}:{group_id}"
-                if group.get("last_overdue_alert_date") == today:
-                    skipped += 1
-                    continue
-                if not push_attempt_allowed(group, group_delivery_key):
-                    skipped += 1
-                    continue
-                try:
-                    result = sender(token, group_id, group_message)
-                    _clear_push_delivery_failure(group, group_delivery_key)
-                    group["last_overdue_alert_date"] = today
-                    append_notification_log(
-                        state,
-                        "overdue_guardian_group",
-                        group_id,
-                        "sent",
-                        group_message,
-                        json.dumps(result, ensure_ascii=False),
-                    )
-                    sent += 1
-                    results.append({"group_id": group_id, "result": result})
-                except Exception as exc:
-                    failure = _record_scheduled_push_failure(
-                        state,
-                        group,
-                        group_delivery_key,
-                        "overdue_guardian_group",
-                        group_id,
-                        group_message,
-                        exc,
-                        now,
-                    )
-                    retry_pending = retry_pending or failure["retry"]
-                    skipped += 1
-                    results.append({"group_id": group_id, "error": str(exc)})
-                    if failure["kind"] == "system":
-                        system_error = True
-                        break
-            if system_error:
-                break
-
-        if not retry_pending:
-            profile["last_overdue_alert_date"] = today
-
-    save_state(config["DATA_FILE"], state)
-    return {
-        "sent": sent,
-        "skipped": skipped,
-        "results": results,
-        "system_error": system_error,
-    }, 200
-
-
-def send_guardian_group_daily_summaries(config):
-    """é¸ç”¨ï¼šå®ˆè­·ç¾¤å‹¾é¸ã€Œç¾¤çµ„æ¯æ—¥æ‘˜è¦ã€æ™‚ï¼Œæ–¼æ™šé–“æ¨æ’­ä»Šæ—¥å·²å ±ï¼æœªå ±ï¼ˆé è¨­é—œé–‰ï¼‰ã€‚"""
-    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-    if not token:
-        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
-
-    state = load_state(config["DATA_FILE"])
-    sender = config.get("LINE_PUSH_SENDER") or line_push_message
-    now = current_app_time(config)
-    today = now.strftime("%Y-%m-%d")
-    users = state.get("users") or {}
-    groups = state.get("guardian_groups") or {}
-    sent = 0
-    skipped = 0
-    results = []
-    system_error = False
-    deferred = 0
-    member_fetcher = config.get("GROUP_MEMBER_IDS_FETCHER") or get_group_member_ids
-    for group_id, group in list(groups.items()):
-        if not isinstance(group, dict) or group.get("status") != "active":
-            skipped += 1
-            continue
-        owner = users.get(str(group.get("owner_line_user_id") or "").strip()) or {}
-        if (
-            not guardian_group_entitlement_active(owner, now)
-        ):
-            skipped += 1
-            results.append({"group_id": group_id, "status": "owner_not_eligible"})
-            continue
-        prefs = normalize_guardian_group_preferences(group.get("preferences"))
-        if not prefs.get("daily_admin_summary"):
-            skipped += 1
-            continue
-        summary_time = str(prefs.get("daily_summary_time") or "21:00")
-        current_hm = now.strftime("%H:%M")
-        if current_hm < summary_time:
-            deferred += 1
-            continue
-        if group.get("last_daily_summary_date") == today:
-            skipped += 1
-            continue
-        delivery_key = f"guardian_group_daily_summary:{today}:{group_id}"
-        if not push_attempt_allowed(group, delivery_key):
-            skipped += 1
-            continue
-        claim_result = mutate_state_atomically(
-            config["DATA_FILE"],
-            lambda current_state: _claim_guardian_group_summary(
-                current_state, group_id, today, now
-            ),
-        )
-        if not claim_result.get("claimed"):
-            skipped += 1
-            results.append({"group_id": group_id, "status": "already_claimed"})
-            continue
-        claim_token = claim_result["claim_token"]
-        try:
-            current_ids = None
-            member_error = None
-            for _attempt in range(3):
-                try:
-                    current_ids = member_fetcher(token, group_id)
-                    if current_ids is not None:
-                        member_error = None
-                        break
-                    member_error = RuntimeError("LINE member list unavailable")
-                except Exception as exc:
-                    member_error = exc
-            if current_ids is None:
-                mutate_state_atomically(
-                    config["DATA_FILE"],
-                    lambda current_state: _finish_guardian_group_summary(
-                        current_state,
-                        group_id,
-                        today,
-                        now,
-                        claim_token=claim_token,
-                        release_only=True,
-                        audit_kind="guardian_group_member_refresh",
-                        audit_status="failed",
-                        audit_detail=str(member_error or "member refresh failed")[:400],
-                    ),
-                )
-                skipped += 1
-                results.append({
-                    "group_id": group_id,
-                    "status": "member_refresh_failed",
-                    "error": str(member_error or "")[:400],
-                })
-                continue
-        except Exception:
-            mutate_state_atomically(
-                config["DATA_FILE"],
-                lambda current_state: _finish_guardian_group_summary(
-                    current_state,
-                    group_id,
-                    today,
-                    now,
-                    claim_token=claim_token,
-                    release_only=True,
-                ),
-            )
-            raise
-        member_ids = list(dict.fromkeys(
-            str(uid or "").strip() for uid in current_ids if str(uid or "").strip()
-        ))
-        prepared = mutate_state_atomically(
-            config["DATA_FILE"],
-            lambda current_state: _prepare_guardian_group_summary(
-                current_state,
-                group_id,
-                today,
-                now,
-                claim_token,
-                member_ids,
-            ),
-        )
-        eligible_members = prepared.get("eligible_members") or []
-        if not prepared.get("ready"):
-            skipped += 1
-            results.append({
-                "group_id": group_id,
-                "status": prepared.get("reason") or "no_longer_eligible",
-            })
-            continue
-        if not eligible_members:
-            mutate_state_atomically(
-                config["DATA_FILE"],
-                lambda current_state: _finish_guardian_group_summary(
-                    current_state,
-                    group_id,
-                    today,
-                    now,
-                    claim_token=claim_token,
-                    release_only=True,
-                    member_ids=member_ids,
-                ),
-            )
-            skipped += 1
-            results.append({"group_id": group_id, "status": "no_eligible_members"})
-            continue
-        checked = []
-        unchecked = []
-        for member in eligible_members:
-            profile = member["profile"]
-            name = member["name"]
-            (checked if _member_checked_today(profile, today) else unchecked).append(name)
-        message = (
-            f"ğŸ“Š ä»Šæ—¥å¹³å®‰æ‘˜è¦ï¼ˆ{today}ï¼‰\n"
-            f"å·²å ±å¹³å®‰ï¼š{', '.join(checked) if checked else 'å°šç„¡'}\n"
-            f"å°šæœªå ±å¹³å®‰ï¼š{', '.join(unchecked) if unchecked else 'ç›®å‰éƒ½å·²å®Œæˆ'}\n\n"
-            "ï¼ˆæ­¤ç‚ºé¸ç”¨ç¾¤çµ„æ‘˜è¦ï¼›é—œé–‰å¾Œåªæœƒç§è¨Šæ ¸å¿ƒå®ˆè­·äººã€‚ï¼‰"
-        )
-        try:
-            if sender is line_push_message:
-                result = sender(
-                    token,
-                    group_id,
-                    message,
-                    retry_key=_line_retry_key(delivery_key),
-                )
-            else:
-                result = sender(token, group_id, message)
-            mutate_state_atomically(
-                config["DATA_FILE"],
-                lambda current_state: _finish_guardian_group_summary(
-                    current_state,
-                    group_id,
-                    today,
-                    now,
-                    claim_token=claim_token,
-                    sent=True,
-                    message=message,
-                    result=result,
-                    member_ids=member_ids,
-                ),
-            )
-            sent += 1
-            results.append({"group_id": group_id, "result": result})
-        except Exception as exc:
-            failure = mutate_state_atomically(
-                config["DATA_FILE"],
-                lambda current_state: _finish_guardian_group_summary(
-                    current_state,
-                    group_id,
-                    today,
-                    now,
-                    claim_token=claim_token,
-                    message=message,
-                    error=exc,
-                    member_ids=member_ids,
-                ),
-            )
-            skipped += 1
-            results.append({"group_id": group_id, "error": str(exc)})
-            if failure["kind"] == "system":
-                system_error = True
-                break
-
-    return {
-        "sent": sent,
-        "skipped": skipped,
-        "deferred": deferred,
-        "results": results,
-        "date": today,
-        "system_error": system_error,
-    }, 200
-
-
-def _line_retry_key(delivery_key):
-    """Stable UUID accepted by LINE for idempotent retries of one logical push."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"daily-peace:{delivery_key}"))
-
-
-def _claim_guardian_group_summary(state, group_id, today, now):
-    group = (state.get("guardian_groups") or {}).get(group_id)
-    if not isinstance(group, dict):
-        return {"claimed": False, "reason": "group_not_found"}
-    owner = (state.get("users") or {}).get(
-        str(group.get("owner_line_user_id") or "").strip()
-    ) or {}
-    prefs = normalize_guardian_group_preferences(group.get("preferences"))
-    if (
-        group.get("status") != "active"
-        or not prefs.get("daily_admin_summary")
-        or not guardian_group_entitlement_active(owner, now)
-    ):
-        return {"claimed": False, "reason": "no_longer_eligible"}
-    if group.get("last_daily_summary_date") == today:
-        return {"claimed": False}
-    claims = dict(group.get("daily_summary_claims") or {})
-    existing = claims.get(today) or {}
-    if existing:
-        claimed_at = None
-        try:
-            claimed_at = datetime.fromisoformat(str(existing.get("claimed_at") or ""))
-        except (TypeError, ValueError):
-            claimed_at = None
-        if claimed_at is not None and (now - claimed_at).total_seconds() < 900:
-            return {"claimed": False, "reason": "active_claim"}
-    claim_token = secrets.token_hex(16)
-    claims[today] = {
-        "claimed_at": now.isoformat(timespec="seconds"),
-        "claim_token": claim_token,
-    }
-    group["daily_summary_claims"] = claims
-    return {
-        "claimed": True,
-        "recovered": bool(existing),
-        "claim_token": claim_token,
-    }
-
-
-def _prepare_guardian_group_summary(
-    state, group_id, today, now, claim_token, member_ids
-):
-    group = (state.get("guardian_groups") or {}).get(group_id)
-    claim = ((group or {}).get("daily_summary_claims") or {}).get(today) or {}
-    if not isinstance(group, dict) or claim.get("claim_token") != claim_token:
-        return {"ready": False, "reason": "claim_lost"}
-    owner = (state.get("users") or {}).get(
-        str(group.get("owner_line_user_id") or "").strip()
-    ) or {}
-    prefs = normalize_guardian_group_preferences(group.get("preferences"))
-    if (
-        group.get("status") != "active"
-        or not prefs.get("daily_admin_summary")
-        or not guardian_group_entitlement_active(owner, now)
-    ):
-        _finish_guardian_group_summary(
-            state,
-            group_id,
-            today,
-            now,
-            claim_token=claim_token,
-            release_only=True,
-        )
-        return {"ready": False, "reason": "no_longer_eligible"}
-    group["member_ids_last_summary"] = list(member_ids)
-    group["member_ids_last_summary_at"] = now.isoformat(timespec="seconds")
-    return {
-        "ready": True,
-        "eligible_members": eligible_guardian_group_summary_members(
-            state, group, member_ids
-        ),
-    }
-
-
-def _finish_guardian_group_summary(
-    state,
-    group_id,
-    today,
-    now,
-    *,
-    claim_token,
-    sent=False,
-    release_only=False,
-    message="",
-    result=None,
-    error=None,
-    member_ids=None,
-    audit_kind=None,
-    audit_status=None,
-    audit_detail=None,
-):
-    group = (state.get("guardian_groups") or {}).get(group_id)
-    if not isinstance(group, dict):
-        return {"kind": "permanent", "retry": False}
-    claims = dict(group.get("daily_summary_claims") or {})
-    claim = claims.get(today) or {}
-    if claim.get("claim_token") != claim_token:
-        return {"kind": "claim_lost", "retry": False}
-    claims.pop(today, None)
-    if claims:
-        group["daily_summary_claims"] = claims
-    else:
-        group.pop("daily_summary_claims", None)
-    if member_ids is not None:
-        group["member_ids_last_summary"] = list(member_ids)
-        group["member_ids_last_summary_at"] = now.isoformat(timespec="seconds")
-    if audit_kind:
-        append_notification_log(
-            state,
-            audit_kind,
-            group_id,
-            audit_status or "failed",
-            "",
-            audit_detail,
-        )
-    if release_only:
-        return {"released": True}
-    delivery_key = f"guardian_group_daily_summary:{today}:{group_id}"
-    if sent:
-        _clear_push_delivery_failure(group, delivery_key)
-        append_notification_log(
-            state,
-            "guardian_group_daily_summary",
-            group_id,
-            "sent",
-            message,
-            json.dumps(result, ensure_ascii=False),
-        )
-        record_line_message_usage(
-            state,
-            category="guardian_summary",
-            owner_line_user_id=group.get("owner_line_user_id") or group_id,
-            recipient_count=max(1, len(member_ids or [])),
-            event_id=delivery_key,
-            sent_at=now,
-        )
-        group["last_daily_summary_date"] = today
-        return {"sent": True}
-    return _record_scheduled_push_failure(
-        state,
-        group,
-        delivery_key,
-        "guardian_group_daily_summary",
-        group_id,
-        message,
-        error,
-        now,
-    )
-
-
-def send_missing_contact_reminders(config):
-    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-    if not token:
-        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
-
-    state = load_state(config["DATA_FILE"])
-    sender = config.get("LINE_PUSH_SENDER") or line_push_message
-    public_url = (config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", "")).rstrip("/")
-    now = current_app_time(config)
-    if not line_non_emergency_push_allowed(state, config, now):
-        return line_budget_blocked_response(state, config, now)
-    today = now.strftime("%Y-%m-%d")
-    sent = 0
-    skipped = 0
-    results = []
-    system_error = False
-    for user in state.get("users", {}).values():
-        line_user_id = user.get("line_user_id")
-        if not line_user_id:
-            skipped += 1
-            continue
-        if user.get("membership_paused") or not membership_access_active(user, now):
-            skipped += 1
-            continue
-        contact_count = len(user.get("contacts") or [])
-        contact_limit = plan_rules(user)["contact_limit"]
-        reminder_enabled = bool(user.get("contact_capacity_reminder_enabled", False))
-        is_799 = user.get("plan") in {"paid_799", "paid_799_year"}
-        guardian_details_complete = any(complete_guardian_contact(contact) for contact in (user.get("contacts") or []))
-        if is_799 and not guardian_details_complete:
-            if not user.get("guardian_details_reminder_enabled", True) or user.get("guardian_details_reminder_sent_at"):
-                continue
-            delivery_key = f"guardian_details:{today}"
-            if not push_attempt_allowed(user, delivery_key):
-                skipped += 1
-                continue
-            link_text = (
-                f"\nå‰å¾€æˆ‘çš„å®ˆè­·è³‡æ–™ï¼š{liff_entry_url(open_action='member') if liff_entry_url else 'https://liff.line.me/2010848330-UAiqPPYD?open=member'}"
-            )
-            message = (
-                "ä½ çš„ 799 å®ˆè­·æ–¹æ¡ˆé‚„å°‘ä¸€ä»½å¿…è¦è³‡æ–™ã€‚è«‹åœ¨ã€æˆ‘çš„å®ˆè­·è³‡æ–™ã€å®Œæˆè‡³å°‘ 1 ä½å®ˆè­·äººçš„å§“åã€é—œä¿‚èˆ‡é›»è©±ï¼Œ"
-                f"ç·Šæ€¥æ™‚ç³»çµ±æ‰èƒ½æ­£ç¢ºè¯çµ¡å°æ–¹ã€‚é€™å‰‡æé†’åªæœƒå‚³é€ä¸€æ¬¡ã€‚{link_text}"
-            )
-            try:
-                result = sender(token, line_user_id, message)
-                _clear_push_delivery_failure(user, delivery_key)
-                user["guardian_details_reminder_sent_at"] = now.isoformat(timespec="seconds")
-                append_notification_log(state, "guardian_details", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
-                sent += 1
-                results.append({"line_user_id": line_user_id, "result": result})
-            except Exception as exc:
-                failure = _record_scheduled_push_failure(
-                    state,
-                    user,
-                    delivery_key,
-                    "guardian_details",
-                    line_user_id,
-                    message,
-                    exc,
-                    now,
-                )
-                skipped += 1
-                results.append({"line_user_id": line_user_id, "error": str(exc)})
-                if failure["kind"] == "system":
-                    system_error = True
-                    break
-            continue
-        if contact_count >= contact_limit or (contact_count > 0 and not reminder_enabled):
-            continue
-        sent_dates = set(user.get("contact_reminder_sent_dates") or [])
-        if today in sent_dates:
-            continue
-        link_text = (
-            f"\nä¸€éµé‚€è«‹å®ˆè­·äººï¼š{share_invite_liff_url() if share_invite_liff_url else 'https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html'}"
-        )
-        if contact_count == 0:
-            message = (
-                "ä½ ç›®å‰é‚„æ²’æœ‰ç¶å®šå®ˆè­·äººï¼ˆç·Šæ€¥è¯çµ¡äººï¼‰ã€‚è«‹è‡³å°‘é‚€è«‹ 1 ä½ä¿¡ä»»çš„è¦ªå‹å®Œæˆ LINE ç¶å®šï¼Œ"
-                f"ç·Šæ€¥æ™‚ç³»çµ±æ‰çŸ¥é“è¦è¯çµ¡èª°ã€‚{link_text}"
-            )
-        else:
-            message = (
-                f"ä½ çš„æ–¹æ¡ˆå¯ç¶å®š {contact_limit} ä½å®ˆè­·äººï¼Œç›®å‰å·²å®Œæˆ {contact_count}/{contact_limit} ä½ã€‚"
-                f"è‹¥æƒ³è£œé½Šå®ˆè­·åé¡ï¼Œå¯é»ä¸‹æ–¹ç¹¼çºŒé‚€è«‹ï¼›ä¹Ÿèƒ½åœ¨æé†’è¨­å®šä¸­é—œé–‰é€™å‰‡æ¯æ—¥æé†’ã€‚{link_text}"
-            )
-        delivery_key = f"missing_contact:{today}"
-        if not push_attempt_allowed(user, delivery_key):
-            skipped += 1
-            continue
-        try:
-            result = sender(token, line_user_id, message)
-            _clear_push_delivery_failure(user, delivery_key)
-            sent_dates.add(today)
-            user["contact_reminder_sent_dates"] = sorted(sent_dates)[-30:]
-            append_notification_log(state, "missing_contact", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
-            sent += 1
-            results.append({"line_user_id": line_user_id, "result": result})
-        except Exception as exc:
-            failure = _record_scheduled_push_failure(
-                state,
-                user,
-                delivery_key,
-                "missing_contact",
-                line_user_id,
-                message,
-                exc,
-                now,
-            )
-            skipped += 1
-            results.append({"line_user_id": line_user_id, "error": str(exc)})
-            if failure["kind"] == "system":
-                system_error = True
-                break
-    save_state(config["DATA_FILE"], state)
-    return {
-        "sent": sent,
-        "skipped": skipped,
-        "results": results,
-        "system_error": system_error,
-    }, 200
-
-
-def cleanup_expired_data(config):
-    data_file = config["DATA_FILE"]
-    now = current_app_time(config)
-    invite_cutoff = now - timedelta(days=7)
-    notification_cutoff = now - timedelta(days=90)
-    migration_cleanup_now = now
-    if migration_cleanup_now.tzinfo is None:
-        timezone_name = (
-            config.get("APP_TIMEZONE")
-            or os.environ.get("APP_TIMEZONE")
-            or "Asia/Taipei"
-        )
-        try:
-            app_timezone = ZoneInfo(str(timezone_name))
-        except Exception:
-            app_timezone = timezone.utc
-        migration_cleanup_now = migration_cleanup_now.replace(
-            tzinfo=app_timezone
-        ).astimezone(timezone.utc)
-
-    def at_or_after(value, cutoff):
-        parsed = parse_datetime(value)
-        if parsed is None:
-            return True
-        comparable_parsed, comparable_cutoff = _comparable_datetimes(
-            parsed, cutoff
-        )
-        return comparable_parsed >= comparable_cutoff
-
-    def mutate(state):
-        downgraded = _apply_expired_plan_downgrades_to_state(state, now)
-        migration_history_removed = purge_account_migration_history(
-            state,
-            now=migration_cleanup_now,
-        )
-        expired_locations_removed = 0
-        contacts_archived = 0
-        contacts_restored = 0
-        migration_snapshots_removed = purge_account_migration_snapshots(
-            state,
-            now=migration_cleanup_now,
-        )
-
-        for profile in state.get("users", {}).values():
-            if restore_legacy_auto_archived_contacts(profile):
-                contacts_restored += 1
-            if soft_archive_contacts_past_retain(profile, now):
-                contacts_archived += 1
-            location = profile.get("location") or {}
-            if not location:
-                continue
-            if location.get("until_stop") and (
-                location.get("sharing") or location.get("active")
-            ):
-                continue
-            expires_at = parse_datetime(location.get("expires_at"))
-            location_expired = False
-            if expires_at:
-                comparable_expires, comparable_now = _comparable_datetimes(
-                    expires_at, now
-                )
-                location_expired = comparable_expires < comparable_now
-            if location_expired:
-                profile["location"] = {
-                    **location,
-                    "sharing": False,
-                    "active": False,
-                    "ended_at": (
-                        location.get("ended_at")
-                        or now.isoformat(timespec="seconds")
-                    ),
-                }
-                expired_locations_removed += 1
-
-        invites_before = len(state.get("friend_invites", {}))
-        state["friend_invites"] = {
-            code: invite
-            for code, invite in state.get("friend_invites", {}).items()
-            if at_or_after(invite.get("created_at"), invite_cutoff)
-        }
-
-        logs_before = len(state.get("notification_logs", []))
-        state["notification_logs"] = [
-            log
-            for log in state.get("notification_logs", [])
-            if at_or_after(log.get("created_at"), notification_cutoff)
-        ][-100:]
-        return {
-            "cleaned_at": now.isoformat(timespec="seconds"),
-            "expired_locations_removed": expired_locations_removed,
-            "expired_invites_removed": (
-                invites_before - len(state["friend_invites"])
-            ),
-            "old_notification_logs_removed": (
-                logs_before - len(state["notification_logs"])
-            ),
-            "contacts_archived_users": contacts_archived,
-            "contacts_restored_users": contacts_restored,
-            "migration_snapshots_removed": migration_snapshots_removed,
-            "migration_tickets_removed": migration_history_removed["tickets"],
-            "migration_audit_removed": migration_history_removed["audit"],
-            "orders_removed": 0,
-            "plans_downgraded": len(downgraded),
-        }, 200
-
-    return mutate_state_atomically(data_file, mutate)
-
-
-def reminder_time_in_window(reminder_time, now, late_minutes=4):
-    try:
-        hour, minute = [int(part) for part in str(reminder_time or "12:00").split(":", 1)]
-    except (TypeError, ValueError):
-        hour, minute = 12, 0
-    scheduled = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    delta = now - scheduled
-    return timedelta(0) <= delta <= timedelta(minutes=int(late_minutes), seconds=59)
-
-
-def build_daily_checkin_flex(now, target_time=""):
-    """Daily check-in Flex: greeting + optional holiday blessing + quote + postback.
-
-    Keeps classic green (#00B900) header; ã€Œæˆ‘å¹³å®‰ã€ uses postback action=checkin.
-    """
-    today = now.strftime("%Y-%m-%d")
-    weekday_zh = ["é€±ä¸€", "é€±äºŒ", "é€±ä¸‰", "é€±å››", "é€±äº”", "é€±å…­", "é€±æ—¥"][now.weekday()]
-    time_bit = f" {target_time}" if target_time else ""
-    copy = (
-        holidays_tw.daily_push_copy(now)
-        if holidays_tw is not None
-        else {
-            "greeting": "â¤ï¸ ä»Šå¤©ä¸€åˆ‡éƒ½å¥½å—ï¼Ÿ",
-            "holiday_name": "",
-            "holiday_blessing": "",
-            "positive_quote": "æ¯ä¸€å¤©çš„å¹³å®‰ï¼Œéƒ½æ˜¯çµ¦å®¶äººæœ€å¥½çš„ç¦®ç‰©ã€‚",
-            "instruction": "é»ã€Œæˆ‘å¹³å®‰ã€ç«‹åˆ»å®Œæˆå ±åˆ°ï¼ˆä¸ç”¨å†é–‹ç¶²é ï¼‰",
-        }
-    )
-    guard_uri = (
-        liff_entry_url(open_action="guard")
-        if liff_entry_url
-        else "https://liff.line.me/2010848330-UAiqPPYD?open=guard"
-    )
-    sos_uri = (
-        liff_entry_url(open_action="sos")
-        if liff_entry_url
-        else "https://liff.line.me/2010848330-UAiqPPYD?open=sos"
-    )
-    body_contents = [
-        {
-            "type": "text",
-            "text": copy["greeting"],
-            "size": "xl",
-            "weight": "bold",
-            "color": "#1a1a1a",
-            "wrap": True,
-        },
-    ]
-    holiday_name = str(copy.get("holiday_name") or "").strip()
-    holiday_blessing = str(copy.get("holiday_blessing") or "").strip()
-    if holiday_name and holiday_blessing:
-        body_contents.append(
-            {
-                "type": "text",
-                "text": f"ğŸ‰ {holiday_name}",
-                "size": "md",
-                "weight": "bold",
-                "color": "#B45309",
-                "wrap": True,
-            }
-        )
-        body_contents.append(
-            {
-                "type": "text",
-                "text": holiday_blessing,
-                "size": "md",
-                "color": "#92400E",
-                "wrap": True,
-            }
-        )
-    body_contents.append(
-        {
-            "type": "text",
-            "text": f"âœ¨ {copy['positive_quote']}",
-            "size": "md",
-            "color": "#166534",
-            "wrap": True,
-        }
-    )
-    body_contents.append(
-        {
-            "type": "text",
-            "text": copy["instruction"],
-            "size": "lg",
-            "color": "#555555",
-            "wrap": True,
-        }
-    )
-    alt_parts = [copy["greeting"], today]
-    if holiday_name:
-        alt_parts.append(holiday_name)
-    if target_time:
-        alt_parts.append(target_time)
-    return {
-        "type": "flex",
-        "altText": " ".join(alt_parts)[:400],
-        "contents": {
-            "type": "bubble",
-            "size": "mega",
-            "header": {
-                "type": "box",
-                "layout": "vertical",
-                "spacing": "xs",
-                "backgroundColor": "#00B900",
-                "paddingTop": "lg",
-                "paddingBottom": "lg",
-                "paddingStart": "lg",
-                "paddingEnd": "lg",
-                "contents": [
-                    {
-                        "type": "text",
-                        "text": "æ¯æ—¥å¹³å®‰",
-                        "color": "#FFFFFF",
-                        "size": "lg",
-                        "weight": "bold",
-                        "wrap": True,
-                    },
-                    {
-                        "type": "text",
-                        "text": f"ğŸ“… {today} {weekday_zh}{time_bit}".strip(),
-                        "color": "#FFFFFF",
-                        "size": "xl",
-                        "weight": "bold",
-                        "wrap": True,
-                    },
-                ],
-            },
-            "body": {
-                "type": "box",
-                "layout": "vertical",
-                "spacing": "md",
-                "paddingAll": "lg",
-                "contents": body_contents,
-            },
-            "footer": {
-                "type": "box",
-                "layout": "vertical",
-                "spacing": "sm",
-                "paddingAll": "lg",
-                "backgroundColor": "#FAFAFA",
-                "contents": [
-                    {
-                        "type": "button",
-                        "action": {
-                            "type": "postback",
-                            "label": "âœ… æˆ‘å¹³å®‰",
-                            "data": "action=checkin",
-                            "displayText": "æˆ‘å¹³å®‰",
-                        },
-                        "style": "primary",
-                        "color": "#16A34A",
-                        "height": "md",
-                    },
-                    {
-                        "type": "button",
-                        "action": {"type": "uri", "label": "ğŸ›¡ï¸ å®‰å…¨å®ˆè­·", "uri": guard_uri},
-                        "style": "primary",
-                        "color": "#2563EB",
-                        "height": "md",
-                    },
-                    {
-                        "type": "button",
-                        "action": {"type": "uri", "label": "éœ€è¦å¹«å¿™", "uri": sos_uri},
-                        "style": "primary",
-                        "color": "#DC2626",
-                        "height": "md",
-                    },
-                ],
-            },
-        },
-    }
-
-
-def _mark_line_push_blocked(user, exc):
-    """Mark blocked / gone users so future broadcasts skip them."""
-    code = None
-    if isinstance(exc, urllib.error.HTTPError):
-        code = exc.code
-    text = str(exc or "").lower()
-    if code in {401, 403, 404} or "not a friend" in text or "blocked" in text:
-        user["line_push_blocked"] = True
-        user["line_push_blocked_at"] = datetime.now().isoformat(timespec="seconds")
-        return True
-    return False
-
-
-def _mark_checkin_reminder_slots(user, today, times, due_times):
-    sent_slots = dict(user.get("checkin_reminder_sent_slots") or {})
-    sent_today = set(sent_slots.get(today) or [])
-    sent_today.update(due_times or times or [])
-    sent_slots[today] = sorted(sent_today)
-    keep_dates = sorted(sent_slots.keys())[-30:]
-    user["checkin_reminder_sent_slots"] = {d: sent_slots[d] for d in keep_dates}
-    legacy_dates = set(user.get("checkin_reminder_sent_dates") or [])
-    if set(times or []).issubset(sent_today):
-        legacy_dates.add(today)
-        user["checkin_reminder_sent_dates"] = sorted(legacy_dates)[-30:]
-
-
-def send_checkin_reminders(config):
-    """Morning/slot cron: skip users already checked in (Taipei). Prefer pre-check-in remind."""
-    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-    if not token:
-        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
-
-    data_file = config["DATA_FILE"]
-    state = load_state(data_file)
-    sender = config.get("LINE_PUSH_SENDER") or line_push_message
-    now = current_app_time(config)
-    if not line_non_emergency_push_allowed(state, config, now):
-        return line_budget_blocked_response(state, config, now)
-    today = now.strftime("%Y-%m-%d")
-    sent = 0
-    skipped = 0
-    results = []
-    system_error = False
-
-    for user in state.get("users", {}).values():
-        line_user_id = user.get("line_user_id")
-        if not line_user_id:
-            skipped += 1
-            continue
-        if user.get("line_push_blocked"):
-            skipped += 1
-            continue
-        if user.get("membership_paused") or not membership_access_active(user, now):
-            skipped += 1
-            continue
-        if not bool(user.get("daily_checkin_reminder_enabled", True)):
-            skipped += 1
-            continue
-        if profile_is_today_checked(user, config=config, now=now):
-            # Heal missing Taipei history so later cron/status stay consistent
-            hist = set(user.get("history") or [])
-            if today not in hist:
-                hist.add(today)
-                user["history"] = sorted(hist)
-            # ä»Šæ—¥å·²å ±å¹³å®‰ â†’ ç•¥éåŒæ—¥å‰©é¤˜æ’ç¨‹æé†’ï¼ˆæ¨™è¨˜ slotsï¼Œé¿å…å¾ŒçºŒèª¤æ¨ï¼‰
-            times = reminder_times_for_profile(user) or ["12:00"]
-            _mark_checkin_reminder_slots(user, today, times, times)
-            skipped += 1
-            continue
-
-        times = reminder_times_for_profile(user)
-        sent_slots = dict(user.get("checkin_reminder_sent_slots") or {})
-        sent_today = set(sent_slots.get(today) or [])
-
-        # ç›¸å®¹èˆŠç‰ˆ:ç•¶å¤©å·²ç”¨å–®ä¸€æ—¥æœŸæ¨™è¨˜é€é â†’ è¦–ç‚ºæœ¬è¼ªå·²æé†’
-        legacy_dates = set(user.get("checkin_reminder_sent_dates") or [])
-        if today in legacy_dates and not sent_today:
-            continue
-
-        due_unsent = [
-            t
-            for t in times
-            if reminder_time_in_window(t, now, late_minutes=4) and t not in sent_today
-        ]
-        if not due_unsent:
-            continue
-
-        # åŒä¸€äº”åˆ†é˜æ™‚é–“çª—åªæ¨ä¸€æ¬¡ï¼›è¼ƒæ—©æ¼æ‰çš„æ™‚æ®µä¸è£œé€ä¹Ÿä¸æ¨™è¨˜ã€‚
-        target_time = due_unsent[-1]
-        delivery_key = f"checkin:{today}:{target_time}"
-        _record_launch_delivery(
-            state, delivery_key, "checkin", line_user_id, "expected"
-        )
-        if not push_attempt_allowed(user, delivery_key):
-            skipped += 1
-            continue
-        message = build_daily_checkin_flex(now, target_time=target_time)
-        try:
-            result = sender(token, line_user_id, message)
-            _clear_push_delivery_failure(user, delivery_key)
-            _record_launch_delivery(
-                state, delivery_key, "checkin", line_user_id, "sent"
-            )
-            _mark_checkin_reminder_slots(user, today, times, due_unsent)
-            append_notification_log(state, "checkin", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
-            record_line_message_usage(
-                state,
-                category="checkin",
-                owner_line_user_id=line_user_id,
-                recipient_count=1,
-                event_id=delivery_key,
-                sent_at=now,
-            )
-            sent += 1
-            results.append({"line_user_id": line_user_id, "reminder_time": target_time, "result": result})
-            # æ–¹æ¡ˆå³å°‡ï¼å·²åˆ°æœŸï¼šåŒæ—¥æœ€å¤šé™„å¸¶ä¸€æ¬¡æé†’ï¼ˆä¸æ´—ç‰ˆï¼‰
-            if should_offer_expiry_remind(user, now):
-                expiry_msg = build_expiry_remind_flex(user, now)
-                expiry_key = f"expiry_remind:{today}"
-                if not push_attempt_allowed(user, expiry_key):
-                    continue
-                try:
-                    expiry_result = sender(token, line_user_id, expiry_msg)
-                    _clear_push_delivery_failure(user, expiry_key)
-                    mark_expiry_remind_sent(user, now)
-                    append_notification_log(
-                        state,
-                        "expiry_remind",
-                        line_user_id,
-                        "sent",
-                        expiry_msg,
-                        json.dumps(expiry_result, ensure_ascii=False),
-                    )
-                except Exception as expiry_exc:
-                    failure = _record_scheduled_push_failure(
-                        state,
-                        user,
-                        expiry_key,
-                        "expiry_remind",
-                        line_user_id,
-                        expiry_msg,
-                        expiry_exc,
-                        now,
-                    )
-                    if failure["kind"] == "system":
-                        system_error = True
-                        break
-        except Exception as exc:
-            failure = _record_scheduled_push_failure(
-                state,
-                user,
-                delivery_key,
-                "checkin",
-                line_user_id,
-                message,
-                exc,
-                now,
-            )
-            skipped += 1
-            results.append({"line_user_id": line_user_id, "error": str(exc)})
-            if failure["kind"] == "system":
-                system_error = True
-                break
-
-    save_state(data_file, state)
-    return {
-        "sent": sent,
-        "skipped": skipped,
-        "results": results,
-        "system_error": system_error,
-    }, 200
-
-
-def broadcast_checkin_reminders(config, *, pause_every=20, pause_seconds=1.0):
-    """é‡æ–°æ¨æ’­ï¼šé€æ–°æ¨¡æ¿çµ¦æ‰€æœ‰å·²è¨»å†Šæœƒå“¡ï¼ˆæœ‰ line_user_idï¼‰ï¼Œå«ä»Šæ—¥å·²ç°½åˆ°è€…ã€‚
-
-    - è·³é line_push_blocked
-    - åˆ†æ‰¹æš«åœä»¥é™ä½ LINE rate-limit é¢¨éšª
-    - æ¨™è¨˜ä»Šæ—¥ reminder slotsï¼Œé¿å… cron ç¨å¾Œå†æ´—ç‰ˆ
-    """
-    import time as _time
-
-    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-    if not token:
-        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
-
-    data_file = config["DATA_FILE"]
-    state = load_state(data_file)
-    sender = config.get("LINE_PUSH_SENDER") or line_push_message
-    now = current_app_time(config)
-    if not line_non_emergency_push_allowed(state, config, now):
-        return line_budget_blocked_response(state, config, now)
-    today = now.strftime("%Y-%m-%d")
-    message = build_daily_checkin_flex(now, target_time="")
-    sent = 0
-    skipped = 0
-    blocked = 0
-    results = []
-    push_count = 0
-
-    for user in state.get("users", {}).values():
-        line_user_id = str(user.get("line_user_id") or "").strip()
-        if not line_user_id:
-            skipped += 1
-            continue
-        if user.get("line_push_blocked"):
-            blocked += 1
-            skipped += 1
-            continue
-        times = reminder_times_for_profile(user)
-        try:
-            result = sender(token, line_user_id, message)
-            _mark_checkin_reminder_slots(user, today, times, times)
-            user["checkin_broadcast_sent_dates"] = sorted(
-                set(user.get("checkin_broadcast_sent_dates") or []) | {today}
-            )[-30:]
-            append_notification_log(
-                state, "checkin_broadcast", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False)
-            )
-            sent += 1
-            push_count += 1
-            results.append({"line_user_id": line_user_id, "result": result})
-            if pause_every and push_count % int(pause_every) == 0:
-                _time.sleep(float(pause_seconds))
-        except Exception as exc:
-            if _mark_line_push_blocked(user, exc):
-                blocked += 1
-                append_notification_log(state, "checkin_broadcast", line_user_id, "blocked", message, str(exc))
-            else:
-                append_notification_log(state, "checkin_broadcast", line_user_id, "failed", message, str(exc))
-            skipped += 1
-            results.append({"line_user_id": line_user_id, "error": str(exc)})
-
-    save_state(data_file, state)
-    holiday = holidays_tw.holiday_for(now) if holidays_tw is not None else None
-    return {
-        "sent": sent,
-        "skipped": skipped,
-        "blocked": blocked,
-        "mode": "broadcast",
-        "holiday": (holiday or {}).get("name") if holiday else None,
-        "positive_quote": holidays_tw.positive_quote_for(now) if holidays_tw is not None else None,
-        "results": results,
-    }, 200
-
-
-def send_birthday_reminders(config):
-    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-    if not token:
-        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
-
-    data_file = config["DATA_FILE"]
-    state = load_state(data_file)
-    sender = config.get("LINE_PUSH_SENDER") or line_push_message
-    now = current_app_time(config)
-    today_date = now.date()
-    today_key = today_date.strftime("%Y-%m-%d")
-    sent = 0
-    skipped = 0
-    results = []
-
-    blocked = 0
-    system_error = False
-    for user in state.get("users", {}).values():
-        line_user_id = user.get("line_user_id")
-        if not line_user_id:
-            skipped += 1
-            continue
-        if not plan_has_smart_reminders(user, now=now):
-            skipped += 1
-            continue
-        if user.get("membership_paused") or not membership_access_active(user, now):
-            skipped += 1
-            continue
-        if user.get("line_push_blocked"):
-            blocked += 1
-            skipped += 1
-            continue
-        notes = user.get("calendar_notes") or {}
-        if not isinstance(notes, dict):
-            continue
-        sent_keys = set(user.get("birthday_reminder_sent_keys") or [])
-        for note_date, note in notes.items():
-            for birthday_index, birthday in enumerate(calendar_note_birthdays(note)):
-                try:
-                    remind_days = int(birthday.get("birthday_remind_days") or 1)
-                except (TypeError, ValueError):
-                    remind_days = 1
-                target_date = today_date + timedelta(days=remind_days)
-                if not birthday_occurs_on(birthday, target_date):
-                    continue
-                birthday_suffix = f":{birthday_index}" if birthday_index else ""
-                sent_key = (
-                    f"{today_key}:{note_date}:{remind_days}{birthday_suffix}"
-                )
-                if sent_key in sent_keys:
-                    continue
-                delivery_key = f"birthday:{sent_key}"
-                if not push_attempt_allowed(user, delivery_key):
-                    skipped += 1
-                    continue
-                who = birthday.get("birthday_relationship") or birthday.get("birthday_name") or "å®¶äºº"
-                when_text = "ä»Šå¤©" if remind_days == 0 else ("æ˜å¤©" if remind_days == 1 else f"{remind_days} å¤©å¾Œ")
-                message = f"{when_text}æ˜¯{who}ç”Ÿæ—¥ï¼Œè¨˜å¾—è·Ÿä»–èªªè²ç”Ÿæ—¥å¿«æ¨‚ã€‚ä¹Ÿå¯ä»¥é †æ‰‹ç¢ºèªä»–ä»Šå¤©å¹³å®‰ã€‚"
-                try:
-                    result = sender(token, line_user_id, message)
-                    _clear_push_delivery_failure(user, delivery_key)
-                    sent_keys.add(sent_key)
-                    user["birthday_reminder_sent_keys"] = sorted(sent_keys)[-80:]
-                    append_notification_log(state, "birthday", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
-                    sent += 1
-                    results.append({"line_user_id": line_user_id, "birthday": who, "remind_days": remind_days})
-                except Exception as exc:
-                    failure = _record_scheduled_push_failure(
-                        state,
-                        user,
-                        delivery_key,
-                        "birthday",
-                        line_user_id,
-                        message,
-                        exc,
-                        now,
-                    )
-                    if failure["status"] == "blocked":
-                        blocked += 1
-                    skipped += 1
-                    results.append({"line_user_id": line_user_id, "birthday": who, "error": str(exc)})
-                    if failure["kind"] == "system":
-                        system_error = True
-                        break
-            if system_error:
-                break
-        if system_error:
-            break
-
-    save_state(data_file, state)
-    return {
-        "sent": sent,
-        "skipped": skipped,
-        "blocked": blocked,
-        "results": results,
-        "system_error": system_error,
-    }, 200
-
-
-# === 799 æ™ºèƒ½æé†’ï¼ˆç”Ÿæ´»æé†’ï¼šåªèµ° LINE ç§è¨Šï¼Œé è¨­ä¸é€²å®ˆè­·ç¾¤ï¼‰===
-SMART_REMINDER_CATEGORIES = {
-    "birthday": {"emoji": "ğŸ‚", "label": "ç”Ÿæ—¥"},
-    "wedding": {"emoji": "ğŸ’", "label": "çµå©šç´€å¿µæ—¥"},
-    "dating": {"emoji": "ğŸ’•", "label": "äº¤å¾€ç´€å¿µæ—¥"},
-    "child_birthday": {"emoji": "ğŸ‘¶", "label": "å°å­©ç”Ÿæ—¥"},
-    "elder_birthday": {"emoji": "ğŸ‘´", "label": "é•·è¼©ç”Ÿæ—¥"},
-    "graduation": {"emoji": "ğŸ“", "label": "ç•¢æ¥­"},
-    "moving": {"emoji": "ğŸ ", "label": "æ¬å®¶"},
-    "special": {"emoji": "ğŸ‰", "label": "ç‰¹æ®Šç´€å¿µæ—¥"},
-    "checkup": {"emoji": "ğŸ’Š", "label": "å›è¨º"},
-    "medicine": {"emoji": "ğŸ’Š", "label": "åƒè—¥"},
-    "schedule": {"emoji": "ğŸ“…", "label": "è¡Œç¨‹"},
-    "greeting": {"emoji": "â¤ï¸", "label": "å•å€™"},
-    "custom": {"emoji": "ğŸ—“ï¸", "label": "è‡ªè¨‚"},
-}
-
-
-def plan_has_smart_reminders(profile, now=None):
-    plan = str((profile or {}).get("plan") or "trial")
-    return plan in {"paid_799", "paid_799_year"} and paid_membership_is_active(
-        profile or {}, now=now
-    )
-
-
-def normalize_smart_reminder(raw, index=0):
-    raw = raw if isinstance(raw, dict) else {}
-    category = str(raw.get("category") or "custom").strip().lower()
-    if category not in SMART_REMINDER_CATEGORIES:
-        category = "custom"
-    meta = SMART_REMINDER_CATEGORIES[category]
-    emoji = str(raw.get("emoji") or meta["emoji"]).strip() or meta["emoji"]
-    try:
-        month = int(raw.get("month") or 0)
-        day = int(raw.get("day") or 0)
-    except (TypeError, ValueError):
-        month, day = 0, 0
-    year_raw = raw.get("year")
-    try:
-        year = int(year_raw) if year_raw not in (None, "", 0, "0") else None
-    except (TypeError, ValueError):
-        year = None
-    # date_isoï¼ˆYYYY-MM-DDï¼‰å„ªå…ˆæ–¼æ‹†é–‹çš„å¹´æœˆæ—¥
-    date_iso = str(raw.get("date") or raw.get("date_iso") or "").strip()
-    if date_iso and re.match(r"^\d{4}-\d{2}-\d{2}$", date_iso):
-        try:
-            y, m, d = date_iso.split("-")
-            year = int(y)
-            month = int(m)
-            day = int(d)
-        except (TypeError, ValueError):
-            pass
-    if bool(raw.get("yearly", False)) or bool(raw.get("repeat_yearly", False)):
-        year = None
-    remind_time = str(raw.get("remind_time") or raw.get("time") or "09:00").strip()
-    if not REMINDER_TIME_PATTERN.match(remind_time):
-        remind_time = "09:00"
-    custom_title = str(raw.get("custom_title") or "").strip()[:80]
-    category_label = meta["label"]
-    if category == "custom" and custom_title:
-        category_label = custom_title
-    rid = str(raw.get("id") or "").strip() or f"sr_{secrets.token_hex(6)}"
-    notify_private = True  # product: æ™ºèƒ½æé†’åªèµ°ç§è¨Š
-    notify_group = False
-    delivery_target = str(raw.get("delivery_target") or "private").strip()
-    if not (delivery_target == "private" or delivery_target.startswith("guardian:")):
-        delivery_target = str(raw.get("delivery_target") or "private").strip()
-    return {
-        "id": rid,
-        "target_name": str(raw.get("target_name") or "").strip() or f"å°è±¡{index + 1}",
-        "category": category,
-        "category_label": category_label,
-        "custom_title": custom_title,
-        "emoji": emoji,
-        "month": month if 1 <= month <= 12 else 1,
-        "day": day if 1 <= day <= 31 else 1,
-        "year": year,
-        "remind_time": remind_time,
-        "note": str(raw.get("note") or "").strip()[:200],
-        "notify_private": notify_private,
-        "notify_group": notify_group,
-        "delivery_target": delivery_target,
-        "eve_remind": bool(raw.get("eve_remind", True)),
-        "created_at": str(raw.get("created_at") or datetime.now().isoformat(timespec="seconds")),
-        "updated_at": str(raw.get("updated_at") or ""),
-    }
-
-
-def list_smart_reminders(profile):
-    rows = profile.get("smart_reminders") if isinstance(profile.get("smart_reminders"), list) else []
-    return [normalize_smart_reminder(row, i) for i, row in enumerate(rows)]
-
-
-def smart_reminder_occurs_on(reminder, target_date):
-    try:
-        month = int(reminder.get("month") or 0)
-        day = int(reminder.get("day") or 0)
-    except (TypeError, ValueError):
-        return False
-    if not (1 <= month <= 12 and 1 <= day <= 31):
-        return False
-    year = reminder.get("year")
-    if year:
-        try:
-            return target_date.year == int(year) and target_date.month == month and target_date.day == day
-        except (TypeError, ValueError):
-            return False
-    # yearly recurrence; skip invalid dates like 2/30
-    try:
-        datetime(target_date.year, month, day)
-    except ValueError:
-        return False
-    return target_date.month == month and target_date.day == day
-
-
-def smart_reminder_canned_wish(reminder):
-    name = reminder.get("target_name") or "å°æ–¹"
-    cat = reminder.get("category") or "custom"
-    label = reminder.get("category_label") or SMART_REMINDER_CATEGORIES.get(cat, {}).get("label", "æ—¥å­")
-    templates = {
-        "birthday": f"ğŸ‚ {name}ï¼Œç”Ÿæ—¥å¿«æ¨‚ï¼é¡˜ä½ ä»Šå¤©è¢«æº«æŸ”åŒ…åœï¼Œå¹³å®‰å¥åº·æ¯ä¸€å¤© â¤ï¸",
-        "wedding": f"ğŸ’ è¦ªæ„›çš„{name}ï¼Œçµå©šç´€å¿µæ—¥å¿«æ¨‚ï¼æ„Ÿè¬ä¸€è·¯ä¸Šçš„é™ªä¼´èˆ‡åŒ…å®¹ â¤ï¸",
-        "dating": f"ğŸ’• {name}ï¼Œäº¤å¾€ç´€å¿µæ—¥å¿«æ¨‚ï¼è¬è¬ä½ è®“å¹³å‡¡æ—¥å­è®Šå¾—ç‰¹åˆ¥ã€‚",
-        "child_birthday": f"ğŸ‘¶ è¦ªæ„›çš„å°å­©ç”Ÿæ—¥å¿«æ¨‚ï¼é•·å¤§çš„æ¯ä¸€æ­¥ï¼Œæˆ‘å€‘éƒ½ç‚ºä½ é–‹å¿ƒã€‚",
-        "elder_birthday": f"ğŸ‘´ {name}ç”Ÿæ—¥å¿«æ¨‚ï¼é¡˜æ‚¨èº«é«”ç¡¬æœ—ã€æ¯å¤©ç¬‘å£å¸¸é–‹ã€‚",
-        "graduation": f"ğŸ“ æ­å–œ{name}ç•¢æ¥­ï¼æ–°çš„æ—…ç¨‹é–‹å§‹äº†ï¼Œæˆ‘å€‘ç‚ºä½ é©•å‚²ã€‚",
-        "moving": f"ğŸ  æ–°å®¶è½æˆï¼å–¬é·æ„‰å¿«ï¼é¡˜{name}åœ¨æ–°ç’°å¢ƒä¸€åˆ‡é †åˆ©ã€‚",
-        "special": f"ğŸ‰ ä»Šå¤©æ˜¯ç‰¹åˆ¥çš„æ—¥å­ï¼Œç¥{name}é–‹å¿ƒã€å¹³å®‰ã€‚",
-        "checkup": f"ğŸ’Š æé†’ï¼šè¨˜å¾—é™ªï¼é—œå¿ƒ{name}å›è¨ºï¼Œå¸¶å¥ä¿å¡èˆ‡å°±é†«è³‡æ–™ã€‚",
-        "medicine": f"ğŸ’Š æé†’ï¼šè©²åƒè—¥ï¼æ‹¿è—¥äº†ï¼Œå¹«{name}ç¢ºèªä¸€æ¬¡ã€‚",
-        "schedule": f"ğŸ“… è¡Œç¨‹æé†’ï¼šä»Šå¤©èˆ‡{name}æœ‰é—œçš„å®‰æ’ï¼Œåˆ¥å¿˜äº†é ç•™æ™‚é–“ã€‚",
-        "greeting": f"â¤ï¸ å‚³ä¸€å¥å•å€™çµ¦{name}ï¼šã€Œä»Šå¤©é‚„å¥½å—ï¼Ÿæˆ‘æƒ³ä½ äº†ã€‚ã€",
-        "custom": f"ğŸ—“ï¸ æé†’ï¼šä»Šå¤©æ˜¯ä½ ç‚º{name}è¨­å®šçš„ã€Œ{label}ã€ï¼Œè¨˜å¾—è™•ç†ä¸€ä¸‹ã€‚",
-    }
-    return templates.get(cat, templates["custom"])
-
-
-def smart_reminder_canned_gift(reminder):
-    name = reminder.get("target_name") or "å°æ–¹"
-    cat = reminder.get("category") or "custom"
-    if cat in {"birthday", "child_birthday", "elder_birthday"}:
-        return f"ğŸ ç¦®ç‰©å»ºè­°ï¼š1) æ‰‹å¯«å°å¡ï¼‹å–œæ­¡çš„ç”œé» 2) å¯¦ç”¨æ—¥å¸¸å¥½ç‰© 3) ä¸€èµ·åƒé “é£¯ã€‚å°è±¡ï¼š{name}"
-    if cat in {"wedding", "dating"}:
-        return f"ğŸ ç¦®ç‰©å»ºè­°ï¼šä¸€èµ·å›æ†¶ç…§ç‰‡æ›¸ã€å…±åŒå–œæ­¡çš„å°æ—…è¡Œï¼Œæˆ–ä¸€é “å®‰éœæ™šé¤ã€‚å°è±¡ï¼š{name}"
-    if cat in {"checkup", "medicine"}:
-        return f"ğŸ å¯¦ç”¨å”åŠ©ï¼šé™ªè¨ºã€æ•´ç†è—¥å–®ã€æº–å‚™æ°´æ¯èˆ‡äº¤é€šå®‰æ’ã€‚å°è±¡ï¼š{name}"
-    return f"ğŸ å»ºè­°ï¼šä¸€å¥çœŸå¿ƒè©±ï¼‹å°é©šå–œï¼ˆèŠ±ï¼ç”œé»ï¼é™ªä¼´æ™‚é–“ï¼‰ã€‚å°è±¡ï¼š{name}"
-
-
-def build_smart_reminder_flex(reminder, *, mode="day"):
-    """mode=day|eve Flex for private LINE push."""
-    name = reminder.get("target_name") or "å°æ–¹"
-    emoji = reminder.get("emoji") or "ğŸ—“ï¸"
-    label = reminder.get("category_label") or "æé†’"
-    month = int(reminder.get("month") or 1)
-    day = int(reminder.get("day") or 1)
-    date_text = f"{month}/{day}"
-    rid = reminder.get("id") or ""
-    if mode == "eve":
-        title = f"â¤ï¸ æ˜å¤©æ˜¯{name}{label}"
-        body = "éœ€è¦å¹«ä½ æº–å‚™ä¸€å¥ç¥ç¦å—ï¼Ÿ"
-        buttons = [
-            {"type": "button", "action": {"type": "postback", "label": "âœ¨æ¯æ—¥ç”¢ç”Ÿç¥ç¦", "data": f"smart:wish:{rid}", "displayText": "å¹«æˆ‘ç”¢ç”Ÿç¥ç¦"}, "style": "primary", "color": "#7C3AED", "height": "sm"},
-            {"type": "button", "action": {"type": "postback", "label": "ğŸç¦®ç‰©å»ºè­°", "data": f"smart:gift:{rid}", "displayText": "ç¦®ç‰©å»ºè­°"}, "style": "secondary", "height": "sm"},
-            {"type": "button", "action": {"type": "postback", "label": "ğŸ“æ˜å¤©æé†’", "data": f"smart:snooze:{rid}", "displayText": "æ˜å¤©å†æé†’æˆ‘"}, "style": "secondary", "height": "sm"},
-        ]
-        alt = f"æ˜å¤©æ˜¯{name}çš„{label}"
-    else:
-        if (reminder.get("category") or "") == "birthday":
-            title = f"ğŸ‚ ä»Šå¤©æ˜¯{name}çš„ç”Ÿæ—¥"
-            body = f"åˆ¥å¿˜äº†é€ä¸Šä¸€å¥ç¥ç¦ â¤ï¸\nå§“åï¼š{name}\nä»Šå¤©ï¼š{date_text}"
-            buttons = [
-                {"type": "button", "action": {"type": "postback", "label": "ğŸå‚³é€ç¥ç¦", "data": f"smart:wish:{rid}", "displayText": "å‚³é€ç¥ç¦"}, "style": "primary", "color": "#E11D48", "height": "sm"},
-                {"type": "button", "action": {"type": "postback", "label": "ğŸ‚å·²ç¥ç¦", "data": f"smart:blessed:{rid}", "displayText": "å·²ç¥ç¦"}, "style": "secondary", "height": "sm"},
-                {"type": "button", "action": {"type": "postback", "label": "â°æ™šé»æé†’æˆ‘", "data": f"smart:snooze:{rid}", "displayText": "æ™šé»æé†’æˆ‘"}, "style": "secondary", "height": "sm"},
-            ]
-        elif "çˆ¶" in name or label in {"ç‰¹æ®Šç´€å¿µæ—¥"} and "çˆ¶" in (reminder.get("note") or ""):
-            title = f"ğŸ‰ ä»Šå¤©æ˜¯çˆ¶è¦ªç¯€"
-            body = f"ä½ è¨­å®šçš„æé†’å°è±¡ï¼šğŸ‘¨{name}\nè¨˜å¾—å‘ä»–èªªè²ï¼šçˆ¶è¦ªç¯€å¿«æ¨‚ â¤ï¸"
-            buttons = [
-                {"type": "button", "action": {"type": "postback", "label": "ğŸ’ŒLINEç¥ç¦", "data": f"smart:wish:{rid}", "displayText": "LINEç¥ç¦"}, "style": "primary", "color": "#2563EB", "height": "sm"},
-                {"type": "button", "action": {"type": "postback", "label": "ğŸ“æ‰“é›»è©±", "data": f"smart:call:{rid}", "displayText": "æé†’æˆ‘æ‰“é›»è©±"}, "style": "secondary", "height": "sm"},
-                {"type": "button", "action": {"type": "postback", "label": "â°æ™šé»æé†’", "data": f"smart:snooze:{rid}", "displayText": "æ™šé»æé†’"}, "style": "secondary", "height": "sm"},
-            ]
-        else:
-            title = f"{emoji} ä»Šå¤©æ˜¯{name}çš„{label}"
-            body = f"åˆ¥å¿˜äº†é—œå¿ƒä¸€ä¸‹ â¤ï¸\nå°è±¡ï¼š{name}\nä»Šå¤©ï¼š{date_text}"
-            if reminder.get("note"):
-                body += f"\nå‚™è¨»ï¼š{reminder.get('note')}"
-            buttons = [
-                {"type": "button", "action": {"type": "postback", "label": "ğŸ’Œå‚³é€ç¥ç¦", "data": f"smart:wish:{rid}", "displayText": "å‚³é€ç¥ç¦"}, "style": "primary", "color": "#E11D48", "height": "sm"},
-                {"type": "button", "action": {"type": "postback", "label": "âœ…å·²å®Œæˆ", "data": f"smart:blessed:{rid}", "displayText": "å·²å®Œæˆ"}, "style": "secondary", "height": "sm"},
-                {"type": "button", "action": {"type": "postback", "label": "â°æ™šé»æé†’æˆ‘", "data": f"smart:snooze:{rid}", "displayText": "æ™šé»æé†’æˆ‘"}, "style": "secondary", "height": "sm"},
-            ]
-        alt = f"ä»Šå¤©æ˜¯{name}çš„{label}"
-    return {
-        "type": "flex",
-        "altText": alt,
-        "contents": {
-            "type": "bubble",
-            "size": "mega",
-            "body": {
-                "type": "box",
-                "layout": "vertical",
-                "spacing": "md",
-                "contents": [
-                    {"type": "text", "text": title, "weight": "bold", "size": "xl", "wrap": True},
-                    {"type": "text", "text": body, "size": "md", "color": "#444444", "wrap": True},
-                    {"type": "text", "text": "ğŸ’¬ æ­¤æé†’åªå‚³åˆ°ä½ çš„ LINE ç§è¨Šï¼ˆä¸æœƒé€²å®ˆè­·ç¾¤ï¼‰", "size": "xs", "color": "#888888", "wrap": True},
-                ],
-            },
-            "footer": {
-                "type": "box",
-                "layout": "vertical",
-                "spacing": "sm",
-                "contents": buttons,
-            },
-        },
-    }
-
-
-def build_smart_reminder_digest(reminders, *, mode="day"):
-    reminders = list(reminders or [])
-    if len(reminders) == 1:
-        return build_smart_reminder_flex(reminders[0], mode=mode)
-    when = "æ˜å¤©" if mode == "eve" else "ä»Šå¤©"
-    lines = [
-        f"{item.get('emoji') or 'ğŸ—“ï¸'} {item.get('target_name') or 'å°è±¡'}ï¼š"
-        f"{item.get('category_label') or 'æé†’'}"
-        for item in reminders
-    ]
-    return {
-        "type": "flex",
-        "altText": f"{when}æœ‰ {len(reminders)} å€‹æé†’",
-        "contents": {
-            "type": "bubble",
-            "size": "mega",
-            "body": {
-                "type": "box",
-                "layout": "vertical",
-                "spacing": "md",
-                "contents": [
-                    {"type": "text", "text": f"ğŸ—“ï¸ {when}æœ‰ {len(reminders)} å€‹æé†’", "weight": "bold", "size": "xl", "wrap": True},
-                    {"type": "text", "text": "\n".join(lines), "size": "md", "wrap": True},
-                    {"type": "text", "text": "åŒä¸€æ™‚æ®µå·²åˆä½µæˆä¸€å‰‡ï¼Œé¿å…é‡è¤‡æ‰“æ“¾", "size": "xs", "color": "#888888", "wrap": True},
-                ],
-            },
-        },
-    }
-
-
-def is_checkin_postback(data):
-    """Daily push / Flex ã€Œæˆ‘å¹³å®‰ã€ postback."""
-    text = str(data or "").strip()
-    if not text:
-        return False
-    if text in {"action=checkin", "checkin", "checkin:ok", "checkin=1"}:
-        return True
-    if text.startswith("action=checkin"):
-        return True
-    if text.startswith("checkin:"):
-        return True
-    try:
-        from alerts.postback import parse_postback_data
-        return parse_postback_data(text).get("action") == "checkin"
-    except Exception:
-        return "action=checkin" in text
-
-
-def handle_checkin_postback(data_file, line_user_id, config=None):
-    """Persist check-in from LINE postback â€” same path as LIFF /api/checkin.
-
-    Returns text, or a list of [text, optional expiry Flex] when membership is near expiry.
-    """
-    if not line_user_id:
-        return "è«‹å…ˆåŠ å…¥æ¯æ—¥å¹³å®‰å¥½å‹å¾Œå†å ±å¹³å®‰ã€‚"
-    status = record_checkin(data_file, {"line_user_id": line_user_id}, config=config)
-    now = current_app_time(config)
-    text = build_checkin_success_text(status, now=now, config=config)
-    state = load_state(data_file)
-    profile = get_profile(state, line_user_id)
-    messages = maybe_attach_expiry_remind(
-        [text], profile, now=now, state=state, data_file=data_file
-    )
-    if len(messages) == 1:
-        return messages[0]
-    return messages
-
-
-def is_expiry_opt_out_postback(data):
-    text = str(data or "").strip()
-    return text == "action=expiry_opt_out" or "action=expiry_opt_out" in text
-
-
-def handle_smart_reminder_postback(data_file, line_user_id, data, config=None):
-    """Handle smart:* postbacks; returns reply text."""
-    parts = str(data or "").split(":")
-    if len(parts) < 3 or parts[0] != "smart":
-        return None
-    action, rid = parts[1], parts[2]
-    state = load_state(data_file)
-    profile = get_profile(state, line_user_id)
-    reminder = next((r for r in list_smart_reminders(profile) if r.get("id") == rid), None)
-    if not reminder:
-        return "æ‰¾ä¸åˆ°é€™ç­†æ™ºèƒ½æé†’ï¼Œå¯èƒ½å·²è¢«åˆªé™¤ã€‚"
-    if action == "wish":
-        return smart_reminder_canned_wish(reminder)
-    if action == "gift":
-        return smart_reminder_canned_gift(reminder)
-    if action == "call":
-        return f"ğŸ“ ç¾åœ¨å°±å¯ä»¥æ’¥é›»è©±çµ¦ã€Œ{reminder.get('target_name')}ã€ã€‚æ‰“å®Œå¾Œå¯å›ã€Œå·²å®Œæˆã€ã€‚"
-    if action == "blessed":
-        return f"å¤ªå¥½äº†ï¼Œå·²å¹«ä½ è¨˜ä¸‹ã€Œå·²ç¥ç¦ï¼å·²å®Œæˆã€ï¼š{reminder.get('target_name')}ã€‚"
-    if action == "snooze":
-        # Mark a soft snooze key so day cron can re-nudge later same day once
-        keys = set(profile.get("smart_reminder_sent_keys") or [])
-        today = today_string(config)
-        # Remove day key to allow one re-send after 2h via separate snooze marker
-        profile["smart_reminder_snooze"] = {
-            "id": rid,
-            "until": (current_app_time(config) + timedelta(hours=2)).isoformat(timespec="seconds"),
-        }
-        # Keep day key so we don't double-fire immediately; snooze path uses until
-        keys = {k for k in keys if not k.endswith(f":{rid}:day")}
-        profile["smart_reminder_sent_keys"] = sorted(keys)[-120:]
-        save_state(data_file, state)
-        return "å¥½ï¼Œç´„ 2 å°æ™‚å¾Œå†ç§è¨Šæé†’ä½ ä¸€æ¬¡ã€‚"
-    return "å·²æ”¶åˆ°ã€‚"
-
-
-def get_smart_reminders_payload(data_file, line_user_id):
-    state = load_state(data_file)
-    profile = get_profile(state, line_user_id)
-    entitled = plan_has_smart_reminders(profile)
-    recovering = str(profile.get("account_migration_status") or "").lower() in {
-        "pending", "recovering", "in_progress"
-    }
-    today = datetime.now().strftime("%Y-%m-%d")
-    usage = (profile.get("smart_reminder_daily_usage") or {}).get(today) or {}
-    bound_guardians = []
-    for contact in profile.get("contacts") or []:
-        if not contact_is_bound_guardian(contact, line_user_id):
-            continue
-        guardian_id = get_contact_line_id(contact)
-        if not guardian_id:
-            continue
-        bound_guardians.append({
-            "line_user_id": guardian_id,
-            "name": contact.get("name") or contact.get("display_name") or "æ ¸å¿ƒå®ˆè­·äºº",
-            "is_primary": bool(contact.get("is_primary")),
-        })
-    return {
-        "ok": True,
-        "entitled": entitled,
-        "state": "entitled" if entitled else ("recovering" if recovering else "upgrade_required"),
-        "plan": profile.get("plan") or "trial",
-        "upgrade_hint": None if entitled else (
-            "å¸³è™Ÿè³‡æ–™æ­£åœ¨æ¢å¾©ï¼Œå®Œæˆå¾Œæœƒè‡ªå‹•å–å›æ—¢æœ‰æ™ºæ…§æé†’"
-            if recovering else
-            "æ™ºèƒ½æé†’ç‚º 799 å®ˆè­·ç‰ˆåŠŸèƒ½ï¼Œå‡ç´šå¾Œå¯è¨­å®šç”Ÿæ—¥ï¼ç´€å¿µæ—¥ï¼å›è¨ºç­‰ç”Ÿæ´»æé†’ï¼ˆä¸é€²å®ˆè­·ç¾¤ï¼‰ã€‚"
-        ),
-        "reminders": list_smart_reminders(profile) if entitled else [],
-        "defaults": profile.get("smart_reminder_defaults") or {"notify_private": True, "notify_group": False},
-        "bound_guardians": bound_guardians if entitled else [],
-        "daily_usage": {
-            "private": int(usage.get("private") or 0),
-            "guardian": int(usage.get("guardian") or 0),
-        },
-        "daily_limits": {"private": 2, "guardian": 1},
-        "categories": [
-            {"id": key, "emoji": meta["emoji"], "label": meta["label"]}
-            for key, meta in SMART_REMINDER_CATEGORIES.items()
-        ],
-    }
-
-
-def save_smart_reminder(data_file, payload):
-    line_user_id = str(payload.get("line_user_id") or "").strip()
-    if not line_user_id:
-        return {"ok": False, "error": "missing line_user_id"}, 400
-    state = load_state(data_file)
-    profile = get_profile(state, line_user_id)
-    if not plan_has_smart_reminders(profile):
-        return {"ok": False, "error": "smart_reminders_require_799", "upgrade_hint": "è«‹å‡ç´š 799 å®ˆè­·ç‰ˆ"}, 403
-    delivery_target = str(payload.get("delivery_target") or "private").strip()
-    if delivery_target.startswith("group:"):
-        return {"ok": False, "error": "guardian_group_target_not_allowed"}, 400
-    if delivery_target != "private":
-        if not delivery_target.startswith("guardian:"):
-            return {"ok": False, "error": "invalid_delivery_target"}, 400
-        target_id = delivery_target.split(":", 1)[1]
-        allowed = {
-            get_contact_line_id(contact)
-            for contact in profile.get("contacts") or []
-            if contact_is_bound_guardian(contact, line_user_id)
-        }
-        if target_id not in allowed:
-            return {"ok": False, "error": "guardian_target_not_bound"}, 400
-    reminder = normalize_smart_reminder(payload, 0)
-    reminder["updated_at"] = current_app_time({}).isoformat(timespec="seconds")
-    rows = list_smart_reminders(profile)
-    replaced = False
-    for i, row in enumerate(rows):
-        if row.get("id") == reminder["id"]:
-            reminder["created_at"] = row.get("created_at") or reminder["created_at"]
-            rows[i] = reminder
-            replaced = True
-            break
-    if not replaced:
-        if len(rows) >= 40:
-            return {"ok": False, "error": "smart_reminder_limit"}, 400
-        rows.append(reminder)
-    profile["smart_reminders"] = rows
-    # ç”¢å“æ±ºç­–ï¼šæ™ºèƒ½æé†’æ°¸é åªç§è¨Šï¼Œç¾¤çµ„æ——æ¨™å›ºå®šé—œé–‰
-    profile["smart_reminder_defaults"] = {"notify_private": True, "notify_group": False}
-    save_state(data_file, state)
-    return {"ok": True, "reminder": reminder, "reminders": rows}, 200
-
-
-def delete_smart_reminder(data_file, line_user_id, reminder_id):
-    line_user_id = str(line_user_id or "").strip()
-    reminder_id = str(reminder_id or "").strip()
-    if not line_user_id or not reminder_id:
-        return {"ok": False, "error": "missing id"}, 400
-    state = load_state(data_file)
-    profile = get_profile(state, line_user_id)
-    if not plan_has_smart_reminders(profile):
-        return {"ok": False, "error": "smart_reminders_require_799"}, 403
-    rows = [r for r in list_smart_reminders(profile) if r.get("id") != reminder_id]
-    profile["smart_reminders"] = rows
-    save_state(data_file, state)
-    return {"ok": True, "reminders": rows}, 200
-
-
-def send_smart_reminders(config):
-    """Push merged, capped smart reminders to self or one bound core guardian."""
-    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-    if not token:
-        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
-
-    data_file = config["DATA_FILE"]
-    state = load_state(data_file)
-    sender = config.get("LINE_PUSH_SENDER") or line_push_message
-    now = current_app_time(config)
-    today_date = now.date()
-    tomorrow = today_date + timedelta(days=1)
-    today_key = today_date.strftime("%Y-%m-%d")
-    sent = 0
-    skipped = 0
-    results = []
-    now_hm = now.strftime("%H:%M")
-    eve_window = now.hour >= 20
-    system_error = False
-
-    for user in state.get("users", {}).values():
-        line_user_id = user.get("line_user_id")
-        if (
-            not line_user_id
-            or user.get("membership_paused")
-            or not membership_access_active(user, now)
-            or not plan_has_smart_reminders(user)
-        ):
-            skipped += 1
-            continue
-        sent_keys = set(user.get("smart_reminder_sent_keys") or [])
-        snooze = user.get("smart_reminder_snooze") or {}
-        daily_all = user.setdefault("smart_reminder_daily_usage", {})
-        usage = daily_all.setdefault(today_key, {"private": 0, "guardian": 0})
-        # Keep only a compact rolling window.
-        user["smart_reminder_daily_usage"] = {
-            key: value for key, value in daily_all.items() if key >= (today_date - timedelta(days=7)).isoformat()
-        }
-        bound_guardians = {
-            get_contact_line_id(contact)
-            for contact in user.get("contacts") or []
-            if contact_is_bound_guardian(contact, line_user_id)
-        }
-        due_groups = {}
-        for reminder in list_smart_reminders(user):
-            rid = reminder.get("id")
-            remind_hm = str(reminder.get("remind_time") or "09:00").strip()
-            if not REMINDER_TIME_PATTERN.match(remind_hm):
-                remind_hm = "09:00"
-            target_spec = str(reminder.get("delivery_target") or "private")
-            if target_spec == "private":
-                target_kind, target_id = "private", line_user_id
-            elif target_spec.startswith("guardian:"):
-                target_kind, target_id = "guardian", target_spec.split(":", 1)[1]
-                if target_id not in bound_guardians:
-                    skipped += 1
-                    continue
-            else:
-                skipped += 1
-                continue
-            if now_hm >= remind_hm and smart_reminder_occurs_on(reminder, today_date):
-                key = f"{today_key}:{rid}:day"
-                snooze_until = parse_datetime(snooze.get("until")) if snooze.get("id") == rid else None
-                if key in sent_keys and not (snooze_until and now >= snooze_until):
-                    continue
-                if snooze_until and now < snooze_until:
-                    continue
-                due_groups.setdefault(("day", remind_hm, target_kind, target_id), []).append((key, reminder))
-            if eve_window and reminder.get("eve_remind", True) and smart_reminder_occurs_on(reminder, tomorrow):
-                key = f"{today_key}:{rid}:eve"
-                if key in sent_keys:
-                    continue
-                due_groups.setdefault(("eve", "20:00", target_kind, target_id), []).append((key, reminder))
-
-        for (mode, slot, target_kind, target_id), entries in sorted(due_groups.items()):
-            limit = 2 if target_kind == "private" else 1
-            if int(usage.get(target_kind) or 0) >= limit:
-                skipped += len(entries)
-                continue
-            keys = [key for key, _reminder in entries]
-            reminders = [reminder for _key, reminder in entries]
-            delivery_key = f"smart_reminder:{today_key}:{mode}:{slot}:{target_kind}:{target_id}"
-            if not push_attempt_allowed(user, delivery_key):
-                skipped += len(entries)
-                continue
-            message = build_smart_reminder_digest(reminders, mode=mode)
-            try:
-                result = sender(token, target_id, message)
-                _clear_push_delivery_failure(user, delivery_key)
-                sent_keys.update(keys)
-                usage[target_kind] = int(usage.get(target_kind) or 0) + 1
-                if snooze.get("id") in {r.get("id") for r in reminders}:
-                    user["smart_reminder_snooze"] = {}
-                append_notification_log(
-                    state, "smart_reminder", target_id, "sent",
-                    message.get("altText"), json.dumps(result, ensure_ascii=False),
-                )
-                record_line_message_usage(
-                    state,
-                    category="smart_reminder",
-                    owner_line_user_id=line_user_id,
-                    recipient_count=1,
-                    event_id=delivery_key,
-                    sent_at=now,
-                )
-                sent += 1
-                results.append({
-                    "line_user_id": line_user_id,
-                    "target": target_kind,
-                    "recipient": target_id,
-                    "ids": [r.get("id") for r in reminders],
-                    "mode": mode,
-                    "merged_count": len(reminders),
-                })
-            except Exception as exc:
-                failure = _record_scheduled_push_failure(
-                    state, user, delivery_key, "smart_reminder", target_id,
-                    message.get("altText"), exc, now,
-                )
-                skipped += len(entries)
-                results.append({"line_user_id": line_user_id, "ids": [r.get("id") for r in reminders], "error": str(exc)})
-                if failure["kind"] == "system":
-                    system_error = True
-                    break
-        user["smart_reminder_sent_keys"] = sorted(sent_keys)[-120:]
-        if system_error:
-            break
-
-    save_state(data_file, state)
-    return {
-        "sent": sent,
-        "skipped": skipped,
-        "results": results,
-        "system_error": system_error,
-    }, 200
-
-
-def cleanup_expired_sos(config):
-    state = load_state(config["DATA_FILE"])
-    removed = sos_flow.sos_purge_old(state, keep_minutes=60) if sos_flow else []
-    save_state(config["DATA_FILE"], state)
-    return {"removed": len(removed)}, 200
-
-
-def send_profile_completion_reminders(config):
-    """Private, retryable reminders at bind, +24h, day 3, and day 7 only."""
-    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-    if not token:
-        return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
-    state = load_state(config["DATA_FILE"])
-    sender = config.get("LINE_PUSH_SENDER") or line_push_message
-    now = current_app_time(config)
-    sent = skipped = 0
-    results = []
-    for profile in (state.get("users") or {}).values():
-        if not isinstance(profile, dict) or not profile.get("profile_completion_required"):
-            continue
-        if profile.get("membership_paused") or not membership_access_active(profile, now):
-            skipped += 1
-            continue
-        completion_peer = str(
-            profile.get("profile_completion_peer_line_user_id") or ""
-        ).strip()
-        completion_contacts = [
-            contact
-            for contact in (profile.get("contacts") or [])
-            if isinstance(contact, dict)
-            and resolve_contact_role(contact) == "guardian"
-            and (
-                not completion_peer
-                or get_contact_line_id(contact) == completion_peer
-            )
-        ]
-        if any(complete_guardian_contact(contact) for contact in completion_contacts):
-            profile["profile_completion_required"] = False
-            profile["profile_completion_completed_at"] = now.isoformat(timespec="seconds")
-            skipped += 1
-            continue
-        try:
-            bound_at = datetime.fromisoformat(str(profile.get("profile_completion_bound_at") or ""))
-        except ValueError:
-            skipped += 1
-            continue
-        elapsed_days = max(0, (now.date() - bound_at.date()).days)
-        already = {int(day) for day in (profile.get("profile_completion_reminder_days") or [])}
-        due = [day for day in PROFILE_COMPLETION_REMINDER_DAYS if day <= elapsed_days and day not in already]
-        for day in due:
-            message = "å·²å®Œæˆæ ¸å¿ƒå®ˆè­·ç¶å®šã€‚è«‹ç§è¨Šã€Œæ¯æ—¥å¹³å®‰ã€å®Œæˆè‡ªå·±çš„è¯çµ¡è³‡æ–™ï¼›LINE é€šçŸ¥å·²å¯ä½¿ç”¨ï¼Œé›»è©±è¯çµ¡æœƒåœ¨è³‡æ–™å®Œæˆå¾Œå•Ÿç”¨ã€‚"
-            try:
-                result = sender(token, profile.get("line_user_id"), message)
-                append_notification_log(state, "profile_completion", profile.get("line_user_id"), "sent", message, json.dumps(result, ensure_ascii=False))
-                already.add(day)
-                sent += 1
-                results.append({"line_user_id": profile.get("line_user_id"), "day": day, "status": "sent"})
-            except Exception as exc:
-                append_notification_log(state, "profile_completion", profile.get("line_user_id"), "failed", message, str(exc)[:400])
-                results.append({"line_user_id": profile.get("line_user_id"), "day": day, "status": "failed"})
-        profile["profile_completion_reminder_days"] = sorted(already)
-    save_state(config["DATA_FILE"], state)
-    return {"sent": sent, "skipped": skipped, "results": results}, 200
-
-
-def run_cron_tick(config):
-    now = current_app_time(config)
-    results = {}
-    slot = now.strftime("%H:%M")
-
-    migration_data, migration_code = migrate_existing_free_members(config)
-    results["membership_transition_migration"] = {
-        "status": migration_code,
-        "result": migration_data,
-    }
-    # æ¯æ¬¡ Cron éƒ½å…ˆè£œé€åˆ°æœŸé‡Œç¨‹ç¢‘ï¼Œå†åŸ·è¡Œåˆ°æœŸé™ç´šï¼›claim/outbox æœƒé˜²é‡ã€‚
-    milestone_data, milestone_code = send_trial_milestone_notices(config)
-    results["trial_milestone_notices"] = {
-        "status": milestone_code,
-        "result": milestone_data,
-    }
-    expiry_data, expiry_code = apply_expired_plan_downgrades(config)
-    results["membership_expiry"] = {
-        "status": expiry_code,
-        "result": expiry_data,
-    }
-
-    always = {
-        "checkin_reminders": send_checkin_reminders,
-        "binding_notification_retries": retry_pending_bind_notifications,
-        "profile_completion_reminders": send_profile_completion_reminders,
-        "overdue_alerts": send_due_reminders,
-        "guardian_group_daily_summaries": send_guardian_group_daily_summaries,
-        "smart_reminders": send_smart_reminders,
-        "sos_cleanup": cleanup_expired_sos,
-    }
-    for name, task in always.items():
-        data, code = task(config)
-        results[name] = {"status": code, "result": data}
-        if isinstance(data, dict) and data.get("system_error"):
-            return {
-                "ok": False,
-                "system_error": True,
-                "ran_at": now.isoformat(timespec="seconds"),
-                "timezone": "Asia/Taipei",
-                "tasks": results,
-            }, 200
-
-    token = config.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-    results["guardian_group_refresh"] = refresh_all_guardian_groups_count(
-        config["DATA_FILE"],
-        token=token,
-    )
-
-    daily = {
-        "09:00": ("birthday_reminders", send_birthday_reminders),
-        "09:05": ("contact_reminders", send_missing_contact_reminders),
-        "10:00": ("renewal_reminders", send_renewal_reminders),
-        "19:00": ("beta_daily_feedback", send_beta_daily_feedback),
-        "02:30": ("data_cleanup", cleanup_expired_data),
-    }
-    if slot in daily:
-        name, task = daily[slot]
-        data, code = task(config)
-        results[name] = {"status": code, "result": data}
-        if isinstance(data, dict) and data.get("system_error"):
-            return {
-                "ok": False,
-                "system_error": True,
-                "ran_at": now.isoformat(timespec="seconds"),
-                "timezone": "Asia/Taipei",
-                "tasks": results,
-            }, 200
-
-    return {
-        "ok": all(
-            item.get("status", 200) < 500
-            for item in results.values()
-            if isinstance(item, dict)
-        ),
-        "system_error": False,
-        "ran_at": now.isoformat(timespec="seconds"),
-        "timezone": "Asia/Taipei",
-        "tasks": results,
-    }, 200
-
-
-def app_config(config):
-    token = (
-        config.get("LINE_CHANNEL_ACCESS_TOKEN")
-        or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
-        or os.environ.get("CHANNEL_ACCESS_TOKEN")
-        or ""
-    ).strip()
-    secret = (
-        config.get("LINE_CHANNEL_SECRET")
-        or os.environ.get("LINE_CHANNEL_SECRET")
-        or os.environ.get("CHANNEL_SECRET")
-        or ""
-    ).strip()
-    return {
-        "liff_id": config.get("LIFF_ID") or os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID,
-        "legacy_liff_id": (
-            config.get("LEGACY_LIFF_ID")
-            or os.environ.get("LEGACY_LIFF_ID")
-            or DEFAULT_LEGACY_LIFF_ID
-        ),
-        "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
-        # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gh",
-        # Both token and secret are required for LINE webhook / messaging.
-        "line_enabled": bool(token and secret),
-        "require_liff_auth": str(
-            config.get("REQUIRE_LIFF_AUTH")
-            if config.get("REQUIRE_LIFF_AUTH") is not None
-            else os.environ.get("REQUIRE_LIFF_AUTH", "0")
-        ).strip().lower()
-        in {"1", "true", "yes", "on"},
-        "ecpay_ready": bool(ecpay and ecpay.ecpay_configured(config)),
-        "newebpay_ready": bool(newebpay and newebpay.newebpay_configured(config)),
-        "sms_live": bool(
-            (config.get("SMSKING_USERNAME") or os.environ.get("SMSKING_USERNAME") or "").strip()
-            and (config.get("SMSKING_PASSWORD") or os.environ.get("SMSKING_PASSWORD") or "").strip()
-        ),
-    }
-
-
-def authenticated_line_user(payload=None, *, args=None, headers=None, config=None):
-    """Resolve one caller identity; never trust a route's requested member ID."""
-    payload = payload or {}
-    args = args or {}
-    headers = headers or {}
-    if resolve_line_user_id is None:
-        claimed = str(payload.get("line_user_id") or args.get("line_user_id") or "").strip()
-        if not claimed:
-            return None, ({"ok": False, "error": "missing line_user_id"}, 400)
-        return claimed, None
-    return resolve_line_user_id(
-        headers=headers,
-        payload=payload,
-        args=args,
-        config=config or {},
-    )
-
-
-def update_onboarding_reminder(data_file, line_user_id, payload):
-    state = load_state(data_file)
-    profile = get_profile(state, line_user_id)
-    max_count = int(plan_rules(profile).get("daily_reminders") or 1)
-    if "reminder_times" in payload:
-        raw = payload.get("reminder_times")
-        if not isinstance(raw, list) or not raw:
-            return {"ok": False, "error": "reminder_times must be a non-empty list"}, 400
-        normalized = normalize_reminder_times(raw, max_count)
-        if not normalized:
-            return {"ok": False, "error": "invalid reminder_times format, use HH:MM"}, 400
-        times = apply_reminder_times_to_profile(profile, times=normalized)
-    else:
-        reminder_time = (payload.get("reminder_time") or "").strip()
-        if not REMINDER_TIME_PATTERN.match(reminder_time):
-            return {"ok": False, "error": "invalid reminder_time format, use HH:MM"}, 400
-        times = apply_reminder_times_to_profile(profile, single=reminder_time)
-    if "daily_checkin_reminder_enabled" in payload:
-        profile["daily_checkin_reminder_enabled"] = bool(
-            payload.get("daily_checkin_reminder_enabled")
-        )
-    if "grace_hours" in payload:
-        profile["grace_hours"] = normalize_grace_hours(payload.get("grace_hours"))
-    else:
-        profile["grace_hours"] = normalize_grace_hours(profile.get("grace_hours"))
-    save_state(data_file, state)
-    return {
-        "ok": True,
-        "reminder_time": times[0],
-        "reminder_times": times,
-        "daily_reminders": max_count,
-        "daily_checkin_reminder_enabled": bool(
-            profile.get("daily_checkin_reminder_enabled", True)
-        ),
-        "grace_hours": normalize_grace_hours(profile.get("grace_hours")),
-        "warning_cancel_minutes": int(
-            profile.get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
-        ),
-        "allowed_grace_hours": list(ALLOWED_GRACE_HOURS),
-    }, 200
-
-
-def complete_onboarding_for_user(data_file, line_user_id, payload):
-    state = load_state(data_file)
-    profile = state.get("users", {}).get(line_user_id)
-    if not profile:
-        return {"ok": False, "error": "user not registered"}, 404
-    access = member_access_state(profile)
-    if access["guardian_required"]:
-        return {
-            "ok": False,
-            "error": "guardian_required",
-            "message": "å¿…é ˆå…ˆå®Œæˆè‡³å°‘ 1 ä½å¯æ¥æ”¶ LINE é€šçŸ¥çš„æ ¸å¿ƒå®ˆè­·äººç¶å®š",
-            **access,
-        }, 400
-    profile["is_onboarding_completed"] = True
-    if "reminder_times" in payload or payload.get("reminder_time"):
-        apply_reminder_times_to_profile(
-            profile,
-            times=payload.get("reminder_times"),
-            single=payload.get("reminder_time"),
-        )
-    else:
-        apply_reminder_times_to_profile(profile)
-    istate = get_or_create_interaction_state(profile)
-    istate["onboarding_completed"] = True
-    if "add_first_guardian" not in istate["completed_steps"]:
-        istate["completed_steps"].append("add_first_guardian")
-    if "set_reminder_time" not in istate["completed_steps"]:
-        istate["completed_steps"].append("set_reminder_time")
-    if not istate.get("pending_steps"):
-        istate["pending_steps"] = [
-            "explore_app",
-            "read_help",
-            "add_more_guardians_if_paid",
-        ]
-    istate["last_interaction_at"] = datetime.now().isoformat(timespec="seconds")
-    save_state(data_file, state)
-    times = reminder_times_for_profile(profile)
-    return {
-        "ok": True,
-        **member_access_state(profile),
-        "is_onboarding_completed": True,
-        "setup_completed": True,
-        "reminder_time": times[0],
-        "reminder_times": times,
-        "interaction_state": istate,
-    }, 200
-
-
-def checkin_for_user(data_file, line_user_id, payload, config=None):
-    payload = dict(payload or {})
-    payload["line_user_id"] = line_user_id
-    now = current_app_time(config or {})
-    event_id = f"checkin:{line_user_id}:{uuid.uuid4().hex}"
-    mutate_state_atomically(
-        data_file,
-        lambda current_state: current_state.setdefault(
-            "launch_events", []
-        ).append({
-            "id": event_id,
-            "kind": "checkin",
-            "success": False,
-            "at": now.isoformat(timespec="seconds"),
-        }),
-    )
-    state = load_state(data_file)
-    if line_user_id not in state.get("users", {}):
-        register_line_user(
-            data_file,
-            {
-                "line_user_id": line_user_id,
-                "display_name": str(payload.get("display_name") or "LINE ä½¿ç”¨è€…"),
-            },
-        )
-        state = load_state(data_file)
-    access = member_access_state(state.get("users", {}).get(line_user_id))
-    if access["guardian_required"]:
-        return {
-            "ok": False,
-            "error": "guardian_required",
-            "message": "å¿…é ˆå…ˆå®Œæˆè‡³å°‘ 1 ä½å¯æ¥æ”¶ LINE é€šçŸ¥çš„æ ¸å¿ƒå®ˆè­·äººç¶å®š",
-            **access,
-        }, 400
-    status = record_checkin(data_file, payload)
-    mutate_state_atomically(
-        data_file,
-        lambda current_state: next(
-            (
-                row.update({"success": True})
-                for row in current_state.get("launch_events") or []
-                if row.get("id") == event_id
-            ),
-            None,
-        ),
-    )
-    status["ok"] = True
-    return status, 200
-
-
-def status_for_user(data_file, line_user_id, display_name=""):
-    state = load_state(data_file)
-    profile = state.get("users", {}).get(line_user_id)
-    if not profile:
-        data, code = register_line_user(
-            data_file,
-            {
-                "line_user_id": line_user_id,
-                "display_name": str(display_name or "").strip() or "LINE ä½¿ç”¨è€…",
-            },
-        )
-        if code != 200:
-            return data, code
-        if isinstance(data, dict):
-            data["auto_registered"] = True
-        return data, 200
-    dirty = scrub_self_line_ids_on_contacts(profile)
-    dirty = ensure_onboarding_completed_flag(profile) or dirty
-    today = today_string()
-    if profile_is_today_checked(profile) and today not in set(profile.get("history") or []):
-        hist = set(profile.get("history") or [])
-        hist.add(today)
-        profile["history"] = sorted(hist)
-        dirty = True
-    before_groups = list(profile.get("guardian_group_ids") or [])
-    sync_owned_guardian_group_ids(state, profile)
-    if list(profile.get("guardian_group_ids") or []) != before_groups:
-        dirty = True
-    if dirty:
-        save_state(data_file, state)
-    return build_status(profile, state), 200
-
-
-def create_app(config=None):
-    if Flask is None:
-        return MiniApp(config)
-
-    supplied_config = config or {}
-    liff_id = (
-        supplied_config.get("LIFF_ID")
-        or os.environ.get("LIFF_ID")
-        or DEFAULT_LIFF_ID
-    ).strip() or DEFAULT_LIFF_ID
-    explicit_channel_id = (
-        supplied_config.get("LINE_LOGIN_CHANNEL_ID")
-        or os.environ.get("LINE_LOGIN_CHANNEL_ID")
-        or os.environ.get("LINE_Login_Channel_ID")
-        or ""
-    ).strip()
-    line_login_channel_id = (
-        explicit_channel_id
-        or liff_id.split("-", 1)[0]
-        or DEFAULT_LINE_LOGIN_CHANNEL_ID
-    )
-
-    app = Flask(__name__, static_folder=".", static_url_path="")
-    app._start_time = datetime.now()  # 2026-07-21 patch 17: ä¾› /api/bot/status è¨ˆç®— uptime
-
-    @app.errorhandler(AccountMigratedError)
-    def _account_migrated_error(_error):
-        return jsonify(account_migrated_response()), 409
-
-    app.config.update(
-        DATA_FILE=resolve_data_file(os.environ.get("DATA_FILE")),
-        ADMIN_PASSWORD=os.environ.get("ADMIN_PASSWORD", ""),
-        ADMIN_OPERATIONS_PASSWORD=os.environ.get("ADMIN_OPERATIONS_PASSWORD", ""),
-        ADMIN_FINANCE_PASSWORD=os.environ.get("ADMIN_FINANCE_PASSWORD", ""),
-        ADMIN_VIEWER_PASSWORD=os.environ.get("ADMIN_VIEWER_PASSWORD", ""),
-        ADMIN_SESSION_SECRET=os.environ.get("ADMIN_SESSION_SECRET", ""),
-        TRUST_PROXY_HEADERS=os.environ.get("TRUST_PROXY_HEADERS", ""),
-        ALLOW_OPEN_ADMIN=os.environ.get("ALLOW_OPEN_ADMIN", ""),
-        ADMIN_OPEN=os.environ.get("ADMIN_OPEN", ""),
-        PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
-        SESSION_COOKIE_HTTPONLY=True,
-        SESSION_COOKIE_SECURE=True,
-        SESSION_COOKIE_SAMESITE="Strict",
-        LINE_CHANNEL_ACCESS_TOKEN=(
-            os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
-            or os.environ.get("CHANNEL_ACCESS_TOKEN")
-            or ""
-        ),
-        LINE_CHANNEL_SECRET=(
-            os.environ.get("LINE_CHANNEL_SECRET")
-            or os.environ.get("CHANNEL_SECRET")
-            or ""
-        ),
-        # Accept odd casing from Render UI typos (LINE_Login_Channel_ID etc.)
-        LINE_LOGIN_CHANNEL_ID=line_login_channel_id,
-        LINE_LOGIN_CHANNEL_SECRET=(
-            os.environ.get("LINE_LOGIN_CHANNEL_SECRET")
-            or os.environ.get("LINE_Login_CHANNEL_SECRET")
-            or ""
-        ),
-        LEGACY_LINE_LOGIN_CHANNEL_ID=os.environ.get(
-            "LEGACY_LINE_LOGIN_CHANNEL_ID", "2010674803"
-        ),
-        LEGACY_LIFF_ID=os.environ.get(
-            "LEGACY_LIFF_ID", DEFAULT_LEGACY_LIFF_ID
-        ),
-        ACCOUNT_MIGRATION_SECRET=os.environ.get("ACCOUNT_MIGRATION_SECRET", ""),
-        ACCOUNT_MIGRATION_TTL_SECONDS=600,
-        LIFF_ID=liff_id,
-        APP_PUBLIC_URL=os.environ.get("APP_PUBLIC_URL", ""),
-        APP_TIMEZONE=os.environ.get("APP_TIMEZONE", "Asia/Taipei"),
-        GA4_PROPERTY_ID=os.environ.get("GA4_PROPERTY_ID", ""),
-        GA4_SERVICE_ACCOUNT_JSON=os.environ.get("GA4_SERVICE_ACCOUNT_JSON", ""),
-        GA4_MEASUREMENT_ID=os.environ.get("GA4_MEASUREMENT_ID", "G-7LT14XLHFM"),
-        WORDPRESS_SITE_URL=os.environ.get("WORDPRESS_SITE_URL", ""),
-        WORDPRESS_USERNAME=os.environ.get("WORDPRESS_USERNAME", ""),
-        WORDPRESS_APPLICATION_PASSWORD=os.environ.get("WORDPRESS_APPLICATION_PASSWORD", ""),
-        LINE_MONTHLY_MESSAGE_LIMIT=os.environ.get("LINE_MONTHLY_MESSAGE_LIMIT", "200"),
-        LINE_MESSAGE_WARNING_PERCENT=os.environ.get("LINE_MESSAGE_WARNING_PERCENT", "80"),
-        LINE_MESSAGE_HARD_STOP_PERCENT=os.environ.get("LINE_MESSAGE_HARD_STOP_PERCENT", "100"),
-        CRON_SECRET=os.environ.get("CRON_SECRET", ""),
-        REQUIRE_LIFF_AUTH=os.environ.get("REQUIRE_LIFF_AUTH", "0"),
-        NEWEBPAY_MERCHANT_ID=os.environ.get("NEWEBPAY_MERCHANT_ID", ""),
-        NEWEBPAY_HASH_KEY=os.environ.get("NEWEBPAY_HASH_KEY", ""),
-        NEWEBPAY_HASH_IV=os.environ.get("NEWEBPAY_HASH_IV", ""),
-        NEWEBPAY_STAGE=os.environ.get("NEWEBPAY_STAGE", "sandbox"),
-        NEWEBPAY_MPG_URL=os.environ.get("NEWEBPAY_MPG_URL", ""),
-        ECPAY_MERCHANT_ID=os.environ.get("ECPAY_MERCHANT_ID", ""),
-        ECPAY_HASH_KEY=os.environ.get("ECPAY_HASH_KEY", ""),
-        ECPAY_HASH_IV=os.environ.get("ECPAY_HASH_IV", ""),
-        ECPAY_STAGE=os.environ.get("ECPAY_STAGE", "sandbox"),
-        ECPAY_PERIOD_TIMES=os.environ.get("ECPAY_PERIOD_TIMES", "99"),
-        SMSKING_USERNAME=os.environ.get("SMSKING_USERNAME", ""),
-        SMSKING_PASSWORD=os.environ.get("SMSKING_PASSWORD", ""),
-        SMTP_HOST=os.environ.get("SMTP_HOST", ""),
-        SMTP_PORT=os.environ.get("SMTP_PORT", "587"),
-        SMTP_USERNAME=os.environ.get("SMTP_USERNAME", ""),
-        SMTP_PASSWORD=os.environ.get("SMTP_PASSWORD", ""),
-        SMTP_USE_TLS=os.environ.get("SMTP_USE_TLS", "true"),
-        SUPPORT_FROM_EMAIL=os.environ.get("SUPPORT_FROM_EMAIL", ""),
-        R2_ENDPOINT=os.environ.get("R2_ENDPOINT", ""),
-        R2_ACCESS_KEY_ID=os.environ.get("R2_ACCESS_KEY_ID", ""),
-        R2_SECRET_ACCESS_KEY=os.environ.get("R2_SECRET_ACCESS_KEY", ""),
-        R2_BUCKET=os.environ.get("R2_BUCKET", ""),
-        R2_BACKUP_ENCRYPTION_KEY=os.environ.get(
-            "R2_BACKUP_ENCRYPTION_KEY", ""
-        ),
-        TEST_LINE_USER_IDS=os.environ.get("TEST_LINE_USER_IDS", ""),
-    )
-    if config:
-        app.config.update(config)
-    app.secret_key = (
-        app.config.get("ADMIN_SESSION_SECRET")
-        or secrets.token_hex(32)
-    )
-
-    def _admin_guard(*, write=False, permission=None):
-        if not admin_security_ready(app.config):
-            return jsonify({"error": "admin_not_configured"}), 503
-        if session.get("admin_authenticated") is not True:
-            return jsonify({"error": "unauthorized"}), 401
-        if write:
-            expected = str(session.get("admin_csrf") or "")
-            provided = str(request.headers.get("X-CSRF-Token") or "")
-            if not expected or not secrets.compare_digest(expected, provided):
-                return jsonify({"error": "csrf_required"}), 403
-        if permission:
-            role = str(session.get("admin_role") or "viewer")
-            if permission not in ADMIN_ROLE_PERMISSIONS.get(role, set()):
-                append_admin_audit(
-                    app.config["DATA_FILE"],
-                    "permission.denied",
-                    "failed",
-                    {"role": role, "required_permission": permission},
-                )
-                return jsonify({"error": "forbidden", "required_permission": permission}), 403
-        return None
-
-    def _admin_mutation_response(action, data, code=200):
-        append_admin_audit(
-            app.config["DATA_FILE"],
-            action,
-            "success" if code < 400 else "failed",
-            {"http_status": code},
-        )
-        return jsonify(data), code
-
-    def _admin_login_transport_secure():
-        if app.config.get("TESTING") is True:
-            return True
-        if request.is_secure:
-            return True
-        if str(request.remote_addr or "") in {"127.0.0.1", "::1"}:
-            return True
-        trusted_proxy = (
-            _env_flag_on("RENDER", app.config)
-            or _env_flag_on("TRUST_PROXY_HEADERS", app.config)
-        )
-        forwarded_proto = str(
-            request.headers.get("X-Forwarded-Proto") or ""
-        ).split(",", 1)[0].strip().lower()
-        return trusted_proxy and forwarded_proto == "https"
-
-    @app.post("/api/admin/login")
-    def admin_login_api():
-        if not _admin_login_transport_secure():
-            return jsonify({"error": "https_required"}), 400
-        if not admin_security_ready(app.config):
-            return jsonify({"error": "admin_not_configured"}), 503
-        payload = request.get_json(silent=True) or {}
-        client_key = str(request.remote_addr or "unknown")
-        if admin_login_rate_limited(client_key):
-            return jsonify({"error": "too_many_attempts"}), 429
-        role = admin_role_for_password(app.config, payload.get("password"))
-        if role is None:
-            record_admin_login_failure(client_key)
-            append_admin_audit(app.config["DATA_FILE"], "session.login", "failed")
-            return jsonify({"error": "invalid_credentials"}), 401
-        ADMIN_LOGIN_ATTEMPTS.pop(client_key, None)
-        session.clear()
-        session.permanent = True
-        session["admin_authenticated"] = True
-        session["admin_role"] = role
-        session["admin_csrf"] = secrets.token_urlsafe(32)
-        append_admin_audit(app.config["DATA_FILE"], "session.login", "success")
-        return jsonify({
-            "ok": True,
-            "csrf_token": session["admin_csrf"],
-            "role": role,
-            "permissions": admin_permissions_for_role(role),
-            "expires_in": 8 * 60 * 60,
-        })
-
-    @app.get("/api/admin/session")
-    def admin_session_api():
-        if not admin_security_ready(app.config):
-            return jsonify({"authenticated": False, "error": "admin_not_configured"}), 503
-        authenticated = session.get("admin_authenticated") is True
-        return jsonify({
-            "authenticated": authenticated,
-            "csrf_token": session.get("admin_csrf") if authenticated else None,
-            "role": session.get("admin_role") if authenticated else None,
-            "permissions": admin_permissions_for_role(session.get("admin_role")) if authenticated else [],
-        }), (200 if authenticated else 401)
-
-    @app.post("/api/admin/logout")
-    def admin_logout_api():
-        denied = _admin_guard(write=True)
-        if denied:
-            return denied
-        session.clear()
-        append_admin_audit(app.config["DATA_FILE"], "session.logout", "success")
-        return jsonify({"ok": True})
-
-    def _authenticated_line_user(payload=None, *, use_args=False):
-        """Resolve LINE user from verified id_token when required."""
-        payload = payload if payload is not None else (request.get_json(silent=True) or {})
-        args = request.args if use_args else {}
-        return authenticated_line_user(
-            payload,
-            args=args,
-            headers={key: value for key, value in request.headers.items()},
-            config=app.config,
-        )
-
-    def _should_keep_liff_endpoint_spa():
-        """LIFF Endpoint MUST always serve the SPA that runs liff.init().
-
-        Never 302 `/?invite_from=` (or friend_invite) away from `/`:
-        - LINE opens Endpoint with query / liff.state
-        - LINE Login returns `code`/`state` on the same Endpoint URL
-        Redirecting those to `/invite` strips OAuth params â†’ iOS+Android login dies.
-        External-browser invitees should use explicit `/invite` short links instead.
-        """
-        return True
-
-    @app.get("/")
-    def index():
-        # Always serve SPA on LIFF Endpoint `/` (see _should_keep_liff_endpoint_spa).
-        _ = _should_keep_liff_endpoint_spa()
-        return send_from_directory(app.static_folder, "index.html")
-
-    @app.get("/invite")
-    def invite_short_link():
-        """Invite landing for external browsers only (not the LIFF Endpoint)."""
-        return send_from_directory(app.static_folder, "invite.html")
-
-    @app.get("/beta/399")
-    @app.get("/beta/799")
-    def beta_registration_landing():
-        """Public 21-day beta introduction; the CTA continues in verified LIFF."""
-        return send_from_directory(app.static_folder, "beta-register.html")
-
-    @app.get("/guardian-guide")
-    def guardian_guide():
-        """Detailed guardian notice linked from the concise invite landing."""
-        return send_from_directory(app.static_folder, "guardian-guide.html")
-
-    @app.get("/health")
-    def health():
-        persist = persistence_info(app.config["DATA_FILE"])
-        return jsonify({"ok": True, "persistence": persist})
-
-    @app.get("/robots.txt")
-    def robots_txt():
-        return send_from_directory(app.static_folder, "robots.txt", mimetype="text/plain")
-
-    @app.get("/sitemap.xml")
-    def sitemap_xml():
-        return send_from_directory(app.static_folder, "sitemap.xml", mimetype="application/xml")
-
-    @app.get("/admin")
-    def admin():
-        resp = send_from_directory(app.static_folder, "admin.html")
-        # Avoid stale cached admin UI (login bar / password UX) after deploys
-        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-        resp.headers["Pragma"] = "no-cache"
-        return resp
-
-    @app.get("/test_bind")
-    def test_bind():
-        return send_from_directory(app.static_folder, "test_bind.html")
-
-    @app.get("/terms")
-    def terms():
-        return send_from_directory(app.static_folder, "terms.html")
-
-    @app.get("/privacy")
-    def privacy():
-        return send_from_directory(app.static_folder, "privacy.html")
-
-    @app.get("/faq")
-    def faq():
-        return send_from_directory(app.static_folder, "faq.html")
-
-    @app.get("/help")
-    def help_page():
-        return send_from_directory(app.static_folder, "help.html")
-
-    @app.get("/pricing")
-    def pricing_page():
-        # ç›´å‡ºæ–¹æ¡ˆé ï¼Œé¿å… pricing.html â†’ liff/pricing.html é›™é‡è½‰è·³
-        return send_from_directory(app.static_folder, "liff/pricing.html")
-
-    def _liff_embed_redirect(open_action=None, fragment=""):
-        """èˆŠ /liff/* HTTPS é€£çµæ”¹å°æ°¸ä¹…å…§åµŒå…¥å£ï¼Œé¿å…å¤–é–‹ç€è¦½å™¨ã€‚"""
-        if liff_entry_url is not None:
-            target = liff_entry_url(open_action=open_action, fragment=fragment)
-        else:
-            lid = (
-                app.config.get("LIFF_ID")
-                or os.environ.get("LIFF_ID")
-                or DEFAULT_LIFF_ID
-            ).strip()
-            target = f"https://liff.line.me/{lid}"
-            if open_action:
-                target += f"?open={open_action}"
-            elif fragment:
-                target += f"#{fragment.lstrip('#')}"
-        if redirect is not None:
-            return redirect(target, code=302)
-        return jsonify({"redirect": target}), 302
-
-    # åœ–æ–‡é¸å–® / èˆŠé€£çµï¼šå°å‘ liff.line.me å…§åµŒï¼ˆå–®ä¸€ Endpoint = index.htmlï¼‰
-    @app.get("/liff/share-invite")
-    @app.get("/liff/share-invite.html")
-    def liff_share_invite_page():
-        """å°ˆç”¨ä¸€éµåˆ†äº«é ï¼ˆçµ¦ LIFF å­è·¯å¾‘ç›´é€£ï¼›ä¸ç¶“ SPA homeï¼‰ã€‚"""
-        return send_from_directory(app.static_folder, "liff/share-invite.html")
-
-    @app.get("/liff/migrate.html")
-    def liff_migration_handoff_page():
-        """Legacy LIFF handoff that asks users to explicitly reauthorize."""
-        return send_from_directory(app.static_folder, "liff/migrate.html")
-
-    # 2026-07-21 patch 24: Onboarding æµç¨‹ API
-    @app.get("/liff/onboarding")
-    def liff_onboarding():
-        return _liff_embed_redirect(open_action="onboarding")
-
-    @app.get("/api/onboarding/state")
-    def onboarding_state_api():
-        """å–å¾—ä½¿ç”¨è€… onboarding ç‹€æ…‹(å®ˆè­·äººæ˜¯å¦ç¶å®š + æé†’æ™‚é–“)ã€‚"""
-        line_user_id, err = _authenticated_line_user({}, use_args=True)
-        if err:
-            return jsonify(err[0]), err[1]
-        data, code = onboarding_status_payload(
-            app.config["DATA_FILE"],
-            line_user_id,
-            allow_missing_profile=True,
-        )
-        return jsonify(data), code
-
-    @app.post("/api/onboarding/reminder")
-    def onboarding_reminder_api():
-        """è¨­å®šä½¿ç”¨è€…æ¯æ—¥æé†’æ™‚é–“(æ”¯æ´å–®ä¸€æˆ–å¤šæ™‚æ®µ)ã€‚"""
-        data = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(data)
-        if err:
-            return jsonify(err[0]), err[1]
-        result, code = update_onboarding_reminder(
-            app.config["DATA_FILE"], line_user_id, data
-        )
-        return jsonify(result), code
-
-    @app.get("/liff/guardian")
-    def liff_guardian():
-        # æ°¸ä¹…å…¥å£æ‡‰æ˜¯ liff.line.meï¼›æ­¤è·¯å¾‘ä¿ç•™ç›¸å®¹ï¼Œå°å‘å…§åµŒ onboardingï¼ˆå®ˆè­·äººâ†’æé†’ï¼‰
-        return _liff_embed_redirect(open_action="onboarding")
-
-    @app.get("/liff/member")
-    def liff_member():
-        return _liff_embed_redirect(open_action="member")
-
-    @app.get("/liff/guardian-groups")
-    def liff_guardian_groups():
-        return _liff_embed_redirect(open_action="guardians")
-
-    @app.get("/api/config")
-    def config_api():
-        return jsonify(app_config(app.config))
-
-    @app.get("/api/bot/status")
-    def bot_status_api():
-        """2026-07-21 patch 17: Bot æ•´é«”å¥åº·ç‹€æ…‹(çµ¦è™±è‘£çœ‹)ã€‚
-
-        Returns:
-            - service: alive-checkin
-            - bot_name: æ¯æ—¥å¹³å®‰
-            - uptime_seconds: é€²ç¨‹å•Ÿå‹•å¾Œç§’æ•¸
-            - users_total: è¨»å†Šäººæ•¸
-            - guardian_groups_total: å®ˆè­·ç¾¤ç¶å®šç¸½æ•¸
-            - guardian_groups_active: æœ‰æ•ˆçš„å®ˆè­·ç¾¤æ•¸
-            - timestamp: ç•¶ä¸‹æ™‚é–“
-            - line_token_has_value / line_secret_has_value: env æ˜¯å¦æœ‰å€¼ï¼ˆä¸å›å‚³å…§å®¹ï¼‰
-            - line_token_ok / line_token_http: ç”¨ /v2/bot/info æ¢æ¸¬ token æ˜¯å¦è¢« LINE æ¥å—
-        """
-        state = load_state(app.config["DATA_FILE"])
-        groups = state.get("guardian_groups", {})
-        active_groups = sum(1 for g in groups.values() if g.get("status") == "active")
-        now = datetime.now()
-        proc_start = getattr(app, "_start_time", None)
-        uptime = (now - proc_start).total_seconds() if proc_start else None
-        token = (
-            app.config.get("LINE_CHANNEL_ACCESS_TOKEN")
-            or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
-            or os.environ.get("CHANNEL_ACCESS_TOKEN")
-            or ""
-        ).strip()
-        secret = (
-            app.config.get("LINE_CHANNEL_SECRET")
-            or os.environ.get("LINE_CHANNEL_SECRET")
-            or os.environ.get("CHANNEL_SECRET")
-            or ""
-        ).strip()
-        line_token_ok = None
-        line_token_http = None
-        if token:
-            try:
-                import urllib.request
-
-                req = urllib.request.Request(
-                    "https://api.line.me/v2/bot/info",
-                    headers={"Authorization": f"Bearer {token}"},
-                    method="GET",
-                )
-                with urllib.request.urlopen(req, timeout=8) as resp:
-                    line_token_http = int(getattr(resp, "status", 200) or 200)
-                    line_token_ok = line_token_http == 200
-            except Exception as exc:
-                code = getattr(getattr(exc, "code", None), "real", None) or getattr(exc, "code", None)
-                try:
-                    line_token_http = int(code) if code is not None else None
-                except Exception:
-                    line_token_http = None
-                line_token_ok = False
-                app.logger.warning(
-                    "line token probe failed http=%s err=%s",
-                    line_token_http,
-                    type(exc).__name__,
-                )
-        return jsonify({
-            "service": "alive-checkin",
-            "bot_name": "æ¯æ—¥å¹³å®‰",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gh",
-            "uptime_seconds": round(uptime, 1) if uptime else None,
-            "users_total": len(state.get("users", {})),
-            "guardian_groups_total": len(groups),
-            "guardian_groups_active": active_groups,
-            "timestamp": now.isoformat(timespec="seconds"),
-            "line_token_has_value": bool(token),
-            "line_secret_has_value": bool(secret),
-            "line_token_ok": line_token_ok,
-            "line_token_http": line_token_http,
-        })
-
-    @app.get("/api/status")
-    def status():
-        """LIFF é¦–è¼‰ï¼šæœ‰æœ‰æ•ˆèº«åˆ†å°± upsertï¼Œé¿å… DB è¢« ephemeral disk æ¸…æ‰å¾Œå¡ 404ã€‚"""
-        line_user_id, err = _authenticated_line_user({}, use_args=True)
-        if err:
-            return jsonify(err[0]), err[1]
-        data, code = status_for_user(
-            app.config["DATA_FILE"],
-            line_user_id,
-            request.args.get("display_name"),
-        )
-        return jsonify(data), code
-
-    @app.post("/api/line/register")
-    def line_register():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = register_line_user(app.config["DATA_FILE"], payload)
-        return jsonify(data), code
-
-    @app.post("/api/beta/claim")
-    def beta_claim_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        cohort = str(payload.get("beta_cohort") or "").strip().upper()
-        if cohort not in {"B399", "B799"}:
-            return jsonify({"ok": False, "error": "invalid_beta_link"}), 400
-        try:
-            result = mutate_state_atomically(
-                app.config["DATA_FILE"],
-                lambda state: claim_beta_link(state, line_user_id, cohort),
-            )
-        except ValueError as exc:
-            reason = str(exc)
-            messages = {
-                "cohort_full": "é€™ä¸€çµ„å°æ¸¬åé¡å·²æ»¿",
-                "already_in_other_cohort": "ä½ å·²åŠ å…¥å¦ä¸€å€‹å°æ¸¬çµ„åˆ¥",
-                "member_not_found": "è«‹å…ˆå®Œæˆ LINE æœƒå“¡è¨»å†Š",
-                "free_eligibility_already_used": "ä½ å·²ä½¿ç”¨éå…è²»é«”é©—æˆ–å°æ¸¬è³‡æ ¼",
-            }
-            return jsonify({
-                "ok": False,
-                "error": reason,
-                "message": messages.get(reason, "ç„¡æ³•åŠ å…¥å°æ¸¬"),
-            }), 409 if reason != "member_not_found" else 404
-        return jsonify({"ok": True, **result}), 200
-
-    @app.post("/api/checkin")
-    def checkin():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        result, code = checkin_for_user(
-            app.config["DATA_FILE"], line_user_id, payload, app.config
-        )
-        return jsonify(result), code
-
-    @app.post("/callback")
-    def line_callback():
-        if LineBotApi is None or WebhookHandler is None:
-            return jsonify({"error": "line-bot-sdk is not installed"}), 503
-        token = (
-            app.config.get("LINE_CHANNEL_ACCESS_TOKEN")
-            or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
-            or os.environ.get("CHANNEL_ACCESS_TOKEN")
-            or ""
-        ).strip()
-        secret = (
-            app.config.get("LINE_CHANNEL_SECRET")
-            or os.environ.get("LINE_CHANNEL_SECRET")
-            or os.environ.get("CHANNEL_SECRET")
-            or ""
-        ).strip()
-        if not token or not secret:
-            return jsonify({"error": "LINE credentials are not configured"}), 503
-
-        line_bot_api = LineBotApi(token)
-        handler = WebhookHandler(secret)
-
-        def _sos_handle(line_bot_api, line_user_id, command, reply_token=None, group_id=None):
-            """éœ€è¦å¹«å¿™ï¼šå›è¦†çµ±ä¸€ LIFF æ±‚åŠ©å…¥å£ã€‚
-
-            command:
-              - 'éœ€è¦å¹«å¿™' / 'SOS' / 'sos' / 'ç·Šæ€¥æ±‚åŠ©' : å…¥å£å¡ï¼ˆæ’¥æ‰“ + é€šçŸ¥å®¶äººï¼‰
-              - 'å–æ¶ˆéœ€è¦å¹«å¿™' / 'SOS å–æ¶ˆ' : å–æ¶ˆ pending
-            """
-            state = load_state(app.config["DATA_FILE"])
-            profile = get_profile(state, line_user_id) if line_user_id else None
-            app.logger.info(
-                "sos_handle command=%s user=%s group=%s",
-                command,
-                (line_user_id or "")[:8],
-                (group_id or "")[:8],
-            )
-
-            def reply(flex, alt_text=""):
-                messages = []
-                if FlexSendMessage is not None and flex is not None:
-                    messages.append(FlexSendMessage(alt_text=alt_text, contents=flex))
-                else:
-                    messages.append(TextSendMessage(text=alt_text or "éœ€è¦å¹«å¿™"))
-                try:
-                    if reply_token:
-                        line_bot_api.reply_message(reply_token, messages)
-                        return
-                except Exception as exc:
-                    app.logger.exception("sos reply_message failed: %s", exc)
-                # reply_token å¤±æ•—æˆ–æœªæä¾› â†’ push åˆ°åŒä¸€å€‹å°è©±
-                push_target = group_id or line_user_id
-                if not push_target:
-                    app.logger.error("sos send aborted: no push target")
-                    return
-                try:
-                    line_bot_api.push_message(push_target, messages)
-                except Exception as exc:
-                    app.logger.exception("sos push_message failed: %s", exc)
-
-            entry_commands = ("éœ€è¦å¹«å¿™", "SOS", "sos", "ç·Šæ€¥æ±‚åŠ©")
-            # å·²é€åˆ°èŠå¤©å®¤çš„èˆŠ Flex æŒ‰éˆ•ç„¡æ³•å›æ”¶ï¼›ä¿ç•™å…¶æ–‡å­—å‘½ä»¤ï¼Œ
-            # ä½†ä¸€å¾‹åªå›æ–°ç‰ˆ LIFF å…¥å£ï¼Œä¸å†å•Ÿå‹•èˆŠçš„èŠå¤©ç‹€æ…‹æ©Ÿã€‚
-            legacy_entry_commands = (
-                "é€šçŸ¥å®¶äºº",
-                "è¯çµ¡å®¶äººé€£æŒ‰3æ¬¡",
-                "éœ€è¦å¹«å¿™ç¢ºèª",
-                "SOS ç¢ºèª 2",
-                "SOS ç¢ºèª 3",
-            )
-            cancel_commands = ("SOS å–æ¶ˆ", "å–æ¶ˆéœ€è¦å¹«å¿™")
-
-            if command in cancel_commands:
-                if sos_flow.sos_cancel_pending(state, line_user_id):
-                    save_state(app.config["DATA_FILE"], state)
-                    reply(sos_flow.sos_cancelled_flex(), "âœ… å·²å–æ¶ˆéœ€è¦å¹«å¿™")
-                else:
-                    reply(None, "æ²’æœ‰å¾…å–æ¶ˆçš„éœ€è¦å¹«å¿™é€šçŸ¥")
-                return
-
-            # å…¥å£å¡ï¼šä¸€å¾‹å›ç·Šæ€¥ Flexï¼ˆä¸æ“‹æ–¹æ¡ˆï¼›å¯¦éš›é€šçŸ¥å†æª¢æŸ¥ï¼‰
-            if command in entry_commands or command in legacy_entry_commands:
-                family_tel = None
-                family_label = None
-                if profile:
-                    contacts = sorted(
-                        (profile.get("contacts") or []),
-                        key=lambda c: int(c.get("priority") or 9999),
-                    )
-                    for contact in contacts:
-                        phone = str(contact.get("phone") or contact.get("mobile") or "").strip()
-                        digits = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
-                        if digits:
-                            family_tel = digits
-                            family_label = contact.get("name") or contact.get("relationship") or "å®¶äºº"
-                            break
-                liff_sos = (
-                    liff_entry_url(open_action="sos")
-                    if liff_entry_url
-                    else "https://liff.line.me/2010848330-UAiqPPYD?open=sos"
-                )
-                reply(
-                    sos_flow.sos_emergency_flex(
-                        family_tel=family_tel,
-                        family_label=family_label,
-                        liff_sos_uri=liff_sos,
-                    ),
-                    "ğŸ†˜ éœ€è¦å¹«å¿™ â€” é€£æŒ‰ 3 æ¬¡é€šçŸ¥å®¶äºº",
-                )
-                return
-
-            if command not in entry_commands and command not in legacy_entry_commands:
-                reply(None, "è«‹å‚³é€ã€Œéœ€è¦å¹«å¿™ã€é–‹å•Ÿæ±‚åŠ©é¸é …")
-                return
-
-        def _send_welcome(line_bot_api, reply_token=None, line_user_id=None, display_name=None, trigger=None):
-            """Follow / é—œéµå­—å…±ç”¨ï¼šé€ welcome_flexï¼Œå¤±æ•—å¯« log ä¸¦ push fallbackã€‚"""
-            # æ¯æ¬¡ç™¼é€å‰å†å–ä¸€æ¬¡çœŸå¯¦æš±ç¨±ï¼ˆé¿å… Follow ç•¶ä¸‹ profile å¤±æ•—è®Šæˆç©ºç™½ï¼ã€Œæ‚¨ã€ï¼‰
-            resolved = resolve_welcome_display_name(
-                line_bot_api=line_bot_api,
-                data_file=app.config["DATA_FILE"],
-                line_user_id=line_user_id,
-                hint=display_name,
-                logger=app.logger,
-            )
-            if welcome_greeting_text is not None:
-                greeting = welcome_greeting_text(resolved)
-            elif resolved:
-                greeting = f"ğŸ‘‹ {resolved} æ‚¨å¥½ï¼Œæ­¡è¿åŠ å…¥ã€Œæ¯æ—¥å¹³å®‰ã€"
-            else:
-                greeting = "ğŸ‘‹ æ‚¨å¥½ï¼Œæ­¡è¿åŠ å…¥ã€Œæ¯æ—¥å¹³å®‰ã€"
-            app.logger.info(
-                "welcome_flex start trigger=%s user=%s name=%r has_reply=%s",
-                trigger or "unknown",
-                (line_user_id or "")[:8],
-                resolved or "",
-                bool(reply_token),
-            )
-            setup_uri = (
-                liff_entry_url(open_action="onboarding")
-                if liff_entry_url
-                else "https://liff.line.me/2010848330-UAiqPPYD?open=onboarding"
-            )
-            invite_uri = (
-                share_invite_liff_url()
-                if share_invite_liff_url
-                else "https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html"
-            )
-            help_uri = (
-                liff_entry_url(open_action="help")
-                if liff_entry_url
-                else "https://liff.line.me/2010848330-UAiqPPYD?open=help"
-            )
-            welcome_fallback = (
-                f"{greeting}\n\n"
-                "æ¯å¤© 10 ç§’ï¼Œå ±å€‹å¹³å®‰\n"
-                "å¹³å¸¸ä¸æ‰“æ“¾ï¼Œæœ‰äº‹æ‰é€šçŸ¥å®ˆè­·äºº\n\n"
-                "é–‹å§‹ä½¿ç”¨å‰å…©å€‹æ­¥é©Ÿï¼š\n"
-                "â‘  æ–°å¢ 1 ä½å®ˆè­·äºº\n"
-                "â‘¡ è¨­å®šæ¯æ—¥æé†’æ™‚é–“\n\n"
-                "ğŸ é¦–æ¬¡è¨»å†Šå¯äº«ä¸€æ¬¡ 14 å¤©å®‰å¿ƒé«”é©—\n"
-                "ç·Šæ€¥ç‹€æ³è«‹ç›´æ¥æ’¥æ‰“ 119 æˆ– 110\n\n"
-                f"å…è²»é«”é©— 14 å¤©ï¼š{setup_uri}\n"
-                f"ä¸€éµå®ˆè­·é‚€è«‹ï¼š{invite_uri}\n"
-                f"äº†è§£æ¯æ—¥å¹³å®‰ï¼š{help_uri}\n"
-                "å‚³ã€Œé–‹å§‹ã€å¯é‡æ‹¿æ­¡è¿å¡"
-            )
-            alt_text = (
-                f"æ¯æ—¥å¹³å®‰ï½œ{resolved} æ‚¨å¥½ï¼Œæ­¡è¿åŠ å…¥"
-                if resolved
-                else "æ¯æ—¥å¹³å®‰ï½œæ‚¨å¥½ï¼Œæ­¡è¿åŠ å…¥"
-            )
-            flex_contents = welcome_flex(resolved) if welcome_flex is not None else None
-            if flex_contents is None:
-                app.logger.error("welcome_flex contents is None â€” check import")
-            try:
-                if FlexSendMessage is not None and flex_contents is not None and reply_token:
-                    line_bot_api.reply_message(
-                        reply_token,
-                        FlexSendMessage(alt_text=alt_text, contents=flex_contents),
-                    )
-                    app.logger.info("welcome_flex reply ok name=%r", resolved or "")
-                    return
-                if reply_token:
-                    line_bot_api.reply_message(reply_token, TextSendMessage(text=welcome_fallback))
-                    app.logger.warning("welcome text reply fallback")
-                    return
-            except Exception as exc:
-                app.logger.exception("welcome reply failed: %s", exc)
-            if line_user_id and FlexSendMessage is not None and flex_contents is not None:
-                try:
-                    line_bot_api.push_message(
-                        line_user_id,
-                        FlexSendMessage(alt_text=alt_text, contents=flex_contents),
-                    )
-                    app.logger.info("welcome_flex push ok name=%r", resolved or "")
-                    return
-                except Exception as exc:
-                    app.logger.exception("welcome push flex failed: %s", exc)
-                    try:
-                        # Capture exact LINE error body when available
-                        err_body = getattr(exc, "error", None) or getattr(exc, "response", None)
-                        app.logger.error("welcome push flex LINE detail: %s", err_body)
-                    except Exception:
-                        pass
-            if line_user_id:
-                try:
-                    line_bot_api.push_message(line_user_id, TextSendMessage(text=welcome_fallback))
-                    app.logger.warning("welcome text push fallback")
-                except Exception as exc:
-                    app.logger.exception("welcome push text failed: %s", exc)
-
-        def _guardian_intro_messages(owner_info, hint_text=None):
-            """é€²ç¾¤æ­¡è¿ï¼šçŸ­æ–‡å­— + Flexï¼ˆé›™ä¿éšªï¼Œé¿å… Flex è¢«æ‹’æ™‚æ•´æ®µæ¶ˆå¤±ï¼‰ã€‚"""
-            tip = hint_text or (
-                "ğŸ›¡ï¸ æ­¡è¿åŠ å…¥ã€Œæ¯æ—¥å¹³å®‰ã€å®ˆè­·ç¾¤\n"
-                "å¹³æ™‚ä¸æ‰“æ“¾ï¼Œåªåœ¨éœ€è¦æ™‚é€šçŸ¥å¤§å®¶ã€‚"
-            )
-            messages = [TextSendMessage(text=tip)]
-            if FlexSendMessage is not None and guardian_group_intro_flex is not None:
-                messages.append(
-                    FlexSendMessage(
-                        alt_text="ğŸ›¡ï¸ æ­¡è¿åŠ å…¥ã€Œæ¯æ—¥å¹³å®‰ã€å®ˆè­·ç¾¤",
-                        contents=guardian_group_intro_flex(owner_info),
-                    )
-                )
-            return messages
-
-        def _reply_migrated_account(reply_token, registration_result):
-            guidance = migrated_account_webhook_guidance(
-                registration_result,
-                app.config.get("LIFF_ID") or DEFAULT_LIFF_ID,
-            )
-            if not guidance:
-                return False
-            try:
-                line_bot_api.reply_message(
-                    reply_token,
-                    TextSendMessage(text=guidance),
-                )
-            except Exception as exc:
-                app.logger.exception(
-                    "migrated account guidance reply failed: %s", exc
-                )
-            return True
-
-        def _enrich_bind_result_for_flex(result, line_user_id):
-            """è£œä¸Šè³‡è¨Šå¡ï¼šç®¡ç†äººï¼æ ¸å¿ƒå®ˆè­·äººï¼ç·Šæ€¥è¯çµ¡äººï¼ç¾¤çµ„æˆå“¡ï¼æé†’æ™‚é–“ã€‚"""
-            enriched = dict(result or {})
-            try:
-                state = load_state(app.config["DATA_FILE"])
-                profile = get_profile(state, line_user_id) or {}
-                rules = plan_rules(profile)
-                times = reminder_times_for_profile(profile) or ["09:00"]
-                contacts = profile.get("contacts") or []
-                # å·²ç¶å®šæ ¸å¿ƒå®ˆè­·äºº â‰  ç¾¤çµ„æˆå“¡ â‰  ç·Šæ€¥è¯çµ¡äººï¼›åªç”¨ core åé¡
-                guardian_count = sum(
-                    1
-                    for c in contacts
-                    if resolve_contact_role(c) != "emergency"
-                    and contact_is_bound_guardian(c, line_user_id)
-                )
-                emergency_count = sum(
-                    1 for c in contacts if resolve_contact_role(c) == "emergency"
-                )
-                enriched.setdefault(
-                    "display_name",
-                    (profile.get("display_name") or "").strip() or "ç®¡ç†å“¡",
-                )
-                enriched.setdefault("guardian_count", guardian_count)
-                enriched.setdefault(
-                    "guardian_limit",
-                    int(rules.get("core_guardian_alert_limit") or 5),
-                )
-                enriched.setdefault("core_guardian_alert_limit", int(rules.get("core_guardian_alert_limit") or 5))
-                enriched.setdefault("emergency_count", emergency_count)
-                enriched.setdefault(
-                    "emergency_limit",
-                    int(rules.get("emergency_contact_limit") or 2),
-                )
-                enriched.setdefault(
-                    "emergency_contact_limit",
-                    int(rules.get("emergency_contact_limit") or 2),
-                )
-                enriched.setdefault("reminder_time", str(times[0] if times else "09:00"))
-                enriched.setdefault("reminder_times", list(times))
-                group_id = enriched.get("group_id")
-                if group_id:
-                    refreshed = refresh_guardian_group_member_snapshot(
-                        app.config["DATA_FILE"], group_id
-                    )
-                    if refreshed and refreshed.get("member_count_at_bind") is not None:
-                        enriched["member_count"] = refreshed.get("member_count_at_bind")
-                    else:
-                        g = (state.get("guardian_groups") or {}).get(group_id) or {}
-                        if g.get("member_count_at_bind") is not None:
-                            enriched.setdefault(
-                                "member_count", g.get("member_count_at_bind")
-                            )
-            except Exception as exc:
-                app.logger.exception("enrich bind result failed: %s", exc)
-                enriched.setdefault("display_name", "ç®¡ç†å“¡")
-                enriched.setdefault("guardian_count", 0)
-                enriched.setdefault("guardian_limit", 5)
-                enriched.setdefault("emergency_count", 0)
-                enriched.setdefault("emergency_limit", 2)
-                enriched.setdefault("reminder_time", "09:00")
-            return enriched
-
-        def _owner_display_name(owner_info):
-            owner_id = (owner_info or {}).get("owner_id")
-            if not owner_id:
-                return "å®¶äºº"
-            try:
-                state = load_state(app.config["DATA_FILE"])
-                profile = state.get("users", {}).get(owner_id, {}) or {}
-                name = (profile.get("display_name") or "").strip()
-                return name or "å®¶äºº"
-            except Exception:
-                return "å®¶äºº"
-
-        def _load_group_owner_info(group_id, line_user_id=None):
-            owner_info = {
-                "bound": False,
-                "is_owner": False,
-                "owner_id": None,
-                "is_active": False,
-                "owner_plan": None,
-            }
-            if not group_id:
-                return owner_info
-            try:
-                state = load_state(app.config["DATA_FILE"])
-                existing_group = state.get("guardian_groups", {}).get(group_id or "", {})
-                if existing_group.get("status") == "active":
-                    owner_id = existing_group.get("owner_line_user_id")
-                    owner_profile = state.get("users", {}).get(owner_id, {})
-                    owner_plan = owner_profile.get("plan")
-                    is_active = bool(owner_profile) and paid_membership_is_active(owner_profile)
-                    owner_info = {
-                        "bound": True,
-                        "is_owner": (line_user_id == owner_id) if line_user_id else False,
-                        "owner_id": owner_id,
-                        "is_active": is_active,
-                        "owner_plan": owner_plan,
-                    }
-            except Exception as exc:
-                app.logger.exception("group owner_info load failed: %s", exc)
-            return owner_info
-
-        @handler.add(JoinEvent)
-        def handle_group_join(event):
-            """Bot è¢«é‚€é€²ç¾¤ â†’ å¿…é€å®ˆè­·ç¾¤æ­¡è¿å¡ï¼ˆä¸ä¾è³´è‡ªå‹•ç¶å®šæˆåŠŸï¼‰ã€‚"""
-            line_user_id = getattr(event.source, "user_id", None)
-            group_id = getattr(event.source, "group_id", None)
-            room_id = getattr(event.source, "room_id", None)
-            target_id = group_id or room_id
-            app.logger.info(
-                "JoinEvent group=%s room=%s inviter=%s",
-                (group_id or "")[:12],
-                (room_id or "")[:12],
-                (line_user_id or "")[:8],
-            )
-
-            # JoinEvent é€šå¸¸æ²’æœ‰ user_idï¼›ä¸è¦å› ç„¡æ³•è‡ªå‹•ç¶å®šå°±æ‹’é€æ­¡è¿å¡
-            outcome, _status = {"reply_text": "æ­¡è¿åŠ å…¥å®ˆè­·ç¾¤", "should_leave": False}, 200
-            if line_user_id and group_id:
-                try:
-                    outcome, _status = guardian_group_join_outcome(
-                        app.config["DATA_FILE"], line_user_id, group_id
-                    )
-                except Exception as exc:
-                    app.logger.exception("guardian_group_join_outcome failed: %s", exc)
-                    outcome, _status = {"reply_text": "æ­¡è¿åŠ å…¥å®ˆè­·ç¾¤", "should_leave": False}, 200
-
-            owner_info = _load_group_owner_info(group_id, line_user_id)
-            intro_msgs = _guardian_intro_messages(owner_info, outcome.get("reply_text") if owner_info.get("bound") else None)
-
-            sent = False
-            try:
-                line_bot_api.reply_message(event.reply_token, intro_msgs)
-                sent = True
-                app.logger.info("JoinEvent reply intro ok group=%s", (group_id or "")[:12])
-            except Exception as exc:
-                app.logger.exception("JoinEvent reply intro failed: %s", exc)
-
-            if not sent and target_id:
-                try:
-                    line_bot_api.push_message(target_id, intro_msgs)
-                    app.logger.info("JoinEvent push intro ok group=%s", (group_id or "")[:12])
-                except Exception as exc:
-                    app.logger.exception("JoinEvent push intro failed: %s", exc)
-
-            # åƒ…åœ¨ç¾¤å·²è¢«å…¶ä»–æœƒå“¡ä½”ç”¨æ™‚é›¢é–‹
-            if group_id and _status == 409:
-                try:
-                    line_bot_api.leave_group(group_id)
-                except Exception as exc:
-                    app.logger.exception("leave_group failed: %s", exc)
-
-        @handler.add(FollowEvent)
-        def handle_follow(event):
-            """åŠ å¥½å‹æ­¡è¿ï¼šå„ªå…ˆå› Flex(çœŸå¯¦æš±ç¨±å•å€™ + ç«‹å³é–‹å§‹è¨­å®š)ã€‚"""
-            line_user_id = getattr(event.source, "user_id", None)
-            display_name = resolve_welcome_display_name(
-                line_bot_api=line_bot_api,
-                data_file=app.config["DATA_FILE"],
-                line_user_id=line_user_id,
-                logger=app.logger,
-            )
-            if line_user_id:
-                # Follow ç•¶ä¸‹å°±å¯«å…¥ usersï¼Œä¹‹å¾Œé–‹ LIFF ä¸æœƒå› ç¼º row è€Œ 404
-                try:
-                    registration_result = register_line_user(
-                        app.config["DATA_FILE"],
-                        {
-                            "line_user_id": line_user_id,
-                            "display_name": display_name or "",
-                        },
-                    )
-                    if _reply_migrated_account(
-                        event.reply_token, registration_result
-                    ):
-                        return
-                    reactivate_line_push_for_follow(app.config["DATA_FILE"], line_user_id)
-                except Exception as exc:
-                    app.logger.exception("FollowEvent register failed: %s", exc)
-            app.logger.info(
-                "FollowEvent welcome trigger user=%s name=%r",
-                (line_user_id or "")[:8],
-                display_name or "",
-            )
-            _send_welcome(
-                line_bot_api,
-                reply_token=event.reply_token,
-                line_user_id=line_user_id,
-                display_name=display_name,
-                trigger="follow",
-            )
-
-        @handler.add(MemberJoinedEvent)
-        def handle_member_joined(event):
-            # 2026-07-20 è¦è‘£ added: è¶…é 50 äººä¸Šé™æ™‚,è«‹å‡ºæ–°æˆå“¡
-            # 2026-07-24: æˆå“¡é€²ç¾¤ä¹Ÿè£œæ­¡è¿ï¼ç¶å®šæé†’ï¼ˆJoinEvent æ¼é€æ™‚çš„å‚™æ´ï¼‰
-            # 2026-07-25: é€²ç¾¤åˆ·æ–°ç¾¤æˆå“¡æ•¸ï¼›æ–‡æ¡ˆå€åˆ†ã€Œç¾¤çµ„æˆå“¡ã€vsã€Œå·²ç¶å®šå®ˆè­·äººã€
-            if getattr(event.source, "type", None) != "group":
-                return
-            group_id = getattr(event.source, "group_id", None)
-            if not group_id:
-                return
-            try:
-                new_ids = [m.user_id for m in (event.joined.members or []) if getattr(m, "user_id", None)]
-                owner_info = _load_group_owner_info(group_id)
-                # å·²ç¶å®šå®ˆè­·ç¾¤ï¼šåˆ·æ–°ç¾¤çµ„æˆå“¡æ•¸å¿«ç…§ï¼ˆä¸å½±éŸ¿å·²ç¶å®šå®ˆè­·äººè¨ˆæ•¸ï¼‰
-                if owner_info.get("bound"):
-                    try:
-                        refresh_guardian_group_member_snapshot(
-                            app.config["DATA_FILE"], group_id
-                        )
-                    except Exception as exc:
-                        app.logger.exception("MemberJoined member snapshot refresh failed: %s", exc)
-                # æœªç¶å®šï¼šæ¨æ­¡è¿å¡ï¼Œè«‹ç®¡ç†å“¡é»ã€Œç¶å®šå®ˆè­·ç¾¤ã€
-                # å·²ç¶å®šï¼šç°¡çŸ­æ­¡è¿æ–°æˆå“¡ï¼ˆé€²ç¾¤ â‰  ä¸€éµé‚€è«‹ç¶å®šï¼‰
-                if not owner_info.get("bound"):
-                    try:
-                        line_bot_api.push_message(
-                            group_id,
-                            _guardian_intro_messages(owner_info),
-                        )
-                        app.logger.info(
-                            "MemberJoined unbound intro push group=%s new=%s",
-                            group_id[:12],
-                            len(new_ids),
-                        )
-                    except Exception as exc:
-                        app.logger.exception("MemberJoined intro push failed: %s", exc)
-                elif new_ids:
-                    try:
-                        inviter_name = _owner_display_name(owner_info)
-                        member_msgs = []
-                        if FlexSendMessage is not None and guardian_group_member_joined_flex is not None:
-                            member_msgs.append(
-                                FlexSendMessage(
-                                    alt_text=f"â¤ï¸ æ­¡è¿åŠ å…¥ {inviter_name} çš„å®ˆè­·ç¾¤",
-                                    contents=guardian_group_member_joined_flex(inviter_name),
-                                )
-                            )
-                        else:
-                            member_msgs.append(
-                                TextSendMessage(
-                                    text=(
-                                        f"â¤ï¸ æ­¡è¿åŠ å…¥ {inviter_name} çš„å®ˆè­·ç¾¤\n"
-                                        "æ‚¨å·²åŠ å…¥ã€Œæ¯æ—¥å¹³å®‰ã€LINE å®ˆè­·ç¾¤ã€‚\n"
-                                        "ç¾¤å…§å¯æ”¶æé†’ï¼›è‹¥è¦æˆç‚ºå€‹äººå·²ç¶å®šå®ˆè­·äººï¼Œ"
-                                        "è«‹è«‹å°æ–¹ç”¨ã€Œä¸€éµé‚€è«‹ã€å†ç¶ä¸€æ¬¡ã€‚"
-                                    )
-                                )
-                            )
-                        line_bot_api.push_message(group_id, member_msgs)
-                    except Exception as exc:
-                        app.logger.exception("MemberJoined welcome flex failed: %s", exc)
-
-                result, code = enforce_group_member_limit(group_id, dict(app.config))
-                if code != 200 or not result.get("enforced"):
-                    return
-                msg_lines = [
-                    f"âš ï¸ å®ˆè­·ç¾¤è¶…é {GROUP_MEMBER_LIMIT} äººä¸Šé™ã€‚",
-                    f"ç›®å‰æˆå“¡æ•¸:{result.get('current_count')}/{GROUP_MEMBER_LIMIT}",
-                ]
-                if result.get("kicked"):
-                    msg_lines.append(f"å·²è«‹å‡º {len(result['kicked'])} ä½æ–°æˆå“¡ã€‚")
-                if result.get("bot_not_admin_count"):
-                    msg_lines.append(
-                        f"âš ï¸ ã€Œæ¯æ—¥å¹³å®‰ã€ç›®å‰ç„¡æ³•è«‹å‡ºè¶…é¡æˆå“¡ï¼ˆå¦æœ‰ {result['bot_not_admin_count']} ä½ï¼‰ã€‚"
-                        "è«‹ç®¡ç†å“¡æ‰‹å‹•é€€å‡ºè¶…é¡æˆå“¡ï¼Œæˆ–å¿…è¦æ™‚æŠŠã€Œæ¯æ—¥å¹³å®‰ã€è¨­ç‚ºç¾¤çµ„ç®¡ç†å“¡å¾Œå†è©¦ã€‚"
-                    )
-                if result.get("failed") and not result.get("bot_not_admin_count"):
-                    msg_lines.append(f"è«‹å‡ºå¤±æ•—:{len(result['failed'])} ä½ã€‚")
-                # åƒ…åœ¨ Bot ç„¡ç®¡ç†å“¡æ¬Šé™ã€çœŸçš„è¸¢äººå¤±æ•—æ™‚æ‰æç¤ºï¼›å‡ç´šï¼ç¶å®šå¾Œä½¿ç”¨è€…å·²è‡ªå‹•æ˜¯å®ˆè­·ç¾¤ç®¡ç†å“¡
-                if result.get("bot_not_admin_count"):
-                    msg_lines.append("ğŸ’¡ è‹¥éœ€è«‹å‡ºè¶…é¡æˆå“¡ï¼Œå¯åœ¨ç¾¤è£¡æ‰“ã€Œç®¡ç†å“¡è¨­å®šã€çœ‹æ•™å­¸ï¼ˆéå¿…è¦é–‹é€šæ­¥é©Ÿï¼‰")
-                line_bot_api.push_message(group_id, TextSendMessage(text="\n".join(msg_lines)))
-            except Exception:
-                pass
-
-        if PostbackEvent is not None:
-            @handler.add(PostbackEvent)
-            def handle_postback(event):
-                line_user_id = getattr(event.source, "user_id", None)
-                data = ""
-                try:
-                    data = str(getattr(event.postback, "data", "") or "")
-                except Exception:
-                    data = ""
-                if not line_user_id or not data:
-                    return
-                reply = None
-                # æ¯æ—¥æ¨æ’­ã€Œæˆ‘å¹³å®‰ã€ï¼šåœ¨ LINE å…§é»é¸å³å¯«å…¥ç°½åˆ°ï¼ˆèˆ‡ LIFF åŒä¸€å¥— record_checkinï¼‰
-                if is_checkin_postback(data):
-                    reply = handle_checkin_postback(app.config["DATA_FILE"], line_user_id, app.config)
-                elif is_expiry_opt_out_postback(data):
-                    reply = handle_expiry_opt_out_postback(app.config["DATA_FILE"], line_user_id)
-                elif data.startswith("beta_feedback:"):
-                    reply = handle_beta_feedback_postback(
-                        app.config["DATA_FILE"], line_user_id, data
-                    )
-                elif data.startswith("smart:"):
-                    reply = handle_smart_reminder_postback(
-                        app.config["DATA_FILE"], line_user_id, data, app.config
-                    )
-                else:
-                    # ç›¸å®¹èˆŠç‰ˆå–æ¶ˆè­¦å ± postbackï¼šä¹Ÿè¦–ç‚ºä»Šæ—¥å ±å¹³å®‰
-                    try:
-                        from alerts.postback import is_alert_cancel_postback
-                        if is_alert_cancel_postback(data):
-                            reply = handle_checkin_postback(
-                                app.config["DATA_FILE"], line_user_id, app.config
-                            )
-                    except Exception:
-                        reply = None
-                if reply:
-                    items = normalize_line_reply_items(reply)
-                    messages = []
-                    for item in items:
-                        if isinstance(item, dict) and item.get("type") == "flex":
-                            if FlexSendMessage is None:
-                                messages.append(
-                                    TextSendMessage(
-                                        text=str(item.get("altText") or "æ¯æ—¥å¹³å®‰")
-                                    )
-                                )
-                            else:
-                                messages.append(
-                                    FlexSendMessage(
-                                        alt_text=str(item.get("altText") or "æ¯æ—¥å¹³å®‰")[:400],
-                                        contents=item.get("contents") or {},
-                                    )
-                                )
-                        else:
-                            messages.append(TextSendMessage(text=str(item)))
-                    if messages:
-                        line_bot_api.reply_message(event.reply_token, messages)
-
-        @handler.add(MessageEvent, message=TextMessage)
-        def handle_text_message(event):
-            text = event.message.text
-            line_user_id = getattr(event.source, "user_id", None)
-            group_id = getattr(event.source, "group_id", None)
-            stripped = text.strip()
-
-            # æ­¡è¿è©é—œéµå­—ï¼ˆå·²æ˜¯å¥½å‹ä¹Ÿå¯é‡æ‹¿æ­¡è¿å¡ï¼›ä¸éœ€å–æ¶ˆå¥½å‹ï¼‰
-            # ç´”é—œéµå­—æˆ–ã€Œé–‹å§‹ï¼ã€ç­‰æ¨™é»ä¹Ÿå¯è§¸ç™¼ï¼Œé¿å… OA æ‰“æ‹›å‘¼èˆŠè¨Šé€ æˆèª¤æœƒ
-            welcome_keys = ("é–‹å§‹", "æ­¡è¿", "èªªæ˜", "æ­¡è¿è©")
-            if stripped in welcome_keys or stripped.rstrip("ï¼!ã€‚.~ï½ ") in welcome_keys:
-                app.logger.info(
-                    "welcome keyword hit text=%r user=%s",
-                    stripped[:20],
-                    (line_user_id or "")[:8],
-                )
-                display_name = resolve_welcome_display_name(
-                    line_bot_api=line_bot_api,
-                    data_file=app.config["DATA_FILE"],
-                    line_user_id=line_user_id,
-                    logger=app.logger,
-                )
-                if line_user_id:
-                    try:
-                        registration_result = register_line_user(
-                            app.config["DATA_FILE"],
-                            {
-                                "line_user_id": line_user_id,
-                                "display_name": display_name or "LINE ä½¿ç”¨è€…",
-                            },
-                        )
-                        if _reply_migrated_account(
-                            event.reply_token, registration_result
-                        ):
-                            return
-                    except Exception as exc:
-                        app.logger.exception("welcome keyword register failed: %s", exc)
-                _send_welcome(
-                    line_bot_api,
-                    reply_token=event.reply_token,
-                    line_user_id=line_user_id,
-                    display_name=display_name,
-                    trigger=f"keyword:{stripped[:20]}",
-                )
-                return
-
-            # ä¸€éµé‚€è«‹ï¼šç•¥é LIFF å¤§æŒ‰éˆ•é  â†’ å› Flex URIï¼ˆline.me/R/shareï¼‰ç›´æ¥é–‹å¥½å‹é¸æ“‡
-            if stripped in ("ä¸€éµé‚€è«‹", "ä¸€éµé‚€è«‹å®ˆè­·äºº", "é‚€è«‹å®ˆè­·äºº"):
-                if not line_user_id:
-                    line_bot_api.reply_message(
-                        event.reply_token,
-                        TextSendMessage(text="è«‹å…ˆåŠ ã€Œæ¯æ—¥å¹³å®‰ã€ç‚ºå¥½å‹ï¼Œå†é»ä¸€éµé‚€è«‹ã€‚"),
-                    )
-                    return
-                try:
-                    registration_result = register_line_user(
-                        app.config["DATA_FILE"],
-                        {"line_user_id": line_user_id, "display_name": "LINE ä½¿ç”¨è€…"},
-                    )
-                    if _reply_migrated_account(
-                        event.reply_token, registration_result
-                    ):
-                        return
-                except Exception as exc:
-                    app.logger.exception("invite keyword register failed: %s", exc)
-                if FlexSendMessage is not None and share_invite_flex is not None:
-                    flex = share_invite_flex(line_user_id)
-                    line_bot_api.reply_message(
-                        event.reply_token,
-                        FlexSendMessage(alt_text="é‚€è«‹å®¶äººç•¶å®ˆè­·äººï½œé»æ“Šå‚³çµ¦å®¶äºº", contents=flex),
-                    )
-                    return
-                # fallbackï¼šç´”æ–‡å­—é™„ä¸ŠåŸç”Ÿåˆ†äº«ç¶²å€
-                if guardian_invite_share_text is not None and line_native_share_url is not None:
-                    share_text = guardian_invite_share_text(line_user_id)
-                    share_uri = line_native_share_url(share_text)
-                    line_bot_api.reply_message(
-                        event.reply_token,
-                        TextSendMessage(
-                            text=(
-                                "è«‹é»é–‹ä¸‹é¢é€£çµï¼Œé¸ä¸€ä½å®¶äººå‚³é€é‚€è«‹ï¼š\n"
-                                f"{share_uri}"
-                            )
-                        ),
-                    )
-                    return
-                share_page = (
-                    share_invite_liff_url()
-                    if share_invite_liff_url
-                    else "https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html"
-                )
-                line_bot_api.reply_message(
-                    event.reply_token,
-                    TextSendMessage(text=f"è«‹é–‹å•Ÿé‚€è«‹é åˆ†äº«çµ¦å®¶äººï¼š\n{share_page}"),
-                )
-                return
-
-            # éœ€è¦å¹«å¿™ï¼ç·Šæ€¥æ±‚åŠ©ï¼šèŠå¤©å®¤åªå›çµ±ä¸€ LIFF å…¥å£
-            if sos_flow is not None and stripped in (
-                "éœ€è¦å¹«å¿™",
-                "SOS",
-                "sos",
-                "ç·Šæ€¥æ±‚åŠ©",
-                "é€šçŸ¥å®¶äºº",
-                "è¯çµ¡å®¶äººé€£æŒ‰3æ¬¡",
-                "éœ€è¦å¹«å¿™ç¢ºèª",
-                "SOS ç¢ºèª 2",
-                "SOS ç¢ºèª 3",
-                "SOS å–æ¶ˆ",
-                "å–æ¶ˆéœ€è¦å¹«å¿™",
-            ):
-                _sos_handle(
-                    line_bot_api,
-                    line_user_id,
-                    stripped,
-                    reply_token=event.reply_token,
-                    group_id=group_id,
-                )
-                return
-
-            # 2026-07-21 patch 17: BOT ç‹€æ…‹æŸ¥è©¢(DM + ç¾¤çµ„éƒ½å¯ç”¨)
-            if stripped in ("BOT ç‹€æ…‹", "bot ç‹€æ…‹", "æ©Ÿå™¨äººç‹€æ…‹", "æ©Ÿå™¨äººç‹€æ³"):
-                state = load_state(app.config["DATA_FILE"])
-                groups = state.get("guardian_groups", {})
-                active_groups = sum(1 for g in groups.values() if g.get("status") == "active")
-                uptime_sec = (datetime.now() - app._start_time).total_seconds()
-                hours = int(uptime_sec // 3600)
-                minutes = int((uptime_sec % 3600) // 60)
-                status_text = (
-                    f"ğŸ¤– æˆ‘æ˜¯ã€Œæ¯æ—¥å¹³å®‰ã€\\n"
-                    f"å±¬æ–¼ã€Œæ¯æ—¥å¹³å®‰ã€é€™å€‹æœå‹™\\n\\n"
-                    f"âœ… ç›®å‰å•Ÿç”¨ä¸­(å·²é€£çºŒ {hours} å°æ™‚ {minutes} åˆ†)\\n"
-                    f"ğŸ‘¥ å·²è¨»å†Šäººæ•¸:{len(state.get('users', {}))}\\n"
-                    f"ğŸ›¡ï¸ å®ˆè­·ç¾¤:{active_groups} ç¾¤æœ‰æ•ˆç¶å®š\\n\\n"
-                    f"ğŸ”§ å¯ç”¨æŒ‡ä»¤(ç§è¨Š):\\n"
-                    f"â€¢ ç°½åˆ° / å ±å¹³å®‰\\n"
-                    f"â€¢ ç¶å®šå®ˆè­·äºº\\n"
-                    f"â€¢ æŸ¥çœ‹æ–¹æ¡ˆ / æˆ‘çš„ç‹€æ…‹\\n\\n"
-                    f"ğŸ‘¥ ç¾¤çµ„æŒ‡ä»¤:å®ˆè­·ç¾¤ç‹€æ…‹ / ç¶å®šå®ˆè­·ç¾¤ / ä½¿ç”¨èªªæ˜"
-                )
-                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=status_text))
-                return
-
-            # 2026-07-21 patch 11: å®ˆè­·ç¾¤ç›¸é—œ 4 å€‹ Flex æŒ‡ä»¤(ç¾¤çµ„é™å®š)
-            if group_id:
-                # 1) ç¶å®šå®ˆè­·ç¾¤(ä¿ç•™èˆŠæŒ‡ä»¤ alias)
-                if stripped in ("é»æˆ‘ç¶å®šå®ˆè­·ç¾¤", "ç¶å®šå®ˆè­·ç¾¤", "ç¶å®šå¹³å®‰å®ˆè­·åŠ©ç†"):
-                    result, code = bind_guardian_group(
-                        app.config["DATA_FILE"],
-                        {"line_user_id": line_user_id, "group_id": group_id},
-                    )
-                    if FlexSendMessage is not None and guardian_group_bind_confirm_flex is not None:
-                        if code == 200:
-                            enriched = _enrich_bind_result_for_flex(result, line_user_id)
-                            success_msgs = [
-                                FlexSendMessage(
-                                    alt_text="ğŸ“‹ å®ˆè­·ç¾¤è³‡è¨Š",
-                                    contents=guardian_group_bind_confirm_flex(enriched),
-                                )
-                            ]
-                            # ç¶å®šæˆåŠŸå¾Œä¸è¦åœåœ¨è³‡è¨Šå¡ï¼šå† nudge å®Œæˆå®ˆè­·äººï¼æé†’è¨­å®š
-                            if not result.get("already_bound"):
-                                nudge = (
-                                    guardian_group_setup_nudge_text(
-                                        enriched.get("guardian_count", 0),
-                                        enriched.get("guardian_limit", 5),
-                                        enriched.get("emergency_count", 0),
-                                        enriched.get("emergency_limit", 2),
-                                    )
-                                    if guardian_group_setup_nudge_text is not None
-                                    else (
-                                        "ğŸ‰ å®ˆè­·ç¾¤å·²å»ºç«‹æˆåŠŸï¼\n"
-                                        "å»ºè­°å†å®Œæˆï¼šæ–°å¢æ ¸å¿ƒå®ˆè­·äººã€ç·Šæ€¥è¯çµ¡äººã€è¨­å®šæ¯æ—¥æé†’æ™‚é–“ã€‚"
-                                    )
-                                )
-                                success_msgs.append(TextSendMessage(text=nudge))
-                            line_bot_api.reply_message(event.reply_token, success_msgs)
-                        else:
-                            reason = result.get(
-                                "reply_text",
-                                "é€™å€‹ç¾¤çµ„ç›®å‰ç„¡æ³•å•Ÿç”¨å®ˆè­·åŠŸèƒ½,è«‹æª¢æŸ¥ 799 è¨‚é–±ç‹€æ…‹æˆ–ç”±åŸå»ºç«‹è€…æ“ä½œ",
-                            )
-                            line_bot_api.reply_message(
-                                event.reply_token,
-                                FlexSendMessage(
-                                    alt_text="âŒ ç„¡æ³•ç¶å®šæ­¤ç¾¤",
-                                    contents=guardian_group_bind_fail_flex(reason),
-                                ),
-                            )
-                    else:
-                        # fallback ç´”æ–‡å­—ï¼šæˆåŠŸå›è¦†å›ºå®šã€Œæˆ‘å·²å®Œæˆå®ˆè­·ç¾¤è¨­å®šã€
-                        if code == 200:
-                            reply_text = (
-                                "æˆ‘å·²å®Œæˆå®ˆè­·ç¾¤è¨­å®š\n"
-                                f"ç›®å‰å·²ç¶å®š {result.get('guardian_group_count', 1)}/"
-                                f"{result.get('guardian_group_limit', 3)} å€‹ç¾¤çµ„ã€‚"
-                            )
-                            if not result.get("already_bound") and guardian_group_setup_nudge_text is not None:
-                                enriched = _enrich_bind_result_for_flex(result, line_user_id)
-                                reply_text = (
-                                    reply_text
-                                    + "\n\n"
-                                    + guardian_group_setup_nudge_text(
-                                        enriched.get("guardian_count", 0),
-                                        enriched.get("guardian_limit", 5),
-                                        enriched.get("emergency_count", 0),
-                                        enriched.get("emergency_limit", 2),
-                                    )
-                                )
-                        elif result.get("should_leave"):
-                            reply_text = (
-                                "é€™å€‹ç¾¤çµ„ç›®å‰ç„¡æ³•å•Ÿç”¨å®ˆè­·åŠŸèƒ½ã€‚å®ˆè­·ç¾¤é™æœ‰æ•ˆçš„ 799 æœˆè²»æˆ–å¹´è²»æœƒå“¡å»ºç«‹ï¼›æœˆè²»æœ€å¤š 1 ç¾¤ï¼Œå¹´è²»æœ€å¤š 3 ç¾¤ã€‚\n"
-                                "è«‹å…ˆå®Œæˆå‡ç´šï¼Œå†é‡æ–°é‚€è«‹ã€Œæ¯æ—¥å¹³å®‰ã€ï¼›æˆ‘ç¾åœ¨æœƒé€€å‡ºç¾¤çµ„ã€‚"
-                            )
-                        else:
-                            reply_text = "é€™å€‹ç¾¤çµ„å·²ç¶å®šå…¶ä»–æœƒå“¡ï¼Œè«‹ç”±åŸå»ºç«‹è€…ç®¡ç†å®ˆè­·è¨­å®šã€‚"
-                        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-                    if result.get("should_leave"):
-                        line_bot_api.leave_group(group_id)
-                    return
-
-                # 2) å®ˆè­·ç¾¤ç‹€æ…‹ï¼ˆå«ã€ŒæŸ¥çœ‹å®ˆè­·ç¾¤ï¼æŸ¥çœ‹å®ˆè­·ç¾¤ç‹€æ…‹ã€æŒ‰éˆ•åˆ¥åï¼‰
-                if stripped in ("å®ˆè­·ç¾¤ç‹€æ…‹", "ç¾¤ç‹€æ…‹", "ç‹€æ…‹", "æŸ¥çœ‹å®ˆè­·ç¾¤", "æŸ¥çœ‹å®ˆè­·ç¾¤ç‹€æ…‹"):
-                    # æŸ¥è©¢å‰å…ˆåˆ·æ–°æœ¬ç¾¤æˆå“¡æ•¸ï¼Œé¿å…ä»é¡¯ç¤ºç¶å®šç•¶ä¸‹çš„èˆŠå¿«ç…§
-                    try:
-                        refresh_guardian_group_member_snapshot(
-                            app.config["DATA_FILE"], group_id
-                        )
-                    except Exception as exc:
-                        app.logger.exception("status member snapshot refresh failed: %s", exc)
-                    state = load_state(app.config["DATA_FILE"])
-                    profile = get_profile(state, line_user_id) or {}
-                    if FlexSendMessage is not None and guardian_group_status_flex is not None:
-                        line_bot_api.reply_message(
-                            event.reply_token,
-                            FlexSendMessage(
-                                alt_text="å®ˆè­·ç¾¤ç‹€æ…‹ï¼ˆç¾¤çµ„æˆå“¡æ•¸ï¼‰",
-                                contents=guardian_group_status_flex(profile, state),
-                            ),
-                        )
-                    else:
-                        reply_text = f"å®ˆè­·ç¾¤æ•¸é‡ï¼š{len(profile.get('guardian_group_ids') or [])}"
-                        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-                    return
-
-                # 2-1) ä»Šæ—¥å¹³å®‰åå–®ï¼šåªæœ‰ç¾¤çµ„å»ºç«‹è€…/ç®¡ç†å“¡å¯çœ‹è©³ç´°è³‡æ–™
-                if stripped in DAILY_ROSTER_KEYWORDS:
-                    reply_text, _status = guardian_group_daily_status_text(
-                        app.config["DATA_FILE"], line_user_id, group_id
-                    )
-                    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-                    return
-
-                # 3) ä½¿ç”¨èªªæ˜ / ä½¿ç”¨è€…èªªæ˜
-                if stripped in ("ä½¿ç”¨èªªæ˜", "ä½¿ç”¨è€…èªªæ˜", "æ•™å­¸", "æ€éº¼ç”¨"):
-                    if FlexSendMessage is not None and guardian_group_user_guide_flex is not None:
-                        line_bot_api.reply_message(
-                            event.reply_token,
-                            FlexSendMessage(
-                                alt_text="ğŸ“– å®ˆè­·ç¾¤ä½¿ç”¨èªªæ˜",
-                                contents=guardian_group_user_guide_flex(),
-                            ),
-                        )
-                    else:
-                        line_bot_api.reply_message(
-                            event.reply_token,
-                            TextSendMessage(text="ä½¿ç”¨èªªæ˜:1.å‡ç´š 799 â†’ 2.å»ºç¾¤ â†’ 3.é‚€ã€Œæ¯æ—¥å¹³å®‰ã€é€²ç¾¤ â†’ 4.é»ã€Œç¶å®šå®ˆè­·ç¾¤ã€ï¼ˆå‡ç´šï¼ç¶å®šå¾Œè‡ªå‹•æˆç‚ºå®ˆè­·ç¾¤ç®¡ç†å“¡ï¼‰"),
-                        )
-                    return
-
-                # 4) ç®¡ç†å“¡è¨­å®š / æ€éº¼è¨­ç®¡ç†å“¡ / ç¾¤çµ„è¨­å®š
-                if stripped in ("ç®¡ç†å“¡è¨­å®š", "è¨­ç®¡ç†å“¡", "æ€éº¼è¨­ç®¡ç†å“¡", "6æ­¥é©Ÿ", "ç¾¤çµ„è¨­å®š"):
-                    if FlexSendMessage is not None and guardian_group_admin_setup_flex is not None:
-                        line_bot_api.reply_message(
-                            event.reply_token,
-                            FlexSendMessage(
-                                alt_text="âš™ï¸ è¨­å®šã€Œæ¯æ—¥å¹³å®‰ã€ç‚ºç®¡ç†å“¡ 6 æ­¥é©Ÿ",
-                                contents=guardian_group_admin_setup_flex(),
-                            ),
-                        )
-                    else:
-                        line_bot_api.reply_message(
-                            event.reply_token,
-                            TextSendMessage(text="ç®¡ç†å“¡è¨­å®š 6 æ­¥é©Ÿ:1.ç¾¤å³ä¸Šã€Œâ‰¡ã€â†’ 2.é¸æˆå“¡ â†’ 3.é•·æŒ‰ã€Œæ¯æ—¥å¹³å®‰ã€ â†’ 4.è¨­ç‚ºç®¡ç†å“¡ â†’ 5.ç¢ºå®š â†’ 6.å®Œæˆ"),
-                        )
-                    return
-
-                # æœªç¬¦åˆä¸Šè¿°æ˜ç¢ºæŒ‡ä»¤ï¼šç¾¤èŠä¿æŒå®‰éœï¼Œé¿å…æ‰“æ“¾å®¶äººå°è©±ã€‚
-                # LINE OA å¾Œå°çš„è‡ªå‹•å›æ‡‰ä¹Ÿæ‡‰é—œé–‰ï¼Œå¦å‰‡ä»å¯èƒ½ç”±å¾Œå°å¦å¤–å›æ–‡å­—ã€‚
-                if group_id:
-                    return
-
-            # ç§è¨Šï¼šç®¡ç†å“¡å¯æŸ¥ã€Œä»Šå¤©èª°é‚„æ²’å ±å¹³å®‰ã€ï¼ˆä¸éœ€é–‹ç¾¤çµ„æé†’ï¼‰
-            if not group_id and stripped in DAILY_ROSTER_KEYWORDS:
-                reply_text, _status = owner_today_safety_roster_text(
-                    app.config["DATA_FILE"], line_user_id, config=app.config
-                )
-                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-                return
-
-            status = None
-            if any(keyword in text for keyword in CHECKIN_KEYWORDS):
-                status = record_checkin(
-                    app.config["DATA_FILE"],
-                    {"line_user_id": line_user_id},
-                    config=app.config,
-                )
-                reply_items = normalize_line_reply_items(
-                    build_checkin_success_text(status, config=app.config)
-                )
-                state = load_state(app.config["DATA_FILE"])
-                profile = get_profile(state, line_user_id)
-                reply_items = maybe_attach_expiry_remind(
-                    reply_items,
-                    profile,
-                    now=current_app_time(app.config),
-                    state=state,
-                    data_file=app.config["DATA_FILE"],
-                )
-                messages = []
-                for item in reply_items:
-                    if isinstance(item, dict) and item.get("type") == "flex":
-                        if FlexSendMessage is not None:
-                            messages.append(
-                                FlexSendMessage(
-                                    alt_text=str(item.get("altText") or "æ–¹æ¡ˆæé†’")[:400],
-                                    contents=item.get("contents") or {},
-                                )
-                            )
-                        else:
-                            messages.append(
-                                TextSendMessage(text=str(item.get("altText") or "æ–¹æ¡ˆæé†’"))
-                            )
-                    else:
-                        messages.append(TextSendMessage(text=str(item)))
-                if should_create_support_ticket(text):
-                    create_support_ticket(
-                        app.config["DATA_FILE"],
-                        {
-                            "line_user_id": line_user_id,
-                            "message": text,
-                        },
-                    )
-                if messages:
-                    line_bot_api.reply_message(event.reply_token, messages)
-                return
-            elif any(keyword in text for keyword in STATUS_KEYWORDS):
-                state = load_state(app.config["DATA_FILE"])
-                status = build_status(get_profile(state, line_user_id))
-            if should_create_support_ticket(text):
-                create_support_ticket(
-                    app.config["DATA_FILE"],
-                    {
-                        "line_user_id": line_user_id,
-                        "message": text,
-                    },
-                )
-                reply_text = (
-                    "ä½ çš„å•é¡Œå·²ç¶“è¨˜éŒ„ä¸‹ä¾†ã€‚"
-                    "ğŸ“© LINE ç•™è¨€ 24 å°æ™‚å…§ç›¡å¿«å›è¦†ã€‚"
-                    "è‹¥æ˜¯ç«‹å³å±éšªï¼Œè«‹å…ˆæ’¥æ‰“ 119ã€‚"
-                )
-            else:
-                reply_text = line_auto_reply_text(text, status)
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-
-        signature = request.headers.get("X-Line-Signature", "")
-        # Use raw bytes then decode so HMAC matches LINE's signed body exactly
-        body_bytes = request.get_data(cache=True, as_text=False) or b""
-        try:
-            body = body_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            # LINE Console Verify must never see non-200
-            app.logger.error("callback body not utf-8 len=%s", len(body_bytes))
-            return jsonify({"ok": True, "verify": True})
-
-        # Soft-accept: empty / no-events payloads always 200 (LINE Verify button)
-        stripped = (body or "").strip()
-        if not stripped:
-            return jsonify({"ok": True, "verify": True})
-        try:
-            probe = json.loads(stripped)
-            if isinstance(probe, dict) and not (probe.get("events") or []):
-                # Still run handler when signature is valid; on mismatch return 200
-                try:
-                    handler.handle(body, signature)
-                except InvalidSignatureError:
-                    app.logger.warning(
-                        "LINE verify/empty events bad signature body_len=%s secret_len=%s",
-                        len(body_bytes),
-                        len(secret or ""),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    app.logger.warning("LINE verify/empty handle skip: %s", type(exc).__name__)
-                return jsonify({"ok": True, "verify": True})
-        except Exception:
-            pass
-
-        try:
-            handler.handle(body, signature)
-        except InvalidSignatureError:
-            # LINE docs: always return 200 to the platform; do not process bad-sig events
-            app.logger.warning(
-                "invalid LINE signature ignored body_len=%s sig_len=%s secret_len=%s",
-                len(body_bytes),
-                len(signature or ""),
-                len(secret or ""),
-            )
-            return jsonify({"ok": True, "signature": "ignored"})
-        except LineBotApiError as exc:
-            app.logger.exception("callback LineBotApiError: %s", exc)
-            # Still 200 so LINE does not disable webhook / fail Verify-like probes
-            return jsonify({"ok": True, "line_api_error": True})
-        except Exception as exc:  # noqa: BLE001
-            app.logger.exception("callback unexpected: %s", exc)
-            return jsonify({"ok": True, "error_ignored": True})
-        return jsonify({"ok": True})
-
-    @app.post("/api/warning/cancel")
-    def warning_cancel_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        return jsonify(cancel_warning(app.config["DATA_FILE"], payload, app.config))
-
-    @app.post("/api/settings")
-    def settings():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        return jsonify(save_settings_for_profile(app.config["DATA_FILE"], payload))
-
-    @app.post("/api/billing/preferences")
-    def billing_preferences_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = save_billing_preferences(app.config["DATA_FILE"], payload)
-        return jsonify(data), code
-
-    @app.post("/api/billing/cancel")
-    def billing_cancel_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = cancel_recurring_subscription(
-            app.config["DATA_FILE"], payload, app.config
-        )
-        return jsonify(data), code
-
-    @app.post("/api/payments/orders")
-    def payment_orders_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = create_payment_order(app.config["DATA_FILE"], payload, app.config)
-        return jsonify(data), code
-
-    @app.post("/webhook/newebpay")
-    @app.post("/api/payment/newebpay/notify")
-    def newebpay_webhook():
-        """è—æ–° NotifyURL â€” é©—ç°½å¾Œè‡ªå‹•é–‹é€šæ–¹æ¡ˆï¼ˆå†ªç­‰ confirmï¼‰ã€‚
-
-        å…©å€‹è·¯å¾‘ç­‰æ•ˆï¼Œæ“‡ä¸€å¡«å…¥å•†åº—å¾Œå°å³å¯ï¼š
-        - /api/payment/newebpay/notifyï¼ˆcheckout é è¨­ï¼‰
-        - /webhook/newebpay
-        æˆåŠŸæ™‚å›å‚³ç´”æ–‡å­— SUCCESSï¼ˆè—æ–°åå¥½ï¼‰ã€‚
-        """
-        form = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
-        if newebpay is None:
-            return jsonify({"error": "newebpay module missing"}), 503
-        parsed, error = newebpay.parse_notify_payload(form, app.config)
-        if error:
-            return jsonify({"error": error}), 400
-        if not newebpay.notify_success(parsed):
-            return Response("SUCCESS", mimetype="text/plain"), 200
-        data, code = confirm_payment_order(
-            app.config["DATA_FILE"],
-            {
-                "order_id": parsed.get("order_id"),
-                "transaction_id": parsed.get("transaction_id"),
-                "amount": parsed.get("amount"),
-                "provider": "newebpay",
-            },
-            app.config,
-        )
-        if code >= 400:
-            return jsonify(data), code
-        return Response("SUCCESS", mimetype="text/plain"), 200
-
-    @app.post("/api/payment/ecpay/notify")
-    def ecpay_webhook():
-        form = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
-        if ecpay is None:
-            return Response("0|payment module missing", mimetype="text/plain"), 503
-        parsed, error = ecpay.parse_notify_payload(form, app.config)
-        if error:
-            return Response(f"0|{error}", mimetype="text/plain"), 400
-        if not ecpay.notify_success(parsed, app.config):
-            return Response("1|OK", mimetype="text/plain"), 200
-        data, code = confirm_payment_order(
-            app.config["DATA_FILE"],
-            {
-                "order_id": parsed.get("order_id"),
-                "transaction_id": parsed.get("transaction_id"),
-                "amount": parsed.get("amount"),
-                "provider": "ecpay",
-            },
-            app.config,
-        )
-        if code >= 400:
-            return Response(f"0|{data.get('error', 'order update failed')}", mimetype="text/plain"), code
-        return Response("1|OK", mimetype="text/plain"), 200
-
-    @app.post("/api/payment/ecpay/period-notify")
-    def ecpay_period_webhook():
-        form = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
-        if ecpay is None:
-            return Response("0|payment module missing", mimetype="text/plain"), 503
-        parsed, error = ecpay.parse_notify_payload(form, app.config)
-        if error:
-            return Response(f"0|{error}", mimetype="text/plain"), 400
-        if not ecpay.notify_success(parsed, app.config):
-            return Response("1|OK", mimetype="text/plain"), 200
-        parsed.update({"status": "SUCCESS", "provider": "ecpay"})
-        data, code = process_period_notification(
-            app.config["DATA_FILE"], parsed, app.config
-        )
-        if code >= 400:
-            return Response(f"0|{data.get('error', 'order update failed')}", mimetype="text/plain"), code
-        return Response("1|OK", mimetype="text/plain"), 200
-
-    @app.post("/api/payment/newebpay/period-notify")
-    def newebpay_period_webhook():
-        form = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
-        if newebpay is None:
-            return jsonify({"error": "newebpay module missing"}), 503
-        parsed, error = newebpay.parse_period_payload(form, app.config)
-        if error:
-            return jsonify({"error": error}), 400
-        data, code = process_period_notification(
-            app.config["DATA_FILE"], parsed, app.config
-        )
-        if code >= 400:
-            return jsonify(data), code
-        return Response("SUCCESS", mimetype="text/plain"), 200
-
-    @app.route("/payment-success", methods=["GET", "POST"])
-    def payment_success_page():
-        # è—æ–° ReturnURL å¸¸ä»¥ POST å¸¶å›ä»˜æ¬¾çµæœï¼›èˆ‡ GET åŒæ¨£å›å‚³ SPAã€‚
-        return send_from_directory(app.static_folder, "index.html")
-
-    @app.get("/api/contacts")
-    def contacts_get():
-        line_user_id, err = _authenticated_line_user({}, use_args=True)
-        if err:
-            return jsonify(err[0]), err[1]
-        return jsonify(get_contacts(app.config["DATA_FILE"], line_user_id))
-
-    @app.post("/api/contacts")
-    def contacts_post():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = save_contacts(app.config["DATA_FILE"], payload)
-        return jsonify(data), code
-
-    @app.get("/api/calendar-notes")
-    def calendar_notes_get():
-        line_user_id, err = _authenticated_line_user({}, use_args=True)
-        if err:
-            return jsonify(err[0]), err[1]
-        data = get_calendar_notes(
-            app.config["DATA_FILE"], line_user_id
-        )
-        return jsonify(data), 200 if data.get("ok") else 403
-
-    @app.post("/api/calendar-notes")
-    def calendar_notes_post():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = save_calendar_note(app.config["DATA_FILE"], payload)
-        return jsonify(data), code
-
-    @app.post("/api/contacts/add")
-    def contacts_add():
-        """æ–°å¢å–®ä¸€å®ˆè­·äººè¯çµ¡äººã€‚"""
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        data, code = add_single_contact(app.config["DATA_FILE"], line_user_id, payload)
-        if code == 200:
-            response = {"ok": True, "contact": data["contact"], "contacts": data["contacts"], "contact_limit": data["contact_limit"]}
-        else:
-            response = {"ok": False, "error": data.get("error"), "fields": data.get("fields"), "contact_limit": data.get("contact_limit"), "current_count": data.get("current_count"), "message": data.get("message")}
-        return jsonify(response), code
-
-    @app.put("/api/contacts/<contact_id>")
-    def contacts_update(contact_id):
-        """æ›´æ–°å–®ä¸€å®ˆè­·äººè¯çµ¡äººã€‚"""
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        data, code = update_single_contact(app.config["DATA_FILE"], line_user_id, contact_id, payload)
-        if code == 200:
-            response = {"ok": True, "contact": data["contact"], "contacts": data["contacts"]}
-        else:
-            response = {"ok": False, "error": data.get("error"), "fields": data.get("fields")}
-        return jsonify(response), code
-
-    @app.delete("/api/contacts/<contact_id>")
-    def contacts_delete(contact_id):
-        """åˆªé™¤å–®ä¸€å®ˆè­·äººè¯çµ¡äººã€‚"""
-        line_user_id, err = _authenticated_line_user({}, use_args=True)
-        if err:
-            return jsonify(err[0]), err[1]
-        data, code = delete_single_contact(app.config["DATA_FILE"], line_user_id, contact_id)
-        if code == 200:
-            response = {"ok": True, "deleted": True, "contact_id": data["contact_id"], "contacts": data["contacts"]}
-        else:
-            response = {"ok": False, "error": data.get("error"), "contact_id": data.get("contact_id")}
-        return jsonify(response), code
-
-    @app.get("/api/onboarding")
-    def onboarding_get():
-        """å›å‚³ä½¿ç”¨è€… onboarding ç‹€æ…‹ã€‚"""
-        line_user_id, err = _authenticated_line_user({}, use_args=True)
-        if err:
-            return jsonify(err[0]), err[1]
-        data, code = onboarding_status_payload(
-            app.config["DATA_FILE"], line_user_id
-        )
-        return jsonify(data), code
-
-    @app.get("/api/interaction-state")
-    def interaction_state_get():
-        """è®€å–ä½¿ç”¨è€…äº’å‹•ç‹€æ…‹(é˜²æ¯æ—¥é‡è¤‡ç›¸åŒå…§å®¹ç”¨)ã€‚"""
-        line_user_id = (request.args.get("line_user_id") or "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
-        state = load_state(app.config["DATA_FILE"])
-        profile = state.get("users", {}).get(line_user_id)
-        if not profile:
-            return jsonify({"ok": False, "error": "user not registered"}), 404
-        istate = get_or_create_interaction_state(profile)
-        save_state(app.config["DATA_FILE"], state)
-        return jsonify({"ok": True, "line_user_id": line_user_id, "interaction_state": istate})
-
-    @app.post("/api/interaction-state")
-    def interaction_state_post():
-        """æ›´æ–°ä½¿ç”¨è€…äº’å‹•ç‹€æ…‹(completed_steps / dismissed_prompts / last_closing_message ç­‰)ã€‚"""
-        payload = request.get_json(silent=True) or {}
-        line_user_id = (payload.get("line_user_id") or "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
-        state = load_state(app.config["DATA_FILE"])
-        profile = state.get("users", {}).get(line_user_id)
-        if not profile:
-            return jsonify({"ok": False, "error": "user not registered"}), 404
-        istate = get_or_create_interaction_state(profile)
-        # åˆä½µå…è¨±æ›´æ–°çš„æ¬„ä½
-        for field in ("last_interaction_at", "last_interaction_summary",
-                      "next_reminder_at", "last_closing_message",
-                      "onboarding_completed", "guardian_prompt_status"):
-            if field in payload:
-                istate[field] = payload[field]
-        if "completed_steps" in payload and isinstance(payload["completed_steps"], list):
-            istate["completed_steps"] = list(set(istate.get("completed_steps", []) + payload["completed_steps"]))
-        if "pending_steps" in payload and isinstance(payload["pending_steps"], list):
-            istate["pending_steps"] = payload["pending_steps"]
-        if "dismissed_prompts" in payload and isinstance(payload["dismissed_prompts"], dict):
-            merged = istate.get("dismissed_prompts", {})
-            merged.update(payload["dismissed_prompts"])
-            istate["dismissed_prompts"] = merged
-        istate["last_interaction_at"] = datetime.now().isoformat(timespec="seconds")
-        save_state(app.config["DATA_FILE"], state)
-        return jsonify({"ok": True, "interaction_state": istate})
-
-    @app.post("/api/guardian-reminder/dismiss")
-    def guardian_reminder_dismiss():
-        """ä½¿ç”¨è€…å°å®ˆè­·äººå®Œæˆåº¦æç¤ºçš„å›æ‡‰ã€‚
-
-        body.preference: 'now' | 'tomorrow' | 'dismiss_7d' | 'dismissed'
-        """
-        payload = request.get_json(silent=True) or {}
-        line_user_id = (payload.get("line_user_id") or "").strip()
-        pref = (payload.get("preference") or "").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
-        if pref not in ("now", "tomorrow", "dismiss_7d", "dismissed"):
-            return jsonify({"ok": False, "error": "invalid preference"}), 400
-        state = load_state(app.config["DATA_FILE"])
-        profile = state.get("users", {}).get(line_user_id)
-        if not profile:
-            return jsonify({"ok": False, "error": "user not registered"}), 404
-        istate = get_or_create_interaction_state(profile)
-        istate["guardian_reminder_preference"] = pref
-        istate["guardian_last_prompted_at"] = datetime.now().isoformat(timespec="seconds")
-        now = datetime.now()
-        if pref == "tomorrow":
-            istate["guardian_reminder_snoozed_until"] = (now + timedelta(days=1)).isoformat(timespec="seconds")
-        elif pref == "dismiss_7d":
-            istate["guardian_reminder_snoozed_until"] = (now + timedelta(days=7)).isoformat(timespec="seconds")
-        else:
-            istate["guardian_reminder_snoozed_until"] = ""
-        save_state(app.config["DATA_FILE"], state)
-        return jsonify({"ok": True, "interaction_state": istate})
-
-
-
-    # Production å®Œå…¨ä¸è¨»å†Š dev endpoint(gunicorn ä¸è·‘ app.run(),debug æ˜¯ False)
-    _is_dev = (
-        os.environ.get("DEV_MODE", "").lower() in ("1", "true", "yes")
-        or os.environ.get("FLASK_ENV", "").lower() in ("development", "dev")
-        or app.debug
-    )
-
-    if _is_dev:
-        @app.post("/api/dev/upgrade-plan")
-        def dev_upgrade_plan():
-            """DEV ONLY: å‡ç´š plan (æ¸¬è©¦ç”¨)ã€‚
-
-        Production ä¸€å¾‹å› 404ã€‚åªæœ‰ä»¥ä¸‹æƒ…æ³æ‰å…è¨±å‘¼å«:
-        1. request.remote_addr æ˜¯ 127.0.0.1 / ::1 (æœ¬æ©Ÿ)
-        2. æˆ– env DEV_MODE=true æ˜ç¢ºå•Ÿç”¨
-        3. æˆ– host header æ˜¯ localhost / 127.0.0.1
-        """
-        # 1. æœ¬æ©Ÿ IP å…è¨±
-        remote = (request.remote_addr or "").strip()
-        host = (request.host or "").lower()
-        is_local = remote in ("127.0.0.1", "::1", "localhost") or host.startswith("localhost") or host.startswith("127.")
-        # 2. env æ˜ç¢ºå•Ÿç”¨
-        dev_mode_enabled = os.environ.get("DEV_MODE", "").lower() in ("1", "true", "yes")
-        if not (is_local or dev_mode_enabled):
-            # Production ç’°å¢ƒ,æ‹’çµ•å­˜å–(ä¸é€éœ² endpoint å­˜åœ¨)
-            return jsonify({"ok": False, "error": "not_found"}), 404
-        # é€šéæª¢æŸ¥,åŸ·è¡Œ dev é‚è¼¯
-        payload = request.get_json(silent=True) or {}
-        line_user_id = (payload.get("line_user_id") or "").strip()
-        plan = (payload.get("plan") or "paid_799_year").strip()
-        if not line_user_id:
-            return jsonify({"ok": False, "error": "missing line_user_id"}), 400
-        state = load_state(app.config["DATA_FILE"])
-        profile = state.get("users", {}).get(line_user_id)
-        if not profile:
-            return jsonify({"ok": False, "error": "user not registered"}), 404
-        profile["plan"] = plan
-        save_state(app.config["DATA_FILE"], state)
-        return jsonify({"ok": True, "plan": plan}), 200
-
-    @app.post("/api/onboarding/complete")
-    def onboarding_complete():
-        """æ¨™è¨˜ onboarding å®Œæˆ(å¿…é ˆè‡³å°‘æœ‰ 1 ä½å®ˆè­·äºº)ã€‚"""
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        result, code = complete_onboarding_for_user(
-            app.config["DATA_FILE"], line_user_id, payload
-        )
-        return jsonify(result), code
-
-    @app.get("/api/emergency-contact/invite-preview")
-    def emergency_contact_invite_preview_api():
-        line_user_id, err = _authenticated_line_user({}, use_args=True)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload = {
-            "invite_from": request.args.get("invite_from") or request.args.get("from") or "",
-            "invite_token": request.args.get("invite_token") or "",
-            "line_user_id": line_user_id,
-        }
-        data, code = invite_bind_preview(app.config["DATA_FILE"], payload)
-        return jsonify(data), code
-
-    @app.post("/api/emergency-contact/invite")
-    def emergency_contact_invite_create_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        data, code = create_guardian_invite(
-            app.config["DATA_FILE"], line_user_id, payload
-        )
-        return jsonify(data), code
-
-    @app.post("/api/emergency-contact/bind")
-    def emergency_contact_bind_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["contact_line_user_id"] = line_user_id
-        data, code = bind_emergency_contact(app.config["DATA_FILE"], payload, app.config)
-        return jsonify(data), code
-
-    @app.post("/api/guardian-groups/bind")
-    def guardian_groups_bind_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = bind_guardian_group(app.config["DATA_FILE"], payload)
-        if code == 200 and data.get("trial_test_message"):
-            token = app.config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
-                "LINE_CHANNEL_ACCESS_TOKEN", ""
-            )
-            if not token:
-                return jsonify({
-                    **data,
-                    "trial_test_delivery": "failed",
-                    "error": "LINE_CHANNEL_ACCESS_TOKEN is not set",
-                }), 503
-            sender = app.config.get("LINE_PUSH_SENDER") or line_push_message
-            retry_key = data.get("trial_test_retry_key") or _line_retry_key(
-                f"trial-group-test:{line_user_id}:{payload.get('group_id')}"
-            )
-            try:
-                _send_line_with_retry_key(
-                    sender,
-                    token,
-                    payload.get("group_id"),
-                    data["trial_test_message"],
-                    retry_key,
-                )
-                data["trial_test_delivery"] = "sent"
-                mutate_state_atomically(
-                    app.config["DATA_FILE"],
-                    lambda state: (
-                        (state.get("users") or {}).get(line_user_id, {}).setdefault(
-                            "trial_group_test_delivery", {}
-                        ).update({
-                            "status": "sent",
-                            "sent_at": current_app_time(app.config).isoformat(
-                                timespec="seconds"
-                            ),
-                        }),
-                        record_line_message_usage(
-                            state,
-                            category="trial_group_test",
-                            owner_line_user_id=line_user_id,
-                            recipient_count=1,
-                            event_id=retry_key,
-                        ),
-                    )[-1],
-                )
-            except Exception as exc:
-                data["trial_test_delivery"] = "failed"
-                data["error"] = "æ¸¬è©¦é€šçŸ¥æš«æ™‚ç„¡æ³•é€å‡ºï¼Œè«‹ç¨å¾Œå†è©¦ã€‚"
-                mutate_state_atomically(
-                    app.config["DATA_FILE"],
-                    lambda state: (state.get("users") or {}).get(
-                        line_user_id, {}
-                    ).setdefault("trial_group_test_delivery", {}).update({
-                        "status": "failed",
-                        "last_error": str(exc)[:200],
-                    }),
-                )
-                app.logger.warning("trial group test delivery failed: %s", exc)
-                return jsonify(data), 502
-        return jsonify(data), code
-
-    @app.post("/api/guardian-groups/unbind")
-    def guardian_groups_unbind_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = unbind_guardian_group(app.config["DATA_FILE"], payload)
-        return jsonify(data), code
-
-    @app.post("/api/guardian-groups/preferences")
-    def guardian_groups_preferences_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = update_guardian_group_preferences(
-            app.config["DATA_FILE"], payload
-        )
-        return jsonify(data), code
-
-    @app.get("/api/guardian-groups/settings")
-    def guardian_groups_settings_api():
-        line_user_id, err = _authenticated_line_user({}, use_args=True)
-        if err:
-            return jsonify(err[0]), err[1]
-        data, code = guardian_group_settings_for_user(
-            app.config["DATA_FILE"], line_user_id
-        )
-        return jsonify(data), code
-
-    # ===== 2026-07-20 è¦è‘£ added: æ¸¬è©¦é  endpoints =====
-    TEST_USER_PREFIX = "U_TEST_"
-
-    @app.get("/api/guardian-groups/test-users")
-    def guardian_groups_test_users_api():
-        state = load_state(app.config["DATA_FILE"])
-        users = []
-        for uid, profile in (state.get("users") or {}).items():
-            if not uid.startswith(TEST_USER_PREFIX):
-                continue
-            plan = profile.get("plan") or "trial"
-            is_year = plan == "paid_799_year"
-            is_month = plan == "paid_799"
-            eligible = (is_year or is_month) and paid_membership_is_active(profile)
-            users.append({
-                "line_user_id": uid,
-                "display_name": profile.get("display_name", ""),
-                "plan": plan,
-                "paid_until": profile.get("paid_until", ""),
-                "payment_status": profile.get("payment_status", ""),
-                "bind_count": len(profile.get("guardian_group_ids") or []),
-                "max_groups": (3 if is_year else 1) if eligible else 0,
-                "eligible": eligible,
-                "status": "eligible" if eligible else "ineligible",
-                "guardian_group_ids": profile.get("guardian_group_ids", []),
-            })
-        groups = [
-            {"group_id": gid, **ginfo}
-            for gid, ginfo in (state.get("guardian_groups") or {}).items()
-        ]
-        return jsonify({"users": users, "groups": groups, "prefix": TEST_USER_PREFIX})
-
-    @app.post("/api/guardian-groups/test-reset")
-    def guardian_groups_test_reset_api():
-        state = load_state(app.config["DATA_FILE"])
-        uids = [uid for uid in state.get("users", {}).keys() if uid.startswith(TEST_USER_PREFIX)]
-        for uid in uids:
-            state["users"].pop(uid, None)
-        for profile in state.get("users", {}).values():
-            if isinstance(profile.get("contacts"), list):
-                profile["contacts"] = [c for c in profile["contacts"] if c.get("line_id") not in uids]
-            if isinstance(profile.get("friends"), list):
-                profile["friends"] = [f for f in profile["friends"] if f not in uids]
-        for gid in list(state.get("guardian_groups", {}).keys()):
-            owner = state["guardian_groups"][gid].get("owner_line_user_id", "")
-            if owner.startswith(TEST_USER_PREFIX):
-                state["guardian_groups"].pop(gid, None)
-        for profile in state.get("users", {}).values():
-            if isinstance(profile.get("guardian_group_ids"), list):
-                profile["guardian_group_ids"] = []
-        save_state(app.config["DATA_FILE"], state)
-        defaults = [
-            ("U_TEST_yearly_001", "paid_799_year", "æ¸¬è©¦-å¹´è²»999", "2099-12-31T00:00:00", "active"),
-            ("U_TEST_monthly_001", "paid_799", "æ¸¬è©¦-æœˆè²»", "2099-12-31T00:00:00", "active"),
-            ("U_TEST_399_001", "paid_399", "æ¸¬è©¦-399 ä¸ç¬¦è³‡æ ¼", "2099-12-31T00:00:00", "active"),
-            ("U_TEST_trial_001", "trial", "æ¸¬è©¦-trial", "", "trial"),
-        ]
-        created = []
-        for uid, plan, name, paid_until, payment_status in defaults:
-            if uid in state["users"]:
-                continue
-            state["users"][uid] = {
-                "line_user_id": uid, "display_name": name, "plan": plan,
-                "paid_until": paid_until, "payment_status": payment_status,
-                "guardian_group_ids": [], "contacts": [], "friends": [],
-            }
-            created.append(uid)
-        save_state(app.config["DATA_FILE"], state)
-        return jsonify({"reset": True, "deleted_users": len(uids), "created": created})
-
-    @app.post("/api/guardian-groups/test-enforce")
-    def guardian_groups_test_enforce_api():
-        body = request.get_json(silent=True) or {}
-        group_id = str(body.get("group_id") or "").strip()
-        simulated_count = body.get("simulated_count")
-        simulated_new_ids = body.get("simulated_new_ids") or []
-        if not group_id:
-            return jsonify({"error": "missing group_id"}), 400
-        state = load_state(app.config["DATA_FILE"])
-        group_info = state.get("guardian_groups", {}).get(group_id)
-        if not group_info:
-            return jsonify({"error": "group not bound"}), 404
-        if group_info.get("status") != "active":
-            return jsonify({"error": "group inactive"}), 409
-        if simulated_count is None:
-            return jsonify({"error": "simulated_count required"}), 400
-        current_count = int(simulated_count)
-        if current_count <= GROUP_MEMBER_LIMIT:
-            return jsonify({
-                "ok": True, "enforced": False,
-                "current_count": current_count, "limit": GROUP_MEMBER_LIMIT,
-                "kicked": [], "failed": [],
-                "group_id": group_id,
-                "note": "æœªè¶…éä¸Šé™,ä¸éœ€ evict",
-            }), 200
-        bind_ids = set(group_info.get("member_ids_at_bind") or [])
-        candidate_ids = list(simulated_new_ids)
-        overflow = current_count - GROUP_MEMBER_LIMIT
-        to_kick = candidate_ids[:overflow] if overflow > 0 else (candidate_ids[:1] if candidate_ids else [])
-        kicked = list(to_kick)
-        return jsonify({
-            "ok": True, "enforced": True,
-            "current_count": current_count, "limit": GROUP_MEMBER_LIMIT,
-            "overflow": overflow,
-            "candidate_count": len(candidate_ids),
-            "bind_snapshot_count": len(bind_ids),
-            "kicked": kicked, "failed": [],
-            "group_id": group_id,
-            "note": "æ¸¬è©¦æ¨¡æ“¬(notå¯¦éš›æ‰“ LINE API)",
-        }), 200
-
-    @app.post("/api/friends/invite")
-    def friends_invite_api():
-        data, code = create_friend_invite(app.config["DATA_FILE"], request.get_json(silent=True) or {})
-        return jsonify(data), code
-
-    @app.post("/api/friends/accept")
-    def friends_accept_api():
-        data, code = accept_friend_invite(app.config["DATA_FILE"], request.get_json(silent=True) or {})
-        return jsonify(data), code
-
-    @app.get("/api/friends/locations")
-    def friends_locations_api():
-        return jsonify(friend_locations(app.config["DATA_FILE"], request.args.get("line_user_id")))
-
-    @app.get("/api/location/status")
-    def location_status_api():
-        line_user_id = str(request.args.get("line_user_id") or "").strip()
-        if not line_user_id:
-            return jsonify({"error": "missing line_user_id"}), 400
-        state = load_state(app.config["DATA_FILE"])
-        profile = get_profile(state, line_user_id)
-        return jsonify({"ok": True, "safety_guard": safety_guard_snapshot(profile)})
-
-    @app.post("/api/location/update")
-    def location_update_api():
-        data, code = update_location(
-            app.config["DATA_FILE"],
-            request.get_json(silent=True) or {},
-            app.config,
-        )
-        return jsonify(data), code
-
-    @app.post("/api/location/stop")
-    def location_stop_api():
-        data, code = stop_location_sharing(app.config["DATA_FILE"], request.get_json(silent=True) or {})
-        return jsonify(data), code
-
-    @app.post("/api/sos")
-    def sos_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = trigger_sos(app.config["DATA_FILE"], payload, app.config)
-        return jsonify(data), code
-
-    @app.post("/api/trial/test-action")
-    def trial_test_action_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        data, code = authorize_labeled_test_action(
-            app.config["DATA_FILE"],
-            line_user_id,
-            payload.get("action"),
-        )
-        if code == 200 and data.get("allowed"):
-            token = app.config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
-                "LINE_CHANNEL_ACCESS_TOKEN", ""
-            )
-            if not token:
-                return jsonify({
-                    **data,
-                    "allowed": False,
-                    "reason": "push_unavailable",
-                }), 503
-            sender = app.config.get("LINE_PUSH_SENDER") or line_push_message
-            retry_key = _line_retry_key(data["event_id"])
-            try:
-                _send_line_with_retry_key(
-                    sender, token, line_user_id, data["message"], retry_key
-                )
-                mutate_state_atomically(
-                    app.config["DATA_FILE"],
-                    lambda state: record_line_message_usage(
-                        state,
-                        category=f"trial_{payload.get('action')}_test",
-                        owner_line_user_id=line_user_id,
-                        recipient_count=1,
-                        event_id=data["event_id"],
-                    ),
-                )
-                data["delivery"] = "sent"
-            except Exception as exc:
-                app.logger.warning("trial test delivery failed: %s", exc)
-                data["delivery"] = "failed"
-                data["reason"] = "push_failed"
-                return jsonify(data), 502
-        return jsonify(data), code
-
-    @app.post("/api/sos/cancel")
-    def sos_cancel_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = cancel_sos_event(app.config["DATA_FILE"], payload, app.config)
-        return jsonify(data), code
-
-    @app.post("/api/sos/retry")
-    def sos_retry_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = retry_sos_event(app.config["DATA_FILE"], payload, app.config)
-        return jsonify(data), code
-
-    @app.get("/api/bot/guardian-groups")
-    def bot_guardian_groups_api():
-        """2026-07-21 patch 22: è¿”å›æ‰€æœ‰å®ˆè­·ç¾¤æ¸…å–®(ä¾› bot_admin.html)ã€‚"""
-        denied = _admin_guard()
-        if denied:
-            return denied
-
-        state = load_state(app.config["DATA_FILE"])
-        groups = state.get("guardian_groups", {})
-        users = state.get("users", {})
-        out = []
-        for gid, g in groups.items():
-            owner_id = g.get("owner_line_user_id", "")
-            owner_profile = users.get(owner_id, {})
-            out.append({
-                "group_id": gid,
-                "owner_id": owner_id[:6] + "..." + owner_id[-4:] if owner_id else None,
-                "owner_plan": owner_profile.get("plan"),
-                "member_count_at_bind": g.get("member_count_at_bind"),
-                "created_at": g.get("created_at"),
-                "status": g.get("status"),
-            })
-        return jsonify({"groups": out, "total": len(out)})
-
-    @app.get("/api/bot/sos-pending")
-    def bot_sos_pending_api():
-        """Return SOS progress, delivery events and graded safety restrictions."""
-        denied = _admin_guard()
-        if denied:
-            return denied
-
-        state = load_state(app.config["DATA_FILE"])
-        pending = state.get("sos_pending", {})
-        out = []
-        for uid, p in pending.items():
-            out.append({
-                "user_id": uid[:6] + "..." + uid[-4:],
-                "stage": p.get("stage"),
-                "tap_count": p.get("tap_count"),
-                "first_tap_at": p.get("first_tap_at"),
-                "last_tap_at": p.get("last_tap_at"),
-                "sent_at": p.get("sent_at"),
-                "event_id": p.get("event_id"),
-                "cancelled_at": p.get("cancelled_at"),
-            })
-        # active åœ¨å‰(è­¦å‘Š/warning),sent,cancelled åœ¨å¾Œ
-        out.sort(key=lambda x: (x.get("stage", "") not in ("warning_1", "warning_2", "warning_3"), x.get("last_tap_at") or ""))
-        events = []
-        for event in (state.get("sos_events") or {}).values():
-            owner = str(event.get("owner_line_user_id") or "")
-            deliveries = event.get("deliveries") or []
-            events.append({
-                "event_id": event.get("event_id"),
-                "owner_id": owner[:6] + "..." + owner[-4:] if owner else None,
-                "owner_display_name": event.get("owner_display_name"),
-                "status": event.get("status"),
-                "sent_at": event.get("sent_at"),
-                "cancelled_at": event.get("cancelled_at"),
-                "sent": sum(1 for item in deliveries if item.get("status") == "sent"),
-                "failed": sum(1 for item in deliveries if item.get("status") == "failed"),
-                "abuse_mode": event.get("abuse_mode") or "normal",
-            })
-        events.sort(key=lambda item: item.get("sent_at") or "", reverse=True)
-        abuse = {"observation": 0, "restricted": 0}
-        for profile in (state.get("users") or {}).values():
-            mode = sos_abuse_state(profile, current_app_time(app.config)).get("mode")
-            if mode in abuse:
-                abuse[mode] += 1
-        return jsonify({
-            "pending": out,
-            "total": len(out),
-            "events": events[:50],
-            "event_total": len(events),
-            "abuse": abuse,
-        })
-
-    @app.get("/api/bot/recent-events")
-    def bot_recent_events_api():
-        """2026-07-21 patch 22: è¿”å›æœ€è¿‘çš„ webhook äº‹ä»¶(ä½¿ç”¨ notification_log)ã€‚"""
-        denied = _admin_guard()
-        if denied:
-            return denied
-
-        state = load_state(app.config["DATA_FILE"])
-        log = state.get("notification_log", [])
-        recent = log[-20:]  # æœ€è¿‘ 20 æ¢
-        recent.reverse()
-        return jsonify({"recent": recent, "total": len(log)})
-
-    @app.post("/api/sos/check-scheduled")
-    def sos_check_scheduled_api():
-        """2026-07-21 patch 21: Cron ç«¯é» â€” æ¸…ç†éæœŸ SOS ç´€éŒ„ã€‚
-
-        3-tap æµç¨‹æœƒç«‹å³ç™¼é€,æ‰€ä»¥é€™å€‹ cron åªè² è²¬:
-        1. æ¸…æ‰ 1 å°æ™‚ä»¥å‰çš„ sent/cancelled ç´€éŒ„(é¿å… state è†¨è„µ)
-        æœªä¾†å¯åŠ :åœ¨ sent_at å¾Œ 5 åˆ†é˜æé†’ã€Œå¯ä»¥å–æ¶ˆäº†ã€ç­‰
-        """
-        from sos_flow import sos_purge_old
-        from datetime import datetime
-
-        state = load_state(app.config["DATA_FILE"])
-        now = datetime.now()
-        removed = sos_purge_old(state, keep_minutes=60)
-        save_state(app.config["DATA_FILE"], state)
-        return jsonify({
-            "checked_at": now.isoformat(timespec="seconds"),
-            "purged": len(removed),
-        })
-
-    @app.post("/api/account/delete")
-    def account_delete_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = delete_account(app.config["DATA_FILE"], payload)
-        return jsonify(data), code
-
-    @app.post("/api/account/export")
-    def account_export_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = export_account_data(app.config["DATA_FILE"], payload)
-        return jsonify(data), code
-
-    @app.post("/api/account/history/delete")
-    def account_history_delete_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = delete_personal_history(app.config["DATA_FILE"], payload)
-        return jsonify(data), code
-
-    def _migration_verified_subject(payload, channel_key):
-        if not account_migration_ready(app.config):
-            return None, ({"ok": False, "error": "migration_unavailable"}, 503)
-        if extract_id_token is None or verify_line_id_token_for_channel is None:
-            return None, ({"ok": False, "error": "migration_unavailable"}, 503)
-        token = extract_id_token(
-            {key: value for key, value in request.headers.items()},
-            payload,
-            {},
-        )
-        subject = verify_line_id_token_for_channel(
-            token,
-            app.config.get(channel_key),
-        )
-        if not subject:
-            return None, ({"ok": False, "error": "invalid_token"}, 401)
-        return subject, None
-
-    @app.after_request
-    def _disable_account_migration_response_caching(response):
-        if request.path.startswith("/api/account-migration/"):
-            response.headers["Cache-Control"] = "no-store"
-        return response
-
-    @app.post("/api/account-migration/start")
-    def account_migration_start_api():
-        payload = request.get_json(silent=True)
-        if not isinstance(payload, dict):
-            return jsonify({"ok": False, "error": "invalid_request"}), 400
-        old_line_user_id, err = _migration_verified_subject(
-            payload,
-            "LEGACY_LINE_LOGIN_CHANNEL_ID",
-        )
-        if err:
-            return jsonify(err[0]), err[1]
-        data, code = create_account_migration_ticket(
-            app.config["DATA_FILE"],
-            old_line_user_id,
-            app.config,
-        )
-        return jsonify(data), code
-
-    @app.get("/api/account-migration/status")
-    def account_migration_status_api():
-        old_line_user_id, err = _migration_verified_subject(
-            {},
-            "LEGACY_LINE_LOGIN_CHANNEL_ID",
-        )
-        if err:
-            return jsonify(err[0]), err[1]
-        data = account_migration_ticket_status(
-            app.config["DATA_FILE"],
-            old_line_user_id,
-            app.config,
-        )
-        return jsonify(data)
-
-    @app.post("/api/account-migration/redeem")
-    def account_migration_redeem_api():
-        payload = request.get_json(silent=True)
-        if not isinstance(payload, dict):
-            return jsonify({"ok": False, "error": "invalid_request"}), 400
-        new_line_user_id, err = _migration_verified_subject(
-            payload,
-            "LINE_LOGIN_CHANNEL_ID",
-        )
-        if err:
-            return jsonify(err[0]), err[1]
-        data, code = redeem_account_migration_ticket(
-            app.config["DATA_FILE"],
-            payload.get("migration_code"),
-            new_line_user_id,
-            app.config,
-        )
-        return jsonify(data), code
-
-    @app.post("/api/account/privacy-request")
-    def account_privacy_request_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = create_privacy_request(app.config["DATA_FILE"], payload)
-        return jsonify(data), code
-
-    @app.get("/api/admin/summary")
-    def admin_summary_api():
-        denied = _admin_guard()
-        if denied:
-            return denied
-        return jsonify(admin_summary(app.config["DATA_FILE"], app.config))
-
-    @app.get("/api/admin/test-center")
-    def admin_test_center_api():
-        denied = _admin_guard()
-        if denied:
-            return denied
-        return jsonify(admin_test_center_status(app.config["DATA_FILE"], app.config))
-
-    @app.post("/api/admin/test-center/run")
-    def admin_test_center_run_api():
-        denied = _admin_guard(write=True)
-        if denied:
-            return denied
-        data, code = run_admin_test(
-            app.config["DATA_FILE"],
-            app.config,
-            request.get_json(silent=True) or {},
-        )
-        append_admin_audit(
-            app.config["DATA_FILE"],
-            f"test_center.{data.get('test_id') or 'unknown'}",
-            "success" if code < 400 else "failed",
-            {"http_status": code, "test_mode": True},
-        )
-        return jsonify(data), code
-
-    @app.get("/api/admin/account-migrations")
-    def admin_account_migrations_api():
-        denied = _admin_guard()
-        if denied:
-            return denied
-        return jsonify(
-            admin_account_migrations(
-                app.config["DATA_FILE"],
-                app.config,
-            )
-        )
-
-    @app.get("/api/admin/beta-members")
-    def admin_beta_members_api():
-        denied = _admin_guard()
-        if denied:
-            return denied
-        return jsonify(beta_members_snapshot(load_state(app.config["DATA_FILE"])))
-
-    @app.get("/api/admin/line-acceptance")
-    def admin_line_acceptance_api():
-        denied = _admin_guard()
-        if denied:
-            return denied
-        return jsonify(
-            line_acceptance_snapshot(load_state(app.config["DATA_FILE"]))
-        )
-
-    @app.post("/api/admin/line-acceptance")
-    def admin_line_acceptance_create_api():
-        denied = _admin_guard(write=True)
-        if denied:
-            return denied
-        payload = request.get_json(silent=True) or {}
-        try:
-            result = mutate_state_atomically(
-                app.config["DATA_FILE"],
-                lambda state: create_line_acceptance_case(state, payload),
-            )
-        except ValueError as exc:
-            return _admin_mutation_response(
-                "line_acceptance.create",
-                {"ok": False, "error": str(exc)},
-                400,
-            )
-        return _admin_mutation_response(
-            "line_acceptance.create",
-            {"ok": True, **result},
-        )
-
-    @app.patch("/api/admin/line-acceptance/<case_id>")
-    def admin_line_acceptance_review_api(case_id):
-        denied = _admin_guard(write=True)
-        if denied:
-            return denied
-        payload = request.get_json(silent=True) or {}
-        try:
-            result = mutate_state_atomically(
-                app.config["DATA_FILE"],
-                lambda state: review_line_acceptance_case(
-                    state, case_id, payload
-                ),
-            )
-        except ValueError as exc:
-            error = str(exc)
-            return _admin_mutation_response(
-                "line_acceptance.review",
-                {"ok": False, "error": error},
-                404 if error == "acceptance_case_not_found" else 400,
-            )
-        return _admin_mutation_response(
-            "line_acceptance.review",
-            {"ok": True, **result},
-        )
-
-    @app.get("/api/admin/business-dashboard")
-    def admin_business_dashboard_api():
-        denied = _admin_guard()
-        if denied:
-            return denied
-        return jsonify(admin_business_dashboard(app.config["DATA_FILE"], app.config))
-
-    @app.get("/api/admin/beta-program")
-    def admin_beta_program_api():
-        denied = _admin_guard(permission="beta.manage")
-        if denied:
-            return denied
-        return jsonify(admin_beta_summary(app.config["DATA_FILE"]))
-
-    @app.post("/api/admin/beta-program/assign")
-    def admin_beta_program_assign_api():
-        denied = _admin_guard(write=True, permission="beta.manage")
-        if denied:
-            return denied
-        data, code = assign_beta_member(
-            app.config["DATA_FILE"], request.get_json(silent=True) or {}
-        )
-        return _admin_mutation_response("beta.assign", data, code)
-
-    @app.post("/api/admin/beta-members")
-    def admin_beta_member_assign_api():
-        denied = _admin_guard(write=True)
-        if denied:
-            return denied
-        data, code = admin_assign_beta_member(
-            app.config["DATA_FILE"], request.get_json(silent=True) or {}
-        )
-        return _admin_mutation_response("beta.assign", data, code)
-
-    @app.delete("/api/admin/beta-members/<line_user_id>")
-    def admin_beta_member_revoke_api(line_user_id):
-        denied = _admin_guard(write=True)
-        if denied:
-            return denied
-        data, code = admin_revoke_beta_member(
-            app.config["DATA_FILE"], line_user_id
-        )
-        return _admin_mutation_response("beta.revoke", data, code)
-
-    @app.get("/api/admin/launch-readiness")
-    def admin_launch_readiness_api():
-        denied = _admin_guard()
-        if denied:
-            return denied
-        return jsonify(
-            launch_readiness_snapshot(load_state(app.config["DATA_FILE"]))
-        )
-
-    @app.post("/api/admin/launch-validation")
-    def admin_launch_validation_api():
-        denied = _admin_guard(write=True)
-        if denied:
-            return denied
-        payload = request.get_json(silent=True) or {}
-        try:
-            scenario = mutate_state_atomically(
-                app.config["DATA_FILE"],
-                lambda state: record_launch_validation_step(
-                    state,
-                    payload.get("scenario_id"),
-                    payload.get("kind"),
-                    payload.get("step"),
-                    line_user_id=payload.get("line_user_id") or "",
-                ),
-            )
-        except ValueError as exc:
-            return _admin_mutation_response(
-                "launch_validation.record",
-                {"ok": False, "error": str(exc)},
-                400,
-            )
-        return _admin_mutation_response(
-            "launch_validation.record",
-            {"ok": True, "scenario": scenario},
-            200,
-        )
-
-    @app.post("/api/admin/beta-program/update")
-    def admin_beta_program_update_api():
-        denied = _admin_guard(write=True, permission="beta.manage")
-        if denied:
-            return denied
-        data, code = update_beta_member(
-            app.config["DATA_FILE"], request.get_json(silent=True) or {}
-        )
-        return _admin_mutation_response("beta.update", data, code)
-
-    @app.get("/api/admin/privacy-requests")
-    def admin_privacy_requests_api():
-        denied = _admin_guard(permission="privacy.manage")
-        if denied:
-            return denied
-        return jsonify(admin_privacy_requests(app.config["DATA_FILE"]))
-
-    @app.post("/api/admin/privacy-requests/update")
-    def admin_privacy_requests_update_api():
-        denied = _admin_guard(write=True, permission="privacy.manage")
-        if denied:
-            return denied
-        data, code = update_privacy_request(
-            app.config["DATA_FILE"],
-            request.get_json(silent=True) or {},
-            str(session.get("admin_role") or "viewer"),
-        )
-        return _admin_mutation_response("privacy.update", data, code)
-
-    @app.get("/api/admin/support-tickets")
-    def admin_support_tickets_api():
-        denied = _admin_guard()
-        if denied:
-            return denied
-        return jsonify(admin_support_tickets(app.config["DATA_FILE"]))
-
-    @app.get("/api/support/tickets")
-    def member_support_tickets_api():
-        line_user_id, err = _authenticated_line_user({}, use_args=True)
-        if err:
-            return jsonify(err[0]), err[1]
-        data, code = member_support_tickets(
-            app.config["DATA_FILE"], line_user_id
-        )
-        return jsonify(data), code
-
-    @app.post("/api/support/tickets")
-    def member_support_ticket_create_api():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = create_support_ticket(app.config["DATA_FILE"], payload)
-        return jsonify(data), code
-
-    @app.get("/api/admin/backups")
-    def admin_backups_list_api():
-        denied = _admin_guard()
-        if denied:
-            return denied
-        return jsonify(list_admin_backups(app.config["DATA_FILE"]))
-
-    @app.post("/api/admin/backups")
-    def admin_backups_create_api():
-        denied = _admin_guard(write=True, permission="backup.manage")
-        if denied:
-            return denied
-        data, code = create_admin_backup(app.config["DATA_FILE"])
-        return _admin_mutation_response("backup.create", data, code)
-
-    @app.post("/api/admin/backups/r2")
-    def admin_r2_backup_create_api():
-        denied = _admin_guard(write=True)
-        if denied:
-            return denied
-        data, code = create_r2_encrypted_backup(app.config)
-        return _admin_mutation_response("backup.r2.create", data, code)
-
-    @app.get("/api/admin/backups/<backup_id>")
-    def admin_backups_download_api(backup_id):
-        denied = _admin_guard()
-        if denied:
-            return denied
-        data, code = read_admin_backup(app.config["DATA_FILE"], backup_id)
-        return jsonify(data), code
-
-    @app.post("/api/admin/support-reply")
-    def admin_support_reply_api():
-        denied = _admin_guard(write=True, permission="support.manage")
-        if denied:
-            return denied
-        data, code = admin_reply_support_ticket(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
-        return _admin_mutation_response("support.reply", data, code)
-
-    @app.post("/api/admin/send-reminders")
-    def send_reminders_api():
-        denied = _admin_guard(write=True, permission="notification.manage")
-        if denied:
-            return denied
-        data, code = send_due_reminders(app.config)
-        return _admin_mutation_response("reminder.send", data, code)
-
-    @app.post("/api/admin/send-contact-reminders")
-    def send_contact_reminders_api():
-        denied = _admin_guard(write=True, permission="notification.manage")
-        if denied:
-            return denied
-        data, code = send_missing_contact_reminders(app.config)
-        return _admin_mutation_response("contact_reminder.send", data, code)
-
-    @app.post("/api/admin/send-renewal-reminders")
-    def send_renewal_reminders_api():
-        denied = _admin_guard(write=True, permission="notification.manage")
-        if denied:
-            return denied
-        data, code = send_renewal_reminders(app.config)
-        return _admin_mutation_response("renewal_reminder.send", data, code)
-
-    @app.post("/api/admin/send-birthday-reminders")
-    def send_birthday_reminders_api():
-        denied = _admin_guard(write=True, permission="notification.manage")
-        if denied:
-            return denied
-        data, code = send_birthday_reminders(app.config)
-        return _admin_mutation_response("birthday_reminder.send", data, code)
-
-    @app.post("/api/admin/payments/confirm")
-    def admin_payment_confirm_api():
-        denied = _admin_guard(write=True, permission="order.manage")
-        if denied:
-            return denied
-        data, code = confirm_payment_order(app.config["DATA_FILE"], request.get_json(silent=True) or {}, app.config)
-        return _admin_mutation_response("payment.confirm", data, code)
-
-    @app.post("/api/admin/payments/refund")
-    def admin_payment_refund_api():
-        denied = _admin_guard(write=True)
-        if denied:
-            return denied
-        payload = request.get_json(silent=True) or {}
-        payload["requested_by"] = "admin_session"
-        data, code = refund_payment_order(
-            app.config["DATA_FILE"], payload, app.config
-        )
-        return _admin_mutation_response("payment.refund", data, code)
-
-    @app.post("/api/cron/tick")
-    def cron_tick_api():
-        secret = request.headers.get("X-Cron-Secret", "")
-        if not cron_allowed(app.config, secret):
-            return jsonify({"error": "unauthorized"}), 401
-        data, code = run_cron_tick(app.config)
-        return jsonify(data), code
-
-    @app.route("/api/cron/contact-reminders", methods=["GET", "POST"])
-    def cron_contact_reminders_api():
-        secret = request.headers.get("X-Cron-Secret", "")
-        if not cron_allowed(app.config, secret):
-            return jsonify({"error": "unauthorized"}), 401
-        data, code = send_missing_contact_reminders(app.config)
-        return jsonify(data), code
-
-    @app.route("/api/cron/checkin-reminders", methods=["GET", "POST"])
-    def cron_checkin_reminders_api():
-        secret = request.headers.get("X-Cron-Secret", "")
-        if not cron_allowed(app.config, secret):
-            return jsonify({"error": "unauthorized"}), 401
-        # ?mode=broadcast æˆ– force=1 â†’ é‡æ–°æ¨æ’­çµ¦å…¨éƒ¨å·²è¨»å†Šæœƒå“¡ï¼ˆå«ä»Šæ—¥å·²ç°½åˆ°ï¼‰
-        mode = str(request.args.get("mode") or "").strip().lower()
-        force = str(request.args.get("force") or "").strip().lower() in {"1", "true", "yes", "on"}
-        if mode in {"broadcast", "repush", "all"} or force:
-            data, code = broadcast_checkin_reminders(app.config)
-        else:
-            data, code = send_checkin_reminders(app.config)
-        return jsonify(data), code
-
-    @app.route("/api/cron/checkin-broadcast", methods=["GET", "POST"])
-    def cron_checkin_broadcast_api():
-        """é‡æ–°æ¨æ’­å°ˆç”¨ï¼šå°æœ‰ line_user_id çš„æœƒå“¡é€æ–°ç‰ˆæ¯æ—¥å¹³å®‰ Flexã€‚"""
-        secret = request.headers.get("X-Cron-Secret", "")
-        if not cron_allowed(app.config, secret):
-            return jsonify({"error": "unauthorized"}), 401
-        data, code = broadcast_checkin_reminders(app.config)
-        return jsonify(data), code
-
-    @app.route("/api/cron/overdue-alerts", methods=["GET", "POST"])
-    def cron_overdue_alerts_api():
-        secret = request.headers.get("X-Cron-Secret", "")
-        if not cron_allowed(app.config, secret):
-            return jsonify({"error": "unauthorized"}), 401
-        data, code = send_due_reminders(app.config)
-        daily, _daily_code = send_guardian_group_daily_summaries(app.config)
-        if isinstance(data, dict):
-            data = dict(data)
-            data["daily_group_summary"] = daily
-        return jsonify(data), code
-
-    @app.route("/api/cron/renewal-reminders", methods=["GET", "POST"])
-    def cron_renewal_reminders_api():
-        secret = request.headers.get("X-Cron-Secret", "")
-        if not cron_allowed(app.config, secret):
-            return jsonify({"error": "unauthorized"}), 401
-        data, code = send_renewal_reminders(app.config)
-        return jsonify(data), code
-
-    @app.route("/api/cron/birthday-reminders", methods=["GET", "POST"])
-    def cron_birthday_reminders_api():
-        secret = request.headers.get("X-Cron-Secret", "")
-        if not cron_allowed(app.config, secret):
-            return jsonify({"error": "unauthorized"}), 401
-        data, code = send_birthday_reminders(app.config)
-        return jsonify(data), code
-
-    @app.route("/api/cron/smart-reminders", methods=["GET", "POST"])
-    def cron_smart_reminders_api():
-        secret = request.headers.get("X-Cron-Secret", "")
-        if not cron_allowed(app.config, secret):
-            return jsonify({"error": "unauthorized"}), 401
-        data, code = send_smart_reminders(app.config)
-        return jsonify(data), code
-
-    @app.get("/api/smart-reminders")
-    def smart_reminders_get():
-        line_user_id, err = _authenticated_line_user({}, use_args=True)
-        if err:
-            return jsonify(err[0]), err[1]
-        return jsonify(get_smart_reminders_payload(app.config["DATA_FILE"], line_user_id))
-
-    @app.post("/api/smart-reminders")
-    def smart_reminders_post():
-        payload = request.get_json(silent=True) or {}
-        line_user_id, err = _authenticated_line_user(payload)
-        if err:
-            return jsonify(err[0]), err[1]
-        payload["line_user_id"] = line_user_id
-        data, code = save_smart_reminder(app.config["DATA_FILE"], payload)
-        return jsonify(data), code
-
-    @app.delete("/api/smart-reminders/<reminder_id>")
-    def smart_reminders_delete(reminder_id):
-        line_user_id, err = _authenticated_line_user({}, use_args=True)
-        if err:
-            # Also accept JSON body for clients that send line_user_id there
-            payload = request.get_json(silent=True) or {}
-            line_user_id, err = _authenticated_line_user(payload)
-            if err:
-                return jsonify(err[0]), err[1]
-        data, code = delete_smart_reminder(app.config["DATA_FILE"], line_user_id, reminder_id)
-        return jsonify(data), code
-
-    @app.route("/api/cron/membership-expiry", methods=["GET", "POST"])
-    def cron_membership_expiry_api():
-        secret = request.headers.get("X-Cron-Secret", "")
-        if not cron_allowed(app.config, secret):
-            return jsonify({"error": "unauthorized"}), 401
-        data, code = apply_expired_plan_downgrades(app.config)
-        return jsonify(data), code
-
-    @app.route("/api/cron/data-cleanup", methods=["GET", "POST"])
-    def cron_data_cleanup_api():
-        secret = request.headers.get("X-Cron-Secret", "")
-        if not cron_allowed(app.config, secret):
-            return jsonify({"error": "unauthorized"}), 401
-        data, code = cleanup_expired_data(app.config)
-        return jsonify(data), code
-
-    @app.route("/api/cron/backfill-bind-notify", methods=["GET", "POST"])
-    def cron_backfill_bind_notify_api():
-        """One-shot: è£œç™¼æ­·å²å·²ç¶å®šé›™æ–¹çš„ç¶å®šæˆåŠŸ LINEï¼ˆå†ªç­‰ bind_notify_sent_atï¼‰ã€‚"""
-        secret = request.headers.get("X-Cron-Secret", "")
-        if not cron_allowed(app.config, secret):
-            return jsonify({"error": "unauthorized"}), 401
-        payload = request.get_json(silent=True) or {}
-        dry_run = str(
-            request.args.get("dry_run")
-            or payload.get("dry_run")
-            or ""
-        ).strip().lower() in {"1", "true", "yes", "on"}
-        try:
-            limit = int(request.args.get("limit") or payload.get("limit") or 0)
-        except (TypeError, ValueError):
-            limit = 0
-        data, code = backfill_bind_notify(app.config, dry_run=dry_run, limit=limit)
-        return jsonify(data), code
-
-    @app.get("/api/admin/rich-menu")
-    def admin_rich_menu_inspect_api():
-        """æŸ¥è©¢ç›®å‰é è¨­åœ–æ–‡é¸å–®ï¼ˆå«ä¸€éµé‚€è«‹ URIï¼‰ã€‚ä¸å›å‚³ tokenã€‚"""
-        denied = _admin_guard()
-        if denied:
-            return denied
-        data, code = inspect_default_rich_menu(app.config)
-        return jsonify(data), code
-
-    @app.post("/api/admin/rich-menu/deploy")
-    def admin_rich_menu_deploy_api():
-        """ç”¨ Render ä¸Šçš„ LINE_CHANNEL_ACCESS_TOKEN ä¸Šå‚³ä¸¦è¨­ç‚ºé è¨­åœ–æ–‡é¸å–®ã€‚"""
-        denied = _admin_guard(write=True, permission="system.manage")
-        if denied:
-            return denied
-        data, code = deploy_default_rich_menu(app.config)
-        if data.get("ok"):
-            app.logger.info(
-                "rich menu deployed richMenuId=%s name=%s",
-                data.get("richMenuId"),
-                data.get("name"),
-            )
-        else:
-            app.logger.warning(
-                "rich menu deploy failed step=%s http=%s",
-                data.get("step"),
-                data.get("http"),
-            )
-        return _admin_mutation_response("rich_menu.deploy", data, code)
-
-    @app.post("/api/admin/push-welcome")
-    def admin_push_welcome_api():
-        """ç®¡ç†å“¡è£œæ¨æ­¡è¿ Flexï¼ˆéœ€å·²åŠ å¥½å‹ï¼‰ã€‚body: {line_user_id, display_name?}"""
-        denied = _admin_guard(write=True, permission="notification.manage")
-        if denied:
-            return denied
-        if LineBotApi is None or FlexSendMessage is None or welcome_flex is None:
-            return _admin_mutation_response(
-                "welcome.push",
-                {"ok": False, "error": "line sdk or welcome_flex unavailable"},
-                503,
-            )
-        payload = request.get_json(silent=True) or {}
-        line_user_id = str(payload.get("line_user_id") or "").strip()
-        if not line_user_id:
-            return _admin_mutation_response(
-                "welcome.push",
-                {"ok": False, "error": "missing line_user_id"},
-                400,
-            )
-        token = (
-            app.config.get("LINE_CHANNEL_ACCESS_TOKEN")
-            or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
-            or ""
-        ).strip()
-        if not token:
-            return _admin_mutation_response(
-                "welcome.push",
-                {"ok": False, "error": "LINE_CHANNEL_ACCESS_TOKEN not set"},
-                503,
-            )
-        line_bot_api = LineBotApi(token)
-        hint = str(payload.get("display_name") or "").strip() or None
-        resolved = resolve_welcome_display_name(
-            line_bot_api=line_bot_api,
-            data_file=app.config["DATA_FILE"],
-            line_user_id=line_user_id,
-            hint=hint,
-            logger=app.logger,
-        )
-        try:
-            register_line_user(
-                app.config["DATA_FILE"],
-                {"line_user_id": line_user_id, "display_name": resolved or "LINE ä½¿ç”¨è€…"},
-            )
-        except Exception as exc:
-            app.logger.warning("admin push-welcome register failed: %s", exc)
-        contents = welcome_flex(resolved)
-        greeting = (
-            welcome_greeting_text(resolved)
-            if welcome_greeting_text is not None
-            else (f"ğŸ‘‹ {resolved} æ‚¨å¥½ï¼Œæ­¡è¿åŠ å…¥ã€Œæ¯æ—¥å¹³å®‰ã€" if resolved else "ğŸ‘‹ æ‚¨å¥½ï¼Œæ­¡è¿åŠ å…¥ã€Œæ¯æ—¥å¹³å®‰ã€")
-        )
-        alt_text = (
-            f"æ¯æ—¥å¹³å®‰ï½œ{resolved} æ‚¨å¥½ï¼Œæ­¡è¿åŠ å…¥"
-            if resolved
-            else "æ¯æ—¥å¹³å®‰ï½œæ‚¨å¥½ï¼Œæ­¡è¿åŠ å…¥"
-        )
-        try:
-            line_bot_api.push_message(
-                line_user_id,
-                FlexSendMessage(alt_text=alt_text, contents=contents),
-            )
-            app.logger.info(
-                "admin push-welcome ok user=%s name=%r",
-                line_user_id[:8],
-                resolved or "",
-            )
-            return _admin_mutation_response(
-                "welcome.push",
-                {
-                    "ok": True,
-                    "line_user_id": line_user_id,
-                    "display_name": resolved,
-                    "greeting": greeting,
-                },
-            )
-        except LineBotApiError as exc:
-            detail = str(exc)
-            try:
-                detail = getattr(exc, "error", None) or detail
-            except Exception:
-                pass
-            app.logger.exception("admin push-welcome LINE error: %s", detail)
-            return _admin_mutation_response(
-                "welcome.push",
-                {"ok": False, "error": "line_api_error", "detail": str(detail)},
-                502,
-            )
-        except Exception as exc:
-            app.logger.exception("admin push-welcome failed: %s", exc)
-            return _admin_mutation_response(
-                "welcome.push",
-                {"ok": False, "error": str(exc)},
-                500,
-            )
-
-    @app.post("/api/admin/user-plan")
-    def admin_user_plan_api():
-        denied = _admin_guard(write=True, permission="member.manage")
-        if denied:
-            return denied
-        data, code = admin_update_user_plan(app.config["DATA_FILE"], request.get_json(silent=True) or {})
-        return _admin_mutation_response("user_plan.update", data, code)
-
-    @app.post("/api/admin/set-core-guardian")
-    def admin_set_core_guardian_api():
-        denied = _admin_guard(write=True, permission="member.manage")
-        if denied:
-            return denied
-        data, code = admin_set_core_guardian(app.config["DATA_FILE"], request.get_json(silent=True) or {})
-        return _admin_mutation_response("core_guardian.set", data, code)
-
-    @app.post("/api/admin/incidents/resolve")
-    def admin_incident_resolve_api():
-        denied = _admin_guard(write=True, permission="incident.manage")
-        if denied:
-            return denied
-        payload = request.get_json(silent=True) or {}
-        data, code = resolve_admin_incident(
-            app.config["DATA_FILE"],
-            payload,
-            session.get("admin_role"),
-        )
-        return _admin_mutation_response(
-            "incident.resolve",
-            data,
-            code,
-        )
-
-    return app
-
-
-class MiniResponse:
-    def __init__(self, data, status_code=200, headers=None):
-        self._data = data
-        self.status_code = status_code
-        self.headers = headers or {}
-
-    def get_json(self):
-        return self._data
-
-    def close(self):
-        return None
-
-    def get_data(self, as_text=False):
-        if isinstance(self._data, bytes):
-            return self._data.decode("utf-8") if as_text else self._data
-        if isinstance(self._data, str):
-            return self._data if as_text else self._data.encode("utf-8")
-        rendered = json.dumps(self._data, ensure_ascii=False)
-        return rendered if as_text else rendered.encode("utf-8")
-
-
-class MiniClient:
-    def __init__(self, app):
-        self.app = app
-
-    def get(self, path, headers=None):
-        route, _, query = path.partition("?")
-        if route == "/api/admin" or route.startswith("/api/admin/"):
-            return MiniResponse({"error": "admin_not_configured"}, 503)
-        params = dict(urllib.parse.parse_qsl(query))
-        headers = headers or {}
-        if route == "/api/config":
-            return MiniResponse(app_config(self.app.config))
-        if route == "/health":
-            return MiniResponse({"ok": True})
-        if route in ("/robots.txt", "/sitemap.xml"):
-            filename = route.lstrip("/")
-            path_obj = Path(__file__).resolve().parent / filename
-            if path_obj.exists():
-                return MiniResponse(path_obj.read_text(encoding="utf-8"))
-            return MiniResponse({"error": "not found"}, 404)
-        if route in ("/terms", "/privacy"):
-            return MiniResponse({"ok": True})
-        if route == "/liff/migrate.html":
-            return MiniResponse({"ok": True})
-        if route == "/liff/onboarding":
-            liff_id = str(self.app.config.get("LIFF_ID") or DEFAULT_LIFF_ID).strip()
-            return MiniResponse(
-                {"ok": True},
-                302,
-                {"Location": f"https://liff.line.me/{liff_id}?open=onboarding"},
-            )
-        if route == "/api/status":
-            line_user_id, err = authenticated_line_user(
-                {}, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            body, code = status_for_user(
-                self.app.config["DATA_FILE"],
-                line_user_id,
-                params.get("display_name"),
-            )
-            return MiniResponse(body, code)
-        if route == "/api/onboarding":
-            line_user_id, err = authenticated_line_user(
-                {}, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            body, code = onboarding_status_payload(
-                self.app.config["DATA_FILE"], line_user_id
-            )
-            return MiniResponse(body, code)
-        if route == "/api/onboarding/state":
-            line_user_id, err = authenticated_line_user(
-                {}, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            body, code = onboarding_status_payload(
-                self.app.config["DATA_FILE"],
-                line_user_id,
-                allow_missing_profile=True,
-            )
-            return MiniResponse(body, code)
-        if route == "/api/guardian-groups/settings":
-            line_user_id, err = authenticated_line_user(
-                {}, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            body, code = guardian_group_settings_for_user(
-                self.app.config["DATA_FILE"], line_user_id
-            )
-            return MiniResponse(body, code)
-        if route == "/api/admin/summary":
-            denied = admin_auth_error_payload(self.app.config, params.get("password", ""))
-            if denied:
-                payload, code = denied
-                return MiniResponse(payload, code)
-            return MiniResponse(admin_summary(self.app.config["DATA_FILE"], self.app.config))
-        if route == "/api/admin/support-tickets":
-            if not admin_allowed(self.app.config, params.get("password", "")):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            return MiniResponse(admin_support_tickets(self.app.config["DATA_FILE"]))
-        if route == "/api/support/tickets":
-            line_user_id, err = authenticated_line_user(
-                {}, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            body, code = member_support_tickets(
-                self.app.config["DATA_FILE"], line_user_id
-            )
-            return MiniResponse(body, code)
-        if route == "/api/admin/backups":
-            if not admin_allowed(self.app.config, params.get("password", "")):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            return MiniResponse(list_admin_backups(self.app.config["DATA_FILE"]))
-        if route.startswith("/api/admin/backups/"):
-            if not admin_allowed(self.app.config, params.get("password", "")):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            backup_id = route.rsplit("/", 1)[-1]
-            body, code = read_admin_backup(self.app.config["DATA_FILE"], backup_id)
-            return MiniResponse(body, code)
-        if route == "/api/contacts":
-            return MiniResponse(get_contacts(self.app.config["DATA_FILE"], params.get("line_user_id")))
-        if route == "/api/emergency-contact/invite-preview":
-            line_user_id, err = authenticated_line_user(
-                {}, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            body, code = invite_bind_preview(
-                self.app.config["DATA_FILE"],
-                {
-                    "invite_from": params.get("invite_from") or params.get("from") or "",
-                    "invite_token": params.get("invite_token") or "",
-                    "line_user_id": line_user_id,
-                },
-            )
-            return MiniResponse(body, code)
-        if route == "/api/calendar-notes":
-            line_user_id, err = authenticated_line_user(
-                {}, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            body = get_calendar_notes(self.app.config["DATA_FILE"], line_user_id)
-            return MiniResponse(body, 200 if body.get("ok") else 403)
-        if route == "/api/smart-reminders":
-            line_user_id, err = authenticated_line_user(
-                {}, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            return MiniResponse(
-                get_smart_reminders_payload(
-                    self.app.config["DATA_FILE"], line_user_id
-                )
-            )
-        if route == "/api/friends/locations":
-            return MiniResponse(friend_locations(self.app.config["DATA_FILE"], params.get("line_user_id")))
-        if route == "/api/location/status":
-            line_user_id = params.get("line_user_id")
-            if not line_user_id:
-                return MiniResponse({"error": "missing line_user_id"}, 400)
-            profile = get_profile(load_state(self.app.config["DATA_FILE"]), line_user_id)
-            return MiniResponse({"ok": True, "safety_guard": safety_guard_snapshot(profile)})
-        return MiniResponse({"error": "not found"}, 404)
-
-    def post(self, path, data=None, content_type=None, headers=None, **kwargs):
-        route, _, query = path.partition("?")
-        if route == "/api/admin" or route.startswith("/api/admin/"):
-            return MiniResponse({"error": "admin_not_configured"}, 503)
-        params = dict(urllib.parse.parse_qsl(query))
-        headers = headers or {}
-        cron_secret = (
-            headers.get("X-Cron-Secret")
-            or headers.get("x-cron-secret")
-            or ""
-        )
-        payload = {}
-        json_payload = kwargs.get("json")
-        if isinstance(json_payload, dict):
-            payload = dict(json_payload)
-        elif data and content_type == "application/json":
-            payload = json.loads(data)
-        if route == "/api/line/register":
-            body, code = register_line_user(self.app.config["DATA_FILE"], payload)
-            return MiniResponse(body, code)
-        if route == "/api/checkin":
-            line_user_id, err = authenticated_line_user(
-                payload, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            result, code = checkin_for_user(
-                self.app.config["DATA_FILE"], line_user_id, payload, self.app.config
-            )
-            return MiniResponse(result, code)
-        if route == "/api/onboarding/reminder":
-            line_user_id, err = authenticated_line_user(
-                payload, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            result, code = update_onboarding_reminder(
-                self.app.config["DATA_FILE"], line_user_id, payload
-            )
-            return MiniResponse(result, code)
-        if route == "/api/onboarding/complete":
-            line_user_id, err = authenticated_line_user(
-                payload, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            result, code = complete_onboarding_for_user(
-                self.app.config["DATA_FILE"], line_user_id, payload
-            )
-            return MiniResponse(result, code)
-        if route == "/api/warning/cancel":
-            return MiniResponse(cancel_warning(self.app.config["DATA_FILE"], payload, self.app.config))
-        if route == "/api/settings":
-            return MiniResponse(save_settings_for_profile(self.app.config["DATA_FILE"], payload))
-        if route == "/api/billing/preferences":
-            body, code = save_billing_preferences(self.app.config["DATA_FILE"], payload)
-            return MiniResponse(body, code)
-        if route == "/api/payments/orders":
-            body, code = create_payment_order(self.app.config["DATA_FILE"], payload, self.app.config)
-            return MiniResponse(body, code)
-        if route in {"/api/payment/ecpay/notify", "/api/payment/ecpay/period-notify"}:
-            form = dict(data) if isinstance(data, dict) else payload
-            if ecpay is None:
-                return MiniResponse("0|payment module missing", 503)
-            parsed, error = ecpay.parse_notify_payload(form, self.app.config)
-            if error:
-                return MiniResponse(f"0|{error}", 400)
-            if not ecpay.notify_success(parsed, self.app.config):
-                return MiniResponse("1|OK", 200)
-            if route.endswith("/period-notify"):
-                parsed.update({"status": "SUCCESS", "provider": "ecpay"})
-                body, code = process_period_notification(
-                    self.app.config["DATA_FILE"], parsed, self.app.config
-                )
-            else:
-                body, code = confirm_payment_order(
-                    self.app.config["DATA_FILE"],
-                    {
-                        "order_id": parsed.get("order_id"),
-                        "transaction_id": parsed.get("transaction_id"),
-                        "amount": parsed.get("amount"),
-                        "provider": "ecpay",
-                    },
-                    self.app.config,
-                )
-            if code >= 400:
-                return MiniResponse(
-                    f"0|{body.get('error', 'order update failed')}", code
-                )
-            return MiniResponse("1|OK", 200)
-        if route == "/api/contacts":
-            body, code = save_contacts(self.app.config["DATA_FILE"], payload)
-            return MiniResponse(body, code)
-        if route == "/api/calendar-notes":
-            line_user_id, err = authenticated_line_user(
-                payload, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            payload["line_user_id"] = line_user_id
-            body, code = save_calendar_note(self.app.config["DATA_FILE"], payload)
-            return MiniResponse(body, code)
-        if route == "/api/smart-reminders":
-            line_user_id, err = authenticated_line_user(
-                payload, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            payload["line_user_id"] = line_user_id
-            body, code = save_smart_reminder(self.app.config["DATA_FILE"], payload)
-            return MiniResponse(body, code)
-        if route in {"/api/cron/smart-reminders", "/api/cron/birthday-reminders"}:
-            if not cron_allowed(self.app.config, cron_secret):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            task = (
-                send_smart_reminders
-                if route.endswith("smart-reminders")
-                else send_birthday_reminders
-            )
-            body, code = task(self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/emergency-contact/bind":
-            line_user_id, err = authenticated_line_user(payload, args=params, headers=headers, config=self.app.config)
-            if err:
-                return MiniResponse(err[0], err[1])
-            payload["contact_line_user_id"] = line_user_id
-            body, code = bind_emergency_contact(self.app.config["DATA_FILE"], payload, self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/emergency-contact/invite":
-            line_user_id, err = authenticated_line_user(
-                payload, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            body, code = create_guardian_invite(
-                self.app.config["DATA_FILE"], line_user_id, payload
-            )
-            return MiniResponse(body, code)
-        if route == "/api/guardian-groups/bind":
-            line_user_id, err = authenticated_line_user(
-                payload, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            payload["line_user_id"] = line_user_id
-            body, code = bind_guardian_group(self.app.config["DATA_FILE"], payload)
-            return MiniResponse(body, code)
-        if route == "/api/guardian-groups/preferences":
-            line_user_id, err = authenticated_line_user(
-                payload, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            payload["line_user_id"] = line_user_id
-            body, code = update_guardian_group_preferences(
-                self.app.config["DATA_FILE"], payload
-            )
-            return MiniResponse(body, code)
-        if route == "/api/guardian-groups/unbind":
-            line_user_id, err = authenticated_line_user(
-                payload, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            payload["line_user_id"] = line_user_id
-            body, code = unbind_guardian_group(self.app.config["DATA_FILE"], payload)
-            return MiniResponse(body, code)
-        if route == "/api/friends/invite":
-            body, code = create_friend_invite(self.app.config["DATA_FILE"], payload)
-            return MiniResponse(body, code)
-        if route == "/api/friends/accept":
-            body, code = accept_friend_invite(self.app.config["DATA_FILE"], payload)
-            return MiniResponse(body, code)
-        if route == "/api/location/update":
-            body, code = update_location(self.app.config["DATA_FILE"], payload, self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/location/stop":
-            body, code = stop_location_sharing(self.app.config["DATA_FILE"], payload)
-            return MiniResponse(body, code)
-        if route == "/api/sos":
-            body, code = trigger_sos(self.app.config["DATA_FILE"], payload, self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/sos/cancel":
-            body, code = cancel_sos_event(self.app.config["DATA_FILE"], payload, self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/sos/retry":
-            body, code = retry_sos_event(self.app.config["DATA_FILE"], payload, self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/account/delete":
-            body, code = delete_account(self.app.config["DATA_FILE"], payload)
-            return MiniResponse(body, code)
-        if route == "/api/account/export":
-            body, code = export_account_data(self.app.config["DATA_FILE"], payload)
-            return MiniResponse(body, code)
-        if route == "/api/account/history/delete":
-            body, code = delete_personal_history(self.app.config["DATA_FILE"], payload)
-            return MiniResponse(body, code)
-        if route == "/api/admin/send-reminders":
-            if not admin_allowed(self.app.config, params.get("password", "")):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            body, code = send_due_reminders(self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/admin/send-contact-reminders":
-            if not admin_allowed(self.app.config, params.get("password", "")):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            body, code = send_missing_contact_reminders(self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/admin/send-renewal-reminders":
-            if not admin_allowed(self.app.config, params.get("password", "")):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            body, code = send_renewal_reminders(self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/admin/payments/confirm":
-            if not admin_allowed(self.app.config, params.get("password", "")):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            body, code = confirm_payment_order(self.app.config["DATA_FILE"], payload, self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/admin/backups":
-            if not admin_allowed(self.app.config, params.get("password", "")):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            body, code = create_admin_backup(self.app.config["DATA_FILE"])
-            return MiniResponse(body, code)
-        if route == "/api/cron/tick":
-            if not cron_allowed(self.app.config, cron_secret):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            body, code = run_cron_tick(self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/cron/contact-reminders":
-            if not cron_allowed(self.app.config, cron_secret):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            body, code = send_missing_contact_reminders(self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/cron/checkin-reminders":
-            if not cron_allowed(self.app.config, cron_secret):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            mode = str(params.get("mode", "") or "").strip().lower()
-            force = str(params.get("force", "") or "").strip().lower() in {"1", "true", "yes", "on"}
-            if mode in {"broadcast", "repush", "all"} or force:
-                body, code = broadcast_checkin_reminders(self.app.config)
-            else:
-                body, code = send_checkin_reminders(self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/cron/checkin-broadcast":
-            if not cron_allowed(self.app.config, cron_secret):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            body, code = broadcast_checkin_reminders(self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/cron/renewal-reminders":
-            if not cron_allowed(self.app.config, cron_secret):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            body, code = send_renewal_reminders(self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/cron/data-cleanup":
-            if not cron_allowed(self.app.config, cron_secret):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            body, code = cleanup_expired_data(self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/cron/backfill-bind-notify":
-            if not cron_allowed(self.app.config, cron_secret):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            dry_run = str(params.get("dry_run") or payload.get("dry_run") or "").strip().lower() in {
-                "1",
-                "true",
-                "yes",
-                "on",
-            }
-            try:
-                limit = int(params.get("limit") or payload.get("limit") or 0)
-            except (TypeError, ValueError):
-                limit = 0
-            body, code = backfill_bind_notify(self.app.config, dry_run=dry_run, limit=limit)
-            return MiniResponse(body, code)
-        if route == "/api/admin/user-plan":
-            if not admin_allowed(self.app.config, params.get("password", "")):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            body, code = admin_update_user_plan(self.app.config["DATA_FILE"], payload)
-            return MiniResponse(body, code)
-        if route == "/api/admin/set-core-guardian":
-            if not admin_allowed(self.app.config, params.get("password", "")):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            body, code = admin_set_core_guardian(self.app.config["DATA_FILE"], payload)
-            return MiniResponse(body, code)
-        if route == "/api/admin/support-reply":
-            if not admin_allowed(self.app.config, params.get("password", "")):
-                return MiniResponse({"error": "unauthorized"}, 401)
-            body, code = admin_reply_support_ticket(self.app.config["DATA_FILE"], payload, self.app.config)
-            return MiniResponse(body, code)
-        if route == "/api/support/tickets":
-            line_user_id, err = authenticated_line_user(
-                payload, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            payload["line_user_id"] = line_user_id
-            body, code = create_support_ticket(
-                self.app.config["DATA_FILE"], payload
-            )
-            return MiniResponse(body, code)
-        return MiniResponse({"error": "not found"}, 404)
-
-    def delete(self, path, headers=None):
-        route, _, query = path.partition("?")
-        params = dict(urllib.parse.parse_qsl(query))
-        headers = headers or {}
-        if route.startswith("/api/smart-reminders/"):
-            line_user_id, err = authenticated_line_user(
-                {}, args=params, headers=headers, config=self.app.config
-            )
-            if err:
-                return MiniResponse(err[0], err[1])
-            reminder_id = route.rsplit("/", 1)[-1]
-            body, code = delete_smart_reminder(
-                self.app.config["DATA_FILE"], line_user_id, reminder_id
-            )
-            return MiniResponse(body, code)
-        return MiniResponse({"error": "not found"}, 404)
-
-
-class MiniApp:
-    def __init__(self, config=None):
-        self.config = {
-            "DATA_FILE": resolve_data_file(os.environ.get("DATA_FILE")),
-            "ADMIN_PASSWORD": os.environ.get("ADMIN_PASSWORD", ""),
-            "ADMIN_SESSION_SECRET": os.environ.get("ADMIN_SESSION_SECRET", ""),
-            "ALLOW_OPEN_ADMIN": os.environ.get("ALLOW_OPEN_ADMIN", ""),
-            "ADMIN_OPEN": os.environ.get("ADMIN_OPEN", ""),
-            "LINE_CHANNEL_ACCESS_TOKEN": os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", ""),
-            "LINE_CHANNEL_SECRET": os.environ.get("LINE_CHANNEL_SECRET", ""),
-            "LIFF_ID": os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID,
-            "LINE_LOGIN_CHANNEL_ID": (
-                os.environ.get("LINE_LOGIN_CHANNEL_ID")
-                or (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).split("-", 1)[0]
-                or DEFAULT_LINE_LOGIN_CHANNEL_ID
-            ),
-            "LEGACY_LINE_LOGIN_CHANNEL_ID": os.environ.get(
-                "LEGACY_LINE_LOGIN_CHANNEL_ID", "2010674803"
-            ),
-            "LEGACY_LIFF_ID": os.environ.get("LEGACY_LIFF_ID", DEFAULT_LEGACY_LIFF_ID),
-            "ACCOUNT_MIGRATION_SECRET": os.environ.get("ACCOUNT_MIGRATION_SECRET", ""),
-            "APP_PUBLIC_URL": os.environ.get("APP_PUBLIC_URL", ""),
-            "APP_TIMEZONE": os.environ.get("APP_TIMEZONE", "Asia/Taipei"),
-            "CRON_SECRET": os.environ.get("CRON_SECRET", ""),
-        }
-        if config:
-            self.config.update(config)
-
-    def test_client(self):
-        return MiniClient(self)
-
-    def status(self, line_user_id=None):
-        state = load_state(self.config["DATA_FILE"])
-        return build_status(get_profile(state, line_user_id))
-
-    def run(self, host="127.0.0.1", port=5000, debug=False):
-        data_file = self.config["DATA_FILE"]
-        config = self.config
-        static_root = Path(__file__).resolve().parent
-
-        class Handler(BaseHTTPRequestHandler):
-            def send_json(handler, payload, status=200):
-                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-                handler.send_response(status)
-                handler.send_header("Content-Type", "application/json; charset=utf-8")
-                handler.send_header("Content-Length", str(len(body)))
-                handler.end_headers()
-                handler.wfile.write(body)
-
-            def read_payload(handler):
-                length = int(handler.headers.get("Content-Length") or 0)
-                if not length:
-                    return {}
-                try:
-                    return json.loads(handler.rfile.read(length).decode("utf-8"))
-                except json.JSONDecodeError:
-                    return {}
-
-            def query(handler):
-                return dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(handler.path).query))
-
-            def cron_secret(handler):
-                return handler.headers.get("X-Cron-Secret", "")
-
-            def route(handler):
-                return urllib.parse.urlsplit(handler.path).path
-
-            def authenticated_user(handler, payload=None, params=None):
-                return authenticated_line_user(
-                    payload or {},
-                    args=params or {},
-                    headers=dict(handler.headers.items()),
-                    config=config,
-                )
-
-            def do_GET(handler):
-                route = handler.route()
-                if route == "/api/admin" or route.startswith("/api/admin/"):
-                    return handler.send_json({"error": "admin_not_configured"}, 503)
-                params = handler.query()
-                if route == "/api/config":
-                    return handler.send_json(app_config(config))
-                if route == "/health":
-                    return handler.send_json({"ok": True})
-                if route == "/api/status":
-                    line_user_id, err = handler.authenticated_user(params=params)
-                    if err:
-                        return handler.send_json(err[0], err[1])
-                    data, code = status_for_user(
-                        data_file,
-                        line_user_id,
-                        params.get("display_name"),
-                    )
-                    return handler.send_json(data, code)
-                if route == "/api/onboarding":
-                    line_user_id, err = handler.authenticated_user(params=params)
-                    if err:
-                        return handler.send_json(err[0], err[1])
-                    data, code = onboarding_status_payload(data_file, line_user_id)
-                    return handler.send_json(data, code)
-                if route == "/api/onboarding/state":
-                    line_user_id, err = handler.authenticated_user(params=params)
-                    if err:
-                        return handler.send_json(err[0], err[1])
-                    data, code = onboarding_status_payload(
-                        data_file,
-                        line_user_id,
-                        allow_missing_profile=True,
-                    )
-                    return handler.send_json(data, code)
-                if route == "/api/admin/summary":
-                    denied = admin_auth_error_payload(config, params.get("password", ""))
-                    if denied:
-                        payload, code = denied
-                        return handler.send_json(payload, code)
-                    return handler.send_json(admin_summary(data_file, config))
-                if route == "/api/contacts":
-                    return handler.send_json(get_contacts(data_file, params.get("line_user_id")))
-                if route == "/api/emergency-contact/invite-preview":
-                    line_user_id, err = handler.authenticated_user({}, params)
-                    if err:
-                        return handler.send_json(err[0], err[1])
-                    data, code = invite_bind_preview(
-                        data_file,
-                        {
-                            "invite_from": params.get("invite_from") or params.get("from") or "",
-                            "invite_token": params.get("invite_token") or "",
-                            "line_user_id": line_user_id,
-                        },
-                    )
-                    return handler.send_json(data, code)
-                if route == "/api/calendar-notes":
-                    line_user_id, err = handler.authenticated_user(params=params)
-                    if err:
-                        return handler.send_json(err[0], err[1])
-                    body = get_calendar_notes(data_file, line_user_id)
-                    return handler.send_json(
-                        body, status=200 if body.get("ok") else 403
-                    )
-                if route == "/api/smart-reminders":
-                    line_user_id, err = handler.authenticated_user(params=params)
-                    if err:
-                        return handler.send_json(err[0], err[1])
-                    return handler.send_json(
-                        get_smart_reminders_payload(data_file, line_user_id)
-                    )
-                if route == "/api/friends/locations":
-                    return handler.send_json(friend_locations(data_file, params.get("line_user_id")))
-                if route == "/api/location/status":
-                    line_user_id = params.get("line_user_id")
-                    if not line_user_id:
-                        return handler.send_json({"error": "missing line_user_id"}, 400)
-                    return handler.send_json({
-                        "ok": True,
-                        "safety_guard": safety_guard_snapshot(get_profile(load_state(data_file), line_user_id)),
-                    })
-                if route == "/api/cron/contact-reminders":
-                    if not cron_allowed(config, handler.cron_secret()):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = send_missing_contact_reminders(config)
-                    return handler.send_json(data, code)
-                if route == "/api/cron/checkin-reminders":
-                    if not cron_allowed(config, handler.cron_secret()):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    mode = str(params.get("mode", "") or "").strip().lower()
-                    force = str(params.get("force", "") or "").strip().lower() in {"1", "true", "yes", "on"}
-                    if mode in {"broadcast", "repush", "all"} or force:
-                        data, code = broadcast_checkin_reminders(config)
-                    else:
-                        data, code = send_checkin_reminders(config)
-                    return handler.send_json(data, code)
-                if route == "/api/cron/checkin-broadcast":
-                    if not cron_allowed(config, handler.cron_secret()):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = broadcast_checkin_reminders(config)
-                    return handler.send_json(data, code)
-                if route == "/api/cron/data-cleanup":
-                    if not cron_allowed(config, handler.cron_secret()):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = cleanup_expired_data(config)
-                    return handler.send_json(data, code)
-                if route == "/api/cron/backfill-bind-notify":
-                    if not cron_allowed(config, handler.cron_secret()):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    dry_run = str(params.get("dry_run") or "").strip().lower() in {
-                        "1",
-                        "true",
-                        "yes",
-                        "on",
-                    }
-                    try:
-                        limit = int(params.get("limit") or 0)
-                    except (TypeError, ValueError):
-                        limit = 0
-                    data, code = backfill_bind_notify(config, dry_run=dry_run, limit=limit)
-                    return handler.send_json(data, code)
-
-                file_name = "index.html" if route == "/" else route.lstrip("/")
-                if route == "/admin":
-                    file_name = "admin.html"
-                if route == "/terms":
-                    file_name = "terms.html"
-                if route == "/privacy":
-                    file_name = "privacy.html"
-                file_path = static_root / file_name
-                if not file_path.exists() or not file_path.is_file():
-                    handler.send_response(404)
-                    handler.end_headers()
-                    return
-                body = file_path.read_bytes()
-                content_type = "text/html; charset=utf-8" if file_path.suffix == ".html" else "text/plain; charset=utf-8"
-                handler.send_response(200)
-                handler.send_header("Content-Type", content_type)
-                handler.send_header("Content-Length", str(len(body)))
-                if route == "/admin":
-                    handler.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-                    handler.send_header("Pragma", "no-cache")
-                handler.end_headers()
-                handler.wfile.write(body)
-
-            def do_POST(handler):
-                route = handler.route()
-                if route == "/api/admin" or route.startswith("/api/admin/"):
-                    return handler.send_json({"error": "admin_not_configured"}, 503)
-                params = handler.query()
-                payload = handler.read_payload()
-                if route == "/api/line/register":
-                    data, code = register_line_user(data_file, payload)
-                    return handler.send_json(data, code)
-                if route == "/api/checkin":
-                    line_user_id, err = handler.authenticated_user(payload, params)
-                    if err:
-                        return handler.send_json(err[0], err[1])
-                    data, code = checkin_for_user(
-                        data_file, line_user_id, payload, config
-                    )
-                    return handler.send_json(data, code)
-                if route == "/api/onboarding/reminder":
-                    line_user_id, err = handler.authenticated_user(payload, params)
-                    if err:
-                        return handler.send_json(err[0], err[1])
-                    data, code = update_onboarding_reminder(
-                        data_file, line_user_id, payload
-                    )
-                    return handler.send_json(data, code)
-                if route == "/api/onboarding/complete":
-                    line_user_id, err = handler.authenticated_user(payload, params)
-                    if err:
-                        return handler.send_json(err[0], err[1])
-                    data, code = complete_onboarding_for_user(
-                        data_file, line_user_id, payload
-                    )
-                    return handler.send_json(data, code)
-                if route == "/api/warning/cancel":
-                    return handler.send_json(cancel_warning(data_file, payload, config))
-                if route == "/api/settings":
-                    return handler.send_json(save_settings_for_profile(data_file, payload))
-                if route == "/api/billing/preferences":
-                    data, code = save_billing_preferences(data_file, payload)
-                    return handler.send_json(data, code)
-                if route == "/api/payments/orders":
-                    data, code = create_payment_order(data_file, payload, config)
-                    return handler.send_json(data, code)
-                if route == "/api/contacts":
-                    data, code = save_contacts(data_file, payload)
-                    return handler.send_json(data, code)
-                if route == "/api/calendar-notes":
-                    line_user_id, err = handler.authenticated_user(payload, params)
-                    if err:
-                        return handler.send_json(err[0], err[1])
-                    payload["line_user_id"] = line_user_id
-                    data, code = save_calendar_note(data_file, payload)
-                    return handler.send_json(data, code)
-                if route == "/api/smart-reminders":
-                    line_user_id, err = handler.authenticated_user(payload, params)
-                    if err:
-                        return handler.send_json(err[0], err[1])
-                    payload["line_user_id"] = line_user_id
-                    data, code = save_smart_reminder(data_file, payload)
-                    return handler.send_json(data, code)
-                if route in {
-                    "/api/cron/smart-reminders",
-                    "/api/cron/birthday-reminders",
-                }:
-                    if not cron_allowed(config, handler.cron_secret()):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    task = (
-                        send_smart_reminders
-                        if route.endswith("smart-reminders")
-                        else send_birthday_reminders
-                    )
-                    data, code = task(config)
-                    return handler.send_json(data, code)
-                if route == "/api/emergency-contact/bind":
-                    line_user_id, err = handler.authenticated_user(payload, params)
-                    if err:
-                        return handler.send_json(err[0], err[1])
-                    payload["contact_line_user_id"] = line_user_id
-                    data, code = bind_emergency_contact(data_file, payload, config)
-                    return handler.send_json(data, code)
-                if route == "/api/emergency-contact/invite":
-                    line_user_id, err = handler.authenticated_user(payload, params)
-                    if err:
-                        return handler.send_json(err[0], err[1])
-                    data, code = create_guardian_invite(
-                        data_file, line_user_id, payload
-                    )
-                    return handler.send_json(data, code)
-                if route == "/api/guardian-groups/bind":
-                    data, code = bind_guardian_group(data_file, payload)
-                    return handler.send_json(data, code)
-                if route == "/api/guardian-groups/unbind":
-                    data, code = unbind_guardian_group(data_file, payload)
-                    return handler.send_json(data, code)
-                if route == "/api/friends/invite":
-                    data, code = create_friend_invite(data_file, payload)
-                    return handler.send_json(data, code)
-                if route == "/api/friends/accept":
-                    data, code = accept_friend_invite(data_file, payload)
-                    return handler.send_json(data, code)
-                if route == "/api/location/update":
-                    data, code = update_location(data_file, payload, config)
-                    return handler.send_json(data, code)
-                if route == "/api/location/stop":
-                    data, code = stop_location_sharing(data_file, payload)
-                    return handler.send_json(data, code)
-                if route == "/api/sos":
-                    data, code = trigger_sos(data_file, payload, config)
-                    return handler.send_json(data, code)
-                if route == "/api/sos/cancel":
-                    data, code = cancel_sos_event(data_file, payload, config)
-                    return handler.send_json(data, code)
-                if route == "/api/sos/retry":
-                    data, code = retry_sos_event(data_file, payload, config)
-                    return handler.send_json(data, code)
-                if route == "/api/account/delete":
-                    data, code = delete_account(data_file, payload)
-                    return handler.send_json(data, code)
-                if route == "/api/account/export":
-                    data, code = export_account_data(data_file, payload)
-                    return handler.send_json(data, code)
-                if route == "/api/account/history/delete":
-                    data, code = delete_personal_history(data_file, payload)
-                    return handler.send_json(data, code)
-                if route == "/api/admin/send-reminders":
-                    if not admin_allowed(config, params.get("password", "")):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = send_due_reminders(config)
-                    return handler.send_json(data, code)
-                if route == "/api/admin/send-contact-reminders":
-                    if not admin_allowed(config, params.get("password", "")):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = send_missing_contact_reminders(config)
-                    return handler.send_json(data, code)
-                if route == "/api/admin/send-renewal-reminders":
-                    if not admin_allowed(config, params.get("password", "")):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = send_renewal_reminders(config)
-                    return handler.send_json(data, code)
-                if route == "/api/admin/payments/confirm":
-                    if not admin_allowed(config, params.get("password", "")):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = confirm_payment_order(data_file, payload, config)
-                    return handler.send_json(data, code)
-                if route == "/api/cron/tick":
-                    if not cron_allowed(config, handler.cron_secret()):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = run_cron_tick(config)
-                    return handler.send_json(data, code)
-                if route == "/api/cron/contact-reminders":
-                    if not cron_allowed(config, handler.cron_secret()):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = send_missing_contact_reminders(config)
-                    return handler.send_json(data, code)
-                if route == "/api/cron/checkin-reminders":
-                    if not cron_allowed(config, handler.cron_secret()):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    mode = str(params.get("mode", "") or "").strip().lower()
-                    force = str(params.get("force", "") or "").strip().lower() in {"1", "true", "yes", "on"}
-                    if mode in {"broadcast", "repush", "all"} or force:
-                        data, code = broadcast_checkin_reminders(config)
-                    else:
-                        data, code = send_checkin_reminders(config)
-                    return handler.send_json(data, code)
-                if route == "/api/cron/checkin-broadcast":
-                    if not cron_allowed(config, handler.cron_secret()):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = broadcast_checkin_reminders(config)
-                    return handler.send_json(data, code)
-                if route == "/api/cron/renewal-reminders":
-                    if not cron_allowed(config, handler.cron_secret()):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = send_renewal_reminders(config)
-                    return handler.send_json(data, code)
-                if route == "/api/cron/data-cleanup":
-                    if not cron_allowed(config, handler.cron_secret()):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = cleanup_expired_data(config)
-                    return handler.send_json(data, code)
-                if route == "/api/cron/backfill-bind-notify":
-                    if not cron_allowed(config, handler.cron_secret()):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    dry_run = str(
-                        params.get("dry_run") or payload.get("dry_run") or ""
-                    ).strip().lower() in {"1", "true", "yes", "on"}
-                    try:
-                        limit = int(params.get("limit") or payload.get("limit") or 0)
-                    except (TypeError, ValueError):
-                        limit = 0
-                    data, code = backfill_bind_notify(config, dry_run=dry_run, limit=limit)
-                    return handler.send_json(data, code)
-                if route == "/api/admin/user-plan":
-                    if not admin_allowed(config, params.get("password", "")):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = admin_update_user_plan(data_file, payload)
-                    return handler.send_json(data, code)
-                if route == "/api/admin/set-core-guardian":
-                    if not admin_allowed(config, params.get("password", "")):
-                        return handler.send_json({"error": "unauthorized"}, 401)
-                    data, code = admin_set_core_guardian(data_file, payload)
-                    return handler.send_json(data, code)
-                handler.send_json({"error": "not found"}, 404)
-
-        print("Flask is not installed. Using the built-in fallback server.")
-        print(f"Open http://{host}:{port}")
-        ThreadingHTTPServer((host, port), Handler).serve_forever()
-
-
-app = create_app()
-
-
-if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "5000")), debug=True)
+        for group_id in ã¯xñ¼­zÊ&ŠÛ^u”(€€€É•ÑÕÉ¸}…½Õ¹Ñ}µ¥É…Ñ¥½¹}¹½Ü¡Á…ÉÍ•¤(()‘•˜ÁÕÉ•}…½Õ¹Ñ}µ¥É…Ñ¥½¹}¡¥ÍÑ½Éä¡ÍÑ…Ñ”°¹½Üõ9½¹”¤è(€€€ÕÉÉ•¹Ğ€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}¹½Ü¡¹½Ü¤(€€€Ñ¥­•Ñ}ÕÑ½™˜€ôÕÉÉ•¹Ğ€´Ñ¥µ•‘•±Ñ„ (€€€€€€€‘…åÌõ=U9Q}5%IQ%=9}Q%-Q}IQ9Q%=9}eL(€€€€¤(€€€…Õ‘¥Ñ}ÕÑ½™˜€ôÕÉÉ•¹Ğ€´Ñ¥µ•‘•±Ñ„ (€€€€€€€‘…åÌõ=U9Q}5%IQ%=9}U%Q}IQ9Q%=9}eL(€€€€¤(€€€Ñ¥­•ÑÌ€ôÍÑ…Ñ”¹•Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}Ñ¥­•ÑÌˆ¤½Èíô(€€€…Ñ¥Ù•}Ñ¥­•ÑÌ€ômt(€€€¡¥ÍÑ½Éå}Ñ¥­•ÑÌ€ômt(€€€™½È­•ä°Ñ¥­•Ğ¥¸Ñ¥­•ÑÌ¹¥Ñ•µÌ ¤è(€€€€€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡Ñ¥­•Ğ°‘¥Ğ¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€É•…Ñ•€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}‘…Ñ•Ñ¥µ”¡Ñ¥­•Ğ¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤¤(€€€€€€€•áÁ¥É•Ì€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}‘…Ñ•Ñ¥µ”¡Ñ¥­•Ğ¹•Ğ ‰•áÁ¥É•Í}…Ğˆ¤¤(€€€€€€€ÍÑ…ÑÕÌ€ôÍÑÈ¡Ñ¥­•Ğ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤½È€ˆˆ¤(€€€€€€€¥˜ÍÑ…ÑÕÌ€ôô€‰Á•¹‘¥¹œˆ…¹•áÁ¥É•Ì…¹•áÁ¥É•Ì€øÕÉÉ•¹Ğè(€€€€€€€€€€€…Ñ¥Ù•}Ñ¥­•ÑÌ¹…ÁÁ•¹ ¡­•ä°Ñ¥­•Ğ¤¤(€€€€€€€•±¥˜É•…Ñ•…¹É•…Ñ•€øôÑ¥­•Ñ}ÕÑ½™˜è(€€€€€€€€€€€¡¥ÍÑ½Éå}Ñ¥­•ÑÌ¹…ÁÁ•¹ ¡­•ä°Ñ¥­•Ğ¤¤(€€€¡¥ÍÑ½Éå}Ñ¥­•ÑÌ¹Í½ÉĞ (€€€€€€€­•äõ±…µ‰‘„¥Ñ•´èÍÑÈ¡¥Ñ•µlÅt¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤½È€ˆˆ¤°(€€€€€€€É•Ù•ÉÍ”õQÉÕ”°(€€€€¤(€€€¡¥ÍÑ½Éå}…Á…¥Ñä€ôµ…à (€€€€€€€€À°(€€€€€€€=U9Q}5%IQ%=9}Q%-Q}1=	1}5`€´±•¸¡…Ñ¥Ù•}Ñ¥­•ÑÌ¤°(€€€€¤(€€€€Œ…Á…¥Ñä¥Ì„İÉ¥Ñ”½¡¥ÍÑ½Éä‰½Õ¹°¹•Ù•È„É•…Í½¸Ñ¼¥¹Ù…±¥‘…Ñ”…¸(€€€€Œ¥¹¡•É¥Ñ•°Õ¹ÕÍ•Ñ¥­•ĞÑ¡…Ğ¡…Ì¹½Ğ•áÁ¥É•¸(€€€É•Ñ…¥¹•‘}Ñ¥­•ÑÌ€ô…Ñ¥Ù•}Ñ¥­•ÑÌ€¬¡¥ÍÑ½Éå}Ñ¥­•ÑÍlé¡¥ÍÑ½Éå}…Á…¥Ñåt(€€€ÍÑ…Ñ•l‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}Ñ¥­•ÑÌ‰t€ô‘¥Ğ¡É•Ñ…¥¹•‘}Ñ¥­•ÑÌ¤((€€€…Õ‘¥Ğ€ôl(€€€€€€€•Ù•¹Ğ(€€€€€€€™½È•Ù•¹Ğ¥¸€¡ÍÑ…Ñ”¹•Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…Õ‘¥Ğˆ¤½Èmt¤(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡•Ù•¹Ğ°‘¥Ğ¤(€€€€€€€…¹€ (€€€€€€€€€€€}…½Õ¹Ñ}µ¥É…Ñ¥½¹}‘…Ñ•Ñ¥µ”¡•Ù•¹Ğ¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤¤(€€€€€€€€€€€…¹}…½Õ¹Ñ}µ¥É…Ñ¥½¹}‘…Ñ•Ñ¥µ”¡•Ù•¹Ğ¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤¤(€€€€€€€€€€€€øô…Õ‘¥Ñ}ÕÑ½™˜(€€€€€€€€¤(€€€ulµ=U9Q}5%IQ%=9}U%Q}1=	1}5`ét(€€€É•µ½Ù•€ôì(€€€€€€€€‰Ñ¥­•ÑÌˆè±•¸¡Ñ¥­•ÑÌ¤€´±•¸¡ÍÑ…Ñ•l‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}Ñ¥­•ÑÌ‰t¤°(€€€€€€€€‰…Õ‘¥Ğˆè±•¸¡ÍÑ…Ñ”¹•Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…Õ‘¥Ğˆ¤½Èmt¤€´±•¸¡…Õ‘¥Ğ¤°(€€€ô(€€€ÍÑ…Ñ•l‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…Õ‘¥Ğ‰t€ô…Õ‘¥Ğ(€€€É•ÑÕÉ¸É•µ½Ù•(()‘•˜…½Õ¹Ñ}µ¥É…Ñ¥½¹}½‘•}‘¥•ÍĞ¡½‘”°Í•É•Ğ¤è(€€€É•ÑÕÉ¸¡µ…Œ¹¹•Ü (€€€€€€€ÍÑÈ¡Í•É•Ğ½È€ˆˆ¤¹•¹½‘” ‰ÕÑ˜´àˆ¤°(€€€€€€€ÍÑÈ¡½‘”½È€ˆˆ¤¹•¹½‘” ‰ÕÑ˜´àˆ¤°(€€€€€€€¡…Í¡±¥ˆ¹Í¡„ÈÔØ°(€€€€¤¹¡•á‘¥•ÍĞ ¤(()‘•˜Ù…±¥‘…Ñ•}…½Õ¹Ñ}µ¥É…Ñ¥½¹}Ñ¥­•Ğ¡ÍÑ…Ñ”°½‘”°Í•É•Ğ°¹½Üõ9½¹”¤è(€€€€ˆˆ‰I•ÑÕÉ¸„Á•¹‘¥¹œÑ¥­•Ğ½È„™¥á•Í…™”•ÉÉ½È…Ñ•½Éä¸((€€€Q¡¥Ì¡•±Á•È½¹±äÙ…±¥‘…Ñ•ÌÑ¥­•ĞÍÑ…Ñ”¸Q…Í¬€ĞÁ•É™½ÉµÌ½¹ÍÕµÁÑ¥½¸…¹(€€€ÁÉ½™¥±”µÕÑ…Ñ¥½¸Ñ½•Ñ¡•È¥¹Í¥‘”Ñ¡”…Ñ½µ¥ŒÁ•ÉÍ¥ÍÑ•¹”‰½Õ¹‘…Éä¸(€€€€ˆˆˆ(€€€É…İ}½‘”€ôÍÑÈ¡½‘”½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€Í¥¹¥¹}Í•É•Ğ€ôÍÑÈ¡Í•É•Ğ½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¹½ĞÉ…İ}½‘”½È¹½ĞÍ¥¹¥¹}Í•É•Ğè(€€€€€€€É•ÑÕÉ¸9½¹”°€‰¥¹Ù…±¥‘}½‘”ˆ((€€€•áÁ•Ñ•‘}‘¥•ÍĞ€ô…½Õ¹Ñ}µ¥É…Ñ¥½¹}½‘•}‘¥•ÍĞ¡É…İ}½‘”°Í¥¹¥¹}Í•É•Ğ¤(€€€µ…Ñ¡•€ô9½¹”(€€€™½ÈÑ¥­•Ğ¥¸€¡ÍÑ…Ñ”¹•Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}Ñ¥­•ÑÌˆ¤½Èíô¤¹Ù…±Õ•Ì ¤è(€€€€€€€…¹‘¥‘…Ñ”€ôÍÑÈ ¡Ñ¥­•Ğ½Èíô¤¹•Ğ ‰½‘•}‘¥•ÍĞˆ¤½È€ˆˆ¤(€€€€€€€¥˜Í•É•ÑÌ¹½µÁ…É•}‘¥•ÍĞ¡…¹‘¥‘…Ñ”°•áÁ•Ñ•‘}‘¥•ÍĞ¤è(€€€€€€€€€€€µ…Ñ¡•€ôÑ¥­•Ğ((€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡µ…Ñ¡•°‘¥Ğ¤è(€€€€€€€É•ÑÕÉ¸9½¹”°€‰¥¹Ù…±¥‘}½‘”ˆ(€€€ÍÑ…ÑÕÌ€ôÍÑÈ¡µ…Ñ¡•¹•Ğ ‰ÍÑ…ÑÕÌˆ¤½È€ˆˆ¤(€€€¥˜ÍÑ…ÑÕÌ€ôô€‰ÕÍ•ˆè(€€€€€€€É•ÑÕÉ¸9½¹”°€‰ÕÍ•‘}½‘”ˆ(€€€•áÁ¥É•Í}…Ğ€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}‘…Ñ•Ñ¥µ”¡µ…Ñ¡•¹•Ğ ‰•áÁ¥É•Í}…Ğˆ¤¤(€€€¥˜ÍÑ…ÑÕÌ€ôô€‰•áÁ¥É•ˆ½È¹½Ğ•áÁ¥É•Í}…Ğè(€€€€€€€É•ÑÕÉ¸9½¹”°€‰•áÁ¥É•‘}½‘”ˆ(€€€¥˜}…½Õ¹Ñ}µ¥É…Ñ¥½¹}¹½Ü¡¹½Ü¤€øô•áÁ¥É•Í}…Ğè(€€€€€€€É•ÑÕÉ¸9½¹”°€‰•áÁ¥É•‘}½‘”ˆ(€€€¥˜ÍÑ…ÑÕÌ€„ô€‰Á•¹‘¥¹œˆè(€€€€€€€É•ÑÕÉ¸9½¹”°€‰¥¹Ù…±¥‘}½‘”ˆ((€€€½±‘}±¥¹•}ÕÍ•É}¥€ôÍÑÈ¡µ…Ñ¡•¹•Ğ ‰½±‘}±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤(€€€ÕÍ•ÉÌ€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô(€€€…±¥…Í•Ì€ôÍÑ…Ñ”¹•Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…±¥…Í•Ìˆ¤½Èíô(€€€¥˜½±‘}±¥¹•}ÕÍ•É}¥¹½Ğ¥¸ÕÍ•ÉÌ½È½±‘}±¥¹•}ÕÍ•É}¥¥¸…±¥…Í•Ìè(€€€€€€€É•ÑÕÉ¸9½¹”°€‰Í½ÕÉ•}µ¥ÍÍ¥¹œˆ(€€€É•ÑÕÉ¸µ…Ñ¡•°9½¹”(()‘•˜É•…Ñ•}…½Õ¹Ñ}µ¥É…Ñ¥½¹}Ñ¥­•Ğ (€€€‘…Ñ…}™¥±”°(€€€½±‘}±¥¹•}ÕÍ•É}¥°(€€€½¹™¥œ°(€€€¹½Üõ9½¹”°(¤è(€€€¥˜¹½Ğ…½Õ¹Ñ}µ¥É…Ñ¥½¹}É•…‘ä¡½¹™¥œ¤è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰µ¥É…Ñ¥½¹}Õ¹…Ù…¥±…‰±”‰ô°€ÔÀÌ((€€€Ù•É¥™¥•‘}½±‘}¥€ôÍÑÈ¡½±‘}±¥¹•}ÕÍ•É}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€ÕÉÉ•¹Ğ€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}¹½Ü¡¹½Ü¤(€€€ÕÉÉ•¹Ñ}¥Í¼€ôÕÉÉ•¹Ğ¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€ÑÑ±}Í•½¹‘Ì€ô¥¹Ğ¡½¹™¥œ¹•Ğ ‰=U9Q}5%IQ%=9}QQ1}M=9Lˆ¤½È€ØÀÀ¤(€€€É…İ}½‘”€ôÍ•É•ÑÌ¹Ñ½­•¹}ÕÉ±Í…™” ÌÈ¤(€€€Ñ¥­•Ñ}¥€ô˜‰…µÑ}íÍ•É•ÑÌ¹Ñ½­•¹}ÕÉ±Í…™” ÄÈ¥ôˆ((€€€‘•˜µÕÑ…Ñ”¡ÍÑ…Ñ”¤è(€€€€€€€ÁÕÉ•}…½Õ¹Ñ}µ¥É…Ñ¥½¹}¡¥ÍÑ½Éä¡ÍÑ…Ñ”°ÕÉÉ•¹Ğ¤(€€€€€€€ÕÍ•ÉÌ€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô(€€€€€€€…±¥…Í•Ì€ôÍÑ…Ñ”¹•Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…±¥…Í•Ìˆ¤½Èíô(€€€€€€€¥˜€ (€€€€€€€€€€€¹½ĞÙ•É¥™¥•‘}½±‘}¥(€€€€€€€€€€€½ÈÙ•É¥™¥•‘}½±‘}¥¹½Ğ¥¸ÕÍ•ÉÌ(€€€€€€€€€€€½ÈÙ•É¥™¥•‘}½±‘}¥¥¸…±¥…Í•Ì(€€€€€€€€¤è(€€€€€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰…½Õ¹Ñ}¹½Ñ}™½Õ¹‰ô°€ĞÀĞ(€€€€€€€Ñ¥­•ÑÌ€ôÍÑ…Ñ”¹Í•Ñ‘•™…Õ±Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}Ñ¥­•ÑÌˆ°íô¤(€€€€€€€É••¹Ñ}ÕÑ½™˜€ôÕÉÉ•¹Ğ€´Ñ¥µ•‘•±Ñ„ (€€€€€€€€€€€Í•½¹‘Ìõ=U9Q}5%IQ%=9}MQIQ}]%9=]}M=9L(€€€€€€€€¤(€€€€€€€É••¹Ğ€ôl(€€€€€€€€€€€Ñ¥­•Ğ™½ÈÑ¥­•Ğ¥¸Ñ¥­•ÑÌ¹Ù…±Õ•Ì ¤(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡Ñ¥­•Ğ°‘¥Ğ¤(€€€€€€€€€€€…¹Ñ¥­•Ğ¹•Ğ ‰½±‘}±¥¹•}ÕÍ•É}¥ˆ¤€ôôÙ•É¥™¥•‘}½±‘}¥(€€€€€€€€€€€…¹€ (€€€€€€€€€€€€€€€}…½Õ¹Ñ}µ¥É…Ñ¥½¹}‘…Ñ•Ñ¥µ”¡Ñ¥­•Ğ¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤¤(€€€€€€€€€€€€€€€…¹}…½Õ¹Ñ}µ¥É…Ñ¥½¹}‘…Ñ•Ñ¥µ”¡Ñ¥­•Ğ¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤¤(€€€€€€€€€€€€€€€€øôÉ••¹Ñ}ÕÑ½™˜(€€€€€€€€€€€€¤(€€€€€€€t(€€€€€€€Í½ÕÉ•}Ñ¥­•ÑÌ€ôl(€€€€€€€€€€€Ñ¥­•Ğ™½ÈÑ¥­•Ğ¥¸Ñ¥­•ÑÌ¹Ù…±Õ•Ì ¤(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡Ñ¥­•Ğ°‘¥Ğ¤(€€€€€€€€€€€…¹Ñ¥­•Ğ¹•Ğ ‰½±‘}±¥¹•}ÕÍ•É}¥ˆ¤€ôôÙ•É¥™¥•‘}½±‘}¥(€€€€€€€t(€€€€€€€¥˜€ (€€€€€€€€€€€±•¸¡É••¹Ğ¤€øô=U9Q}5%IQ%=9}MQIQ}5a}AI}]%9=\(€€€€€€€€€€€½È±•¸¡Í½ÕÉ•}Ñ¥­•ÑÌ¤€øô=U9Q}5%IQ%=9}Q%-Q}5a}AI}M=UI(€€€€€€€€€€€½È±•¸¡Ñ¥­•ÑÌ¤€øô=U9Q}5%IQ%=9}Q%-Q}1=	1}5`(€€€€€€€€¤è(€€€€€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰É…Ñ•}±¥µ¥Ñ•‰ô°€ĞÈä(€€€€€€€™½ÈÑ¥­•Ğ¥¸Ñ¥­•ÑÌ¹Ù…±Õ•Ì ¤è(€€€€€€€€€€€¥˜€ (€€€€€€€€€€€€€€€¥Í¥¹ÍÑ…¹”¡Ñ¥­•Ğ°‘¥Ğ¤(€€€€€€€€€€€€€€€…¹Ñ¥­•Ğ¹•Ğ ‰½±‘}±¥¹•}ÕÍ•É}¥ˆ¤€ôôÙ•É¥™¥•‘}½±‘}¥(€€€€€€€€€€€€€€€…¹Ñ¥­•Ğ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰Á•¹‘¥¹œˆ(€€€€€€€€€€€€¤è(€€€€€€€€€€€€€€€Ñ¥­•Ñl‰ÍÑ…ÑÕÌ‰t€ô€‰•áÁ¥É•ˆ(€€€€€€€€€€€€€€€Ñ¥­•Ñl‰•áÁ¥É•Í}…Ğ‰t€ôÕÉÉ•¹Ñ}¥Í¼(€€€€€€€Ñ¥­•ÑÍmÑ¥­•Ñ}¥‘t€ôì(€€€€€€€€€€€€‰Ñ¥­•Ñ}¥ˆèÑ¥­•Ñ}¥°(€€€€€€€€€€€€‰½‘•}‘¥•ÍĞˆè…½Õ¹Ñ}µ¥É…Ñ¥½¹}½‘•}‘¥•ÍĞ (€€€€€€€€€€€€€€€É…İ}½‘”°(€€€€€€€€€€€€€€€½¹™¥œ¹•Ğ ‰=U9Q}5%IQ%=9}MIPˆ¤°(€€€€€€€€€€€€¤°(€€€€€€€€€€€€‰½±‘}±¥¹•}ÕÍ•É}¥ˆèÙ•É¥™¥•‘}½±‘}¥°(€€€€€€€€€€€€‰É•…Ñ•‘}…ĞˆèÕÉÉ•¹Ñ}¥Í¼°(€€€€€€€€€€€€‰•áÁ¥É•Í}…Ğˆè€ (€€€€€€€€€€€€€€€ÕÉÉ•¹Ğ€¬Ñ¥µ•‘•±Ñ„¡Í•½¹‘ÌõÑÑ±}Í•½¹‘Ì¤(€€€€€€€€€€€€¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€€€€€‰ÕÍ•‘}…Ğˆè€ˆˆ°(€€€€€€€€€€€€‰ÍÑ…ÑÕÌˆè€‰Á•¹‘¥¹œˆ°(€€€€€€€ô(€€€€€€€É•ÑÕÉ¸ì(€€€€€€€€€€€€‰½¬ˆèQÉÕ”°(€€€€€€€€€€€€‰µ¥É…Ñ¥½¹}½‘”ˆèÉ…İ}½‘”°(€€€€€€€€€€€€‰•áÁ¥É•Í}¥¸ˆèÑÑ±}Í•½¹‘Ì°(€€€€€€€ô°€ÈÀÀ((€€€É•ÑÕÉ¸µÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä¡‘…Ñ…}™¥±”°µÕÑ…Ñ”¤(()‘•˜…½Õ¹Ñ}µ¥É…Ñ¥½¹}Ñ¥­•Ñ}ÍÑ…ÑÕÌ (€€€‘…Ñ…}™¥±”°(€€€½±‘}±¥¹•}ÕÍ•É}¥°(€€€½¹™¥œ°(€€€¹½Üõ9½¹”°(¤è(€€€Í…™•}ÍÑ…ÑÕÌ€ôì(€€€€€€€€‰½¬ˆèQÉÕ”°(€€€€€€€€‰½¹™¥ÕÉ•ˆè…½Õ¹Ñ}µ¥É…Ñ¥½¹}É•…‘ä¡½¹™¥œ¤°(€€€€€€€€‰Á•¹‘¥¹œˆè…±Í”°(€€€€€€€€‰•áÁ¥É•Í}¥¸ˆè€À°(€€€ô(€€€¥˜¹½ĞÍ…™•}ÍÑ…ÑÕÍl‰½¹™¥ÕÉ•‰tè(€€€€€€€É•ÑÕÉ¸Í…™•}ÍÑ…ÑÕÌ((€€€Ù•É¥™¥•‘}½±‘}¥€ôÍÑÈ¡½±‘}±¥¹•}ÕÍ•É}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€ÕÉÉ•¹Ğ€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}¹½Ü¡¹½Ü¤(€€€É•µ…¥¹¥¹œ€ô€À(€€€ÕÍ•ÉÌ€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô(€€€…±¥…Í•Ì€ôÍÑ…Ñ”¹•Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…±¥…Í•Ìˆ¤½Èíô(€€€Í½ÕÉ•}•á¥ÍÑÌ€ôÙ•É¥™¥•‘}½±‘}¥¥¸ÕÍ•ÉÌ…¹Ù•É¥™¥•‘}½±‘}¥¹½Ğ¥¸…±¥…Í•Ì(€€€™½ÈÑ¥­•Ğ¥¸€¡ÍÑ…Ñ”¹•Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}Ñ¥­•ÑÌˆ¤½Èíô¤¹Ù…±Õ•Ì ¤è(€€€€€€€¥˜€ (€€€€€€€€€€€¹½Ğ¥Í¥¹ÍÑ…¹”¡Ñ¥­•Ğ°‘¥Ğ¤(€€€€€€€€€€€½ÈÑ¥­•Ğ¹•Ğ ‰½±‘}±¥¹•}ÕÍ•É}¥ˆ¤€„ôÙ•É¥™¥•‘}½±‘}¥(€€€€€€€€€€€½ÈÑ¥­•Ğ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€„ô€‰Á•¹‘¥¹œˆ(€€€€€€€€¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€•áÁ¥É•Í}…Ğ€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}‘…Ñ•Ñ¥µ”¡Ñ¥­•Ğ¹•Ğ ‰•áÁ¥É•Í}…Ğˆ¤¤(€€€€€€€¥˜¹½ĞÍ½ÕÉ•}•á¥ÍÑÌ½È¹½Ğ•áÁ¥É•Í}…Ğ½ÈÕÉÉ•¹Ğ€øô•áÁ¥É•Í}…Ğè(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€É•µ…¥¹¥¹œ€ôµ…à¡É•µ…¥¹¥¹œ°¥¹Ğ ¡•áÁ¥É•Í}…Ğ€´ÕÉÉ•¹Ğ¤¹Ñ½Ñ…±}Í•½¹‘Ì ¤¤¤((€€€Í…™•}ÍÑ…ÑÕÍl‰Á•¹‘¥¹œ‰t€ôÉ•µ…¥¹¥¹œ€ø€À(€€€Í…™•}ÍÑ…ÑÕÍl‰•áÁ¥É•Í}¥¸‰t€ôÉ•µ…¥¹¥¹œ(€€€É•ÑÕÉ¸Í…™•}ÍÑ…ÑÕÌ(()}5%IQ%=9}AI=%1}1%MQ}-eL€ôì(€€€€‰½¹Ñ…ÑÌˆè€ ‰¥ˆ°€‰…•ÁÑ•‘}¥¹Ù¥Ñ•}¥ˆ°€‰¥¹Ù¥Ñ•}¥ˆ¤°(€€€€‰½¹Ñ…ÑÍ}…É¡¥Ù•ˆè€ ‰¥ˆ°€‰…•ÁÑ•‘}¥¹Ù¥Ñ•}¥ˆ°€‰¥¹Ù¥Ñ•}¥ˆ¤°(€€€€‰Íµ…ÉÑ}É•µ¥¹‘•ÉÌˆè€ ‰¥ˆ°¤°(€€€€‰Õ…É‘¥¹}‘•Ñ…¥±Ìˆè€ ‰¥ˆ°€‰±¥¹•}ÕÍ•É}¥ˆ¤°)ô()}5%IQ%=9}AII9}-eL€ôì(€€€€‰ÁÉ•™•É•¹•Ìˆ°(€€€€‰¥¹Ñ•É…Ñ¥½¹}ÍÑ…Ñ”ˆ°(€€€€‰Íµ…ÉÑ}É•µ¥¹‘•É}‘•™…Õ±ÑÌˆ°(€€€€‰É…•}¡½ÕÉÌˆ°(€€€€‰É•µ¥¹‘•É}Ñ¥µ”ˆ°(€€€€‰É•µ¥¹‘•É}Ñ¥µ•Ìˆ°(€€€€‰¡•­¥¹}µ½‘”ˆ°(€€€€‰…ÕÑ½}¡•­¥¹}½¹}½Á•¸ˆ°(€€€€‰İ…É¹¥¹}…¹•±}µ¥¹ÕÑ•Ìˆ°(€€€€‰…±•ÉÑ}¡…¹¹•±Ìˆ°(€€€€‰…ÑÑ…¡}±½…Ñ¥½¹}½¹}…±•ÉĞˆ°(€€€€‰½¹Ñ…Ñ}…Á…¥Ñå}É•µ¥¹‘•É}•¹…‰±•ˆ°(€€€€‰‘…¥±å}¡•­¥¹}É•µ¥¹‘•É}•¹…‰±•ˆ°(€€€€‰Õ…É‘¥…¹}‘•Ñ…¥±Í}É•µ¥¹‘•É}•¹…‰±•ˆ°(€€€€‰•áÁ¥Éå}É•µ¥¹‘}½ÁÑ}½ÕĞˆ°)ô()}5%IQ%=9}9Q%Q159Q}-eL€ôì(€€€€‰Á±…¸ˆ°(€€€€‰µ•µ‰•ÉÍ¡¥Á}Í½ÕÉ”ˆ°(€€€€‰ÑÉ¥…±}ÍÑ…ÉÑ•‘}…Ğˆ°(€€€€‰ÑÉ¥…±}•¹ˆ°(€€€€‰ÑÉ¥…±}Á½±¥å}Ù•ÉÍ¥½¸ˆ°(€€€€‰ÑÉ¥…±}¹½Ñ¥•}‘…åÍ}Í•¹Ğˆ°(€€€€‰ÑÉ¥…±}‰½¹ÕÍ}‘…åÌˆ°(€€€€‰Á…åµ•¹Ñ}ÍÑ…ÑÕÌˆ°(€€€€‰Á…¥‘}Õ¹Ñ¥°ˆ°(€€€€‰‰¥±±¥¹}å±”ˆ°(€€€€‰Á…åµ•¹Ñ}ÁÉ½Ù¥‘•Èˆ°(€€€€‰Á…åµ•¹Ñ}µ•Ñ¡½‘}±…ÍĞĞˆ°(€€€€‰¹•áÑ}‰¥±±¥¹}‘…Ñ”ˆ°(€€€€‰…ÕÑ½}É•¹•İ}É•ÅÕ•ÍÑ•ˆ°(€€€€‰…ÕÑ½}É•¹•İ}•¹…‰±•ˆ°(€€€€‰…ÕÑ½}É•¹•İ}ÍÑ…ÑÕÌˆ°(€€€€‰Á±…¹}•áÁ¥É•‘}…Ğˆ°(€€€€‰½¹Ñ…ÑÍ}É•Ñ…¥¹}Õ¹Ñ¥°ˆ°)ô(()‘•˜}µ¥É…Ñ¥½¹}Ù…±Õ•}‰±…¹¬¡Ù…±Õ”¤è(€€€É•ÑÕÉ¸Ù…±Õ”¥Ì9½¹”½ÈÙ…±Õ”€ôô€ˆˆ½ÈÙ…±Õ”€ôômt½ÈÙ…±Õ”€ôôíô(()‘•˜}µ¥É…Ñ¥½¹}Ñ¥µ•ÍÑ…µÀ¡Ù…±Õ”¤è(€€€¥˜¹½ĞÙ…±Õ”è(€€€€€€€É•ÑÕÉ¸9½¹”(€€€É•ÑÕÉ¸}…½Õ¹Ñ}µ¥É…Ñ¥½¹}‘…Ñ•Ñ¥µ”¡Ù…±Õ”¤(()‘•˜}µ¥É…Ñ¥½¹}É•½É‘}Ñ¥µ•ÍÑ…µÀ¡É•½É¤è(€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡É•½É°‘¥Ğ¤è(€€€€€€€É•ÑÕÉ¸9½¹”(€€€™½È­•ä¥¸€ ‰ÕÁ‘…Ñ•‘}…Ğˆ°€‰…•ÁÑ•‘}…Ğˆ°€‰É•…Ñ•‘}…Ğˆ¤è(€€€€€€€Á…ÉÍ•€ô}µ¥É…Ñ¥½¹}Ñ¥µ•ÍÑ…µÀ¡É•½É¹•Ğ¡­•ä¤¤(€€€€€€€¥˜Á…ÉÍ•è(€€€€€€€€€€€É•ÑÕÉ¸Á…ÉÍ•(€€€É•ÑÕÉ¸9½¹”(()‘•˜}µ¥É…Ñ¥½¹}ÁÉ•™•É•¹•}Ñ¥µ•ÍÑ…µÀ¡ÁÉ½™¥±”°­•ä°Ù…±Õ”¤è(€€€¥˜¥Í¥¹ÍÑ…¹”¡Ù…±Õ”°‘¥Ğ¤è(€€€€€€€¹•ÍÑ•€ô}µ¥É…Ñ¥½¹}Ñ¥µ•ÍÑ…µÀ¡Ù…±Õ”¹•Ğ ‰ÕÁ‘…Ñ•‘}…Ğˆ¤¤(€€€€€€€¥˜¹•ÍÑ•è(€€€€€€€€€€€É•ÑÕÉ¸¹•ÍÑ•(€€€É•ÑÕÉ¸€ (€€€€€€€}µ¥É…Ñ¥½¹}Ñ¥µ•ÍÑ…µÀ ¡ÁÉ½™¥±”½Èíô¤¹•Ğ¡˜‰í­•åõ}ÕÁ‘…Ñ•‘}…Ğˆ¤¤(€€€€€€€½È}µ¥É…Ñ¥½¹}Ñ¥µ•ÍÑ…µÀ ¡ÁÉ½™¥±”½Èíô¤¹•Ğ ‰ÁÉ•™•É•¹•Í}ÕÁ‘…Ñ•‘}…Ğˆ¤¤(€€€€¤(()‘•˜}µ¥É…Ñ¥½¹}¡½½Í•}É•½É¡±•…ä°ÕÉÉ•¹Ğ¤è(€€€±•…å}Ñ¥µ”€ô}µ¥É…Ñ¥½¹}É•½É‘}Ñ¥µ•ÍÑ…µÀ¡±•…ä¤(€€€ÕÉÉ•¹Ñ}Ñ¥µ”€ô}µ¥É…Ñ¥½¹}É•½É‘}Ñ¥µ•ÍÑ…µÀ¡ÕÉÉ•¹Ğ¤(€€€¥˜ÕÉÉ•¹Ñ}Ñ¥µ”…¹€¡¹½Ğ±•…å}Ñ¥µ”½ÈÕÉÉ•¹Ñ}Ñ¥µ”€ø±•…å}Ñ¥µ”¤è(€€€€€€€É•ÑÕÉ¸½Áä¹‘••Á½Áä¡ÕÉÉ•¹Ğ¤(€€€É•ÑÕÉ¸½Áä¹‘••Á½Áä¡±•…ä¤(()‘•˜}µ¥É…Ñ¥½¹}ÍÑ…‰±•}Ù…±Õ”¡É•½É°­•åÌ¤è(€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡É•½É°‘¥Ğ¤è(€€€€€€€É•ÑÕÉ¸€ˆˆ(€€€™½È­•ä¥¸­•åÌè(€€€€€€€Ù…±Õ”€ôÍÑÈ¡É•½É¹•Ğ¡­•ä¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€¥˜Ù…±Õ”è(€€€€€€€€€€€É•ÑÕÉ¸˜‰í­•åôéíÙ…±Õ•ôˆ(€€€É•ÑÕÉ¸€ˆˆ(()‘•˜}µ•É•}µ¥É…Ñ¥½¹}É•½É‘Ì¡±•…å}É½İÌ°ÕÉÉ•¹Ñ}É½İÌ°­•åÌ°ÁÉ•™¥à¤è(€€€µ•É•€ômt(€€€Á½Í¥Ñ¥½¹Ì€ôíô(€€€ÕÍ•‘}¥‘Ì€ôì(€€€€€€€ÍÑÈ¡É½Ü¹•Ğ ‰¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€™½ÈÉ½Ü¥¸l¨¡±•…å}É½İÌ½Èmt¤°€¨¡ÕÉÉ•¹Ñ}É½İÌ½Èmt¥t(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡É½Ü°‘¥Ğ¤…¹ÍÑÈ¡É½Ü¹•Ğ ‰¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€ô(€€€•¹•É…Ñ•‘}¥¹‘•à€ô€À((€€€™½ÈÍ½ÕÉ•}¹…µ”°É½İÌ¥¸€  ‰±•…äˆ°±•…å}É½İÌ½Èmt¤°€ ‰ÕÉÉ•¹Ğˆ°ÕÉÉ•¹Ñ}É½İÌ½Èmt¤¤è(€€€€€€€™½ÈÉ½Ü¥¸É½İÌè(€€€€€€€€€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡É½Ü°‘¥Ğ¤è(€€€€€€€€€€€€€€€É½Ü€ôì‰Ù…±Õ”ˆè½Áä¹‘••Á½Áä¡É½Ü¥ô(€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€É½Ü€ô½Áä¹‘••Á½Áä¡É½Ü¤(€€€€€€€€€€€ÍÑ…‰±”€ô}µ¥É…Ñ¥½¹}ÍÑ…‰±•}Ù…±Õ”¡É½Ü°­•åÌ¤(€€€€€€€€€€€¥˜ÍÑ…‰±”…¹ÍÑ…‰±”¥¸Á½Í¥Ñ¥½¹Ìè(€€€€€€€€€€€€€€€Á½Í¥Ñ¥½¸€ôÁ½Í¥Ñ¥½¹ÍmÍÑ…‰±•t(€€€€€€€€€€€€€€€¥˜Í½ÕÉ•}¹…µ”€ôô€‰ÕÉÉ•¹Ğˆè(€€€€€€€€€€€€€€€€€€€µ•É•‘mÁ½Í¥Ñ¥½¹t€ô}µ¥É…Ñ¥½¹}¡½½Í•}É•½É (€€€€€€€€€€€€€€€€€€€€€€€µ•É•‘mÁ½Í¥Ñ¥½¹t°(€€€€€€€€€€€€€€€€€€€€€€€É½Ü°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€¥˜¹½ĞÍÑ…‰±”è(€€€€€€€€€€€€€€€•¹•É…Ñ•‘}¥¹‘•à€¬ô€Ä(€€€€€€€€€€€€€€€•¹•É…Ñ•€ô˜‰µ¥É…Ñ¥½¸µíÁÉ•™¥áôµí•¹•É…Ñ•‘}¥¹‘•àèÀÑ‘ôˆ(€€€€€€€€€€€€€€€İ¡¥±”•¹•É…Ñ•¥¸ÕÍ•‘}¥‘Ìè(€€€€€€€€€€€€€€€€€€€•¹•É…Ñ•‘}¥¹‘•à€¬ô€Ä(€€€€€€€€€€€€€€€€€€€•¹•É…Ñ•€ô˜‰µ¥É…Ñ¥½¸µíÁÉ•™¥áôµí•¹•É…Ñ•‘}¥¹‘•àèÀÑ‘ôˆ(€€€€€€€€€€€€€€€É½İl‰¥‰t€ô•¹•É…Ñ•(€€€€€€€€€€€€€€€ÕÍ•‘}¥‘Ì¹…‘¡•¹•É…Ñ•¤(€€€€€€€€€€€€€€€ÍÑ…‰±”€ô˜‰¥éí•¹•É…Ñ•‘ôˆ(€€€€€€€€€€€Á½Í¥Ñ¥½¹ÍmÍÑ…‰±•t€ô±•¸¡µ•É•¤(€€€€€€€€€€€µ•É•¹…ÁÁ•¹¡É½Ü¤(€€€É•ÑÕÉ¸µ•É•(()‘•˜}µ¥É…Ñ¥½¹}¡¥ÍÑ½Éå}‘…Ñ”¡Ù…±Õ”¤è(€€€¥˜¥Í¥¹ÍÑ…¹”¡Ù…±Õ”°‘¥Ğ¤è(€€€€€€€É…Ü€ô€ (€€€€€€€€€€€Ù…±Õ”¹•Ğ ‰‘…Ñ”ˆ¤(€€€€€€€€€€€½ÈÙ…±Õ”¹•Ğ ‰¡•­¥¹}‘…Ñ”ˆ¤(€€€€€€€€€€€½ÈÙ…±Õ”¹•Ğ ‰¡•­•‘}…Ğˆ¤(€€€€€€€€€€€½ÈÙ…±Õ”¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤(€€€€€€€€¤(€€€•±Í”è(€€€€€€€É…Ü€ôÙ…±Õ”(€€€Ñ•áĞ€ôÍÑÈ¡É…Ü½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜É”¹™Õ±±µ…Ñ ¡È‰q‘ìÑôµq‘ìÉôµq‘ìÉôˆ°Ñ•áĞ¤è(€€€€€€€É•ÑÕÉ¸Ñ•áĞ(€€€É•ÑÕÉ¸‘…Ñ•}ÍÑÉ¥¹}¥¹}Ñ…¥Á•¤¡Ñ•áĞ¤(()‘•˜}µ•É•}µ¥É…Ñ¥½¹}¡¥ÍÑ½Éä¡±•…å}É½İÌ°ÕÉÉ•¹Ñ}É½İÌ¤è(€€€‰å}‘…Ñ”€ôíô(€€€Õ¹‘…Ñ•€ômt(€€€™½ÈÉ½Ü¥¸l¨¡±•…å}É½İÌ½Èmt¤°€¨¡ÕÉÉ•¹Ñ}É½İÌ½Èmt¥tè(€€€€€€€¹½Éµ…±¥é•€ô}µ¥É…Ñ¥½¹}¡¥ÍÑ½Éå}‘…Ñ”¡É½Ü¤(€€€€€€€¥˜¹½Éµ…±¥é•è(€€€€€€€€€€€‰å}‘…Ñ•m¹½Éµ…±¥é•‘t€ô¹½Éµ…±¥é•(€€€€€€€•±Í”è(€€€€€€€€€€€Õ¹‘…Ñ•¹…ÁÁ•¹¡½Áä¹‘••Á½Áä¡É½Ü¤¤(€€€É•ÑÕÉ¸l©Í½ÉÑ•¡‰å}‘…Ñ”¤°€©Õ¹‘…Ñ•‘t(()‘•˜}µ•É•}µ¥É…Ñ¥½¹}…±•¹‘…É}¹½Ñ•Ì¡±•…å}¹½Ñ•Ì°ÕÉÉ•¹Ñ}¹½Ñ•Ì¤è(€€€¥˜¥Í¥¹ÍÑ…¹”¡±•…å}¹½Ñ•Ì°‘¥Ğ¤½È¥Í¥¹ÍÑ…¹”¡ÕÉÉ•¹Ñ}¹½Ñ•Ì°‘¥Ğ¤è(€€€€€€€µ•É•€ô½Áä¹‘••Á½Áä¡±•…å}¹½Ñ•Ì¤¥˜¥Í¥¹ÍÑ…¹”¡±•…å}¹½Ñ•Ì°‘¥Ğ¤•±Í”íô(€€€€€€€ÕÍ•‘}¥‘Ì€ôÍ•Ğ ¤(€€€€€€€™½È¹½Ñ•Ì¥¸€¡±•…å}¹½Ñ•Ì°ÕÉÉ•¹Ñ}¹½Ñ•Ì¤è(€€€€€€€€€€€™½ÈÙ…±Õ”¥¸€¡¹½Ñ•Ì½Èíô¤¹Ù…±Õ•Ì ¤¥˜¥Í¥¹ÍÑ…¹”¡¹½Ñ•Ì°‘¥Ğ¤•±Í”mtè(€€€€€€€€€€€€€€€Ù…±Õ•Ì€ôÙ…±Õ”¥˜¥Í¥¹ÍÑ…¹”¡Ù…±Õ”°±¥ÍĞ¤•±Í”mÙ…±Õ•t(€€€€€€€€€€€€€€€™½È¥Ñ•´¥¸Ù…±Õ•Ìè(€€€€€€€€€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡¥Ñ•´°‘¥Ğ¤…¹¥Ñ•´¹•Ğ ‰¥ˆ¤è(€€€€€€€€€€€€€€€€€€€€€€€ÕÍ•‘}¥‘Ì¹…‘¡ÍÑÈ¡¥Ñ•µl‰¥‰t¤¤(€€€€€€€•¹•É…Ñ•‘}¥¹‘•à€ô€À((€€€€€€€‘•˜¹½Éµ…±¥é•‘}¹½Ñ•}É•½É‘Ì¡Ù…±Õ”¤è(€€€€€€€€€€€¹½¹±½…°•¹•É…Ñ•‘}¥¹‘•à(€€€€€€€€€€€Ù…±Õ•Ì€ôÙ…±Õ”¥˜¥Í¥¹ÍÑ…¹”¡Ù…±Õ”°±¥ÍĞ¤•±Í”mÙ…±Õ•t(€€€€€€€€€€€É•½É‘Ì€ômt(€€€€€€€€€€€™½È¥Ñ•´¥¸Ù…±Õ•Ìè(€€€€€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡¥Ñ•´°‘¥Ğ¤è(€€€€€€€€€€€€€€€€€€€É•½É€ô½Áä¹‘••Á½Áä¡¥Ñ•´¤(€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€É•½É€ôì‰½¹Ñ•¹ĞˆèÍÑÈ¡¥Ñ•´½È€ˆˆ¥ô(€€€€€€€€€€€€€€€¥˜¹½ĞÍÑÈ¡É•½É¹•Ğ ‰¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤è(€€€€€€€€€€€€€€€€€€€•¹•É…Ñ•‘}¥¹‘•à€¬ô€Ä(€€€€€€€€€€€€€€€€€€€•¹•É…Ñ•€ô˜‰µ¥É…Ñ¥½¸µ…±•¹‘…Èµ¹½Ñ”µí•¹•É…Ñ•‘}¥¹‘•àèÀÑ‘ôˆ(€€€€€€€€€€€€€€€€€€€İ¡¥±”•¹•É…Ñ•¥¸ÕÍ•‘}¥‘Ìè(€€€€€€€€€€€€€€€€€€€€€€€•¹•É…Ñ•‘}¥¹‘•à€¬ô€Ä(€€€€€€€€€€€€€€€€€€€€€€€•¹•É…Ñ•€ô˜‰µ¥É…Ñ¥½¸µ…±•¹‘…Èµ¹½Ñ”µí•¹•É…Ñ•‘}¥¹‘•àèÀÑ‘ôˆ(€€€€€€€€€€€€€€€€€€€É•½É‘l‰¥‰t€ô•¹•É…Ñ•(€€€€€€€€€€€€€€€€€€€ÕÍ•‘}¥‘Ì¹…‘¡•¹•É…Ñ•¤(€€€€€€€€€€€€€€€É•½É‘Ì¹…ÁÁ•¹¡É•½É¤(€€€€€€€€€€€É•ÑÕÉ¸É•½É‘Ì((€€€€€€€™½È­•ä°ÕÉÉ•¹Ñ}Ù…±Õ”¥¸€ (€€€€€€€€€€€ÕÉÉ•¹Ñ}¹½Ñ•Ì¹¥Ñ•µÌ ¤¥˜¥Í¥¹ÍÑ…¹”¡ÕÉÉ•¹Ñ}¹½Ñ•Ì°‘¥Ğ¤•±Í”mt(€€€€€€€€¤è(€€€€€€€€€€€¥˜­•ä¹½Ğ¥¸µ•É•è(€€€€€€€€€€€€€€€µ•É•‘m­•åt€ô½Áä¹‘••Á½Áä¡ÕÉÉ•¹Ñ}Ù…±Õ”¤(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€½µ‰¥¹•€ômt(€€€€€€€€€€€Á½Í¥Ñ¥½¹Ì€ôíô(€€€€€€€€€€€™½ÈÉ•½É¥¸l(€€€€€€€€€€€€€€€€©¹½Éµ…±¥é•‘}¹½Ñ•}É•½É‘Ì¡µ•É•‘m­•åt¤°(€€€€€€€€€€€€€€€€©¹½Éµ…±¥é•‘}¹½Ñ•}É•½É‘Ì¡ÕÉÉ•¹Ñ}Ù…±Õ”¤°(€€€€€€€€€€€tè(€€€€€€€€€€€€€€€ÍÑ…‰±”€ôÍÑÈ¡É•½É‘l‰¥‰t¤(€€€€€€€€€€€€€€€¥˜ÍÑ…‰±”¥¸Á½Í¥Ñ¥½¹Ìè(€€€€€€€€€€€€€€€€€€€Á½Í¥Ñ¥½¸€ôÁ½Í¥Ñ¥½¹ÍmÍÑ…‰±•t(€€€€€€€€€€€€€€€€€€€½µ‰¥¹•‘mÁ½Í¥Ñ¥½¹t€ô}µ¥É…Ñ¥½¹}¡½½Í•}É•½É (€€€€€€€€€€€€€€€€€€€€€€€½µ‰¥¹•‘mÁ½Í¥Ñ¥½¹t°(€€€€€€€€€€€€€€€€€€€€€€€É•½É°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€€€€€Á½Í¥Ñ¥½¹ÍmÍÑ…‰±•t€ô±•¸¡½µ‰¥¹•¤(€€€€€€€€€€€€€€€½µ‰¥¹•¹…ÁÁ•¹¡É•½É¤(€€€€€€€€€€€µ•É•‘m­•åt€ô½µ‰¥¹•‘lÁt¥˜±•¸¡½µ‰¥¹•¤€ôô€Ä•±Í”½µ‰¥¹•(€€€€€€€É•ÑÕÉ¸µ•É•(€€€É•ÑÕÉ¸}µ•É•}µ¥É…Ñ¥½¹}É•½É‘Ì (€€€€€€€±•…å}¹½Ñ•Ì½Èmt°(€€€€€€€ÕÉÉ•¹Ñ}¹½Ñ•Ì½Èmt°(€€€€€€€€ ‰¥ˆ°¤°(€€€€€€€€‰…±•¹‘…Èµ¹½Ñ”ˆ°(€€€€¤(()‘•˜}µ¥É…Ñ¥½¹}•¹Ñ¥Ñ±•µ•¹Ñ}…Ñ¥Ù”¡ÁÉ½™¥±”°¹½Ü¤è(€€€Á±…¸€ôÍÑÈ ¡ÁÉ½™¥±”½Èíô¤¹•Ğ ‰Á±…¸ˆ¤½È€ˆˆ¤(€€€¥˜Á±…¸¹½Ğ¥¸A19}I9,è(€€€€€€€É•ÑÕÉ¸…±Í”(€€€¥˜Á±…¸€ôô€‰ÑÉ¥…°ˆè(€€€€€€€•áÁ¥É•Í}…Ğ€ô}µ¥É…Ñ¥½¹}Ñ¥µ•ÍÑ…µÀ ¡ÁÉ½™¥±”½Èíô¤¹•Ğ ‰ÑÉ¥…±}•¹ˆ¤¤(€€€€€€€É•ÑÕÉ¸‰½½°¡•áÁ¥É•Í}…Ğ…¹•áÁ¥É•Í}…Ğ€ø¹½Ü¤(€€€¥˜ÍÑÈ ¡ÁÉ½™¥±”½Èíô¤¹•Ğ ‰Á…åµ•¹Ñ}ÍÑ…ÑÕÌˆ¤½È€ˆˆ¤€„ô€‰…Ñ¥Ù”ˆè(€€€€€€€É•ÑÕÉ¸…±Í”(€€€•áÁ¥É•Í}…Ğ€ô}µ¥É…Ñ¥½¹}Ñ¥µ•ÍÑ…µÀ ¡ÁÉ½™¥±”½Èíô¤¹•Ğ ‰Á…¥‘}Õ¹Ñ¥°ˆ¤¤(€€€É•ÑÕÉ¸•áÁ¥É•Í}…Ğ¥Ì9½¹”½È•áÁ¥É•Í}…Ğ€ø¹½Ü(()‘•˜}µ¥É…Ñ¥½¹}•¹Ñ¥Ñ±•µ•¹Ñ}•áÁ¥Éä¡ÁÉ½™¥±”¤è(€€€Á±…¸€ôÍÑÈ ¡ÁÉ½™¥±”½Èíô¤¹•Ğ ‰Á±…¸ˆ¤½È€ˆˆ¤(€€€­•ä€ô€‰ÑÉ¥…±}•¹ˆ¥˜Á±…¸€ôô€‰ÑÉ¥…°ˆ•±Í”€‰Á…¥‘}Õ¹Ñ¥°ˆ(€€€É•ÑÕÉ¸}µ¥É…Ñ¥½¹}Ñ¥µ•ÍÑ…µÀ ¡ÁÉ½™¥±”½Èíô¤¹•Ğ¡­•ä¤¤(()‘•˜}µ¥É…Ñ¥½¹}¡½½Í•}•¹Ñ¥Ñ±•µ•¹Ğ¡±•…å}ÁÉ½™¥±”°ÕÉÉ•¹Ñ}ÁÉ½™¥±”°¹½Ü¤è(€€€…¹‘¥‘…Ñ•Ì€ôl(€€€€€€€ÁÉ½™¥±”(€€€€€€€™½ÈÁÉ½™¥±”¥¸€¡±•…å}ÁÉ½™¥±”½Èíô°ÕÉÉ•¹Ñ}ÁÉ½™¥±”½Èíô¤(€€€€€€€¥˜}µ¥É…Ñ¥½¹}•¹Ñ¥Ñ±•µ•¹Ñ}…Ñ¥Ù”¡ÁÉ½™¥±”°¹½Ü¤(€€€t(€€€¥˜¹½Ğ…¹‘¥‘…Ñ•Ìè(€€€€€€€É•ÑÕÉ¸±•…å}ÁÉ½™¥±”½ÈÕÉÉ•¹Ñ}ÁÉ½™¥±”½Èíô((€€€‘•˜•¹Ñ¥Ñ±•µ•¹Ñ}­•ä¡ÁÉ½™¥±”¤è(€€€€€€€•áÁ¥Éä€ô}µ¥É…Ñ¥½¹}•¹Ñ¥Ñ±•µ•¹Ñ}•áÁ¥Éä¡ÁÉ½™¥±”¤(€€€€€€€•áÁ¥Éå}Í½É”€ô•áÁ¥Éä¹Ñ¥µ•ÍÑ…µÀ ¤¥˜•áÁ¥Éä•±Í”™±½…Ğ ‰¥¹˜ˆ¤(€€€€€€€É•ÑÕÉ¸€¡A19}I9,¹•Ğ¡ÍÑÈ¡ÁÉ½™¥±”¹•Ğ ‰Á±…¸ˆ¤½È€ˆˆ¤°€´Ä¤°•áÁ¥Éå}Í½É”¤((€€€É•ÑÕÉ¸µ…à¡…¹‘¥‘…Ñ•Ì°­•äõ•¹Ñ¥Ñ±•µ•¹Ñ}­•ä¤(()‘•˜}µ¥É…Ñ¥½¹}±½…Ñ¥½¹}…Ñ¥Ù”¡±½…Ñ¥½¸°¹½Ü¤è(€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡±½…Ñ¥½¸°‘¥Ğ¤è(€€€€€€€É•ÑÕÉ¸…±Í”(€€€¥˜¹½Ğ±½…Ñ¥½¸¹•Ğ ‰…Ñ¥Ù”ˆ¤…¹¹½Ğ±½…Ñ¥½¸¹•Ğ ‰Í¡…É¥¹œˆ¤è(€€€€€€€É•ÑÕÉ¸…±Í”(€€€¥˜±½…Ñ¥½¸¹•Ğ ‰Õ¹Ñ¥±}ÍÑ½Àˆ¤è(€€€€€€€É•ÑÕÉ¸QÉÕ”(€€€•áÁ¥É•Í}…Ğ€ô}µ¥É…Ñ¥½¹}Ñ¥µ•ÍÑ…µÀ¡±½…Ñ¥½¸¹•Ğ ‰•áÁ¥É•Í}…Ğˆ¤¤(€€€É•ÑÕÉ¸‰½½°¡•áÁ¥É•Í}…Ğ…¹•áÁ¥É•Í}…Ğ€ø¹½Ü¤(()‘•˜}µ•É•}µ¥É…Ñ¥½¹}±½…Ñ¥½¸¡±•…å}±½…Ñ¥½¸°ÕÉÉ•¹Ñ}±½…Ñ¥½¸°¹½Ü¤è(€€€±•…å}…Ñ¥Ù”€ô}µ¥É…Ñ¥½¹}±½…Ñ¥½¹}…Ñ¥Ù”¡±•…å}±½…Ñ¥½¸°¹½Ü¤(€€€ÕÉÉ•¹Ñ}…Ñ¥Ù”€ô}µ¥É…Ñ¥½¹}±½…Ñ¥½¹}…Ñ¥Ù”¡ÕÉÉ•¹Ñ}±½…Ñ¥½¸°¹½Ü¤(€€€¥˜±•…å}…Ñ¥Ù”…¹ÕÉÉ•¹Ñ}…Ñ¥Ù”è(€€€€€€€É•ÑÕÉ¸}µ¥É…Ñ¥½¹}¡½½Í•}É•½É¡±•…å}±½…Ñ¥½¸°ÕÉÉ•¹Ñ}±½…Ñ¥½¸¤(€€€¥˜ÕÉÉ•¹Ñ}…Ñ¥Ù”è(€€€€€€€É•ÑÕÉ¸½Áä¹‘••Á½Áä¡ÕÉÉ•¹Ñ}±½…Ñ¥½¸¤(€€€¥˜±•…å}…Ñ¥Ù”è(€€€€€€€É•ÑÕÉ¸½Áä¹‘••Á½Áä¡±•…å}±½…Ñ¥½¸¤(€€€É•ÑÕÉ¸íô(()‘•˜µ•É•}µ¥É…Ñ¥½¹}ÁÉ½™¥±•Ì¡½±‘}ÁÉ½™¥±”°¹•İ}ÁÉ½™¥±”°¹½Üõ9½¹”¤è(€€€€ˆˆ‰•Ñ•Éµ¥¹¥ÍÑ¥…±±äµ•É”Ñİ¼Ù•É¥™¥•AÉ½Ù¥‘•ÈÁÉ½™¥±•Ì¸((€€€MÑ…‰±”‰ÕÍ¥¹•ÍÌ¥‘•¹Ñ¥™¥•ÉÌ‘É¥Ù”½±±•Ñ¥½¸‘•‘ÕÁ±¥…Ñ¥½¸¸¥ÍÁ±…ä¹…µ•Ì(€€€…¹½Ñ¡•È¡Õµ…¸µÉ•…‘…‰±”…ÑÑÉ¥‰ÕÑ•Ì…É”¹•Ù•È¥‘•¹Ñ¥Ñä­•åÌ¸(€€€€ˆˆˆ(€€€±•…ä€ô½Áä¹‘••Á½Áä¡½±‘}ÁÉ½™¥±”½Èíô¤(€€€ÕÉÉ•¹Ğ€ô½Áä¹‘••Á½Áä¡¹•İ}ÁÉ½™¥±”½Èíô¤(€€€ÕÉÉ•¹Ñ}¹½Ü€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}¹½Ü¡¹½Ü¤(€€€µ•É•€ô½Áä¹‘••Á½Áä¡±•…ä¤((€€€™½È­•ä°Ù…±Õ”¥¸ÕÉÉ•¹Ğ¹¥Ñ•µÌ ¤è(€€€€€€€¥˜­•ä¥¸ì(€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆ°(€€€€€€€€€€€€‰¡¥ÍÑ½Éäˆ°(€€€€€€€€€€€€‰…±•¹‘…É}¹½Ñ•Ìˆ°(€€€€€€€€€€€€‰±½…Ñ¥½¸ˆ°(€€€€€€€€€€€€‰™É¥•¹‘Ìˆ°(€€€€€€€€€€€€‰Õ…É‘¥…¹}É½ÕÁ}¥‘Ìˆ°(€€€€€€€€€€€€‰Õ…É‘¥¹}™½Èˆ°(€€€€€€€€€€€€‰Íµ…ÉÑ}É•µ¥¹‘•É}Í•¹Ñ}­•åÌˆ°(€€€€€€€€€€€€©}5%IQ%=9}AI=%1}1%MQ}-eL°(€€€€€€€€€€€€©}5%IQ%=9}9Q%Q159Q}-eL°(€€€€€€€€€€€€©}5%IQ%=9}AII9}-eL°(€€€€€€€ôè(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜­•ä€ôô€‰‘¥ÍÁ±…å}¹…µ”ˆ…¹¥Í}Á±…•¡½±‘•É}‘¥ÍÁ±…å}¹…µ”¡Ù…±Õ”¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜}µ¥É…Ñ¥½¹}Ù…±Õ•}‰±…¹¬¡Ù…±Õ”¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜­•ä¥¸U1Q}AI=%1…¹Ù…±Õ”€ôôU1Q}AI=%1¹•Ğ¡­•ä¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€µ•É•‘m­•åt€ô½Áä¹‘••Á½Áä¡Ù…±Õ”¤((€€€µ•É•‘l‰¡¥ÍÑ½Éä‰t€ô}µ•É•}µ¥É…Ñ¥½¹}¡¥ÍÑ½Éä (€€€€€€€±•…ä¹•Ğ ‰¡¥ÍÑ½Éäˆ¤°(€€€€€€€ÕÉÉ•¹Ğ¹•Ğ ‰¡¥ÍÑ½Éäˆ¤°(€€€€¤(€€€™½È­•ä°ÍÑ…‰±•}­•åÌ¥¸}5%IQ%=9}AI=%1}1%MQ}-eL¹¥Ñ•µÌ ¤è(€€€€€€€µ•É•‘m­•åt€ô}µ•É•}µ¥É…Ñ¥½¹}É•½É‘Ì (€€€€€€€€€€€±•…ä¹•Ğ¡­•ä¤°(€€€€€€€€€€€ÕÉÉ•¹Ğ¹•Ğ¡­•ä¤°(€€€€€€€€€€€ÍÑ…‰±•}­•åÌ°(€€€€€€€€€€€­•ä¹É•Á±…” ‰|ˆ°€ˆ´ˆ¤°(€€€€€€€€¤(€€€µ•É•‘l‰…±•¹‘…É}¹½Ñ•Ì‰t€ô}µ•É•}µ¥É…Ñ¥½¹}…±•¹‘…É}¹½Ñ•Ì (€€€€€€€±•…ä¹•Ğ ‰…±•¹‘…É}¹½Ñ•Ìˆ¤°(€€€€€€€ÕÉÉ•¹Ğ¹•Ğ ‰…±•¹‘…É}¹½Ñ•Ìˆ¤°(€€€€¤(€€€™½È­•ä¥¸€ (€€€€€€€€‰™É¥•¹‘Ìˆ°(€€€€€€€€‰Õ…É‘¥…¹}É½ÕÁ}¥‘Ìˆ°(€€€€€€€€‰Õ…É‘¥¹}™½Èˆ°(€€€€€€€€‰Íµ…ÉÑ}É•µ¥¹‘•É}Í•¹Ñ}­•åÌˆ°(€€€€¤è(€€€€€€€µ•É•‘m­•åt€ô±¥ÍĞ (€€€€€€€€€€€‘¥Ğ¹™É½µ­•åÌ¡l¨¡±•…ä¹•Ğ¡­•ä¤½Èmt¤°€¨¡ÕÉÉ•¹Ğ¹•Ğ¡­•ä¤½Èmt¥t¤(€€€€€€€€¤((€€€™½È­•ä¥¸}5%IQ%=9}AII9}-eLè(€€€€€€€±•…å}Ù…±Õ”€ô±•…ä¹•Ğ¡­•ä¤(€€€€€€€ÕÉÉ•¹Ñ}Ù…±Õ”€ôÕÉÉ•¹Ğ¹•Ğ¡­•ä¤(€€€€€€€±•…å}Ñ¥µ”€ô}µ¥É…Ñ¥½¹}ÁÉ•™•É•¹•}Ñ¥µ•ÍÑ…µÀ¡±•…ä°­•ä°±•…å}Ù…±Õ”¤(€€€€€€€ÕÉÉ•¹Ñ}Ñ¥µ”€ô}µ¥É…Ñ¥½¹}ÁÉ•™•É•¹•}Ñ¥µ•ÍÑ…µÀ¡ÕÉÉ•¹Ğ°­•ä°ÕÉÉ•¹Ñ}Ù…±Õ”¤(€€€€€€€¥˜ÕÉÉ•¹Ñ}Ñ¥µ”…¹€¡¹½Ğ±•…å}Ñ¥µ”½ÈÕÉÉ•¹Ñ}Ñ¥µ”€ø±•…å}Ñ¥µ”¤è(€€€€€€€€€€€µ•É•‘m­•åt€ô½Áä¹‘••Á½Áä¡ÕÉÉ•¹Ñ}Ù…±Õ”¤(€€€€€€€•±¥˜­•ä¥¸±•…äè(€€€€€€€€€€€µ•É•‘m­•åt€ô½Áä¹‘••Á½Áä¡±•…å}Ù…±Õ”¤(€€€€€€€•±¥˜­•ä¥¸ÕÉÉ•¹Ğè(€€€€€€€€€€€µ•É•‘m­•åt€ô½Áä¹‘••Á½Áä¡ÕÉÉ•¹Ñ}Ù…±Õ”¤((€€€•¹Ñ¥Ñ±•µ•¹Ğ€ô}µ¥É…Ñ¥½¹}¡½½Í•}•¹Ñ¥Ñ±•µ•¹Ğ¡±•…ä°ÕÉÉ•¹Ğ°ÕÉÉ•¹Ñ}¹½Ü¤(€€€™½È­•ä¥¸}5%IQ%=9}9Q%Q159Q}-eLè(€€€€€€€¥˜­•ä¥¸•¹Ñ¥Ñ±•µ•¹Ğè(€€€€€€€€€€€µ•É•‘m­•åt€ô½Áä¹‘••Á½Áä¡•¹Ñ¥Ñ±•µ•¹Ñm­•åt¤((€€€µ•É•‘l‰±½…Ñ¥½¸‰t€ô}µ•É•}µ¥É…Ñ¥½¹}±½…Ñ¥½¸ (€€€€€€€±•…ä¹•Ğ ‰±½…Ñ¥½¸ˆ¤°(€€€€€€€ÕÉÉ•¹Ğ¹•Ğ ‰±½…Ñ¥½¸ˆ¤°(€€€€€€€ÕÉÉ•¹Ñ}¹½Ü°(€€€€¤(€€€µ•É•‘l‰±¥¹•}ÕÍ•É}¥‰t€ôÍÑÈ¡ÕÉÉ•¹Ğ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€É•ÑÕÉ¸µ•É•(()}5%IQ%=9}II9}M1I}%1L€ôì(€€€€‰±¥¹•}ÕÍ•É}¥ˆ°(€€€€‰±¥¹•}¥ˆ°(€€€€‰½İ¹•É}±¥¹•}ÕÍ•É}¥ˆ°(€€€€‰µ•µ‰•É}±¥¹•}ÕÍ•É}¥ˆ°(€€€€‰É•ÅÕ•ÍÑ•É}±¥¹•}ÕÍ•É}¥ˆ°(€€€€‰Á…å•É}±¥¹•}ÕÍ•É}¥ˆ°(€€€€‰É•¥Á¥•¹Ñ}±¥¹•}ÕÍ•É}¥ˆ°(€€€€‰¥¹Ù¥Ñ•É}±¥¹•}ÕÍ•É}¥ˆ°(€€€€‰½¹Ñ…Ñ}±¥¹•}ÕÍ•É}¥ˆ°(€€€€‰Õ…É‘¥…¹}±¥¹•}ÕÍ•É}¥ˆ°(€€€€‰…•ÁÑ½É}±¥¹•}ÕÍ•É}¥ˆ°(€€€€‰É…¹Ñ••}±¥¹•}ÕÍ•É}¥ˆ°(€€€€‰…•ÁÑ•‘}‰äˆ°(€€€€‰¥¹Ù¥Ñ•‘}‰äˆ°(€€€€‰Ñ…É•Ğˆ°)ô()}5%IQ%=9}II9}1%MQ}%1L€ôì(€€€€‰…‘µ¥¹}±¥¹•}ÕÍ•É}¥‘Ìˆ°(€€€€‰µ•µ‰•É}¥‘Í}…Ñ}‰¥¹ˆ°(€€€€‰µ•µ‰•É}±¥¹•}ÕÍ•É}¥‘Ìˆ°(€€€€‰µ•µ‰•É}ÕÍ•É}¥‘Ìˆ°(€€€€‰µ•µ‰•ÉÌˆ°(€€€€‰™É¥•¹‘Ìˆ°(€€€€‰Õ…É‘¥¹}™½Èˆ°)ô()}5%IQ%=9}Q=A}1Y1}=11Q%=9}-eL€ôì(€€€€‰½É‘•ÉÌˆè€ ‰½É‘•É}¥ˆ°€‰µ•É¡…¹Ñ}½É‘•É}¥ˆ°€‰µ•É¡…¹Ñ}ÑÉ…‘•}¹¼ˆ¤°(€€€€‰Á…åµ•¹Ñ}É•½É‘Ìˆè€ ‰ÑÉ…¹Í…Ñ¥½¹}¥ˆ°€‰½É‘•É}¥ˆ°€‰µ•É¡…¹Ñ}½É‘•É}¥ˆ¤°(€€€€‰Á…åµ•¹ÑÌˆè€ ‰ÑÉ…¹Í…Ñ¥½¹}¥ˆ°€‰½É‘•É}¥ˆ°€‰µ•É¡…¹Ñ}½É‘•É}¥ˆ¤°(€€€€‰ÍÕÁÁ½ÉÑ}Ñ¥­•ÑÌˆè€ ‰¥ˆ°€‰Ñ¥­•Ñ}¥ˆ¤°(€€€€‰ÁÉ¥Ù…å}É•ÅÕ•ÍÑÌˆè€ ‰¥ˆ°€‰É•ÅÕ•ÍÑ}¥ˆ¤°(€€€€‰¹½Ñ¥™¥…Ñ¥½¹}±½Ìˆè€ ‰¥ˆ°€‰±½}¥ˆ°€‰•Ù•¹Ñ}¥ˆ¤°(€€€€‰¡•­¥¹}İ…É¹¥¹Ìˆè€ ‰¥ˆ°€‰•Ù•¹Ñ}¥ˆ°€‰±½}¥ˆ¤°(€€€€‰¡•­¥¹}İ…É¹¥¹}±½Ìˆè€ ‰¥ˆ°€‰•Ù•¹Ñ}¥ˆ°€‰±½}¥ˆ¤°(€€€€‰Í½Í}±½Ìˆè€ ‰¥ˆ°€‰•Ù•¹Ñ}¥ˆ°€‰±½}¥ˆ¤°(€€€€‰½¹Ñ…Ñ}É•İ…É‘Ìˆè€ ‰¥ˆ°€‰É•İ…É‘}¥ˆ¤°)ô()}5%IQ%=9}%9a}-eL€ôì(€€€€‰Í½Í}Á•¹‘¥¹œˆ°(€€€€‰±½…Ñ¥½¹}É…¹ÑÌˆ°(€€€€‰¡•­¥¹}İ…É¹¥¹}¥¹‘•àˆ°(€€€€‰±½…Ñ¥½¹}É…¹Ñ}¥¹‘•àˆ°)ô(()‘•˜}É•¥¹‘•á}µ¥É…Ñ¥½¹}É•½É¡É•½É°½±‘}¥°¹•İ}¥°µ¥É…Ñ¥½¹}•Ù•¹Ñ}¥¤è(€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡É•½É°‘¥Ğ¤è(€€€€€€€É•ÑÕÉ¸…±Í”(€€€¡…¹•€ô…±Í”(€€€™½È­•ä°Ù…±Õ”¥¸±¥ÍĞ¡É•½É¹¥Ñ•µÌ ¤¤è(€€€€€€€¥˜­•ä¥¸}5%IQ%=9}II9}M1I}%1Lè(€€€€€€€€€€€¥˜ÍÑÈ¡Ù…±Õ”½È€ˆˆ¤€ôô½±‘}¥è(€€€€€€€€€€€€€€€É•½É‘m­•åt€ô¹•İ}¥(€€€€€€€€€€€€€€€¡…¹•€ôQÉÕ”(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜­•ä¥¸}5%IQ%=9}II9}1%MQ}%1L…¹¥Í¥¹ÍÑ…¹”¡Ù…±Õ”°±¥ÍĞ¤è(€€€€€€€€€€€É•Á±…•€ômt(€€€€€€€€€€€±¥ÍÑ}¡…¹•€ô…±Í”(€€€€€€€€€€€™½È¥Ñ•´¥¸Ù…±Õ”è(€€€€€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡¥Ñ•´°‘¥Ğ¤è(€€€€€€€€€€€€€€€€€€€¹•ÍÑ•‘}¡…¹•€ô}É•¥¹‘•á}µ¥É…Ñ¥½¹}É•½É (€€€€€€€€€€€€€€€€€€€€€€€¥Ñ•´°(€€€€€€€€€€€€€€€€€€€€€€€½±‘}¥°(€€€€€€€€€€€€€€€€€€€€€€€¹•İ}¥°(€€€€€€€€€€€€€€€€€€€€€€€µ¥É…Ñ¥½¹}•Ù•¹Ñ}¥°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€±¥ÍÑ}¡…¹•€ô±¥ÍÑ}¡…¹•½È¹•ÍÑ•‘}¡…¹•(€€€€€€€€€€€€€€€€€€€É•Á±…•¹…ÁÁ•¹¡¥Ñ•´¤(€€€€€€€€€€€€€€€•±¥˜ÍÑÈ¡¥Ñ•´½È€ˆˆ¤€ôô½±‘}¥è(€€€€€€€€€€€€€€€€€€€É•Á±…•¹…ÁÁ•¹¡¹•İ}¥¤(€€€€€€€€€€€€€€€€€€€±¥ÍÑ}¡…¹•€ôQÉÕ”(€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€É•Á±…•¹…ÁÁ•¹¡¥Ñ•´¤(€€€€€€€€€€€¥˜±¥ÍÑ}¡…¹•è(€€€€€€€€€€€€€€€‘•‘ÕÁ•€ômt(€€€€€€€€€€€€€€€Í••¹}Í…±…ÉÌ€ôÍ•Ğ ¤(€€€€€€€€€€€€€€€™½È¥Ñ•´¥¸É•Á±…•è(€€€€€€€€€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡¥Ñ•´°‘¥Ğ¤è(€€€€€€€€€€€€€€€€€€€€€€€‘•‘ÕÁ•¹…ÁÁ•¹¡¥Ñ•´¤(€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€€€€€€€€€µ…É­•È€ôÍÑÈ¡¥Ñ•´¤(€€€€€€€€€€€€€€€€€€€¥˜µ…É­•È¥¸Í••¹}Í…±…ÉÌè(€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€€€€€€€€€Í••¹}Í…±…ÉÌ¹…‘¡µ…É­•È¤(€€€€€€€€€€€€€€€€€€€‘•‘ÕÁ•¹…ÁÁ•¹¡¥Ñ•´¤(€€€€€€€€€€€€€€€É•½É‘m­•åt€ô‘•‘ÕÁ•(€€€€€€€€€€€€€€€¡…¹•€ôQÉÕ”(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡Ù…±Õ”°‘¥Ğ¤è(€€€€€€€€€€€¡…¹•€ô€ (€€€€€€€€€€€€€€€}É•¥¹‘•á}µ¥É…Ñ¥½¹}É•½É (€€€€€€€€€€€€€€€€€€€Ù…±Õ”°(€€€€€€€€€€€€€€€€€€€½±‘}¥°(€€€€€€€€€€€€€€€€€€€¹•İ}¥°(€€€€€€€€€€€€€€€€€€€µ¥É…Ñ¥½¹}•Ù•¹Ñ}¥°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€½È¡…¹•(€€€€€€€€€€€€¤(€€€€€€€•±¥˜¥Í¥¹ÍÑ…¹”¡Ù…±Õ”°±¥ÍĞ¤è(€€€€€€€€€€€™½È¥Ñ•´¥¸Ù…±Õ”è(€€€€€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡¥Ñ•´°‘¥Ğ¤è(€€€€€€€€€€€€€€€€€€€¡…¹•€ô€ (€€€€€€€€€€€€€€€€€€€€€€€}É•¥¹‘•á}µ¥É…Ñ¥½¹}É•½É (€€€€€€€€€€€€€€€€€€€€€€€€€€€¥Ñ•´°(€€€€€€€€€€€€€€€€€€€€€€€€€€€½±‘}¥°(€€€€€€€€€€€€€€€€€€€€€€€€€€€¹•İ}¥°(€€€€€€€€€€€€€€€€€€€€€€€€€€€µ¥É…Ñ¥½¹}•Ù•¹Ñ}¥°(€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€½È¡…¹•(€€€€€€€€€€€€€€€€€€€€¤(€€€¥˜¡…¹•è(€€€€€€€É•½É‘l‰µ¥É…Ñ¥½¹}•Ù•¹Ñ}¥‰t€ôµ¥É…Ñ¥½¹}•Ù•¹Ñ}¥(€€€É•ÑÕÉ¸¡…¹•(()‘•˜}‘•‘ÕÁ•}µ¥É…Ñ¥½¹}½±±•Ñ¥½¸¡É½İÌ°ÍÑ…‰±•}­•åÌ°ÁÉ•™¥à°µ¥É…Ñ¥½¹}•Ù•¹Ñ}¥¤è(€€€‘•‘ÕÁ•€ômt(€€€Á½Í¥Ñ¥½¹Ì€ôíô(€€€ÕÍ•‘}¥‘Ì€ôì(€€€€€€€ÍÑÈ¡É½Ü¹•Ğ ‰¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€™½ÈÉ½Ü¥¸É½İÌ(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡É½Ü°‘¥Ğ¤…¹ÍÑÈ¡É½Ü¹•Ğ ‰¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€ô(€€€•¹•É…Ñ•‘}¥¹‘•à€ô€À(€€€™½ÈÉ½Ü¥¸É½İÌè(€€€€€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡É½Ü°‘¥Ğ¤è(€€€€€€€€€€€‘•‘ÕÁ•¹…ÁÁ•¹¡É½Ü¤(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€ÍÑ…‰±”€ô}µ¥É…Ñ¥½¹}ÍÑ…‰±•}Ù…±Õ”¡É½Ü°ÍÑ…‰±•}­•åÌ¤(€€€€€€€¥˜¹½ĞÍÑ…‰±”è(€€€€€€€€€€€•¹•É…Ñ•‘}¥¹‘•à€¬ô€Ä(€€€€€€€€€€€•¹•É…Ñ•€ô˜‰µ¥É…Ñ¥½¸µíÁÉ•™¥áôµí•¹•É…Ñ•‘}¥¹‘•àèÀÑ‘ôˆ(€€€€€€€€€€€İ¡¥±”•¹•É…Ñ•¥¸ÕÍ•‘}¥‘Ìè(€€€€€€€€€€€€€€€•¹•É…Ñ•‘}¥¹‘•à€¬ô€Ä(€€€€€€€€€€€€€€€•¹•É…Ñ•€ô˜‰µ¥É…Ñ¥½¸µíÁÉ•™¥áôµí•¹•É…Ñ•‘}¥¹‘•àèÀÑ‘ôˆ(€€€€€€€€€€€É½İl‰¥‰t€ô•¹•É…Ñ•(€€€€€€€€€€€ÕÍ•‘}¥‘Ì¹…‘¡•¹•É…Ñ•¤(€€€€€€€€€€€‘•‘ÕÁ•¹…ÁÁ•¹¡É½Ü¤(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜ÍÑ…‰±”¹½Ğ¥¸Á½Í¥Ñ¥½¹Ìè(€€€€€€€€€€€Á½Í¥Ñ¥½¹ÍmÍÑ…‰±•t€ô±•¸¡‘•‘ÕÁ•¤(€€€€€€€€€€€‘•‘ÕÁ•¹…ÁÁ•¹¡É½Ü¤(€€€€€€€€€€€½¹Ñ¥¹Õ”((€€€€€€€Á½Í¥Ñ¥½¸€ôÁ½Í¥Ñ¥½¹ÍmÍÑ…‰±•t(€€€€€€€ÁÉ•Ù¥½ÕÌ€ô‘•‘ÕÁ•‘mÁ½Í¥Ñ¥½¹t(€€€€€€€İ¥¹¹•È€ô}µ¥É…Ñ¥½¹}¡½½Í•}É•½É¡ÁÉ•Ù¥½ÕÌ°É½Ü¤(€€€€€€€±½Í•È€ôÉ½Ü¥˜İ¥¹¹•È€ôôÁÉ•Ù¥½ÕÌ•±Í”ÁÉ•Ù¥½ÕÌ(€€€€€€€½µ‰¥¹•€ô½Áä¹‘••Á½Áä¡±½Í•È¤(€€€€€€€½µ‰¥¹•¹ÕÁ‘…Ñ”¡İ¥¹¹•È¤(€€€€€€€½µ‰¥¹•‘l‰µ¥É…Ñ¥½¹}•Ù•¹Ñ}¥‰t€ôµ¥É…Ñ¥½¹}•Ù•¹Ñ}¥(€€€€€€€‘•‘ÕÁ•‘mÁ½Í¥Ñ¥½¹t€ô½µ‰¥¹•(€€€É•ÑÕÉ¸‘•‘ÕÁ•(()‘•˜É•¥¹‘•á}…½Õ¹Ñ}É•™•É•¹•Ì (€€€ÍÑ…Ñ”°(€€€½±‘}¥°(€€€¹•İ}¥°(€€€µ¥É…Ñ¥½¹}•Ù•¹Ñ}¥°(€€€¹½Üõ9½¹”°(¤è(€€€€ˆˆ‰I•Á±…”•á…Ğ…½Õ¹ĞÉ•™•É•¹•Ìİ¥Ñ¡½ÕĞÉ•İÉ¥Ñ¥¹œ¡¥ÍÑ½É¥…°ÁÉ½Í”¸ˆˆˆ(€€€Í½ÕÉ•}¥€ôÍÑÈ¡½±‘}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€Ñ…É•Ñ}¥€ôÍÑÈ¡¹•İ}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¹½ĞÍ½ÕÉ•}¥½È¹½ĞÑ…É•Ñ}¥è(€€€€€€€É…¥Í”Y…±Õ•ÉÉ½È ‰µ¥ÍÍ¥¹}¥‘•¹Ñ¥Ñäˆ¤(€€€¥˜Í½ÕÉ•}¥€ôôÑ…É•Ñ}¥è(€€€€€€€É…¥Í”Y…±Õ•ÉÉ½È ‰Í…µ•}¥‘•¹Ñ¥Ñäˆ¤((€€€•Ù•¹Ñ}¥€ôÍÑÈ¡µ¥É…Ñ¥½¹}•Ù•¹Ñ}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¹½Ğ•Ù•¹Ñ}¥è(€€€€€€€É…¥Í”Y…±Õ•ÉÉ½È ‰µ¥ÍÍ¥¹}µ¥É…Ñ¥½¹}•Ù•¹Ğˆ¤(€€€É•¥¹‘•á•‘}É•½É‘Ì€ô€À((€€€™½ÈÕÍ•É}¥°ÁÉ½™¥±”¥¸€¡ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô¤¹¥Ñ•µÌ ¤è(€€€€€€€¥˜ÕÍ•É}¥¥¸íÍ½ÕÉ•}¥°Ñ…É•Ñ}¥‘ô½È¹½Ğ¥Í¥¹ÍÑ…¹”¡ÁÉ½™¥±”°‘¥Ğ¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜}É•¥¹‘•á}µ¥É…Ñ¥½¹}É•½É¡ÁÉ½™¥±”°Í½ÕÉ•}¥°Ñ…É•Ñ}¥°•Ù•¹Ñ}¥¤è(€€€€€€€€€€€É•¥¹‘•á•‘}É•½É‘Ì€¬ô€Ä((€€€™½ÈÉ½ÕÀ¥¸€¡ÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁÌˆ¤½Èíô¤¹Ù…±Õ•Ì ¤è(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡É½ÕÀ°‘¥Ğ¤…¹}É•¥¹‘•á}µ¥É…Ñ¥½¹}É•½É (€€€€€€€€€€€É½ÕÀ°(€€€€€€€€€€€Í½ÕÉ•}¥°(€€€€€€€€€€€Ñ…É•Ñ}¥°(€€€€€€€€€€€•Ù•¹Ñ}¥°(€€€€€€€€¤è(€€€€€€€€€€€É•¥¹‘•á•‘}É•½É‘Ì€¬ô€Ä((€€€™½È¥¹Ù¥Ñ”¥¸€¡ÍÑ…Ñ”¹•Ğ ‰™É¥•¹‘}¥¹Ù¥Ñ•Ìˆ¤½Èíô¤¹Ù…±Õ•Ì ¤è(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡¥¹Ù¥Ñ”°‘¥Ğ¤…¹}É•¥¹‘•á}µ¥É…Ñ¥½¹}É•½É (€€€€€€€€€€€¥¹Ù¥Ñ”°(€€€€€€€€€€€Í½ÕÉ•}¥°(€€€€€€€€€€€Ñ…É•Ñ}¥°(€€€€€€€€€€€•Ù•¹Ñ}¥°(€€€€€€€€¤è(€€€€€€€€€€€É•¥¹‘•á•‘}É•½É‘Ì€¬ô€Ä((€€€™½È½±±•Ñ¥½¹}­•ä°ÍÑ…‰±•}­•åÌ¥¸}5%IQ%=9}Q=A}1Y1}=11Q%=9}-eL¹¥Ñ•µÌ ¤è(€€€€€€€É½İÌ€ôÍÑ…Ñ”¹•Ğ¡½±±•Ñ¥½¹}­•ä¤½Èmt(€€€€€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡É½İÌ°±¥ÍĞ¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€™½ÈÉ½Ü¥¸É½İÌè(€€€€€€€€€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡É½Ü°‘¥Ğ¤è(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€¥˜}É•¥¹‘•á}µ¥É…Ñ¥½¹}É•½É (€€€€€€€€€€€€€€€É½Ü°(€€€€€€€€€€€€€€€Í½ÕÉ•}¥°(€€€€€€€€€€€€€€€Ñ…É•Ñ}¥°(€€€€€€€€€€€€€€€•Ù•¹Ñ}¥°(€€€€€€€€€€€€¤è(€€€€€€€€€€€€€€€É•¥¹‘•á•‘}É•½É‘Ì€¬ô€Ä(€€€€€€€ÍÑ…Ñ•m½±±•Ñ¥½¹}­•åt€ô}‘•‘ÕÁ•}µ¥É…Ñ¥½¹}½±±•Ñ¥½¸ (€€€€€€€€€€€É½İÌ°(€€€€€€€€€€€ÍÑ…‰±•}­•åÌ°(€€€€€€€€€€€½±±•Ñ¥½¹}­•ä¹É•Á±…” ‰|ˆ°€ˆ´ˆ¤°(€€€€€€€€€€€•Ù•¹Ñ}¥°(€€€€€€€€¤((€€€™½È¥¹‘•á}­•ä¥¸}5%IQ%=9}%9a}-eLè(€€€€€€€¥¹‘•à€ôÍÑ…Ñ”¹•Ğ¡¥¹‘•á}­•ä¤½Èíô(€€€€€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡¥¹‘•à°‘¥Ğ¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€İ…Í}É•­•å•€ôÍ½ÕÉ•}¥¥¸¥¹‘•à(€€€€€€€¥˜Í½ÕÉ•}¥¥¸¥¹‘•àè(€€€€€€€€€€€Í½ÕÉ•}É•½É€ô¥¹‘•à¹Á½À¡Í½ÕÉ•}¥¤(€€€€€€€€€€€¥˜Ñ…É•Ñ}¥¥¸¥¹‘•àè(€€€€€€€€€€€€€€€¥¹‘•ámÑ…É•Ñ}¥‘t€ô}µ¥É…Ñ¥½¹}¡½½Í•}É•½É (€€€€€€€€€€€€€€€€€€€Í½ÕÉ•}É•½É°(€€€€€€€€€€€€€€€€€€€¥¹‘•ámÑ…É•Ñ}¥‘t°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€¥¹‘•ámÑ…É•Ñ}¥‘t€ôÍ½ÕÉ•}É•½É(€€€€€€€É•½É€ô¥¹‘•à¹•Ğ¡Ñ…É•Ñ}¥¤(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡É•½É°‘¥Ğ¤è(€€€€€€€€€€€¡…¹•€ô}É•¥¹‘•á}µ¥É…Ñ¥½¹}É•½É (€€€€€€€€€€€€€€€É•½É°(€€€€€€€€€€€€€€€Í½ÕÉ•}¥°(€€€€€€€€€€€€€€€Ñ…É•Ñ}¥°(€€€€€€€€€€€€€€€•Ù•¹Ñ}¥°(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜¡…¹•½Èİ…Í}É•­•å•è(€€€€€€€€€€€€€€€É•½É‘l‰µ¥É…Ñ¥½¹}•Ù•¹Ñ}¥‰t€ô•Ù•¹Ñ}¥(€€€€€€€€€€€€€€€É•¥¹‘•á•‘}É•½É‘Ì€¬ô€Ä(€€€€€€€ÍÑ…Ñ•m¥¹‘•á}­•åt€ô¥¹‘•à((€€€É•ÑÕÉ¸ì‰½¬ˆèQÉÕ”°€‰É•¥¹‘•á•‘}É•½É‘ÌˆèÉ•¥¹‘•á•‘}É•½É‘Íô(()‘•˜É•…Ñ•}…½Õ¹Ñ}µ¥É…Ñ¥½¹}…±¥…Ì¡ÍÑ…Ñ”°½±‘}¥°¹•İ}¥°¹½Üõ9½¹”¤è(€€€Í½ÕÉ•}¥€ôÍÑÈ¡½±‘}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€Ñ…É•Ñ}¥€ôÍÑÈ¡¹•İ}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¹½ĞÍ½ÕÉ•}¥½È¹½ĞÑ…É•Ñ}¥è(€€€€€€€É…¥Í”Y…±Õ•ÉÉ½È ‰µ¥ÍÍ¥¹}¥‘•¹Ñ¥Ñäˆ¤(€€€¥˜Í½ÕÉ•}¥€ôôÑ…É•Ñ}¥è(€€€€€€€É…¥Í”Y…±Õ•ÉÉ½È ‰Í…µ•}¥‘•¹Ñ¥Ñäˆ¤(€€€ÕÉÉ•¹Ñ}¥Í¼€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}¹½Ü¡¹½Ü¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€ÍÑ…Ñ”¹Í•Ñ‘•™…Õ±Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…±¥…Í•Ìˆ°íô¥mÍ½ÕÉ•}¥‘t€ôì(€€€€€€€€‰Ñ…É•Ñ}±¥¹•}ÕÍ•É}¥ˆèÑ…É•Ñ}¥°(€€€€€€€€‰É•…Ñ•‘}…ĞˆèÕÉÉ•¹Ñ}¥Í¼°(€€€€€€€€‰ÍÑ…ÑÕÌˆè€‰‘¥Í…‰±•ˆ°(€€€ô(€€€É•ÑÕÉ¸ÍÑ…Ñ•l‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…±¥…Í•Ì‰umÍ½ÕÉ•}¥‘t(()‘•˜}…½Õ¹Ñ}µ¥É…Ñ¥½¹}É•½É‘}É•™•É•¹•Ì¡É•½É°±¥¹•}ÕÍ•É}¥¤è(€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡É•½É°‘¥Ğ¤è(€€€€€€€É•ÑÕÉ¸…±Í”(€€€É•ÑÕÉ¸…¹ä (€€€€€€€ÍÑÈ¡É•½É¹•Ğ¡­•ä¤½È€ˆˆ¤€ôô±¥¹•}ÕÍ•É}¥(€€€€€€€™½È­•ä¥¸}5%IQ%=9}II9}M1I}%1L(€€€€¤(()‘•˜}…½Õ¹Ñ}µ¥É…Ñ¥½¹}Í…™•}½Õ¹ÑÌ¡ÍÑ…Ñ”°ÁÉ½™¥±”°±¥¹•}ÕÍ•É}¥¤è(€€€‘•˜½İ¹•‘}½Õ¹Ğ¡½±±•Ñ¥½¹}­•ä¤è(€€€€€€€É•ÑÕÉ¸ÍÕ´ (€€€€€€€€€€€€Ä(€€€€€€€€€€€™½ÈÉ•½É¥¸€¡ÍÑ…Ñ”¹•Ğ¡½±±•Ñ¥½¹}­•ä¤½Èmt¤(€€€€€€€€€€€¥˜}…½Õ¹Ñ}µ¥É…Ñ¥½¹}É•½É‘}É•™•É•¹•Ì¡É•½É°±¥¹•}ÕÍ•É}¥¤(€€€€€€€€¤((€€€É•ÑÕÉ¸ì(€€€€€€€€‰¡•­¥¹Ìˆè±•¸¡ÁÉ½™¥±”¹•Ğ ‰¡¥ÍÑ½Éäˆ¤½Èmt¤°(€€€€€€€€‰½¹Ñ…ÑÌˆè±•¸¡ÁÉ½™¥±”¹•Ğ ‰½¹Ñ…ÑÌˆ¤½Èmt¤°(€€€€€€€€‰É½ÕÁÌˆè±•¸¡ÁÉ½™¥±”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁ}¥‘Ìˆ¤½Èmt¤°(€€€€€€€€‰É•µ¥¹‘•ÉÌˆè±•¸¡ÁÉ½™¥±”¹•Ğ ‰Íµ…ÉÑ}É•µ¥¹‘•ÉÌˆ¤½Èmt¤°(€€€€€€€€‰½É‘•ÉÌˆè½İ¹•‘}½Õ¹Ğ ‰½É‘•ÉÌˆ¤°(€€€€€€€€‰É•ÅÕ•ÍÑÌˆè€ (€€€€€€€€€€€½İ¹•‘}½Õ¹Ğ ‰ÍÕÁÁ½ÉÑ}Ñ¥­•ÑÌˆ¤(€€€€€€€€€€€€¬½İ¹•‘}½Õ¹Ğ ‰ÁÉ¥Ù…å}É•ÅÕ•ÍÑÌˆ¤(€€€€€€€€¤°(€€€ô(()‘•˜}…ÁÁ•¹‘}…½Õ¹Ñ}µ¥É…Ñ¥½¹}™…¥±ÕÉ•}…Õ‘¥Ğ¡ÍÑ…Ñ”°…Ñ•½Éä°¹½Ü¤è(€€€ÁÕÉ•}…½Õ¹Ñ}µ¥É…Ñ¥½¹}¡¥ÍÑ½Éä¡ÍÑ…Ñ”°¹½Ü¤(€€€ÍÑ…Ñ”¹Í•Ñ‘•™…Õ±Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…Õ‘¥Ğˆ°mt¤¹…ÁÁ•¹¡ì(€€€€€€€€‰•Ù•¹Ñ}¥ˆè˜‰…µ•}íÍ•É•ÑÌ¹Ñ½­•¹}ÕÉ±Í…™” ÄÈ¥ôˆ°(€€€€€€€€‰ÍÑ…ÑÕÌˆè€‰™…¥±•ˆ°(€€€€€€€€‰É•…Ñ•‘}…Ğˆè¹½Ü¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€‰™…¥±ÕÉ•}…Ñ•½ÉäˆèÍÑÈ¡…Ñ•½Éä¤°(€€€€€€€€‰½Õ¹ÑÌˆèì(€€€€€€€€€€€€‰¡•­¥¹Ìˆè€À°(€€€€€€€€€€€€‰½¹Ñ…ÑÌˆè€À°(€€€€€€€€€€€€‰É½ÕÁÌˆè€À°(€€€€€€€€€€€€‰É•µ¥¹‘•ÉÌˆè€À°(€€€€€€€€€€€€‰½É‘•ÉÌˆè€À°(€€€€€€€€€€€€‰É•ÅÕ•ÍÑÌˆè€À°(€€€€€€€ô°(€€€ô¤(€€€ÍÑ…Ñ•l‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…Õ‘¥Ğ‰t€ôÍÑ…Ñ•l‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…Õ‘¥Ğ‰ul(€€€€€€€€µ=U9Q}5%IQ%=9}U%Q}1=	1}5`è(€€€t(()‘•˜}…½Õ¹Ñ}µ¥É…Ñ¥½¹}Í¹…ÁÍ¡½Ğ (€€€ÍÑ…Ñ”°(€€€Ñ¥­•Ğ°(€€€½±‘}±¥¹•}ÕÍ•É}¥°(€€€¹•İ}±¥¹•}ÕÍ•É}¥°(€€€•Ù•¹Ñ}¥°(€€€¹½Ü°(¤è(€€€ÕÍ•ÉÌ€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô(€€€…™™•Ñ•‘}ÕÍ•ÉÌ€ôíô(€€€™½ÈÕÍ•É}¥°ÁÉ½™¥±”¥¸ÕÍ•ÉÌ¹¥Ñ•µÌ ¤è(€€€€€€€¥˜€ (€€€€€€€€€€€ÕÍ•É}¥¥¸í½±‘}±¥¹•}ÕÍ•É}¥°¹•İ}±¥¹•}ÕÍ•É}¥‘ô(€€€€€€€€€€€½È¹½Ğ¥Í¥¹ÍÑ…¹”¡ÁÉ½™¥±”°‘¥Ğ¤(€€€€€€€€¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€É•¥¹‘•á•‘}ÁÉ½‰”€ô½Áä¹‘••Á½Áä¡ÁÉ½™¥±”¤(€€€€€€€¥˜}É•¥¹‘•á}µ¥É…Ñ¥½¹}É•½É (€€€€€€€€€€€É•¥¹‘•á•‘}ÁÉ½‰”°(€€€€€€€€€€€½±‘}±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€¹•İ}±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€•Ù•¹Ñ}¥°(€€€€€€€€¤è(€€€€€€€€€€€…™™•Ñ•‘}ÕÍ•ÉÍmÕÍ•É}¥‘t€ô½Áä¹‘••Á½Áä¡ÁÉ½™¥±”¤(€€€…™™•Ñ•‘}­•åÌ€ôì(€€€€€€€€‰Õ…É‘¥…¹}É½ÕÁÌˆ°(€€€€€€€€‰™É¥•¹‘}¥¹Ù¥Ñ•Ìˆ°(€€€€€€€€‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…±¥…Í•Ìˆ°(€€€€€€€€©}5%IQ%=9}Q=A}1Y1}=11Q%=9}-eL°(€€€€€€€€©}5%IQ%=9}%9a}-eL°(€€€ô(€€€Í¹…ÁÍ¡½Ñ}¥€ô˜‰…µÍ}íÍ•É•ÑÌ¹Ñ½­•¹}ÕÉ±Í…™” ÄÈ¥ôˆ(€€€É•ÑÕÉ¸Í¹…ÁÍ¡½Ñ}¥°ì(€€€€€€€€‰Í¹…ÁÍ¡½Ñ}¥ˆèÍ¹…ÁÍ¡½Ñ}¥°(€€€€€€€€‰•Ù•¹Ñ}¥ˆè•Ù•¹Ñ}¥°(€€€€€€€€‰É•…Ñ•‘}…Ğˆè¹½Ü¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€‰ÁÕÉ•}…™Ñ•Èˆè€¡¹½Ü€¬Ñ¥µ•‘•±Ñ„¡‘…åÌôÌÀ¤¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€‰½±‘}ÁÉ½™¥±”ˆè½Áä¹‘••Á½Áä¡ÕÍ•ÉÌ¹•Ğ¡½±‘}±¥¹•}ÕÍ•É}¥¤¤°(€€€€€€€€‰¹•İ}ÁÉ½™¥±”ˆè€ (€€€€€€€€€€€½Áä¹‘••Á½Áä¡ÕÍ•ÉÌ¹•Ğ¡¹•İ}±¥¹•}ÕÍ•É}¥¤¤(€€€€€€€€€€€¥˜¹•İ}±¥¹•}ÕÍ•É}¥¥¸ÕÍ•ÉÌ(€€€€€€€€€€€•±Í”9½¹”(€€€€€€€€¤°(€€€€€€€€‰µ¥É…Ñ¥½¹}Ñ¥­•Ğˆè½Áä¹‘••Á½Áä¡Ñ¥­•Ğ¤°(€€€€€€€€‰…™™•Ñ•‘}ÕÍ•ÉÌˆè…™™•Ñ•‘}ÕÍ•ÉÌ°(€€€€€€€€‰…™™•Ñ•‘}Ñ½Á}±•Ù•±}É•½É‘Ìˆèì(€€€€€€€€€€€­•äè½Áä¹‘••Á½Áä¡ÍÑ…Ñ”¹•Ğ¡­•ä¤¤(€€€€€€€€€€€™½È­•ä¥¸Í½ÉÑ•¡…™™•Ñ•‘}­•åÌ¤(€€€€€€€€€€€¥˜­•ä¥¸ÍÑ…Ñ”(€€€€€€€ô°(€€€ô(()‘•˜É•‘••µ}…½Õ¹Ñ}µ¥É…Ñ¥½¹}Ñ¥­•Ğ (€€€‘…Ñ…}™¥±”°(€€€½‘”°(€€€¹•İ}±¥¹•}ÕÍ•É}¥°(€€€½¹™¥œ°(€€€¹½Üõ9½¹”°(¤è(€€€¥˜¹½Ğ…½Õ¹Ñ}µ¥É…Ñ¥½¹}É•…‘ä¡½¹™¥œ¤è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰µ¥É…Ñ¥½¹}Õ¹…Ù…¥±…‰±”‰ô°€ÔÀÌ((€€€ÕÉÉ•¹Ğ€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}¹½Ü¡¹½Ü¤(€€€Ù•É¥™¥•‘}¹•İ}¥€ôÍÑÈ¡¹•İ}±¥¹•}ÕÍ•É}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€É…İ}½‘”€ôÍÑÈ¡½‘”½È€ˆˆ¤¹ÍÑÉ¥À ¤((€€€‘•˜µÕÑ…Ñ”¡ÍÑ…Ñ”¤è(€€€€€€€ÁÕÉ•}…½Õ¹Ñ}µ¥É…Ñ¥½¹}¡¥ÍÑ½Éä¡ÍÑ…Ñ”°ÕÉÉ•¹Ğ¤(€€€€€€€¥¹Ù…±¥‘}ÕÑ½™˜€ôÕÉÉ•¹Ğ€´Ñ¥µ•‘•±Ñ„ (€€€€€€€€€€€Í•½¹‘Ìõ=U9Q}5%IQ%=9}%9Y1%}I5}]%9=]}M=9L(€€€€€€€€¤(€€€€€€€¥¹Ù…±¥‘}É••¹Ğ€ôÍÕ´ (€€€€€€€€€€€€Ä(€€€€€€€€€€€™½È•Ù•¹Ğ¥¸€¡ÍÑ…Ñ”¹•Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…Õ‘¥Ğˆ¤½Èmt¤(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡•Ù•¹Ğ°‘¥Ğ¤(€€€€€€€€€€€…¹•Ù•¹Ğ¹•Ğ ‰™…¥±ÕÉ•}…Ñ•½Éäˆ¤€ôô€‰¥¹Ù…±¥‘}½‘”ˆ(€€€€€€€€€€€…¹€ (€€€€€€€€€€€€€€€}…½Õ¹Ñ}µ¥É…Ñ¥½¹}‘…Ñ•Ñ¥µ”¡•Ù•¹Ğ¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤¤(€€€€€€€€€€€€€€€…¹}…½Õ¹Ñ}µ¥É…Ñ¥½¹}‘…Ñ•Ñ¥µ”¡•Ù•¹Ğ¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤¤(€€€€€€€€€€€€€€€€øô¥¹Ù…±¥‘}ÕÑ½™˜(€€€€€€€€€€€€¤(€€€€€€€€¤(€€€€€€€¥˜¥¹Ù…±¥‘}É••¹Ğ€øô=U9Q}5%IQ%=9}%9Y1%}I5}5a}AI}]%9=\è(€€€€€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰É…Ñ•}±¥µ¥Ñ•‰ô°€ĞÈä(€€€€€€€Ñ¥­•Ğ°Ñ¥­•Ñ}•ÉÉ½È€ôÙ…±¥‘…Ñ•}…½Õ¹Ñ}µ¥É…Ñ¥½¹}Ñ¥­•Ğ (€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€É…İ}½‘”°(€€€€€€€€€€€½¹™¥œ¹•Ğ ‰=U9Q}5%IQ%=9}MIPˆ¤°(€€€€€€€€€€€¹½ÜõÕÉÉ•¹Ğ°(€€€€€€€€¤(€€€€€€€•ÉÉ½É}ÍÑ…ÑÕÍ•Ì€ôì(€€€€€€€€€€€€‰¥¹Ù…±¥‘}½‘”ˆè€ĞÀĞ°(€€€€€€€€€€€€‰•áÁ¥É•‘}½‘”ˆè€ĞÄÀ°(€€€€€€€€€€€€‰ÕÍ•‘}½‘”ˆè€ĞÀä°(€€€€€€€€€€€€‰Í½ÕÉ•}µ¥ÍÍ¥¹œˆè€ĞÀĞ°(€€€€€€€ô(€€€€€€€¥˜Ñ¥­•Ñ}•ÉÉ½Èè(€€€€€€€€€€€}…ÁÁ•¹‘}…½Õ¹Ñ}µ¥É…Ñ¥½¹}™…¥±ÕÉ•}…Õ‘¥Ğ (€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€Ñ¥­•Ñ}•ÉÉ½È°(€€€€€€€€€€€€€€€ÕÉÉ•¹Ğ°(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸€ (€€€€€€€€€€€€€€€ì‰½¬ˆè…±Í”°€‰•ÉÉ½ÈˆèÑ¥­•Ñ}•ÉÉ½Éô°(€€€€€€€€€€€€€€€•ÉÉ½É}ÍÑ…ÑÕÍ•Ì¹•Ğ¡Ñ¥­•Ñ}•ÉÉ½È°€ĞÀä¤°(€€€€€€€€€€€€¤((€€€€€€€½±‘}±¥¹•}ÕÍ•É}¥€ôÍÑÈ¡Ñ¥­•Ğ¹•Ğ ‰½±‘}±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€…±¥…Í•Ì€ôÍÑ…Ñ”¹•Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…±¥…Í•Ìˆ¤½Èíô(€€€€€€€¥˜€ (€€€€€€€€€€€¹½ĞÙ•É¥™¥•‘}¹•İ}¥(€€€€€€€€€€€½È½±‘}±¥¹•}ÕÍ•É}¥€ôôÙ•É¥™¥•‘}¹•İ}¥(€€€€€€€€€€€½ÈÙ•É¥™¥•‘}¹•İ}¥¥¸…±¥…Í•Ì(€€€€€€€€¤è(€€€€€€€€€€€}…ÁÁ•¹‘}…½Õ¹Ñ}µ¥É…Ñ¥½¹}™…¥±ÕÉ•}…Õ‘¥Ğ (€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€‰Õ¹Í…™•}½¹™±¥Ğˆ°(€€€€€€€€€€€€€€€ÕÉÉ•¹Ğ°(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰Õ¹Í…™•}½¹™±¥Ğ‰ô°€ĞÀä((€€€€€€€ÕÍ•ÉÌ€ôÍÑ…Ñ”¹Í•Ñ‘•™…Õ±Ğ ‰ÕÍ•ÉÌˆ°íô¤(€€€€€€€½±‘}ÁÉ½™¥±”€ôÕÍ•ÉÌ¹•Ğ¡½±‘}±¥¹•}ÕÍ•É}¥¤(€€€€€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡½±‘}ÁÉ½™¥±”°‘¥Ğ¤è(€€€€€€€€€€€}…ÁÁ•¹‘}…½Õ¹Ñ}µ¥É…Ñ¥½¹}™…¥±ÕÉ•}…Õ‘¥Ğ (€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€‰Í½ÕÉ•}µ¥ÍÍ¥¹œˆ°(€€€€€€€€€€€€€€€ÕÉÉ•¹Ğ°(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰Í½ÕÉ•}µ¥ÍÍ¥¹œ‰ô°€ĞÀĞ(€€€€€€€¹•İ}ÁÉ½™¥±”€ôÕÍ•ÉÌ¹•Ğ¡Ù•É¥™¥•‘}¹•İ}¥¤(€€€€€€€¥˜¹•İ}ÁÉ½™¥±”¥Ì¹½Ğ9½¹”…¹¹½Ğ¥Í¥¹ÍÑ…¹”¡¹•İ}ÁÉ½™¥±”°‘¥Ğ¤è(€€€€€€€€€€€}…ÁÁ•¹‘}…½Õ¹Ñ}µ¥É…Ñ¥½¹}™…¥±ÕÉ•}…Õ‘¥Ğ (€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€‰Õ¹Í…™•}½¹™±¥Ğˆ°(€€€€€€€€€€€€€€€ÕÉÉ•¹Ğ°(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰Õ¹Í…™•}½¹™±¥Ğ‰ô°€ĞÀä((€€€€€€€•Ù•¹Ñ}¥€ô˜‰…µ•}íÍ•É•ÑÌ¹Ñ½­•¹}ÕÉ±Í…™” ÄÈ¥ôˆ(€€€€€€€Í¹…ÁÍ¡½Ñ}¥°Í¹…ÁÍ¡½Ğ€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}Í¹…ÁÍ¡½Ğ (€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€Ñ¥­•Ğ°(€€€€€€€€€€€½±‘}±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€Ù•É¥™¥•‘}¹•İ}¥°(€€€€€€€€€€€•Ù•¹Ñ}¥°(€€€€€€€€€€€ÕÉÉ•¹Ğ°(€€€€€€€€¤(€€€€€€€ÍÑ…Ñ”¹Í•Ñ‘•™…Õ±Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}Í¹…ÁÍ¡½ÑÌˆ°íô¥mÍ¹…ÁÍ¡½Ñ}¥‘t€ôÍ¹…ÁÍ¡½Ğ((€€€€€€€µ•É•‘}ÁÉ½™¥±”€ôµ•É•}µ¥É…Ñ¥½¹}ÁÉ½™¥±•Ì (€€€€€€€€€€€½±‘}ÁÉ½™¥±”°(€€€€€€€€€€€¹•İ}ÁÉ½™¥±”½Èì(€€€€€€€€€€€€€€€€¨©U1Q}AI=%1°(€€€€€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆèÙ•É¥™¥•‘}¹•İ}¥°(€€€€€€€€€€€ô°(€€€€€€€€€€€¹½ÜõÕÉÉ•¹Ğ°(€€€€€€€€¤(€€€€€€€É•¥¹‘•á}…½Õ¹Ñ}É•™•É•¹•Ì (€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€½±‘}±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€Ù•É¥™¥•‘}¹•İ}¥°(€€€€€€€€€€€•Ù•¹Ñ}¥°(€€€€€€€€€€€¹½ÜõÕÉÉ•¹Ğ°(€€€€€€€€¤(€€€€€€€}É•¥¹‘•á}µ¥É…Ñ¥½¹}É•½É (€€€€€€€€€€€µ•É•‘}ÁÉ½™¥±”°(€€€€€€€€€€€½±‘}±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€Ù•É¥™¥•‘}¹•İ}¥°(€€€€€€€€€€€•Ù•¹Ñ}¥°(€€€€€€€€¤(€€€€€€€ÕÍ•ÉÍmÙ•É¥™¥•‘}¹•İ}¥‘t€ôµ•É•‘}ÁÉ½™¥±”(€€€€€€€ÕÍ•ÉÌ¹Á½À¡½±‘}±¥¹•}ÕÍ•É}¥°9½¹”¤(€€€€€€€É•…Ñ•}…½Õ¹Ñ}µ¥É…Ñ¥½¹}…±¥…Ì (€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€½±‘}±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€Ù•É¥™¥•‘}¹•İ}¥°(€€€€€€€€€€€¹½ÜõÕÉÉ•¹Ğ°(€€€€€€€€¤((€€€€€€€Ñ¥­•Ñl‰ÍÑ…ÑÕÌ‰t€ô€‰ÕÍ•ˆ(€€€€€€€Ñ¥­•Ñl‰ÕÍ•‘}…Ğ‰t€ôÕÉÉ•¹Ğ¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€€€€€Ñ¥­•Ñl‰µ¥É…Ñ¥½¹}•Ù•¹Ñ}¥‰t€ô•Ù•¹Ñ}¥(€€€€€€€½Õ¹ÑÌ€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}Í…™•}½Õ¹ÑÌ (€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€µ•É•‘}ÁÉ½™¥±”°(€€€€€€€€€€€Ù•É¥™¥•‘}¹•İ}¥°(€€€€€€€€¤(€€€€€€€ÍÑ…Ñ”¹Í•Ñ‘•™…Õ±Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…Õ‘¥Ğˆ°mt¤¹…ÁÁ•¹¡ì(€€€€€€€€€€€€‰•Ù•¹Ñ}¥ˆè•Ù•¹Ñ}¥°(€€€€€€€€€€€€‰ÍÑ…ÑÕÌˆè€‰ÍÕ•ÍÌˆ°(€€€€€€€€€€€€‰É•…Ñ•‘}…ĞˆèÕÉÉ•¹Ğ¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€€€€€‰™…¥±ÕÉ•}…Ñ•½Éäˆè€ˆˆ°(€€€€€€€€€€€€‰½Õ¹ÑÌˆè½Õ¹ÑÌ°(€€€€€€€ô¤(€€€€€€€É•ÑÕÉ¸ì(€€€€€€€€€€€€‰½¬ˆèQÉÕ”°(€€€€€€€€€€€€‰ÍÑ…ÑÕÌˆè€‰µ¥É…Ñ•ˆ°(€€€€€€€€€€€€‰½Õ¹ÑÌˆè½Õ¹ÑÌ°(€€€€€€€ô°€ÈÀÀ((€€€ÑÉäè(€€€€€€€É•ÑÕÉ¸µÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä¡‘…Ñ…}™¥±”°µÕÑ…Ñ”¤(€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€ÑÉäè(€€€€€€€€€€€µÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€€€€€€€€€‘…Ñ…}™¥±”°(€€€€€€€€€€€€€€€±…µ‰‘„ÍÑ…Ñ”è}…ÁÁ•¹‘}…½Õ¹Ñ}µ¥É…Ñ¥½¹}™…¥±ÕÉ•}…Õ‘¥Ğ (€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€€‰µ¥É…Ñ¥½¹}™…¥±•ˆ°(€€€€€€€€€€€€€€€€€€€ÕÉÉ•¹Ğ°(€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€¤(€€€€€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€€€€€Á…ÍÌ(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰µ¥É…Ñ¥½¹}™…¥±•‰ô°€ÔÀÀ(()‘•˜ÁÕÉ•}…½Õ¹Ñ}µ¥É…Ñ¥½¹}Í¹…ÁÍ¡½ÑÌ¡ÍÑ…Ñ”°¹½Üõ9½¹”¤è(€€€ÕÉÉ•¹Ğ€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}¹½Ü¡¹½Ü¤(€€€Í¹…ÁÍ¡½ÑÌ€ôÍÑ…Ñ”¹•Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}Í¹…ÁÍ¡½ÑÌˆ¤½Èíô(€€€É•Ñ…¥¹•€ôíô(€€€É•µ½Ù•€ô€À(€€€™½ÈÍ¹…ÁÍ¡½Ñ}¥°Í¹…ÁÍ¡½Ğ¥¸Í¹…ÁÍ¡½ÑÌ¹¥Ñ•µÌ ¤è(€€€€€€€ÁÕÉ•}…™Ñ•È€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}‘…Ñ•Ñ¥µ” (€€€€€€€€€€€€¡Í¹…ÁÍ¡½Ğ½Èíô¤¹•Ğ ‰ÁÕÉ•}…™Ñ•Èˆ¤(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡Í¹…ÁÍ¡½Ğ°‘¥Ğ¤(€€€€€€€€€€€•±Í”9½¹”(€€€€€€€€¤(€€€€€€€¥˜ÁÕÉ•}…™Ñ•È…¹ÁÕÉ•}…™Ñ•È€ğôÕÉÉ•¹Ğè(€€€€€€€€€€€É•µ½Ù•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€É•Ñ…¥¹•‘mÍ¹…ÁÍ¡½Ñ}¥‘t€ôÍ¹…ÁÍ¡½Ğ(€€€ÍÑ…Ñ•l‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}Í¹…ÁÍ¡½ÑÌ‰t€ôÉ•Ñ…¥¹•(€€€É•ÑÕÉ¸É•µ½Ù•(()‘•˜…‘µ¥¹}Á…ÍÍİ½É‘}µ…Ñ¡•Ì¡½¹™¥œ°…¹‘¥‘…Ñ”¤è(€€€É•ÑÕÉ¸…‘µ¥¹}É½±•}™½É}Á…ÍÍİ½É¡½¹™¥œ°…¹‘¥‘…Ñ”¤¥Ì¹½Ğ9½¹”(()5%9}I=1}AI5%MM%=9L€ôì(€€€€‰ÍÕÁ•É}…‘µ¥¸ˆèì(€€€€€€€€‰‰…­ÕÀ¹µ…¹…”ˆ°(€€€€€€€€‰‰•Ñ„¹µ…¹…”ˆ°(€€€€€€€€‰¥¹¥‘•¹Ğ¹µ…¹…”ˆ°(€€€€€€€€‰µ•µ‰•È¹µ…¹…”ˆ°(€€€€€€€€‰¹½Ñ¥™¥…Ñ¥½¸¹µ…¹…”ˆ°(€€€€€€€€‰½É‘•È¹µ…¹…”ˆ°(€€€€€€€€‰ÁÉ¥Ù…ä¹µ…¹…”ˆ°(€€€€€€€€‰ÍÕÁÁ½ÉĞ¹µ…¹…”ˆ°(€€€€€€€€‰ÍåÍÑ•´¹µ…¹…”ˆ°(€€€ô°(€€€€‰½Á•É…Ñ¥½¹Ìˆèì(€€€€€€€€‰‰•Ñ„¹µ…¹…”ˆ°(€€€€€€€€‰¥¹¥‘•¹Ğ¹µ…¹…”ˆ°(€€€€€€€€‰µ•µ‰•È¹µ…¹…”ˆ°(€€€€€€€€‰¹½Ñ¥™¥…Ñ¥½¸¹µ…¹…”ˆ°(€€€€€€€€‰ÁÉ¥Ù…ä¹µ…¹…”ˆ°(€€€€€€€€‰ÍÕÁÁ½ÉĞ¹µ…¹…”ˆ°(€€€ô°(€€€€‰™¥¹…¹”ˆèì‰½É‘•È¹µ…¹…”‰ô°(€€€€‰Ù¥•İ•ÈˆèÍ•Ğ ¤°)ô(()‘•˜…‘µ¥¹}É½±•}™½É}Á…ÍÍİ½É¡½¹™¥œ°…¹‘¥‘…Ñ”¤è(€€€¥˜¹½Ğ…‘µ¥¹}Í•ÕÉ¥Ñå}É•…‘ä¡½¹™¥œ¤è(€€€€€€€É•ÑÕÉ¸9½¹”(€€€½Ğ€ô}¹½Éµ…±¥é•}…‘µ¥¹}Á…ÍÍİ½É¡…¹‘¥‘…Ñ”¤(€€€¥˜¹½Ğ½Ğè(€€€€€€€É•ÑÕÉ¸9½¹”(€€€É½±•}Á…ÍÍİ½É‘Ì€ô€ (€€€€€€€€ ‰ÍÕÁ•É}…‘µ¥¸ˆ°€‰5%9}AMM]=Iˆ¤°(€€€€€€€€ ‰½Á•É…Ñ¥½¹Ìˆ°€‰5%9}=AIQ%=9M}AMM]=Iˆ¤°(€€€€€€€€ ‰™¥¹…¹”ˆ°€‰5%9}%99}AMM]=Iˆ¤°(€€€€€€€€ ‰Ù¥•İ•Èˆ°€‰5%9}Y%]I}AMM]=Iˆ¤°(€€€€¤(€€€™½ÈÉ½±”°½¹™¥}¹…µ”¥¸É½±•}Á…ÍÍİ½É‘Ìè(€€€€€€€•áÁ•Ñ•€ô}¹½Éµ…±¥é•}…‘µ¥¹}Á…ÍÍİ½É¡½¹™¥œ¹•Ğ¡½¹™¥}¹…µ”°€ˆˆ¤¤(€€€€€€€¥˜•áÁ•Ñ•…¹Í•É•ÑÌ¹½µÁ…É•}‘¥•ÍĞ¡•áÁ•Ñ•°½Ğ¤è(€€€€€€€€€€€É•ÑÕÉ¸É½±”(€€€É•ÑÕÉ¸9½¹”(()‘•˜…‘µ¥¹}Á•Éµ¥ÍÍ¥½¹Í}™½É}É½±”¡É½±”¤è(€€€É•ÑÕÉ¸Í½ÉÑ•¡5%9}I=1}AI5%MM%=9L¹•Ğ¡ÍÑÈ¡É½±”½È€ˆˆ¤°Í•Ğ ¤¤¤(()5%9}1=%9}QQ5AQL€ôíô(()‘•˜}…‘µ¥¹}±½¥¹}…ÑÑ•µÁÑÌ¡±¥•¹Ñ}­•ä°¹½Üõ9½¹”¤è(€€€¹½Ü€ô¹½Ü½È‘…Ñ•Ñ¥µ”¹¹½Ü ¤(€€€ÕÑ½™˜€ô¹½Ü€´Ñ¥µ•‘•±Ñ„¡µ¥¹ÕÑ•ÌôÄÀ¤(€€€É••¹Ğ€ôl(€€€€€€€Ù…±Õ”™½ÈÙ…±Õ”¥¸5%9}1=%9}QQ5AQL¹•Ğ¡±¥•¹Ñ}­•ä°mt¤(€€€€€€€¥˜Ù…±Õ”€øôÕÑ½™˜(€€€t(€€€5%9}1=%9}QQ5AQMm±¥•¹Ñ}­•åt€ôÉ••¹Ğ(€€€É•ÑÕÉ¸É••¹Ğ(()‘•˜…‘µ¥¹}±½¥¹}É…Ñ•}±¥µ¥Ñ•¡±¥•¹Ñ}­•ä°¹½Üõ9½¹”¤è(€€€É•ÑÕÉ¸±•¸¡}…‘µ¥¹}±½¥¹}…ÑÑ•µÁÑÌ¡±¥•¹Ñ}­•ä°¹½Ü¤¤€øô€Ô(()‘•˜É•½É‘}…‘µ¥¹}±½¥¹}™…¥±ÕÉ”¡±¥•¹Ñ}­•ä°¹½Üõ9½¹”¤è(€€€¹½Ü€ô¹½Ü½È‘…Ñ•Ñ¥µ”¹¹½Ü ¤(€€€É••¹Ğ€ô}…‘µ¥¹}±½¥¹}…ÑÑ•µÁÑÌ¡±¥•¹Ñ}­•ä°¹½Ü¤(€€€É••¹Ğ¹…ÁÁ•¹¡¹½Ü¤(€€€5%9}1=%9}QQ5AQMm±¥•¹Ñ}­•åt€ôÉ••¹Ñl´Ôét(()}5%9}U%Q}M9M%Q%Y}-e}AIQL€ô€ (€€€€‰Á…ÍÍİ½Éˆ°(€€€€‰Á…ÍÍİˆ°(€€€€‰Ñ½­•¸ˆ°(€€€€‰Í•É•Ğˆ°(€€€€‰ÍÉ˜ˆ°(€€€€‰…ÕÑ¡½É¥é…Ñ¥½¸ˆ°(€€€€‰½½­¥”ˆ°(€€€€‰•µ…¥°ˆ°(€€€€‰Á¡½¹”ˆ°(€€€€‰µ½‰¥±”ˆ°(€€€€‰…‘‘É•ÍÌˆ°(€€€€‰±¥¹•ÕÍ•É¥ˆ°(€€€€‰ÕÍ•É¥ˆ°(€€€€‰‘¥ÍÁ±…å¹…µ”ˆ°(€€€€‰™Õ±±¹…µ”ˆ°(€€€€‰±…Ñ¥ÑÕ‘”ˆ°(€€€€‰±½¹¥ÑÕ‘”ˆ°(€€€€‰±½…Ñ¥½¸ˆ°(€€€€‰¥Á…‘‘É•ÍÌˆ°(€€€€‰É•µ½Ñ•…‘‘Èˆ°(¤(()‘•˜}Í…¹¥Ñ¥é•}…‘µ¥¹}…Õ‘¥Ñ}µ•Ñ…‘…Ñ„¡Ù…±Õ”¤è(€€€¥˜¥Í¥¹ÍÑ…¹”¡Ù…±Õ”°‘¥Ğ¤è(€€€€€€€±•…¹•€ôíô(€€€€€€€™½È­•ä°¥Ñ•´¥¸Ù…±Õ”¹¥Ñ•µÌ ¤è(€€€€€€€€€€€½µÁ…Ñ}­•ä€ôÉ”¹ÍÕˆ¡È‰my„µèÀ´åtˆ°€ˆˆ°ÍÑÈ¡­•ä¤¹…Í•™½± ¤¤(€€€€€€€€€€€¥˜€ (€€€€€€€€€€€€€€€½µÁ…Ñ}­•ä¥¸ì‰¹…µ”ˆ°€‰ÕÍ•É¹…µ”‰ô(€€€€€€€€€€€€€€€½È…¹ä (€€€€€€€€€€€€€€€€€€€Á…ÉĞ¥¸½µÁ…Ñ}­•ä(€€€€€€€€€€€€€€€€€€€™½ÈÁ…ÉĞ¥¸}5%9}U%Q}M9M%Q%Y}-e}AIQL(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€¤è(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€±•…¹•‘mÍÑÈ¡­•ä¥t€ô}Í…¹¥Ñ¥é•}…‘µ¥¹}…Õ‘¥Ñ}µ•Ñ…‘…Ñ„¡¥Ñ•´¤(€€€€€€€É•ÑÕÉ¸±•…¹•(€€€¥˜¥Í¥¹ÍÑ…¹”¡Ù…±Õ”°€¡±¥ÍĞ°ÑÕÁ±”°Í•Ğ¤¤è(€€€€€€€É•ÑÕÉ¸m}Í…¹¥Ñ¥é•}…‘µ¥¹}…Õ‘¥Ñ}µ•Ñ…‘…Ñ„¡¥Ñ•´¤™½È¥Ñ•´¥¸Ù…±Õ•t(€€€¥˜Ù…±Õ”¥Ì9½¹”½È¥Í¥¹ÍÑ…¹”¡Ù…±Õ”°€¡ÍÑÈ°¥¹Ğ°™±½…Ğ°‰½½°¤¤è(€€€€€€€É•ÑÕÉ¸Ù…±Õ”(€€€É•ÑÕÉ¸ÍÑÈ¡Ù…±Õ”¤(()‘•˜…ÁÁ•¹‘}…‘µ¥¹}…Õ‘¥Ğ¡‘…Ñ…}™¥±”°…Ñ¥½¸°ÍÑ…ÑÕÌ°µ•Ñ…‘…Ñ„õ9½¹”¤è(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€±½Ì€ô±¥ÍĞ¡ÍÑ…Ñ”¹•Ğ ‰…‘µ¥¹}…Õ‘¥Ñ}±½Ìˆ¤½Èmt¤(€€€±½Ì¹…ÁÁ•¹¡ì(€€€€€€€€‰É•…Ñ•‘}…Ğˆè‘…Ñ•Ñ¥µ”¹¹½Ü ¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€‰…Ñ¥½¸ˆèÍÑÈ¡…Ñ¥½¸¤°(€€€€€€€€‰ÍÑ…ÑÕÌˆèÍÑÈ¡ÍÑ…ÑÕÌ¤°(€€€€€€€€‰µ•Ñ…‘…Ñ„ˆè}Í…¹¥Ñ¥é•}…‘µ¥¹}…Õ‘¥Ñ}µ•Ñ…‘…Ñ„¡‘¥Ğ¡µ•Ñ…‘…Ñ„½Èíô¤¤°(€€€ô¤(€€€ÍÑ…Ñ•l‰…‘µ¥¹}…Õ‘¥Ñ}±½Ì‰t€ô±½Íl´ÈÀÀét(€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(()5%9}QMQ}9QI}QMQL€ôì(€€€€‰‘…¥±å}É••Ñ¥¹œˆè€ ‹š¾?š^—–V?–gš:£šJ´ˆ°€‰±¥¹”ˆ¤°(€€€€‰ÑÉ¥…±|ÄÑ}¹½Ñ¥”ˆè€ ˆÄĞƒ–’§¦®S¦¦_š>C¦Hˆ°€‰±¥¹”ˆ¤°(€€€€‰‰•Ñ…|ÈÅ}¹½Ñ¥”ˆè€ ˆÈÄƒ–’§–Âšâ³š>C¦Hˆ°€‰±¥¹”ˆ¤°(€€€€‰Á…¥‘}•áÁ¥Éå}¹½Ñ¥”ˆè€ ‹’îc¢ÊïšZçš†#–"Ãšrš>C¦Hˆ°€‰±¥¹”ˆ¤°(€€€€‰Á…åµ•¹Ñ}É•ÍÑ½É”ˆè€ ‹’îcš²û–ú3š‹–ú§–:¢¢·–ºhˆ°€‰Í¥µÕ±…Ñ¥½¸ˆ¤°(€€€€‰Í½Í}±½…Ñ¥½¸ˆè€ ‰M=O–>[šÚ#¢"–ºk’ö7¦k~”ˆ°€‰±¥¹”ˆ¤°(€€€€‰Õ…É‘¥…¹}¥¹Ù¥Ñ”ˆè€ ‹š‚ã–ş–º#¢¶ß’êë¦
+¢®/Ú–ºhˆ°€‰±¥¹”ˆ¤°(€€€€‰‰•Ñ…}™••‘‰…­|ÄäÀÀˆè€ ˆÄäèÀÀƒ–Âšâ³¢¦‹–V<ˆ°€‰±¥¹”ˆ¤°(€€€€‰ÍÑ½Á}É•¹•İ…±}¹½Ñ¥”ˆè€ ‹’â7–7š>C¦Kš"Dˆ°€‰Í¥µÕ±…Ñ¥½¸ˆ¤°(€€€€‰ÈÉ}‰…­ÕÀˆè€ ‰HÈƒ–*ƒ–¾–
+g’îôˆ°€‰ÈÈˆ¤°)ô(()‘•˜}Ñ•ÍÑ}±¥¹•}ÕÍ•É}¥‘Ì¡½¹™¥œ¤è(€€€É…Ü€ô½¹™¥œ¹•Ğ ‰QMQ}1%9}UMI}%Lˆ¤½È€ˆˆ(€€€¥˜¥Í¥¹ÍÑ…¹”¡É…Ü°€¡±¥ÍĞ°ÑÕÁ±”°Í•Ğ¤¤è(€€€€€€€Ù…±Õ•Ì€ôÉ…Ü(€€€•±Í”è(€€€€€€€Ù…±Õ•Ì€ôÍÑÈ¡É…Ü¤¹ÍÁ±¥Ğ ˆ°ˆ¤(€€€É•ÑÕÉ¸mÍÑÈ¡Ù…±Õ”¤¹ÍÑÉ¥À ¤™½ÈÙ…±Õ”¥¸Ù…±Õ•Ì¥˜ÍÑÈ¡Ù…±Õ”¤¹ÍÑÉ¥À ¥t(()‘•˜}µ…Í­•‘}Ñ•ÍÑ}…½Õ¹Ğ¡±¥¹•}ÕÍ•É}¥¤è(€€€‘¥•ÍĞ€ô¡…Í¡±¥ˆ¹Í¡„ÈÔØ¡ÍÑÈ¡±¥¹•}ÕÍ•É}¥¤¹•¹½‘” ‰ÕÑ˜´àˆ¤¤¹¡•á‘¥•ÍĞ ¥lèát(€€€É•ÑÕÉ¸ì‰¥ˆè‘¥•ÍĞ°€‰±…‰•°ˆè˜‹šâ³¢¦›–âÏ¢f|ƒŠ™í‘¥•ÍÑl´Ğéuô‰ô(()‘•˜}Ñ•ÍÑ}•¹Ñ•É}¥¹Ñ•É…Ñ¥½¹Ì¡½¹™¥œ¤è(€€€½¹™¥ÕÉ•€ô±…µ‰‘„­•äè‰½½°¡ÍÑÈ¡½¹™¥œ¹•Ğ¡­•ä¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰±¥¹”ˆèì(€€€€€€€€€€€€‰½¹™¥ÕÉ•ˆè½¹™¥ÕÉ• ‰1%9}!991}MM}Q=-8ˆ¤°(€€€€€€€€€€€€‰±…‰•°ˆè€‰1%9ƒš:£šJ´ˆ°(€€€€€€€ô°(€€€€€€€€‰ÈÈˆèì(€€€€€€€€€€€€‰½¹™¥ÕÉ•ˆè…±°¡½¹™¥ÕÉ•¡­•ä¤™½È­•ä¥¸€ (€€€€€€€€€€€€€€€€‰HÉ}9A=%9Pˆ°€‰HÉ}MM}-e}%ˆ°€‰HÉ}MIQ}MM}-dˆ°(€€€€€€€€€€€€€€€€‰HÉ}	U-Pˆ°€‰HÉ}	-UA}9IeAQ%=9}-dˆ°(€€€€€€€€€€€€¤¤°(€€€€€€€€€€€€‰±…‰•°ˆè€‰HÈƒ–*ƒ–¾–
+g’îôˆ°(€€€€€€€ô°(€€€€€€€€‰„Ğˆèì(€€€€€€€€€€€€‰½¹™¥ÕÉ•ˆè½¹™¥ÕÉ• ‰Ñ}5MUI59Q}%ˆ¤(€€€€€€€€€€€…¹½¹™¥ÕÉ• ‰Ñ}AI=AIQe}%ˆ¤(€€€€€€€€€€€…¹½¹™¥ÕÉ• ‰Ñ}MIY%}=U9Q})M=8ˆ¤°(€€€€€€€€€€€€‰±…‰•°ˆè€‰Ğƒ–‚Ç¢† ˆ°(€€€€€€€ô°(€€€€€€€€‰Á…åµ•¹Ğˆèì(€€€€€€€€€€€€‰½¹™¥ÕÉ•ˆè€ (€€€€€€€€€€€€€€€…±°¡½¹™¥ÕÉ•¡­•ä¤™½È­•ä¥¸€ (€€€€€€€€€€€€€€€€€€€€‰Ae}5I!9Q}%ˆ°€‰Ae}!M!}-dˆ°€‰Ae}!M!}%Xˆ°(€€€€€€€€€€€€€€€€¤¤(€€€€€€€€€€€€€€€½È…±°¡½¹™¥ÕÉ•¡­•ä¤™½È­•ä¥¸€ (€€€€€€€€€€€€€€€€€€€€‰9]	Ae}5I!9Q}%ˆ°€‰9]	Ae}!M!}-dˆ°€‰9]	Ae}!M!}%Xˆ°(€€€€€€€€€€€€€€€€¤¤(€€€€€€€€€€€€¤°(€€€€€€€€€€€€‰±¥Ù”ˆè€ (€€€€€€€€€€€€€€€ÍÑÈ¡½¹™¥œ¹•Ğ ‰Ae}MQˆ¤½È€‰Í…¹‘‰½àˆ¤¹±½İ•È ¤€ôô€‰ÁÉ½‘ÕÑ¥½¸ˆ(€€€€€€€€€€€€€€€½ÈÍÑÈ¡½¹™¥œ¹•Ğ ‰9]	Ae}MQˆ¤½È€‰Í…¹‘‰½àˆ¤¹±½İ•È ¤€ôô€‰ÁÉ½‘ÕÑ¥½¸ˆ(€€€€€€€€€€€€¤°(€€€€€€€€€€€€‰±…‰•°ˆè€‹¦GšÖˆ°(€€€€€€€ô°(€€€ô(()‘•˜…‘µ¥¹}Ñ•ÍÑ}•¹Ñ•É}ÍÑ…ÑÕÌ¡‘…Ñ…}™¥±”°½¹™¥œ¤è(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€…½Õ¹ÑÌ€ô}Ñ•ÍÑ}±¥¹•}ÕÍ•É}¥‘Ì¡½¹™¥œ¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰Ñ•ÍÑ}µ½‘”ˆèQÉÕ”°(€€€€€€€€‰Ñ•ÍÑ}…½Õ¹ÑÌˆèm}µ…Í­•‘}Ñ•ÍÑ}…½Õ¹Ğ¡¥Ñ•´¤™½È¥Ñ•´¥¸…½Õ¹ÑÍt°(€€€€€€€€‰¥¹Ñ•É…Ñ¥½¹Ìˆè}Ñ•ÍÑ}•¹Ñ•É}¥¹Ñ•É…Ñ¥½¹Ì¡½¹™¥œ¤°(€€€€€€€€‰Ñ•ÍÑÌˆèl(€€€€€€€€€€€ì‰¥ˆèÑ•ÍÑ}¥°€‰±…‰•°ˆè±…‰•°°€‰­¥¹ˆè­¥¹‘ô(€€€€€€€€€€€™½ÈÑ•ÍÑ}¥°€¡±…‰•°°­¥¹¤¥¸5%9}QMQ}9QI}QMQL¹¥Ñ•µÌ ¤(€€€€€€€t°(€€€€€€€€‰É••¹Ñ}ÉÕ¹Ìˆè±¥ÍĞ¡É•Ù•ÉÍ•¡ÍÑ…Ñ”¹•Ğ ‰Ñ•ÍÑ}•¹Ñ•É}ÉÕ¹Ìˆ¤½Èmt¤¥lèÈÁt°(€€€ô(()‘•˜}Ñ•ÍÑ}•¹Ñ•É}µ•ÍÍ…”¡Ñ•ÍÑ}¥¤è(€€€±…‰•°€ô5%9}QMQ}9QI}QMQMmÑ•ÍÑ}¥‘ulÁt(€€€‘•Ñ…¥±Ì€ôì(€€€€€€€€‰‘…¥±å}É••Ñ¥¹œˆè€‹¦gšb¿š¾?š^—–V?–gš:£šJ·šâ³¢¦›¾ò3¢®/Šë¢ª7šZ–¶_¢"š2'¦"W¦†¿’ëš¶–âãˆ°(€€€€€€€€‰ÑÉ¥…±|ÄÑ}¹½Ñ¥”ˆè€‹¦gšb¼€ÄĞƒ–’§¦®S¦¦_²°€ß¾ò<ÄË¾ò<ÄĞƒ–’§š>C¦K¦‚C¢š÷ˆ°(€€€€€€€€‰‰•Ñ…|ÈÅ}¹½Ñ¥”ˆè€‹¦gšb¼€ÈÄƒ–’§–Âšâ³²°€Äã¾ò<ÈÃ¾ò<ÈÄƒ–’§š>C¦K¦‚C¢š÷ˆ°(€€€€€€€€‰Á…¥‘}•áÁ¥Éå}¹½Ñ¥”ˆè€‹¦gšb¿’îc¢ÊïšZçš†#–"Ãšr–&4€ß¾ò<Ï¾ò<Äƒ–’§¢"–"Ãšrš^—š>C¦K¦‚C¢š÷ˆ°(€€€€€€€€‰Í½Í}±½…Ñ¥½¸ˆè€‹¦gšb¼M=O–>[šÚ M=Lƒ¢"–ºk’ö7¦k~—j–º'–£¦‚C¢š÷¾ò3’â7šr–îë®/r–¾›’ê/’îÛˆ°(€€€€€€€€‰Õ…É‘¥…¹}¥¹Ù¥Ñ”ˆè€‹¦gšb¿š‚ã–ş–º#¢¶ß’êë¦
+¢®/¢"Ú–ºk¢ª«šb;¦‚C¢š÷ˆ°(€€€€€€€€‰‰•Ñ…}™••‘‰…­|ÄäÀÀˆè€‹¦gšb¿š¾?–’¤€ÄäèÀÀƒ–Âšâ³’öÿR£¢¦‹–V?¦‚C¢š÷ˆ°(€€€ô(€€€É•ÑÕÉ¸˜‹Cšâ³¢¦›š¢‡–ò?Eí±…‰•±õq¹í‘•Ñ…¥±Ì¹•Ğ¡Ñ•ÍÑ}¥°€Ÿ–º'–£šâ³¢¦›¦‚C¢šôœ¥õq»’â7šrš&š²û’â7šr¢º+šnÓšZçš†#ˆ(()‘•˜ÉÕ¹}…‘µ¥¹}Ñ•ÍĞ¡‘…Ñ…}™¥±”°½¹™¥œ°Á…å±½…¤è(€€€Á…å±½…€ôÁ…å±½…¥˜¥Í¥¹ÍÑ…¹”¡Á…å±½…°‘¥Ğ¤•±Í”íô(€€€Ñ•ÍÑ}¥€ôÍÑÈ¡Á…å±½…¹•Ğ ‰Ñ•ÍÑ}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€±¥¹•}ÕÍ•É}¥€ôÍÑÈ¡Á…å±½…¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜Ñ•ÍÑ}¥¹½Ğ¥¸5%9}QMQ}9QI}QMQLè(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰Õ¹­¹½İ¹}Ñ•ÍĞ‰ô°€ĞÀÀ(€€€…±±½İ•€ô}Ñ•ÍÑ}±¥¹•}ÕÍ•É}¥‘Ì¡½¹™¥œ¤(€€€…½Õ¹Ñ}¥€ôÍÑÈ¡Á…å±½…¹•Ğ ‰…½Õ¹Ñ}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥…¹…½Õ¹Ñ}¥è(€€€€€€€±¥¹•}ÕÍ•É}¥€ô¹•áĞ (€€€€€€€€€€€€ (€€€€€€€€€€€€€€€¥Ñ•´™½È¥Ñ•´¥¸…±±½İ•(€€€€€€€€€€€€€€€¥˜}µ…Í­•‘}Ñ•ÍÑ}…½Õ¹Ğ¡¥Ñ•´¥l‰¥‰t€ôô…½Õ¹Ñ}¥(€€€€€€€€€€€€¤°(€€€€€€€€€€€€ˆˆ°(€€€€€€€€¤(€€€¥˜±¥¹•}ÕÍ•É}¥¹½Ğ¥¸…±±½İ•è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰Ñ•ÍÑ}É•¥Á¥•¹Ñ}¹½Ñ}…±±½İ•‰ô°€ĞÀÌ(€€€±…‰•°°­¥¹€ô5%9}QMQ}9QI}QMQMmÑ•ÍÑ}¥‘t(€€€ÍÑ…ÑÕÌ€ô€‰ÍÕ•ÍÌˆ(€€€•ÉÉ½È€ô€ˆˆ(€€€É•ÍÕ±Ğ€ôì‰½¬ˆèQÉÕ”°€‰Ñ•ÍÑ}¥ˆèÑ•ÍÑ}¥°€‰±…‰•°ˆè±…‰•°°€‰Ñ•ÍÑ}µ½‘”ˆèQÉÕ•ô(€€€ÑÉäè(€€€€€€€¥˜­¥¹€ôô€‰±¥¹”ˆè(€€€€€€€€€€€Ñ½­•¸€ôÍÑÈ¡½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€€€€€¥˜¹½ĞÑ½­•¸è(€€€€€€€€€€€€€€€É…¥Í”Y…±Õ•ÉÉ½È ‰±¥¹•}¹½Ñ}½¹™¥ÕÉ•ˆ¤(€€€€€€€€€€€Í•¹‘•È€ô½¹™¥œ¹•Ğ ‰1%9}AUM!}M9Hˆ¤½È±¥¹•}ÁÕÍ¡}µ•ÍÍ…”(€€€€€€€€€€€Í•¹‘•È¡Ñ½­•¸°±¥¹•}ÕÍ•É}¥°}Ñ•ÍÑ}•¹Ñ•É}µ•ÍÍ…”¡Ñ•ÍÑ}¥¤¤(€€€€€€€€€€€É•ÍÕ±Ñl‰Í•¹Ğ‰t€ôQÉÕ”(€€€€€€€•±¥˜­¥¹€ôô€‰ÈÈˆè(€€€€€€€€€€€‰…­ÕÀ°½‘”€ôÉ•…Ñ•}ÈÉ}•¹ÉåÁÑ•‘}‰…­ÕÀ¡½¹™¥œ¤(€€€€€€€€€€€¥˜½‘”€øô€ĞÀÀè(€€€€€€€€€€€€€€€É…¥Í”Y…±Õ•ÉÉ½È¡ÍÑÈ¡‰…­ÕÀ¹•Ğ ‰•ÉÉ½Èˆ¤½È€‰ÈÉ}‰…­ÕÁ}™…¥±•ˆ¤¤(€€€€€€€€€€€É•ÍÕ±Ñl‰‰…­ÕÀ‰t€ôì(€€€€€€€€€€€€€€€€‰­•äˆèÍÑÈ¡‰…­ÕÀ¹•Ğ ‰­•äˆ¤½È€ˆˆ¤°(€€€€€€€€€€€€€€€€‰É•…Ñ•‘}…ĞˆèÍÑÈ¡‰…­ÕÀ¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤½È€ˆˆ¤°(€€€€€€€€€€€ô(€€€€€€€•±Í”è(€€€€€€€€€€€É•ÍÕ±Ñl‰Í¥µÕ±…Ñ•‰t€ôQÉÕ”(€€€€€€€€€€€É•ÍÕ±Ñl‰µ•ÍÍ…”‰t€ô€ (€€€€€€€€€€€€€€€€‹’îcš²û–ú3š‹–ú§–:¢¢·–ºkš¢‡šN³š"C–*¾òošr«–Fó–>¯¦GšÖšr«šRçšZçš†#ˆ(€€€€€€€€€€€€€€€¥˜Ñ•ÍÑ}¥€ôô€‰Á…åµ•¹Ñ}É•ÍÑ½É”ˆ(€€€€€€€€€€€€€€€•±Í”€‹’â7–7š>C¦K–?––÷š¢‡šN³š"C–*¾òošr«’ş»šRçš¶–ò?šr–N‡¢ÎšZgˆ(€€€€€€€€€€€€¤(€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€ÍÑ…ÑÕÌ€ô€‰™…¥±•ˆ(€€€€€€€•ÉÉ½È€ô±…ÍÍ¥™å}±¥¹•}ÁÕÍ¡}•ÉÉ½È¡•áŒ¤(€€€€€€€É•ÍÕ±Ğ€ôì(€€€€€€€€€€€€‰½¬ˆè…±Í”°(€€€€€€€€€€€€‰•ÉÉ½Èˆè•ÉÉ½È°(€€€€€€€€€€€€‰Ñ•ÍÑ}¥ˆèÑ•ÍÑ}¥°(€€€€€€€€€€€€‰Ñ•ÍÑ}µ½‘”ˆèQÉÕ”°(€€€€€€€ô((€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€ÉÕ¹Ì€ô±¥ÍĞ¡ÍÑ…Ñ”¹•Ğ ‰Ñ•ÍÑ}•¹Ñ•É}ÉÕ¹Ìˆ¤½Èmt¤(€€€ÉÕ¹Ì¹…ÁÁ•¹¡ì(€€€€€€€€‰¥ˆèÕÕ¥¹ÕÕ¥Ğ ¤¹¡•álèÄÉt°(€€€€€€€€‰Ñ•ÍÑ}¥ˆèÑ•ÍÑ}¥°(€€€€€€€€‰±…‰•°ˆè±…‰•°°(€€€€€€€€‰Ñ…É•Ğˆè}µ…Í­•‘}Ñ•ÍÑ}…½Õ¹Ğ¡±¥¹•}ÕÍ•É}¥¥l‰±…‰•°‰t°(€€€€€€€€‰ÍÑ…ÑÕÌˆèÍÑ…ÑÕÌ°(€€€€€€€€‰•ÉÉ½Èˆè•ÉÉ½È°(€€€€€€€€‰É•…Ñ•‘}…Ğˆè‘…Ñ•Ñ¥µ”¹¹½Ü ¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€ô¤(€€€ÍÑ…Ñ•l‰Ñ•ÍÑ}•¹Ñ•É}ÉÕ¹Ì‰t€ôÉÕ¹Íl´ÄÀÀét(€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸É•ÍÕ±Ğ°€ ÈÀÀ¥˜ÍÑ…ÑÕÌ€ôô€‰ÍÕ•ÍÌˆ•±Í”€ÔÀÈ¤(()‘•˜É•Í½±Ù•}…‘µ¥¹}¥¹¥‘•¹Ğ¡‘…Ñ…}™¥±”°Á…å±½…°…Ñ½É}É½±”¤è(€€€­¥¹€ôÍÑÈ ¡Á…å±½…½Èíô¤¹•Ğ ‰­¥¹ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¹…Í•™½± ¤(€€€¥¹¥‘•¹Ñ}¥€ôÍÑÈ ¡Á…å±½…½Èíô¤¹•Ğ ‰¥¹¥‘•¹Ñ}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¹½Ñ”€ôÍÑÈ ¡Á…å±½…½Èíô¤¹•Ğ ‰É•Í½±ÕÑ¥½¹}¹½Ñ”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¥lèÔÀÁt(€€€¥˜­¥¹¹½Ğ¥¸ì‰Í½Ìˆ°€‰‘•±¥Ù•Éä‰ô½È¹½Ğ¥¹¥‘•¹Ñ}¥è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰¥¹Ù…±¥‘}¥¹¥‘•¹Ğ‰ô°€ĞÀÀ(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€É•Í½±Ù•‘}…Ğ€ô‘…Ñ•Ñ¥µ”¹¹½Ü ¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€¥˜­¥¹€ôô€‰Í½Ìˆè(€€€€€€€Ñ…É•Ğ€ô€¡ÍÑ…Ñ”¹•Ğ ‰Í½Í}•Ù•¹ÑÌˆ¤½Èíô¤¹•Ğ¡¥¹¥‘•¹Ñ}¥¤(€€€€€€€¥˜Ñ…É•Ğ¥Ì9½¹”è(€€€€€€€€€€€Ñ…É•Ğ€ô¹•áĞ (€€€€€€€€€€€€€€€€ (€€€€€€€€€€€€€€€€€€€¥Ñ•´(€€€€€€€€€€€€€€€€€€€™½È¥Ñ•´¥¸€¡ÍÑ…Ñ”¹•Ğ ‰Í½Í}Á•¹‘¥¹œˆ¤½Èíô¤¹Ù…±Õ•Ì ¤(€€€€€€€€€€€€€€€€€€€¥˜ÍÑÈ¡¥Ñ•´¹•Ğ ‰•Ù•¹Ñ}¥ˆ¤½È€ˆˆ¤€ôô¥¹¥‘•¹Ñ}¥(€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€9½¹”°(€€€€€€€€€€€€¤(€€€•±Í”è(€€€€€€€Ñ…É•Ğ€ô¹•áĞ (€€€€€€€€€€€€ (€€€€€€€€€€€€€€€¥Ñ•´(€€€€€€€€€€€€€€€™½È¥¹‘•à°¥Ñ•´¥¸•¹Õµ•É…Ñ”¡ÍÑ…Ñ”¹•Ğ ‰¹½Ñ¥™¥…Ñ¥½¹}±½Ìˆ¤½Èmt¤(€€€€€€€€€€€€€€€¥˜ÍÑÈ¡¥Ñ•´¹•Ğ ‰¥¹¥‘•¹Ñ}¥ˆ¤½È˜‰‘•±¥Ù•Éäµí¥¹‘•áôˆ¤€ôô¥¹¥‘•¹Ñ}¥(€€€€€€€€€€€€€€€…¹¥Ñ•´¹•Ğ ‰ÍÑ…ÑÕÌˆ¤¥¸ì‰™…¥±•ˆ°€‰•ÉÉ½È‰ô(€€€€€€€€€€€€¤°(€€€€€€€€€€€9½¹”°(€€€€€€€€¤(€€€¥˜Ñ…É•Ğ¥Ì9½¹”è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰¥¹¥‘•¹Ñ}¹½Ñ}™½Õ¹‰ô°€ĞÀĞ(€€€Ñ…É•Ñl‰ÍÑ…ÑÕÌ‰t€ô€‰É•Í½±Ù•ˆ(€€€Ñ…É•Ñl‰É•Í½±Ù•‘}…Ğ‰t€ôÉ•Í½±Ù•‘}…Ğ(€€€Ñ…É•Ñl‰É•Í½±Ù•‘}‰å}É½±”‰t€ôÍÑÈ¡…Ñ½É}É½±”½È€‰Õ¹­¹½İ¸ˆ¤(€€€¥˜¹½Ñ”è(€€€€€€€Ñ…É•Ñl‰É•Í½±ÕÑ¥½¹}¹½Ñ”‰t€ô¹½Ñ”(€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì‰½¬ˆèQÉÕ”°€‰­¥¹ˆè­¥¹°€‰¥¹¥‘•¹Ñ}¥ˆè¥¹¥‘•¹Ñ}¥°€‰É•Í½±Ù•‘}…ĞˆèÉ•Í½±Ù•‘}…Ñô°€ÈÀÀ(()‘•˜}±¥¹•}¡…¹¹•±}…•ÍÍ}Ñ½­•¸¡½¹™¥œõ9½¹”¤è(€€€™œ€ô½¹™¥œ½Èíô(€€€É•ÑÕÉ¸€ (€€€€€€€™œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤(€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤(€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰!991}MM}Q=-8ˆ¤(€€€€€€€½È€ˆˆ(€€€€¤¹ÍÑÉ¥À ¤(()‘•˜‘•Á±½å}‘•™…Õ±Ñ}É¥¡}µ•¹Ô¡½¹™¥œõ9½¹”°É½½Ñ}‘¥Èõ9½¹”¤è(€€€€ˆˆ‹R£’òëšr7–f£’â+j1%9}!991}MM}Q=-8ƒ–îë®/’â›¢¢·
+ë¦‚C¢¢·–r[šZ¦ã–Z»((€€€ƒ’â7–n{–
+Ï¾ò?’â4±½œÑ½­•»š"C–*–nx€¡Á…å±½…°€ÈÀÀ§¾òo–’ÇšV_–nx€¡•ÉÉ½È°¡ÑÑÁ}½‘”§(€€€€ˆˆˆ(€€€Ñ½­•¸€ô}±¥¹•}¡…¹¹•±}…•ÍÍ}Ñ½­•¸¡½¹™¥œ¤(€€€¥˜¹½ĞÑ½­•¸è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰1%9}!991}MM}Q=-8¹½Ğ½¹™¥ÕÉ•‰ô°€ÔÀÌ((€€€É½½Ğ€ôA…Ñ ¡É½½Ñ}‘¥È¤¥˜É½½Ñ}‘¥È•±Í”A…Ñ ¡}}™¥±•}|¤¹É•Í½±Ù” ¤¹Á…É•¹Ğ(€€€½¹™¥}Á…Ñ €ôÉ½½Ğ€¼€‰±¥¹”µÉ¥ µµ•¹Ôµ½¹™¥œ¹©Í½¸ˆ(€€€¥µ…•}Á…Ñ €ôÉ½½Ğ€¼€‰±¥¹”µÉ¥ µµ•¹Ô¹Á¹œˆ(€€€¥˜¹½Ğ½¹™¥}Á…Ñ ¹•á¥ÍÑÌ ¤è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè˜‰µ¥ÍÍ¥¹œí½¹™¥}Á…Ñ ¹¹…µ•ô‰ô°€ÔÀÀ(€€€¥˜¹½Ğ¥µ…•}Á…Ñ ¹•á¥ÍÑÌ ¤è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè˜‰µ¥ÍÍ¥¹œí¥µ…•}Á…Ñ ¹¹…µ•ô‰ô°€ÔÀÀ((€€€µ•¹Õ}½¹™¥œ€ô©Í½¸¹±½…‘Ì¡½¹™¥}Á…Ñ ¹É•…‘}Ñ•áĞ¡•¹½‘¥¹œô‰ÕÑ˜´àˆ¤¤((€€€‘•˜}É•ÅÕ•ÍĞ¡µ•Ñ¡½°ÕÉ°°‰½‘äõ9½¹”°½¹Ñ•¹Ñ}ÑåÁ”ô‰…ÁÁ±¥…Ñ¥½¸½©Í½¸ˆ¤è(€€€€€€€‘…Ñ„€ô9½¹”(€€€€€€€¡•…‘•ÉÌ€ôì‰ÕÑ¡½É¥é…Ñ¥½¸ˆè˜‰	•…É•ÈíÑ½­•¹ô‰ô(€€€€€€€¥˜‰½‘ä¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€¥˜½¹Ñ•¹Ñ}ÑåÁ”€ôô€‰…ÁÁ±¥…Ñ¥½¸½©Í½¸ˆè(€€€€€€€€€€€€€€€‘…Ñ„€ô©Í½¸¹‘ÕµÁÌ¡‰½‘ä°•¹ÍÕÉ•}…Í¥¤õ…±Í”¤¹•¹½‘” ‰ÕÑ˜´àˆ¤(€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€‘…Ñ„€ô‰½‘ä(€€€€€€€€€€€¡•…‘•ÉÍl‰½¹Ñ•¹ĞµQåÁ”‰t€ô½¹Ñ•¹Ñ}ÑåÁ”(€€€€€€€É•Ä€ôÕÉ±±¥ˆ¹É•ÅÕ•ÍĞ¹I•ÅÕ•ÍĞ¡ÕÉ°°‘…Ñ„õ‘…Ñ„°µ•Ñ¡½õµ•Ñ¡½°¡•…‘•ÉÌõ¡•…‘•ÉÌ¤(€€€€€€€ÑÉäè(€€€€€€€€€€€İ¥Ñ ÕÉ±±¥ˆ¹É•ÅÕ•ÍĞ¹ÕÉ±½Á•¸¡É•Ä°Ñ¥µ•½ÕĞôØÀ¤…ÌÉ•ÍÀè(€€€€€€€€€€€€€€€É…Ü€ôÉ•ÍÀ¹É•… ¤¹‘•½‘” ‰ÕÑ˜´àˆ°•ÉÉ½ÉÌô‰É•Á±…”ˆ¤(€€€€€€€€€€€€€€€½‘”€ô¥¹Ğ¡•Ñ…ÑÑÈ¡É•ÍÀ°€‰ÍÑ…ÑÕÌˆ°€ÈÀÀ¤½È€ÈÀÀ¤(€€€€€€€€€€€€€€€Á…ÉÍ•€ô©Í½¸¹±½…‘Ì¡É…Ü¤¥˜É…Ü¹ÍÑÉ¥À ¤•±Í”íô(€€€€€€€€€€€€€€€É•ÑÕÉ¸½‘”°Á…ÉÍ•(€€€€€€€•á•ÁĞÕÉ±±¥ˆ¹•ÉÉ½È¹!QQAÉÉ½È…Ì•áŒè(€€€€€€€€€€€•ÉÉ}‰½‘ä€ô•áŒ¹É•… ¤¹‘•½‘” ‰ÕÑ˜´àˆ°•ÉÉ½ÉÌô‰É•Á±…”ˆ¤(€€€€€€€€€€€É•ÑÕÉ¸¥¹Ğ¡•áŒ¹½‘”¤°ì‰•ÉÉ½Èˆè•ÉÉ}‰½‘åô((€€€½‘”°É•…Ñ•€ô}É•ÅÕ•ÍĞ ‰A=MPˆ°€‰¡ÑÑÁÌè¼½…Á¤¹±¥¹”¹µ”½ØÈ½‰½Ğ½É¥¡µ•¹Ôˆ°µ•¹Õ}½¹™¥œ¤(€€€¥˜½‘”€„ô€ÈÀÀ½È¹½ĞÉ•…Ñ•¹•Ğ ‰É¥¡5•¹Õ%ˆ¤è(€€€€€€€É•ÑÕÉ¸ì(€€€€€€€€€€€€‰½¬ˆè…±Í”°(€€€€€€€€€€€€‰ÍÑ•Àˆè€‰É•…Ñ”ˆ°(€€€€€€€€€€€€‰¡ÑÑÀˆè½‘”°(€€€€€€€€€€€€‰•ÉÉ½ÈˆèÉ•…Ñ•¹•Ğ ‰•ÉÉ½Èˆ¤½ÈÉ•…Ñ•°(€€€€€€€ô°€ÔÀÈ((€€€É¥¡}µ•¹Õ}¥€ôÉ•…Ñ•‘l‰É¥¡5•¹Õ%‰t(€€€½‘”°ÕÁ±½…‘•€ô}É•ÅÕ•ÍĞ (€€€€€€€€‰A=MPˆ°(€€€€€€€˜‰¡ÑÑÁÌè¼½…Á¤µ‘…Ñ„¹±¥¹”¹µ”½ØÈ½‰½Ğ½É¥¡µ•¹Ô½íÉ¥¡}µ•¹Õ}¥‘ô½½¹Ñ•¹Ğˆ°(€€€€€€€¥µ…•}Á…Ñ ¹É•…‘}‰åÑ•Ì ¤°(€€€€€€€½¹Ñ•¹Ñ}ÑåÁ”ô‰¥µ…”½Á¹œˆ°(€€€€¤(€€€¥˜½‘”¹½Ğ¥¸€ ÈÀÀ°€ÈÀĞ¤è(€€€€€€€É•ÑÕÉ¸ì(€€€€€€€€€€€€‰½¬ˆè…±Í”°(€€€€€€€€€€€€‰ÍÑ•Àˆè€‰ÕÁ±½…‘}¥µ…”ˆ°(€€€€€€€€€€€€‰É¥¡5•¹Õ%ˆèÉ¥¡}µ•¹Õ}¥°(€€€€€€€€€€€€‰¡ÑÑÀˆè½‘”°(€€€€€€€€€€€€‰•ÉÉ½ÈˆèÕÁ±½…‘•¹•Ğ ‰•ÉÉ½Èˆ¤½ÈÕÁ±½…‘•°(€€€€€€€ô°€ÔÀÈ((€€€½‘”°‘•™…Õ±Ñ•€ô}É•ÅÕ•ÍĞ (€€€€€€€€‰A=MPˆ°(€€€€€€€˜‰¡ÑÑÁÌè¼½…Á¤¹±¥¹”¹µ”½ØÈ½‰½Ğ½ÕÍ•È½…±°½É¥¡µ•¹Ô½íÉ¥¡}µ•¹Õ}¥‘ôˆ°(€€€€¤(€€€¥˜½‘”¹½Ğ¥¸€ ÈÀÀ°€ÈÀĞ¤è(€€€€€€€É•ÑÕÉ¸ì(€€€€€€€€€€€€‰½¬ˆè…±Í”°(€€€€€€€€€€€€‰ÍÑ•Àˆè€‰Í•Ñ}‘•™…Õ±Ğˆ°(€€€€€€€€€€€€‰É¥¡5•¹Õ%ˆèÉ¥¡}µ•¹Õ}¥°(€€€€€€€€€€€€‰¡ÑÑÀˆè½‘”°(€€€€€€€€€€€€‰•ÉÉ½Èˆè‘•™…Õ±Ñ•¹•Ğ ‰•ÉÉ½Èˆ¤½È‘•™…Õ±Ñ•°(€€€€€€€ô°€ÔÀÈ((€€€É•ÑÕÉ¸ì(€€€€€€€€‰½¬ˆèQÉÕ”°(€€€€€€€€‰É¥¡5•¹Õ%ˆèÉ¥¡}µ•¹Õ}¥°(€€€€€€€€‰¹…µ”ˆèµ•¹Õ}½¹™¥œ¹•Ğ ‰¹…µ”ˆ¤°(€€€€€€€€‰¡…Ñ	…ÉQ•áĞˆèµ•¹Õ}½¹™¥œ¹•Ğ ‰¡…Ñ	…ÉQ•áĞˆ¤°(€€€€€€€€‰¥µ…•}‰åÑ•Ìˆè¥µ…•}Á…Ñ ¹ÍÑ…Ğ ¤¹ÍÑ}Í¥é”°(€€€€€€€€‰…É•…Ìˆèl(€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€‰±…‰•°ˆè€¡…É•„¹•Ğ ‰…Ñ¥½¸ˆ¤½Èíô¤¹•Ğ ‰±…‰•°ˆ¤°(€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€¡…É•„¹•Ğ ‰…Ñ¥½¸ˆ¤½Èíô¤¹•Ğ ‰ÑåÁ”ˆ¤°(€€€€€€€€€€€€€€€€‰ÕÉ¤ˆè€¡…É•„¹•Ğ ‰…Ñ¥½¸ˆ¤½Èíô¤¹•Ğ ‰ÕÉ¤ˆ¤°(€€€€€€€€€€€€€€€€‰Ñ•áĞˆè€¡…É•„¹•Ğ ‰…Ñ¥½¸ˆ¤½Èíô¤¹•Ğ ‰Ñ•áĞˆ¤°(€€€€€€€€€€€ô(€€€€€€€€€€€™½È…É•„¥¸€¡µ•¹Õ}½¹™¥œ¹•Ğ ‰…É•…Ìˆ¤½Èmt¤(€€€€€€€t°(€€€ô°€ÈÀÀ(()‘•˜¥¹ÍÁ•Ñ}‘•™…Õ±Ñ}É¥¡}µ•¹Ô¡½¹™¥œõ9½¹”¤è(€€€€ˆˆ‹š~—¢¦‹n»–&7¦‚C¢¢·–r[šZ¦ã–Z»¾ò#–B¯–B–6–†(UI'¾ò'’â7–n{–
+ÌÑ½­•»ˆˆˆ(€€€Ñ½­•¸€ô}±¥¹•}¡…¹¹•±}…•ÍÍ}Ñ½­•¸¡½¹™¥œ¤(€€€¥˜¹½ĞÑ½­•¸è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰1%9}!991}MM}Q=-8¹½Ğ½¹™¥ÕÉ•‰ô°€ÔÀÌ((€€€‘•˜}É•ÅÕ•ÍĞ¡µ•Ñ¡½°ÕÉ°¤è(€€€€€€€É•Ä€ôÕÉ±±¥ˆ¹É•ÅÕ•ÍĞ¹I•ÅÕ•ÍĞ (€€€€€€€€€€€ÕÉ°°µ•Ñ¡½õµ•Ñ¡½°¡•…‘•ÉÌõì‰ÕÑ¡½É¥é…Ñ¥½¸ˆè˜‰	•…É•ÈíÑ½­•¹ô‰ô(€€€€€€€€¤(€€€€€€€ÑÉäè(€€€€€€€€€€€İ¥Ñ ÕÉ±±¥ˆ¹É•ÅÕ•ÍĞ¹ÕÉ±½Á•¸¡É•Ä°Ñ¥µ•½ÕĞôØÀ¤…ÌÉ•ÍÀè(€€€€€€€€€€€€€€€É…Ü€ôÉ•ÍÀ¹É•… ¤¹‘•½‘” ‰ÕÑ˜´àˆ°•ÉÉ½ÉÌô‰É•Á±…”ˆ¤(€€€€€€€€€€€€€€€½‘”€ô¥¹Ğ¡•Ñ…ÑÑÈ¡É•ÍÀ°€‰ÍÑ…ÑÕÌˆ°€ÈÀÀ¤½È€ÈÀÀ¤(€€€€€€€€€€€€€€€Á…ÉÍ•€ô©Í½¸¹±½…‘Ì¡É…Ü¤¥˜É…Ü¹ÍÑÉ¥À ¤•±Í”íô(€€€€€€€€€€€€€€€É•ÑÕÉ¸½‘”°Á…ÉÍ•(€€€€€€€•á•ÁĞÕÉ±±¥ˆ¹•ÉÉ½È¹!QQAÉÉ½È…Ì•áŒè(€€€€€€€€€€€•ÉÉ}‰½‘ä€ô•áŒ¹É•… ¤¹‘•½‘” ‰ÕÑ˜´àˆ°•ÉÉ½ÉÌô‰É•Á±…”ˆ¤(€€€€€€€€€€€É•ÑÕÉ¸¥¹Ğ¡•áŒ¹½‘”¤°ì‰•ÉÉ½Èˆè•ÉÉ}‰½‘åô((€€€½‘”°‘•™…Õ±Ğ€ô}É•ÅÕ•ÍĞ ‰Pˆ°€‰¡ÑÑÁÌè¼½…Á¤¹±¥¹”¹µ”½ØÈ½‰½Ğ½ÕÍ•È½…±°½É¥¡µ•¹Ôˆ¤(€€€¥˜½‘”€„ô€ÈÀÀ½È¹½Ğ¥Í¥¹ÍÑ…¹”¡‘•™…Õ±Ğ°‘¥Ğ¤½È¹½Ğ‘•™…Õ±Ğ¹•Ğ ‰É¥¡5•¹Õ%ˆ¤è(€€€€€€€É•ÑÕÉ¸ì(€€€€€€€€€€€€‰½¬ˆè…±Í”°(€€€€€€€€€€€€‰ÍÑ•Àˆè€‰•Ñ}‘•™…Õ±Ğˆ°(€€€€€€€€€€€€‰¡ÑÑÀˆè½‘”°(€€€€€€€€€€€€‰•ÉÉ½Èˆè‘•™…Õ±Ğ¹•Ğ ‰•ÉÉ½Èˆ¤¥˜¥Í¥¹ÍÑ…¹”¡‘•™…Õ±Ğ°‘¥Ğ¤•±Í”‘•™…Õ±Ğ°(€€€€€€€ô°€ÔÀÈ((€€€É¥¡}µ•¹Õ}¥€ô‘•™…Õ±Ñl‰É¥¡5•¹Õ%‰t(€€€½‘”°‘•Ñ…¥°€ô}É•ÅÕ•ÍĞ ‰Pˆ°˜‰¡ÑÑÁÌè¼½…Á¤¹±¥¹”¹µ”½ØÈ½‰½Ğ½É¥¡µ•¹Ô½íÉ¥¡}µ•¹Õ}¥‘ôˆ¤(€€€¥˜½‘”€„ô€ÈÀÀ½È¹½Ğ¥Í¥¹ÍÑ…¹”¡‘•Ñ…¥°°‘¥Ğ¤è(€€€€€€€É•ÑÕÉ¸ì(€€€€€€€€€€€€‰½¬ˆè…±Í”°(€€€€€€€€€€€€‰ÍÑ•Àˆè€‰•Ñ}‘•Ñ…¥°ˆ°(€€€€€€€€€€€€‰É¥¡5•¹Õ%ˆèÉ¥¡}µ•¹Õ}¥°(€€€€€€€€€€€€‰¡ÑÑÀˆè½‘”°(€€€€€€€€€€€€‰•ÉÉ½Èˆè‘•Ñ…¥°¹•Ğ ‰•ÉÉ½Èˆ¤¥˜¥Í¥¹ÍÑ…¹”¡‘•Ñ…¥°°‘¥Ğ¤•±Í”‘•Ñ…¥°°(€€€€€€€ô°€ÔÀÈ((€€€…É•…Ì€ômt(€€€¥¹Ù¥Ñ•}ÕÉ¤€ô9½¹”(€€€¥¹Ù¥Ñ•}Ñ•áĞ€ô9½¹”(€€€¥¹Ù¥Ñ•}ÑåÁ”€ô9½¹”(€€€™½È…É•„¥¸‘•Ñ…¥°¹•Ğ ‰…É•…Ìˆ¤½Èmtè(€€€€€€€…Ñ¥½¸€ô…É•„¹•Ğ ‰…Ñ¥½¸ˆ¤½Èíô(€€€€€€€¥Ñ•´€ôì(€€€€€€€€€€€€‰±…‰•°ˆè…Ñ¥½¸¹•Ğ ‰±…‰•°ˆ¤°(€€€€€€€€€€€€‰ÑåÁ”ˆè…Ñ¥½¸¹•Ğ ‰ÑåÁ”ˆ¤°(€€€€€€€€€€€€‰ÕÉ¤ˆè…Ñ¥½¸¹•Ğ ‰ÕÉ¤ˆ¤°(€€€€€€€€€€€€‰Ñ•áĞˆè…Ñ¥½¸¹•Ğ ‰Ñ•áĞˆ¤°(€€€€€€€ô(€€€€€€€…É•…Ì¹…ÁÁ•¹¡¥Ñ•´¤(€€€€€€€¥˜…Ñ¥½¸¹•Ğ ‰±…‰•°ˆ¤€ôô€‹’â¦6×¦
+¢®,ˆè(€€€€€€€€€€€¥¹Ù¥Ñ•}ÕÉ¤€ô…Ñ¥½¸¹•Ğ ‰ÕÉ¤ˆ¤(€€€€€€€€€€€¥¹Ù¥Ñ•}Ñ•áĞ€ô…Ñ¥½¸¹•Ğ ‰Ñ•áĞˆ¤(€€€€€€€€€€€¥¹Ù¥Ñ•}ÑåÁ”€ô…Ñ¥½¸¹•Ğ ‰ÑåÁ”ˆ¤((€€€€Œ\ÈÔÀÜÈÑ‡¾òk–r[šZ¦ã–Z»’â¦6×¦
+¢®,ƒŠHƒ¦ëfô1%¾òo¦š[š²‡¢«–.TH½Í¡…É—¾ò3¢şS–n{–>«¦†¿’ë–7¢¦›¾ò#¦bË¢şÓ–r#¾ò$(€€€€Œƒ’î7nã–ºç¢"+& µ•ÍÍ…—3’â¦6×¦
+¢®/7ŠH	½Ğ±•à(€€€¥¹Ù¥Ñ•}½¬€ô€ (€€€€€€€‰½½°¡¥¹Ù¥Ñ•}ÕÉ¤¤(€€€€€€€…¹€‰Í¡…É”µ¥¹Ù¥Ñ”¹¡Ñµ°ˆ¥¸ÍÑÈ¡¥¹Ù¥Ñ•}ÕÉ¤¤(€€€€€€€…¹€‰½Á•¸õÍ¡…É”ˆ¹½Ğ¥¸ÍÑÈ¡¥¹Ù¥Ñ•}ÕÉ¤¤(€€€€¤½È€ (€€€€€€€¥¹Ù¥Ñ•}ÑåÁ”€ôô€‰µ•ÍÍ…”ˆ(€€€€€€€…¹ÍÑÈ¡¥¹Ù¥Ñ•}Ñ•áĞ½È€ˆˆ¤¹ÍÑÉ¥À ¤¥¸ì‹’â¦6×¦
+¢®,ˆ°€‹’â¦6×¦
+¢®/–º#¢¶ß’êè‰ô(€€€€¤((€€€É•ÑÕÉ¸ì(€€€€€€€€‰½¬ˆèQÉÕ”°(€€€€€€€€‰É¥¡5•¹Õ%ˆèÉ¥¡}µ•¹Õ}¥°(€€€€€€€€‰¹…µ”ˆè‘•Ñ…¥°¹•Ğ ‰¹…µ”ˆ¤°(€€€€€€€€‰¡…Ñ	…ÉQ•áĞˆè‘•Ñ…¥°¹•Ğ ‰¡…Ñ	…ÉQ•áĞˆ¤°(€€€€€€€€‰…É•…Ìˆè…É•…Ì°(€€€€€€€€‰¥¹Ù¥Ñ•}ÕÉ¤ˆè¥¹Ù¥Ñ•}ÕÉ¤°(€€€€€€€€‰¥¹Ù¥Ñ•}Ñ•áĞˆè¥¹Ù¥Ñ•}Ñ•áĞ°(€€€€€€€€‰¥¹Ù¥Ñ•}ÑåÁ”ˆè¥¹Ù¥Ñ•}ÑåÁ”°(€€€€€€€€‰¥¹Ù¥Ñ•}ÕÉ¥}½¬ˆè¥¹Ù¥Ñ•}½¬°(€€€ô°€ÈÀÀ(()‘•˜É½¹}…±±½İ•¡½¹™¥œ°Í•É•Ğ¤è(€€€•áÁ•Ñ•€ô€¡½¹™¥œ¹•Ğ ‰I=9}MIPˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰I=9}MIPˆ°€ˆˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€ÁÉ½Ù¥‘•€ôÍÑÈ¡Í•É•Ğ½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€ŒµÁÑäI=9}MIPµÕÍĞ¹•Ù•È…ÕÑ¡½É¥é”ƒŠP™…¥°±½Í•¸(€€€¥˜¹½Ğ•áÁ•Ñ•è(€€€€€€€É•ÑÕÉ¸…±Í”(€€€É•ÑÕÉ¸Í•É•ÑÌ¹½µÁ…É•}‘¥•ÍĞ¡•áÁ•Ñ•°ÁÉ½Ù¥‘•¤(()‘•˜}Á½Í¥Ñ¥Ù•}Á•É•¹Ñ…”¡½¹™¥œ°¹…µ”°‘•™…Õ±Ğ¤è(€€€É…Ü€ô½¹™¥œ¹•Ğ¡¹…µ”¤¥˜¡…Í…ÑÑÈ¡½¹™¥œ°€‰•Ğˆ¤•±Í”9½¹”(€€€¥˜É…Ü¥¸€¡9½¹”°€ˆˆ¤è(€€€€€€€É…Ü€ô½Ì¹•¹Ù¥É½¸¹•Ğ¡¹…µ”°€ˆˆ¤(€€€ÑÉäè(€€€€€€€Ù…±Õ”€ô¥¹Ğ¡ÍÑÈ¡É…Ü½È‘•™…Õ±Ğ¤¤(€€€•á•ÁĞ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€É•ÑÕÉ¸‘•™…Õ±Ğ(€€€É•ÑÕÉ¸Ù…±Õ”¥˜€Ä€ğôÙ…±Õ”€ğô€ÄÀÀ•±Í”‘•™…Õ±Ğ(()‘•˜±¥¹•}µ•ÍÍ…•}‰Õ‘•Ñ}ÍÑ…ÑÕÌ¡ÍÑ…Ñ”°½¹™¥œõ9½¹”°¹½Üõ9½¹”¤è(€€€€ˆˆ‰I•ÑÕÉ¸ÍåÍÑ•´µÉ•½É‘•1%9ÕÍ…”İ¥Ñ¡½ÕĞ•áÁ½Í¥¹œ½¹™¥ÕÉ…Ñ¥½¸Ù…±Õ•Ì¸ˆˆˆ(€€€™œ€ô½¹™¥œ¥˜½¹™¥œ¥Ì¹½Ğ9½¹”…¹¡…Í…ÑÑÈ¡½¹™¥œ°€‰•Ğˆ¤•±Í”íô(€€€•¹•É…Ñ•‘}…Ğ€ô¹½Ü½ÈÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡™œ¤(€€€ÑÉäè(€€€€€€€µ•ÍÍ…•}±¥µ¥Ğ€ôµ…à (€€€€€€€€€€€€Ä°(€€€€€€€€€€€¥¹Ğ¡ÍÑÈ¡™œ¹•Ğ ‰1%9}5=9Q!1e}5MM}1%5%Pˆ¤(€€€€€€€€€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}5=9Q!1e}5MM}1%5%Pˆ°€ˆˆ¤(€€€€€€€€€€€€€€€€€€€½È€ÈÀÀ¤¤°(€€€€€€€€¤(€€€•á•ÁĞ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€µ•ÍÍ…•}±¥µ¥Ğ€ô€ÈÀÀ(€€€İ…É¹¥¹}Á•É•¹Ğ€ô}Á½Í¥Ñ¥Ù•}Á•É•¹Ñ…” (€€€€€€€™œ°€‰1%9}5MM}]I9%9}AI9Pˆ°€àÀ(€€€€¤(€€€¡…É‘}ÍÑ½Á}Á•É•¹Ğ€ô}Á½Í¥Ñ¥Ù•}Á•É•¹Ñ…” (€€€€€€€™œ°€‰1%9}5MM}!I}MQ=A}AI9Pˆ°€ÄÀÀ(€€€€¤(€€€µ½¹Ñ¡}­•ä€ô•¹•É…Ñ•‘}…Ğ¹ÍÑÉ™Ñ¥µ” ˆ•d´•´ˆ¤(€€€µ½¹Ñ¡±å}±½Ì€ôl(€€€€€€€¥Ñ•´(€€€€€€€™½È¥Ñ•´¥¸€¡ÍÑ…Ñ”¹•Ğ ‰¹½Ñ¥™¥…Ñ¥½¹}±½Ìˆ¤½Èmt¤(€€€€€€€¥˜¹½ĞÍÑÈ¡¥Ñ•´¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤½È€ˆˆ¤(€€€€€€€½ÈÍÑÈ¡¥Ñ•´¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤½È€ˆˆ¤¹ÍÑ…ÉÑÍİ¥Ñ ¡µ½¹Ñ¡}­•ä¤(€€€t(€€€ÕÍ•€ô±•¸¡µ½¹Ñ¡±å}±½Ì¤(€€€ÕÍ…•}Á•É•¹Ğ€ôÉ½Õ¹¡ÕÍ•€¼µ•ÍÍ…•}±¥µ¥Ğ€¨€ÄÀÀ°€Ä¤(€€€¡…É‘}ÍÑ½Á}…Ñ¥Ù”€ôÕÍ…•}Á•É•¹Ğ€øô¡…É‘}ÍÑ½Á}Á•É•¹Ğ(€€€¥˜ÕÍ•€øôµ•ÍÍ…•}±¥µ¥Ğè(€€€€€€€ÍÑ…ÑÕÌ€ô€‰•á••‘•ˆ(€€€•±¥˜ÕÍ…•}Á•É•¹Ğ€øôİ…É¹¥¹}Á•É•¹Ğè(€€€€€€€ÍÑ…ÑÕÌ€ô€‰İ…É¹¥¹œˆ(€€€•±Í”è(€€€€€€€ÍÑ…ÑÕÌ€ô€‰¡•…±Ñ¡äˆ(€€€É•ÑÕÉ¸ì(€€€€€€€€‰µ½¹Ñ ˆèµ½¹Ñ¡}­•ä°(€€€€€€€€‰ÕÍ•ˆèÕÍ•°(€€€€€€€€‰±¥µ¥Ğˆèµ•ÍÍ…•}±¥µ¥Ğ°(€€€€€€€€‰É•µ…¥¹¥¹œˆèµ…à À°µ•ÍÍ…•}±¥µ¥Ğ€´ÕÍ•¤°(€€€€€€€€‰ÕÍ…•}Á•É•¹ĞˆèÕÍ…•}Á•É•¹Ğ°(€€€€€€€€‰İ…É¹¥¹}Á•É•¹Ğˆèİ…É¹¥¹}Á•É•¹Ğ°(€€€€€€€€‰¡…É‘}ÍÑ½Á}Á•É•¹Ğˆè¡…É‘}ÍÑ½Á}Á•É•¹Ğ°(€€€€€€€€‰¡…É‘}ÍÑ½Á}…Ñ¥Ù”ˆè¡…É‘}ÍÑ½Á}…Ñ¥Ù”°(€€€€€€€€‰ÍÑ…ÑÕÌˆèÍÑ…ÑÕÌ°(€€€ô(()‘•˜±¥¹•}¹½¹}•µ•É•¹å}ÁÕÍ¡}…±±½İ•¡ÍÑ…Ñ”°½¹™¥œõ9½¹”°¹½Üõ9½¹”¤è(€€€É•ÑÕÉ¸¹½Ğ±¥¹•}µ•ÍÍ…•}‰Õ‘•Ñ}ÍÑ…ÑÕÌ¡ÍÑ…Ñ”°½¹™¥œ°¹½Ü¥l‰¡…É‘}ÍÑ½Á}…Ñ¥Ù”‰t(()‘•˜±¥¹•}ÁÕÍ¡}…±±½İ•‘}™½É}­¥¹¡ÍÑ…Ñ”°½¹™¥œ°­¥¹°¹½Üõ9½¹”¤è(€€€•µ•É•¹å}­¥¹‘Ì€ôì‰Í½Ìˆ°€‰Í…™•Ñå}Õ…Éˆ°€‰Õ…É‘¥…¹}Í½Ìˆ°€‰•µ•É•¹ä‰ô(€€€¥˜ÍÑÈ¡­¥¹½È€ˆˆ¤¹ÍÑÉ¥À ¤¹…Í•™½± ¤¥¸•µ•É•¹å}­¥¹‘Ìè(€€€€€€€É•ÑÕÉ¸QÉÕ”(€€€É•ÑÕÉ¸±¥¹•}¹½¹}•µ•É•¹å}ÁÕÍ¡}…±±½İ•¡ÍÑ…Ñ”°½¹™¥œ°¹½Ü¤(()‘•˜±¥¹•}‰Õ‘•Ñ}‰±½­•‘}É•ÍÁ½¹Í”¡ÍÑ…Ñ”°½¹™¥œ°¹½Üõ9½¹”¤è(€€€‰Õ‘•Ğ€ô±¥¹•}µ•ÍÍ…•}‰Õ‘•Ñ}ÍÑ…ÑÕÌ¡ÍÑ…Ñ”°½¹™¥œ°¹½Ü¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰Í•¹Ğˆè€À°(€€€€€€€€‰Í­¥ÁÁ•ˆè€À°(€€€€€€€€‰•ÉÉ½Èˆè€‰±¥¹•}¹½¹}•µ•É•¹å}‰Õ‘•Ñ}¡…É‘}ÍÑ½Àˆ°(€€€€€€€€‰±¥¹•}‰Õ‘•Ğˆè‰Õ‘•Ğ°(€€€ô°€ĞÈä(()	Q}=!=IQL€ôì(€€€€‰­¹½İ¹|ÄÀˆèì‰±…‰•°ˆè€‹¢ª7¢¶cšr–N„€ÄÀƒ’êèˆ°€‰…Á…¥Ñäˆè€ÄÁô°(€€€€‰ÍÑ…¹‘…É‘|ÈÀˆèì‰±…‰•°ˆè€‹’â¢"³šr–N„€ÈÀƒ’êèˆ°€‰…Á…¥Ñäˆè€ÈÁô°(€€€€‰™…µ¥±å}É½ÕÁ|ÄÀˆèì‰±…‰•°ˆè€‹–ºÛ–ê·ú“Ö€ÄÀƒ’êèˆ°€‰…Á…¥Ñäˆè€ÄÁô°)ô)	Q}Q%Y}MQQUML€ôì‰…Ñ¥Ù”ˆ°€‰İ…¥Ñ±¥ÍÑ•‰ô)	Q}MQQUML€ô	Q}Q%Y}MQQUMLğì‰½µÁ±•Ñ•ˆ°€‰İ¥Ñ¡‘É…İ¸‰ô(()‘•˜…‘µ¥¹}‰•Ñ…}ÍÕµµ…Éä¡‘…Ñ…}™¥±”°¹½Üõ9½¹”¤è(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€µ•µ‰•ÉÌ€ô±¥ÍĞ¡ÍÑ…Ñ”¹•Ğ ‰‰•Ñ…}ÁÉ½É…µ}µ•µ‰•ÉÌˆ¤½Èmt¤(€€€ÕÉÉ•¹Ğ€ô¹½Ü½ÈÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡íô¤(€€€½¡½ÉÑÌ€ôíô(€€€™½È­•ä°‘•™¥¹¥Ñ¥½¸¥¸	Q}=!=IQL¹¥Ñ•µÌ ¤è(€€€€€€€½¡½ÉÑ}µ•µ‰•ÉÌ€ômÉ½Ü™½ÈÉ½Ü¥¸µ•µ‰•ÉÌ¥˜É½Ü¹•Ğ ‰½¡½ÉĞˆ¤€ôô­•åt(€€€€€€€…Ñ¥Ù”€ôÍÕ´ (€€€€€€€€€€€€Ä™½ÈÉ½Ü¥¸½¡½ÉÑ}µ•µ‰•ÉÌ¥˜É½Ü¹•Ğ ‰ÍÑ…ÑÕÌˆ¤¥¸	Q}Q%Y}MQQUML(€€€€€€€€¤(€€€€€€€½¡½ÉÑÍm­•åt€ôì(€€€€€€€€€€€€¨©‘•™¥¹¥Ñ¥½¸°(€€€€€€€€€€€€‰…Ñ¥Ù”ˆè…Ñ¥Ù”°(€€€€€€€€€€€€‰½µÁ±•Ñ•ˆèÍÕ´ (€€€€€€€€€€€€€€€€Ä™½ÈÉ½Ü¥¸½¡½ÉÑ}µ•µ‰•ÉÌ¥˜É½Ü¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰½µÁ±•Ñ•ˆ(€€€€€€€€€€€€¤°(€€€€€€€€€€€€‰É•µ…¥¹¥¹œˆèµ…à À°‘•™¥¹¥Ñ¥½¹l‰…Á…¥Ñä‰t€´…Ñ¥Ù”¤°(€€€€€€€ô(€€€É•ÑÕÉ¸ì(€€€€€€€€‰‘ÕÉ…Ñ¥½¹}‘…åÌˆè€ÈÄ°(€€€€€€€€‰•¹•É…Ñ•‘}…ĞˆèÕÉÉ•¹Ğ¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€‰½¡½ÉÑÌˆè½¡½ÉÑÌ°(€€€€€€€€‰µ•µ‰•ÉÌˆè±¥ÍĞ¡É•Ù•ÉÍ•¡µ•µ‰•ÉÍl´ÄÀÀét¤¤°(€€€ô(()‘•˜…ÍÍ¥¹}‰•Ñ…}µ•µ‰•È¡‘…Ñ…}™¥±”°Á…å±½…°¹½Üõ9½¹”¤è(€€€±¥¹•}ÕÍ•É}¥€ôÍÑÈ ¡Á…å±½…½Èíô¤¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€½¡½ÉĞ€ôÍÑÈ ¡Á…å±½…½Èíô¤¹•Ğ ‰½¡½ÉĞˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥½È½¡½ÉĞ¹½Ğ¥¸	Q}=!=IQLè(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰¥¹Ù…±¥‘}‰•Ñ…}…ÍÍ¥¹µ•¹Ğ‰ô°€ĞÀÀ(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€ÁÉ½™¥±”€ô€¡ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô¤¹•Ğ¡±¥¹•}ÕÍ•É}¥¤(€€€¥˜ÁÉ½™¥±”¥Ì9½¹”è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰µ•µ‰•É}¹½Ñ}™½Õ¹‰ô°€ĞÀĞ(€€€µ•µ‰•ÉÌ€ôÍÑ…Ñ”¹Í•Ñ‘•™…Õ±Ğ ‰‰•Ñ…}ÁÉ½É…µ}µ•µ‰•ÉÌˆ°mt¤(€€€•á¥ÍÑ¥¹œ€ô¹•áĞ (€€€€€€€€ (€€€€€€€€€€€É½Ü™½ÈÉ½Ü¥¸µ•µ‰•ÉÌ(€€€€€€€€€€€¥˜É½Ü¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤€ôô±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€…¹É½Ü¹•Ğ ‰ÍÑ…ÑÕÌˆ¤¥¸	Q}Q%Y}MQQUML(€€€€€€€€¤°(€€€€€€€9½¹”°(€€€€¤(€€€¥˜•á¥ÍÑ¥¹œè(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰‰•Ñ…}µ•µ‰•É}…±É•…‘å}…ÍÍ¥¹•‰ô°€ĞÀä(€€€…Ñ¥Ù•}½Õ¹Ğ€ôÍÕ´ (€€€€€€€€Ä™½ÈÉ½Ü¥¸µ•µ‰•ÉÌ(€€€€€€€¥˜É½Ü¹•Ğ ‰½¡½ÉĞˆ¤€ôô½¡½ÉĞ(€€€€€€€…¹É½Ü¹•Ğ ‰ÍÑ…ÑÕÌˆ¤¥¸	Q}Q%Y}MQQUML(€€€€¤(€€€¥˜…Ñ¥Ù•}½Õ¹Ğ€øô	Q}=!=IQMm½¡½ÉÑul‰…Á…¥Ñä‰tè(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰‰•Ñ…}½¡½ÉÑ}™Õ±°‰ô°€ĞÀä(€€€ÍÑ…ÉÑ•€ô¹½Ü½ÈÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡íô¤(€€€µ•µ‰•È€ôì(€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€€‰‘¥ÍÁ±…å}¹…µ”ˆèÍÑÈ¡ÁÉ½™¥±”¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤½È€‹šr«–>[–ú_šjÇ¢Äˆ¤°(€€€€€€€€‰½¡½ÉĞˆè½¡½ÉĞ°(€€€€€€€€‰ÍÑ…ÑÕÌˆè€‰…Ñ¥Ù”ˆ°(€€€€€€€€‰ÍÑ…ÉÑÍ}…ĞˆèÍÑ…ÉÑ•¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€‰•¹‘Í}…Ğˆè€¡ÍÑ…ÉÑ•€¬Ñ¥µ•‘•±Ñ„¡‘…åÌôÈÄ¤¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€‰½ÕÑ½µ•}¹½Ñ”ˆè€ˆˆ°(€€€ô(€€€µ•µ‰•ÉÌ¹…ÁÁ•¹¡µ•µ‰•È¤(€€€ÍÑ…Ñ•l‰‰•Ñ…}ÁÉ½É…µ}µ•µ‰•ÉÌ‰t€ôµ•µ‰•ÉÍl´ÈÀÀét(€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì‰½¬ˆèQÉÕ”°€‰µ•µ‰•Èˆèµ•µ‰•Éô°€ÈÀÀ(()‘•˜ÕÁ‘…Ñ•}‰•Ñ…}µ•µ‰•È¡‘…Ñ…}™¥±”°Á…å±½…°¹½Üõ9½¹”¤è(€€€±¥¹•}ÕÍ•É}¥€ôÍÑÈ ¡Á…å±½…½Èíô¤¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€ÍÑ…ÑÕÌ€ôÍÑÈ ¡Á…å±½…½Èíô¤¹•Ğ ‰ÍÑ…ÑÕÌˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¹…Í•™½± ¤(€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥½ÈÍÑ…ÑÕÌ¹½Ğ¥¸	Q}MQQUMLè(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰¥¹Ù…±¥‘}‰•Ñ…}ÕÁ‘…Ñ”‰ô°€ĞÀÀ(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€µ•µ‰•È€ô¹•áĞ (€€€€€€€€ (€€€€€€€€€€€É½Ü™½ÈÉ½Ü¥¸É•Ù•ÉÍ•¡ÍÑ…Ñ”¹•Ğ ‰‰•Ñ…}ÁÉ½É…µ}µ•µ‰•ÉÌˆ¤½Èmt¤(€€€€€€€€€€€¥˜É½Ü¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤€ôô±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€…¹É½Ü¹•Ğ ‰ÍÑ…ÑÕÌˆ¤¥¸	Q}Q%Y}MQQUML(€€€€€€€€¤°(€€€€€€€9½¹”°(€€€€¤(€€€¥˜µ•µ‰•È¥Ì9½¹”è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰‰•Ñ…}µ•µ‰•É}¹½Ñ}™½Õ¹‰ô°€ĞÀĞ(€€€µ•µ‰•Él‰ÍÑ…ÑÕÌ‰t€ôÍÑ…ÑÕÌ(€€€µ•µ‰•Él‰ÕÁ‘…Ñ•‘}…Ğ‰t€ô€¡¹½Ü½ÈÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡íô¤¤¹¥Í½™½Éµ…Ğ (€€€€€€€Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ(€€€€¤(€€€¹½Ñ”€ôÍÑÈ ¡Á…å±½…½Èíô¤¹•Ğ ‰½ÕÑ½µ•}¹½Ñ”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¥lèÔÀÁt(€€€¥˜¹½Ñ”è(€€€€€€€µ•µ‰•Él‰½ÕÑ½µ•}¹½Ñ”‰t€ô¹½Ñ”(€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì‰½¬ˆèQÉÕ”°€‰µ•µ‰•Èˆèµ•µ‰•Éô°€ÈÀÀ(()‘•˜…‘µ¥¹}ÁÉ¥Ù…å}É•ÅÕ•ÍÑÌ¡‘…Ñ…}™¥±”¤è(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€É•ÅÕ•ÍÑÌ€ô±¥ÍĞ¡É•Ù•ÉÍ• ¡ÍÑ…Ñ”¹•Ğ ‰ÁÉ¥Ù…å}É•ÅÕ•ÍÑÌˆ¤½Èmt¥l´ÄÀÀét¤¤(€€€ÍÑ…ÑÕÍ•Ì€ô€ ‰Á•¹‘¥¹œˆ°€‰¥¹}ÁÉ½É•ÍÌˆ°€‰½µÁ±•Ñ•ˆ°€‰É•©•Ñ•ˆ¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰É•ÅÕ•ÍÑÌˆèÉ•ÅÕ•ÍÑÌ°(€€€€€€€€‰½Õ¹ÑÌˆèì(€€€€€€€€€€€ÍÑ…ÑÕÌèÍÕ´ Ä™½ÈÉ½Ü¥¸É•ÅÕ•ÍÑÌ¥˜É½Ü¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôôÍÑ…ÑÕÌ¤(€€€€€€€€€€€™½ÈÍÑ…ÑÕÌ¥¸ÍÑ…ÑÕÍ•Ì(€€€€€€€ô°(€€€ô(()‘•˜É•…Ñ•}ÁÉ¥Ù…å}É•ÅÕ•ÍĞ¡‘…Ñ…}™¥±”°Á…å±½…°¹½Üõ9½¹”¤è(€€€±¥¹•}ÕÍ•É}¥€ôÍÑÈ ¡Á…å±½…½Èíô¤¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€É•ÅÕ•ÍÑ}ÑåÁ”€ôÍÑÈ ¡Á…å±½…½Èíô¤¹•Ğ ‰É•ÅÕ•ÍÑ}ÑåÁ”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¹…Í•™½± ¤(€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥½ÈÉ•ÅÕ•ÍÑ}ÑåÁ”¹½Ğ¥¸ì(€€€€€€€€‰•áÁ½ÉĞˆ°€‰‘•±•Ñ¥½¸ˆ°€‰½ÉÉ•Ñ¥½¸ˆ°€‰¥¹ÅÕ¥Éäˆ(€€€ôè(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰¥¹Ù…±¥‘}ÁÉ¥Ù…å}É•ÅÕ•ÍĞ‰ô°€ĞÀÀ(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€¥˜±¥¹•}ÕÍ•É}¥¹½Ğ¥¸€¡ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô¤è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰µ•µ‰•É}¹½Ñ}™½Õ¹‰ô°€ĞÀĞ(€€€É•ÅÕ•ÍÑÌ€ôÍÑ…Ñ”¹Í•Ñ‘•™…Õ±Ğ ‰ÁÉ¥Ù…å}É•ÅÕ•ÍÑÌˆ°mt¤(€€€¥˜…¹ä (€€€€€€€É½Ü¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤€ôô±¥¹•}ÕÍ•É}¥(€€€€€€€…¹É½Ü¹•Ğ ‰É•ÅÕ•ÍÑ}ÑåÁ”ˆ¤€ôôÉ•ÅÕ•ÍÑ}ÑåÁ”(€€€€€€€…¹É½Ü¹•Ğ ‰ÍÑ…ÑÕÌˆ¤¥¸ì‰Á•¹‘¥¹œˆ°€‰¥¹}ÁÉ½É•ÍÌ‰ô(€€€€€€€™½ÈÉ½Ü¥¸É•ÅÕ•ÍÑÌ(€€€€¤è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰ÁÉ¥Ù…å}É•ÅÕ•ÍÑ}…±É•…‘å}½Á•¸‰ô°€ĞÀä(€€€É•…Ñ•€ô¹½Ü½ÈÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡íô¤(€€€ÁÉ¥Ù…å}É•ÅÕ•ÍĞ€ôì(€€€€€€€€‰¥ˆè˜‰ÁÉ¥Ù…äµíÍ•É•ÑÌ¹Ñ½­•¹}¡•à à¥ôˆ°(€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€€‰É•ÅÕ•ÍÑ}ÑåÁ”ˆèÉ•ÅÕ•ÍÑ}ÑåÁ”°(€€€€€€€€‰ÍÕµµ…ÉäˆèÍÑÈ ¡Á…å±½…½Èíô¤¹•Ğ ‰ÍÕµµ…Éäˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¥lèÔÀÁt°(€€€€€€€€‰ÍÑ…ÑÕÌˆè€‰Á•¹‘¥¹œˆ°(€€€€€€€€‰É•…Ñ•‘}…ĞˆèÉ•…Ñ•¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€ô(€€€É•ÅÕ•ÍÑÌ¹…ÁÁ•¹¡ÁÉ¥Ù…å}É•ÅÕ•ÍĞ¤(€€€ÍÑ…Ñ•l‰ÁÉ¥Ù…å}É•ÅÕ•ÍÑÌ‰t€ôÉ•ÅÕ•ÍÑÍl´ÈÀÀét(€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì‰½¬ˆèQÉÕ”°€‰É•ÅÕ•ÍĞˆèÁÉ¥Ù…å}É•ÅÕ•ÍÑô°€ÈÀÄ(()‘•˜ÕÁ‘…Ñ•}ÁÉ¥Ù…å}É•ÅÕ•ÍĞ¡‘…Ñ…}™¥±”°Á…å±½…°…Ñ½É}É½±”¤è(€€€É•ÅÕ•ÍÑ}¥€ôÍÑÈ ¡Á…å±½…½Èíô¤¹•Ğ ‰É•ÅÕ•ÍÑ}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€ÍÑ…ÑÕÌ€ôÍÑÈ ¡Á…å±½…½Èíô¤¹•Ğ ‰ÍÑ…ÑÕÌˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¹…Í•™½± ¤(€€€¹½Ñ”€ôÍÑÈ ¡Á…å±½…½Èíô¤¹•Ğ ‰É•Í½±ÕÑ¥½¹}¹½Ñ”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¥lèÄÀÀÁt(€€€¥˜¹½ĞÉ•ÅÕ•ÍÑ}¥½ÈÍÑ…ÑÕÌ¹½Ğ¥¸ì(€€€€€€€€‰Á•¹‘¥¹œˆ°€‰¥¹}ÁÉ½É•ÍÌˆ°€‰½µÁ±•Ñ•ˆ°€‰É•©•Ñ•ˆ(€€€ôè(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰¥¹Ù…±¥‘}ÁÉ¥Ù…å}ÕÁ‘…Ñ”‰ô°€ĞÀÀ(€€€¥˜ÍÑ…ÑÕÌ¥¸ì‰½µÁ±•Ñ•ˆ°€‰É•©•Ñ•‰ô…¹¹½Ğ¹½Ñ”è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰É•Í½±ÕÑ¥½¹}¹½Ñ•}É•ÅÕ¥É•‰ô°€ĞÀÀ(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€ÁÉ¥Ù…å}É•ÅÕ•ÍĞ€ô¹•áĞ (€€€€€€€€ (€€€€€€€€€€€É½Ü™½ÈÉ½Ü¥¸€¡ÍÑ…Ñ”¹•Ğ ‰ÁÉ¥Ù…å}É•ÅÕ•ÍÑÌˆ¤½Èmt¤(€€€€€€€€€€€¥˜ÍÑÈ¡É½Ü¹•Ğ ‰¥ˆ¤½È€ˆˆ¤€ôôÉ•ÅÕ•ÍÑ}¥(€€€€€€€€¤°(€€€€€€€9½¹”°(€€€€¤(€€€¥˜ÁÉ¥Ù…å}É•ÅÕ•ÍĞ¥Ì9½¹”è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰ÁÉ¥Ù…å}É•ÅÕ•ÍÑ}¹½Ñ}™½Õ¹‰ô°€ĞÀĞ(€€€ÁÉ¥Ù…å}É•ÅÕ•ÍÑl‰ÍÑ…ÑÕÌ‰t€ôÍÑ…ÑÕÌ(€€€ÁÉ¥Ù…å}É•ÅÕ•ÍÑl‰ÕÁ‘…Ñ•‘}…Ğ‰t€ô‘…Ñ•Ñ¥µ”¹¹½Ü ¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€ÁÉ¥Ù…å}É•ÅÕ•ÍÑl‰É•Í½±Ù•‘}‰å}É½±”‰t€ôÍÑÈ¡…Ñ½É}É½±”½È€‰Õ¹­¹½İ¸ˆ¤(€€€¥˜¹½Ñ”è(€€€€€€€ÁÉ¥Ù…å}É•ÅÕ•ÍÑl‰É•Í½±ÕÑ¥½¹}¹½Ñ”‰t€ô¹½Ñ”(€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì‰½¬ˆèQÉÕ”°€‰É•ÅÕ•ÍĞˆèÁÉ¥Ù…å}É•ÅÕ•ÍÑô°€ÈÀÀ(()‘•˜…‘µ¥¹}‰ÕÍ¥¹•ÍÍ}‘…Í¡‰½…É¡‘…Ñ…}™¥±”°½¹™¥œõ9½¹”°¹½Üõ9½¹”¤è(€€€€ˆˆ‰É•…Ñ”¹½¸µÍ•¹Í¥Ñ¥Ù”½µµ•É¥…°µ•ÑÉ¥Ì™½ÈÑ¡”ÁÉ½Ñ•Ñ•…‘µ¥¸U$¸ˆˆˆ(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€™œ€ô½¹™¥œ¥˜½¹™¥œ¥Ì¹½Ğ9½¹”…¹¡…Í…ÑÑÈ¡½¹™¥œ°€‰•Ğˆ¤•±Í”íô(€€€•¹•É…Ñ•‘}…Ğ€ô¹½Ü½ÈÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡™œ¤(€€€ÕÍ•ÉÌ€ô±¥ÍĞ ¡ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô¤¹Ù…±Õ•Ì ¤¤(€€€¹½Ñ¥™¥…Ñ¥½¹}±½Ì€ô±¥ÍĞ¡ÍÑ…Ñ”¹•Ğ ‰¹½Ñ¥™¥…Ñ¥½¹}±½Ìˆ¤½Èmt¤(€€€Í•¹Ğ€ôÍÕ´ Ä™½È¥Ñ•´¥¸¹½Ñ¥™¥…Ñ¥½¹}±½Ì¥˜¥Ñ•´¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰Í•¹Ğˆ¤(€€€™…¥±•€ôÍÕ´ Ä™½È¥Ñ•´¥¸¹½Ñ¥™¥…Ñ¥½¹}±½Ì¥˜¥Ñ•´¹•Ğ ‰ÍÑ…ÑÕÌˆ¤¥¸ì‰™…¥±•ˆ°€‰•ÉÉ½È‰ô¤(€€€‘•±¥Ù•Éå}Ñ½Ñ…°€ôÍ•¹Ğ€¬™…¥±•((€€€‘•˜½¹™¥ÕÉ•¡¹…µ”¤è(€€€€€€€É•ÑÕÉ¸‰½½°¡ÍÑÈ¡™œ¹•Ğ¡¹…µ”¤½È½Ì¹•¹Ù¥É½¸¹•Ğ¡¹…µ”°€ˆˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¤((€€€„Ñ}µ•…ÍÕÉ•µ•¹Ñ}¥€ôÍÑÈ (€€€€€€€™œ¹•Ğ ‰Ñ}5MUI59Q}%ˆ¤(€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰Ñ}5MUI59Q}%ˆ°€ˆˆ¤(€€€€€€€½È€‰´İ1PÄÑa1!4ˆ(€€€€¤¹ÍÑÉ¥À ¤(€€€„Ñ}ÁÉ½Á•ÉÑä€ô½¹™¥ÕÉ• ‰Ñ}AI=AIQe}%ˆ¤(€€€„Ñ}É•‘•¹Ñ¥…±Ì€ô½¹™¥ÕÉ• ‰Ñ}MIY%}=U9Q})M=8ˆ¤(€€€±¥¹•}Ñ½­•¸€ô½¹™¥ÕÉ• ‰1%9}!991}MM}Q=-8ˆ¤(€€€±¥¹•}Í•É•Ğ€ô½¹™¥ÕÉ• ‰1%9}!991}MIPˆ¤(€€€±¥™™}¥€ô½¹™¥ÕÉ• ‰1%}%ˆ¤(€€€ÁÕ‰±¥}ÕÉ°€ôÍÑÈ (€€€€€€€™œ¹•Ğ ‰AA}AU	1%}UI0ˆ¤(€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰AA}AU	1%}UI0ˆ°€ˆˆ¤(€€€€€€€½È€‰¡ÑÑÁÌè¼½…±¥Ù”µ¡•­¥¸¹½¹É•¹‘•È¹½´ˆ(€€€€¤¹ÍÑÉ¥À ¤¹ÉÍÑÉ¥À ˆ¼ˆ¤(€€€İ½É‘ÁÉ•ÍÍ}Í¥Ñ”€ô½¹™¥ÕÉ• ‰]=IAIMM}M%Q}UI0ˆ¤(€€€İ½É‘ÁÉ•ÍÍ}ÕÍ•È€ô½¹™¥ÕÉ• ‰]=IAIMM}UMI95ˆ¤(€€€İ½É‘ÁÉ•ÍÍ}Á…ÍÍİ½É€ô½¹™¥ÕÉ• ‰]=IAIMM}AA1%Q%=9}AMM]=Iˆ¤((€€€±¥¹•}‰Õ‘•Ğ€ô±¥¹•}µ•ÍÍ…•}‰Õ‘•Ñ}ÍÑ…ÑÕÌ¡ÍÑ…Ñ”°™œ°•¹•É…Ñ•‘}…Ğ¤((€€€Á•¹‘¥¹}Í½Ì€ôl(€€€€€€€¥Ñ•´(€€€€€€€™½È¥Ñ•´¥¸€¡ÍÑ…Ñ”¹•Ğ ‰Í½Í}•Ù•¹ÑÌˆ¤½Èíô¤¹Ù…±Õ•Ì ¤(€€€€€€€¥˜ÍÑÈ¡¥Ñ•´¹•Ğ ‰ÍÑ…ÑÕÌˆ¤½È€‰Á•¹‘¥¹œˆ¤¹…Í•™½± ¤(€€€€€€€¹½Ğ¥¸M=M}1=M}MQQUML(€€€t(€€€­¹½İ¹}Í½Í}¥‘Ì€ôíÍÑÈ¡¥Ñ•´¹•Ğ ‰•Ù•¹Ñ}¥ˆ¤½È€ˆˆ¤™½È¥Ñ•´¥¸Á•¹‘¥¹}Í½Íô(€€€Á•¹‘¥¹}Í½Ì¹•áÑ•¹ (€€€€€€€¥Ñ•´(€€€€€€€™½È¥Ñ•´¥¸€¡ÍÑ…Ñ”¹•Ğ ‰Í½Í}Á•¹‘¥¹œˆ¤½Èíô¤¹Ù…±Õ•Ì ¤(€€€€€€€¥˜ÍÑÈ¡¥Ñ•´¹•Ğ ‰•Ù•¹Ñ}¥ˆ¤½È€ˆˆ¤¹½Ğ¥¸­¹½İ¹}Í½Í}¥‘Ì(€€€€€€€…¹ÍÑÈ¡¥Ñ•´¹•Ğ ‰ÍÑ…ÑÕÌˆ¤½È€‰Á•¹‘¥¹œˆ¤¹…Í•™½± ¤(€€€€€€€¹½Ğ¥¸M=M}1=M}MQQUML(€€€€¤(€€€‘•±¥Ù•Éå}™…¥±ÕÉ•Ì€ôl(€€€€€€€‘¥Ğ¡¥Ñ•´°¥¹¥‘•¹Ñ}¥õÍÑÈ¡¥Ñ•´¹•Ğ ‰¥¹¥‘•¹Ñ}¥ˆ¤½È˜‰‘•±¥Ù•Éäµí¥¹‘•áôˆ¤¤(€€€€€€€™½È¥¹‘•à°¥Ñ•´¥¸•¹Õµ•É…Ñ”¡¹½Ñ¥™¥…Ñ¥½¹}±½Ì¤(€€€€€€€¥˜¥Ñ•´¹•Ğ ‰ÍÑ…ÑÕÌˆ¤¥¸ì‰™…¥±•ˆ°€‰•ÉÉ½È‰ô(€€€t(€€€ÁÕ‰±¥}Á…•Ì€ô€ ‰¥¹‘•à¹¡Ñµ°ˆ°€‰ÁÉ¥¥¹œ¹¡Ñµ°ˆ°€‰¡•±À¹¡Ñµ°ˆ°€‰ÁÉ¥Ù…ä¹¡Ñµ°ˆ°€‰Ñ•ÉµÌ¹¡Ñµ°ˆ¤(€€€ÁÉ½©•Ñ}É½½Ğ€ôA…Ñ ¡}}™¥±•}|¤¹É•Í½±Ù” ¤¹Á…É•¹Ğ(€€€Í•½}Á…•Ì€ômt(€€€™½È™¥±•¹…µ”¥¸ÁÕ‰±¥}Á…•Ìè(€€€€€€€Á…Ñ €ôÁÉ½©•Ñ}É½½Ğ€¼™¥±•¹…µ”(€€€€€€€Í½ÕÉ”€ôÁ…Ñ ¹É•…‘}Ñ•áĞ¡•¹½‘¥¹œô‰ÕÑ˜´àˆ¤¥˜Á…Ñ ¹•á¥ÍÑÌ ¤•±Í”€ˆˆ(€€€€€€€±½İ•É•€ôÍ½ÕÉ”¹±½İ•È ¤(€€€€€€€¡•­Ì€ôì(€€€€€€€€€€€€‰Ñ¥Ñ±”ˆè€ˆñÑ¥Ñ±”ˆ¥¸±½İ•É•°(€€€€€€€€€€€€‰‘•ÍÉ¥ÁÑ¥½¸ˆè€¹…µ”ô‰‘•ÍÉ¥ÁÑ¥½¸ˆœ¥¸±½İ•É•½È€‰¹…µ”ô‘•ÍÉ¥ÁÑ¥½¸œˆ¥¸±½İ•É•°(€€€€€€€€€€€€‰…¹½¹¥…°ˆè€É•°ô‰…¹½¹¥…°ˆœ¥¸±½İ•É•½È€‰É•°ô…¹½¹¥…°œˆ¥¸±½İ•É•°(€€€€€€€€€€€€‰É½‰½ÑÌˆè€¹…µ”ô‰É½‰½ÑÌˆœ¥¸±½İ•É•½È€‰¹…µ”ôÉ½‰½ÑÌœˆ¥¸±½İ•É•°(€€€€€€€€€€€€‰ÍÑÉÕÑÕÉ•‘}‘…Ñ„ˆè€‰…ÁÁ±¥…Ñ¥½¸½±­©Í½¸ˆ¥¸±½İ•É•°(€€€€€€€ô(€€€€€€€Í•½}Á…•Ì¹…ÁÁ•¹ (€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€‰Á…”ˆè™¥±•¹…µ”°(€€€€€€€€€€€€€€€€‰¡•­Ìˆè¡•­Ì°(€€€€€€€€€€€€€€€€‰Á…ÍÍ•ˆèÍÕ´ Ä™½ÈÙ…±Õ”¥¸¡•­Ì¹Ù…±Õ•Ì ¤¥˜Ù…±Õ”¤°(€€€€€€€€€€€€€€€€‰Ñ½Ñ…°ˆè±•¸¡¡•­Ì¤°(€€€€€€€€€€€ô(€€€€€€€€¤((€€€É•ÑÕÉ¸ì(€€€€€€€€‰•¹•É…Ñ•‘}…Ğˆè•¹•É…Ñ•‘}…Ğ¹¥Í½™½Éµ…Ğ ¤°(€€€€€€€€‰™Õ¹¹•°ˆèì(€€€€€€€€€€€€‰É•¥ÍÑ•É•‘}µ•µ‰•ÉÌˆè±•¸¡ÕÍ•ÉÌ¤°(€€€€€€€€€€€€‰µ•µ‰•ÉÍ}İ¥Ñ¡}Õ…É‘¥…¸ˆèÍÕ´ (€€€€€€€€€€€€€€€€Ä(€€€€€€€€€€€€€€€™½ÈÕÍ•È¥¸ÕÍ•ÉÌ(€€€€€€€€€€€€€€€¥˜…¹ä¡•Ñ}½¹Ñ…Ñ}±¥¹•}¥¡½¹Ñ…Ğ¤™½È½¹Ñ…Ğ¥¸€¡ÕÍ•È¹•Ğ ‰½¹Ñ…ÑÌˆ¤½Èmt¤¤(€€€€€€€€€€€€¤°(€€€€€€€€€€€€‰…Ñ¥Ù•}Á…¥‘}µ•µ‰•ÉÌˆèÍÕ´ (€€€€€€€€€€€€€€€€Ä(€€€€€€€€€€€€€€€™½ÈÕÍ•È¥¸ÕÍ•ÉÌ(€€€€€€€€€€€€€€€¥˜ÍÑÈ¡ÕÍ•È¹•Ğ ‰Á±…¸ˆ¤½È€ˆˆ¤¹ÍÑ…ÉÑÍİ¥Ñ  ‰Á…¥‘|ˆ¤(€€€€€€€€€€€€€€€…¹ÕÍ•È¹•Ğ ‰Á…åµ•¹Ñ}ÍÑ…ÑÕÌˆ¤€ôô€‰…Ñ¥Ù”ˆ(€€€€€€€€€€€€¤°(€€€€€€€ô°(€€€€€€€€‰‘•±¥Ù•Éäˆèì(€€€€€€€€€€€€‰Í•¹ĞˆèÍ•¹Ğ°(€€€€€€€€€€€€‰™…¥±•ˆè™…¥±•°(€€€€€€€€€€€€‰Ñ½Ñ…°ˆè‘•±¥Ù•Éå}Ñ½Ñ…°°(€€€€€€€€€€€€‰ÍÕ•ÍÍ}É…Ñ”ˆèÉ½Õ¹ ¡Í•¹Ğ€¼‘•±¥Ù•Éå}Ñ½Ñ…°€¨€ÄÀÀ¤°€Ä¤¥˜‘•±¥Ù•Éå}Ñ½Ñ…°•±Í”9½¹”°(€€€€€€€ô°(€€€€€€€€‰¥¹¥‘•¹ÑÌˆèì(€€€€€€€€€€€€‰½Á•¹}Í½Ìˆè±•¸¡Á•¹‘¥¹}Í½Ì¤°(€€€€€€€€€€€€‰‘•±¥Ù•Éå}™…¥±ÕÉ•Ìˆè±•¸¡‘•±¥Ù•Éå}™…¥±ÕÉ•Ì¤°(€€€€€€€€€€€€‰Ñ½Ñ…±}½Á•¸ˆè±•¸¡Á•¹‘¥¹}Í½Ì¤€¬±•¸¡‘•±¥Ù•Éå}™…¥±ÕÉ•Ì¤°(€€€€€€€€€€€€‰¥Ñ•µÌˆèl(€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€‰­¥¹ˆè€‰Í½Ìˆ°(€€€€€€€€€€€€€€€€€€€€‰¥¹¥‘•¹Ñ}¥ˆèÍÑÈ¡¥Ñ•´¹•Ğ ‰•Ù•¹Ñ}¥ˆ¤½È€ˆˆ¤°(€€€€€€€€€€€€€€€€€€€€‰É•…Ñ•‘}…Ğˆè¥Ñ•´¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤°(€€€€€€€€€€€€€€€€€€€€‰½İ¹•É}‘¥ÍÁ±…å}¹…µ”ˆè¥Ñ•´¹•Ğ ‰½İ¹•É}‘¥ÍÁ±…å}¹…µ”ˆ¤½È€‹šr–N„ˆ°(€€€€€€€€€€€€€€€€€€€€‰ÍÑ…ÑÕÌˆè¥Ñ•´¹•Ğ ‰ÍÑ…ÑÕÌˆ¤½È€‰Á•¹‘¥¹œˆ°(€€€€€€€€€€€€€€€€€€€€‰ÁÉ¥µ…Éå}É•ÍÁ½¹‘•Èˆè}Í½Í}ÁÕ‰±¥}Í¹…ÁÍ¡½Ğ¡¥Ñ•´¤¹•Ğ ‰ÁÉ¥µ…Éå}É•ÍÁ½¹‘•Èˆ¤°(€€€€€€€€€€€€€€€€€€€€‰…ÍÍ¥ÍÑ…¹ÑÌˆè}Í½Í}ÁÕ‰±¥}Í¹…ÁÍ¡½Ğ¡¥Ñ•´¤¹•Ğ ‰…ÍÍ¥ÍÑ…¹ÑÌˆ¤°(€€€€€€€€€€€€€€€€€€€€‰•Í…±…Ñ¥½¹}É½Õ¹ˆè¥¹Ğ¡¥Ñ•´¹•Ğ ‰•Í…±…Ñ¥½¹}É½Õ¹ˆ¤½È€À¤°(€€€€€€€€€€€€€€€€€€€€‰Í•¹Ñ}½Õ¹ĞˆèÍÕ´ (€€€€€€€€€€€€€€€€€€€€€€€€Ä™½ÈÉ½Ü¥¸€¡¥Ñ•´¹•Ğ ‰‘•±¥Ù•É¥•Ìˆ¤½Èmt¤(€€€€€€€€€€€€€€€€€€€€€€€¥˜É½Ü¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰Í•¹Ğˆ(€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€‰™…¥±•‘}½Õ¹ĞˆèÍÕ´ (€€€€€€€€€€€€€€€€€€€€€€€€Ä™½ÈÉ½Ü¥¸€¡¥Ñ•´¹•Ğ ‰‘•±¥Ù•É¥•Ìˆ¤½Èmt¤(€€€€€€€€€€€€€€€€€€€€€€€¥˜É½Ü¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰™…¥±•ˆ(€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€‰Ñ¥µ•±¥¹”ˆè}Í½Í}ÁÕ‰±¥}Í¹…ÁÍ¡½Ğ¡¥Ñ•´¤¹•Ğ ‰Ñ¥µ•±¥¹”ˆ¤°(€€€€€€€€€€€€€€€ô(€€€€€€€€€€€€€€€™½È¥Ñ•´¥¸Á•¹‘¥¹}Í½Ì(€€€€€€€€€€€€€€€¥˜¥Ñ•´¹•Ğ ‰•Ù•¹Ñ}¥ˆ¤(€€€€€€€€€€€t€¬l(€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€‰­¥¹ˆè€‰‘•±¥Ù•Éäˆ°(€€€€€€€€€€€€€€€€€€€€‰¥¹¥‘•¹Ñ}¥ˆè¥Ñ•µl‰¥¹¥‘•¹Ñ}¥‰t°(€€€€€€€€€€€€€€€€€€€€‰É•…Ñ•‘}…Ğˆè¥Ñ•´¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤°(€€€€€€€€€€€€€€€€€€€€‰¹½Ñ¥™¥…Ñ¥½¹}­¥¹ˆè¥Ñ•´¹•Ğ ‰­¥¹ˆ¤°(€€€€€€€€€€€€€€€ô(€€€€€€€€€€€€€€€™½È¥Ñ•´¥¸‘•±¥Ù•Éå}™…¥±ÕÉ•Ì(€€€€€€€€€€€t°(€€€€€€€ô°(€€€€€€€€‰±¥¹•}‰Õ‘•Ğˆè±¥¹•}‰Õ‘•Ğ°(€€€€€€€€‰¥¹Ñ•É…Ñ¥½¹Ìˆèì(€€€€€€€€€€€€‰±¥¹”ˆèì(€€€€€€€€€€€€€€€€‰½¹™¥ÕÉ•ˆè±¥¹•}Ñ½­•¸°(€€€€€€€€€€€€€€€€‰µ•ÍÍ…¥¹}É•…‘äˆè±¥¹•}Ñ½­•¸…¹±¥¹•}Í•É•Ğ°(€€€€€€€€€€€€€€€€‰Ñ½­•¹}½¹™¥ÕÉ•ˆè±¥¹•}Ñ½­•¸°(€€€€€€€€€€€€€€€€‰Í•É•Ñ}½¹™¥ÕÉ•ˆè±¥¹•}Í•É•Ğ°(€€€€€€€€€€€€€€€€‰±¥™™}½¹™¥ÕÉ•ˆè±¥™™}¥°(€€€€€€€€€€€€€€€€‰İ•‰¡½½­}½¹™¥ÕÉ•ˆè‰½½°¡ÁÕ‰±¥}ÕÉ°…¹±¥¹•}Í•É•Ğ¤°(€€€€€€€€€€€€€€€€‰İ•‰¡½½­}ÕÉ°ˆè˜‰íÁÕ‰±¥}ÕÉ±ô½…Á¤½±¥¹”½İ•‰¡½½¬ˆ¥˜ÁÕ‰±¥}ÕÉ°•±Í”€ˆˆ°(€€€€€€€€€€€ô°(€€€€€€€€€€€€‰„Ğˆèì(€€€€€€€€€€€€€€€€Œ-••ÀÑ¡”±•…ä­•ä…ÌÉ•Á½ÉĞµ…•ÍÌÍÑ…ÑÕÌ™½È•á¥ÍÑ¥¹œ±¥•¹ÑÌ¸(€€€€€€€€€€€€€€€€‰½¹™¥ÕÉ•ˆè„Ñ}ÁÉ½Á•ÉÑä…¹„Ñ}É•‘•¹Ñ¥…±Ì°(€€€€€€€€€€€€€€€€‰ÑÉ…­¥¹}½¹™¥ÕÉ•ˆè‰½½°¡É”¹™Õ±±µ…Ñ ¡È‰µmµhÀ´åt¬ˆ°„Ñ}µ•…ÍÕÉ•µ•¹Ñ}¥¤¤°(€€€€€€€€€€€€€€€€‰É•Á½ÉÑ¥¹}½¹™¥ÕÉ•ˆè„Ñ}ÁÉ½Á•ÉÑä…¹„Ñ}É•‘•¹Ñ¥…±Ì°(€€€€€€€€€€€€€€€€‰µ•…ÍÕÉ•µ•¹Ñ}¥ˆè„Ñ}µ•…ÍÕÉ•µ•¹Ñ}¥°(€€€€€€€€€€€€€€€€‰ÁÉ½Á•ÉÑå}½¹™¥ÕÉ•ˆè„Ñ}ÁÉ½Á•ÉÑä°(€€€€€€€€€€€€€€€€‰É•‘•¹Ñ¥…±Í}½¹™¥ÕÉ•ˆè„Ñ}É•‘•¹Ñ¥…±Ì°(€€€€€€€€€€€ô°(€€€€€€€€€€€€‰İ½É‘ÁÉ•ÍÌˆèì(€€€€€€€€€€€€€€€€‰½¹™¥ÕÉ•ˆèİ½É‘ÁÉ•ÍÍ}Í¥Ñ”…¹İ½É‘ÁÉ•ÍÍ}ÕÍ•È…¹İ½É‘ÁÉ•ÍÍ}Á…ÍÍİ½É°(€€€€€€€€€€€€€€€€‰Í¥Ñ•}½¹™¥ÕÉ•ˆèİ½É‘ÁÉ•ÍÍ}Í¥Ñ”°(€€€€€€€€€€€€€€€€‰ÕÍ•É¹…µ•}½¹™¥ÕÉ•ˆèİ½É‘ÁÉ•ÍÍ}ÕÍ•È°(€€€€€€€€€€€€€€€€‰…ÁÁ±¥…Ñ¥½¹}Á…ÍÍİ½É‘}½¹™¥ÕÉ•ˆèİ½É‘ÁÉ•ÍÍ}Á…ÍÍİ½É°(€€€€€€€€€€€ô°(€€€€€€€ô°(€€€€€€€€‰Í•¼ˆèì(€€€€€€€€€€€€‰Á…•ÌˆèÍ•½}Á…•Ì°(€€€€€€€€€€€€‰Á…ÍÍ•ˆèÍÕ´¡É½İl‰Á…ÍÍ•‰t™½ÈÉ½Ü¥¸Í•½}Á…•Ì¤°(€€€€€€€€€€€€‰Ñ½Ñ…°ˆèÍÕ´¡É½İl‰Ñ½Ñ…°‰t™½ÈÉ½Ü¥¸Í•½}Á…•Ì¤°(€€€€€€€ô°(€€€ô(()‘•˜…‘µ¥¹}ÍÕµµ…Éä¡‘…Ñ…}™¥±”°½¹™¥œõ9½¹”°¹½Üõ9½¹”¤è(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€ÍÑ…ÑÕÍ}¹½Ü€ô¹½Ü½ÈÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡½¹™¥œ½Èíô¤(€€€Ñ½­•¸€ô€ˆˆ(€€€¥˜½¹™¥œ¥Ì¹½Ğ9½¹”…¹¡…Í…ÑÑÈ¡½¹™¥œ°€‰•Ğˆ¤è(€€€€€€€Ñ½­•¸€ôÍÑÈ¡½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¹½ĞÑ½­•¸è(€€€€€€€Ñ½­•¸€ôÍÑÈ¡½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤((€€€€Œƒ–ú3–>Ã¢ò'–—šf¢s¦ö+11%9ƒ’öÿR£¢7’öS’ö7–B7¢Ç¾ò#šr–’kš&L€ĞÀƒš²„1%9ÁÉ½™¥±—¾ò3¦ÿ–7¦ûšf¾ò$(€€€¡å‘É…Ñ•€ô€À(€€€‘¥ÉÑä€ô…±Í”(€€€™½ÈÕÍ•È¥¸€¡ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô¤¹Ù…±Õ•Ì ¤è(€€€€€€€¥˜¡å‘É…Ñ•€øô€ĞÀè(€€€€€€€€€€€‰É•…¬(€€€€€€€¥˜¹½Ğ¥Í}Á±…•¡½±‘•É}‘¥ÍÁ±…å}¹…µ”¡ÕÍ•È¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€‰•™½É”€ôÍÑÈ¡ÕÍ•È¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤½È€ˆˆ¤(€€€€€€€•¹ÍÕÉ•}ÕÍ•É}‘¥ÍÁ±…å}¹…µ”¡ÕÍ•È°Ñ½­•¸õÑ½­•¸¤(€€€€€€€¥˜ÍÑÈ¡ÕÍ•È¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤½È€ˆˆ¤€„ô‰•™½É”è(€€€€€€€€€€€¡å‘É…Ñ•€¬ô€Ä(€€€€€€€€€€€‘¥ÉÑä€ôQÉÕ”(€€€¥˜‘¥ÉÑäè(€€€€€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤((€€€ÕÍ•ÉÌ€ômt(€€€¥¹Ù¥Ñ•}•‘•Ì€ômt(€€€™½ÈÕÍ•È¥¸ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹Ù…±Õ•Ì ¤è(€€€€€€€ÍÑ…ÑÕÌ€ô‰Õ¥±‘}ÍÑ…ÑÕÌ¡ÕÍ•È°ÍÑ…Ñ”°¹½ÜõÍÑ…ÑÕÍ}¹½Ü¤(€€€€€€€±…Ñ•ÍÑ}¡•­¥¸€ô€¡ÍÑ…ÑÕÌ¹•Ğ ‰¡•­¥¹}É•½É‘Ìˆ¤½Èmt¥l´Äét½Èmíõt(€€€€€€€ÍÑ…ÑÕÍl‰±…ÍÑ}¡•­¥¹}…É•„‰t€ôÍÑÈ (€€€€€€€€€€€±…Ñ•ÍÑ}¡•­¥¹lÁt¹•Ğ ‰…É•„ˆ¤(€€€€€€€€€€€½È€¡ÕÍ•È¹•Ğ ‰±½…Ñ¥½¸ˆ¤½Èíô¤¹•Ğ ‰¥Ñäˆ¤(€€€€€€€€€€€½È€‹šr«š>C’úlˆ(€€€€€€€€¤¹ÍÑÉ¥À ¤(€€€€€€€€Œƒ–ú3–>Ã¦†¿’ë–B7¢Ç¾òkÖW’â7¦ëf÷¾òo’î7šb¿’öS’ö7šf¢Ï–ÂG¦f~´%ƒšZç’úÿ¢ú£¢¶`(€€€€€€€¹…µ”€ôÍÑÈ¡ÍÑ…ÑÕÌ¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€¥˜¥Í}Á±…•¡½±‘•É}‘¥ÍÁ±…å}¹…µ”¡¹…µ”¤è(€€€€€€€€€€€Í¡½ÉĞ€ôÍÑÈ¡ÍÑ…ÑÕÌ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¥l´Øét½È€ˆüˆ(€€€€€€€€€€€ÍÑ…ÑÕÍl‰‘¥ÍÁ±…å}¹…µ”‰t€ô˜‹šr«–>[–ú_šjÇ¢Ç¾ò#Š™íÍ¡½ÉÑ÷¾ò$ˆ(€€€€€€€€€€€ÍÑ…ÑÕÍl‰‘¥ÍÁ±…å}¹…µ•}µ¥ÍÍ¥¹œ‰t€ôQÉÕ”(€€€€€€€•±Í”è(€€€€€€€€€€€ÍÑ…ÑÕÍl‰‘¥ÍÁ±…å}¹…µ•}µ¥ÍÍ¥¹œ‰t€ô…±Í”(€€€€€€€ÕÍ•ÉÌ¹…ÁÁ•¹¡ÍÑ…ÑÕÌ¤(€€€€€€€¥¹Ù¥Ñ•É}¥€ôÍÑ…ÑÕÌ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ(€€€€€€€¥¹Ù¥Ñ•É}¹…µ”€ôÍÑ…ÑÕÌ¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤½È€ˆˆ(€€€€€€€™½È½¹Ñ…Ğ¥¸ÍÑ…ÑÕÌ¹•Ğ ‰½¹Ñ…ÑÌˆ¤½Èmtè(€€€€€€€€€€€Õ…É‘¥…¹}¥€ô•Ñ}½¹Ñ…Ñ}±¥¹•}¥¡½¹Ñ…Ğ¤(€€€€€€€€€€€¥˜¹½ĞÕ…É‘¥…¹}¥è(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€¥˜Õ…É‘¥…¹}¥€ôô¥¹Ù¥Ñ•É}¥è(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€¥¹Ù¥Ñ•}•‘•Ì¹…ÁÁ•¹ (€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€‰¥¹Ù¥Ñ•É}±¥¹•}ÕÍ•É}¥ˆè¥¹Ù¥Ñ•É}¥°(€€€€€€€€€€€€€€€€€€€€‰¥¹Ù¥Ñ•É}‘¥ÍÁ±…å}¹…µ”ˆè¥¹Ù¥Ñ•É}¹…µ”°(€€€€€€€€€€€€€€€€€€€€‰Õ…É‘¥…¹}±¥¹•}ÕÍ•É}¥ˆèÕ…É‘¥…¹}¥°(€€€€€€€€€€€€€€€€€€€€‰Õ…É‘¥…¹}‘¥ÍÁ±…å}¹…µ”ˆè½¹Ñ…Ğ¹•Ğ ‰¹…µ”ˆ¤½È€ˆˆ°(€€€€€€€€€€€€€€€€€€€€‰‰¥¹‘¥¹}ÍÑ…ÑÕÌˆè½¹Ñ…Ğ¹•Ğ ‰‰¥¹‘¥¹}ÍÑ…ÑÕÌˆ¤½È€ˆˆ°(€€€€€€€€€€€€€€€€€€€€‰…•ÁÑ•‘}…Ğˆè½¹Ñ…Ğ¹•Ğ ‰…•ÁÑ•‘}…Ğˆ¤½È½¹Ñ…Ğ¹•Ğ ‰ÕÁ‘…Ñ•‘}…Ğˆ¤½È€ˆˆ°(€€€€€€€€€€€€€€€ô(€€€€€€€€€€€€¤(€€€ÕÍ•ÉÌ¹Í½ÉĞ¡­•äõ±…µ‰‘„¥Ñ•´è€¡¹½Ğ¥Ñ•µl‰¥Í}½Ù•É‘Õ”‰t°¥Ñ•´¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤½È€ˆˆ¤¤(€€€ÕÍ•ÉÍ}‰å}¥€ôì(€€€€€€€ÍÑÈ¡ÕÍ•È¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤èÕÍ•È(€€€€€€€™½ÈÕÍ•È¥¸ÕÍ•ÉÌ(€€€€€€€¥˜ÕÍ•È¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤(€€€ô(€€€‘…¥±å}ÁÕÍ¡}É½İÌ€ôíô(€€€Á•ÉÍ¥ÍÑ•‘}‘…¥±å}ÁÕÍ¡•Ì€ôÍÑ…Ñ”¹•Ğ ‰‘…¥±å}ÁÕÍ¡}µ•µ‰•É}ÍÑ…ÑÌˆ¤½Èíô(€€€¥˜¥Í¥¹ÍÑ…¹”¡Á•ÉÍ¥ÍÑ•‘}‘…¥±å}ÁÕÍ¡•Ì°‘¥Ğ¤è(€€€€€€€™½È­•ä°¥Ñ•´¥¸Á•ÉÍ¥ÍÑ•‘}‘…¥±å}ÁÕÍ¡•Ì¹¥Ñ•µÌ ¤è(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡¥Ñ•´°‘¥Ğ¤è(€€€€€€€€€€€€€€€‘…¥±å}ÁÕÍ¡}É½İÍmÍÑÈ¡­•ä¥t€ô‘¥Ğ¡¥Ñ•´¤(€€€€Œ	…­™¥±°É••¹Ğ±•…ä±½ÌÑ¡…ĞÁÉ•‘…Ñ”Ñ¡”Á•ÉÍ¥ÍÑ•¹Ğ‘…¥±ä½Õ¹Ñ•ÉÌ¸(€€€™½È±½œ¥¸ÍÑ…Ñ”¹•Ğ ‰¹½Ñ¥™¥…Ñ¥½¹}±½Ìˆ¤½Èmtè(€€€€€€€±¥¹•}ÕÍ•É}¥€ôÍÑÈ¡±½œ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€É•…Ñ•‘}…Ğ€ôÍÑÈ¡±½œ¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤½È€ˆˆ¤(€€€€€€€‘…Ñ”€ôÉ•…Ñ•‘}…ÑlèÄÁt(€€€€€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥½È±•¸¡‘…Ñ”¤€„ô€ÄÀè(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€­•ä€ô˜‰í‘…Ñ•õñí±¥¹•}ÕÍ•É}¥‘ôˆ(€€€€€€€¥˜­•ä¥¸‘…¥±å}ÁÕÍ¡}É½İÌè(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€µ…Ñ¡¥¹œ€ôl(€€€€€€€€€€€É½Ü(€€€€€€€€€€€™½ÈÉ½Ü¥¸€¡ÍÑ…Ñ”¹•Ğ ‰¹½Ñ¥™¥…Ñ¥½¹}±½Ìˆ¤½Èmt¤(€€€€€€€€€€€¥˜ÍÑÈ¡É½Ü¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤€ôô±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€…¹ÍÑÈ¡É½Ü¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤½È€ˆˆ¥lèÄÁt€ôô‘…Ñ”(€€€€€€€t(€€€€€€€‘…¥±å}ÁÕÍ¡}É½İÍm­•åt€ôì(€€€€€€€€€€€€‰‘…Ñ”ˆè‘…Ñ”°(€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€‰Í•¹Ñ}½Õ¹ĞˆèÍÕ´ Ä™½ÈÉ½Ü¥¸µ…Ñ¡¥¹œ¥˜É½Ü¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰Í•¹Ğˆ¤°(€€€€€€€€€€€€‰™…¥±•‘}½Õ¹ĞˆèÍÕ´ (€€€€€€€€€€€€€€€€Ä™½ÈÉ½Ü¥¸µ…Ñ¡¥¹œ¥˜É½Ü¹•Ğ ‰ÍÑ…ÑÕÌˆ¤¥¸ì‰™…¥±•ˆ°€‰•ÉÉ½Èˆ°€‰‰±½­•‰ô(€€€€€€€€€€€€¤°(€€€€€€€€€€€€‰Ñ½Ñ…±}½Õ¹Ğˆè±•¸¡µ…Ñ¡¥¹œ¤°(€€€€€€€€€€€€‰­¥¹‘ÌˆèÍ½ÉÑ•¡ì(€€€€€€€€€€€€€€€ÍÑÈ¡É½Ü¹•Ğ ‰­¥¹ˆ¤½È€‰½Ñ¡•Èˆ¤™½ÈÉ½Ü¥¸µ…Ñ¡¥¹œ(€€€€€€€€€€€ô¤°(€€€€€€€€€€€€‰±…ÍÑ}ÁÕÍ¡}…Ğˆèµ…à (€€€€€€€€€€€€€€€€¡ÍÑÈ¡É½Ü¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤½È€ˆˆ¤™½ÈÉ½Ü¥¸µ…Ñ¡¥¹œ¤°(€€€€€€€€€€€€€€€‘•™…Õ±Ğôˆˆ°(€€€€€€€€€€€€¤°(€€€€€€€ô(€€€‘…¥±å}ÁÕÍ¡}µ•µ‰•É}ÍÑ…ÑÌ€ômt(€€€™½È¥Ñ•´¥¸‘…¥±å}ÁÕÍ¡}É½İÌ¹Ù…±Õ•Ì ¤è(€€€€€€€µ•µ‰•È€ôÕÍ•ÉÍ}‰å}¥¹•Ğ¡ÍÑÈ¡¥Ñ•´¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤°íô¤(€€€€€€€‘…¥±å}ÁÕÍ¡}µ•µ‰•É}ÍÑ…ÑÌ¹…ÁÁ•¹¡ì(€€€€€€€€€€€€¨©¥Ñ•´°(€€€€€€€€€€€€‰‘¥ÍÁ±…å}¹…µ”ˆèµ•µ‰•È¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤½È€‹šr«–>[–ú_šjÇ¢Äˆ°(€€€€€€€€€€€€‰Á±…¸ˆèµ•µ‰•È¹•Ğ ‰Á±…¸ˆ¤½È€‰™É•”ˆ°(€€€€€€€€€€€€‰•áÁ¥É•Í}…Ğˆèµ•µ‰•È¹•Ğ ‰Á±…¹}•áÁ¥É•Í}…Ğˆ¤½È€ˆˆ°(€€€€€€€ô¤(€€€‘…¥±å}ÁÕÍ¡}µ•µ‰•É}ÍÑ…ÑÌ¹Í½ÉĞ (€€€€€€€­•äõ±…µ‰‘„¥Ñ•´è€¡¥Ñ•´¹•Ğ ‰‘…Ñ”ˆ¤½È€ˆˆ°¥Ñ•´¹•Ğ ‰±…ÍÑ}ÁÕÍ¡}…Ğˆ¤½È€ˆˆ¤°(€€€€€€€É•Ù•ÉÍ”õQÉÕ”°(€€€€¤(€€€Õ…É‘¥…¹}É½ÕÁÌ€ô±¥ÍĞ¡ÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁÌˆ°íô¤¹Ù…±Õ•Ì ¤¤(€€€Õ…É‘¥…¹}É½ÕÁÌ¹Í½ÉĞ¡­•äõ±…µ‰‘„¥Ñ•´è¥Ñ•´¹•Ğ ‰É•…Ñ•‘}…Ğˆ°€ˆˆ¤°É•Ù•ÉÍ”õQÉÕ”¤(€€€½É‘•ÉÌ€ô±¥ÍĞ¡É•Ù•ÉÍ•¡ÍÑ…Ñ”¹•Ğ ‰½É‘•ÉÌˆ°mt¥l´ÄÀÀét¤¤(€€€Á…¥‘}½É‘•ÉÌ€ôm½É‘•È™½È½É‘•È¥¸½É‘•ÉÌ¥˜½É‘•È¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰Á…¥‰t(€€€½Õ¹Ñå}É½İÌ€ôíô((€€€‘•˜½Õ¹Ñå}É½Ü¡½Õ¹Ñä¤è(€€€€€€€É•ÑÕÉ¸½Õ¹Ñå}É½İÌ¹Í•Ñ‘•™…Õ±Ğ (€€€€€€€€€€€½Õ¹Ñä½È€‹šr«š>C’úlˆ°(€€€€€€€€€€€ì‰½Õ¹Ñäˆè½Õ¹Ñä½È€‹šr«š>C’úlˆ°€‰µ•µ‰•ÉÌˆè€À°€‰½É‘•ÉÌˆè€À°€‰Á…¥‘}½É‘•ÉÌˆè€À°€‰É•Ù•¹Õ”ˆè€Áô°(€€€€€€€€¤((€€€™½ÈÁÉ½™¥±”¥¸ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹Ù…±Õ•Ì ¤è(€€€€€€€±…Ñ•ÍĞ€ôl(€€€€€€€€€€€É½Ü™½ÈÉ½Ü¥¸€¡ÁÉ½™¥±”¹•Ğ ‰¡•­¥¹}É•½É‘Ìˆ¤½Èmt¤(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡É½Ü°‘¥Ğ¤(€€€€€€€t(€€€€€€€½Õ¹Ñä€ôÍÑÈ (€€€€€€€€€€€€¡±…Ñ•ÍÑl´Åt¹•Ğ ‰…É•„ˆ¤¥˜±…Ñ•ÍĞ•±Í”€ˆˆ¤(€€€€€€€€€€€½È€¡ÁÉ½™¥±”¹•Ğ ‰±½…Ñ¥½¸ˆ¤½Èíô¤¹•Ğ ‰¥Ñäˆ¤(€€€€€€€€€€€½È€‹šr«š>C’úlˆ(€€€€€€€€¤¹ÍÑÉ¥À ¤(€€€€€€€½Õ¹Ñå}É½Ü¡½Õ¹Ñä¥l‰µ•µ‰•ÉÌ‰t€¬ô€Ä((€€€™½È½É‘•È¥¸½É‘•ÉÌè(€€€€€€€ÁÉ½™¥±”€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹•Ğ¡½É‘•È¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤°íô¤(€€€€€€€±…Ñ•ÍĞ€ôl(€€€€€€€€€€€É½Ü™½ÈÉ½Ü¥¸€¡ÁÉ½™¥±”¹•Ğ ‰¡•­¥¹}É•½É‘Ìˆ¤½Èmt¤(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡É½Ü°‘¥Ğ¤(€€€€€€€t(€€€€€€€½Õ¹Ñä€ôÍÑÈ (€€€€€€€€€€€€¡±…Ñ•ÍÑl´Åt¹•Ğ ‰…É•„ˆ¤¥˜±…Ñ•ÍĞ•±Í”€ˆˆ¤(€€€€€€€€€€€½È€¡ÁÉ½™¥±”¹•Ğ ‰±½…Ñ¥½¸ˆ¤½Èíô¤¹•Ğ ‰¥Ñäˆ¤(€€€€€€€€€€€½È€‹šr«š>C’úlˆ(€€€€€€€€¤¹ÍÑÉ¥À ¤(€€€€€€€É½Ü€ô½Õ¹Ñå}É½Ü¡½Õ¹Ñä¤(€€€€€€€É½İl‰½É‘•ÉÌ‰t€¬ô€Ä(€€€€€€€¥˜½É‘•È¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰Á…¥ˆè(€€€€€€€€€€€É½İl‰Á…¥‘}½É‘•ÉÌ‰t€¬ô€Ä(€€€€€€€€€€€É½İl‰É•Ù•¹Õ”‰t€¬ô¥¹Ğ¡½É‘•È¹•Ğ ‰…µ½Õ¹Ğˆ¤½È€À¤((€€€½Õ¹Ñå}ÍÑ…ÑÌ€ôÍ½ÉÑ• (€€€€€€€½Õ¹Ñå}É½İÌ¹Ù…±Õ•Ì ¤°(€€€€€€€­•äõ±…µ‰‘„¥Ñ•´è€ µ¥Ñ•µl‰É•Ù•¹Õ”‰t°€µ¥Ñ•µl‰µ•µ‰•ÉÌ‰t°¥Ñ•µl‰½Õ¹Ñä‰t¤°(€€€€¤(€€€Á•ÉÍ¥ÍĞ€ôÁ•ÉÍ¥ÍÑ•¹•}¥¹™¼¡‘…Ñ…}™¥±”¤(€€€Õ…É‘¥…¹}¥¹Ù¥Ñ•Ì€ômt(€€€™½ÈÉ½Ü¥¸É•Ù•ÉÍ• ¡ÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}¥¹Ù¥Ñ•Ìˆ¤½Èmt¥l´ÄÀÀét¤è(€€€€€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡É½Ü°‘¥Ğ¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€Õ…É‘¥…¹}¥¹Ù¥Ñ•Ì¹…ÁÁ•¹¡ì(€€€€€€€€€€€€‰¥ˆèÉ½Ü¹•Ğ ‰¥ˆ¤½È€ˆˆ°(€€€€€€€€€€€€‰¥¹Ù¥Ñ•É}±¥¹•}ÕÍ•É}¥ˆèÉ½Ü¹•Ğ ‰¥¹Ù¥Ñ•É}±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ°(€€€€€€€€€€€€‰‘¥ÍÁ±…å}¹…µ”ˆèÉ½Ü¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤½È€ˆˆ°(€€€€€€€€€€€€‰É•±…Ñ¥½¹Í¡¥ÀˆèÉ½Ü¹•Ğ ‰É•±…Ñ¥½¹Í¡¥Àˆ¤½È€ˆˆ°(€€€€€€€€€€€€‰ÍÑ…ÑÕÌˆèÉ½Ü¹•Ğ ‰ÍÑ…ÑÕÌˆ¤½È€ˆˆ°(€€€€€€€€€€€€‰É•…Ñ•‘}…ĞˆèÉ½Ü¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤½È€ˆˆ°(€€€€€€€€€€€€‰•áÁ¥É•Í}…ĞˆèÉ½Ü¹•Ğ ‰•áÁ¥É•Í}…Ğˆ¤½È€ˆˆ°(€€€€€€€€€€€€‰…•ÁÑ•‘}…ĞˆèÉ½Ü¹•Ğ ‰…•ÁÑ•‘}…Ğˆ¤½È€ˆˆ°(€€€€€€€€€€€€‰¥¹Ù¥Ñ••}±¥¹•}ÕÍ•É}¥ˆèÉ½Ü¹•Ğ ‰¥¹Ù¥Ñ••}±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ°(€€€€€€€ô¤(€€€ÅÕ½Ñ„€ô¥¹Ğ ¡½¹™¥œ½Èíô¤¹•Ğ ‰1%9}5=9Q!1e}5MM}EU=Qˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}5=9Q!1e}5MM}EU=Qˆ¤½È€ÈÀÀ¤(€€€±¥¹•}ÕÍ…”€ôµ½¹Ñ¡±å}±¥¹•}µ•ÍÍ…•}ÕÍ…” (€€€€€€€ÍÑ…Ñ”°ÍÑ…ÑÕÍ}¹½Ü¹ÍÑÉ™Ñ¥µ” ˆ•d´•´ˆ¤°ÅÕ½Ñ„°ÍÑ…ÑÕÍ}¹½Ü(€€€€¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰Ñ½Ñ…±}ÕÍ•ÉÌˆè±•¸¡ÕÍ•ÉÌ¤°(€€€€€€€€‰½Ù•É‘Õ•}ÕÍ•ÉÌˆèÍÕ´ Ä™½ÈÕÍ•È¥¸ÕÍ•ÉÌ¥˜ÕÍ•Él‰¥Í}½Ù•É‘Õ”‰t¤°(€€€€€€€€‰İ…É¹¥¹}ÕÍ•ÉÌˆèÍÕ´ Ä™½ÈÕÍ•È¥¸ÕÍ•ÉÌ¥˜ÕÍ•Él‰ÍÑ…ÑÕÍ}±…ÍÌ‰t€ôô€‰İ…É¹¥¹œˆ¤°(€€€€€€€€‰¡•­•‘}Ñ½‘…äˆèÍÕ´ Ä™½ÈÕÍ•È¥¸ÕÍ•ÉÌ¥˜ÕÍ•Él‰¥Í}Ñ½‘…å}¡•­•‰t¤°(€€€€€€€€‰Õ…É‘¥…¹}É½ÕÁ}½Õ¹Ğˆè±•¸¡Õ…É‘¥…¹}É½ÕÁÌ¤°(€€€€€€€€‰Õ…É‘¥…¹}É½ÕÁÌˆèÕ…É‘¥…¹}É½ÕÁÌ°(€€€€€€€€‰‰½Õ¹‘}Õ…É‘¥…¹}Ñ½Ñ…°ˆèÍÕ´¡¥¹Ğ¡ÕÍ•È¹•Ğ ‰‰½Õ¹‘}Õ…É‘¥…¹}½Õ¹Ğˆ¤½È€À¤™½ÈÕÍ•È¥¸ÕÍ•ÉÌ¤°(€€€€€€€€‰¥¹Ù¥Ñ•}•‘•Ìˆè±¥ÍĞ¡É•Ù•ÉÍ•¡¥¹Ù¥Ñ•}•‘•Íl´ÄÀÀét¤¤°(€€€€€€€€‰Õ…É‘¥…¹}¥¹Ù¥Ñ•ÌˆèÕ…É‘¥…¹}¥¹Ù¥Ñ•Ì°(€€€€€€€€‰Õ…É‘¥…¹}¥¹Ù¥Ñ•}½Õ¹ÑÌˆèì(€€€€€€€€€€€ÍÑ…ÑÕÌèÍÕ´ Ä™½ÈÉ½Ü¥¸Õ…É‘¥…¹}¥¹Ù¥Ñ•Ì¥˜É½Ü¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôôÍÑ…ÑÕÌ¤(€€€€€€€€€€€™½ÈÍÑ…ÑÕÌ¥¸€ ‰Á•¹‘¥¹œˆ°€‰…•ÁÑ•ˆ°€‰•áÁ¥É•ˆ¤(€€€€€€€ô°(€€€€€€€€‰½É‘•ÉÌˆè½É‘•ÉÌ°(€€€€€€€€‰Á…¥‘}½É‘•É}½Õ¹Ğˆè±•¸¡Á…¥‘}½É‘•ÉÌ¤°(€€€€€€€€‰Á…¥‘}É•Ù•¹Õ”ˆèÍÕ´¡¥¹Ğ¡½É‘•È¹•Ğ ‰…µ½Õ¹Ğˆ¤½È€À¤™½È½É‘•È¥¸Á…¥‘}½É‘•ÉÌ¤°(€€€€€€€€‰Á•¹‘¥¹}½É‘•É}½Õ¹ĞˆèÍÕ´ Ä™½È½É‘•È¥¸½É‘•ÉÌ¥˜½É‘•È¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰Á•¹‘¥¹œˆ¤°(€€€€€€€€‰½Õ¹Ñå}ÍÑ…ÑÌˆè½Õ¹Ñå}ÍÑ…ÑÌ°(€€€€€€€€‰ÕÍ•ÉÌˆèÕÍ•ÉÌ°(€€€€€€€€‰½¹Ñ…Ñ}É•İ…É‘Ìˆè±¥ÍĞ¡É•Ù•ÉÍ•¡ÍÑ…Ñ”¹•Ğ ‰½¹Ñ…Ñ}É•İ…É‘Ìˆ°mt¥l´ÈÀét¤¤°(€€€€€€€€‰¹½Ñ¥™¥…Ñ¥½¹}±½Ìˆè±¥ÍĞ¡É•Ù•ÉÍ•¡ÍÑ…Ñ”¹•Ğ ‰¹½Ñ¥™¥…Ñ¥½¹}±½Ìˆ°mt¥l´ÈÀét¤¤°(€€€€€€€€‰‘…¥±å}ÁÕÍ¡}µ•µ‰•É}ÍÑ…ÑÌˆè‘…¥±å}ÁÕÍ¡}µ•µ‰•É}ÍÑ…ÑÍlèÔÀÁt°(€€€€€€€€‰±¥¹•}µ•ÍÍ…•}ÕÍ…”ˆè±¥¹•}ÕÍ…”°(€€€€€€€€‰‘¥ÍÁ±…å}¹…µ•Í}¡å‘É…Ñ•ˆè¡å‘É…Ñ•°(€€€€€€€€‰Á•ÉÍ¥ÍÑ•¹”ˆèÁ•ÉÍ¥ÍĞ°(€€€ô(()}5%IQ%=9}5%9}=U9Q}-eL€ô€ (€€€€‰¡•­¥¹Ìˆ°(€€€€‰½¹Ñ…ÑÌˆ°(€€€€‰É½ÕÁÌˆ°(€€€€‰É•µ¥¹‘•ÉÌˆ°(€€€€‰½É‘•ÉÌˆ°(€€€€‰É•ÅÕ•ÍÑÌˆ°(¤)}5%IQ%=9}5%9}%1UI}Q=I%L€ôì(€€€€ˆˆ°(€€€€‰¥¹Ù…±¥‘}½‘”ˆ°(€€€€‰•áÁ¥É•‘}½‘”ˆ°(€€€€‰ÕÍ•‘}½‘”ˆ°(€€€€‰Í½ÕÉ•}µ¥ÍÍ¥¹œˆ°(€€€€‰Õ¹Í…™•}½¹™±¥Ğˆ°(€€€€‰µ¥É…Ñ¥½¹}™…¥±•ˆ°)ô(()‘•˜…‘µ¥¹}…½Õ¹Ñ}µ¥É…Ñ¥½¹Ì¡‘…Ñ…}™¥±”°½¹™¥œ°¹½Üõ9½¹”¤è(€€€€ˆˆ‰I•ÑÕÉ¸„É•…µ½¹±ä°…±±½İ±¥ÍÑ•½Á•É…Ñ¥½¹…°µ¥É…Ñ¥½¸ÍÕµµ…Éä¸ˆˆˆ(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€ÕÉÉ•¹Ğ€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}¹½Ü¡¹½Ü¤(€€€…Õ‘¥Ğ€ôÍÑ…Ñ”¹•Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}…Õ‘¥Ğˆ¤½Èmt(€€€ÍÕ•ÍÍ•Ì€ôÍÕ´ (€€€€€€€€Ä(€€€€€€€™½È•Ù•¹Ğ¥¸…Õ‘¥Ğ(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡•Ù•¹Ğ°‘¥Ğ¤…¹•Ù•¹Ğ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰ÍÕ•ÍÌˆ(€€€€¤(€€€™…¥±ÕÉ•Ì€ôÍÕ´ (€€€€€€€€Ä(€€€€€€€™½È•Ù•¹Ğ¥¸…Õ‘¥Ğ(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡•Ù•¹Ğ°‘¥Ğ¤…¹•Ù•¹Ğ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰™…¥±•ˆ(€€€€¤(€€€Á•¹‘¥¹œ€ôÍÕ´ (€€€€€€€€Ä(€€€€€€€™½ÈÑ¥­•Ğ¥¸€¡ÍÑ…Ñ”¹•Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}Ñ¥­•ÑÌˆ¤½Èíô¤¹Ù…±Õ•Ì ¤(€€€€€€€¥˜€ (€€€€€€€€€€€¥Í¥¹ÍÑ…¹”¡Ñ¥­•Ğ°‘¥Ğ¤(€€€€€€€€€€€…¹Ñ¥­•Ğ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰Á•¹‘¥¹œˆ(€€€€€€€€€€€…¹€ (€€€€€€€€€€€€€€€}…½Õ¹Ñ}µ¥É…Ñ¥½¹}‘…Ñ•Ñ¥µ”¡Ñ¥­•Ğ¹•Ğ ‰•áÁ¥É•Í}…Ğˆ¤¤(€€€€€€€€€€€€€€€…¹ÕÉÉ•¹Ğ(€€€€€€€€€€€€€€€€ğ}…½Õ¹Ñ}µ¥É…Ñ¥½¹}‘…Ñ•Ñ¥µ”¡Ñ¥­•Ğ¹•Ğ ‰•áÁ¥É•Í}…Ğˆ¤¤(€€€€€€€€€€€€¤(€€€€€€€€¤(€€€€¤(€€€±…Ñ•ÍÑ}•Ù•¹ÑÌ€ômt(€€€™½È•Ù•¹Ğ¥¸É•Ù•ÉÍ•¡…Õ‘¥Ñl´ÄÀét¤è(€€€€€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡•Ù•¹Ğ°‘¥Ğ¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€ÍÑ…ÑÕÌ€ô€ (€€€€€€€€€€€•Ù•¹Ğ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤(€€€€€€€€€€€¥˜•Ù•¹Ğ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤¥¸ì‰ÍÕ•ÍÌˆ°€‰™…¥±•‰ô(€€€€€€€€€€€•±Í”€‰™…¥±•ˆ(€€€€€€€€¤(€€€€€€€™…¥±ÕÉ•}…Ñ•½Éä€ôÍÑÈ¡•Ù•¹Ğ¹•Ğ ‰™…¥±ÕÉ•}…Ñ•½Éäˆ¤½È€ˆˆ¤(€€€€€€€¥˜™…¥±ÕÉ•}…Ñ•½Éä¹½Ğ¥¸}5%IQ%=9}5%9}%1UI}Q=I%Lè(€€€€€€€€€€€™…¥±ÕÉ•}…Ñ•½Éä€ô€‰½Ñ¡•Èˆ(€€€€€€€É•…Ñ•‘}…Ğ€ô}…½Õ¹Ñ}µ¥É…Ñ¥½¹}‘…Ñ•Ñ¥µ”¡•Ù•¹Ğ¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤¤(€€€€€€€É…İ}½Õ¹ÑÌ€ô€ (€€€€€€€€€€€•Ù•¹Ğ¹•Ğ ‰½Õ¹ÑÌˆ¤(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡•Ù•¹Ğ¹•Ğ ‰½Õ¹ÑÌˆ¤°‘¥Ğ¤(€€€€€€€€€€€•±Í”íô(€€€€€€€€¤(€€€€€€€½Õ¹ÑÌ€ôíô(€€€€€€€™½È­•ä¥¸}5%IQ%=9}5%9}=U9Q}-eLè(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€½Õ¹ÑÍm­•åt€ôµ…à À°¥¹Ğ¡É…İ}½Õ¹ÑÌ¹•Ğ¡­•ä¤½È€À¤¤(€€€€€€€€€€€•á•ÁĞ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€€€€€€€€€½Õ¹ÑÍm­•åt€ô€À(€€€€€€€±…Ñ•ÍÑ}•Ù•¹ÑÌ¹…ÁÁ•¹¡ì(€€€€€€€€€€€€‰ÍÑ…ÑÕÌˆèÍÑ…ÑÕÌ°(€€€€€€€€€€€€‰É•…Ñ•‘}…Ğˆè€ (€€€€€€€€€€€€€€€É•…Ñ•‘}…Ğ¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€€€€€€€€€€€€€¥˜É•…Ñ•‘}…Ğ(€€€€€€€€€€€€€€€•±Í”€ˆˆ(€€€€€€€€€€€€¤°(€€€€€€€€€€€€‰™…¥±ÕÉ•}…Ñ•½Éäˆè™…¥±ÕÉ•}…Ñ•½Éä°(€€€€€€€€€€€€‰½Õ¹ÑÌˆè½Õ¹ÑÌ°(€€€€€€€ô¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰½¹™¥ÕÉ•ˆè…½Õ¹Ñ}µ¥É…Ñ¥½¹}É•…‘ä¡½¹™¥œ¤°(€€€€€€€€‰Ñ½Ñ…±Ìˆèì(€€€€€€€€€€€€‰Ñ½Ñ…°ˆèÍÕ•ÍÍ•Ì€¬™…¥±ÕÉ•Ì€¬Á•¹‘¥¹œ°(€€€€€€€€€€€€‰ÍÕ•ÍÌˆèÍÕ•ÍÍ•Ì°(€€€€€€€€€€€€‰™…¥±•ˆè™…¥±ÕÉ•Ì°(€€€€€€€€€€€€‰Á•¹‘¥¹œˆèÁ•¹‘¥¹œ°(€€€€€€€ô°(€€€€€€€€‰±…Ñ•ÍÑ}•Ù•¹ÑÌˆè±…Ñ•ÍÑ}•Ù•¹ÑÌ°(€€€ô(()‘•˜‰…­ÕÁ}É½½Ğ¡‘…Ñ…}™¥±”¤è(€€€É•ÑÕÉ¸A…Ñ ¡‘…Ñ…}™¥±”¤¹Á…É•¹Ğ€¼€‰‰…­ÕÁÌˆ(()‘•˜}ÈÉ}‰…­ÕÁ}­•ä¡É…Ü¤è(€€€ÑÉäè(€€€€€€€­•ä€ô‰…Í”ØĞ¹ÕÉ±Í…™•}ˆØÑ‘•½‘”¡ÍÑÈ¡É…Ü¤¹•¹½‘” ¤¤(€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€­•ä€ôˆˆˆ(€€€É•ÑÕÉ¸­•ä¥˜±•¸¡­•ä¤€ôô€ÌÈ•±Í”9½¹”(()‘•˜}‘•™…Õ±Ñ}ÈÉ}ÕÁ±½…‘•È¡‰Õ­•Ğ°½‰©•Ñ}­•ä°‰½‘ä°½¹Ñ•¹Ñ}ÑåÁ”°µ•Ñ…‘…Ñ„°½¹™¥œ¤è(€€€¥µÁ½ÉĞ‰½Ñ¼Ì((€€€±¥•¹Ğ€ô‰½Ñ¼Ì¹±¥•¹Ğ (€€€€€€€€‰ÌÌˆ°(€€€€€€€•¹‘Á½¥¹Ñ}ÕÉ°õ½¹™¥œ¹•Ğ ‰HÉ}9A=%9Pˆ¤°(€€€€€€€…İÍ}…•ÍÍ}­•å}¥õ½¹™¥œ¹•Ğ ‰HÉ}MM}-e}%ˆ¤°(€€€€€€€…İÍ}Í•É•Ñ}…•ÍÍ}­•äõ½¹™¥œ¹•Ğ ‰HÉ}MIQ}MM}-dˆ¤°(€€€€€€€É•¥½¹}¹…µ”ô‰…ÕÑ¼ˆ°(€€€€¤(€€€É•ÑÕÉ¸±¥•¹Ğ¹ÁÕÑ}½‰©•Ğ (€€€€€€€	Õ­•Ğõ‰Õ­•Ğ°(€€€€€€€-•äõ½‰©•Ñ}­•ä°(€€€€€€€	½‘äõ‰½‘ä°(€€€€€€€½¹Ñ•¹ÑQåÁ”õ½¹Ñ•¹Ñ}ÑåÁ”°(€€€€€€€5•Ñ…‘…Ñ„õµ•Ñ…‘…Ñ„°(€€€€¤(()‘•˜É•…Ñ•}ÈÉ}•¹ÉåÁÑ•‘}‰…­ÕÀ¡½¹™¥œ¤è(€€€‰Õ­•Ğ€ôÍÑÈ¡½¹™¥œ¹•Ğ ‰HÉ}	U-Pˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€­•ä€ô}ÈÉ}‰…­ÕÁ}­•ä¡½¹™¥œ¹•Ğ ‰HÉ}	-UA}9IeAQ%=9}-dˆ¤½È€ˆˆ¤(€€€ÕÁ±½…‘•È€ô½¹™¥œ¹•Ğ ‰HÉ}UA1=Hˆ¤½È}‘•™…Õ±Ñ}ÈÉ}ÕÁ±½…‘•È(€€€¥˜¹½Ğ‰Õ­•Ğ½È­•ä¥Ì9½¹”½ÈL¥Ì9½¹”è(€€€€€€€É•ÑÕÉ¸ì‰•ÉÉ½Èˆè€‰ÈÉ}‰…­ÕÁ}¹½Ñ}½¹™¥ÕÉ•‰ô°€ÔÀÌ(€€€¥˜ÕÁ±½…‘•È¥Ì}‘•™…Õ±Ñ}ÈÉ}ÕÁ±½…‘•È…¹¹½Ğ…±° (€€€€€€€ÍÑÈ¡½¹™¥œ¹•Ğ¡¹…µ”¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€™½È¹…µ”¥¸€ ‰HÉ}9A=%9Pˆ°€‰HÉ}MM}-e}%ˆ°€‰HÉ}MIQ}MM}-dˆ¤(€€€€¤è(€€€€€€€É•ÑÕÉ¸ì‰•ÉÉ½Èˆè€‰ÈÉ}‰…­ÕÁ}¹½Ñ}½¹™¥ÕÉ•‰ô°€ÔÀÌ(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡½¹™¥l‰Q}%1‰t¤(€€€É•…Ñ•‘}…Ğ€ô‘…Ñ•Ñ¥µ”¹¹½Ü¡Ñ¥µ•é½¹”¹ÕÑŒ¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€‰…­ÕÁ}¥€ô€ (€€€€€€€˜‰ÈÈµí‘…Ñ•Ñ¥µ”¹¹½Ü¡Ñ¥µ•é½¹”¹ÕÑŒ¤¹ÍÑÉ™Ñ¥µ” œ•d•´•‘P• •4•Mhœ¥ô´ˆ(€€€€€€€˜‰íÍ•É•ÑÌ¹Ñ½­•¹}¡•à Ì¥ôˆ(€€€€¤(€€€Í¹…ÁÍ¡½Ğ€ôì(€€€€€€€­•å}¹…µ”èÙ…±Õ”(€€€€€€€™½È­•å}¹…µ”°Ù…±Õ”¥¸ÍÑ…Ñ”¹¥Ñ•µÌ ¤(€€€€€€€¥˜­•å}¹…µ”¹½Ğ¥¸ì‰‰…­ÕÁ}•áÁ½ÉÑÌˆ°€‰ÈÉ}‰…­ÕÁ}•áÁ½ÉÑÌ‰ô(€€€ô(€€€Á±…¥¹Ñ•áĞ€ô©Í½¸¹‘ÕµÁÌ (€€€€€€€ì‰‰…­ÕÁ}¥ˆè‰…­ÕÁ}¥°€‰É•…Ñ•‘}…ĞˆèÉ•…Ñ•‘}…Ğ°€‰Í¹…ÁÍ¡½ĞˆèÍ¹…ÁÍ¡½Ñô°(€€€€€€€•¹ÍÕÉ•}…Í¥¤õ…±Í”°(€€€€€€€Í•Á…É…Ñ½ÉÌô ˆ°ˆ°€ˆèˆ¤°(€€€€¤¹•¹½‘” ¤(€€€¥Á¡•È€ôL¹¹•Ü¡­•ä°L¹5=}4¤(€€€¥Á¡•ÉÑ•áĞ°Ñ…œ€ô¥Á¡•È¹•¹ÉåÁÑ}…¹‘}‘¥•ÍĞ¡Á±…¥¹Ñ•áĞ¤(€€€•¹Ù•±½Á”€ô©Í½¸¹‘ÕµÁÌ (€€€€€€€ì(€€€€€€€€€€€€‰Ù•ÉÍ¥½¸ˆè€Ä°(€€€€€€€€€€€€‰…±½É¥Ñ¡´ˆè€‰L´ÈÔØµ4ˆ°(€€€€€€€€€€€€‰¹½¹”ˆè‰…Í”ØĞ¹ˆØÑ•¹½‘”¡¥Á¡•È¹¹½¹”¤¹‘•½‘” ¤°(€€€€€€€€€€€€‰Ñ…œˆè‰…Í”ØĞ¹ˆØÑ•¹½‘”¡Ñ…œ¤¹‘•½‘” ¤°(€€€€€€€€€€€€‰¥Á¡•ÉÑ•áĞˆè‰…Í”ØĞ¹ˆØÑ•¹½‘”¡¥Á¡•ÉÑ•áĞ¤¹‘•½‘” ¤°(€€€€€€€ô°(€€€€€€€Í•Á…É…Ñ½ÉÌô ˆ°ˆ°€ˆèˆ¤°(€€€€¤¹•¹½‘” ¤(€€€½‰©•Ñ}­•ä€ô˜‰…±¥Ù”µ¡•­¥¸½íÉ•…Ñ•‘}…ÑlèÄÁuô½í‰…­ÕÁ}¥‘ô¹©Í½¸¹…•Í´ˆ(€€€µ•Ñ…‘…Ñ„€ôì(€€€€€€€€‰•¹ÉåÁÑ¥½¸ˆè€‰L´ÈÔØµ4ˆ°(€€€€€€€€‰‰…­ÕÀµ¥ˆè‰…­ÕÁ}¥°(€€€€€€€€‰Í¡„ÈÔØˆè¡…Í¡±¥ˆ¹Í¡„ÈÔØ¡•¹Ù•±½Á”¤¹¡•á‘¥•ÍĞ ¤°(€€€ô(€€€ÑÉäè(€€€€€€€É•ÍÕ±Ğ€ôÕÁ±½…‘•È (€€€€€€€€€€€‰Õ­•Ğ°(€€€€€€€€€€€½‰©•Ñ}­•ä°(€€€€€€€€€€€•¹Ù•±½Á”°(€€€€€€€€€€€€‰…ÁÁ±¥…Ñ¥½¸½½Ñ•ĞµÍÑÉ•…´ˆ°(€€€€€€€€€€€µ•Ñ…‘…Ñ„°(€€€€€€€€€€€½¹™¥œ°(€€€€€€€€¤(€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€É•ÑÕÉ¸ì‰•ÉÉ½Èˆè€‰ÈÉ}‰…­ÕÁ}ÕÁ±½…‘}™…¥±•‰ô°€ÔÀÈ(€€€•Ñ…œ€ôÍÑÈ ¡É•ÍÕ±Ğ½Èíô¤¹•Ğ ‰•Ñ…œˆ¤½È€¡É•ÍÕ±Ğ½Èíô¤¹•Ğ ‰Q…œˆ¤½È€ˆˆ¤(€€€•Ñ…œ€ô•Ñ…œ¹ÍÑÉ¥À œˆœ¤(€€€‰…­ÕÀ€ôì(€€€€€€€€‰¥ˆè‰…­ÕÁ}¥°(€€€€€€€€‰É•…Ñ•‘}…ĞˆèÉ•…Ñ•‘}…Ğ°(€€€€€€€€‰‰Õ­•Ğˆè‰Õ­•Ğ°(€€€€€€€€‰½‰©•Ñ}­•äˆè½‰©•Ñ}­•ä°(€€€€€€€€‰•Ñ…œˆè•Ñ…œ°(€€€€€€€€‰Í¡„ÈÔØˆèµ•Ñ…‘…Ñ…l‰Í¡„ÈÔØ‰t°(€€€€€€€€‰•¹ÉåÁÑ¥½¸ˆèµ•Ñ…‘…Ñ…l‰•¹ÉåÁÑ¥½¸‰t°(€€€€€€€€‰ÕÍ•É}½Õ¹Ğˆè±•¸¡Í¹…ÁÍ¡½Ğ¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¤°(€€€ô(€€€ÍÑ…Ñ”¹Í•Ñ‘•™…Õ±Ğ ‰ÈÉ}‰…­ÕÁ}•áÁ½ÉÑÌˆ°mt¤¹…ÁÁ•¹¡‰…­ÕÀ¤(€€€ÍÑ…Ñ•l‰ÈÉ}‰…­ÕÁ}•áÁ½ÉÑÌ‰t€ôÍÑ…Ñ•l‰ÈÉ}‰…­ÕÁ}•áÁ½ÉÑÌ‰ul´ÄÀÀét(€€€Í…Ù•}ÍÑ…Ñ”¡½¹™¥l‰Q}%1‰t°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì‰‰…­ÕÀˆè‰…­ÕÁô°€ÈÀÄ(()‘•˜É•…Ñ•}…‘µ¥¹}‰…­ÕÀ¡‘…Ñ…}™¥±”¤è(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€É•…Ñ•‘}…Ğ€ô‘…Ñ•Ñ¥µ”¹¹½Ü ¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€‰…­ÕÁ}¥€ô˜‰‰…­ÕÀµí‘…Ñ•Ñ¥µ”¹¹½Ü ¤¹ÍÑÉ™Ñ¥µ” œ•d•´•• •4•Lœ¥ôµíÍ•É•ÑÌ¹Ñ½­•¹}¡•à Ì¥ôˆ(€€€™¥±•¹…µ”€ô˜‰í‰…­ÕÁ}¥‘ô¹©Í½¸ˆ(€€€Í¹…ÁÍ¡½Ğ€ôí­•äèÙ…±Õ”™½È­•ä°Ù…±Õ”¥¸ÍÑ…Ñ”¹¥Ñ•µÌ ¤¥˜­•ä€„ô€‰‰…­ÕÁ}•áÁ½ÉÑÌ‰ô(€€€‰…­ÕÀ€ôì(€€€€€€€€‰¥ˆè‰…­ÕÁ}¥°(€€€€€€€€‰É•…Ñ•‘}…ĞˆèÉ•…Ñ•‘}…Ğ°(€€€€€€€€‰™¥±•¹…µ”ˆè™¥±•¹…µ”°(€€€€€€€€‰ÕÍ•É}½Õ¹Ğˆè±•¸¡Í¹…ÁÍ¡½Ğ¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¤°(€€€ô(€€€É½½Ğ€ô‰…­ÕÁ}É½½Ğ¡‘…Ñ…}™¥±”¤(€€€É½½Ğ¹µ­‘¥È¡Á…É•¹ÑÌõQÉÕ”°•á¥ÍÑ}½¬õQÉÕ”¤(€€€€¡É½½Ğ€¼™¥±•¹…µ”¤¹İÉ¥Ñ•}Ñ•áĞ (€€€€€€€©Í½¸¹‘ÕµÁÌ¡ì‰‰…­ÕÀˆè‰…­ÕÀ°€‰Í¹…ÁÍ¡½ĞˆèÍ¹…ÁÍ¡½Ñô°•¹ÍÕÉ•}…Í¥¤õ…±Í”°¥¹‘•¹ĞôÈ¤°(€€€€€€€•¹½‘¥¹œô‰ÕÑ˜´àˆ°(€€€€¤(€€€ÍÑ…Ñ”¹Í•Ñ‘•™…Õ±Ğ ‰‰…­ÕÁ}•áÁ½ÉÑÌˆ°mt¤¹…ÁÁ•¹¡‰…­ÕÀ¤(€€€ÍÑ…Ñ•l‰‰…­ÕÁ}•áÁ½ÉÑÌ‰t€ôÍÑ…Ñ•l‰‰…­ÕÁ}•áÁ½ÉÑÌ‰ul´ÔÀét(€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì‰‰…­ÕÀˆè‰…­ÕÁô°€ÈÀÀ(()‘•˜±¥ÍÑ}…‘µ¥¹}‰…­ÕÁÌ¡‘…Ñ…}™¥±”¤è(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€É•ÑÕÉ¸ì‰‰…­ÕÁÌˆè±¥ÍĞ¡É•Ù•ÉÍ•¡ÍÑ…Ñ”¹•Ğ ‰‰…­ÕÁ}•áÁ½ÉÑÌˆ°mt¤¤¥ô(()‘•˜É•…‘}…‘µ¥¹}‰…­ÕÀ¡‘…Ñ…}™¥±”°‰…­ÕÁ}¥¤è(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€‰…­ÕÀ€ô¹•áĞ ¡¥Ñ•´™½È¥Ñ•´¥¸ÍÑ…Ñ”¹•Ğ ‰‰…­ÕÁ}•áÁ½ÉÑÌˆ°mt¤¥˜¥Ñ•´¹•Ğ ‰¥ˆ¤€ôô‰…­ÕÁ}¥¤°9½¹”¤(€€€¥˜¹½Ğ‰…­ÕÀè(€€€€€€€É•ÑÕÉ¸ì‰•ÉÉ½Èˆè€‰‰…­ÕÀ¹½Ğ™½Õ¹‰ô°€ĞÀĞ(€€€Á…Ñ €ô‰…­ÕÁ}É½½Ğ¡‘…Ñ…}™¥±”¤€¼‰…­ÕÀ¹•Ğ ‰™¥±•¹…µ”ˆ°€ˆˆ¤(€€€¥˜¹½ĞÁ…Ñ ¹•á¥ÍÑÌ ¤è(€€€€€€€É•ÑÕÉ¸ì‰•ÉÉ½Èˆè€‰‰…­ÕÀ™¥±”µ¥ÍÍ¥¹œ‰ô°€ĞÀĞ(€€€ÑÉäè(€€€€€€€É•ÑÕÉ¸©Í½¸¹±½…‘Ì¡Á…Ñ ¹É•…‘}Ñ•áĞ¡•¹½‘¥¹œô‰ÕÑ˜´àˆ¤¤°€ÈÀÀ(€€€•á•ÁĞ€¡©Í½¸¹)M=9•½‘•ÉÉ½È°=MÉÉ½È¤è(€€€€€€€É•ÑÕÉ¸ì‰•ÉÉ½Èˆè€‰‰…­ÕÀ™¥±”Õ¹É•…‘…‰±”‰ô°€ÔÀÀ(()‘•˜‰Õ¥±‘}Í½Í}É½ÕÁ}µ•¹Ñ¥½¹}µ•ÍÍ…”¡…±•ÉÑ}Ñ•áĞèÍÑÈ¤è(€€€€ˆˆ‹ú“ÖM=O¾òkR Ñ•áÑXÈ€¬µ•¹Ñ¥½¹•”ÑåÁ”õ…±³¾ò!–£¦®S¾ò'¾ò3n‡–>¿¢÷¢ºOš¾?’ö7š"C–N‡šRÛ–"Ã¦k~—ˆˆˆ(€€€‰½‘ä€ôÍÑÈ¡…±•ÉÑ}Ñ•áĞ½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰ÑåÁ”ˆè€‰Ñ•áÑXÈˆ°(€€€€€€€€‰Ñ•áĞˆè€‰í•Ù•Éå½¹•õq»Â~j£A–£¦®PƒŞ+š•M=OEq¸ˆ€¬‰½‘ä°(€€€€€€€€‰ÍÕ‰ÍÑ¥ÑÕÑ¥½¸ˆèì(€€€€€€€€€€€€‰•Ù•Éå½¹”ˆèì(€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€‰µ•¹Ñ¥½¸ˆ°(€€€€€€€€€€€€€€€€‰µ•¹Ñ¥½¹•”ˆèì‰ÑåÁ”ˆè€‰…±°‰ô°(€€€€€€€€€€€ô(€€€€€€€ô°(€€€ô(()‘•˜‰Õ¥±‘}Í½Í}É½ÕÁ}µ•µ‰•É}µ•¹Ñ¥½¹Í}µ•ÍÍ…”¡…±•ÉÑ}Ñ•áĞèÍÑÈ°µ•µ‰•É}ÕÍ•É}¥‘Ìõ9½¹”¤è(€€€€ˆˆ‰…±°ƒ–’ÇšV_šf–
+gš>Ó¾òiµ•¹Ñ¥½¸ƒ–ŞË~—š"C–N„ÕÍ•É%“¾ò#–Z»–&šr–’h€ÈÀƒ’êë¾ò'ˆˆˆ(€€€‰½‘ä€ôÍÑÈ¡…±•ÉÑ}Ñ•áĞ½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥‘Ì€ômt(€€€Í••¸€ôÍ•Ğ ¤(€€€™½ÈÕ¥¥¸µ•µ‰•É}ÕÍ•É}¥‘Ì½Èmtè(€€€€€€€Ô€ôÍÑÈ¡Õ¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€¥˜¹½ĞÔ½ÈÔ¥¸Í••¸½È¹½ĞÔ¹ÍÑ…ÉÑÍİ¥Ñ  ‰Tˆ¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€Í••¸¹…‘¡Ô¤(€€€€€€€¥‘Ì¹…ÁÁ•¹¡Ô¤(€€€€€€€¥˜±•¸¡¥‘Ì¤€øô€ÈÀè(€€€€€€€€€€€‰É•…¬(€€€¥˜¹½Ğ¥‘Ìè(€€€€€€€É•ÑÕÉ¸€‹Â~j£A–£¦®PƒŞ+š•M=OEq¸ˆ€¬‰½‘ä(€€€ÍÕ‰ÍÑ¥ÑÕÑ¥½¸€ôíô(€€€Á…ÉÑÌ€ômt(€€€™½È¤°Õ¥¥¸•¹Õµ•É…Ñ”¡¥‘Ì¤è(€€€€€€€­•ä€ô˜‰µí¥ôˆ(€€€€€€€Á…ÉÑÌ¹…ÁÁ•¹ ‰ìˆ€¬­•ä€¬€‰ôˆ¤(€€€€€€€ÍÕ‰ÍÑ¥ÑÕÑ¥½¹m­•åt€ôì(€€€€€€€€€€€€‰ÑåÁ”ˆè€‰µ•¹Ñ¥½¸ˆ°(€€€€€€€€€€€€‰µ•¹Ñ¥½¹•”ˆèì‰ÑåÁ”ˆè€‰ÕÍ•Èˆ°€‰ÕÍ•É%ˆèÕ¥‘ô°(€€€€€€€ô(€€€É•ÑÕÉ¸ì(€€€€€€€€‰ÑåÁ”ˆè€‰Ñ•áÑXÈˆ°(€€€€€€€€‰Ñ•áĞˆè€ˆ€ˆ¹©½¥¸¡Á…ÉÑÌ¤€¬€‰q»Â~j£A–£¦®PƒŞ+š•M=OEq¸ˆ€¬‰½‘ä°(€€€€€€€€‰ÍÕ‰ÍÑ¥ÑÕÑ¥½¸ˆèÍÕ‰ÍÑ¥ÑÕÑ¥½¸°(€€€ô(()‘•˜}Í•¹‘}±¥¹•}İ¥Ñ¡}É•ÑÉå}­•ä¡Í•¹‘•È°Ñ½­•¸°Ñ…É•Ğ°µ•ÍÍ…”°É•ÑÉå}­•ä¤è(€€€€ˆˆ‰UÍ”1%9É•ÑÉä­•åÌ¥¸ÁÉ½‘ÕÑ¥½¸İ¡¥±”­••Á¥¹œÍ¥µÁ±”¥¹©•Ñ•Ñ•ÍĞÍ•¹‘•ÉÌ¸ˆˆˆ(€€€¥˜Í•¹‘•È¥Ì±¥¹•}ÁÕÍ¡}µ•ÍÍ…”è(€€€€€€€É•ÑÕÉ¸Í•¹‘•È¡Ñ½­•¸°Ñ…É•Ğ°µ•ÍÍ…”°É•ÑÉå}­•äõÉ•ÑÉå}­•ä¤(€€€É•ÑÕÉ¸Í•¹‘•È¡Ñ½­•¸°Ñ…É•Ğ°µ•ÍÍ…”¤(()‘•˜ÁÕÍ¡}Í½Í}Ñ½}Õ…É‘¥…¹}É½ÕÀ (€€€Ñ½­•¸°É½ÕÁ}¥°…±•ÉÑ}Ñ•áĞ°€¨°Í•¹‘•Èõ9½¹”°µ•µ‰•É}¥‘Ìõ9½¹”°É•ÑÉå}­•äõ9½¹”(¤è(€€€€ˆˆ‹š:£¦ú“ÖM=O¾ò3–«– …±³¾òo–’ÇšV_–4µ•¹Ñ¥½¸ƒ–ŞË~—š"C–N‡¾òošr–ú3ÒSšZ–¶_–*€–£¦®Pƒ–&7ÚÓˆˆˆ(€€€ÁÕÍ €ôÍ•¹‘•È½È±¥¹•}ÁÕÍ¡}µ•ÍÍ…”(€€€¥€ôÍÑÈ¡É½ÕÁ}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¹½Ğ¥è(€€€€€€€É…¥Í”Y…±Õ•ÉÉ½È ‰µ¥ÍÍ¥¹œÉ½ÕÁ}¥™½ÈM=LÉ½ÕÀÁÕÍ ˆ¤(€€€ÁÉ¥µ…Éä€ô‰Õ¥±‘}Í½Í}É½ÕÁ}µ•¹Ñ¥½¹}µ•ÍÍ…”¡…±•ÉÑ}Ñ•áĞ¤(€€€ÑÉäè(€€€€€€€É•ÍÕ±Ğ€ô}Í•¹‘}±¥¹•}İ¥Ñ¡}É•ÑÉå}­•ä (€€€€€€€€€€€ÁÕÍ °Ñ½­•¸°¥°ÁÉ¥µ…Éä°(€€€€€€€€€€€}±¥¹•}É•ÑÉå}­•ä¡˜‰íÉ•ÑÉå}­•åôé…±°ˆ¤¥˜É•ÑÉå}­•ä•±Í”9½¹”°(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸É•ÍÕ±Ğ°€‰…±°ˆ°ÁÉ¥µ…Éä(€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€¥˜±…ÍÍ¥™å}ÁÕÍ¡}•á•ÁÑ¥½¸¡•áŒ¤¹­¥¹€„ô€‰µ•ÍÍ…”ˆè(€€€€€€€€€€€É…¥Í”(€€€€€€€™…±±‰…­}¥‘Ì€ô±¥ÍĞ¡µ•µ‰•É}¥‘Ì½Èmt¤(€€€€€€€¥˜¹½Ğ™…±±‰…­}¥‘Ìè(€€€€€€€€€€€™…±±‰…­}¥‘Ì€ô•Ñ}É½ÕÁ}µ•µ‰•É}¥‘Ì¡Ñ½­•¸°¥¤½Èmt(€€€€€€€Í•½¹‘…Éä€ô‰Õ¥±‘}Í½Í}É½ÕÁ}µ•µ‰•É}µ•¹Ñ¥½¹Í}µ•ÍÍ…”¡…±•ÉÑ}Ñ•áĞ°™…±±‰…­}¥‘Ì¤(€€€€€€€ÑÉäè(€€€€€€€€€€€É•ÍÕ±Ğ€ô}Í•¹‘}±¥¹•}İ¥Ñ¡}É•ÑÉå}­•ä (€€€€€€€€€€€€€€€ÁÕÍ °Ñ½­•¸°¥°Í•½¹‘…Éä°(€€€€€€€€€€€€€€€}±¥¹•}É•ÑÉå}­•ä¡˜‰íÉ•ÑÉå}­•åôéµ•µ‰•ÉÌˆ¤¥˜É•ÑÉå}­•ä•±Í”9½¹”°(€€€€€€€€€€€€¤(€€€€€€€€€€€µ½‘”€ô€‰µ•µ‰•ÉÌˆ¥˜¥Í¥¹ÍÑ…¹”¡Í•½¹‘…Éä°‘¥Ğ¤•±Í”€‰Ñ•áĞˆ(€€€€€€€€€€€É•ÑÕÉ¸É•ÍÕ±Ğ°µ½‘”°Í•½¹‘…Éä(€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€¥˜±…ÍÍ¥™å}ÁÕÍ¡}•á•ÁÑ¥½¸¡•áŒ¤¹­¥¹€„ô€‰µ•ÍÍ…”ˆè(€€€€€€€€€€€€€€€É…¥Í”(€€€€€€€€€€€Á±…¥¸€ô€‹Â~j£A–£¦®PƒŞ+š•M=OEq¸ˆ€¬ÍÑÈ¡…±•ÉÑ}Ñ•áĞ½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€€€€€É•ÍÕ±Ğ€ô}Í•¹‘}±¥¹•}İ¥Ñ¡}É•ÑÉå}­•ä (€€€€€€€€€€€€€€€ÁÕÍ °Ñ½­•¸°¥°Á±…¥¸°(€€€€€€€€€€€€€€€}±¥¹•}É•ÑÉå}­•ä¡˜‰íÉ•ÑÉå}­•åôéÑ•áĞˆ¤¥˜É•ÑÉå}­•ä•±Í”9½¹”°(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸É•ÍÕ±Ğ°€‰Ñ•áĞˆ°Á±…¥¸(()‘•˜±¥¹•}ÁÕÍ¡}µ•ÍÍ…”¡Ñ½­•¸°±¥¹•}ÕÍ•É}¥°µ•ÍÍ…”°€¨°É•ÑÉå}­•äõ9½¹”¤è(€€€€ˆˆ‹š:£¢¢+š¿Ö›–Z»’â 1%9ƒR£š"Û((€€€µ•ÍÍ…”ƒ–>¿’î—šb¼è(€€€€´ÍÑÈèƒÒSšZ–¶_¢¢+š¼(€€€€´‘¥Ğƒ’âS–âØ€‰ÑåÁ”ˆ­•äèƒnÓš:—’ös
+è1%9µ•ÍÍ…”½‰©•Ğ€£’ú/–š™±•à¤(€€€€ˆˆˆ(€€€Ñ½}¥€ôÍÑÈ¡±¥¹•}ÕÍ•É}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¹½ĞÑ½}¥è(€€€€€€€É…¥Í”Y…±Õ•ÉÉ½È ‰µ¥ÍÍ¥¹œ±¥¹•}ÕÍ•É}¥™½ÈÁÕÍ ˆ¤(€€€¥˜¥Í¥¹ÍÑ…¹”¡µ•ÍÍ…”°‘¥Ğ¤…¹µ•ÍÍ…”¹•Ğ ‰ÑåÁ”ˆ¤è(€€€€€€€µÍ}½‰¨€ôµ•ÍÍ…”(€€€•±Í”è(€€€€€€€µÍ}½‰¨€ôì‰ÑåÁ”ˆè€‰Ñ•áĞˆ°€‰Ñ•áĞˆèÍÑÈ¡µ•ÍÍ…”¥ô(€€€‰½‘ä€ô©Í½¸¹‘ÕµÁÌ (€€€€€€€ì‰Ñ¼ˆèÑ½}¥°€‰µ•ÍÍ…•ÌˆèmµÍ}½‰©uô°(€€€€€€€•¹ÍÕÉ•}…Í¥¤õ…±Í”°(€€€€¤¹•¹½‘” ‰ÕÑ˜´àˆ¤(€€€¡•…‘•ÉÌ€ôì(€€€€€€€€‰½¹Ñ•¹ĞµQåÁ”ˆè€‰…ÁÁ±¥…Ñ¥½¸½©Í½¸ì¡…ÉÍ•ĞõUQ´àˆ°(€€€€€€€€‰ÕÑ¡½É¥é…Ñ¥½¸ˆè˜‰	•…É•ÈíÑ½­•¹ôˆ°(€€€ô(€€€¥˜É•ÑÉå}­•äè(€€€€€€€¡•…‘•ÉÍl‰`µ1¥¹”µI•ÑÉäµ-•ä‰t€ôÍÑÈ¡É•ÑÉå}­•ä¤(€€€É•Ä€ôÕÉ±±¥ˆ¹É•ÅÕ•ÍĞ¹I•ÅÕ•ÍĞ (€€€€€€€€‰¡ÑÑÁÌè¼½…Á¤¹±¥¹”¹µ”½ØÈ½‰½Ğ½µ•ÍÍ…”½ÁÕÍ ˆ°(€€€€€€€‘…Ñ„õ‰½‘ä°(€€€€€€€¡•…‘•ÉÌõ¡•…‘•ÉÌ°(€€€€€€€µ•Ñ¡½ô‰A=MPˆ°(€€€€¤(€€€ÑÉäè(€€€€€€€İ¥Ñ ÕÉ±±¥ˆ¹É•ÅÕ•ÍĞ¹ÕÉ±½Á•¸¡É•Ä°Ñ¥µ•½ÕĞôÄÀ¤…ÌÉ•Ìè(€€€€€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè€ÈÀÀ€ğôÉ•Ì¹ÍÑ…ÑÕÌ€ğ€ÌÀÀ°€‰ÍÑ…ÑÕÌˆèÉ•Ì¹ÍÑ…ÑÕÍô(€€€•á•ÁĞÕÉ±±¥ˆ¹•ÉÉ½È¹!QQAÉÉ½È…Ì•áŒè(€€€€€€€¥˜•áŒ¹½‘”€ôô€ĞÀä…¹•áŒ¹¡•…‘•ÉÌ¹•Ğ ‰`µ1¥¹”µ•ÁÑ•µI•ÅÕ•ÍĞµ%ˆ¤è(€€€€€€€€€€€É•ÑÕÉ¸ì(€€€€€€€€€€€€€€€€‰½¬ˆèQÉÕ”°(€€€€€€€€€€€€€€€€‰ÍÑ…ÑÕÌˆè€ĞÀä°(€€€€€€€€€€€€€€€€‰¥‘•µÁ½Ñ•¹Ñ}É•Á±…äˆèQÉÕ”°(€€€€€€€€€€€€€€€€‰…•ÁÑ•‘}É•ÅÕ•ÍÑ}¥ˆè•áŒ¹¡•…‘•ÉÌ¹•Ğ (€€€€€€€€€€€€€€€€€€€€‰`µ1¥¹”µ•ÁÑ•µI•ÅÕ•ÍĞµ%ˆ(€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€ô(€€€€€€€•ÉÉ}‰½‘ä€ô€ˆˆ(€€€€€€€ÑÉäè(€€€€€€€€€€€•ÉÉ}‰½‘ä€ô•áŒ¹É•… ¤¹‘•½‘” ‰ÕÑ˜´àˆ°•ÉÉ½ÉÌô‰É•Á±…”ˆ¥lèÔÀÁt(€€€€€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€€€€€•ÉÉ}‰½‘ä€ô€ˆˆ(€€€€€€€€ŒI”µÉ…¥Í”İ¥Ñ 1%9‰½‘äÍ¼É½¸½‰…­™¥±°…¸ÍÕÉ™…”Ñ¡”É•…°…ÕÍ”¸(€€€€€€€É…¥Í”ÕÉ±±¥ˆ¹•ÉÉ½È¹!QQAÉÉ½È (€€€€€€€€€€€•áŒ¹ÕÉ°°(€€€€€€€€€€€•áŒ¹½‘”°(€€€€€€€€€€€˜‰í•áŒ¹É•…Í½¹ôèí•ÉÉ}‰½‘åôˆ¥˜•ÉÉ}‰½‘ä•±Í”•áŒ¹É•…Í½¸°(€€€€€€€€€€€•áŒ¹¡•…‘•ÉÌ°(€€€€€€€€€€€9½¹”°(€€€€€€€€¤™É½´•áŒ(()‘•˜…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ¡ÍÑ…Ñ”°­¥¹°±¥¹•}ÕÍ•É}¥°ÍÑ…ÑÕÌ°µ•ÍÍ…”°‘•Ñ…¥°õ9½¹”¤è(€€€±½Ì€ôÍÑ…Ñ”¹Í•Ñ‘•™…Õ±Ğ ‰¹½Ñ¥™¥…Ñ¥½¹}±½Ìˆ°mt¤(€€€¥˜¥Í¥¹ÍÑ…¹”¡µ•ÍÍ…”°‘¥Ğ¤è(€€€€€€€µ•ÍÍ…•}Ñ•áĞ€ôÍÑÈ¡µ•ÍÍ…”¹•Ğ ‰…±ÑQ•áĞˆ¤½Èµ•ÍÍ…”¹•Ğ ‰ÑåÁ”ˆ¤½Èµ•ÍÍ…”¥lèÄÈÁt(€€€•±Í”è(€€€€€€€µ•ÍÍ…•}Ñ•áĞ€ôÍÑÈ¡µ•ÍÍ…”½È€ˆˆ¥lèÄÈÁt(€€€É•…Ñ•‘}…Ğ€ô‘…Ñ•Ñ¥µ”¹¹½Ü ¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€±½Ì¹…ÁÁ•¹ (€€€€€€€ì(€€€€€€€€€€€€‰É•…Ñ•‘}…ĞˆèÉ•…Ñ•‘}…Ğ°(€€€€€€€€€€€€‰­¥¹ˆè­¥¹°(€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€‰ÍÑ…ÑÕÌˆèÍÑ…ÑÕÌ°(€€€€€€€€€€€€‰µ•ÍÍ…”ˆèµ•ÍÍ…•}Ñ•áĞ°(€€€€€€€€€€€€‰‘•Ñ…¥°ˆè‘•Ñ…¥°½È€ˆˆ°(€€€€€€€ô(€€€€¤(€€€ÍÑ…Ñ•l‰¹½Ñ¥™¥…Ñ¥½¹}±½Ì‰t€ô±½Íl´ÄÀÀét(€€€µ•µ‰•É}¥€ôÍÑÈ¡±¥¹•}ÕÍ•É}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€‘…Ñ”€ôÉ•…Ñ•‘}…ÑlèÄÁt(€€€¥˜µ•µ‰•É}¥è(€€€€€€€ÍÑ…ÑÌ€ôÍÑ…Ñ”¹Í•Ñ‘•™…Õ±Ğ ‰‘…¥±å}ÁÕÍ¡}µ•µ‰•É}ÍÑ…ÑÌˆ°íô¤(€€€€€€€­•ä€ô˜‰í‘…Ñ•õñíµ•µ‰•É}¥‘ôˆ(€€€€€€€É½Ü€ôÍÑ…ÑÌ¹Í•Ñ‘•™…Õ±Ğ (€€€€€€€€€€€­•ä°(€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€‰‘…Ñ”ˆè‘…Ñ”°(€€€€€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆèµ•µ‰•É}¥°(€€€€€€€€€€€€€€€€‰Í•¹Ñ}½Õ¹Ğˆè€À°(€€€€€€€€€€€€€€€€‰™…¥±•‘}½Õ¹Ğˆè€À°(€€€€€€€€€€€€€€€€‰Ñ½Ñ…±}½Õ¹Ğˆè€À°(€€€€€€€€€€€€€€€€‰­¥¹‘Ìˆèmt°(€€€€€€€€€€€€€€€€‰±…ÍÑ}ÁÕÍ¡}…ĞˆèÉ•…Ñ•‘}…Ğ°(€€€€€€€€€€€ô°(€€€€€€€€¤(€€€€€€€É½İl‰Ñ½Ñ…±}½Õ¹Ğ‰t€ô¥¹Ğ¡É½Ü¹•Ğ ‰Ñ½Ñ…±}½Õ¹Ğˆ¤½È€À¤€¬€Ä(€€€€€€€¥˜ÍÑ…ÑÕÌ€ôô€‰Í•¹Ğˆè(€€€€€€€€€€€É½İl‰Í•¹Ñ}½Õ¹Ğ‰t€ô¥¹Ğ¡É½Ü¹•Ğ ‰Í•¹Ñ}½Õ¹Ğˆ¤½È€À¤€¬€Ä(€€€€€€€•±¥˜ÍÑ…ÑÕÌ¥¸ì‰™…¥±•ˆ°€‰•ÉÉ½Èˆ°€‰‰±½­•‰ôè(€€€€€€€€€€€É½İl‰™…¥±•‘}½Õ¹Ğ‰t€ô¥¹Ğ¡É½Ü¹•Ğ ‰™…¥±•‘}½Õ¹Ğˆ¤½È€À¤€¬€Ä(€€€€€€€É½İl‰­¥¹‘Ì‰t€ôÍ½ÉÑ•¡Í•Ğ¡É½Ü¹•Ğ ‰­¥¹‘Ìˆ¤½Èmt¤ğíÍÑÈ¡­¥¹½È€‰½Ñ¡•Èˆ¥ô¤(€€€€€€€É½İl‰±…ÍÑ}ÁÕÍ¡}…Ğ‰t€ôÉ•…Ñ•‘}…Ğ(€€€€€€€€Œ-••ÀÉ½Õ¡±ä½¹”å•…È½˜‘…¥±ä½µ•µ‰•È…É•…Ñ•Ìİ¥Ñ¡½ÕĞÉ½İ¥¹œ™½É•Ù•È¸(€€€€€€€¥˜±•¸¡ÍÑ…ÑÌ¤€ø€ÈÀÀÀÀè(€€€€€€€€€€€™½È½±‘}­•ä¥¸Í½ÉÑ•¡ÍÑ…ÑÌ¥lè±•¸¡ÍÑ…ÑÌ¤€´€ÈÀÀÀÁtè(€€€€€€€€€€€€€€€ÍÑ…ÑÌ¹Á½À¡½±‘}­•ä°9½¹”¤(()1%9}5MM}UM}Q=I%L€ôì(€€€€‰‰¥¹‘¥¹œˆ°(€€€€‰¡•­¥¸ˆ°(€€€€‰½Ù•É‘Õ”ˆ°(€€€€‰Í½Ìˆ°(€€€€‰Í½Í}…¹•°ˆ°(€€€€‰Í½Í}•Í…±…Ñ¥½¸ˆ°(€€€€‰Íµ…ÉÑ}É•µ¥¹‘•Èˆ°(€€€€‰Õ…É‘¥…¹}ÍÕµµ…Éäˆ°)ô(()‘•˜É•½É‘}±¥¹•}µ•ÍÍ…•}ÕÍ…” (€€€ÍÑ…Ñ”è‘¥Ğ°(€€€€¨°(€€€…Ñ•½ÉäèÍÑÈ°(€€€½İ¹•É}±¥¹•}ÕÍ•É}¥èÍÑÈ°(€€€É•¥Á¥•¹Ñ}½Õ¹Ğè¥¹Ğ°(€€€•Ù•¹Ñ}¥èÍÑÈ°(€€€Í•¹Ñ}…Ğè‘…Ñ•Ñ¥µ”°(¤€´ø‘¥Ğè(€€€€ˆˆ‰%‘•µÁ½Ñ•¹Ñ±äÉ•½É‘•±¥Ù•É•1%9É•¥Á¥•¹ĞÕ¹¥ÑÌ¸ˆˆˆ(€€€…Ñ•½Éä€ôÍÑÈ¡…Ñ•½Éä½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜…Ñ•½Éä¹½Ğ¥¸1%9}5MM}UM}Q=I%Lè(€€€€€€€É…¥Í”Y…±Õ•ÉÉ½È ‰¥¹Ù…±¥1%9µ•ÍÍ…”ÕÍ…”…Ñ•½Éäˆ¤(€€€Õ¹¥ÑÌ€ôµ…à À°¥¹Ğ¡É•¥Á¥•¹Ñ}½Õ¹Ğ½È€À¤¤(€€€¥˜Õ¹¥ÑÌ€ğô€Àè(€€€€€€€É•ÑÕÉ¸ì‰É•½É‘•ˆè…±Í”°€‰Õ¹¥ÑÌˆè€Áô(€€€½İ¹•È€ôÍÑÈ¡½İ¹•É}±¥¹•}ÕÍ•É}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€•Ù•¹Ñ}¥€ôÍÑÈ¡•Ù•¹Ñ}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¹½Ğ½İ¹•È½È¹½Ğ•Ù•¹Ñ}¥è(€€€€€€€É…¥Í”Y…±Õ•ÉÉ½È ‰½İ¹•É}±¥¹•}ÕÍ•É}¥…¹•Ù•¹Ñ}¥…É”É•ÅÕ¥É•ˆ¤(€€€±•‘•È€ôÍÑ…Ñ”¹Í•Ñ‘•™…Õ±Ğ ‰±¥¹•}µ•ÍÍ…•}ÕÍ…”ˆ°mt¤(€€€­•ä€ô˜‰í…Ñ•½Éåôéí•Ù•¹Ñ}¥‘ôˆ(€€€•á¥ÍÑ¥¹œ€ô¹•áĞ ¡É½Ü™½ÈÉ½Ü¥¸±•‘•È¥˜É½Ü¹•Ğ ‰­•äˆ¤€ôô­•ä¤°9½¹”¤(€€€¥˜•á¥ÍÑ¥¹œè(€€€€€€€É•ÑÕÉ¸ì¨©•á¥ÍÑ¥¹œ°€‰É•½É‘•ˆè…±Í”°€‰¥‘•µÁ½Ñ•¹ĞˆèQÉÕ•ô(€€€É½Ü€ôì(€€€€€€€€‰­•äˆè­•ä°(€€€€€€€€‰…Ñ•½Éäˆè…Ñ•½Éä°(€€€€€€€€‰½İ¹•É}±¥¹•}ÕÍ•É}¥ˆè½İ¹•È°(€€€€€€€€‰É•¥Á¥•¹Ñ}½Õ¹ĞˆèÕ¹¥ÑÌ°(€€€€€€€€‰Õ¹¥ÑÌˆèÕ¹¥ÑÌ°(€€€€€€€€‰•Ù•¹Ñ}¥ˆè•Ù•¹Ñ}¥°(€€€€€€€€‰Í•¹Ñ}…ĞˆèÍ•¹Ñ}…Ğ¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€ô(€€€±•‘•È¹…ÁÁ•¹¡É½Ü¤(€€€ÍÑ…Ñ•l‰±¥¹•}µ•ÍÍ…•}ÕÍ…”‰t€ô±•‘•Él´ÄÀÀÀÀét(€€€É•ÑÕÉ¸ì¨©É½Ü°€‰É•½É‘•ˆèQÉÕ”°€‰¥‘•µÁ½Ñ•¹Ğˆè…±Í•ô(()‘•˜±¥¹•}ÁÕÍ¡}‰Õ‘•Ñ}‘•¥Í¥½¸ (€€€ÍÑ…Ñ”è‘¥Ğ°(€€€€¨°(€€€½İ¹•É}±¥¹•}ÕÍ•É}¥èÍÑÈ°(€€€É•ÅÕ•ÍÑ•‘}Õ¹¥ÑÌè¥¹Ğ°(€€€¹½Üè‘…Ñ•Ñ¥µ”°(€€€µ½¹Ñ¡±å}¡…É‘}…Àè¥¹Ğ°(€€€µ•µ‰•É}‘…¥±å}¡…É‘}…Àè¥¹Ğ°(€€€•µ•É•¹äè‰½½°€ô…±Í”°(¤€´ø‘¥Ğè(€€€€ˆˆ‰ÁÁ±äÁÉ”µÍ•¹¡…É…ÁÌİ¡¥±”É•Ñ…¥¹¥¹œ½¹”ÁÉ¥µ…ÉäM=L‘•±¥Ù•Éä¸ˆˆˆ(€€€½İ¹•È€ôÍÑÈ¡½İ¹•É}±¥¹•}ÕÍ•É}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€É•ÅÕ•ÍÑ•€ôµ…à À°¥¹Ğ¡É•ÅÕ•ÍÑ•‘}Õ¹¥ÑÌ½È€À¤¤(€€€µ½¹Ñ¡±å}…À€ôµ…à À°¥¹Ğ¡µ½¹Ñ¡±å}¡…É‘}…À½È€À¤¤(€€€‘…¥±å}…À€ôµ…à À°¥¹Ğ¡µ•µ‰•É}‘…¥±å}¡…É‘}…À½È€À¤¤(€€€µ½¹Ñ¡}ÁÉ•™¥à€ô¹½Ü¹ÍÑÉ™Ñ¥µ” ˆ•d´•´´ˆ¤(€€€‘…å}ÁÉ•™¥à€ô¹½Ü¹ÍÑÉ™Ñ¥µ” ˆ•d´•´´•ˆ¤(€€€É½İÌ€ôÍÑ…Ñ”¹•Ğ ‰±¥¹•}µ•ÍÍ…•}ÕÍ…”ˆ¤½Èmt(€€€µ½¹Ñ¡±å}ÕÍ•€ôÍÕ´ (€€€€€€€µ…à À°¥¹Ğ¡É½Ü¹•Ğ ‰Õ¹¥ÑÌˆ¤½ÈÉ½Ü¹•Ğ ‰É•¥Á¥•¹Ñ}½Õ¹Ğˆ¤½È€À¤¤(€€€€€€€™½ÈÉ½Ü¥¸É½İÌ(€€€€€€€¥˜ÍÑÈ¡É½Ü¹•Ğ ‰Í•¹Ñ}…Ğˆ¤½È€ˆˆ¤¹ÍÑ…ÉÑÍİ¥Ñ ¡µ½¹Ñ¡}ÁÉ•™¥à¤(€€€€¤(€€€µ•µ‰•É}‘…¥±å}ÕÍ•€ôÍÕ´ (€€€€€€€µ…à À°¥¹Ğ¡É½Ü¹•Ğ ‰Õ¹¥ÑÌˆ¤½ÈÉ½Ü¹•Ğ ‰É•¥Á¥•¹Ñ}½Õ¹Ğˆ¤½È€À¤¤(€€€€€€€™½ÈÉ½Ü¥¸É½İÌ(€€€€€€€¥˜ÍÑÈ¡É½Ü¹•Ğ ‰½İ¹•É}±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤€ôô½İ¹•È(€€€€€€€…¹ÍÑÈ¡É½Ü¹•Ğ ‰Í•¹Ñ}…Ğˆ¤½È€ˆˆ¤¹ÍÑ…ÉÑÍİ¥Ñ ¡‘…å}ÁÉ•™¥à¤(€€€€¤(€€€µ½¹Ñ¡±å}É•µ…¥¹¥¹œ€ôµ…à À°µ½¹Ñ¡±å}…À€´µ½¹Ñ¡±å}ÕÍ•¤(€€€‘…¥±å}É•µ…¥¹¥¹œ€ôµ…à À°‘…¥±å}…À€´µ•µ‰•É}‘…¥±å}ÕÍ•¤(€€€…±±½İ•‘}Õ¹¥ÑÌ€ôµ¥¸¡É•ÅÕ•ÍÑ•°µ½¹Ñ¡±å}É•µ…¥¹¥¹œ°‘…¥±å}É•µ…¥¹¥¹œ¤(€€€É•…Í½¸€ô9½¹”(€€€¥˜…±±½İ•‘}Õ¹¥ÑÌ€ğÉ•ÅÕ•ÍÑ•è(€€€€€€€É•…Í½¸€ô€ (€€€€€€€€€€€€‰µ½¹Ñ¡±å}¡…É‘}…Àˆ(€€€€€€€€€€€¥˜µ½¹Ñ¡±å}É•µ…¥¹¥¹œ€ğô‘…¥±å}É•µ…¥¹¥¹œ(€€€€€€€€€€€•±Í”€‰µ•µ‰•É}‘…¥±å}¡…É‘}…Àˆ(€€€€€€€€¤(€€€¥˜•µ•É•¹ä…¹É•ÅÕ•ÍÑ•€ø€À…¹…±±½İ•‘}Õ¹¥ÑÌ€ğ€Äè(€€€€€€€…±±½İ•‘}Õ¹¥ÑÌ€ô€Ä(€€€€€€€É•…Í½¸€ô€‰•µ•É•¹å}ÁÉ¥µ…Éå}½¹±äˆ(€€€É•ÑÕÉ¸ì(€€€€€€€€‰…±±½İ•ˆè…±±½İ•‘}Õ¹¥ÑÌ€ø€À½ÈÉ•ÅÕ•ÍÑ•€ôô€À°(€€€€€€€€‰É•…Í½¸ˆèÉ•…Í½¸°(€€€€€€€€‰É•ÅÕ•ÍÑ•‘}Õ¹¥ÑÌˆèÉ•ÅÕ•ÍÑ•°(€€€€€€€€‰…±±½İ•‘}Õ¹¥ÑÌˆè…±±½İ•‘}Õ¹¥ÑÌ°(€€€€€€€€‰µ½¹Ñ¡±å}ÕÍ•ˆèµ½¹Ñ¡±å}ÕÍ•°(€€€€€€€€‰µ½¹Ñ¡±å}¡…É‘}…Àˆèµ½¹Ñ¡±å}…À°(€€€€€€€€‰µ•µ‰•É}‘…¥±å}ÕÍ•ˆèµ•µ‰•É}‘…¥±å}ÕÍ•°(€€€€€€€€‰µ•µ‰•É}‘…¥±å}¡…É‘}…Àˆè‘…¥±å}…À°(€€€ô(()‘•˜µ½¹Ñ¡±å}±¥¹•}µ•ÍÍ…•}ÕÍ…”¡ÍÑ…Ñ”è‘¥Ğ°å•…É}µ½¹Ñ èÍÑÈ°ÅÕ½Ñ„è¥¹Ğ°¹½Üè‘…Ñ•Ñ¥µ”¤€´ø‘¥Ğè(€€€€ˆˆ‰É•…Ñ”‘•±¥Ù•É•É•¥Á¥•¹ĞÕ¹¥ÑÌ™½ÈÑ¡”É•ÅÕ•ÍÑ•…±•¹‘…Èµ½¹Ñ ¸ˆˆˆ(€€€…Ñ•½Éå}Ñ½Ñ…±Ì€ôí­•äè€À™½È­•ä¥¸Í½ÉÑ•¡1%9}5MM}UM}Q=I%L¥ô(€€€µ•µ‰•É}µ…À€ôíô(€€€É½İÌ€ômt(€€€™½ÈÉ½Ü¥¸ÍÑ…Ñ”¹•Ğ ‰±¥¹•}µ•ÍÍ…•}ÕÍ…”ˆ¤½Èmtè(€€€€€€€¥˜¹½ĞÍÑÈ¡É½Ü¹•Ğ ‰Í•¹Ñ}…Ğˆ¤½È€ˆˆ¤¹ÍÑ…ÉÑÍİ¥Ñ ¡˜‰íå•…É}µ½¹Ñ¡ô´ˆ¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€Õ¹¥ÑÌ€ôµ…à À°¥¹Ğ¡É½Ü¹•Ğ ‰Õ¹¥ÑÌˆ¤½ÈÉ½Ü¹•Ğ ‰É•¥Á¥•¹Ñ}½Õ¹Ğˆ¤½È€À¤¤(€€€€€€€¥˜Õ¹¥ÑÌ€ğô€Àè(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€É½İÌ¹…ÁÁ•¹¡É½Ü¤(€€€€€€€…Ñ•½Éä€ôÍÑÈ¡É½Ü¹•Ğ ‰…Ñ•½Éäˆ¤½È€ˆˆ¤(€€€€€€€¥˜…Ñ•½Éä¥¸…Ñ•½Éå}Ñ½Ñ…±Ìè(€€€€€€€€€€€…Ñ•½Éå}Ñ½Ñ…±Ím…Ñ•½Éåt€¬ôÕ¹¥ÑÌ(€€€€€€€½İ¹•È€ôÍÑÈ¡É½Ü¹•Ğ ‰½İ¹•É}±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤(€€€€€€€µ•µ‰•É}µ…Ám½İ¹•Ét€ôµ•µ‰•É}µ…À¹•Ğ¡½İ¹•È°€À¤€¬Õ¹¥ÑÌ(€€€ÕÍ•€ôÍÕ´¡…Ñ•½Éå}Ñ½Ñ…±Ì¹Ù…±Õ•Ì ¤¤(€€€ÑÉäè(€€€€€€€µ½¹Ñ¡}‘…åÌ€ô…±•¹‘…È¹µ½¹Ñ¡É…¹”¡¹½Ü¹å•…È°¹½Ü¹µ½¹Ñ ¥lÅt(€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€µ½¹Ñ¡}‘…åÌ€ô€ÌÀ(€€€•±…ÁÍ•‘}‘…åÌ€ôµ…à Ä°¹½Ü¹‘…ä¤(€€€ÁÉ½©•Ñ•€ô¥¹Ğ¡µ…Ñ ¹•¥°¡ÕÍ•€¨µ½¹Ñ¡}‘…åÌ€¼•±…ÁÍ•‘}‘…åÌ¤¤(€€€ÅÕ½Ñ„€ôµ…à À°¥¹Ğ¡ÅÕ½Ñ„½È€À¤¤(€€€É…Ñ¥¼€ô€¡ÕÍ•€¼ÅÕ½Ñ„¤¥˜ÅÕ½Ñ„•±Í”€À(€€€…±•ÉĞ€ô€‰É¥Ñ¥…±|äÀˆ¥˜ÅÕ½Ñ„…¹É…Ñ¥¼€øô€À¸ä•±Í”€ (€€€€€€€€‰İ…É¹¥¹|ÜÀˆ¥˜ÅÕ½Ñ„…¹É…Ñ¥¼€øô€À¸Ü•±Í”€‰¹½Éµ…°ˆ(€€€€¤(€€€µ•µ‰•ÉÌ€ôl(€€€€€€€ì‰±¥¹•}ÕÍ•É}¥ˆèÕ¥‘lèÙt€¬€ˆ¸¸¸ˆ€¬Õ¥‘l´Ğét¥˜±•¸¡Õ¥¤€ø€ÄÀ•±Í”Õ¥°€‰Õ¹¥ÑÌˆèÕ¹¥ÑÍô(€€€€€€€™½ÈÕ¥°Õ¹¥ÑÌ¥¸Í½ÉÑ•¡µ•µ‰•É}µ…À¹¥Ñ•µÌ ¤°­•äõ±…µ‰‘„¥Ñ•´è€ µ¥Ñ•µlÅt°¥Ñ•µlÁt¤¤(€€€t(€€€É•ÑÕÉ¸ì(€€€€€€€€‰å•…É}µ½¹Ñ ˆèå•…É}µ½¹Ñ °(€€€€€€€€‰ÅÕ½Ñ„ˆèÅÕ½Ñ„°(€€€€€€€€‰ÕÍ•‘}Õ¹¥ÑÌˆèÕÍ•°(€€€€€€€€‰É•µ…¥¹¥¹}Õ¹¥ÑÌˆèµ…à À°ÅÕ½Ñ„€´ÕÍ•¤¥˜ÅÕ½Ñ„•±Í”9½¹”°(€€€€€€€€‰ÕÍ…•}Á•É•¹ĞˆèÉ½Õ¹¡É…Ñ¥¼€¨€ÄÀÀ°€Ä¤¥˜ÅÕ½Ñ„•±Í”9½¹”°(€€€€€€€€‰ÁÉ½©•Ñ•‘}Õ¹¥ÑÌˆèÁÉ½©•Ñ•°(€€€€€€€€‰…±•ÉÑ}±•Ù•°ˆè…±•ÉĞ°(€€€€€€€€‰…Ñ•½Éå}Ñ½Ñ…±Ìˆè…Ñ•½Éå}Ñ½Ñ…±Ì°(€€€€€€€€‰µ•µ‰•É}Ñ½Ñ…±Ìˆèµ•µ‰•ÉÌ°(€€€€€€€€‰™…±Í•}…±…Éµ}Õ¹¥ÑÌˆè…Ñ•½Éå}Ñ½Ñ…±Íl‰Í½Í}…¹•°‰t°(€€€€€€€€‰É•½É‘Ìˆè±•¸¡É½İÌ¤°(€€€ô(()‘•˜}±•…É}ÁÕÍ¡}‘•±¥Ù•Éå}™…¥±ÕÉ”¡É•¥Á¥•¹Ğ°‘•±¥Ù•Éå}­•ä¤è(€€€…ÑÑ•µÁÑÌ€ô‘¥Ğ¡É•¥Á¥•¹Ğ¹•Ğ ‰ÁÕÍ¡}‘•±¥Ù•Éå}…ÑÑ•µÁÑÌˆ¤½Èíô¤(€€€…ÑÑ•µÁÑÌ¹Á½À¡‘•±¥Ù•Éå}­•ä°9½¹”¤(€€€¥˜…ÑÑ•µÁÑÌè(€€€€€€€É•¥Á¥•¹Ñl‰ÁÕÍ¡}‘•±¥Ù•Éå}…ÑÑ•µÁÑÌ‰t€ô…ÑÑ•µÁÑÌ(€€€•±Í”è(€€€€€€€É•¥Á¥•¹Ğ¹Á½À ‰ÁÕÍ¡}‘•±¥Ù•Éå}…ÑÑ•µÁÑÌˆ°9½¹”¤(()‘•˜}É•½É‘}±…Õ¹¡}‘•±¥Ù•Éä¡ÍÑ…Ñ”°‘•±¥Ù•Éå}­•ä°­¥¹°Ñ…É•Ğ°ÍÑ…ÑÕÌ¤è(€€€±•‘•È€ôÍÑ…Ñ”¹Í•Ñ‘•™…Õ±Ğ ‰±…Õ¹¡}‘•±¥Ù•Éå}•Ù•¹ÑÌˆ°íô¤(€€€±•‘•É}­•ä€ô˜‰í­¥¹‘ôéíÑ…É•Ñôéí‘•±¥Ù•Éå}­•åôˆ(€€€•Ù•¹Ğ€ô±•‘•È¹Í•Ñ‘•™…Õ±Ğ¡±•‘•É}­•ä°ì(€€€€€€€€‰­¥¹ˆèÍÑÈ¡­¥¹¤°(€€€€€€€€‰Ñ…É•ĞˆèÍÑÈ¡Ñ…É•Ğ¤°(€€€€€€€€‰•áÁ•Ñ•ˆèQÉÕ”°(€€€€€€€€‰Í•¹Ñ}½Õ¹Ğˆè€À°(€€€€€€€€‰™…¥±•ˆè…±Í”°(€€€ô¤(€€€¥˜ÍÑ…ÑÕÌ€ôô€‰Í•¹Ğˆè(€€€€€€€•Ù•¹Ñl‰Í•¹Ñ}½Õ¹Ğ‰t€ô¥¹Ğ¡•Ù•¹Ğ¹•Ğ ‰Í•¹Ñ}½Õ¹Ğˆ¤½È€À¤€¬€Ä(€€€•±¥˜ÍÑ…ÑÕÌ€ôô€‰™…¥±•ˆè(€€€€€€€•Ù•¹Ñl‰™…¥±•‰t€ôQÉÕ”(€€€•Ù•¹Ñl‰ÕÁ‘…Ñ•‘}…Ğ‰t€ô‘…Ñ•Ñ¥µ”¹¹½Ü ¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€É•ÑÕÉ¸•Ù•¹Ğ(()‘•˜}É•½É‘}Í¡•‘Õ±•‘}ÁÕÍ¡}™…¥±ÕÉ” (€€€ÍÑ…Ñ”°(€€€É•¥Á¥•¹Ğ°(€€€‘•±¥Ù•Éå}­•ä°(€€€­¥¹°(€€€±¥¹•}ÕÍ•É}¥°(€€€µ•ÍÍ…”°(€€€•áŒ°(€€€¹½Ü°(¤è(€€€™…¥±ÕÉ”€ôÉ•½É‘}ÁÕÍ¡}™…¥±ÕÉ”¡É•¥Á¥•¹Ğ°‘•±¥Ù•Éå}­•ä°•áŒ°¹½Ü¤(€€€}É•½É‘}±…Õ¹¡}‘•±¥Ù•Éä (€€€€€€€ÍÑ…Ñ”°‘•±¥Ù•Éå}­•ä°­¥¹°±¥¹•}ÕÍ•É}¥°€‰™…¥±•ˆ(€€€€¤(€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ (€€€€€€€ÍÑ…Ñ”°(€€€€€€€­¥¹°(€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€™…¥±ÕÉ•l‰ÍÑ…ÑÕÌ‰t°(€€€€€€€µ•ÍÍ…”°(€€€€€€€ÍÑÈ¡•áŒ¤°(€€€€¤(€€€É•ÑÕÉ¸™…¥±ÕÉ”(()‘•˜±½}¹½Ñ¥™¥…Ñ¥½¸¡‘…Ñ…}™¥±”°­¥¹°±¥¹•}ÕÍ•É}¥°ÍÑ…ÑÕÌ°µ•ÍÍ…”°‘•Ñ…¥°õ9½¹”¤è(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ¡ÍÑ…Ñ”°­¥¹°±¥¹•}ÕÍ•É}¥°ÍÑ…ÑÕÌ°µ•ÍÍ…”°‘•Ñ…¥°¤(€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(()‘•˜Í•¹‘}‘Õ•}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤è(€€€Ñ½­•¸€ô½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ°€ˆˆ¤(€€€¥˜¹½ĞÑ½­•¸è(€€€€€€€É•ÑÕÉ¸ì‰Í•¹Ğˆè€À°€‰Í­¥ÁÁ•ˆè€À°€‰•ÉÉ½Èˆè€‰1%9}!991}MM}Q=-8¥Ì¹½ĞÍ•Ğ‰ô°€ĞÀÀ((€€€¹½Ü€ôÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡½¹™¥œ¤(€€€ÍÕµµ…Éä€ô…‘µ¥¹}ÍÕµµ…Éä¡½¹™¥l‰Q}%1‰t°½¹™¥œ°¹½Üõ¹½Ü¤(€€€Í•¹‘•È€ô½¹™¥œ¹•Ğ ‰1%9}AUM!}M9Hˆ¤½È±¥¹•}ÁÕÍ¡}µ•ÍÍ…”(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡½¹™¥l‰Q}%1‰t¤(€€€Ñ½‘…ä€ô¹½Ü¹ÍÑÉ™Ñ¥µ” ˆ•d´•´´•ˆ¤(€€€Í•¹Ğ€ô€À(€€€Í­¥ÁÁ•€ô€À(€€€É•ÍÕ±ÑÌ€ômt(€€€ÍåÍÑ•µ}•ÉÉ½È€ô…±Í”(€€€™½ÈÕÍ•È¥¸ÍÕµµ…Éål‰ÕÍ•ÉÌ‰tè(€€€€€€€¥˜¹½ĞÕÍ•Él‰¥Í}½Ù•É‘Õ”‰tè(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€ÁÉ½™¥±”€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹•Ğ¡ÕÍ•Él‰±¥¹•}ÕÍ•É}¥‰t¤(€€€€€€€¥˜¹½ĞÁÉ½™¥±”è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜ÁÉ½™¥±”¹•Ğ ‰µ•µ‰•ÉÍ¡¥Á}Á…ÕÍ•ˆ¤½È¹½Ğµ•µ‰•ÉÍ¡¥Á}…•ÍÍ}…Ñ¥Ù”¡ÁÉ½™¥±”°¹½Ü¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜ÁÉ½™¥±”¹•Ğ ‰±…ÍÑ}½Ù•É‘Õ•}…±•ÉÑ}‘…Ñ”ˆ¤€ôôÑ½‘…äè(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€É•ÑÉå}Á•¹‘¥¹œ€ô…±Í”(€€€€€€€±½…Ñ¥½¸€ôÁÉ½™¥±”¹•Ğ ‰±½…Ñ¥½¸ˆ¤½Èíô(€€€€€€€±½…Ñ¥½¹}±¥¹¬€ô€ˆˆ(€€€€€€€¥˜ÁÉ½™¥±”¹•Ğ ‰…ÑÑ…¡}±½…Ñ¥½¹}½¹}…±•ÉĞˆ¤…¹±½…Ñ¥½¸¹•Ğ ‰±…Ñ¥ÑÕ‘”ˆ¤…¹±½…Ñ¥½¸¹•Ğ ‰±½¹¥ÑÕ‘”ˆ¤è(€€€€€€€€€€€±½…Ñ¥½¹}±¥¹¬€ô˜‰q»šr–ú3’ö7ö»¾òi¡ÑÑÁÌè¼½İİÜ¹½½±”¹½´½µ…ÁÌıÄõí±½…Ñ¥½¹l±…Ñ¥ÑÕ‘”uô±í±½…Ñ¥½¹l±½¹¥ÑÕ‘”uôˆ(€€€€€€€µ•ÍÍ…”€ô˜‹Šv“¾â<ƒ’î+–’§’â–"¦÷––÷–^;¾ò}q»¦î{’â’â/3š"G–æÏ–º'7¾ò3¢ºO–ºÛ’êëšRû–ş	í±½…Ñ¥½¹}±¥¹­ôˆ(€€€€€€€‘•±¥Ù•Éå}­•ä€ô˜‰½Ù•É‘Õ”éíÑ½‘…åôˆ(€€€€€€€}É•½É‘}±…Õ¹¡}‘•±¥Ù•Éä (€€€€€€€€€€€ÍÑ…Ñ”°‘•±¥Ù•Éå}­•ä°€‰½Ù•É‘Õ”ˆ°ÕÍ•Él‰±¥¹•}ÕÍ•É}¥‰t°€‰•áÁ•Ñ•ˆ(€€€€€€€€¤(€€€€€€€¥˜ÁÉ½™¥±”¹•Ğ ‰±…ÍÑ}½Ù•É‘Õ•}µ•µ‰•É}…±•ÉÑ}‘…Ñ”ˆ¤€ôôÑ½‘…äè(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€•±¥˜¹½ĞÁÕÍ¡}…ÑÑ•µÁÑ}…±±½İ•¡ÁÉ½™¥±”°‘•±¥Ù•Éå}­•ä¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€•±Í”è(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€É•ÍÕ±Ğ€ôÍ•¹‘•È¡Ñ½­•¸°ÕÍ•Él‰±¥¹•}ÕÍ•É}¥‰t°µ•ÍÍ…”¤(€€€€€€€€€€€€€€€}±•…É}ÁÕÍ¡}‘•±¥Ù•Éå}™…¥±ÕÉ”¡ÁÉ½™¥±”°‘•±¥Ù•Éå}­•ä¤(€€€€€€€€€€€€€€€}É•½É‘}±…Õ¹¡}‘•±¥Ù•Éä (€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°‘•±¥Ù•Éå}­•ä°€‰½Ù•É‘Õ”ˆ°ÕÍ•Él‰±¥¹•}ÕÍ•É}¥‰t°€‰Í•¹Ğˆ(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€ÁÉ½™¥±•l‰±…ÍÑ}½Ù•É‘Õ•}µ•µ‰•É}…±•ÉÑ}‘…Ñ”‰t€ôÑ½‘…ä(€€€€€€€€€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ¡ÍÑ…Ñ”°€‰½Ù•É‘Õ”ˆ°ÕÍ•Él‰±¥¹•}ÕÍ•É}¥‰t°€‰Í•¹Ğˆ°µ•ÍÍ…”°©Í½¸¹‘ÕµÁÌ¡É•ÍÕ±Ğ°•¹ÍÕÉ•}…Í¥¤õ…±Í”¤¤(€€€€€€€€€€€€€€€Í•¹Ğ€¬ô€Ä(€€€€€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆèÕÍ•Él‰±¥¹•}ÕÍ•É}¥‰t°€‰É•ÍÕ±ĞˆèÉ•ÍÕ±Ñô¤(€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€™…¥±ÕÉ”€ô}É•½É‘}Í¡•‘Õ±•‘}ÁÕÍ¡}™…¥±ÕÉ” (€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€ÁÉ½™¥±”°(€€€€€€€€€€€€€€€€€€€‘•±¥Ù•Éå}­•ä°(€€€€€€€€€€€€€€€€€€€€‰½Ù•É‘Õ”ˆ°(€€€€€€€€€€€€€€€€€€€ÕÍ•Él‰±¥¹•}ÕÍ•É}¥‰t°(€€€€€€€€€€€€€€€€€€€µ•ÍÍ…”°(€€€€€€€€€€€€€€€€€€€•áŒ°(€€€€€€€€€€€€€€€€€€€¹½Ü°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€É•ÑÉå}Á•¹‘¥¹œ€ôÉ•ÑÉå}Á•¹‘¥¹œ½È™…¥±ÕÉ•l‰É•ÑÉä‰t(€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆèÕÍ•Él‰±¥¹•}ÕÍ•É}¥‰t°€‰•ÉÉ½ÈˆèÍÑÈ¡•áŒ¥ô¤(€€€€€€€€€€€€€€€¥˜™…¥±ÕÉ•l‰­¥¹‰t€ôô€‰ÍåÍÑ•´ˆè(€€€€€€€€€€€€€€€€€€€ÍåÍÑ•µ}•ÉÉ½È€ôQÉÕ”(€€€€€€€¥˜ÍåÍÑ•µ}•ÉÉ½Èè(€€€€€€€€€€€‰É•…¬((€€€€€€€½¹Ñ…Ñ}µ•ÍÍ…”€ô€ (€€€€€€€€€€€˜‹C¦r¢š–æ¯–şgEíÁÉ½™¥±”¹•Ğ ‘¥ÍÁ±…å}¹…µ”œ¤½È€Ÿ–ºÛ’êèôƒ¢Ú¦;šf¦ZO–Âkšr«–n{–‚Ç–æÏ–º'¾ò3¢®/–6S–*§Šë¢ª7šb¿–B›’â–"¦÷––÷ˆ(€€€€€€€€€€€˜‰í±½…Ñ¥½¹}±¥¹­ôˆ(€€€€€€€€¤(€€€€€€€ÉÕ±•Ì€ôÁ±…¹}ÉÕ±•Ì¡ÁÉ½™¥±”°¹½Ü¤(€€€€€€€¹½Ñ¥™å}ÁÉ¥Ù…Ñ”€ôÍ¡½Õ±‘}¹½Ñ¥™å}ÁÉ¥Ù…Ñ•}Õ…É‘¥…¹Ì¡ÍÑ…Ñ”°ÁÉ½™¥±”¤(€€€€€€€¥˜¹½Ñ¥™å}ÁÉ¥Ù…Ñ”è(€€€€€€€€€€€…±•ÉÑ}±¥µ¥Ğ€ô¥¹Ğ¡ÉÕ±•Ì¹•Ğ ‰½É•}Õ…É‘¥…¹}…±•ÉÑ}±¥µ¥Ğˆ¤½È€Ä¤(€€€€€€€€€€€½¹Ñ…ÑÌ€ôÍ½ÉÑ• (€€€€€€€€€€€€€€€ÁÉ½™¥±”¹•Ğ ‰½¹Ñ…ÑÌˆ¤½Èmt°(€€€€€€€€€€€€€€€­•äõ±…µ‰‘„¥Ñ•´è€ À¥˜¥Ñ•´¹•Ğ ‰¥Í}ÁÉ¥µ…Éäˆ¤•±Í”€Ä°¥¹Ğ¡¥Ñ•´¹•Ğ ‰ÁÉ¥½É¥Ñäˆ¤½È€ääää¤¤°(€€€€€€€€€€€€¤(€€€€€€€€€€€±¥¹•}½¹Ñ…ÑÌ€ôl(€€€€€€€€€€€€€€€½¹Ñ…Ğ™½È½¹Ñ…Ğ¥¸½¹Ñ…ÑÌ(€€€€€€€€€€€€€€€¥˜€¡½¹Ñ…Ğ¹•Ğ ‰±¥¹•}¥ˆ¤½È½¹Ñ…Ğ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤¤(€€€€€€€€€€€€€€€…¹€‰±¥¹”ˆ¥¸€¡½¹Ñ…Ğ¹•Ğ ‰¹½Ñ¥™å}µ•Ñ¡½‘Ìˆ¤½Èl‰±¥¹”‰t¤(€€€€€€€€€€€ulé…±•ÉÑ}±¥µ¥Ñt(€€€€€€€€€€€™½È½¹Ñ…Ğ¥¸±¥¹•}½¹Ñ…ÑÌè(€€€€€€€€€€€€€€€Ñ…É•Ğ€ô½¹Ñ…Ğ¹•Ğ ‰±¥¹•}¥ˆ¤½È½¹Ñ…Ğ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤(€€€€€€€€€€€€€€€½¹Ñ…Ñ}‘•±¥Ù•Éå}­•ä€ô˜‰½¹Ñ…Ñ}…±•ÉĞéíÑ½‘…åôéíÑ…É•Ñôˆ(€€€€€€€€€€€€€€€¥˜½¹Ñ…Ğ¹•Ğ ‰±…ÍÑ}½Ù•É‘Õ•}½¹Ñ…Ñ}…±•ÉÑ}‘…Ñ”ˆ¤€ôôÑ½‘…äè(€€€€€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€€€€€¥˜¹½ĞÁÕÍ¡}…ÑÑ•µÁÑ}…±±½İ•¡½¹Ñ…Ğ°½¹Ñ…Ñ}‘•±¥Ù•Éå}­•ä¤è(€€€€€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€É•ÍÕ±Ğ€ôÍ•¹‘•È¡Ñ½­•¸°Ñ…É•Ğ°½¹Ñ…Ñ}µ•ÍÍ…”¤(€€€€€€€€€€€€€€€€€€€}±•…É}ÁÕÍ¡}‘•±¥Ù•Éå}™…¥±ÕÉ”¡½¹Ñ…Ğ°½¹Ñ…Ñ}‘•±¥Ù•Éå}­•ä¤(€€€€€€€€€€€€€€€€€€€½¹Ñ…Ñl‰±…ÍÑ}½Ù•É‘Õ•}½¹Ñ…Ñ}…±•ÉÑ}‘…Ñ”‰t€ôÑ½‘…ä(€€€€€€€€€€€€€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ¡ÍÑ…Ñ”°€‰½¹Ñ…Ñ}…±•ÉĞˆ°Ñ…É•Ğ°€‰Í•¹Ğˆ°½¹Ñ…Ñ}µ•ÍÍ…”°©Í½¸¹‘ÕµÁÌ¡É•ÍÕ±Ğ°•¹ÍÕÉ•}…Í¥¤õ…±Í”¤¤(€€€€€€€€€€€€€€€€€€€Í•¹Ğ€¬ô€Ä(€€€€€€€€€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆèÑ…É•Ğ°€‰É•ÍÕ±ĞˆèÉ•ÍÕ±Ñô¤(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€™…¥±ÕÉ”€ô}É•½É‘}Í¡•‘Õ±•‘}ÁÕÍ¡}™…¥±ÕÉ” (€€€€€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ…Ğ°(€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ…Ñ}‘•±¥Ù•Éå}­•ä°(€€€€€€€€€€€€€€€€€€€€€€€€‰½¹Ñ…Ñ}…±•ÉĞˆ°(€€€€€€€€€€€€€€€€€€€€€€€Ñ…É•Ğ°(€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ…Ñ}µ•ÍÍ…”°(€€€€€€€€€€€€€€€€€€€€€€€•áŒ°(€€€€€€€€€€€€€€€€€€€€€€€¹½Ü°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€É•ÑÉå}Á•¹‘¥¹œ€ôÉ•ÑÉå}Á•¹‘¥¹œ½È™…¥±ÕÉ•l‰É•ÑÉä‰t(€€€€€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆèÑ…É•Ğ°€‰•ÉÉ½ÈˆèÍÑÈ¡•áŒ¥ô¤(€€€€€€€€€€€€€€€€€€€¥˜™…¥±ÕÉ•l‰­¥¹‰t€ôô€‰ÍåÍÑ•´ˆè(€€€€€€€€€€€€€€€€€€€€€€€ÍåÍÑ•µ}•ÉÉ½È€ôQÉÕ”(€€€€€€€€€€€€€€€€€€€€€€€‰É•…¬(€€€€€€€€€€€€€€€™½Èµ•Ñ¡½¥¸€¡½¹Ñ…Ğ¹•Ğ ‰¹½Ñ¥™å}µ•Ñ¡½‘Ìˆ¤½Èl‰±¥¹”‰t¤è(€€€€€€€€€€€€€€€€€€€¥˜µ•Ñ¡½¥¸ì‰ÍµÌˆ°€‰Á¡½¹”‰ôè(€€€€€€€€€€€€€€€€€€€€€€€‘•Ñ…¥°€ô½¹Ñ…Ğ¹•Ğ ‰Á¡½¹”ˆ¤½È€‰µ¥ÍÍ¥¹œÁ¡½¹”ˆ(€€€€€€€€€€€€€€€€€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ (€€€€€€€€€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€€€€€€€€€˜‰íµ•Ñ¡½‘õ}½¹Ñ…Ñ}…±•ÉĞˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€ÕÍ•Él‰±¥¹•}ÕÍ•É}¥‰t°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰Í­¥ÁÁ•‘}¹½Ñ}±¥Ù”ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ…Ñ}µ•ÍÍ…”°(€€€€€€€€€€€€€€€€€€€€€€€€€€€‘•Ñ…¥°°(€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜ÍåÍÑ•µ}•ÉÉ½Èè(€€€€€€€€€€€€€€€‰É•…¬(€€€€€€€¥˜ÍåÍÑ•µ}•ÉÉ½Èè(€€€€€€€€€€€‰É•…¬((€€€€€€€É½ÕÁ}±¥µ¥Ğ€ô¥¹Ğ¡ÉÕ±•Ì¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁ}±¥µ¥Ğˆ¤½È€À¤(€€€€€€€¥˜É½ÕÁ}±¥µ¥Ğ€ø€Àè(€€€€€€€€€€€É½ÕÁÌ€ôÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁÌˆ°íô¤(€€€€€€€€€€€…Ñ¥Ù•}É½ÕÁ}¥‘Ì€ôl(€€€€€€€€€€€€€€€É½ÕÁ}¥™½ÈÉ½ÕÁ}¥¥¸€¡ÁÉ½™¥±”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁ}¥‘Ìˆ¤½Èmt¤(€€€€€€€€€€€€€€€¥˜É½ÕÁÌ¹•Ğ¡É½ÕÁ}¥°íô¤¹•Ğ ‰½İ¹•É}±¥¹•}ÕÍ•É}¥ˆ¤€ôôÕÍ•Él‰±¥¹•}ÕÍ•É}¥‰t(€€€€€€€€€€€€€€€…¹É½ÕÁÌ¹•Ğ¡É½ÕÁ}¥°íô¤¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰…Ñ¥Ù”ˆ(€€€€€€€€€€€€€€€…¹Õ…É‘¥…¹}É½ÕÁ}ÁÉ•™•É•¹”¡É½ÕÁÌ¹•Ğ¡É½ÕÁ}¥¤°€‰¹½Ñ¥™å}É½ÕÁ}½¹}½Ù•É‘Õ”ˆ¤(€€€€€€€€€€€uléÉ½ÕÁ}±¥µ¥Ñt(€€€€€€€€€€€É½ÕÁ}µ•ÍÍ…”€ô€ (€€€€€€€€€€€€€€€˜‹C–’Ç¢¿¦‚C¢¶›EíÁÉ½™¥±”¹•Ğ ‘¥ÍÁ±…å}¹…µ”œ¤½È€Ÿš"C–N„ôƒ–ŞË¢Ú¦;–æÏ–º'Â÷–"Ãšf¦ZO¾ò0ˆ(€€€€€€€€€€€€€€€˜‹¢®/ú“–Ÿ–6S–*§Šë¢ª7	í±½…Ñ¥½¹}±¥¹­ôˆ(€€€€€€€€€€€€¤(€€€€€€€€€€€™½ÈÉ½ÕÁ}¥¥¸…Ñ¥Ù•}É½ÕÁ}¥‘Ìè(€€€€€€€€€€€€€€€É½ÕÀ€ôÉ½ÕÁÌ¹•Ğ¡É½ÕÁ}¥¤½Èíô(€€€€€€€€€€€€€€€É½ÕÁ}‘•±¥Ù•Éå}­•ä€ô˜‰½Ù•É‘Õ•}Õ…É‘¥…¹}É½ÕÀéíÑ½‘…åôéíÉ½ÕÁ}¥‘ôˆ(€€€€€€€€€€€€€€€¥˜É½ÕÀ¹•Ğ ‰±…ÍÑ}½Ù•É‘Õ•}…±•ÉÑ}‘…Ñ”ˆ¤€ôôÑ½‘…äè(€€€€€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€€€€€¥˜¹½ĞÁÕÍ¡}…ÑÑ•µÁÑ}…±±½İ•¡É½ÕÀ°É½ÕÁ}‘•±¥Ù•Éå}­•ä¤è(€€€€€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€É•ÍÕ±Ğ€ôÍ•¹‘•È¡Ñ½­•¸°É½ÕÁ}¥°É½ÕÁ}µ•ÍÍ…”¤(€€€€€€€€€€€€€€€€€€€}±•…É}ÁÕÍ¡}‘•±¥Ù•Éå}™…¥±ÕÉ”¡É½ÕÀ°É½ÕÁ}‘•±¥Ù•Éå}­•ä¤(€€€€€€€€€€€€€€€€€€€É½ÕÁl‰±…ÍÑ}½Ù•É‘Õ•}…±•ÉÑ}‘…Ñ”‰t€ôÑ½‘…ä(€€€€€€€€€€€€€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ (€€€€€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€€€€€€‰½Ù•É‘Õ•}Õ…É‘¥…¹}É½ÕÀˆ°(€€€€€€€€€€€€€€€€€€€€€€€É½ÕÁ}¥°(€€€€€€€€€€€€€€€€€€€€€€€€‰Í•¹Ğˆ°(€€€€€€€€€€€€€€€€€€€€€€€É½ÕÁ}µ•ÍÍ…”°(€€€€€€€€€€€€€€€€€€€€€€€©Í½¸¹‘ÕµÁÌ¡É•ÍÕ±Ğ°•¹ÍÕÉ•}…Í¥¤õ…±Í”¤°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€Í•¹Ğ€¬ô€Ä(€€€€€€€€€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰É½ÕÁ}¥ˆèÉ½ÕÁ}¥°€‰É•ÍÕ±ĞˆèÉ•ÍÕ±Ñô¤(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€™…¥±ÕÉ”€ô}É•½É‘}Í¡•‘Õ±•‘}ÁÕÍ¡}™…¥±ÕÉ” (€€€€€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€€€€€É½ÕÀ°(€€€€€€€€€€€€€€€€€€€€€€€É½ÕÁ}‘•±¥Ù•Éå}­•ä°(€€€€€€€€€€€€€€€€€€€€€€€€‰½Ù•É‘Õ•}Õ…É‘¥…¹}É½ÕÀˆ°(€€€€€€€€€€€€€€€€€€€€€€€É½ÕÁ}¥°(€€€€€€€€€€€€€€€€€€€€€€€É½ÕÁ}µ•ÍÍ…”°(€€€€€€€€€€€€€€€€€€€€€€€•áŒ°(€€€€€€€€€€€€€€€€€€€€€€€¹½Ü°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€É•ÑÉå}Á•¹‘¥¹œ€ôÉ•ÑÉå}Á•¹‘¥¹œ½È™…¥±ÕÉ•l‰É•ÑÉä‰t(€€€€€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰É½ÕÁ}¥ˆèÉ½ÕÁ}¥°€‰•ÉÉ½ÈˆèÍÑÈ¡•áŒ¥ô¤(€€€€€€€€€€€€€€€€€€€¥˜™…¥±ÕÉ•l‰­¥¹‰t€ôô€‰ÍåÍÑ•´ˆè(€€€€€€€€€€€€€€€€€€€€€€€ÍåÍÑ•µ}•ÉÉ½È€ôQÉÕ”(€€€€€€€€€€€€€€€€€€€€€€€‰É•…¬(€€€€€€€€€€€¥˜ÍåÍÑ•µ}•ÉÉ½Èè(€€€€€€€€€€€€€€€‰É•…¬((€€€€€€€¥˜¹½ĞÉ•ÑÉå}Á•¹‘¥¹œè(€€€€€€€€€€€ÁÉ½™¥±•l‰±…ÍÑ}½Ù•É‘Õ•}…±•ÉÑ}‘…Ñ”‰t€ôÑ½‘…ä((€€€Í…Ù•}ÍÑ…Ñ”¡½¹™¥l‰Q}%1‰t°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰Í•¹ĞˆèÍ•¹Ğ°(€€€€€€€€‰Í­¥ÁÁ•ˆèÍ­¥ÁÁ•°(€€€€€€€€‰É•ÍÕ±ÑÌˆèÉ•ÍÕ±ÑÌ°(€€€€€€€€‰ÍåÍÑ•µ}•ÉÉ½ÈˆèÍåÍÑ•µ}•ÉÉ½È°(€€€ô°€ÈÀÀ(()‘•˜Í•¹‘}Õ…É‘¥…¹}É½ÕÁ}‘…¥±å}ÍÕµµ…É¥•Ì¡½¹™¥œ¤è(€€€€ˆˆ‹¦ãR£¾òk–º#¢¶ßú“–.û¦ã3ú“Öš¾?š^—šFc¢š7šf¾ò3šZóšfk¦ZOš:£šJ·’î+š^—–ŞË–‚Ç¾ò?šr«–‚Ç¾ò#¦‚C¢¢·¦^s¦Z'¾ò'ˆˆˆ(€€€Ñ½­•¸€ô½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ°€ˆˆ¤(€€€¥˜¹½ĞÑ½­•¸è(€€€€€€€É•ÑÕÉ¸ì‰Í•¹Ğˆè€À°€‰Í­¥ÁÁ•ˆè€À°€‰•ÉÉ½Èˆè€‰1%9}!991}MM}Q=-8¥Ì¹½ĞÍ•Ğ‰ô°€ĞÀÀ((€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡½¹™¥l‰Q}%1‰t¤(€€€Í•¹‘•È€ô½¹™¥œ¹•Ğ ‰1%9}AUM!}M9Hˆ¤½È±¥¹•}ÁÕÍ¡}µ•ÍÍ…”(€€€¹½Ü€ôÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡½¹™¥œ¤(€€€Ñ½‘…ä€ô¹½Ü¹ÍÑÉ™Ñ¥µ” ˆ•d´•´´•ˆ¤(€€€ÕÍ•ÉÌ€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô(€€€É½ÕÁÌ€ôÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁÌˆ¤½Èíô(€€€Í•¹Ğ€ô€À(€€€Í­¥ÁÁ•€ô€À(€€€É•ÍÕ±ÑÌ€ômt(€€€ÍåÍÑ•µ}•ÉÉ½È€ô…±Í”(€€€‘•™•ÉÉ•€ô€À(€€€µ•µ‰•É}™•Ñ¡•È€ô½¹™¥œ¹•Ğ ‰I=UA}55	I}%M}Q!Hˆ¤½È•Ñ}É½ÕÁ}µ•µ‰•É}¥‘Ì(€€€™½ÈÉ½ÕÁ}¥°É½ÕÀ¥¸±¥ÍĞ¡É½ÕÁÌ¹¥Ñ•µÌ ¤¤è(€€€€€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡É½ÕÀ°‘¥Ğ¤½ÈÉ½ÕÀ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€„ô€‰…Ñ¥Ù”ˆè(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€½İ¹•È€ôÕÍ•ÉÌ¹•Ğ¡ÍÑÈ¡É½ÕÀ¹•Ğ ‰½İ¹•É}±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¤½Èíô(€€€€€€€¥˜€ (€€€€€€€€€€€¹½ĞÕ…É‘¥…¹}É½ÕÁ}•¹Ñ¥Ñ±•µ•¹Ñ}…Ñ¥Ù”¡½İ¹•È°¹½Ü¤(€€€€€€€€¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰É½ÕÁ}¥ˆèÉ½ÕÁ}¥°€‰ÍÑ…ÑÕÌˆè€‰½İ¹•É}¹½Ñ}•±¥¥‰±”‰ô¤(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€ÁÉ•™Ì€ô¹½Éµ…±¥é•}Õ…É‘¥…¹}É½ÕÁ}ÁÉ•™•É•¹•Ì¡É½ÕÀ¹•Ğ ‰ÁÉ•™•É•¹•Ìˆ¤¤(€€€€€€€¥˜¹½ĞÁÉ•™Ì¹•Ğ ‰‘…¥±å}…‘µ¥¹}ÍÕµµ…Éäˆ¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€ÍÕµµ…Éå}Ñ¥µ”€ôÍÑÈ¡ÁÉ•™Ì¹•Ğ ‰‘…¥±å}ÍÕµµ…Éå}Ñ¥µ”ˆ¤½È€ˆÈÄèÀÀˆ¤(€€€€€€€ÕÉÉ•¹Ñ}¡´€ô¹½Ü¹ÍÑÉ™Ñ¥µ” ˆ• è•4ˆ¤(€€€€€€€¥˜ÕÉÉ•¹Ñ}¡´€ğÍÕµµ…Éå}Ñ¥µ”è(€€€€€€€€€€€‘•™•ÉÉ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜É½ÕÀ¹•Ğ ‰±…ÍÑ}‘…¥±å}ÍÕµµ…Éå}‘…Ñ”ˆ¤€ôôÑ½‘…äè(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€‘•±¥Ù•Éå}­•ä€ô˜‰Õ…É‘¥…¹}É½ÕÁ}‘…¥±å}ÍÕµµ…ÉäéíÑ½‘…åôéíÉ½ÕÁ}¥‘ôˆ(€€€€€€€¥˜¹½ĞÁÕÍ¡}…ÑÑ•µÁÑ}…±±½İ•¡É½ÕÀ°‘•±¥Ù•Éå}­•ä¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€±…¥µ}É•ÍÕ±Ğ€ôµÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€€€€€½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€±…µ‰‘„ÕÉÉ•¹Ñ}ÍÑ…Ñ”è}±…¥µ}Õ…É‘¥…¹}É½ÕÁ}ÍÕµµ…Éä (€€€€€€€€€€€€€€€ÕÉÉ•¹Ñ}ÍÑ…Ñ”°É½ÕÁ}¥°Ñ½‘…ä°¹½Ü(€€€€€€€€€€€€¤°(€€€€€€€€¤(€€€€€€€¥˜¹½Ğ±…¥µ}É•ÍÕ±Ğ¹•Ğ ‰±…¥µ•ˆ¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰É½ÕÁ}¥ˆèÉ½ÕÁ}¥°€‰ÍÑ…ÑÕÌˆè€‰…±É•…‘å}±…¥µ•‰ô¤(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€±…¥µ}Ñ½­•¸€ô±…¥µ}É•ÍÕ±Ñl‰±…¥µ}Ñ½­•¸‰t(€€€€€€€ÑÉäè(€€€€€€€€€€€ÕÉÉ•¹Ñ}¥‘Ì€ô9½¹”(€€€€€€€€€€€µ•µ‰•É}•ÉÉ½È€ô9½¹”(€€€€€€€€€€€™½È}…ÑÑ•µÁĞ¥¸É…¹” Ì¤è(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€ÕÉÉ•¹Ñ}¥‘Ì€ôµ•µ‰•É}™•Ñ¡•È¡Ñ½­•¸°É½ÕÁ}¥¤(€€€€€€€€€€€€€€€€€€€¥˜ÕÉÉ•¹Ñ}¥‘Ì¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€€€€€€€€€µ•µ‰•É}•ÉÉ½È€ô9½¹”(€€€€€€€€€€€€€€€€€€€€€€€‰É•…¬(€€€€€€€€€€€€€€€€€€€µ•µ‰•É}•ÉÉ½È€ôIÕ¹Ñ¥µ•ÉÉ½È ‰1%9µ•µ‰•È±¥ÍĞÕ¹…Ù…¥±…‰±”ˆ¤(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€µ•µ‰•É}•ÉÉ½È€ô•áŒ(€€€€€€€€€€€¥˜ÕÉÉ•¹Ñ}¥‘Ì¥Ì9½¹”è(€€€€€€€€€€€€€€€µÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€€€€€€€€€€€€€½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€±…µ‰‘„ÕÉÉ•¹Ñ}ÍÑ…Ñ”è}™¥¹¥Í¡}Õ…É‘¥…¹}É½ÕÁ}ÍÕµµ…Éä (€€€€€€€€€€€€€€€€€€€€€€€ÕÉÉ•¹Ñ}ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€€€€€É½ÕÁ}¥°(€€€€€€€€€€€€€€€€€€€€€€€Ñ½‘…ä°(€€€€€€€€€€€€€€€€€€€€€€€¹½Ü°(€€€€€€€€€€€€€€€€€€€€€€€±…¥µ}Ñ½­•¸õ±…¥µ}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€€€€€É•±•…Í•}½¹±äõQÉÕ”°(€€€€€€€€€€€€€€€€€€€€€€€…Õ‘¥Ñ}­¥¹ô‰Õ…É‘¥…¹}É½ÕÁ}µ•µ‰•É}É•™É•Í ˆ°(€€€€€€€€€€€€€€€€€€€€€€€…Õ‘¥Ñ}ÍÑ…ÑÕÌô‰™…¥±•ˆ°(€€€€€€€€€€€€€€€€€€€€€€€…Õ‘¥Ñ}‘•Ñ…¥°õÍÑÈ¡µ•µ‰•É}•ÉÉ½È½È€‰µ•µ‰•ÈÉ•™É•Í ™…¥±•ˆ¥lèĞÀÁt°(€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì(€€€€€€€€€€€€€€€€€€€€‰É½ÕÁ}¥ˆèÉ½ÕÁ}¥°(€€€€€€€€€€€€€€€€€€€€‰ÍÑ…ÑÕÌˆè€‰µ•µ‰•É}É•™É•Í¡}™…¥±•ˆ°(€€€€€€€€€€€€€€€€€€€€‰•ÉÉ½ÈˆèÍÑÈ¡µ•µ‰•É}•ÉÉ½È½È€ˆˆ¥lèĞÀÁt°(€€€€€€€€€€€€€€€ô¤(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€€€€€µÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€€€€€€€€€½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€±…µ‰‘„ÕÉÉ•¹Ñ}ÍÑ…Ñ”è}™¥¹¥Í¡}Õ…É‘¥…¹}É½ÕÁ}ÍÕµµ…Éä (€€€€€€€€€€€€€€€€€€€ÕÉÉ•¹Ñ}ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€É½ÕÁ}¥°(€€€€€€€€€€€€€€€€€€€Ñ½‘…ä°(€€€€€€€€€€€€€€€€€€€¹½Ü°(€€€€€€€€€€€€€€€€€€€±…¥µ}Ñ½­•¸õ±…¥µ}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€É•±•…Í•}½¹±äõQÉÕ”°(€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€¤(€€€€€€€€€€€É…¥Í”(€€€€€€€µ•µ‰•É}¥‘Ì€ô±¥ÍĞ¡‘¥Ğ¹™É½µ­•åÌ (€€€€€€€€€€€ÍÑÈ¡Õ¥½È€ˆˆ¤¹ÍÑÉ¥À ¤™½ÈÕ¥¥¸ÕÉÉ•¹Ñ}¥‘Ì¥˜ÍÑÈ¡Õ¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€€¤¤(€€€€€€€ÁÉ•Á…É•€ôµÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€€€€€½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€±…µ‰‘„ÕÉÉ•¹Ñ}ÍÑ…Ñ”è}ÁÉ•Á…É•}Õ…É‘¥…¹}É½ÕÁ}ÍÕµµ…Éä (€€€€€€€€€€€€€€€ÕÉÉ•¹Ñ}ÍÑ…Ñ”°(€€€€€€€€€€€€€€€É½ÕÁ}¥°(€€€€€€€€€€€€€€€Ñ½‘…ä°(€€€€€€€€€€€€€€€¹½Ü°(€€€€€€€€€€€€€€€±…¥µ}Ñ½­•¸°(€€€€€€€€€€€€€€€µ•µ‰•É}¥‘Ì°(€€€€€€€€€€€€¤°(€€€€€€€€¤(€€€€€€€•±¥¥‰±•}µ•µ‰•ÉÌ€ôÁÉ•Á…É•¹•Ğ ‰•±¥¥‰±•}µ•µ‰•ÉÌˆ¤½Èmt(€€€€€€€¥˜¹½ĞÁÉ•Á…É•¹•Ğ ‰É•…‘äˆ¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì(€€€€€€€€€€€€€€€€‰É½ÕÁ}¥ˆèÉ½ÕÁ}¥°(€€€€€€€€€€€€€€€€‰ÍÑ…ÑÕÌˆèÁÉ•Á…É•¹•Ğ ‰É•…Í½¸ˆ¤½È€‰¹½}±½¹•É}•±¥¥‰±”ˆ°(€€€€€€€€€€€ô¤(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜¹½Ğ•±¥¥‰±•}µ•µ‰•ÉÌè(€€€€€€€€€€€µÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€€€€€€€€€½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€±…µ‰‘„ÕÉÉ•¹Ñ}ÍÑ…Ñ”è}™¥¹¥Í¡}Õ…É‘¥…¹}É½ÕÁ}ÍÕµµ…Éä (€€€€€€€€€€€€€€€€€€€ÕÉÉ•¹Ñ}ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€É½ÕÁ}¥°(€€€€€€€€€€€€€€€€€€€Ñ½‘…ä°(€€€€€€€€€€€€€€€€€€€¹½Ü°(€€€€€€€€€€€€€€€€€€€±…¥µ}Ñ½­•¸õ±…¥µ}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€É•±•…Í•}½¹±äõQÉÕ”°(€€€€€€€€€€€€€€€€€€€µ•µ‰•É}¥‘Ìõµ•µ‰•É}¥‘Ì°(€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€¤(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰É½ÕÁ}¥ˆèÉ½ÕÁ}¥°€‰ÍÑ…ÑÕÌˆè€‰¹½}•±¥¥‰±•}µ•µ‰•ÉÌ‰ô¤(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¡•­•€ômt(€€€€€€€Õ¹¡•­•€ômt(€€€€€€€™½Èµ•µ‰•È¥¸•±¥¥‰±•}µ•µ‰•ÉÌè(€€€€€€€€€€€ÁÉ½™¥±”€ôµ•µ‰•Él‰ÁÉ½™¥±”‰t(€€€€€€€€€€€¹…µ”€ôµ•µ‰•Él‰¹…µ”‰t(€€€€€€€€€€€€¡¡•­•¥˜}µ•µ‰•É}¡•­•‘}Ñ½‘…ä¡ÁÉ½™¥±”°Ñ½‘…ä¤•±Í”Õ¹¡•­•¤¹…ÁÁ•¹¡¹…µ”¤(€€€€€€€µ•ÍÍ…”€ô€ (€€€€€€€€€€€˜‹Â~N(ƒ’î+š^—–æÏ–º'šFc¢š¾ò!íÑ½‘…å÷¾ò%q¸ˆ(€€€€€€€€€€€˜‹–ŞË–‚Ç–æÏ–º'¾òiìœ°€œ¹©½¥¸¡¡•­•¤¥˜¡•­••±Í”€Ÿ–Âk„õq¸ˆ(€€€€€€€€€€€˜‹–Âkšr«–‚Ç–æÏ–º'¾òiìœ°€œ¹©½¥¸¡Õ¹¡•­•¤¥˜Õ¹¡•­••±Í”€Ÿn»–&7¦÷–ŞË–º3š"@õq¹q¸ˆ(€€€€€€€€€€€€‹¾ò#š¶“
+ë¦ãR£ú“ÖšFc¢š¾òo¦^s¦Z'–ú3–>«šr¢¢+š‚ã–ş–º#¢¶ß’êë¾ò$ˆ(€€€€€€€€¤(€€€€€€€ÑÉäè(€€€€€€€€€€€¥˜Í•¹‘•È¥Ì±¥¹•}ÁÕÍ¡}µ•ÍÍ…”è(€€€€€€€€€€€€€€€É•ÍÕ±Ğ€ôÍ•¹‘•È (€€€€€€€€€€€€€€€€€€€Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€É½ÕÁ}¥°(€€€€€€€€€€€€€€€€€€€µ•ÍÍ…”°(€€€€€€€€€€€€€€€€€€€É•ÑÉå}­•äõ}±¥¹•}É•ÑÉå}­•ä¡‘•±¥Ù•Éå}­•ä¤°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€É•ÍÕ±Ğ€ôÍ•¹‘•È¡Ñ½­•¸°É½ÕÁ}¥°µ•ÍÍ…”¤(€€€€€€€€€€€µÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€€€€€€€€€½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€±…µ‰‘„ÕÉÉ•¹Ñ}ÍÑ…Ñ”è}™¥¹¥Í¡}Õ…É‘¥…¹}É½ÕÁ}ÍÕµµ…Éä (€€€€€€€€€€€€€€€€€€€ÕÉÉ•¹Ñ}ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€É½ÕÁ}¥°(€€€€€€€€€€€€€€€€€€€Ñ½‘…ä°(€€€€€€€€€€€€€€€€€€€¹½Ü°(€€€€€€€€€€€€€€€€€€€±…¥µ}Ñ½­•¸õ±…¥µ}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€Í•¹ĞõQÉÕ”°(€€€€€€€€€€€€€€€€€€€µ•ÍÍ…”õµ•ÍÍ…”°(€€€€€€€€€€€€€€€€€€€É•ÍÕ±ĞõÉ•ÍÕ±Ğ°(€€€€€€€€€€€€€€€€€€€µ•µ‰•É}¥‘Ìõµ•µ‰•É}¥‘Ì°(€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€¤(€€€€€€€€€€€Í•¹Ğ€¬ô€Ä(€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰É½ÕÁ}¥ˆèÉ½ÕÁ}¥°€‰É•ÍÕ±ĞˆèÉ•ÍÕ±Ñô¤(€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€™…¥±ÕÉ”€ôµÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€€€€€€€€€½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€±…µ‰‘„ÕÉÉ•¹Ñ}ÍÑ…Ñ”è}™¥¹¥Í¡}Õ…É‘¥…¹}É½ÕÁ}ÍÕµµ…Éä (€€€€€€€€€€€€€€€€€€€ÕÉÉ•¹Ñ}ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€É½ÕÁ}¥°(€€€€€€€€€€€€€€€€€€€Ñ½‘…ä°(€€€€€€€€€€€€€€€€€€€¹½Ü°(€€€€€€€€€€€€€€€€€€€±…¥µ}Ñ½­•¸õ±…¥µ}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€µ•ÍÍ…”õµ•ÍÍ…”°(€€€€€€€€€€€€€€€€€€€•ÉÉ½Èõ•áŒ°(€€€€€€€€€€€€€€€€€€€µ•µ‰•É}¥‘Ìõµ•µ‰•É}¥‘Ì°(€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€¤(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰É½ÕÁ}¥ˆèÉ½ÕÁ}¥°€‰•ÉÉ½ÈˆèÍÑÈ¡•áŒ¥ô¤(€€€€€€€€€€€¥˜™…¥±ÕÉ•l‰­¥¹‰t€ôô€‰ÍåÍÑ•´ˆè(€€€€€€€€€€€€€€€ÍåÍÑ•µ}•ÉÉ½È€ôQÉÕ”(€€€€€€€€€€€€€€€‰É•…¬((€€€É•ÑÕÉ¸ì(€€€€€€€€‰Í•¹ĞˆèÍ•¹Ğ°(€€€€€€€€‰Í­¥ÁÁ•ˆèÍ­¥ÁÁ•°(€€€€€€€€‰‘•™•ÉÉ•ˆè‘•™•ÉÉ•°(€€€€€€€€‰É•ÍÕ±ÑÌˆèÉ•ÍÕ±ÑÌ°(€€€€€€€€‰‘…Ñ”ˆèÑ½‘…ä°(€€€€€€€€‰ÍåÍÑ•µ}•ÉÉ½ÈˆèÍåÍÑ•µ}•ÉÉ½È°(€€€ô°€ÈÀÀ(()‘•˜}±¥¹•}É•ÑÉå}­•ä¡‘•±¥Ù•Éå}­•ä¤è(€€€€ˆˆ‰MÑ…‰±”UU%…•ÁÑ•‰ä1%9™½È¥‘•µÁ½Ñ•¹ĞÉ•ÑÉ¥•Ì½˜½¹”±½¥…°ÁÕÍ ¸ˆˆˆ(€€€É•ÑÕÉ¸ÍÑÈ¡ÕÕ¥¹ÕÕ¥Ô¡ÕÕ¥¹95MA}UI0°˜‰‘…¥±äµÁ•…”éí‘•±¥Ù•Éå}­•åôˆ¤¤(()‘•˜}±…¥µ}Õ…É‘¥…¹}É½ÕÁ}ÍÕµµ…Éä¡ÍÑ…Ñ”°É½ÕÁ}¥°Ñ½‘…ä°¹½Ü¤è(€€€É½ÕÀ€ô€¡ÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁÌˆ¤½Èíô¤¹•Ğ¡É½ÕÁ}¥¤(€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡É½ÕÀ°‘¥Ğ¤è(€€€€€€€É•ÑÕÉ¸ì‰±…¥µ•ˆè…±Í”°€‰É•…Í½¸ˆè€‰É½ÕÁ}¹½Ñ}™½Õ¹‰ô(€€€½İ¹•È€ô€¡ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô¤¹•Ğ (€€€€€€€ÍÑÈ¡É½ÕÀ¹•Ğ ‰½İ¹•É}±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€¤½Èíô(€€€ÁÉ•™Ì€ô¹½Éµ…±¥é•}Õ…É‘¥…¹}É½ÕÁ}ÁÉ•™•É•¹•Ì¡É½ÕÀ¹•Ğ ‰ÁÉ•™•É•¹•Ìˆ¤¤(€€€¥˜€ (€€€€€€€É½ÕÀ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€„ô€‰…Ñ¥Ù”ˆ(€€€€€€€½È¹½ĞÁÉ•™Ì¹•Ğ ‰‘…¥±å}…‘µ¥¹}ÍÕµµ…Éäˆ¤(€€€€€€€½È¹½ĞÕ…É‘¥…¹}É½ÕÁ}•¹Ñ¥Ñ±•µ•¹Ñ}…Ñ¥Ù”¡½İ¹•È°¹½Ü¤(€€€€¤è(€€€€€€€É•ÑÕÉ¸ì‰±…¥µ•ˆè…±Í”°€‰É•…Í½¸ˆè€‰¹½}±½¹•É}•±¥¥‰±”‰ô(€€€¥˜É½ÕÀ¹•Ğ ‰±…ÍÑ}‘…¥±å}ÍÕµµ…Éå}‘…Ñ”ˆ¤€ôôÑ½‘…äè(€€€€€€€É•ÑÕÉ¸ì‰±…¥µ•ˆè…±Í•ô(€€€±…¥µÌ€ô‘¥Ğ¡É½ÕÀ¹•Ğ ‰‘…¥±å}ÍÕµµ…Éå}±…¥µÌˆ¤½Èíô¤(€€€•á¥ÍÑ¥¹œ€ô±…¥µÌ¹•Ğ¡Ñ½‘…ä¤½Èíô(€€€¥˜•á¥ÍÑ¥¹œè(€€€€€€€±…¥µ•‘}…Ğ€ô9½¹”(€€€€€€€ÑÉäè(€€€€€€€€€€€±…¥µ•‘}…Ğ€ô‘…Ñ•Ñ¥µ”¹™É½µ¥Í½™½Éµ…Ğ¡ÍÑÈ¡•á¥ÍÑ¥¹œ¹•Ğ ‰±…¥µ•‘}…Ğˆ¤½È€ˆˆ¤¤(€€€€€€€•á•ÁĞ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€€€€€±…¥µ•‘}…Ğ€ô9½¹”(€€€€€€€¥˜±…¥µ•‘}…Ğ¥Ì¹½Ğ9½¹”…¹€¡¹½Ü€´±…¥µ•‘}…Ğ¤¹Ñ½Ñ…±}Í•½¹‘Ì ¤€ğ€äÀÀè(€€€€€€€€€€€É•ÑÕÉ¸ì‰±…¥µ•ˆè…±Í”°€‰É•…Í½¸ˆè€‰…Ñ¥Ù•}±…¥´‰ô(€€€±…¥µ}Ñ½­•¸€ôÍ•É•ÑÌ¹Ñ½­•¹}¡•à ÄØ¤(€€€±…¥µÍmÑ½‘…åt€ôì(€€€€€€€€‰±…¥µ•‘}…Ğˆè¹½Ü¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€‰±…¥µ}Ñ½­•¸ˆè±…¥µ}Ñ½­•¸°(€€€ô(€€€É½ÕÁl‰‘…¥±å}ÍÕµµ…Éå}±…¥µÌ‰t€ô±…¥µÌ(€€€É•ÑÕÉ¸ì(€€€€€€€€‰±…¥µ•ˆèQÉÕ”°(€€€€€€€€‰É•½Ù•É•ˆè‰½½°¡•á¥ÍÑ¥¹œ¤°(€€€€€€€€‰±…¥µ}Ñ½­•¸ˆè±…¥µ}Ñ½­•¸°(€€€ô(()‘•˜}ÁÉ•Á…É•}Õ…É‘¥…¹}É½ÕÁ}ÍÕµµ…Éä (€€€ÍÑ…Ñ”°É½ÕÁ}¥°Ñ½‘…ä°¹½Ü°±…¥µ}Ñ½­•¸°µ•µ‰•É}¥‘Ì(¤è(€€€É½ÕÀ€ô€¡ÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁÌˆ¤½Èíô¤¹•Ğ¡É½ÕÁ}¥¤(€€€±…¥´€ô€ ¡É½ÕÀ½Èíô¤¹•Ğ ‰‘…¥±å}ÍÕµµ…Éå}±…¥µÌˆ¤½Èíô¤¹•Ğ¡Ñ½‘…ä¤½Èíô(€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡É½ÕÀ°‘¥Ğ¤½È±…¥´¹•Ğ ‰±…¥µ}Ñ½­•¸ˆ¤€„ô±…¥µ}Ñ½­•¸è(€€€€€€€É•ÑÕÉ¸ì‰É•…‘äˆè…±Í”°€‰É•…Í½¸ˆè€‰±…¥µ}±½ÍĞ‰ô(€€€½İ¹•È€ô€¡ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô¤¹•Ğ (€€€€€€€ÍÑÈ¡É½ÕÀ¹•Ğ ‰½İ¹•É}±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€¤½Èíô(€€€ÁÉ•™Ì€ô¹½Éµ…±¥é•}Õ…É‘¥…¹}É½ÕÁ}ÁÉ•™•É•¹•Ì¡É½ÕÀ¹•Ğ ‰ÁÉ•™•É•¹•Ìˆ¤¤(€€€¥˜€ (€€€€€€€É½ÕÀ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€„ô€‰…Ñ¥Ù”ˆ(€€€€€€€½È¹½ĞÁÉ•™Ì¹•Ğ ‰‘…¥±å}…‘µ¥¹}ÍÕµµ…Éäˆ¤(€€€€€€€½È¹½ĞÕ…É‘¥…¹}É½ÕÁ}•¹Ñ¥Ñ±•µ•¹Ñ}…Ñ¥Ù”¡½İ¹•È°¹½Ü¤(€€€€¤è(€€€€€€€}™¥¹¥Í¡}Õ…É‘¥…¹}É½ÕÁ}ÍÕµµ…Éä (€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€É½ÕÁ}¥°(€€€€€€€€€€€Ñ½‘…ä°(€€€€€€€€€€€¹½Ü°(€€€€€€€€€€€±…¥µ}Ñ½­•¸õ±…¥µ}Ñ½­•¸°(€€€€€€€€€€€É•±•…Í•}½¹±äõQÉÕ”°(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸ì‰É•…‘äˆè…±Í”°€‰É•…Í½¸ˆè€‰¹½}±½¹•É}•±¥¥‰±”‰ô(€€€É½ÕÁl‰µ•µ‰•É}¥‘Í}±…ÍÑ}ÍÕµµ…Éä‰t€ô±¥ÍĞ¡µ•µ‰•É}¥‘Ì¤(€€€É½ÕÁl‰µ•µ‰•É}¥‘Í}±…ÍÑ}ÍÕµµ…Éå}…Ğ‰t€ô¹½Ü¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰É•…‘äˆèQÉÕ”°(€€€€€€€€‰•±¥¥‰±•}µ•µ‰•ÉÌˆè•±¥¥‰±•}Õ…É‘¥…¹}É½ÕÁ}ÍÕµµ…Éå}µ•µ‰•ÉÌ (€€€€€€€€€€€ÍÑ…Ñ”°É½ÕÀ°µ•µ‰•É}¥‘Ì(€€€€€€€€¤°(€€€ô(()‘•˜}™¥¹¥Í¡}Õ…É‘¥…¹}É½ÕÁ}ÍÕµµ…Éä (€€€ÍÑ…Ñ”°(€€€É½ÕÁ}¥°(€€€Ñ½‘…ä°(€€€¹½Ü°(€€€€¨°(€€€±…¥µ}Ñ½­•¸°(€€€Í•¹Ğõ…±Í”°(€€€É•±•…Í•}½¹±äõ…±Í”°(€€€µ•ÍÍ…”ôˆˆ°(€€€É•ÍÕ±Ğõ9½¹”°(€€€•ÉÉ½Èõ9½¹”°(€€€µ•µ‰•É}¥‘Ìõ9½¹”°(€€€…Õ‘¥Ñ}­¥¹õ9½¹”°(€€€…Õ‘¥Ñ}ÍÑ…ÑÕÌõ9½¹”°(€€€…Õ‘¥Ñ}‘•Ñ…¥°õ9½¹”°(¤è(€€€É½ÕÀ€ô€¡ÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁÌˆ¤½Èíô¤¹•Ğ¡É½ÕÁ}¥¤(€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡É½ÕÀ°‘¥Ğ¤è(€€€€€€€É•ÑÕÉ¸ì‰­¥¹ˆè€‰Á•Éµ…¹•¹Ğˆ°€‰É•ÑÉäˆè…±Í•ô(€€€±…¥µÌ€ô‘¥Ğ¡É½ÕÀ¹•Ğ ‰‘…¥±å}ÍÕµµ…Éå}±…¥µÌˆ¤½Èíô¤(€€€±…¥´€ô±…¥µÌ¹•Ğ¡Ñ½‘…ä¤½Èíô(€€€¥˜±…¥´¹•Ğ ‰±…¥µ}Ñ½­•¸ˆ¤€„ô±…¥µ}Ñ½­•¸è(€€€€€€€É•ÑÕÉ¸ì‰­¥¹ˆè€‰±…¥µ}±½ÍĞˆ°€‰É•ÑÉäˆè…±Í•ô(€€€±…¥µÌ¹Á½À¡Ñ½‘…ä°9½¹”¤(€€€¥˜±…¥µÌè(€€€€€€€É½ÕÁl‰‘…¥±å}ÍÕµµ…Éå}±…¥µÌ‰t€ô±…¥µÌ(€€€•±Í”è(€€€€€€€É½ÕÀ¹Á½À ‰‘…¥±å}ÍÕµµ…Éå}±…¥µÌˆ°9½¹”¤(€€€¥˜µ•µ‰•É}¥‘Ì¥Ì¹½Ğ9½¹”è(€€€€€€€É½ÕÁl‰µ•µ‰•É}¥‘Í}±…ÍÑ}ÍÕµµ…Éä‰t€ô±¥ÍĞ¡µ•µ‰•É}¥‘Ì¤(€€€€€€€É½ÕÁl‰µ•µ‰•É}¥‘Í}±…ÍÑ}ÍÕµµ…Éå}…Ğ‰t€ô¹½Ü¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€¥˜…Õ‘¥Ñ}­¥¹è(€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ (€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€…Õ‘¥Ñ}­¥¹°(€€€€€€€€€€€É½ÕÁ}¥°(€€€€€€€€€€€…Õ‘¥Ñ}ÍÑ…ÑÕÌ½È€‰™…¥±•ˆ°(€€€€€€€€€€€€ˆˆ°(€€€€€€€€€€€…Õ‘¥Ñ}‘•Ñ…¥°°(€€€€€€€€¤(€€€¥˜É•±•…Í•}½¹±äè(€€€€€€€É•ÑÕÉ¸ì‰É•±•…Í•ˆèQÉÕ•ô(€€€‘•±¥Ù•Éå}­•ä€ô˜‰Õ…É‘¥…¹}É½ÕÁ}‘…¥±å}ÍÕµµ…ÉäéíÑ½‘…åôéíÉ½ÕÁ}¥‘ôˆ(€€€¥˜Í•¹Ğè(€€€€€€€}±•…É}ÁÕÍ¡}‘•±¥Ù•Éå}™…¥±ÕÉ”¡É½ÕÀ°‘•±¥Ù•Éå}­•ä¤(€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ (€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€‰Õ…É‘¥…¹}É½ÕÁ}‘…¥±å}ÍÕµµ…Éäˆ°(€€€€€€€€€€€É½ÕÁ}¥°(€€€€€€€€€€€€‰Í•¹Ğˆ°(€€€€€€€€€€€µ•ÍÍ…”°(€€€€€€€€€€€©Í½¸¹‘ÕµÁÌ¡É•ÍÕ±Ğ°•¹ÍÕÉ•}…Í¥¤õ…±Í”¤°(€€€€€€€€¤(€€€€€€€É•½É‘}±¥¹•}µ•ÍÍ…•}ÕÍ…” (€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€…Ñ•½Éäô‰Õ…É‘¥…¹}ÍÕµµ…Éäˆ°(€€€€€€€€€€€½İ¹•É}±¥¹•}ÕÍ•É}¥õÉ½ÕÀ¹•Ğ ‰½İ¹•É}±¥¹•}ÕÍ•É}¥ˆ¤½ÈÉ½ÕÁ}¥°(€€€€€€€€€€€É•¥Á¥•¹Ñ}½Õ¹Ğõµ…à Ä°±•¸¡µ•µ‰•É}¥‘Ì½Èmt¤¤°(€€€€€€€€€€€•Ù•¹Ñ}¥õ‘•±¥Ù•Éå}­•ä°(€€€€€€€€€€€Í•¹Ñ}…Ğõ¹½Ü°(€€€€€€€€¤(€€€€€€€É½ÕÁl‰±…ÍÑ}‘…¥±å}ÍÕµµ…Éå}‘…Ñ”‰t€ôÑ½‘…ä(€€€€€€€É•ÑÕÉ¸ì‰Í•¹ĞˆèQÉÕ•ô(€€€É•ÑÕÉ¸}É•½É‘}Í¡•‘Õ±•‘}ÁÕÍ¡}™…¥±ÕÉ” (€€€€€€€ÍÑ…Ñ”°(€€€€€€€É½ÕÀ°(€€€€€€€‘•±¥Ù•Éå}­•ä°(€€€€€€€€‰Õ…É‘¥…¹}É½ÕÁ}‘…¥±å}ÍÕµµ…Éäˆ°(€€€€€€€É½ÕÁ}¥°(€€€€€€€µ•ÍÍ…”°(€€€€€€€•ÉÉ½È°(€€€€€€€¹½Ü°(€€€€¤(()‘•˜Í•¹‘}µ¥ÍÍ¥¹}½¹Ñ…Ñ}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤è(€€€Ñ½­•¸€ô½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ°€ˆˆ¤(€€€¥˜¹½ĞÑ½­•¸è(€€€€€€€É•ÑÕÉ¸ì‰Í•¹Ğˆè€À°€‰Í­¥ÁÁ•ˆè€À°€‰•ÉÉ½Èˆè€‰1%9}!991}MM}Q=-8¥Ì¹½ĞÍ•Ğ‰ô°€ĞÀÀ((€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡½¹™¥l‰Q}%1‰t¤(€€€Í•¹‘•È€ô½¹™¥œ¹•Ğ ‰1%9}AUM!}M9Hˆ¤½È±¥¹•}ÁÕÍ¡}µ•ÍÍ…”(€€€ÁÕ‰±¥}ÕÉ°€ô€¡½¹™¥œ¹•Ğ ‰AA}AU	1%}UI0ˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰AA}AU	1%}UI0ˆ°€ˆˆ¤¤¹ÉÍÑÉ¥À ˆ¼ˆ¤(€€€¹½Ü€ôÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡½¹™¥œ¤(€€€¥˜¹½Ğ±¥¹•}¹½¹}•µ•É•¹å}ÁÕÍ¡}…±±½İ•¡ÍÑ…Ñ”°½¹™¥œ°¹½Ü¤è(€€€€€€€É•ÑÕÉ¸±¥¹•}‰Õ‘•Ñ}‰±½­•‘}É•ÍÁ½¹Í”¡ÍÑ…Ñ”°½¹™¥œ°¹½Ü¤(€€€Ñ½‘…ä€ô¹½Ü¹ÍÑÉ™Ñ¥µ” ˆ•d´•´´•ˆ¤(€€€Í•¹Ğ€ô€À(€€€Í­¥ÁÁ•€ô€À(€€€É•ÍÕ±ÑÌ€ômt(€€€ÍåÍÑ•µ}•ÉÉ½È€ô…±Í”(€€€™½ÈÕÍ•È¥¸ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹Ù…±Õ•Ì ¤è(€€€€€€€±¥¹•}ÕÍ•É}¥€ôÕÍ•È¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤(€€€€€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜ÕÍ•È¹•Ğ ‰µ•µ‰•ÉÍ¡¥Á}Á…ÕÍ•ˆ¤½È¹½Ğµ•µ‰•ÉÍ¡¥Á}…•ÍÍ}…Ñ¥Ù”¡ÕÍ•È°¹½Ü¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€½¹Ñ…Ñ}½Õ¹Ğ€ô±•¸¡ÕÍ•È¹•Ğ ‰½¹Ñ…ÑÌˆ¤½Èmt¤(€€€€€€€½¹Ñ…Ñ}±¥µ¥Ğ€ôÁ±…¹}ÉÕ±•Ì¡ÕÍ•È¥l‰½¹Ñ…Ñ}±¥µ¥Ğ‰t(€€€€€€€É•µ¥¹‘•É}•¹…‰±•€ô‰½½°¡ÕÍ•È¹•Ğ ‰½¹Ñ…Ñ}…Á…¥Ñå}É•µ¥¹‘•É}•¹…‰±•ˆ°…±Í”¤¤(€€€€€€€¥Í|Üää€ôÕÍ•È¹•Ğ ‰Á±…¸ˆ¤¥¸ì‰Á…¥‘|Üääˆ°€‰Á…¥‘|Üäå}å•…È‰ô(€€€€€€€Õ…É‘¥…¹}‘•Ñ…¥±Í}½µÁ±•Ñ”€ô…¹ä¡½µÁ±•Ñ•}Õ…É‘¥…¹}½¹Ñ…Ğ¡½¹Ñ…Ğ¤™½È½¹Ñ…Ğ¥¸€¡ÕÍ•È¹•Ğ ‰½¹Ñ…ÑÌˆ¤½Èmt¤¤(€€€€€€€¥˜¥Í|Üää…¹¹½ĞÕ…É‘¥…¹}‘•Ñ…¥±Í}½µÁ±•Ñ”è(€€€€€€€€€€€¥˜¹½ĞÕÍ•È¹•Ğ ‰Õ…É‘¥…¹}‘•Ñ…¥±Í}É•µ¥¹‘•É}•¹…‰±•ˆ°QÉÕ”¤½ÈÕÍ•È¹•Ğ ‰Õ…É‘¥…¹}‘•Ñ…¥±Í}É•µ¥¹‘•É}Í•¹Ñ}…Ğˆ¤è(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€‘•±¥Ù•Éå}­•ä€ô˜‰Õ…É‘¥…¹}‘•Ñ…¥±ÌéíÑ½‘…åôˆ(€€€€€€€€€€€¥˜¹½ĞÁÕÍ¡}…ÑÑ•µÁÑ}…±±½İ•¡ÕÍ•È°‘•±¥Ù•Éå}­•ä¤è(€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€±¥¹­}Ñ•áĞ€ô€ (€€€€€€€€€€€€€€€˜‰q»–&7–úš"Gj–º#¢¶ß¢ÎšZg¾òií±¥™™}•¹ÑÉå}ÕÉ°¡½Á•¹}…Ñ¥½¸ôµ•µ‰•Èœ¤¥˜±¥™™}•¹ÑÉå}ÕÉ°•±Í”€¡ÑÑÁÌè¼½±¥™˜¹±¥¹”¹µ”¼ÈÀÄÀàĞàÌÌÀµU¥ÅAAeı½Á•¸õµ•µ‰•Èôˆ(€€€€€€€€€€€€¤(€€€€€€€€€€€µ•ÍÍ…”€ô€ (€€€€€€€€€€€€€€€€‹’öƒj€Üääƒ–º#¢¶ßšZçš†#¦
+–ÂG’â’î÷–ş¢š¢ÎšZg¢®/–r£;š"Gj–º#¢¶ß¢ÎšZg?–º3š"C¢Ï–ÂD€Äƒ’ö7–º#¢¶ß’êëj–O–B7¦^s’ş¢"¦nï¢¦Ç¾ò0ˆ(€€€€€€€€€€€€€€€˜‹Ş+š—šfÎïÖÇš&7¢÷š¶Šë¢¿Ö‡–Â7šZç¦g–&š>C¦K–>«šr–
+Ï¦’âš²‡	í±¥¹­}Ñ•áÑôˆ(€€€€€€€€€€€€¤(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€É•ÍÕ±Ğ€ôÍ•¹‘•È¡Ñ½­•¸°±¥¹•}ÕÍ•É}¥°µ•ÍÍ…”¤(€€€€€€€€€€€€€€€}±•…É}ÁÕÍ¡}‘•±¥Ù•Éå}™…¥±ÕÉ”¡ÕÍ•È°‘•±¥Ù•Éå}­•ä¤(€€€€€€€€€€€€€€€ÕÍ•Él‰Õ…É‘¥…¹}‘•Ñ…¥±Í}É•µ¥¹‘•É}Í•¹Ñ}…Ğ‰t€ô¹½Ü¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€€€€€€€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ¡ÍÑ…Ñ”°€‰Õ…É‘¥…¹}‘•Ñ…¥±Ìˆ°±¥¹•}ÕÍ•É}¥°€‰Í•¹Ğˆ°µ•ÍÍ…”°©Í½¸¹‘ÕµÁÌ¡É•ÍÕ±Ğ°•¹ÍÕÉ•}…Í¥¤õ…±Í”¤¤(€€€€€€€€€€€€€€€Í•¹Ğ€¬ô€Ä(€€€€€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°€‰É•ÍÕ±ĞˆèÉ•ÍÕ±Ñô¤(€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€™…¥±ÕÉ”€ô}É•½É‘}Í¡•‘Õ±•‘}ÁÕÍ¡}™…¥±ÕÉ” (€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€ÕÍ•È°(€€€€€€€€€€€€€€€€€€€‘•±¥Ù•Éå}­•ä°(€€€€€€€€€€€€€€€€€€€€‰Õ…É‘¥…¹}‘•Ñ…¥±Ìˆ°(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€µ•ÍÍ…”°(€€€€€€€€€€€€€€€€€€€•áŒ°(€€€€€€€€€€€€€€€€€€€¹½Ü°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°€‰•ÉÉ½ÈˆèÍÑÈ¡•áŒ¥ô¤(€€€€€€€€€€€€€€€¥˜™…¥±ÕÉ•l‰­¥¹‰t€ôô€‰ÍåÍÑ•´ˆè(€€€€€€€€€€€€€€€€€€€ÍåÍÑ•µ}•ÉÉ½È€ôQÉÕ”(€€€€€€€€€€€€€€€€€€€‰É•…¬(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜½¹Ñ…Ñ}½Õ¹Ğ€øô½¹Ñ…Ñ}±¥µ¥Ğ½È€¡½¹Ñ…Ñ}½Õ¹Ğ€ø€À…¹¹½ĞÉ•µ¥¹‘•É}•¹…‰±•¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€Í•¹Ñ}‘…Ñ•Ì€ôÍ•Ğ¡ÕÍ•È¹•Ğ ‰½¹Ñ…Ñ}É•µ¥¹‘•É}Í•¹Ñ}‘…Ñ•Ìˆ¤½Èmt¤(€€€€€€€¥˜Ñ½‘…ä¥¸Í•¹Ñ}‘…Ñ•Ìè(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€±¥¹­}Ñ•áĞ€ô€ (€€€€€€€€€€€˜‰q»’â¦6×¦
+¢®/–º#¢¶ß’êë¾òiíÍ¡…É•}¥¹Ù¥Ñ•}±¥™™}ÕÉ° ¤¥˜Í¡…É•}¥¹Ù¥Ñ•}±¥™™}ÕÉ°•±Í”€¡ÑÑÁÌè¼½±¥™˜¹±¥¹”¹µ”¼ÈÀÄÀàĞàÌÌÀµU¥ÅAAe½±¥™˜½Í¡…É”µ¥¹Ù¥Ñ”¹¡Ñµ°ôˆ(€€€€€€€€¤(€€€€€€€¥˜½¹Ñ…Ñ}½Õ¹Ğ€ôô€Àè(€€€€€€€€€€€µ•ÍÍ…”€ô€ (€€€€€€€€€€€€€€€€‹’öƒn»–&7¦
+šÊKšr'Ú–ºk–º#¢¶ß’êë¾ò#Ş+š—¢¿Ö‡’êë¾ò'¢®/¢Ï–ÂG¦
+¢®,€Äƒ’ö7’ş‡’îïj¢š«–>/–º3š"@1%9ƒÚ–ºk¾ò0ˆ(€€€€€€€€€€€€€€€˜‹Ş+š—šfÎïÖÇš&7~—¦O¢š¢¿Ö‡¢ªÃ	í±¥¹­}Ñ•áÑôˆ(€€€€€€€€€€€€¤(€€€€€€€•±Í”è(€€€€€€€€€€€µ•ÍÍ…”€ô€ (€€€€€€€€€€€€€€€˜‹’öƒjšZçš†#–>¿Ú–ºhí½¹Ñ…Ñ}±¥µ¥Ñôƒ’ö7–º#¢¶ß’êë¾ò3n»–&7–ŞË–º3š"@í½¹Ñ…Ñ}½Õ¹Ñô½í½¹Ñ…Ñ}±¥µ¥Ñôƒ’ö7ˆ(€€€€€€€€€€€€€€€˜‹¢.—šÏ¢s¦ö+–º#¢¶ß–B7¦†7¾ò3–>¿¦î{’â/šZçæóê3¦
+¢®/¾òo’æ¢÷–r£š>C¦K¢¢·–ºk’â·¦^s¦Z'¦g–&š¾?š^—š>C¦K	í±¥¹­}Ñ•áÑôˆ(€€€€€€€€€€€€¤(€€€€€€€‘•±¥Ù•Éå}­•ä€ô˜‰µ¥ÍÍ¥¹}½¹Ñ…ĞéíÑ½‘…åôˆ(€€€€€€€¥˜¹½ĞÁÕÍ¡}…ÑÑ•µÁÑ}…±±½İ•¡ÕÍ•È°‘•±¥Ù•Éå}­•ä¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€ÑÉäè(€€€€€€€€€€€É•ÍÕ±Ğ€ôÍ•¹‘•È¡Ñ½­•¸°±¥¹•}ÕÍ•É}¥°µ•ÍÍ…”¤(€€€€€€€€€€€}±•…É}ÁÕÍ¡}‘•±¥Ù•Éå}™…¥±ÕÉ”¡ÕÍ•È°‘•±¥Ù•Éå}­•ä¤(€€€€€€€€€€€Í•¹Ñ}‘…Ñ•Ì¹…‘¡Ñ½‘…ä¤(€€€€€€€€€€€ÕÍ•Él‰½¹Ñ…Ñ}É•µ¥¹‘•É}Í•¹Ñ}‘…Ñ•Ì‰t€ôÍ½ÉÑ•¡Í•¹Ñ}‘…Ñ•Ì¥l´ÌÀét(€€€€€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ¡ÍÑ…Ñ”°€‰µ¥ÍÍ¥¹}½¹Ñ…Ğˆ°±¥¹•}ÕÍ•É}¥°€‰Í•¹Ğˆ°µ•ÍÍ…”°©Í½¸¹‘ÕµÁÌ¡É•ÍÕ±Ğ°•¹ÍÕÉ•}…Í¥¤õ…±Í”¤¤(€€€€€€€€€€€Í•¹Ğ€¬ô€Ä(€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°€‰É•ÍÕ±ĞˆèÉ•ÍÕ±Ñô¤(€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€™…¥±ÕÉ”€ô}É•½É‘}Í¡•‘Õ±•‘}ÁÕÍ¡}™…¥±ÕÉ” (€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€ÕÍ•È°(€€€€€€€€€€€€€€€‘•±¥Ù•Éå}­•ä°(€€€€€€€€€€€€€€€€‰µ¥ÍÍ¥¹}½¹Ñ…Ğˆ°(€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€µ•ÍÍ…”°(€€€€€€€€€€€€€€€•áŒ°(€€€€€€€€€€€€€€€¹½Ü°(€€€€€€€€€€€€¤(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°€‰•ÉÉ½ÈˆèÍÑÈ¡•áŒ¥ô¤(€€€€€€€€€€€¥˜™…¥±ÕÉ•l‰­¥¹‰t€ôô€‰ÍåÍÑ•´ˆè(€€€€€€€€€€€€€€€ÍåÍÑ•µ}•ÉÉ½È€ôQÉÕ”(€€€€€€€€€€€€€€€‰É•…¬(€€€Í…Ù•}ÍÑ…Ñ”¡½¹™¥l‰Q}%1‰t°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰Í•¹ĞˆèÍ•¹Ğ°(€€€€€€€€‰Í­¥ÁÁ•ˆèÍ­¥ÁÁ•°(€€€€€€€€‰É•ÍÕ±ÑÌˆèÉ•ÍÕ±ÑÌ°(€€€€€€€€‰ÍåÍÑ•µ}•ÉÉ½ÈˆèÍåÍÑ•µ}•ÉÉ½È°(€€€ô°€ÈÀÀ(()‘•˜±•…¹ÕÁ}•áÁ¥É•‘}‘…Ñ„¡½¹™¥œ¤è(€€€‘…Ñ…}™¥±”€ô½¹™¥l‰Q}%1‰t(€€€¹½Ü€ôÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡½¹™¥œ¤(€€€¥¹Ù¥Ñ•}ÕÑ½™˜€ô¹½Ü€´Ñ¥µ•‘•±Ñ„¡‘…åÌôÜ¤(€€€¹½Ñ¥™¥…Ñ¥½¹}ÕÑ½™˜€ô¹½Ü€´Ñ¥µ•‘•±Ñ„¡‘…åÌôäÀ¤(€€€µ¥É…Ñ¥½¹}±•…¹ÕÁ}¹½Ü€ô¹½Ü(€€€¥˜µ¥É…Ñ¥½¹}±•…¹ÕÁ}¹½Ü¹Ñé¥¹™¼¥Ì9½¹”è(€€€€€€€Ñ¥µ•é½¹•}¹…µ”€ô€ (€€€€€€€€€€€½¹™¥œ¹•Ğ ‰AA}Q%5i=9ˆ¤(€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰AA}Q%5i=9ˆ¤(€€€€€€€€€€€½È€‰Í¥„½Q…¥Á•¤ˆ(€€€€€€€€¤(€€€€€€€ÑÉäè(€€€€€€€€€€€…ÁÁ}Ñ¥µ•é½¹”€ôi½¹•%¹™¼¡ÍÑÈ¡Ñ¥µ•é½¹•}¹…µ”¤¤(€€€€€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€€€€€…ÁÁ}Ñ¥µ•é½¹”€ôÑ¥µ•é½¹”¹ÕÑŒ(€€€€€€€µ¥É…Ñ¥½¹}±•…¹ÕÁ}¹½Ü€ôµ¥É…Ñ¥½¹}±•…¹ÕÁ}¹½Ü¹É•Á±…” (€€€€€€€€€€€Ñé¥¹™¼õ…ÁÁ}Ñ¥µ•é½¹”(€€€€€€€€¤¹…ÍÑ¥µ•é½¹”¡Ñ¥µ•é½¹”¹ÕÑŒ¤((€€€‘•˜…Ñ}½É}…™Ñ•È¡Ù…±Õ”°ÕÑ½™˜¤è(€€€€€€€Á…ÉÍ•€ôÁ…ÉÍ•}‘…Ñ•Ñ¥µ”¡Ù…±Õ”¤(€€€€€€€¥˜Á…ÉÍ•¥Ì9½¹”è(€€€€€€€€€€€É•ÑÕÉ¸QÉÕ”(€€€€€€€½µÁ…É…‰±•}Á…ÉÍ•°½µÁ…É…‰±•}ÕÑ½™˜€ô}½µÁ…É…‰±•}‘…Ñ•Ñ¥µ•Ì (€€€€€€€€€€€Á…ÉÍ•°ÕÑ½™˜(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸½µÁ…É…‰±•}Á…ÉÍ•€øô½µÁ…É…‰±•}ÕÑ½™˜((€€€‘•˜µÕÑ…Ñ”¡ÍÑ…Ñ”¤è(€€€€€€€‘½İ¹É…‘•€ô}…ÁÁ±å}•áÁ¥É•‘}Á±…¹}‘½İ¹É…‘•Í}Ñ½}ÍÑ…Ñ”¡ÍÑ…Ñ”°¹½Ü¤(€€€€€€€µ¥É…Ñ¥½¹}¡¥ÍÑ½Éå}É•µ½Ù•€ôÁÕÉ•}…½Õ¹Ñ}µ¥É…Ñ¥½¹}¡¥ÍÑ½Éä (€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€¹½Üõµ¥É…Ñ¥½¹}±•…¹ÕÁ}¹½Ü°(€€€€€€€€¤(€€€€€€€•áÁ¥É•‘}±½…Ñ¥½¹Í}É•µ½Ù•€ô€À(€€€€€€€½¹Ñ…ÑÍ}…É¡¥Ù•€ô€À(€€€€€€€½¹Ñ…ÑÍ}É•ÍÑ½É•€ô€À(€€€€€€€µ¥É…Ñ¥½¹}Í¹…ÁÍ¡½ÑÍ}É•µ½Ù•€ôÁÕÉ•}…½Õ¹Ñ}µ¥É…Ñ¥½¹}Í¹…ÁÍ¡½ÑÌ (€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€¹½Üõµ¥É…Ñ¥½¹}±•…¹ÕÁ}¹½Ü°(€€€€€€€€¤((€€€€€€€™½ÈÁÉ½™¥±”¥¸ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹Ù…±Õ•Ì ¤è(€€€€€€€€€€€¥˜É•ÍÑ½É•}±•…å}…ÕÑ½}…É¡¥Ù•‘}½¹Ñ…ÑÌ¡ÁÉ½™¥±”¤è(€€€€€€€€€€€€€€€½¹Ñ…ÑÍ}É•ÍÑ½É•€¬ô€Ä(€€€€€€€€€€€¥˜Í½™Ñ}…É¡¥Ù•}½¹Ñ…ÑÍ}Á…ÍÑ}É•Ñ…¥¸¡ÁÉ½™¥±”°¹½Ü¤è(€€€€€€€€€€€€€€€½¹Ñ…ÑÍ}…É¡¥Ù•€¬ô€Ä(€€€€€€€€€€€±½…Ñ¥½¸€ôÁÉ½™¥±”¹•Ğ ‰±½…Ñ¥½¸ˆ¤½Èíô(€€€€€€€€€€€¥˜¹½Ğ±½…Ñ¥½¸è(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€¥˜±½…Ñ¥½¸¹•Ğ ‰Õ¹Ñ¥±}ÍÑ½Àˆ¤…¹€ (€€€€€€€€€€€€€€€±½…Ñ¥½¸¹•Ğ ‰Í¡…É¥¹œˆ¤½È±½…Ñ¥½¸¹•Ğ ‰…Ñ¥Ù”ˆ¤(€€€€€€€€€€€€¤è(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€•áÁ¥É•Í}…Ğ€ôÁ…ÉÍ•}‘…Ñ•Ñ¥µ”¡±½…Ñ¥½¸¹•Ğ ‰•áÁ¥É•Í}…Ğˆ¤¤(€€€€€€€€€€€±½…Ñ¥½¹}•áÁ¥É•€ô…±Í”(€€€€€€€€€€€¥˜•áÁ¥É•Í}…Ğè(€€€€€€€€€€€€€€€½µÁ…É…‰±•}•áÁ¥É•Ì°½µÁ…É…‰±•}¹½Ü€ô}½µÁ…É…‰±•}‘…Ñ•Ñ¥µ•Ì (€€€€€€€€€€€€€€€€€€€•áÁ¥É•Í}…Ğ°¹½Ü(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€±½…Ñ¥½¹}•áÁ¥É•€ô½µÁ…É…‰±•}•áÁ¥É•Ì€ğ½µÁ…É…‰±•}¹½Ü(€€€€€€€€€€€¥˜±½…Ñ¥½¹}•áÁ¥É•è(€€€€€€€€€€€€€€€ÁÉ½™¥±•l‰±½…Ñ¥½¸‰t€ôì(€€€€€€€€€€€€€€€€€€€€¨©±½…Ñ¥½¸°(€€€€€€€€€€€€€€€€€€€€‰Í¡…É¥¹œˆè…±Í”°(€€€€€€€€€€€€€€€€€€€€‰…Ñ¥Ù”ˆè…±Í”°(€€€€€€€€€€€€€€€€€€€€‰•¹‘•‘}…Ğˆè€ (€€€€€€€€€€€€€€€€€€€€€€€±½…Ñ¥½¸¹•Ğ ‰•¹‘•‘}…Ğˆ¤(€€€€€€€€€€€€€€€€€€€€€€€½È¹½Ü¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€ô(€€€€€€€€€€€€€€€•áÁ¥É•‘}±½…Ñ¥½¹Í}É•µ½Ù•€¬ô€Ä((€€€€€€€¥¹Ù¥Ñ•Í}‰•™½É”€ô±•¸¡ÍÑ…Ñ”¹•Ğ ‰™É¥•¹‘}¥¹Ù¥Ñ•Ìˆ°íô¤¤(€€€€€€€ÍÑ…Ñ•l‰™É¥•¹‘}¥¹Ù¥Ñ•Ì‰t€ôì(€€€€€€€€€€€½‘”è¥¹Ù¥Ñ”(€€€€€€€€€€€™½È½‘”°¥¹Ù¥Ñ”¥¸ÍÑ…Ñ”¹•Ğ ‰™É¥•¹‘}¥¹Ù¥Ñ•Ìˆ°íô¤¹¥Ñ•µÌ ¤(€€€€€€€€€€€¥˜…Ñ}½É}…™Ñ•È¡¥¹Ù¥Ñ”¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤°¥¹Ù¥Ñ•}ÕÑ½™˜¤(€€€€€€€ô((€€€€€€€±½Í}‰•™½É”€ô±•¸¡ÍÑ…Ñ”¹•Ğ ‰¹½Ñ¥™¥…Ñ¥½¹}±½Ìˆ°mt¤¤(€€€€€€€ÍÑ…Ñ•l‰¹½Ñ¥™¥…Ñ¥½¹}±½Ì‰t€ôl(€€€€€€€€€€€±½œ(€€€€€€€€€€€™½È±½œ¥¸ÍÑ…Ñ”¹•Ğ ‰¹½Ñ¥™¥…Ñ¥½¹}±½Ìˆ°mt¤(€€€€€€€€€€€¥˜…Ñ}½É}…™Ñ•È¡±½œ¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤°¹½Ñ¥™¥…Ñ¥½¹}ÕÑ½™˜¤(€€€€€€€ul´ÄÀÀét(€€€€€€€É•ÑÕÉ¸ì(€€€€€€€€€€€€‰±•…¹•‘}…Ğˆè¹½Ü¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€€€€€‰•áÁ¥É•‘}±½…Ñ¥½¹Í}É•µ½Ù•ˆè•áÁ¥É•‘}±½…Ñ¥½¹Í}É•µ½Ù•°(€€€€€€€€€€€€‰•áÁ¥É•‘}¥¹Ù¥Ñ•Í}É•µ½Ù•ˆè€ (€€€€€€€€€€€€€€€¥¹Ù¥Ñ•Í}‰•™½É”€´±•¸¡ÍÑ…Ñ•l‰™É¥•¹‘}¥¹Ù¥Ñ•Ì‰t¤(€€€€€€€€€€€€¤°(€€€€€€€€€€€€‰½±‘}¹½Ñ¥™¥…Ñ¥½¹}±½Í}É•µ½Ù•ˆè€ (€€€€€€€€€€€€€€€±½Í}‰•™½É”€´±•¸¡ÍÑ…Ñ•l‰¹½Ñ¥™¥…Ñ¥½¹}±½Ì‰t¤(€€€€€€€€€€€€¤°(€€€€€€€€€€€€‰½¹Ñ…ÑÍ}…É¡¥Ù•‘}ÕÍ•ÉÌˆè½¹Ñ…ÑÍ}…É¡¥Ù•°(€€€€€€€€€€€€‰½¹Ñ…ÑÍ}É•ÍÑ½É•‘}ÕÍ•ÉÌˆè½¹Ñ…ÑÍ}É•ÍÑ½É•°(€€€€€€€€€€€€‰µ¥É…Ñ¥½¹}Í¹…ÁÍ¡½ÑÍ}É•µ½Ù•ˆèµ¥É…Ñ¥½¹}Í¹…ÁÍ¡½ÑÍ}É•µ½Ù•°(€€€€€€€€€€€€‰µ¥É…Ñ¥½¹}Ñ¥­•ÑÍ}É•µ½Ù•ˆèµ¥É…Ñ¥½¹}¡¥ÍÑ½Éå}É•µ½Ù•‘l‰Ñ¥­•ÑÌ‰t°(€€€€€€€€€€€€‰µ¥É…Ñ¥½¹}…Õ‘¥Ñ}É•µ½Ù•ˆèµ¥É…Ñ¥½¹}¡¥ÍÑ½Éå}É•µ½Ù•‘l‰…Õ‘¥Ğ‰t°(€€€€€€€€€€€€‰½É‘•ÉÍ}É•µ½Ù•ˆè€À°(€€€€€€€€€€€€‰Á±…¹Í}‘½İ¹É…‘•ˆè±•¸¡‘½İ¹É…‘•¤°(€€€€€€€ô°€ÈÀÀ((€€€É•ÑÕÉ¸µÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä¡‘…Ñ…}™¥±”°µÕÑ…Ñ”¤(()‘•˜É•µ¥¹‘•É}Ñ¥µ•}¥¹}İ¥¹‘½Ü¡É•µ¥¹‘•É}Ñ¥µ”°¹½Ü°±…Ñ•}µ¥¹ÕÑ•ÌôĞ¤è(€€€ÑÉäè(€€€€€€€¡½ÕÈ°µ¥¹ÕÑ”€ôm¥¹Ğ¡Á…ÉĞ¤™½ÈÁ…ÉĞ¥¸ÍÑÈ¡É•µ¥¹‘•É}Ñ¥µ”½È€ˆÄÈèÀÀˆ¤¹ÍÁ±¥Ğ ˆèˆ°€Ä¥t(€€€•á•ÁĞ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€¡½ÕÈ°µ¥¹ÕÑ”€ô€ÄÈ°€À(€€€Í¡•‘Õ±•€ô¹½Ü¹É•Á±…”¡¡½ÕÈõ¡½ÕÈ°µ¥¹ÕÑ”õµ¥¹ÕÑ”°Í•½¹ôÀ°µ¥É½Í•½¹ôÀ¤(€€€‘•±Ñ„€ô¹½Ü€´Í¡•‘Õ±•(€€€É•ÑÕÉ¸Ñ¥µ•‘•±Ñ„ À¤€ğô‘•±Ñ„€ğôÑ¥µ•‘•±Ñ„¡µ¥¹ÕÑ•Ìõ¥¹Ğ¡±…Ñ•}µ¥¹ÕÑ•Ì¤°Í•½¹‘ÌôÔä¤(()‘•˜‰Õ¥±‘}‘…¥±å}¡•­¥¹}™±•à¡¹½Ü°Ñ…É•Ñ}Ñ¥µ”ôˆˆ¤è(€€€€ˆˆ‰…¥±ä¡•¬µ¥¸±•àèÉ••Ñ¥¹œ€¬½ÁÑ¥½¹…°¡½±¥‘…ä‰±•ÍÍ¥¹œ€¬ÅÕ½Ñ”€¬Á½ÍÑ‰…¬¸((€€€-••ÁÌ±…ÍÍ¥ŒÉ••¸€ ŒÀÁäÀÀ¤¡•…‘•Èìƒ3š"G–æÏ–º'4ÕÍ•ÌÁ½ÍÑ‰…¬…Ñ¥½¸õ¡•­¥¸¸(€€€€ˆˆˆ(€€€Ñ½‘…ä€ô¹½Ü¹ÍÑÉ™Ñ¥µ” ˆ•d´•´´•ˆ¤(€€€İ••­‘…å}é €ôl‹¦Ç’â ˆ°€‹¦Ç’ê0ˆ°€‹¦Ç’â$ˆ°€‹¦Ç–nlˆ°€‹¦Ç’êPˆ°€‹¦Ç–´ˆ°€‹¦Çš^”‰um¹½Ü¹İ••­‘…ä ¥t(€€€Ñ¥µ•}‰¥Ğ€ô˜ˆíÑ…É•Ñ}Ñ¥µ•ôˆ¥˜Ñ…É•Ñ}Ñ¥µ”•±Í”€ˆˆ(€€€½Áä€ô€ (€€€€€€€¡½±¥‘…åÍ}ÑÜ¹‘…¥±å}ÁÕÍ¡}½Áä¡¹½Ü¤(€€€€€€€¥˜¡½±¥‘…åÍ}ÑÜ¥Ì¹½Ğ9½¹”(€€€€€€€•±Í”ì(€€€€€€€€€€€€‰É••Ñ¥¹œˆè€‹Šv“¾â<ƒ’î+–’§’â–"¦÷––÷–^;¾ò|ˆ°(€€€€€€€€€€€€‰¡½±¥‘…å}¹…µ”ˆè€ˆˆ°(€€€€€€€€€€€€‰¡½±¥‘…å}‰±•ÍÍ¥¹œˆè€ˆˆ°(€€€€€€€€€€€€‰Á½Í¥Ñ¥Ù•}ÅÕ½Ñ”ˆè€‹š¾?’â–’§j–æÏ–º'¾ò3¦÷šb¿Ö›–ºÛ’êëšr––÷jš»&§ˆ°(€€€€€€€€€€€€‰¥¹ÍÑÉÕÑ¥½¸ˆè€‹¦î{3š"G–æÏ–º'7®/–"ï–º3š"C–‚Ç–"Ã¾ò#’â7R£–7¦Z/ÚË¦‚¾ò$ˆ°(€€€€€€€ô(€€€€¤(€€€Õ…É‘}ÕÉ¤€ô€ (€€€€€€€±¥™™}•¹ÑÉå}ÕÉ°¡½Á•¹}…Ñ¥½¸ô‰Õ…Éˆ¤(€€€€€€€¥˜±¥™™}•¹ÑÉå}ÕÉ°(€€€€€€€•±Í”€‰¡ÑÑÁÌè¼½±¥™˜¹±¥¹”¹µ”¼ÈÀÄÀàĞàÌÌÀµU¥ÅAAeı½Á•¸õÕ…Éˆ(€€€€¤(€€€Í½Í}ÕÉ¤€ô€ (€€€€€€€±¥™™}•¹ÑÉå}ÕÉ°¡½Á•¹}…Ñ¥½¸ô‰Í½Ìˆ¤(€€€€€€€¥˜±¥™™}•¹ÑÉå}ÕÉ°(€€€€€€€•±Í”€‰¡ÑÑÁÌè¼½±¥™˜¹±¥¹”¹µ”¼ÈÀÄÀàĞàÌÌÀµU¥ÅAAeı½Á•¸õÍ½Ìˆ(€€€€¤(€€€‰½‘å}½¹Ñ•¹ÑÌ€ôl(€€€€€€€ì(€€€€€€€€€€€€‰ÑåÁ”ˆè€‰Ñ•áĞˆ°(€€€€€€€€€€€€‰Ñ•áĞˆè½Áål‰É••Ñ¥¹œ‰t°(€€€€€€€€€€€€‰Í¥é”ˆè€‰á°ˆ°(€€€€€€€€€€€€‰İ•¥¡Ğˆè€‰‰½±ˆ°(€€€€€€€€€€€€‰½±½Èˆè€ˆŒÅ„Å„Å„ˆ°(€€€€€€€€€€€€‰İÉ…ÀˆèQÉÕ”°(€€€€€€€ô°(€€€t(€€€¡½±¥‘…å}¹…µ”€ôÍÑÈ¡½Áä¹•Ğ ‰¡½±¥‘…å}¹…µ”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¡½±¥‘…å}‰±•ÍÍ¥¹œ€ôÍÑÈ¡½Áä¹•Ğ ‰¡½±¥‘…å}‰±•ÍÍ¥¹œˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¡½±¥‘…å}¹…µ”…¹¡½±¥‘…å}‰±•ÍÍ¥¹œè(€€€€€€€‰½‘å}½¹Ñ•¹ÑÌ¹…ÁÁ•¹ (€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€‰Ñ•áĞˆ°(€€€€€€€€€€€€€€€€‰Ñ•áĞˆè˜‹Â~:$í¡½±¥‘…å}¹…µ•ôˆ°(€€€€€€€€€€€€€€€€‰Í¥é”ˆè€‰µˆ°(€€€€€€€€€€€€€€€€‰İ•¥¡Ğˆè€‰‰½±ˆ°(€€€€€€€€€€€€€€€€‰½±½Èˆè€ˆĞÔÌÀäˆ°(€€€€€€€€€€€€€€€€‰İÉ…ÀˆèQÉÕ”°(€€€€€€€€€€€ô(€€€€€€€€¤(€€€€€€€‰½‘å}½¹Ñ•¹ÑÌ¹…ÁÁ•¹ (€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€‰Ñ•áĞˆ°(€€€€€€€€€€€€€€€€‰Ñ•áĞˆè¡½±¥‘…å}‰±•ÍÍ¥¹œ°(€€€€€€€€€€€€€€€€‰Í¥é”ˆè€‰µˆ°(€€€€€€€€€€€€€€€€‰½±½Èˆè€ˆŒäÈĞÀÁˆ°(€€€€€€€€€€€€€€€€‰İÉ…ÀˆèQÉÕ”°(€€€€€€€€€€€ô(€€€€€€€€¤(€€€‰½‘å}½¹Ñ•¹ÑÌ¹…ÁÁ•¹ (€€€€€€€ì(€€€€€€€€€€€€‰ÑåÁ”ˆè€‰Ñ•áĞˆ°(€€€€€€€€€€€€‰Ñ•áĞˆè˜‹Šr í½ÁålÁ½Í¥Ñ¥Ù•}ÅÕ½Ñ”uôˆ°(€€€€€€€€€€€€‰Í¥é”ˆè€‰µˆ°(€€€€€€€€€€€€‰½±½Èˆè€ˆŒÄØØÔÌĞˆ°(€€€€€€€€€€€€‰İÉ…ÀˆèQÉÕ”°(€€€€€€€ô(€€€€¤(€€€‰½‘å}½¹Ñ•¹ÑÌ¹…ÁÁ•¹ (€€€€€€€ì(€€€€€€€€€€€€‰ÑåÁ”ˆè€‰Ñ•áĞˆ°(€€€€€€€€€€€€‰Ñ•áĞˆè½Áål‰¥¹ÍÑÉÕÑ¥½¸‰t°(€€€€€€€€€€€€‰Í¥é”ˆè€‰±œˆ°(€€€€€€€€€€€€‰½±½Èˆè€ˆŒÔÔÔÔÔÔˆ°(€€€€€€€€€€€€‰İÉ…ÀˆèQÉÕ”°(€€€€€€€ô(€€€€¤(€€€…±Ñ}Á…ÉÑÌ€ôm½Áål‰É••Ñ¥¹œ‰t°Ñ½‘…åt(€€€¥˜¡½±¥‘…å}¹…µ”è(€€€€€€€…±Ñ}Á…ÉÑÌ¹…ÁÁ•¹¡¡½±¥‘…å}¹…µ”¤(€€€¥˜Ñ…É•Ñ}Ñ¥µ”è(€€€€€€€…±Ñ}Á…ÉÑÌ¹…ÁÁ•¹¡Ñ…É•Ñ}Ñ¥µ”¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰ÑåÁ”ˆè€‰™±•àˆ°(€€€€€€€€‰…±ÑQ•áĞˆè€ˆ€ˆ¹©½¥¸¡…±Ñ}Á…ÉÑÌ¥lèĞÀÁt°(€€€€€€€€‰½¹Ñ•¹ÑÌˆèì(€€€€€€€€€€€€‰ÑåÁ”ˆè€‰‰Õ‰‰±”ˆ°(€€€€€€€€€€€€‰Í¥é”ˆè€‰µ•„ˆ°(€€€€€€€€€€€€‰¡•…‘•Èˆèì(€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€‰‰½àˆ°(€€€€€€€€€€€€€€€€‰±…å½ÕĞˆè€‰Ù•ÉÑ¥…°ˆ°(€€€€€€€€€€€€€€€€‰ÍÁ…¥¹œˆè€‰áÌˆ°(€€€€€€€€€€€€€€€€‰‰…­É½Õ¹‘½±½Èˆè€ˆŒÀÁäÀÀˆ°(€€€€€€€€€€€€€€€€‰Á…‘‘¥¹Q½Àˆè€‰±œˆ°(€€€€€€€€€€€€€€€€‰Á…‘‘¥¹	½ÑÑ½´ˆè€‰±œˆ°(€€€€€€€€€€€€€€€€‰Á…‘‘¥¹MÑ…ÉĞˆè€‰±œˆ°(€€€€€€€€€€€€€€€€‰Á…‘‘¥¹¹ˆè€‰±œˆ°(€€€€€€€€€€€€€€€€‰½¹Ñ•¹ÑÌˆèl(€€€€€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€‰Ñ•áĞˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰Ñ•áĞˆè€‹š¾?š^—–æÏ–º$ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰½±½Èˆè€ˆˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰Í¥é”ˆè€‰±œˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰İ•¥¡Ğˆè€‰‰½±ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰İÉ…ÀˆèQÉÕ”°(€€€€€€€€€€€€€€€€€€€ô°(€€€€€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€‰Ñ•áĞˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰Ñ•áĞˆè˜‹Â~NíÑ½‘…åôíİ••­‘…å}é¡õíÑ¥µ•}‰¥Ñôˆ¹ÍÑÉ¥À ¤°(€€€€€€€€€€€€€€€€€€€€€€€€‰½±½Èˆè€ˆˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰Í¥é”ˆè€‰á°ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰İ•¥¡Ğˆè€‰‰½±ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰İÉ…ÀˆèQÉÕ”°(€€€€€€€€€€€€€€€€€€€ô°(€€€€€€€€€€€€€€€t°(€€€€€€€€€€€ô°(€€€€€€€€€€€€‰‰½‘äˆèì(€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€‰‰½àˆ°(€€€€€€€€€€€€€€€€‰±…å½ÕĞˆè€‰Ù•ÉÑ¥…°ˆ°(€€€€€€€€€€€€€€€€‰ÍÁ…¥¹œˆè€‰µˆ°(€€€€€€€€€€€€€€€€‰Á…‘‘¥¹±°ˆè€‰±œˆ°(€€€€€€€€€€€€€€€€‰½¹Ñ•¹ÑÌˆè‰½‘å}½¹Ñ•¹ÑÌ°(€€€€€€€€€€€ô°(€€€€€€€€€€€€‰™½½Ñ•Èˆèì(€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€‰‰½àˆ°(€€€€€€€€€€€€€€€€‰±…å½ÕĞˆè€‰Ù•ÉÑ¥…°ˆ°(€€€€€€€€€€€€€€€€‰ÍÁ…¥¹œˆè€‰Í´ˆ°(€€€€€€€€€€€€€€€€‰Á…‘‘¥¹±°ˆè€‰±œˆ°(€€€€€€€€€€€€€€€€‰‰…­É½Õ¹‘½±½Èˆè€ˆˆ°(€€€€€€€€€€€€€€€€‰½¹Ñ•¹ÑÌˆèl(€€€€€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€‰‰ÕÑÑ½¸ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰…Ñ¥½¸ˆèì(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€‰Á½ÍÑ‰…¬ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰±…‰•°ˆè€‹Šrƒš"G–æÏ–º$ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰‘…Ñ„ˆè€‰…Ñ¥½¸õ¡•­¥¸ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰‘¥ÍÁ±…åQ•áĞˆè€‹š"G–æÏ–º$ˆ°(€€€€€€€€€€€€€€€€€€€€€€€ô°(€€€€€€€€€€€€€€€€€€€€€€€€‰ÍÑå±”ˆè€‰ÁÉ¥µ…Éäˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰½±½Èˆè€ˆŒÄÙÌÑˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰¡•¥¡Ğˆè€‰µˆ°(€€€€€€€€€€€€€€€€€€€ô°(€€€€€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€‰‰ÕÑÑ½¸ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰…Ñ¥½¸ˆèì‰ÑåÁ”ˆè€‰ÕÉ¤ˆ°€‰±…‰•°ˆè€‹Â~n‡¾â<ƒ–º'–£–º#¢¶Üˆ°€‰ÕÉ¤ˆèÕ…É‘}ÕÉ¥ô°(€€€€€€€€€€€€€€€€€€€€€€€€‰ÍÑå±”ˆè€‰ÁÉ¥µ…Éäˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰½±½Èˆè€ˆŒÈÔØÍˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰¡•¥¡Ğˆè€‰µˆ°(€€€€€€€€€€€€€€€€€€€ô°(€€€€€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€‰‰ÕÑÑ½¸ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰…Ñ¥½¸ˆèì‰ÑåÁ”ˆè€‰ÕÉ¤ˆ°€‰±…‰•°ˆè€‹¦r¢š–æ¯–şdˆ°€‰ÕÉ¤ˆèÍ½Í}ÕÉ¥ô°(€€€€€€€€€€€€€€€€€€€€€€€€‰ÍÑå±”ˆè€‰ÁÉ¥µ…Éäˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰½±½Èˆè€ˆÈØÈØˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰¡•¥¡Ğˆè€‰µˆ°(€€€€€€€€€€€€€€€€€€€ô°(€€€€€€€€€€€€€€€t°(€€€€€€€€€€€ô°(€€€€€€€ô°(€€€ô(()‘•˜}µ…É­}±¥¹•}ÁÕÍ¡}‰±½­•¡ÕÍ•È°•áŒ¤è(€€€€ˆˆ‰5…É¬‰±½­•€¼½¹”ÕÍ•ÉÌÍ¼™ÕÑÕÉ”‰É½…‘…ÍÑÌÍ­¥ÀÑ¡•´¸ˆˆˆ(€€€½‘”€ô9½¹”(€€€¥˜¥Í¥¹ÍÑ…¹”¡•áŒ°ÕÉ±±¥ˆ¹•ÉÉ½È¹!QQAÉÉ½È¤è(€€€€€€€½‘”€ô•áŒ¹½‘”(€€€Ñ•áĞ€ôÍÑÈ¡•áŒ½È€ˆˆ¤¹±½İ•È ¤(€€€¥˜½‘”¥¸ìĞÀÄ°€ĞÀÌ°€ĞÀÑô½È€‰¹½Ğ„™É¥•¹ˆ¥¸Ñ•áĞ½È€‰‰±½­•ˆ¥¸Ñ•áĞè(€€€€€€€ÕÍ•Él‰±¥¹•}ÁÕÍ¡}‰±½­•‰t€ôQÉÕ”(€€€€€€€ÕÍ•Él‰±¥¹•}ÁÕÍ¡}‰±½­•‘}…Ğ‰t€ô‘…Ñ•Ñ¥µ”¹¹½Ü ¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€€€€€É•ÑÕÉ¸QÉÕ”(€€€É•ÑÕÉ¸…±Í”(()‘•˜}µ…É­}¡•­¥¹}É•µ¥¹‘•É}Í±½ÑÌ¡ÕÍ•È°Ñ½‘…ä°Ñ¥µ•Ì°‘Õ•}Ñ¥µ•Ì¤è(€€€Í•¹Ñ}Í±½ÑÌ€ô‘¥Ğ¡ÕÍ•È¹•Ğ ‰¡•­¥¹}É•µ¥¹‘•É}Í•¹Ñ}Í±½ÑÌˆ¤½Èíô¤(€€€Í•¹Ñ}Ñ½‘…ä€ôÍ•Ğ¡Í•¹Ñ}Í±½ÑÌ¹•Ğ¡Ñ½‘…ä¤½Èmt¤(€€€Í•¹Ñ}Ñ½‘…ä¹ÕÁ‘…Ñ”¡‘Õ•}Ñ¥µ•Ì½ÈÑ¥µ•Ì½Èmt¤(€€€Í•¹Ñ}Í±½ÑÍmÑ½‘…åt€ôÍ½ÉÑ•¡Í•¹Ñ}Ñ½‘…ä¤(€€€­••Á}‘…Ñ•Ì€ôÍ½ÉÑ•¡Í•¹Ñ}Í±½ÑÌ¹­•åÌ ¤¥l´ÌÀét(€€€ÕÍ•Él‰¡•­¥¹}É•µ¥¹‘•É}Í•¹Ñ}Í±½ÑÌ‰t€ôíèÍ•¹Ñ}Í±½ÑÍm‘t™½È¥¸­••Á}‘…Ñ•Íô(€€€±•…å}‘…Ñ•Ì€ôÍ•Ğ¡ÕÍ•È¹•Ğ ‰¡•­¥¹}É•µ¥¹‘•É}Í•¹Ñ}‘…Ñ•Ìˆ¤½Èmt¤(€€€¥˜Í•Ğ¡Ñ¥µ•Ì½Èmt¤¹¥ÍÍÕ‰Í•Ğ¡Í•¹Ñ}Ñ½‘…ä¤è(€€€€€€€±•…å}‘…Ñ•Ì¹…‘¡Ñ½‘…ä¤(€€€€€€€ÕÍ•Él‰¡•­¥¹}É•µ¥¹‘•É}Í•¹Ñ}‘…Ñ•Ì‰t€ôÍ½ÉÑ•¡±•…å}‘…Ñ•Ì¥l´ÌÀét(()‘•˜Í•¹‘}¡•­¥¹}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤è(€€€€ˆˆ‰5½É¹¥¹œ½Í±½ĞÉ½¸èÍ­¥ÀÕÍ•ÉÌ…±É•…‘ä¡•­•¥¸€¡Q…¥Á•¤¤¸AÉ•™•ÈÁÉ”µ¡•¬µ¥¸É•µ¥¹¸ˆˆˆ(€€€Ñ½­•¸€ô½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ°€ˆˆ¤(€€€¥˜¹½ĞÑ½­•¸è(€€€€€€€É•ÑÕÉ¸ì‰Í•¹Ğˆè€À°€‰Í­¥ÁÁ•ˆè€À°€‰•ÉÉ½Èˆè€‰1%9}!991}MM}Q=-8¥Ì¹½ĞÍ•Ğ‰ô°€ĞÀÀ((€€€‘…Ñ…}™¥±”€ô½¹™¥l‰Q}%1‰t(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€Í•¹‘•È€ô½¹™¥œ¹•Ğ ‰1%9}AUM!}M9Hˆ¤½È±¥¹•}ÁÕÍ¡}µ•ÍÍ…”(€€€¹½Ü€ôÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡½¹™¥œ¤(€€€¥˜¹½Ğ±¥¹•}¹½¹}•µ•É•¹å}ÁÕÍ¡}…±±½İ•¡ÍÑ…Ñ”°½¹™¥œ°¹½Ü¤è(€€€€€€€É•ÑÕÉ¸±¥¹•}‰Õ‘•Ñ}‰±½­•‘}É•ÍÁ½¹Í”¡ÍÑ…Ñ”°½¹™¥œ°¹½Ü¤(€€€Ñ½‘…ä€ô¹½Ü¹ÍÑÉ™Ñ¥µ” ˆ•d´•´´•ˆ¤(€€€Í•¹Ğ€ô€À(€€€Í­¥ÁÁ•€ô€À(€€€É•ÍÕ±ÑÌ€ômt(€€€ÍåÍÑ•µ}•ÉÉ½È€ô…±Í”((€€€™½ÈÕÍ•È¥¸ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹Ù…±Õ•Ì ¤è(€€€€€€€±¥¹•}ÕÍ•É}¥€ôÕÍ•È¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤(€€€€€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜ÕÍ•È¹•Ğ ‰±¥¹•}ÁÕÍ¡}‰±½­•ˆ¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜ÕÍ•È¹•Ğ ‰µ•µ‰•ÉÍ¡¥Á}Á…ÕÍ•ˆ¤½È¹½Ğµ•µ‰•ÉÍ¡¥Á}…•ÍÍ}…Ñ¥Ù”¡ÕÍ•È°¹½Ü¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜¹½Ğ‰½½°¡ÕÍ•È¹•Ğ ‰‘…¥±å}¡•­¥¹}É•µ¥¹‘•É}•¹…‰±•ˆ°QÉÕ”¤¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜ÁÉ½™¥±•}¥Í}Ñ½‘…å}¡•­•¡ÕÍ•È°½¹™¥œõ½¹™¥œ°¹½Üõ¹½Ü¤è(€€€€€€€€€€€€Œ!•…°µ¥ÍÍ¥¹œQ…¥Á•¤¡¥ÍÑ½ÉäÍ¼±…Ñ•ÈÉ½¸½ÍÑ…ÑÕÌÍÑ…ä½¹Í¥ÍÑ•¹Ğ(€€€€€€€€€€€¡¥ÍĞ€ôÍ•Ğ¡ÕÍ•È¹•Ğ ‰¡¥ÍÑ½Éäˆ¤½Èmt¤(€€€€€€€€€€€¥˜Ñ½‘…ä¹½Ğ¥¸¡¥ÍĞè(€€€€€€€€€€€€€€€¡¥ÍĞ¹…‘¡Ñ½‘…ä¤(€€€€€€€€€€€€€€€ÕÍ•Él‰¡¥ÍÑ½Éä‰t€ôÍ½ÉÑ•¡¡¥ÍĞ¤(€€€€€€€€€€€€Œƒ’î+š^—–ŞË–‚Ç–æÏ–º$ƒŠHƒV—¦;–B3š^—–&§¦’cš:K¢/š>C¦K¾ò#š¢g¢¢`Í±½ÑÏ¾ò3¦ÿ–7–ú3ê3¢ª“š:£¾ò$(€€€€€€€€€€€Ñ¥µ•Ì€ôÉ•µ¥¹‘•É}Ñ¥µ•Í}™½É}ÁÉ½™¥±”¡ÕÍ•È¤½ÈlˆÄÈèÀÀ‰t(€€€€€€€€€€€}µ…É­}¡•­¥¹}É•µ¥¹‘•É}Í±½ÑÌ¡ÕÍ•È°Ñ½‘…ä°Ñ¥µ•Ì°Ñ¥µ•Ì¤(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”((€€€€€€€Ñ¥µ•Ì€ôÉ•µ¥¹‘•É}Ñ¥µ•Í}™½É}ÁÉ½™¥±”¡ÕÍ•È¤(€€€€€€€Í•¹Ñ}Í±½ÑÌ€ô‘¥Ğ¡ÕÍ•È¹•Ğ ‰¡•­¥¹}É•µ¥¹‘•É}Í•¹Ñ}Í±½ÑÌˆ¤½Èíô¤(€€€€€€€Í•¹Ñ}Ñ½‘…ä€ôÍ•Ğ¡Í•¹Ñ}Í±½ÑÌ¹•Ğ¡Ñ½‘…ä¤½Èmt¤((€€€€€€€€Œƒnã–ºç¢"+& ëVÛ–’§–ŞËR£–Z»’âš^—šrš¢g¢¢c¦¦8ƒŠHƒ¢š[
+ëšr³¢ò«–ŞËš>C¦H(€€€€€€€±•…å}‘…Ñ•Ì€ôÍ•Ğ¡ÕÍ•È¹•Ğ ‰¡•­¥¹}É•µ¥¹‘•É}Í•¹Ñ}‘…Ñ•Ìˆ¤½Èmt¤(€€€€€€€¥˜Ñ½‘…ä¥¸±•…å}‘…Ñ•Ì…¹¹½ĞÍ•¹Ñ}Ñ½‘…äè(€€€€€€€€€€€½¹Ñ¥¹Õ”((€€€€€€€‘Õ•}Õ¹Í•¹Ğ€ôl(€€€€€€€€€€€Ğ(€€€€€€€€€€€™½ÈĞ¥¸Ñ¥µ•Ì(€€€€€€€€€€€¥˜É•µ¥¹‘•É}Ñ¥µ•}¥¹}İ¥¹‘½Ü¡Ğ°¹½Ü°±…Ñ•}µ¥¹ÕÑ•ÌôĞ¤…¹Ğ¹½Ğ¥¸Í•¹Ñ}Ñ½‘…ä(€€€€€€€t(€€€€€€€¥˜¹½Ğ‘Õ•}Õ¹Í•¹Ğè(€€€€€€€€€€€½¹Ñ¥¹Õ”((€€€€€€€€Œƒ–B3’â’êS–"¦Bcšf¦ZOª_–>«š:£’âš²‡¾òo¢òš^§šò?š:'jšfšº×’â7¢s¦’æ’â7š¢g¢¢c(€€€€€€€Ñ…É•Ñ}Ñ¥µ”€ô‘Õ•}Õ¹Í•¹Ñl´Åt(€€€€€€€‘•±¥Ù•Éå}­•ä€ô˜‰¡•­¥¸éíÑ½‘…åôéíÑ…É•Ñ}Ñ¥µ•ôˆ(€€€€€€€}É•½É‘}±…Õ¹¡}‘•±¥Ù•Éä (€€€€€€€€€€€ÍÑ…Ñ”°‘•±¥Ù•Éå}­•ä°€‰¡•­¥¸ˆ°±¥¹•}ÕÍ•É}¥°€‰•áÁ•Ñ•ˆ(€€€€€€€€¤(€€€€€€€¥˜¹½ĞÁÕÍ¡}…ÑÑ•µÁÑ}…±±½İ•¡ÕÍ•È°‘•±¥Ù•Éå}­•ä¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€µ•ÍÍ…”€ô‰Õ¥±‘}‘…¥±å}¡•­¥¹}™±•à¡¹½Ü°Ñ…É•Ñ}Ñ¥µ”õÑ…É•Ñ}Ñ¥µ”¤(€€€€€€€ÑÉäè(€€€€€€€€€€€É•ÍÕ±Ğ€ôÍ•¹‘•È¡Ñ½­•¸°±¥¹•}ÕÍ•É}¥°µ•ÍÍ…”¤(€€€€€€€€€€€}±•…É}ÁÕÍ¡}‘•±¥Ù•Éå}™…¥±ÕÉ”¡ÕÍ•È°‘•±¥Ù•Éå}­•ä¤(€€€€€€€€€€€}É•½É‘}±…Õ¹¡}‘•±¥Ù•Éä (€€€€€€€€€€€€€€€ÍÑ…Ñ”°‘•±¥Ù•Éå}­•ä°€‰¡•­¥¸ˆ°±¥¹•}ÕÍ•É}¥°€‰Í•¹Ğˆ(€€€€€€€€€€€€¤(€€€€€€€€€€€}µ…É­}¡•­¥¹}É•µ¥¹‘•É}Í±½ÑÌ¡ÕÍ•È°Ñ½‘…ä°Ñ¥µ•Ì°‘Õ•}Õ¹Í•¹Ğ¤(€€€€€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ¡ÍÑ…Ñ”°€‰¡•­¥¸ˆ°±¥¹•}ÕÍ•É}¥°€‰Í•¹Ğˆ°µ•ÍÍ…”°©Í½¸¹‘ÕµÁÌ¡É•ÍÕ±Ğ°•¹ÍÕÉ•}…Í¥¤õ…±Í”¤¤(€€€€€€€€€€€É•½É‘}±¥¹•}µ•ÍÍ…•}ÕÍ…” (€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€…Ñ•½Éäô‰¡•­¥¸ˆ°(€€€€€€€€€€€€€€€½İ¹•É}±¥¹•}ÕÍ•É}¥õ±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€É•¥Á¥•¹Ñ}½Õ¹ĞôÄ°(€€€€€€€€€€€€€€€•Ù•¹Ñ}¥õ‘•±¥Ù•Éå}­•ä°(€€€€€€€€€€€€€€€Í•¹Ñ}…Ğõ¹½Ü°(€€€€€€€€€€€€¤(€€€€€€€€€€€Í•¹Ğ€¬ô€Ä(€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°€‰É•µ¥¹‘•É}Ñ¥µ”ˆèÑ…É•Ñ}Ñ¥µ”°€‰É•ÍÕ±ĞˆèÉ•ÍÕ±Ñô¤(€€€€€€€€€€€€ŒƒšZçš†#–6Ï–Â¾ò?–ŞË–"Ãšr¾òk–B3š^—šr–’k¦f–âÛ’âš²‡š>C¦K¾ò#’â7šÒ_&#¾ò$(€€€€€€€€€€€¥˜Í¡½Õ±‘}½™™•É}•áÁ¥Éå}É•µ¥¹¡ÕÍ•È°¹½Ü¤è(€€€€€€€€€€€€€€€•áÁ¥Éå}µÍœ€ô‰Õ¥±‘}•áÁ¥Éå}É•µ¥¹‘}™±•à¡ÕÍ•È°¹½Ü¤(€€€€€€€€€€€€€€€•áÁ¥Éå}­•ä€ô˜‰•áÁ¥Éå}É•µ¥¹éíÑ½‘…åôˆ(€€€€€€€€€€€€€€€¥˜¹½ĞÁÕÍ¡}…ÑÑ•µÁÑ}…±±½İ•¡ÕÍ•È°•áÁ¥Éå}­•ä¤è(€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€•áÁ¥Éå}É•ÍÕ±Ğ€ôÍ•¹‘•È¡Ñ½­•¸°±¥¹•}ÕÍ•É}¥°•áÁ¥Éå}µÍœ¤(€€€€€€€€€€€€€€€€€€€}±•…É}ÁÕÍ¡}‘•±¥Ù•Éå}™…¥±ÕÉ”¡ÕÍ•È°•áÁ¥Éå}­•ä¤(€€€€€€€€€€€€€€€€€€€µ…É­}•áÁ¥Éå}É•µ¥¹‘}Í•¹Ğ¡ÕÍ•È°¹½Ü¤(€€€€€€€€€€€€€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ (€€€€€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€€€€€€‰•áÁ¥Éå}É•µ¥¹ˆ°(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€€€€€‰Í•¹Ğˆ°(€€€€€€€€€€€€€€€€€€€€€€€•áÁ¥Éå}µÍœ°(€€€€€€€€€€€€€€€€€€€€€€€©Í½¸¹‘ÕµÁÌ¡•áÁ¥Éå}É•ÍÕ±Ğ°•¹ÍÕÉ•}…Í¥¤õ…±Í”¤°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áÁ¥Éå}•áŒè(€€€€€€€€€€€€€€€€€€€™…¥±ÕÉ”€ô}É•½É‘}Í¡•‘Õ±•‘}ÁÕÍ¡}™…¥±ÕÉ” (€€€€€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€€€€€ÕÍ•È°(€€€€€€€€€€€€€€€€€€€€€€€•áÁ¥Éå}­•ä°(€€€€€€€€€€€€€€€€€€€€€€€€‰•áÁ¥Éå}É•µ¥¹ˆ°(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€€€€•áÁ¥Éå}µÍœ°(€€€€€€€€€€€€€€€€€€€€€€€•áÁ¥Éå}•áŒ°(€€€€€€€€€€€€€€€€€€€€€€€¹½Ü°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€¥˜™…¥±ÕÉ•l‰­¥¹‰t€ôô€‰ÍåÍÑ•´ˆè(€€€€€€€€€€€€€€€€€€€€€€€ÍåÍÑ•µ}•ÉÉ½È€ôQÉÕ”(€€€€€€€€€€€€€€€€€€€€€€€‰É•…¬(€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€™…¥±ÕÉ”€ô}É•½É‘}Í¡•‘Õ±•‘}ÁÕÍ¡}™…¥±ÕÉ” (€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€ÕÍ•È°(€€€€€€€€€€€€€€€‘•±¥Ù•Éå}­•ä°(€€€€€€€€€€€€€€€€‰¡•­¥¸ˆ°(€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€µ•ÍÍ…”°(€€€€€€€€€€€€€€€•áŒ°(€€€€€€€€€€€€€€€¹½Ü°(€€€€€€€€€€€€¤(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°€‰•ÉÉ½ÈˆèÍÑÈ¡•áŒ¥ô¤(€€€€€€€€€€€¥˜™…¥±ÕÉ•l‰­¥¹‰t€ôô€‰ÍåÍÑ•´ˆè(€€€€€€€€€€€€€€€ÍåÍÑ•µ}•ÉÉ½È€ôQÉÕ”(€€€€€€€€€€€€€€€‰É•…¬((€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰Í•¹ĞˆèÍ•¹Ğ°(€€€€€€€€‰Í­¥ÁÁ•ˆèÍ­¥ÁÁ•°(€€€€€€€€‰É•ÍÕ±ÑÌˆèÉ•ÍÕ±ÑÌ°(€€€€€€€€‰ÍåÍÑ•µ}•ÉÉ½ÈˆèÍåÍÑ•µ}•ÉÉ½È°(€€€ô°€ÈÀÀ(()‘•˜‰É½…‘…ÍÑ}¡•­¥¹}É•µ¥¹‘•ÉÌ¡½¹™¥œ°€¨°Á…ÕÍ•}•Ù•ÉäôÈÀ°Á…ÕÍ•}Í•½¹‘ÌôÄ¸À¤è(€€€€ˆˆ‹¦7šZÃš:£šJ·¾òk¦šZÃš¢‡švÿÖ›š&šr'–ŞË¢¢ï–+šr–N‡¾ò#šr$±¥¹•}ÕÍ•É}¥“¾ò'¾ò3–B¯’î+š^—–ŞËÂ÷–"Ã¢((€€€€´ƒ¢ŞÏ¦8±¥¹•}ÁÕÍ¡}‰±½­•(€€€€´ƒ–"š&çšj¯–s’î—¦f7’ö81%9É…Ñ”µ±¥µ¥Ğƒ¦Š£¦j¨(€€€€´ƒš¢g¢¢c’î+š^”É•µ¥¹‘•ÈÍ±½ÑÏ¾ò3¦ÿ–4É½¸ƒ¢7–ú3–7šÒ_& (€€€€ˆˆˆ(€€€¥µÁ½ÉĞÑ¥µ”…Ì}Ñ¥µ”((€€€Ñ½­•¸€ô½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ°€ˆˆ¤(€€€¥˜¹½ĞÑ½­•¸è(€€€€€€€É•ÑÕÉ¸ì‰Í•¹Ğˆè€À°€‰Í­¥ÁÁ•ˆè€À°€‰•ÉÉ½Èˆè€‰1%9}!991}MM}Q=-8¥Ì¹½ĞÍ•Ğ‰ô°€ĞÀÀ((€€€‘…Ñ…}™¥±”€ô½¹™¥l‰Q}%1‰t(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€Í•¹‘•È€ô½¹™¥œ¹•Ğ ‰1%9}AUM!}M9Hˆ¤½È±¥¹•}ÁÕÍ¡}µ•ÍÍ…”(€€€¹½Ü€ôÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡½¹™¥œ¤(€€€¥˜¹½Ğ±¥¹•}¹½¹}•µ•É•¹å}ÁÕÍ¡}…±±½İ•¡ÍÑ…Ñ”°½¹™¥œ°¹½Ü¤è(€€€€€€€É•ÑÕÉ¸±¥¹•}‰Õ‘•Ñ}‰±½­•‘}É•ÍÁ½¹Í”¡ÍÑ…Ñ”°½¹™¥œ°¹½Ü¤(€€€Ñ½‘…ä€ô¹½Ü¹ÍÑÉ™Ñ¥µ” ˆ•d´•´´•ˆ¤(€€€µ•ÍÍ…”€ô‰Õ¥±‘}‘…¥±å}¡•­¥¹}™±•à¡¹½Ü°Ñ…É•Ñ}Ñ¥µ”ôˆˆ¤(€€€Í•¹Ğ€ô€À(€€€Í­¥ÁÁ•€ô€À(€€€‰±½­•€ô€À(€€€É•ÍÕ±ÑÌ€ômt(€€€ÁÕÍ¡}½Õ¹Ğ€ô€À((€€€™½ÈÕÍ•È¥¸ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹Ù…±Õ•Ì ¤è(€€€€€€€±¥¹•}ÕÍ•É}¥€ôÍÑÈ¡ÕÍ•È¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜ÕÍ•È¹•Ğ ‰±¥¹•}ÁÕÍ¡}‰±½­•ˆ¤è(€€€€€€€€€€€‰±½­•€¬ô€Ä(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€Ñ¥µ•Ì€ôÉ•µ¥¹‘•É}Ñ¥µ•Í}™½É}ÁÉ½™¥±”¡ÕÍ•È¤(€€€€€€€ÑÉäè(€€€€€€€€€€€É•ÍÕ±Ğ€ôÍ•¹‘•È¡Ñ½­•¸°±¥¹•}ÕÍ•É}¥°µ•ÍÍ…”¤(€€€€€€€€€€€}µ…É­}¡•­¥¹}É•µ¥¹‘•É}Í±½ÑÌ¡ÕÍ•È°Ñ½‘…ä°Ñ¥µ•Ì°Ñ¥µ•Ì¤(€€€€€€€€€€€ÕÍ•Él‰¡•­¥¹}‰É½…‘…ÍÑ}Í•¹Ñ}‘…Ñ•Ì‰t€ôÍ½ÉÑ• (€€€€€€€€€€€€€€€Í•Ğ¡ÕÍ•È¹•Ğ ‰¡•­¥¹}‰É½…‘…ÍÑ}Í•¹Ñ}‘…Ñ•Ìˆ¤½Èmt¤ğíÑ½‘…åô(€€€€€€€€€€€€¥l´ÌÀét(€€€€€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ (€€€€€€€€€€€€€€€ÍÑ…Ñ”°€‰¡•­¥¹}‰É½…‘…ÍĞˆ°±¥¹•}ÕÍ•É}¥°€‰Í•¹Ğˆ°µ•ÍÍ…”°©Í½¸¹‘ÕµÁÌ¡É•ÍÕ±Ğ°•¹ÍÕÉ•}…Í¥¤õ…±Í”¤(€€€€€€€€€€€€¤(€€€€€€€€€€€Í•¹Ğ€¬ô€Ä(€€€€€€€€€€€ÁÕÍ¡}½Õ¹Ğ€¬ô€Ä(€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°€‰É•ÍÕ±ĞˆèÉ•ÍÕ±Ñô¤(€€€€€€€€€€€¥˜Á…ÕÍ•}•Ù•Éä…¹ÁÕÍ¡}½Õ¹Ğ€”¥¹Ğ¡Á…ÕÍ•}•Ù•Éä¤€ôô€Àè(€€€€€€€€€€€€€€€}Ñ¥µ”¹Í±••À¡™±½…Ğ¡Á…ÕÍ•}Í•½¹‘Ì¤¤(€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€¥˜}µ…É­}±¥¹•}ÁÕÍ¡}‰±½­•¡ÕÍ•È°•áŒ¤è(€€€€€€€€€€€€€€€‰±½­•€¬ô€Ä(€€€€€€€€€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ¡ÍÑ…Ñ”°€‰¡•­¥¹}‰É½…‘…ÍĞˆ°±¥¹•}ÕÍ•É}¥°€‰‰±½­•ˆ°µ•ÍÍ…”°ÍÑÈ¡•áŒ¤¤(€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ¡ÍÑ…Ñ”°€‰¡•­¥¹}‰É½…‘…ÍĞˆ°±¥¹•}ÕÍ•É}¥°€‰™…¥±•ˆ°µ•ÍÍ…”°ÍÑÈ¡•áŒ¤¤(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°€‰•ÉÉ½ÈˆèÍÑÈ¡•áŒ¥ô¤((€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€¡½±¥‘…ä€ô¡½±¥‘…åÍ}ÑÜ¹¡½±¥‘…å}™½È¡¹½Ü¤¥˜¡½±¥‘…åÍ}ÑÜ¥Ì¹½Ğ9½¹”•±Í”9½¹”(€€€É•ÑÕÉ¸ì(€€€€€€€€‰Í•¹ĞˆèÍ•¹Ğ°(€€€€€€€€‰Í­¥ÁÁ•ˆèÍ­¥ÁÁ•°(€€€€€€€€‰‰±½­•ˆè‰±½­•°(€€€€€€€€‰µ½‘”ˆè€‰‰É½…‘…ÍĞˆ°(€€€€€€€€‰¡½±¥‘…äˆè€¡¡½±¥‘…ä½Èíô¤¹•Ğ ‰¹…µ”ˆ¤¥˜¡½±¥‘…ä•±Í”9½¹”°(€€€€€€€€‰Á½Í¥Ñ¥Ù•}ÅÕ½Ñ”ˆè¡½±¥‘…åÍ}ÑÜ¹Á½Í¥Ñ¥Ù•}ÅÕ½Ñ•}™½È¡¹½Ü¤¥˜¡½±¥‘…åÍ}ÑÜ¥Ì¹½Ğ9½¹”•±Í”9½¹”°(€€€€€€€€‰É•ÍÕ±ÑÌˆèÉ•ÍÕ±ÑÌ°(€€€ô°€ÈÀÀ(()‘•˜Í•¹‘}‰¥ÉÑ¡‘…å}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤è(€€€Ñ½­•¸€ô½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ°€ˆˆ¤(€€€¥˜¹½ĞÑ½­•¸è(€€€€€€€É•ÑÕÉ¸ì‰Í•¹Ğˆè€À°€‰Í­¥ÁÁ•ˆè€À°€‰•ÉÉ½Èˆè€‰1%9}!991}MM}Q=-8¥Ì¹½ĞÍ•Ğ‰ô°€ĞÀÀ((€€€‘…Ñ…}™¥±”€ô½¹™¥l‰Q}%1‰t(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€Í•¹‘•È€ô½¹™¥œ¹•Ğ ‰1%9}AUM!}M9Hˆ¤½È±¥¹•}ÁÕÍ¡}µ•ÍÍ…”(€€€¹½Ü€ôÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡½¹™¥œ¤(€€€Ñ½‘…å}‘…Ñ”€ô¹½Ü¹‘…Ñ” ¤(€€€Ñ½‘…å}­•ä€ôÑ½‘…å}‘…Ñ”¹ÍÑÉ™Ñ¥µ” ˆ•d´•´´•ˆ¤(€€€Í•¹Ğ€ô€À(€€€Í­¥ÁÁ•€ô€À(€€€É•ÍÕ±ÑÌ€ômt((€€€‰±½­•€ô€À(€€€ÍåÍÑ•µ}•ÉÉ½È€ô…±Í”(€€€™½ÈÕÍ•È¥¸ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹Ù…±Õ•Ì ¤è(€€€€€€€±¥¹•}ÕÍ•É}¥€ôÕÍ•È¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤(€€€€€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜¹½ĞÁ±…¹}¡…Í}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ¡ÕÍ•È°¹½Üõ¹½Ü¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜ÕÍ•È¹•Ğ ‰µ•µ‰•ÉÍ¡¥Á}Á…ÕÍ•ˆ¤½È¹½Ğµ•µ‰•ÉÍ¡¥Á}…•ÍÍ}…Ñ¥Ù”¡ÕÍ•È°¹½Ü¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜ÕÍ•È¹•Ğ ‰±¥¹•}ÁÕÍ¡}‰±½­•ˆ¤è(€€€€€€€€€€€‰±½­•€¬ô€Ä(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¹½Ñ•Ì€ôÕÍ•È¹•Ğ ‰…±•¹‘…É}¹½Ñ•Ìˆ¤½Èíô(€€€€€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡¹½Ñ•Ì°‘¥Ğ¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€Í•¹Ñ}­•åÌ€ôÍ•Ğ¡ÕÍ•È¹•Ğ ‰‰¥ÉÑ¡‘…å}É•µ¥¹‘•É}Í•¹Ñ}­•åÌˆ¤½Èmt¤(€€€€€€€™½È¹½Ñ•}‘…Ñ”°¹½Ñ”¥¸¹½Ñ•Ì¹¥Ñ•µÌ ¤è(€€€€€€€€€€€™½È‰¥ÉÑ¡‘…å}¥¹‘•à°‰¥ÉÑ¡‘…ä¥¸•¹Õµ•É…Ñ”¡…±•¹‘…É}¹½Ñ•}‰¥ÉÑ¡‘…åÌ¡¹½Ñ”¤¤è(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€É•µ¥¹‘}‘…åÌ€ô¥¹Ğ¡‰¥ÉÑ¡‘…ä¹•Ğ ‰‰¥ÉÑ¡‘…å}É•µ¥¹‘}‘…åÌˆ¤½È€Ä¤(€€€€€€€€€€€€€€€•á•ÁĞ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€€€€€€€€€€€€€É•µ¥¹‘}‘…åÌ€ô€Ä(€€€€€€€€€€€€€€€Ñ…É•Ñ}‘…Ñ”€ôÑ½‘…å}‘…Ñ”€¬Ñ¥µ•‘•±Ñ„¡‘…åÌõÉ•µ¥¹‘}‘…åÌ¤(€€€€€€€€€€€€€€€¥˜¹½Ğ‰¥ÉÑ¡‘…å}½ÕÉÍ}½¸¡‰¥ÉÑ¡‘…ä°Ñ…É•Ñ}‘…Ñ”¤è(€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€€€€€‰¥ÉÑ¡‘…å}ÍÕ™™¥à€ô˜ˆéí‰¥ÉÑ¡‘…å}¥¹‘•áôˆ¥˜‰¥ÉÑ¡‘…å}¥¹‘•à•±Í”€ˆˆ(€€€€€€€€€€€€€€€Í•¹Ñ}­•ä€ô€ (€€€€€€€€€€€€€€€€€€€˜‰íÑ½‘…å}­•åôéí¹½Ñ•}‘…Ñ•ôéíÉ•µ¥¹‘}‘…åÍõí‰¥ÉÑ¡‘…å}ÍÕ™™¥áôˆ(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€¥˜Í•¹Ñ}­•ä¥¸Í•¹Ñ}­•åÌè(€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€€€€€‘•±¥Ù•Éå}­•ä€ô˜‰‰¥ÉÑ¡‘…äéíÍ•¹Ñ}­•åôˆ(€€€€€€€€€€€€€€€¥˜¹½ĞÁÕÍ¡}…ÑÑ•µÁÑ}…±±½İ•¡ÕÍ•È°‘•±¥Ù•Éå}­•ä¤è(€€€€€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€€€€€İ¡¼€ô‰¥ÉÑ¡‘…ä¹•Ğ ‰‰¥ÉÑ¡‘…å}É•±…Ñ¥½¹Í¡¥Àˆ¤½È‰¥ÉÑ¡‘…ä¹•Ğ ‰‰¥ÉÑ¡‘…å}¹…µ”ˆ¤½È€‹–ºÛ’êèˆ(€€€€€€€€€€€€€€€İ¡•¹}Ñ•áĞ€ô€‹’î+–’¤ˆ¥˜É•µ¥¹‘}‘…åÌ€ôô€À•±Í”€ ‹šb;–’¤ˆ¥˜É•µ¥¹‘}‘…åÌ€ôô€Ä•±Í”˜‰íÉ•µ¥¹‘}‘…åÍôƒ–’§–ú0ˆ¤(€€€€€€€€€€€€€€€µ•ÍÍ…”€ô˜‰íİ¡•¹}Ñ•áÑ÷šb½íİ¡½÷Rš^—¾ò3¢¢c–ú_¢Ş’î[¢ª«¢ËRš^—–ş¯š¢’æ–>¿’î—¦‚š&/Šë¢ª7’î[’î+–’§–æÏ–º'ˆ(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€É•ÍÕ±Ğ€ôÍ•¹‘•È¡Ñ½­•¸°±¥¹•}ÕÍ•É}¥°µ•ÍÍ…”¤(€€€€€€€€€€€€€€€€€€€}±•…É}ÁÕÍ¡}‘•±¥Ù•Éå}™…¥±ÕÉ”¡ÕÍ•È°‘•±¥Ù•Éå}­•ä¤(€€€€€€€€€€€€€€€€€€€Í•¹Ñ}­•åÌ¹…‘¡Í•¹Ñ}­•ä¤(€€€€€€€€€€€€€€€€€€€ÕÍ•Él‰‰¥ÉÑ¡‘…å}É•µ¥¹‘•É}Í•¹Ñ}­•åÌ‰t€ôÍ½ÉÑ•¡Í•¹Ñ}­•åÌ¥l´àÀét(€€€€€€€€€€€€€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ¡ÍÑ…Ñ”°€‰‰¥ÉÑ¡‘…äˆ°±¥¹•}ÕÍ•É}¥°€‰Í•¹Ğˆ°µ•ÍÍ…”°©Í½¸¹‘ÕµÁÌ¡É•ÍÕ±Ğ°•¹ÍÕÉ•}…Í¥¤õ…±Í”¤¤(€€€€€€€€€€€€€€€€€€€Í•¹Ğ€¬ô€Ä(€€€€€€€€€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°€‰‰¥ÉÑ¡‘…äˆèİ¡¼°€‰É•µ¥¹‘}‘…åÌˆèÉ•µ¥¹‘}‘…åÍô¤(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€™…¥±ÕÉ”€ô}É•½É‘}Í¡•‘Õ±•‘}ÁÕÍ¡}™…¥±ÕÉ” (€€€€€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€€€€€ÕÍ•È°(€€€€€€€€€€€€€€€€€€€€€€€‘•±¥Ù•Éå}­•ä°(€€€€€€€€€€€€€€€€€€€€€€€€‰‰¥ÉÑ¡‘…äˆ°(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€€€€µ•ÍÍ…”°(€€€€€€€€€€€€€€€€€€€€€€€•áŒ°(€€€€€€€€€€€€€€€€€€€€€€€¹½Ü°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€¥˜™…¥±ÕÉ•l‰ÍÑ…ÑÕÌ‰t€ôô€‰‰±½­•ˆè(€€€€€€€€€€€€€€€€€€€€€€€‰±½­•€¬ô€Ä(€€€€€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°€‰‰¥ÉÑ¡‘…äˆèİ¡¼°€‰•ÉÉ½ÈˆèÍÑÈ¡•áŒ¥ô¤(€€€€€€€€€€€€€€€€€€€¥˜™…¥±ÕÉ•l‰­¥¹‰t€ôô€‰ÍåÍÑ•´ˆè(€€€€€€€€€€€€€€€€€€€€€€€ÍåÍÑ•µ}•ÉÉ½È€ôQÉÕ”(€€€€€€€€€€€€€€€€€€€€€€€‰É•…¬(€€€€€€€€€€€¥˜ÍåÍÑ•µ}•ÉÉ½Èè(€€€€€€€€€€€€€€€‰É•…¬(€€€€€€€¥˜ÍåÍÑ•µ}•ÉÉ½Èè(€€€€€€€€€€€‰É•…¬((€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰Í•¹ĞˆèÍ•¹Ğ°(€€€€€€€€‰Í­¥ÁÁ•ˆèÍ­¥ÁÁ•°(€€€€€€€€‰‰±½­•ˆè‰±½­•°(€€€€€€€€‰É•ÍÕ±ÑÌˆèÉ•ÍÕ±ÑÌ°(€€€€€€€€‰ÍåÍÑ•µ}•ÉÉ½ÈˆèÍåÍÑ•µ}•ÉÉ½È°(€€€ô°€ÈÀÀ(((Œ€ôôô€Üääƒšfë¢÷š>C¦K¾ò#RšÒïš>C¦K¾òk–>«¢ÖÀ1%9ƒ¢¢+¾ò3¦‚C¢¢·’â7¦Ë–º#¢¶ßú“¾ò$ôôô)M5IQ}I5%9I}Q=I%L€ôì(€€€€‰‰¥ÉÑ¡‘…äˆèì‰•µ½©¤ˆè€‹Â~:ˆ°€‰±…‰•°ˆè€‹Rš^”‰ô°(€€€€‰İ•‘‘¥¹œˆèì‰•µ½©¤ˆè€‹Â~J4ˆ°€‰±…‰•°ˆè€‹ÖC–¦kÒ–ş×š^”‰ô°(€€€€‰‘…Ñ¥¹œˆèì‰•µ½©¤ˆè€‹Â~JTˆ°€‰±…‰•°ˆè€‹’ê“–úÒ–ş×š^”‰ô°(€€€€‰¡¥±‘}‰¥ÉÑ¡‘…äˆèì‰•µ½©¤ˆè€‹Â~FØˆ°€‰±…‰•°ˆè€‹–Â?–¶§Rš^”‰ô°(€€€€‰•±‘•É}‰¥ÉÑ¡‘…äˆèì‰•µ½©¤ˆè€‹Â~FĞˆ°€‰±…‰•°ˆè€‹¦Vß¢ò§Rš^”‰ô°(€€€€‰É…‘Õ…Ñ¥½¸ˆèì‰•µ½©¤ˆè€‹Â~:Lˆ°€‰±…‰•°ˆè€‹V‹š–´‰ô°(€€€€‰µ½Ù¥¹œˆèì‰•µ½©¤ˆè€‹Â~>€ˆ°€‰±…‰•°ˆè€‹šB³–ºØ‰ô°(€€€€‰ÍÁ•¥…°ˆèì‰•µ½©¤ˆè€‹Â~:$ˆ°€‰±…‰•°ˆè€‹&çšº+Ò–ş×š^”‰ô°(€€€€‰¡•­ÕÀˆèì‰•µ½©¤ˆè€‹Â~J(ˆ°€‰±…‰•°ˆè€‹–n{¢¢è‰ô°(€€€€‰µ•‘¥¥¹”ˆèì‰•µ½©¤ˆè€‹Â~J(ˆ°€‰±…‰•°ˆè€‹–B¢^”‰ô°(€€€€‰Í¡•‘Õ±”ˆèì‰•µ½©¤ˆè€‹Â~Nˆ°€‰±…‰•°ˆè€‹¢†3¢,‰ô°(€€€€‰É••Ñ¥¹œˆèì‰•µ½©¤ˆè€‹Šv“¾â<ˆ°€‰±…‰•°ˆè€‹–V?–d‰ô°(€€€€‰ÕÍÑ½´ˆèì‰•µ½©¤ˆè€‹Â~^O¾â<ˆ°€‰±…‰•°ˆè€‹¢«¢¢‰ô°)ô(()‘•˜Á±…¹}¡…Í}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ¡ÁÉ½™¥±”°¹½Üõ9½¹”¤è(€€€Á±…¸€ôÍÑÈ ¡ÁÉ½™¥±”½Èíô¤¹•Ğ ‰Á±…¸ˆ¤½È€‰ÑÉ¥…°ˆ¤(€€€É•ÑÕÉ¸Á±…¸¥¸ì‰Á…¥‘|Üääˆ°€‰Á…¥‘|Üäå}å•…È‰ô…¹Á…¥‘}µ•µ‰•ÉÍ¡¥Á}¥Í}…Ñ¥Ù” (€€€€€€€ÁÉ½™¥±”½Èíô°¹½Üõ¹½Ü(€€€€¤(()‘•˜¹½Éµ…±¥é•}Íµ…ÉÑ}É•µ¥¹‘•È¡É…Ü°¥¹‘•àôÀ¤è(€€€É…Ü€ôÉ…Ü¥˜¥Í¥¹ÍÑ…¹”¡É…Ü°‘¥Ğ¤•±Í”íô(€€€…Ñ•½Éä€ôÍÑÈ¡É…Ü¹•Ğ ‰…Ñ•½Éäˆ¤½È€‰ÕÍÑ½´ˆ¤¹ÍÑÉ¥À ¤¹±½İ•È ¤(€€€¥˜…Ñ•½Éä¹½Ğ¥¸M5IQ}I5%9I}Q=I%Lè(€€€€€€€…Ñ•½Éä€ô€‰ÕÍÑ½´ˆ(€€€µ•Ñ„€ôM5IQ}I5%9I}Q=I%Mm…Ñ•½Éåt(€€€•µ½©¤€ôÍÑÈ¡É…Ü¹•Ğ ‰•µ½©¤ˆ¤½Èµ•Ñ…l‰•µ½©¤‰t¤¹ÍÑÉ¥À ¤½Èµ•Ñ…l‰•µ½©¤‰t(€€€ÑÉäè(€€€€€€€µ½¹Ñ €ô¥¹Ğ¡É…Ü¹•Ğ ‰µ½¹Ñ ˆ¤½È€À¤(€€€€€€€‘…ä€ô¥¹Ğ¡É…Ü¹•Ğ ‰‘…äˆ¤½È€À¤(€€€•á•ÁĞ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€µ½¹Ñ °‘…ä€ô€À°€À(€€€å•…É}É…Ü€ôÉ…Ü¹•Ğ ‰å•…Èˆ¤(€€€ÑÉäè(€€€€€€€å•…È€ô¥¹Ğ¡å•…É}É…Ü¤¥˜å•…É}É…Ü¹½Ğ¥¸€¡9½¹”°€ˆˆ°€À°€ˆÀˆ¤•±Í”9½¹”(€€€•á•ÁĞ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€å•…È€ô9½¹”(€€€€Œ‘…Ñ•}¥Í¿¾ò!eeedµ54µ¾ò'–«–#šZóš.¦Z/j–æÓšr#š^”(€€€‘…Ñ•}¥Í¼€ôÍÑÈ¡É…Ü¹•Ğ ‰‘…Ñ”ˆ¤½ÈÉ…Ü¹•Ğ ‰‘…Ñ•}¥Í¼ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜‘…Ñ•}¥Í¼…¹É”¹µ…Ñ ¡È‰yq‘ìÑôµq‘ìÉôµq‘ìÉôˆ°‘…Ñ•}¥Í¼¤è(€€€€€€€ÑÉäè(€€€€€€€€€€€ä°´°€ô‘…Ñ•}¥Í¼¹ÍÁ±¥Ğ ˆ´ˆ¤(€€€€€€€€€€€å•…È€ô¥¹Ğ¡ä¤(€€€€€€€€€€€µ½¹Ñ €ô¥¹Ğ¡´¤(€€€€€€€€€€€‘…ä€ô¥¹Ğ¡¤(€€€€€€€•á•ÁĞ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€€€€€Á…ÍÌ(€€€¥˜‰½½°¡É…Ü¹•Ğ ‰å•…É±äˆ°…±Í”¤¤½È‰½½°¡É…Ü¹•Ğ ‰É•Á•…Ñ}å•…É±äˆ°…±Í”¤¤è(€€€€€€€å•…È€ô9½¹”(€€€É•µ¥¹‘}Ñ¥µ”€ôÍÑÈ¡É…Ü¹•Ğ ‰É•µ¥¹‘}Ñ¥µ”ˆ¤½ÈÉ…Ü¹•Ğ ‰Ñ¥µ”ˆ¤½È€ˆÀäèÀÀˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¹½ĞI5%9I}Q%5}AQQI8¹µ…Ñ ¡É•µ¥¹‘}Ñ¥µ”¤è(€€€€€€€É•µ¥¹‘}Ñ¥µ”€ô€ˆÀäèÀÀˆ(€€€ÕÍÑ½µ}Ñ¥Ñ±”€ôÍÑÈ¡É…Ü¹•Ğ ‰ÕÍÑ½µ}Ñ¥Ñ±”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¥lèàÁt(€€€…Ñ•½Éå}±…‰•°€ôµ•Ñ…l‰±…‰•°‰t(€€€¥˜…Ñ•½Éä€ôô€‰ÕÍÑ½´ˆ…¹ÕÍÑ½µ}Ñ¥Ñ±”è(€€€€€€€…Ñ•½Éå}±…‰•°€ôÕÍÑ½µ}Ñ¥Ñ±”(€€€É¥€ôÍÑÈ¡É…Ü¹•Ğ ‰¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤½È˜‰ÍÉ}íÍ•É•ÑÌ¹Ñ½­•¹}¡•à Ø¥ôˆ(€€€¹½Ñ¥™å}ÁÉ¥Ù…Ñ”€ôQÉÕ”€€ŒÁÉ½‘ÕĞèƒšfë¢÷š>C¦K–>«¢ÖÃ¢¢((€€€¹½Ñ¥™å}É½ÕÀ€ô…±Í”(€€€‘•±¥Ù•Éå}Ñ…É•Ğ€ôÍÑÈ¡É…Ü¹•Ğ ‰‘•±¥Ù•Éå}Ñ…É•Ğˆ¤½È€‰ÁÉ¥Ù…Ñ”ˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¹½Ğ€¡‘•±¥Ù•Éå}Ñ…É•Ğ€ôô€‰ÁÉ¥Ù…Ñ”ˆ½È‘•±¥Ù•Éå}Ñ…É•Ğ¹ÍÑ…ÉÑÍİ¥Ñ  ‰Õ…É‘¥…¸èˆ¤¤è(€€€€€€€‘•±¥Ù•Éå}Ñ…É•Ğ€ôÍÑÈ¡É…Ü¹•Ğ ‰‘•±¥Ù•Éå}Ñ…É•Ğˆ¤½È€‰ÁÉ¥Ù…Ñ”ˆ¤¹ÍÑÉ¥À ¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰¥ˆèÉ¥°(€€€€€€€€‰Ñ…É•Ñ}¹…µ”ˆèÍÑÈ¡É…Ü¹•Ğ ‰Ñ…É•Ñ}¹…µ”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤½È˜‹–Â7¢Æ…í¥¹‘•à€¬€Åôˆ°(€€€€€€€€‰…Ñ•½Éäˆè…Ñ•½Éä°(€€€€€€€€‰…Ñ•½Éå}±…‰•°ˆè…Ñ•½Éå}±…‰•°°(€€€€€€€€‰ÕÍÑ½µ}Ñ¥Ñ±”ˆèÕÍÑ½µ}Ñ¥Ñ±”°(€€€€€€€€‰•µ½©¤ˆè•µ½©¤°(€€€€€€€€‰µ½¹Ñ ˆèµ½¹Ñ ¥˜€Ä€ğôµ½¹Ñ €ğô€ÄÈ•±Í”€Ä°(€€€€€€€€‰‘…äˆè‘…ä¥˜€Ä€ğô‘…ä€ğô€ÌÄ•±Í”€Ä°(€€€€€€€€‰å•…Èˆèå•…È°(€€€€€€€€‰É•µ¥¹‘}Ñ¥µ”ˆèÉ•µ¥¹‘}Ñ¥µ”°(€€€€€€€€‰¹½Ñ”ˆèÍÑÈ¡É…Ü¹•Ğ ‰¹½Ñ”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¥lèÈÀÁt°(€€€€€€€€‰¹½Ñ¥™å}ÁÉ¥Ù…Ñ”ˆè¹½Ñ¥™å}ÁÉ¥Ù…Ñ”°(€€€€€€€€‰¹½Ñ¥™å}É½ÕÀˆè¹½Ñ¥™å}É½ÕÀ°(€€€€€€€€‰‘•±¥Ù•Éå}Ñ…É•Ğˆè‘•±¥Ù•Éå}Ñ…É•Ğ°(€€€€€€€€‰•Ù•}É•µ¥¹ˆè‰½½°¡É…Ü¹•Ğ ‰•Ù•}É•µ¥¹ˆ°QÉÕ”¤¤°(€€€€€€€€‰É•…Ñ•‘}…ĞˆèÍÑÈ¡É…Ü¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤½È‘…Ñ•Ñ¥µ”¹¹½Ü ¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤¤°(€€€€€€€€‰ÕÁ‘…Ñ•‘}…ĞˆèÍÑÈ¡É…Ü¹•Ğ ‰ÕÁ‘…Ñ•‘}…Ğˆ¤½È€ˆˆ¤°(€€€ô(()‘•˜±¥ÍÑ}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ¡ÁÉ½™¥±”¤è(€€€É½İÌ€ôÁÉ½™¥±”¹•Ğ ‰Íµ…ÉÑ}É•µ¥¹‘•ÉÌˆ¤¥˜¥Í¥¹ÍÑ…¹”¡ÁÉ½™¥±”¹•Ğ ‰Íµ…ÉÑ}É•µ¥¹‘•ÉÌˆ¤°±¥ÍĞ¤•±Í”mt(€€€É•ÑÕÉ¸m¹½Éµ…±¥é•}Íµ…ÉÑ}É•µ¥¹‘•È¡É½Ü°¤¤™½È¤°É½Ü¥¸•¹Õµ•É…Ñ”¡É½İÌ¥t(()‘•˜Íµ…ÉÑ}É•µ¥¹‘•É}½ÕÉÍ}½¸¡É•µ¥¹‘•È°Ñ…É•Ñ}‘…Ñ”¤è(€€€ÑÉäè(€€€€€€€µ½¹Ñ €ô¥¹Ğ¡É•µ¥¹‘•È¹•Ğ ‰µ½¹Ñ ˆ¤½È€À¤(€€€€€€€‘…ä€ô¥¹Ğ¡É•µ¥¹‘•È¹•Ğ ‰‘…äˆ¤½È€À¤(€€€•á•ÁĞ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€É•ÑÕÉ¸…±Í”(€€€¥˜¹½Ğ€ Ä€ğôµ½¹Ñ €ğô€ÄÈ…¹€Ä€ğô‘…ä€ğô€ÌÄ¤è(€€€€€€€É•ÑÕÉ¸…±Í”(€€€å•…È€ôÉ•µ¥¹‘•È¹•Ğ ‰å•…Èˆ¤(€€€¥˜å•…Èè(€€€€€€€ÑÉäè(€€€€€€€€€€€É•ÑÕÉ¸Ñ…É•Ñ}‘…Ñ”¹å•…È€ôô¥¹Ğ¡å•…È¤…¹Ñ…É•Ñ}‘…Ñ”¹µ½¹Ñ €ôôµ½¹Ñ …¹Ñ…É•Ñ}‘…Ñ”¹‘…ä€ôô‘…ä(€€€€€€€•á•ÁĞ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€€€€€É•ÑÕÉ¸…±Í”(€€€€Œå•…É±äÉ•ÕÉÉ•¹”ìÍ­¥À¥¹Ù…±¥‘…Ñ•Ì±¥­”€È¼ÌÀ(€€€ÑÉäè(€€€€€€€‘…Ñ•Ñ¥µ”¡Ñ…É•Ñ}‘…Ñ”¹å•…È°µ½¹Ñ °‘…ä¤(€€€•á•ÁĞY…±Õ•ÉÉ½Èè(€€€€€€€É•ÑÕÉ¸…±Í”(€€€É•ÑÕÉ¸Ñ…É•Ñ}‘…Ñ”¹µ½¹Ñ €ôôµ½¹Ñ …¹Ñ…É•Ñ}‘…Ñ”¹‘…ä€ôô‘…ä(()‘•˜Íµ…ÉÑ}É•µ¥¹‘•É}…¹¹•‘}İ¥Í ¡É•µ¥¹‘•È¤è(€€€¹…µ”€ôÉ•µ¥¹‘•È¹•Ğ ‰Ñ…É•Ñ}¹…µ”ˆ¤½È€‹–Â7šZäˆ(€€€…Ğ€ôÉ•µ¥¹‘•È¹•Ğ ‰…Ñ•½Éäˆ¤½È€‰ÕÍÑ½´ˆ(€€€±…‰•°€ôÉ•µ¥¹‘•È¹•Ğ ‰…Ñ•½Éå}±…‰•°ˆ¤½ÈM5IQ}I5%9I}Q=I%L¹•Ğ¡…Ğ°íô¤¹•Ğ ‰±…‰•°ˆ°€‹š^—–¶@ˆ¤(€€€Ñ•µÁ±…Ñ•Ì€ôì(€€€€€€€€‰‰¥ÉÑ¡‘…äˆè˜‹Â~:í¹…µ•÷¾ò3Rš^—–ş¯š¢¾ò¦†c’öƒ’î+–’§¢Š¯šê¯š~S–2–r7¾ò3–æÏ–º'–—–êßš¾?’â–’¤ƒŠv“¾â<ˆ°(€€€€€€€€‰İ•‘‘¥¹œˆè˜‹Â~J4ƒ¢š«šojí¹…µ•÷¾ò3ÖC–¦kÒ–ş×š^—–ş¯š¢¾òš¢²w’â¢Ş¿’â+j¦f«’òÓ¢"–2–ºäƒŠv“¾â<ˆ°(€€€€€€€€‰‘…Ñ¥¹œˆè˜‹Â~JTí¹…µ•÷¾ò3’ê“–úÒ–ş×š^—–ş¯š¢¾ò¢²w¢²w’öƒ¢ºO–æÏ–‡š^—–¶C¢º+–ú_&ç–"—ˆ°(€€€€€€€€‰¡¥±‘}‰¥ÉÑ¡‘…äˆè˜‹Â~FØƒ¢š«šoj–Â?–¶§Rš^—–ş¯š¢¾ò¦Vß–’Ÿjš¾?’âš¶—¾ò3š"G–G¦÷
+ë’öƒ¦Z/–şˆ°(€€€€€€€€‰•±‘•É}‰¥ÉÑ¡‘…äˆè˜‹Â~FĞí¹…µ•÷Rš^—–ş¯š¢¾ò¦†cš
+£¢ê¯¦®S†³šr_š¾?–’§²G–>–âã¦Z/ˆ°(€€€€€€€€‰É…‘Õ…Ñ¥½¸ˆè˜‹Â~:Lƒš·–Zqí¹…µ•÷V‹š–·¾òšZÃjš^¢/¦Z/–/’ê¾ò3š"G–G
+ë’öƒ¦¦W–
+Ëˆ°(€€€€€€€€‰µ½Ù¥¹œˆè˜‹Â~>€ƒšZÃ–ºÛ¢B÷š"C¾ò?–Z³¦ßš'–ş¯¾ò¦†aí¹…µ•÷–r£šZÃJÃ–Š’â–"¦‚–"§ˆ°(€€€€€€€€‰ÍÁ•¥…°ˆè˜‹Â~:$ƒ’î+–’§šb¿&ç–"—jš^—–¶C¾ò3–uí¹…µ•÷¦Z/–ş–æÏ–º'ˆ°(€€€€€€€€‰¡•­ÕÀˆè˜‹Â~J(ƒš>C¦K¾òk¢¢c–ú_¦f«¾ò?¦^s–şí¹…µ•÷–n{¢¢ë¾ò3–âÛ–—’şw–6‡¢"–ÂÇ¦¯¢ÎšZgˆ°(€€€€€€€€‰µ•‘¥¥¹”ˆè˜‹Â~J(ƒš>C¦K¾òk¢¦Ë–B¢^—¾ò?š.ÿ¢^—’ê¾ò3–æ­í¹…µ•÷Šë¢ª7’âš²‡ˆ°(€€€€€€€€‰Í¡•‘Õ±”ˆè˜‹Â~Nƒ¢†3¢/š>C¦K¾òk’î+–’§¢"í¹…µ•÷šr'¦^sj–º'š:K¾ò3–"—–şc’ê¦‚CVgšf¦ZOˆ°(€€€€€€€€‰É••Ñ¥¹œˆè˜‹Šv“¾â<ƒ–
+Ï’â–>—–V?–gÖ™í¹…µ•÷¾òk3’î+–’§¦
+––÷–^;¾òš"GšÏ’öƒ’ê4ˆ°(€€€€€€€€‰ÕÍÑ½´ˆè˜‹Â~^O¾â<ƒš>C¦K¾òk’î+–’§šb¿’öƒ
+éí¹…µ•÷¢¢·–ºkj1í±…‰•±÷7¾ò3¢¢c–ú_¢fWB’â’â/ˆ°(€€€ô(€€€É•ÑÕÉ¸Ñ•µÁ±…Ñ•Ì¹•Ğ¡…Ğ°Ñ•µÁ±…Ñ•Íl‰ÕÍÑ½´‰t¤(()‘•˜Íµ…ÉÑ}É•µ¥¹‘•É}…¹¹•‘}¥™Ğ¡É•µ¥¹‘•È¤è(€€€¹…µ”€ôÉ•µ¥¹‘•È¹•Ğ ‰Ñ…É•Ñ}¹…µ”ˆ¤½È€‹–Â7šZäˆ(€€€…Ğ€ôÉ•µ¥¹‘•È¹•Ğ ‰…Ñ•½Éäˆ¤½È€‰ÕÍÑ½´ˆ(€€€¥˜…Ğ¥¸ì‰‰¥ÉÑ¡‘…äˆ°€‰¡¥±‘}‰¥ÉÑ¡‘…äˆ°€‰•±‘•É}‰¥ÉÑ¡‘…ä‰ôè(€€€€€€€É•ÑÕÉ¸˜‹Â~:ƒš»&§–îë¢¶Ã¾òhÄ¤ƒš&/–¾¯–Â?–6‡¾ò/–Zsš¶‡jRs¦îx€È¤ƒ–¾›R£š^—–âã––÷&¤€Ì¤ƒ’â¢Öß–B¦‚O¦¿–Â7¢Æ‡¾òií¹…µ•ôˆ(€€€¥˜…Ğ¥¸ì‰İ•‘‘¥¹œˆ°€‰‘…Ñ¥¹œ‰ôè(€€€€€€€É•ÑÕÉ¸˜‹Â~:ƒš»&§–îë¢¶Ã¾òk’â¢Öß–n{šÛŸ&šnã–Ç–B3–Zsš¶‡j–Â?š^¢†3¾ò3š"[’â¦‚O–º'¦vsšfk¦’C–Â7¢Æ‡¾òií¹…µ•ôˆ(€€€¥˜…Ğ¥¸ì‰¡•­ÕÀˆ°€‰µ•‘¥¥¹”‰ôè(€€€€€€€É•ÑÕÉ¸˜‹Â~:ƒ–¾›R£–6S–*§¾òk¦f«¢¢ëšVÓB¢^—–Z»šê[–
+gšÂÓšv¿¢"’ê“¦k–º'š:K–Â7¢Æ‡¾òií¹…µ•ôˆ(€€€É•ÑÕÉ¸˜‹Â~:ƒ–îë¢¶Ã¾òk’â–>—r–ş¢¦Ç¾ò/–Â?¦¦k–Zs¾ò#¢*Ç¾ò?Rs¦î{¾ò?¦f«’òÓšf¦ZO¾ò'–Â7¢Æ‡¾òií¹…µ•ôˆ(()‘•˜‰Õ¥±‘}Íµ…ÉÑ}É•µ¥¹‘•É}™±•à¡É•µ¥¹‘•È°€¨°µ½‘”ô‰‘…äˆ¤è(€€€€ˆˆ‰µ½‘”õ‘…åñ•Ù”±•à™½ÈÁÉ¥Ù…Ñ”1%9ÁÕÍ ¸ˆˆˆ(€€€¹…µ”€ôÉ•µ¥¹‘•È¹•Ğ ‰Ñ…É•Ñ}¹…µ”ˆ¤½È€‹–Â7šZäˆ(€€€•µ½©¤€ôÉ•µ¥¹‘•È¹•Ğ ‰•µ½©¤ˆ¤½È€‹Â~^O¾â<ˆ(€€€±…‰•°€ôÉ•µ¥¹‘•È¹•Ğ ‰…Ñ•½Éå}±…‰•°ˆ¤½È€‹š>C¦Hˆ(€€€µ½¹Ñ €ô¥¹Ğ¡É•µ¥¹‘•È¹•Ğ ‰µ½¹Ñ ˆ¤½È€Ä¤(€€€‘…ä€ô¥¹Ğ¡É•µ¥¹‘•È¹•Ğ ‰‘…äˆ¤½È€Ä¤(€€€‘…Ñ•}Ñ•áĞ€ô˜‰íµ½¹Ñ¡ô½í‘…åôˆ(€€€É¥€ôÉ•µ¥¹‘•È¹•Ğ ‰¥ˆ¤½È€ˆˆ(€€€¥˜µ½‘”€ôô€‰•Ù”ˆè(€€€€€€€Ñ¥Ñ±”€ô˜‹Šv“¾â<ƒšb;–’§šb½í¹…µ•õí±…‰•±ôˆ(€€€€€€€‰½‘ä€ô€‹¦r¢š–æ¯’öƒšê[–
+g’â–>—–wš?–^;¾ò|ˆ(€€€€€€€‰ÕÑÑ½¹Ì€ôl(€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰‰ÕÑÑ½¸ˆ°€‰…Ñ¥½¸ˆèì‰ÑåÁ”ˆè€‰Á½ÍÑ‰…¬ˆ°€‰±…‰•°ˆè€‹Šr£š¾?š^—R‹R–wš<ˆ°€‰‘…Ñ„ˆè˜‰Íµ…ÉĞéİ¥Í éíÉ¥‘ôˆ°€‰‘¥ÍÁ±…åQ•áĞˆè€‹–æ¯š"GR‹R–wš<‰ô°€‰ÍÑå±”ˆè€‰ÁÉ¥µ…Éäˆ°€‰½±½Èˆè€ˆŒİÍˆ°€‰¡•¥¡Ğˆè€‰Í´‰ô°(€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰‰ÕÑÑ½¸ˆ°€‰…Ñ¥½¸ˆèì‰ÑåÁ”ˆè€‰Á½ÍÑ‰…¬ˆ°€‰±…‰•°ˆè€‹Â~:š»&§–îë¢¶Àˆ°€‰‘…Ñ„ˆè˜‰Íµ…ÉĞé¥™ĞéíÉ¥‘ôˆ°€‰‘¥ÍÁ±…åQ•áĞˆè€‹š»&§–îë¢¶À‰ô°€‰ÍÑå±”ˆè€‰Í•½¹‘…Éäˆ°€‰¡•¥¡Ğˆè€‰Í´‰ô°(€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰‰ÕÑÑ½¸ˆ°€‰…Ñ¥½¸ˆèì‰ÑåÁ”ˆè€‰Á½ÍÑ‰…¬ˆ°€‰±…‰•°ˆè€‹Â~N{šb;–’§š>C¦Hˆ°€‰‘…Ñ„ˆè˜‰Íµ…ÉĞéÍ¹½½é”éíÉ¥‘ôˆ°€‰‘¥ÍÁ±…åQ•áĞˆè€‹šb;–’§–7š>C¦Kš"D‰ô°€‰ÍÑå±”ˆè€‰Í•½¹‘…Éäˆ°€‰¡•¥¡Ğˆè€‰Í´‰ô°(€€€€€€€t(€€€€€€€…±Ğ€ô˜‹šb;–’§šb½í¹…µ•÷jí±…‰•±ôˆ(€€€•±Í”è(€€€€€€€¥˜€¡É•µ¥¹‘•È¹•Ğ ‰…Ñ•½Éäˆ¤½È€ˆˆ¤€ôô€‰‰¥ÉÑ¡‘…äˆè(€€€€€€€€€€€Ñ¥Ñ±”€ô˜‹Â~:ƒ’î+–’§šb½í¹…µ•÷jRš^”ˆ(€€€€€€€€€€€‰½‘ä€ô˜‹–"—–şc’ê¦’â+’â–>—–wš<ƒŠv“¾â=q»–O–B7¾òií¹…µ•õq»’î+–’§¾òií‘…Ñ•}Ñ•áÑôˆ(€€€€€€€€€€€‰ÕÑÑ½¹Ì€ôl(€€€€€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰‰ÕÑÑ½¸ˆ°€‰…Ñ¥½¸ˆèì‰ÑåÁ”ˆè€‰Á½ÍÑ‰…¬ˆ°€‰±…‰•°ˆè€‹Â~:–
+Ï¦–wš<ˆ°€‰‘…Ñ„ˆè˜‰Íµ…ÉĞéİ¥Í éíÉ¥‘ôˆ°€‰‘¥ÍÁ±…åQ•áĞˆè€‹–
+Ï¦–wš<‰ô°€‰ÍÑå±”ˆè€‰ÁÉ¥µ…Éäˆ°€‰½±½Èˆè€ˆÄÅĞàˆ°€‰¡•¥¡Ğˆè€‰Í´‰ô°(€€€€€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰‰ÕÑÑ½¸ˆ°€‰…Ñ¥½¸ˆèì‰ÑåÁ”ˆè€‰Á½ÍÑ‰…¬ˆ°€‰±…‰•°ˆè€‹Â~:–ŞË–wš<ˆ°€‰‘…Ñ„ˆè˜‰Íµ…ÉĞé‰±•ÍÍ•éíÉ¥‘ôˆ°€‰‘¥ÍÁ±…åQ•áĞˆè€‹–ŞË–wš<‰ô°€‰ÍÑå±”ˆè€‰Í•½¹‘…Éäˆ°€‰¡•¥¡Ğˆè€‰Í´‰ô°(€€€€€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰‰ÕÑÑ½¸ˆ°€‰…Ñ¥½¸ˆèì‰ÑåÁ”ˆè€‰Á½ÍÑ‰…¬ˆ°€‰±…‰•°ˆè€‹Š>Ãšfk¦î{š>C¦Kš"Dˆ°€‰‘…Ñ„ˆè˜‰Íµ…ÉĞéÍ¹½½é”éíÉ¥‘ôˆ°€‰‘¥ÍÁ±…åQ•áĞˆè€‹šfk¦î{š>C¦Kš"D‰ô°€‰ÍÑå±”ˆè€‰Í•½¹‘…Éäˆ°€‰¡•¥¡Ğˆè€‰Í´‰ô°(€€€€€€€€€€€t(€€€€€€€•±¥˜€‹"Øˆ¥¸¹…µ”½È±…‰•°¥¸ì‹&çšº+Ò–ş×š^”‰ô…¹€‹"Øˆ¥¸€¡É•µ¥¹‘•È¹•Ğ ‰¹½Ñ”ˆ¤½È€ˆˆ¤è(€€€€€€€€€€€Ñ¥Ñ±”€ô˜‹Â~:$ƒ’î+–’§šb¿"Û¢š«¾ ˆ(€€€€€€€€€€€‰½‘ä€ô˜‹’öƒ¢¢·–ºkjš>C¦K–Â7¢Æ‡¾òkÂ~F¡í¹…µ•õq»¢¢c–ú_–BG’î[¢ª«¢Ë¾òk"Û¢š«¾–ş¯š¢ƒŠv“¾â<ˆ(€€€€€€€€€€€‰ÕÑÑ½¹Ì€ôl(€€€€€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰‰ÕÑÑ½¸ˆ°€‰…Ñ¥½¸ˆèì‰ÑåÁ”ˆè€‰Á½ÍÑ‰…¬ˆ°€‰±…‰•°ˆè€‹Â~J11%9–wš<ˆ°€‰‘…Ñ„ˆè˜‰Íµ…ÉĞéİ¥Í éíÉ¥‘ôˆ°€‰‘¥ÍÁ±…åQ•áĞˆè€‰1%9–wš<‰ô°€‰ÍÑå±”ˆè€‰ÁÉ¥µ…Éäˆ°€‰½±½Èˆè€ˆŒÈÔØÍˆ°€‰¡•¥¡Ğˆè€‰Í´‰ô°(€€€€€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰‰ÕÑÑ½¸ˆ°€‰…Ñ¥½¸ˆèì‰ÑåÁ”ˆè€‰Á½ÍÑ‰…¬ˆ°€‰±…‰•°ˆè€‹Â~N{š&O¦nï¢¦Äˆ°€‰‘…Ñ„ˆè˜‰Íµ…ÉĞé…±°éíÉ¥‘ôˆ°€‰‘¥ÍÁ±…åQ•áĞˆè€‹š>C¦Kš"Gš&O¦nï¢¦Ä‰ô°€‰ÍÑå±”ˆè€‰Í•½¹‘…Éäˆ°€‰¡•¥¡Ğˆè€‰Í´‰ô°(€€€€€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰‰ÕÑÑ½¸ˆ°€‰…Ñ¥½¸ˆèì‰ÑåÁ”ˆè€‰Á½ÍÑ‰…¬ˆ°€‰±…‰•°ˆè€‹Š>Ãšfk¦î{š>C¦Hˆ°€‰‘…Ñ„ˆè˜‰Íµ…ÉĞéÍ¹½½é”éíÉ¥‘ôˆ°€‰‘¥ÍÁ±…åQ•áĞˆè€‹šfk¦î{š>C¦H‰ô°€‰ÍÑå±”ˆè€‰Í•½¹‘…Éäˆ°€‰¡•¥¡Ğˆè€‰Í´‰ô°(€€€€€€€€€€€t(€€€€€€€•±Í”è(€€€€€€€€€€€Ñ¥Ñ±”€ô˜‰í•µ½©¥ôƒ’î+–’§šb½í¹…µ•÷jí±…‰•±ôˆ(€€€€€€€€€€€‰½‘ä€ô˜‹–"—–şc’ê¦^s–ş’â’â,ƒŠv“¾â=q»–Â7¢Æ‡¾òií¹…µ•õq»’î+–’§¾òií‘…Ñ•}Ñ•áÑôˆ(€€€€€€€€€€€¥˜É•µ¥¹‘•È¹•Ğ ‰¹½Ñ”ˆ¤è(€€€€€€€€€€€€€€€‰½‘ä€¬ô˜‰q»–
+g¢¢ï¾òiíÉ•µ¥¹‘•È¹•Ğ ¹½Ñ”œ¥ôˆ(€€€€€€€€€€€‰ÕÑÑ½¹Ì€ôl(€€€€€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰‰ÕÑÑ½¸ˆ°€‰…Ñ¥½¸ˆèì‰ÑåÁ”ˆè€‰Á½ÍÑ‰…¬ˆ°€‰±…‰•°ˆè€‹Â~J3–
+Ï¦–wš<ˆ°€‰‘…Ñ„ˆè˜‰Íµ…ÉĞéİ¥Í éíÉ¥‘ôˆ°€‰‘¥ÍÁ±…åQ•áĞˆè€‹–
+Ï¦–wš<‰ô°€‰ÍÑå±”ˆè€‰ÁÉ¥µ…Éäˆ°€‰½±½Èˆè€ˆÄÅĞàˆ°€‰¡•¥¡Ğˆè€‰Í´‰ô°(€€€€€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰‰ÕÑÑ½¸ˆ°€‰…Ñ¥½¸ˆèì‰ÑåÁ”ˆè€‰Á½ÍÑ‰…¬ˆ°€‰±…‰•°ˆè€‹Šr–ŞË–º3š"@ˆ°€‰‘…Ñ„ˆè˜‰Íµ…ÉĞé‰±•ÍÍ•éíÉ¥‘ôˆ°€‰‘¥ÍÁ±…åQ•áĞˆè€‹–ŞË–º3š"@‰ô°€‰ÍÑå±”ˆè€‰Í•½¹‘…Éäˆ°€‰¡•¥¡Ğˆè€‰Í´‰ô°(€€€€€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰‰ÕÑÑ½¸ˆ°€‰…Ñ¥½¸ˆèì‰ÑåÁ”ˆè€‰Á½ÍÑ‰…¬ˆ°€‰±…‰•°ˆè€‹Š>Ãšfk¦î{š>C¦Kš"Dˆ°€‰‘…Ñ„ˆè˜‰Íµ…ÉĞéÍ¹½½é”éíÉ¥‘ôˆ°€‰‘¥ÍÁ±…åQ•áĞˆè€‹šfk¦î{š>C¦Kš"D‰ô°€‰ÍÑå±”ˆè€‰Í•½¹‘…Éäˆ°€‰¡•¥¡Ğˆè€‰Í´‰ô°(€€€€€€€€€€€t(€€€€€€€…±Ğ€ô˜‹’î+–’§šb½í¹…µ•÷jí±…‰•±ôˆ(€€€É•ÑÕÉ¸ì(€€€€€€€€‰ÑåÁ”ˆè€‰™±•àˆ°(€€€€€€€€‰…±ÑQ•áĞˆè…±Ğ°(€€€€€€€€‰½¹Ñ•¹ÑÌˆèì(€€€€€€€€€€€€‰ÑåÁ”ˆè€‰‰Õ‰‰±”ˆ°(€€€€€€€€€€€€‰Í¥é”ˆè€‰µ•„ˆ°(€€€€€€€€€€€€‰‰½‘äˆèì(€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€‰‰½àˆ°(€€€€€€€€€€€€€€€€‰±…å½ÕĞˆè€‰Ù•ÉÑ¥…°ˆ°(€€€€€€€€€€€€€€€€‰ÍÁ…¥¹œˆè€‰µˆ°(€€€€€€€€€€€€€€€€‰½¹Ñ•¹ÑÌˆèl(€€€€€€€€€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰Ñ•áĞˆ°€‰Ñ•áĞˆèÑ¥Ñ±”°€‰İ•¥¡Ğˆè€‰‰½±ˆ°€‰Í¥é”ˆè€‰á°ˆ°€‰İÉ…ÀˆèQÉÕ•ô°(€€€€€€€€€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰Ñ•áĞˆ°€‰Ñ•áĞˆè‰½‘ä°€‰Í¥é”ˆè€‰µˆ°€‰½±½Èˆè€ˆŒĞĞĞĞĞĞˆ°€‰İÉ…ÀˆèQÉÕ•ô°(€€€€€€€€€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰Ñ•áĞˆ°€‰Ñ•áĞˆè€‹Â~J°ƒš¶“š>C¦K–>«–
+Ï–"Ã’öƒj1%9ƒ¢¢+¾ò#’â7šr¦Ë–º#¢¶ßú“¾ò$ˆ°€‰Í¥é”ˆè€‰áÌˆ°€‰½±½Èˆè€ˆŒààààààˆ°€‰İÉ…ÀˆèQÉÕ•ô°(€€€€€€€€€€€€€€€t°(€€€€€€€€€€€ô°(€€€€€€€€€€€€‰™½½Ñ•Èˆèì(€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€‰‰½àˆ°(€€€€€€€€€€€€€€€€‰±…å½ÕĞˆè€‰Ù•ÉÑ¥…°ˆ°(€€€€€€€€€€€€€€€€‰ÍÁ…¥¹œˆè€‰Í´ˆ°(€€€€€€€€€€€€€€€€‰½¹Ñ•¹ÑÌˆè‰ÕÑÑ½¹Ì°(€€€€€€€€€€€ô°(€€€€€€€ô°(€€€ô(()‘•˜‰Õ¥±‘}Íµ…ÉÑ}É•µ¥¹‘•É}‘¥•ÍĞ¡É•µ¥¹‘•ÉÌ°€¨°µ½‘”ô‰‘…äˆ¤è(€€€É•µ¥¹‘•ÉÌ€ô±¥ÍĞ¡É•µ¥¹‘•ÉÌ½Èmt¤(€€€¥˜±•¸¡É•µ¥¹‘•ÉÌ¤€ôô€Äè(€€€€€€€É•ÑÕÉ¸‰Õ¥±‘}Íµ…ÉÑ}É•µ¥¹‘•É}™±•à¡É•µ¥¹‘•ÉÍlÁt°µ½‘”õµ½‘”¤(€€€İ¡•¸€ô€‹šb;–’¤ˆ¥˜µ½‘”€ôô€‰•Ù”ˆ•±Í”€‹’î+–’¤ˆ(€€€±¥¹•Ì€ôl(€€€€€€€˜‰í¥Ñ•´¹•Ğ •µ½©¤œ¤½È€ŸÂ~^O¾â<ôí¥Ñ•´¹•Ğ Ñ…É•Ñ}¹…µ”œ¤½È€Ÿ–Â7¢Æ„÷¾òhˆ(€€€€€€€˜‰í¥Ñ•´¹•Ğ …Ñ•½Éå}±…‰•°œ¤½È€Ÿš>C¦Hôˆ(€€€€€€€™½È¥Ñ•´¥¸É•µ¥¹‘•ÉÌ(€€€t(€€€É•ÑÕÉ¸ì(€€€€€€€€‰ÑåÁ”ˆè€‰™±•àˆ°(€€€€€€€€‰…±ÑQ•áĞˆè˜‰íİ¡•¹÷šr$í±•¸¡É•µ¥¹‘•ÉÌ¥ôƒ–/š>C¦Hˆ°(€€€€€€€€‰½¹Ñ•¹ÑÌˆèì(€€€€€€€€€€€€‰ÑåÁ”ˆè€‰‰Õ‰‰±”ˆ°(€€€€€€€€€€€€‰Í¥é”ˆè€‰µ•„ˆ°(€€€€€€€€€€€€‰‰½‘äˆèì(€€€€€€€€€€€€€€€€‰ÑåÁ”ˆè€‰‰½àˆ°(€€€€€€€€€€€€€€€€‰±…å½ÕĞˆè€‰Ù•ÉÑ¥…°ˆ°(€€€€€€€€€€€€€€€€‰ÍÁ…¥¹œˆè€‰µˆ°(€€€€€€€€€€€€€€€€‰½¹Ñ•¹ÑÌˆèl(€€€€€€€€€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰Ñ•áĞˆ°€‰Ñ•áĞˆè˜‹Â~^O¾â<íİ¡•¹÷šr$í±•¸¡É•µ¥¹‘•ÉÌ¥ôƒ–/š>C¦Hˆ°€‰İ•¥¡Ğˆè€‰‰½±ˆ°€‰Í¥é”ˆè€‰á°ˆ°€‰İÉ…ÀˆèQÉÕ•ô°(€€€€€€€€€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰Ñ•áĞˆ°€‰Ñ•áĞˆè€‰q¸ˆ¹©½¥¸¡±¥¹•Ì¤°€‰Í¥é”ˆè€‰µˆ°€‰İÉ…ÀˆèQÉÕ•ô°(€€€€€€€€€€€€€€€€€€€ì‰ÑåÁ”ˆè€‰Ñ•áĞˆ°€‰Ñ•áĞˆè€‹–B3’âšfšº×–ŞË–B#’ö×š"C’â–&¾ò3¦ÿ–7¦7¢’š&OšNøˆ°€‰Í¥é”ˆè€‰áÌˆ°€‰½±½Èˆè€ˆŒààààààˆ°€‰İÉ…ÀˆèQÉÕ•ô°(€€€€€€€€€€€€€€€t°(€€€€€€€€€€€ô°(€€€€€€€ô°(€€€ô(()‘•˜¥Í}¡•­¥¹}Á½ÍÑ‰…¬¡‘…Ñ„¤è(€€€€ˆˆ‰…¥±äÁÕÍ €¼±•àƒ3š"G–æÏ–º'4Á½ÍÑ‰…¬¸ˆˆˆ(€€€Ñ•áĞ€ôÍÑÈ¡‘…Ñ„½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¹½ĞÑ•áĞè(€€€€€€€É•ÑÕÉ¸…±Í”(€€€¥˜Ñ•áĞ¥¸ì‰…Ñ¥½¸õ¡•­¥¸ˆ°€‰¡•­¥¸ˆ°€‰¡•­¥¸é½¬ˆ°€‰¡•­¥¸ôÄ‰ôè(€€€€€€€É•ÑÕÉ¸QÉÕ”(€€€¥˜Ñ•áĞ¹ÍÑ…ÉÑÍİ¥Ñ  ‰…Ñ¥½¸õ¡•­¥¸ˆ¤è(€€€€€€€É•ÑÕÉ¸QÉÕ”(€€€¥˜Ñ•áĞ¹ÍÑ…ÉÑÍİ¥Ñ  ‰¡•­¥¸èˆ¤è(€€€€€€€É•ÑÕÉ¸QÉÕ”(€€€ÑÉäè(€€€€€€€™É½´…±•ÉÑÌ¹Á½ÍÑ‰…¬¥µÁ½ÉĞÁ…ÉÍ•}Á½ÍÑ‰…­}‘…Ñ„(€€€€€€€É•ÑÕÉ¸Á…ÉÍ•}Á½ÍÑ‰…­}‘…Ñ„¡Ñ•áĞ¤¹•Ğ ‰…Ñ¥½¸ˆ¤€ôô€‰¡•­¥¸ˆ(€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€É•ÑÕÉ¸€‰…Ñ¥½¸õ¡•­¥¸ˆ¥¸Ñ•áĞ(()‘•˜¡…¹‘±•}¡•­¥¹}Á½ÍÑ‰…¬¡‘…Ñ…}™¥±”°±¥¹•}ÕÍ•É}¥°½¹™¥œõ9½¹”¤è(€€€€ˆˆ‰A•ÉÍ¥ÍĞ¡•¬µ¥¸™É½´1%9Á½ÍÑ‰…¬ƒŠPÍ…µ”Á…Ñ …Ì1%€½…Á¤½¡•­¥¸¸((€€€I•ÑÕÉ¹ÌÑ•áĞ°½È„±¥ÍĞ½˜mÑ•áĞ°½ÁÑ¥½¹…°•áÁ¥Éä±•átİ¡•¸µ•µ‰•ÉÍ¡¥À¥Ì¹•…È•áÁ¥Éä¸(€€€€ˆˆˆ(€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥è(€€€€€€€É•ÑÕÉ¸€‹¢®/–#–*ƒ–—š¾?š^—–æÏ–º'––÷–>/–ú3–7–‚Ç–æÏ–º'ˆ(€€€ÍÑ…ÑÕÌ€ôÉ•½É‘}¡•­¥¸¡‘…Ñ…}™¥±”°ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥‘ô°½¹™¥œõ½¹™¥œ¤(€€€¹½Ü€ôÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡½¹™¥œ¤(€€€Ñ•áĞ€ô‰Õ¥±‘}¡•­¥¹}ÍÕ•ÍÍ}Ñ•áĞ¡ÍÑ…ÑÕÌ°¹½Üõ¹½Ü°½¹™¥œõ½¹™¥œ¤(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€ÁÉ½™¥±”€ô•Ñ}ÁÉ½™¥±”¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥¤(€€€µ•ÍÍ…•Ì€ôµ…å‰•}…ÑÑ…¡}•áÁ¥Éå}É•µ¥¹ (€€€€€€€mÑ•áÑt°ÁÉ½™¥±”°¹½Üõ¹½Ü°ÍÑ…Ñ”õÍÑ…Ñ”°‘…Ñ…}™¥±”õ‘…Ñ…}™¥±”(€€€€¤(€€€¥˜±•¸¡µ•ÍÍ…•Ì¤€ôô€Äè(€€€€€€€É•ÑÕÉ¸µ•ÍÍ…•ÍlÁt(€€€É•ÑÕÉ¸µ•ÍÍ…•Ì(()‘•˜¥Í}•áÁ¥Éå}½ÁÑ}½ÕÑ}Á½ÍÑ‰…¬¡‘…Ñ„¤è(€€€Ñ•áĞ€ôÍÑÈ¡‘…Ñ„½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€É•ÑÕÉ¸Ñ•áĞ€ôô€‰…Ñ¥½¸õ•áÁ¥Éå}½ÁÑ}½ÕĞˆ½È€‰…Ñ¥½¸õ•áÁ¥Éå}½ÁÑ}½ÕĞˆ¥¸Ñ•áĞ(()‘•˜¡…¹‘±•}Íµ…ÉÑ}É•µ¥¹‘•É}Á½ÍÑ‰…¬¡‘…Ñ…}™¥±”°±¥¹•}ÕÍ•É}¥°‘…Ñ„°½¹™¥œõ9½¹”¤è(€€€€ˆˆ‰!…¹‘±”Íµ…ÉĞè¨Á½ÍÑ‰…­ÌìÉ•ÑÕÉ¹ÌÉ•Á±äÑ•áĞ¸ˆˆˆ(€€€Á…ÉÑÌ€ôÍÑÈ¡‘…Ñ„½È€ˆˆ¤¹ÍÁ±¥Ğ ˆèˆ¤(€€€¥˜±•¸¡Á…ÉÑÌ¤€ğ€Ì½ÈÁ…ÉÑÍlÁt€„ô€‰Íµ…ÉĞˆè(€€€€€€€É•ÑÕÉ¸9½¹”(€€€…Ñ¥½¸°É¥€ôÁ…ÉÑÍlÅt°Á…ÉÑÍlÉt(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€ÁÉ½™¥±”€ô•Ñ}ÁÉ½™¥±”¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥¤(€€€É•µ¥¹‘•È€ô¹•áĞ ¡È™½ÈÈ¥¸±¥ÍÑ}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ¡ÁÉ½™¥±”¤¥˜È¹•Ğ ‰¥ˆ¤€ôôÉ¥¤°9½¹”¤(€€€¥˜¹½ĞÉ•µ¥¹‘•Èè(€€€€€€€É•ÑÕÉ¸€‹š&û’â7–"Ã¦g¶šfë¢÷š>C¦K¾ò3–>¿¢÷–ŞË¢Š¯–"«¦f“ˆ(€€€¥˜…Ñ¥½¸€ôô€‰İ¥Í ˆè(€€€€€€€É•ÑÕÉ¸Íµ…ÉÑ}É•µ¥¹‘•É}…¹¹•‘}İ¥Í ¡É•µ¥¹‘•È¤(€€€¥˜…Ñ¥½¸€ôô€‰¥™Ğˆè(€€€€€€€É•ÑÕÉ¸Íµ…ÉÑ}É•µ¥¹‘•É}…¹¹•‘}¥™Ğ¡É•µ¥¹‘•È¤(€€€¥˜…Ñ¥½¸€ôô€‰…±°ˆè(€€€€€€€É•ÑÕÉ¸˜‹Â~Nxƒ>û–r£–ÂÇ–>¿’î—šJ—¦nï¢¦ÇÖ›1íÉ•µ¥¹‘•È¹•Ğ Ñ…É•Ñ}¹…µ”œ¥÷7š&O–º3–ú3–>¿–n{3–ŞË–º3š"C7ˆ(€€€¥˜…Ñ¥½¸€ôô€‰‰±•ÍÍ•ˆè(€€€€€€€É•ÑÕÉ¸˜‹–’«––÷’ê¾ò3–ŞË–æ¯’öƒ¢¢c’â/3–ŞË–wš?¾ò?–ŞË–º3š"C7¾òiíÉ•µ¥¹‘•È¹•Ğ Ñ…É•Ñ}¹…µ”œ¥÷ˆ(€€€¥˜…Ñ¥½¸€ôô€‰Í¹½½é”ˆè(€€€€€€€€Œ5…É¬„Í½™ĞÍ¹½½é”­•äÍ¼‘…äÉ½¸…¸É”µ¹Õ‘”±…Ñ•ÈÍ…µ”‘…ä½¹”(€€€€€€€­•åÌ€ôÍ•Ğ¡ÁÉ½™¥±”¹•Ğ ‰Íµ…ÉÑ}É•µ¥¹‘•É}Í•¹Ñ}­•åÌˆ¤½Èmt¤(€€€€€€€Ñ½‘…ä€ôÑ½‘…å}ÍÑÉ¥¹œ¡½¹™¥œ¤(€€€€€€€€ŒI•µ½Ù”‘…ä­•äÑ¼…±±½Ü½¹”É”µÍ•¹…™Ñ•È€É Ù¥„Í•Á…É…Ñ”Í¹½½é”µ…É­•È(€€€€€€€ÁÉ½™¥±•l‰Íµ…ÉÑ}É•µ¥¹‘•É}Í¹½½é”‰t€ôì(€€€€€€€€€€€€‰¥ˆèÉ¥°(€€€€€€€€€€€€‰Õ¹Ñ¥°ˆè€¡ÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡½¹™¥œ¤€¬Ñ¥µ•‘•±Ñ„¡¡½ÕÉÌôÈ¤¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€ô(€€€€€€€€Œ-••À‘…ä­•äÍ¼İ”‘½¸Ğ‘½Õ‰±”µ™¥É”¥µµ•‘¥…Ñ•±äìÍ¹½½é”Á…Ñ ÕÍ•ÌÕ¹Ñ¥°(€€€€€€€­•åÌ€ôí¬™½È¬¥¸­•åÌ¥˜¹½Ğ¬¹•¹‘Íİ¥Ñ ¡˜ˆéíÉ¥‘ôé‘…äˆ¥ô(€€€€€€€ÁÉ½™¥±•l‰Íµ…ÉÑ}É•µ¥¹‘•É}Í•¹Ñ}­•åÌ‰t€ôÍ½ÉÑ•¡­•åÌ¥l´ÄÈÀét(€€€€€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€€€€€É•ÑÕÉ¸€‹––÷¾ò3Ò€Èƒ–Â?šf–ú3–7¢¢+š>C¦K’öƒ’âš²‡ˆ(€€€É•ÑÕÉ¸€‹–ŞËšRÛ–"Ãˆ(()‘•˜•Ñ}Íµ…ÉÑ}É•µ¥¹‘•ÉÍ}Á…å±½…¡‘…Ñ…}™¥±”°±¥¹•}ÕÍ•É}¥¤è(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€ÁÉ½™¥±”€ô•Ñ}ÁÉ½™¥±”¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥¤(€€€•¹Ñ¥Ñ±•€ôÁ±…¹}¡…Í}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ¡ÁÉ½™¥±”¤(€€€É•½Ù•É¥¹œ€ôÍÑÈ¡ÁÉ½™¥±”¹•Ğ ‰…½Õ¹Ñ}µ¥É…Ñ¥½¹}ÍÑ…ÑÕÌˆ¤½È€ˆˆ¤¹±½İ•È ¤¥¸ì(€€€€€€€€‰Á•¹‘¥¹œˆ°€‰É•½Ù•É¥¹œˆ°€‰¥¹}ÁÉ½É•ÍÌˆ(€€€ô(€€€Ñ½‘…ä€ô‘…Ñ•Ñ¥µ”¹¹½Ü ¤¹ÍÑÉ™Ñ¥µ” ˆ•d´•´´•ˆ¤(€€€ÕÍ…”€ô€¡ÁÉ½™¥±”¹•Ğ ‰Íµ…ÉÑ}É•µ¥¹‘•É}‘…¥±å}ÕÍ…”ˆ¤½Èíô¤¹•Ğ¡Ñ½‘…ä¤½Èíô(€€€‰½Õ¹‘}Õ…É‘¥…¹Ì€ômt(€€€™½È½¹Ñ…Ğ¥¸ÁÉ½™¥±”¹•Ğ ‰½¹Ñ…ÑÌˆ¤½Èmtè(€€€€€€€¥˜¹½Ğ½¹Ñ…Ñ}¥Í}‰½Õ¹‘}Õ…É‘¥…¸¡½¹Ñ…Ğ°±¥¹•}ÕÍ•É}¥¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€Õ…É‘¥…¹}¥€ô•Ñ}½¹Ñ…Ñ}±¥¹•}¥¡½¹Ñ…Ğ¤(€€€€€€€¥˜¹½ĞÕ…É‘¥…¹}¥è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€‰½Õ¹‘}Õ…É‘¥…¹Ì¹…ÁÁ•¹¡ì(€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆèÕ…É‘¥…¹}¥°(€€€€€€€€€€€€‰¹…µ”ˆè½¹Ñ…Ğ¹•Ğ ‰¹…µ”ˆ¤½È½¹Ñ…Ğ¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤½È€‹š‚ã–ş–º#¢¶ß’êèˆ°(€€€€€€€€€€€€‰¥Í}ÁÉ¥µ…Éäˆè‰½½°¡½¹Ñ…Ğ¹•Ğ ‰¥Í}ÁÉ¥µ…Éäˆ¤¤°(€€€€€€€ô¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰½¬ˆèQÉÕ”°(€€€€€€€€‰•¹Ñ¥Ñ±•ˆè•¹Ñ¥Ñ±•°(€€€€€€€€‰ÍÑ…Ñ”ˆè€‰•¹Ñ¥Ñ±•ˆ¥˜•¹Ñ¥Ñ±••±Í”€ ‰É•½Ù•É¥¹œˆ¥˜É•½Ù•É¥¹œ•±Í”€‰ÕÁÉ…‘•}É•ÅÕ¥É•ˆ¤°(€€€€€€€€‰Á±…¸ˆèÁÉ½™¥±”¹•Ğ ‰Á±…¸ˆ¤½È€‰ÑÉ¥…°ˆ°(€€€€€€€€‰ÕÁÉ…‘•}¡¥¹Ğˆè9½¹”¥˜•¹Ñ¥Ñ±••±Í”€ (€€€€€€€€€€€€‹–âÏ¢f¢ÎšZgš¶–r£š‹–ú§¾ò3–º3š"C–ú3šr¢«–.W–>[–n{š^‹šr'šfëšŸš>C¦Hˆ(€€€€€€€€€€€¥˜É•½Ù•É¥¹œ•±Í”(€€€€€€€€€€€€‹šfë¢÷š>C¦K
+è€Üääƒ–º#¢¶ß&#–*¢÷¾ò3–6Òk–ú3–>¿¢¢·–ºkRš^—¾ò?Ò–ş×š^—¾ò?–n{¢¢ë¶'RšÒïš>C¦K¾ò#’â7¦Ë–º#¢¶ßú“¾ò'ˆ(€€€€€€€€¤°(€€€€€€€€‰É•µ¥¹‘•ÉÌˆè±¥ÍÑ}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ¡ÁÉ½™¥±”¤¥˜•¹Ñ¥Ñ±••±Í”mt°(€€€€€€€€‰‘•™…Õ±ÑÌˆèÁÉ½™¥±”¹•Ğ ‰Íµ…ÉÑ}É•µ¥¹‘•É}‘•™…Õ±ÑÌˆ¤½Èì‰¹½Ñ¥™å}ÁÉ¥Ù…Ñ”ˆèQÉÕ”°€‰¹½Ñ¥™å}É½ÕÀˆè…±Í•ô°(€€€€€€€€‰‰½Õ¹‘}Õ…É‘¥…¹Ìˆè‰½Õ¹‘}Õ…É‘¥…¹Ì¥˜•¹Ñ¥Ñ±••±Í”mt°(€€€€€€€€‰‘…¥±å}ÕÍ…”ˆèì(€€€€€€€€€€€€‰ÁÉ¥Ù…Ñ”ˆè¥¹Ğ¡ÕÍ…”¹•Ğ ‰ÁÉ¥Ù…Ñ”ˆ¤½È€À¤°(€€€€€€€€€€€€‰Õ…É‘¥…¸ˆè¥¹Ğ¡ÕÍ…”¹•Ğ ‰Õ…É‘¥…¸ˆ¤½È€À¤°(€€€€€€€ô°(€€€€€€€€‰‘…¥±å}±¥µ¥ÑÌˆèì‰ÁÉ¥Ù…Ñ”ˆè€È°€‰Õ…É‘¥…¸ˆè€Åô°(€€€€€€€€‰…Ñ•½É¥•Ìˆèl(€€€€€€€€€€€ì‰¥ˆè­•ä°€‰•µ½©¤ˆèµ•Ñ…l‰•µ½©¤‰t°€‰±…‰•°ˆèµ•Ñ…l‰±…‰•°‰uô(€€€€€€€€€€€™½È­•ä°µ•Ñ„¥¸M5IQ}I5%9I}Q=I%L¹¥Ñ•µÌ ¤(€€€€€€€t°(€€€ô(()‘•˜Í…Ù•}Íµ…ÉÑ}É•µ¥¹‘•È¡‘…Ñ…}™¥±”°Á…å±½…¤è(€€€±¥¹•}ÕÍ•É}¥€ôÍÑÈ¡Á…å±½…¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰µ¥ÍÍ¥¹œ±¥¹•}ÕÍ•É}¥‰ô°€ĞÀÀ(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€ÁÉ½™¥±”€ô•Ñ}ÁÉ½™¥±”¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥¤(€€€¥˜¹½ĞÁ±…¹}¡…Í}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ¡ÁÉ½™¥±”¤è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰Íµ…ÉÑ}É•µ¥¹‘•ÉÍ}É•ÅÕ¥É•|Üääˆ°€‰ÕÁÉ…‘•}¡¥¹Ğˆè€‹¢®/–6Òh€Üääƒ–º#¢¶ß& ‰ô°€ĞÀÌ(€€€‘•±¥Ù•Éå}Ñ…É•Ğ€ôÍÑÈ¡Á…å±½…¹•Ğ ‰‘•±¥Ù•Éå}Ñ…É•Ğˆ¤½È€‰ÁÉ¥Ù…Ñ”ˆ¤¹ÍÑÉ¥À ¤(€€€¥˜‘•±¥Ù•Éå}Ñ…É•Ğ¹ÍÑ…ÉÑÍİ¥Ñ  ‰É½ÕÀèˆ¤è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰Õ…É‘¥…¹}É½ÕÁ}Ñ…É•Ñ}¹½Ñ}…±±½İ•‰ô°€ĞÀÀ(€€€¥˜‘•±¥Ù•Éå}Ñ…É•Ğ€„ô€‰ÁÉ¥Ù…Ñ”ˆè(€€€€€€€¥˜¹½Ğ‘•±¥Ù•Éå}Ñ…É•Ğ¹ÍÑ…ÉÑÍİ¥Ñ  ‰Õ…É‘¥…¸èˆ¤è(€€€€€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰¥¹Ù…±¥‘}‘•±¥Ù•Éå}Ñ…É•Ğ‰ô°€ĞÀÀ(€€€€€€€Ñ…É•Ñ}¥€ô‘•±¥Ù•Éå}Ñ…É•Ğ¹ÍÁ±¥Ğ ˆèˆ°€Ä¥lÅt(€€€€€€€…±±½İ•€ôì(€€€€€€€€€€€•Ñ}½¹Ñ…Ñ}±¥¹•}¥¡½¹Ñ…Ğ¤(€€€€€€€€€€€™½È½¹Ñ…Ğ¥¸ÁÉ½™¥±”¹•Ğ ‰½¹Ñ…ÑÌˆ¤½Èmt(€€€€€€€€€€€¥˜½¹Ñ…Ñ}¥Í}‰½Õ¹‘}Õ…É‘¥…¸¡½¹Ñ…Ğ°±¥¹•}ÕÍ•É}¥¤(€€€€€€€ô(€€€€€€€¥˜Ñ…É•Ñ}¥¹½Ğ¥¸…±±½İ•è(€€€€€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰Õ…É‘¥…¹}Ñ…É•Ñ}¹½Ñ}‰½Õ¹‰ô°€ĞÀÀ(€€€É•µ¥¹‘•È€ô¹½Éµ…±¥é•}Íµ…ÉÑ}É•µ¥¹‘•È¡Á…å±½…°€À¤(€€€É•µ¥¹‘•Él‰ÕÁ‘…Ñ•‘}…Ğ‰t€ôÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡íô¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€É½İÌ€ô±¥ÍÑ}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ¡ÁÉ½™¥±”¤(€€€É•Á±…•€ô…±Í”(€€€™½È¤°É½Ü¥¸•¹Õµ•É…Ñ”¡É½İÌ¤è(€€€€€€€¥˜É½Ü¹•Ğ ‰¥ˆ¤€ôôÉ•µ¥¹‘•Él‰¥‰tè(€€€€€€€€€€€É•µ¥¹‘•Él‰É•…Ñ•‘}…Ğ‰t€ôÉ½Ü¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤½ÈÉ•µ¥¹‘•Él‰É•…Ñ•‘}…Ğ‰t(€€€€€€€€€€€É½İÍm¥t€ôÉ•µ¥¹‘•È(€€€€€€€€€€€É•Á±…•€ôQÉÕ”(€€€€€€€€€€€‰É•…¬(€€€¥˜¹½ĞÉ•Á±…•è(€€€€€€€¥˜±•¸¡É½İÌ¤€øô€ĞÀè(€€€€€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰Íµ…ÉÑ}É•µ¥¹‘•É}±¥µ¥Ğ‰ô°€ĞÀÀ(€€€€€€€É½İÌ¹…ÁÁ•¹¡É•µ¥¹‘•È¤(€€€ÁÉ½™¥±•l‰Íµ…ÉÑ}É•µ¥¹‘•ÉÌ‰t€ôÉ½İÌ(€€€€ŒƒR‹–NšÆë¶[¾òkšfë¢÷š>C¦KšÂã¦ƒ–>«¢¢+¾ò3ú“Öš^_š¢g–në–ºk¦^s¦Z$(€€€ÁÉ½™¥±•l‰Íµ…ÉÑ}É•µ¥¹‘•É}‘•™…Õ±ÑÌ‰t€ôì‰¹½Ñ¥™å}ÁÉ¥Ù…Ñ”ˆèQÉÕ”°€‰¹½Ñ¥™å}É½ÕÀˆè…±Í•ô(€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì‰½¬ˆèQÉÕ”°€‰É•µ¥¹‘•ÈˆèÉ•µ¥¹‘•È°€‰É•µ¥¹‘•ÉÌˆèÉ½İÍô°€ÈÀÀ(()‘•˜‘•±•Ñ•}Íµ…ÉÑ}É•µ¥¹‘•È¡‘…Ñ…}™¥±”°±¥¹•}ÕÍ•É}¥°É•µ¥¹‘•É}¥¤è(€€€±¥¹•}ÕÍ•É}¥€ôÍÑÈ¡±¥¹•}ÕÍ•É}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€É•µ¥¹‘•É}¥€ôÍÑÈ¡É•µ¥¹‘•É}¥½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥½È¹½ĞÉ•µ¥¹‘•É}¥è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰µ¥ÍÍ¥¹œ¥‰ô°€ĞÀÀ(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€ÁÉ½™¥±”€ô•Ñ}ÁÉ½™¥±”¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥¤(€€€¥˜¹½ĞÁ±…¹}¡…Í}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ¡ÁÉ½™¥±”¤è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰Íµ…ÉÑ}É•µ¥¹‘•ÉÍ}É•ÅÕ¥É•|Üää‰ô°€ĞÀÌ(€€€É½İÌ€ômÈ™½ÈÈ¥¸±¥ÍÑ}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ¡ÁÉ½™¥±”¤¥˜È¹•Ğ ‰¥ˆ¤€„ôÉ•µ¥¹‘•É}¥‘t(€€€ÁÉ½™¥±•l‰Íµ…ÉÑ}É•µ¥¹‘•ÉÌ‰t€ôÉ½İÌ(€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì‰½¬ˆèQÉÕ”°€‰É•µ¥¹‘•ÉÌˆèÉ½İÍô°€ÈÀÀ(()‘•˜Í•¹‘}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤è(€€€€ˆˆ‰AÕÍ µ•É•°…ÁÁ•Íµ…ÉĞÉ•µ¥¹‘•ÉÌÑ¼Í•±˜½È½¹”‰½Õ¹½É”Õ…É‘¥…¸¸ˆˆˆ(€€€Ñ½­•¸€ô½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ°€ˆˆ¤(€€€¥˜¹½ĞÑ½­•¸è(€€€€€€€É•ÑÕÉ¸ì‰Í•¹Ğˆè€À°€‰Í­¥ÁÁ•ˆè€À°€‰•ÉÉ½Èˆè€‰1%9}!991}MM}Q=-8¥Ì¹½ĞÍ•Ğ‰ô°€ĞÀÀ((€€€‘…Ñ…}™¥±”€ô½¹™¥l‰Q}%1‰t(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€Í•¹‘•È€ô½¹™¥œ¹•Ğ ‰1%9}AUM!}M9Hˆ¤½È±¥¹•}ÁÕÍ¡}µ•ÍÍ…”(€€€¹½Ü€ôÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡½¹™¥œ¤(€€€Ñ½‘…å}‘…Ñ”€ô¹½Ü¹‘…Ñ” ¤(€€€Ñ½µ½ÉÉ½Ü€ôÑ½‘…å}‘…Ñ”€¬Ñ¥µ•‘•±Ñ„¡‘…åÌôÄ¤(€€€Ñ½‘…å}­•ä€ôÑ½‘…å}‘…Ñ”¹ÍÑÉ™Ñ¥µ” ˆ•d´•´´•ˆ¤(€€€Í•¹Ğ€ô€À(€€€Í­¥ÁÁ•€ô€À(€€€É•ÍÕ±ÑÌ€ômt(€€€¹½İ}¡´€ô¹½Ü¹ÍÑÉ™Ñ¥µ” ˆ• è•4ˆ¤(€€€•Ù•}İ¥¹‘½Ü€ô¹½Ü¹¡½ÕÈ€øô€ÈÀ(€€€ÍåÍÑ•µ}•ÉÉ½È€ô…±Í”((€€€™½ÈÕÍ•È¥¸ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹Ù…±Õ•Ì ¤è(€€€€€€€±¥¹•}ÕÍ•É}¥€ôÕÍ•È¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤(€€€€€€€¥˜€ (€€€€€€€€€€€¹½Ğ±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€½ÈÕÍ•È¹•Ğ ‰µ•µ‰•ÉÍ¡¥Á}Á…ÕÍ•ˆ¤(€€€€€€€€€€€½È¹½Ğµ•µ‰•ÉÍ¡¥Á}…•ÍÍ}…Ñ¥Ù”¡ÕÍ•È°¹½Ü¤(€€€€€€€€€€€½È¹½ĞÁ±…¹}¡…Í}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ¡ÕÍ•È¤(€€€€€€€€¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€Í•¹Ñ}­•åÌ€ôÍ•Ğ¡ÕÍ•È¹•Ğ ‰Íµ…ÉÑ}É•µ¥¹‘•É}Í•¹Ñ}­•åÌˆ¤½Èmt¤(€€€€€€€Í¹½½é”€ôÕÍ•È¹•Ğ ‰Íµ…ÉÑ}É•µ¥¹‘•É}Í¹½½é”ˆ¤½Èíô(€€€€€€€‘…¥±å}…±°€ôÕÍ•È¹Í•Ñ‘•™…Õ±Ğ ‰Íµ…ÉÑ}É•µ¥¹‘•É}‘…¥±å}ÕÍ…”ˆ°íô¤(€€€€€€€ÕÍ…”€ô‘…¥±å}…±°¹Í•Ñ‘•™…Õ±Ğ¡Ñ½‘…å}­•ä°ì‰ÁÉ¥Ù…Ñ”ˆè€À°€‰Õ…É‘¥…¸ˆè€Áô¤(€€€€€€€€Œ-••À½¹±ä„½µÁ…ĞÉ½±±¥¹œİ¥¹‘½Ü¸(€€€€€€€ÕÍ•Él‰Íµ…ÉÑ}É•µ¥¹‘•É}‘…¥±å}ÕÍ…”‰t€ôì(€€€€€€€€€€€­•äèÙ…±Õ”™½È­•ä°Ù…±Õ”¥¸‘…¥±å}…±°¹¥Ñ•µÌ ¤¥˜­•ä€øô€¡Ñ½‘…å}‘…Ñ”€´Ñ¥µ•‘•±Ñ„¡‘…åÌôÜ¤¤¹¥Í½™½Éµ…Ğ ¤(€€€€€€€ô(€€€€€€€‰½Õ¹‘}Õ…É‘¥…¹Ì€ôì(€€€€€€€€€€€•Ñ}½¹Ñ…Ñ}±¥¹•}¥¡½¹Ñ…Ğ¤(€€€€€€€€€€€™½È½¹Ñ…Ğ¥¸ÕÍ•È¹•Ğ ‰½¹Ñ…ÑÌˆ¤½Èmt(€€€€€€€€€€€¥˜½¹Ñ…Ñ}¥Í}‰½Õ¹‘}Õ…É‘¥…¸¡½¹Ñ…Ğ°±¥¹•}ÕÍ•É}¥¤(€€€€€€€ô(€€€€€€€‘Õ•}É½ÕÁÌ€ôíô(€€€€€€€™½ÈÉ•µ¥¹‘•È¥¸±¥ÍÑ}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ¡ÕÍ•È¤è(€€€€€€€€€€€É¥€ôÉ•µ¥¹‘•È¹•Ğ ‰¥ˆ¤(€€€€€€€€€€€É•µ¥¹‘}¡´€ôÍÑÈ¡É•µ¥¹‘•È¹•Ğ ‰É•µ¥¹‘}Ñ¥µ”ˆ¤½È€ˆÀäèÀÀˆ¤¹ÍÑÉ¥À ¤(€€€€€€€€€€€¥˜¹½ĞI5%9I}Q%5}AQQI8¹µ…Ñ ¡É•µ¥¹‘}¡´¤è(€€€€€€€€€€€€€€€É•µ¥¹‘}¡´€ô€ˆÀäèÀÀˆ(€€€€€€€€€€€Ñ…É•Ñ}ÍÁ•Œ€ôÍÑÈ¡É•µ¥¹‘•È¹•Ğ ‰‘•±¥Ù•Éå}Ñ…É•Ğˆ¤½È€‰ÁÉ¥Ù…Ñ”ˆ¤(€€€€€€€€€€€¥˜Ñ…É•Ñ}ÍÁ•Œ€ôô€‰ÁÉ¥Ù…Ñ”ˆè(€€€€€€€€€€€€€€€Ñ…É•Ñ}­¥¹°Ñ…É•Ñ}¥€ô€‰ÁÉ¥Ù…Ñ”ˆ°±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€•±¥˜Ñ…É•Ñ}ÍÁ•Œ¹ÍÑ…ÉÑÍİ¥Ñ  ‰Õ…É‘¥…¸èˆ¤è(€€€€€€€€€€€€€€€Ñ…É•Ñ}­¥¹°Ñ…É•Ñ}¥€ô€‰Õ…É‘¥…¸ˆ°Ñ…É•Ñ}ÍÁ•Œ¹ÍÁ±¥Ğ ˆèˆ°€Ä¥lÅt(€€€€€€€€€€€€€€€¥˜Ñ…É•Ñ}¥¹½Ğ¥¸‰½Õ¹‘}Õ…É‘¥…¹Ìè(€€€€€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€¥˜¹½İ}¡´€øôÉ•µ¥¹‘}¡´…¹Íµ…ÉÑ}É•µ¥¹‘•É}½ÕÉÍ}½¸¡É•µ¥¹‘•È°Ñ½‘…å}‘…Ñ”¤è(€€€€€€€€€€€€€€€­•ä€ô˜‰íÑ½‘…å}­•åôéíÉ¥‘ôé‘…äˆ(€€€€€€€€€€€€€€€Í¹½½é•}Õ¹Ñ¥°€ôÁ…ÉÍ•}‘…Ñ•Ñ¥µ”¡Í¹½½é”¹•Ğ ‰Õ¹Ñ¥°ˆ¤¤¥˜Í¹½½é”¹•Ğ ‰¥ˆ¤€ôôÉ¥•±Í”9½¹”(€€€€€€€€€€€€€€€¥˜­•ä¥¸Í•¹Ñ}­•åÌ…¹¹½Ğ€¡Í¹½½é•}Õ¹Ñ¥°…¹¹½Ü€øôÍ¹½½é•}Õ¹Ñ¥°¤è(€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€€€€€¥˜Í¹½½é•}Õ¹Ñ¥°…¹¹½Ü€ğÍ¹½½é•}Õ¹Ñ¥°è(€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€€€€€‘Õ•}É½ÕÁÌ¹Í•Ñ‘•™…Õ±Ğ  ‰‘…äˆ°É•µ¥¹‘}¡´°Ñ…É•Ñ}­¥¹°Ñ…É•Ñ}¥¤°mt¤¹…ÁÁ•¹ ¡­•ä°É•µ¥¹‘•È¤¤(€€€€€€€€€€€¥˜•Ù•}İ¥¹‘½Ü…¹É•µ¥¹‘•È¹•Ğ ‰•Ù•}É•µ¥¹ˆ°QÉÕ”¤…¹Íµ…ÉÑ}É•µ¥¹‘•É}½ÕÉÍ}½¸¡É•µ¥¹‘•È°Ñ½µ½ÉÉ½Ü¤è(€€€€€€€€€€€€€€€­•ä€ô˜‰íÑ½‘…å}­•åôéíÉ¥‘ôé•Ù”ˆ(€€€€€€€€€€€€€€€¥˜­•ä¥¸Í•¹Ñ}­•åÌè(€€€€€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€€€€€‘Õ•}É½ÕÁÌ¹Í•Ñ‘•™…Õ±Ğ  ‰•Ù”ˆ°€ˆÈÀèÀÀˆ°Ñ…É•Ñ}­¥¹°Ñ…É•Ñ}¥¤°mt¤¹…ÁÁ•¹ ¡­•ä°É•µ¥¹‘•È¤¤((€€€€€€€™½È€¡µ½‘”°Í±½Ğ°Ñ…É•Ñ}­¥¹°Ñ…É•Ñ}¥¤°•¹ÑÉ¥•Ì¥¸Í½ÉÑ•¡‘Õ•}É½ÕÁÌ¹¥Ñ•µÌ ¤¤è(€€€€€€€€€€€±¥µ¥Ğ€ô€È¥˜Ñ…É•Ñ}­¥¹€ôô€‰ÁÉ¥Ù…Ñ”ˆ•±Í”€Ä(€€€€€€€€€€€¥˜¥¹Ğ¡ÕÍ…”¹•Ğ¡Ñ…É•Ñ}­¥¹¤½È€À¤€øô±¥µ¥Ğè(€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô±•¸¡•¹ÑÉ¥•Ì¤(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€­•åÌ€ôm­•ä™½È­•ä°}É•µ¥¹‘•È¥¸•¹ÑÉ¥•Ít(€€€€€€€€€€€É•µ¥¹‘•ÉÌ€ômÉ•µ¥¹‘•È™½È}­•ä°É•µ¥¹‘•È¥¸•¹ÑÉ¥•Ít(€€€€€€€€€€€‘•±¥Ù•Éå}­•ä€ô˜‰Íµ…ÉÑ}É•µ¥¹‘•ÈéíÑ½‘…å}­•åôéíµ½‘•ôéíÍ±½ÑôéíÑ…É•Ñ}­¥¹‘ôéíÑ…É•Ñ}¥‘ôˆ(€€€€€€€€€€€¥˜¹½ĞÁÕÍ¡}…ÑÑ•µÁÑ}…±±½İ•¡ÕÍ•È°‘•±¥Ù•Éå}­•ä¤è(€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô±•¸¡•¹ÑÉ¥•Ì¤(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€µ•ÍÍ…”€ô‰Õ¥±‘}Íµ…ÉÑ}É•µ¥¹‘•É}‘¥•ÍĞ¡É•µ¥¹‘•ÉÌ°µ½‘”õµ½‘”¤(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€É•ÍÕ±Ğ€ôÍ•¹‘•È¡Ñ½­•¸°Ñ…É•Ñ}¥°µ•ÍÍ…”¤(€€€€€€€€€€€€€€€}±•…É}ÁÕÍ¡}‘•±¥Ù•Éå}™…¥±ÕÉ”¡ÕÍ•È°‘•±¥Ù•Éå}­•ä¤(€€€€€€€€€€€€€€€Í•¹Ñ}­•åÌ¹ÕÁ‘…Ñ”¡­•åÌ¤(€€€€€€€€€€€€€€€ÕÍ…•mÑ…É•Ñ}­¥¹‘t€ô¥¹Ğ¡ÕÍ…”¹•Ğ¡Ñ…É•Ñ}­¥¹¤½È€À¤€¬€Ä(€€€€€€€€€€€€€€€¥˜Í¹½½é”¹•Ğ ‰¥ˆ¤¥¸íÈ¹•Ğ ‰¥ˆ¤™½ÈÈ¥¸É•µ¥¹‘•ÉÍôè(€€€€€€€€€€€€€€€€€€€ÕÍ•Él‰Íµ…ÉÑ}É•µ¥¹‘•É}Í¹½½é”‰t€ôíô(€€€€€€€€€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ (€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°€‰Íµ…ÉÑ}É•µ¥¹‘•Èˆ°Ñ…É•Ñ}¥°€‰Í•¹Ğˆ°(€€€€€€€€€€€€€€€€€€€µ•ÍÍ…”¹•Ğ ‰…±ÑQ•áĞˆ¤°©Í½¸¹‘ÕµÁÌ¡É•ÍÕ±Ğ°•¹ÍÕÉ•}…Í¥¤õ…±Í”¤°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€É•½É‘}±¥¹•}µ•ÍÍ…•}ÕÍ…” (€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€…Ñ•½Éäô‰Íµ…ÉÑ}É•µ¥¹‘•Èˆ°(€€€€€€€€€€€€€€€€€€€½İ¹•É}±¥¹•}ÕÍ•É}¥õ±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€É•¥Á¥•¹Ñ}½Õ¹ĞôÄ°(€€€€€€€€€€€€€€€€€€€•Ù•¹Ñ}¥õ‘•±¥Ù•Éå}­•ä°(€€€€€€€€€€€€€€€€€€€Í•¹Ñ}…Ğõ¹½Ü°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€Í•¹Ğ€¬ô€Ä(€€€€€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì(€€€€€€€€€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€‰Ñ…É•ĞˆèÑ…É•Ñ}­¥¹°(€€€€€€€€€€€€€€€€€€€€‰É•¥Á¥•¹ĞˆèÑ…É•Ñ}¥°(€€€€€€€€€€€€€€€€€€€€‰¥‘ÌˆèmÈ¹•Ğ ‰¥ˆ¤™½ÈÈ¥¸É•µ¥¹‘•ÉÍt°(€€€€€€€€€€€€€€€€€€€€‰µ½‘”ˆèµ½‘”°(€€€€€€€€€€€€€€€€€€€€‰µ•É•‘}½Õ¹Ğˆè±•¸¡É•µ¥¹‘•ÉÌ¤°(€€€€€€€€€€€€€€€ô¤(€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€™…¥±ÕÉ”€ô}É•½É‘}Í¡•‘Õ±•‘}ÁÕÍ¡}™…¥±ÕÉ” (€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°ÕÍ•È°‘•±¥Ù•Éå}­•ä°€‰Íµ…ÉÑ}É•µ¥¹‘•Èˆ°Ñ…É•Ñ}¥°(€€€€€€€€€€€€€€€€€€€µ•ÍÍ…”¹•Ğ ‰…±ÑQ•áĞˆ¤°•áŒ°¹½Ü°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€Í­¥ÁÁ•€¬ô±•¸¡•¹ÑÉ¥•Ì¤(€€€€€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°€‰¥‘ÌˆèmÈ¹•Ğ ‰¥ˆ¤™½ÈÈ¥¸É•µ¥¹‘•ÉÍt°€‰•ÉÉ½ÈˆèÍÑÈ¡•áŒ¥ô¤(€€€€€€€€€€€€€€€¥˜™…¥±ÕÉ•l‰­¥¹‰t€ôô€‰ÍåÍÑ•´ˆè(€€€€€€€€€€€€€€€€€€€ÍåÍÑ•µ}•ÉÉ½È€ôQÉÕ”(€€€€€€€€€€€€€€€€€€€‰É•…¬(€€€€€€€ÕÍ•Él‰Íµ…ÉÑ}É•µ¥¹‘•É}Í•¹Ñ}­•åÌ‰t€ôÍ½ÉÑ•¡Í•¹Ñ}­•åÌ¥l´ÄÈÀét(€€€€€€€¥˜ÍåÍÑ•µ}•ÉÉ½Èè(€€€€€€€€€€€‰É•…¬((€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰Í•¹ĞˆèÍ•¹Ğ°(€€€€€€€€‰Í­¥ÁÁ•ˆèÍ­¥ÁÁ•°(€€€€€€€€‰É•ÍÕ±ÑÌˆèÉ•ÍÕ±ÑÌ°(€€€€€€€€‰ÍåÍÑ•µ}•ÉÉ½ÈˆèÍåÍÑ•µ}•ÉÉ½È°(€€€ô°€ÈÀÀ(()‘•˜±•…¹ÕÁ}•áÁ¥É•‘}Í½Ì¡½¹™¥œ¤è(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡½¹™¥l‰Q}%1‰t¤(€€€É•µ½Ù•€ôÍ½Í}™±½Ü¹Í½Í}ÁÕÉ•}½±¡ÍÑ…Ñ”°­••Á}µ¥¹ÕÑ•ÌôØÀ¤¥˜Í½Í}™±½Ü•±Í”mt(€€€Í…Ù•}ÍÑ…Ñ”¡½¹™¥l‰Q}%1‰t°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì‰É•µ½Ù•ˆè±•¸¡É•µ½Ù•¥ô°€ÈÀÀ(()‘•˜Í•¹‘}ÁÉ½™¥±•}½µÁ±•Ñ¥½¹}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤è(€€€€ˆˆ‰AÉ¥Ù…Ñ”°É•ÑÉå…‰±”É•µ¥¹‘•ÉÌ…Ğ‰¥¹°€¬ÈÑ °‘…ä€Ì°…¹‘…ä€Ü½¹±ä¸ˆˆˆ(€€€Ñ½­•¸€ô½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ°€ˆˆ¤(€€€¥˜¹½ĞÑ½­•¸è(€€€€€€€É•ÑÕÉ¸ì‰Í•¹Ğˆè€À°€‰Í­¥ÁÁ•ˆè€À°€‰•ÉÉ½Èˆè€‰1%9}!991}MM}Q=-8¥Ì¹½ĞÍ•Ğ‰ô°€ĞÀÀ(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡½¹™¥l‰Q}%1‰t¤(€€€Í•¹‘•È€ô½¹™¥œ¹•Ğ ‰1%9}AUM!}M9Hˆ¤½È±¥¹•}ÁÕÍ¡}µ•ÍÍ…”(€€€¹½Ü€ôÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡½¹™¥œ¤(€€€Í•¹Ğ€ôÍ­¥ÁÁ•€ô€À(€€€É•ÍÕ±ÑÌ€ômt(€€€™½ÈÁÉ½™¥±”¥¸€¡ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô¤¹Ù…±Õ•Ì ¤è(€€€€€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡ÁÉ½™¥±”°‘¥Ğ¤½È¹½ĞÁÉ½™¥±”¹•Ğ ‰ÁÉ½™¥±•}½µÁ±•Ñ¥½¹}É•ÅÕ¥É•ˆ¤è(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€¥˜ÁÉ½™¥±”¹•Ğ ‰µ•µ‰•ÉÍ¡¥Á}Á…ÕÍ•ˆ¤½È¹½Ğµ•µ‰•ÉÍ¡¥Á}…•ÍÍ}…Ñ¥Ù”¡ÁÉ½™¥±”°¹½Ü¤è(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€½µÁ±•Ñ¥½¹}Á••È€ôÍÑÈ (€€€€€€€€€€€ÁÉ½™¥±”¹•Ğ ‰ÁÉ½™¥±•}½µÁ±•Ñ¥½¹}Á••É}±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ(€€€€€€€€¤¹ÍÑÉ¥À ¤(€€€€€€€½µÁ±•Ñ¥½¹}½¹Ñ…ÑÌ€ôl(€€€€€€€€€€€½¹Ñ…Ğ(€€€€€€€€€€€™½È½¹Ñ…Ğ¥¸€¡ÁÉ½™¥±”¹•Ğ ‰½¹Ñ…ÑÌˆ¤½Èmt¤(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡½¹Ñ…Ğ°‘¥Ğ¤(€€€€€€€€€€€…¹É•Í½±Ù•}½¹Ñ…Ñ}É½±”¡½¹Ñ…Ğ¤€ôô€‰Õ…É‘¥…¸ˆ(€€€€€€€€€€€…¹€ (€€€€€€€€€€€€€€€¹½Ğ½µÁ±•Ñ¥½¹}Á••È(€€€€€€€€€€€€€€€½È•Ñ}½¹Ñ…Ñ}±¥¹•}¥¡½¹Ñ…Ğ¤€ôô½µÁ±•Ñ¥½¹}Á••È(€€€€€€€€€€€€¤(€€€€€€€t(€€€€€€€¥˜…¹ä¡½µÁ±•Ñ•}Õ…É‘¥…¹}½¹Ñ…Ğ¡½¹Ñ…Ğ¤™½È½¹Ñ…Ğ¥¸½µÁ±•Ñ¥½¹}½¹Ñ…ÑÌ¤è(€€€€€€€€€€€ÁÉ½™¥±•l‰ÁÉ½™¥±•}½µÁ±•Ñ¥½¹}É•ÅÕ¥É•‰t€ô…±Í”(€€€€€€€€€€€ÁÉ½™¥±•l‰ÁÉ½™¥±•}½µÁ±•Ñ¥½¹}½µÁ±•Ñ•‘}…Ğ‰t€ô¹½Ü¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€ÑÉäè(€€€€€€€€€€€‰½Õ¹‘}…Ğ€ô‘…Ñ•Ñ¥µ”¹™É½µ¥Í½™½Éµ…Ğ¡ÍÑÈ¡ÁÉ½™¥±”¹•Ğ ‰ÁÉ½™¥±•}½µÁ±•Ñ¥½¹}‰½Õ¹‘}…Ğˆ¤½È€ˆˆ¤¤(€€€€€€€•á•ÁĞY…±Õ•ÉÉ½Èè(€€€€€€€€€€€Í­¥ÁÁ•€¬ô€Ä(€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€•±…ÁÍ•‘}‘…åÌ€ôµ…à À°€¡¹½Ü¹‘…Ñ” ¤€´‰½Õ¹‘}…Ğ¹‘…Ñ” ¤¤¹‘…åÌ¤(€€€€€€€…±É•…‘ä€ôí¥¹Ğ¡‘…ä¤™½È‘…ä¥¸€¡ÁÉ½™¥±”¹•Ğ ‰ÁÉ½™¥±•}½µÁ±•Ñ¥½¹}É•µ¥¹‘•É}‘…åÌˆ¤½Èmt¥ô(€€€€€€€‘Õ”€ôm‘…ä™½È‘…ä¥¸AI=%1}=5A1Q%=9}I5%9I}eL¥˜‘…ä€ğô•±…ÁÍ•‘}‘…åÌ…¹‘…ä¹½Ğ¥¸…±É•…‘åt(€€€€€€€™½È‘…ä¥¸‘Õ”è(€€€€€€€€€€€µ•ÍÍ…”€ô€‹–ŞË–º3š"Cš‚ã–ş–º#¢¶ßÚ–ºk¢®/¢¢+3š¾?š^—–æÏ–º'7–º3š"C¢«–ŞÇj¢¿Ö‡¢ÎšZg¾òm1%9ƒ¦k~—–ŞË–>¿’öÿR£¾ò3¦nï¢¦Ç¢¿Ö‡šr–r£¢ÎšZg–º3š"C–ú3–VR£ˆ(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€É•ÍÕ±Ğ€ôÍ•¹‘•È¡Ñ½­•¸°ÁÉ½™¥±”¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤°µ•ÍÍ…”¤(€€€€€€€€€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ¡ÍÑ…Ñ”°€‰ÁÉ½™¥±•}½µÁ±•Ñ¥½¸ˆ°ÁÉ½™¥±”¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤°€‰Í•¹Ğˆ°µ•ÍÍ…”°©Í½¸¹‘ÕµÁÌ¡É•ÍÕ±Ğ°•¹ÍÕÉ•}…Í¥¤õ…±Í”¤¤(€€€€€€€€€€€€€€€…±É•…‘ä¹…‘¡‘…ä¤(€€€€€€€€€€€€€€€Í•¹Ğ€¬ô€Ä(€€€€€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆèÁÉ½™¥±”¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤°€‰‘…äˆè‘…ä°€‰ÍÑ…ÑÕÌˆè€‰Í•¹Ğ‰ô¤(€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€…ÁÁ•¹‘}¹½Ñ¥™¥…Ñ¥½¹}±½œ¡ÍÑ…Ñ”°€‰ÁÉ½™¥±•}½µÁ±•Ñ¥½¸ˆ°ÁÉ½™¥±”¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤°€‰™…¥±•ˆ°µ•ÍÍ…”°ÍÑÈ¡•áŒ¥lèĞÀÁt¤(€€€€€€€€€€€€€€€É•ÍÕ±ÑÌ¹…ÁÁ•¹¡ì‰±¥¹•}ÕÍ•É}¥ˆèÁÉ½™¥±”¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤°€‰‘…äˆè‘…ä°€‰ÍÑ…ÑÕÌˆè€‰™…¥±•‰ô¤(€€€€€€€ÁÉ½™¥±•l‰ÁÉ½™¥±•}½µÁ±•Ñ¥½¹}É•µ¥¹‘•É}‘…åÌ‰t€ôÍ½ÉÑ•¡…±É•…‘ä¤(€€€Í…Ù•}ÍÑ…Ñ”¡½¹™¥l‰Q}%1‰t°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì‰Í•¹ĞˆèÍ•¹Ğ°€‰Í­¥ÁÁ•ˆèÍ­¥ÁÁ•°€‰É•ÍÕ±ÑÌˆèÉ•ÍÕ±ÑÍô°€ÈÀÀ(()‘•˜ÉÕ¹}É½¹}Ñ¥¬¡½¹™¥œ¤è(€€€¹½Ü€ôÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡½¹™¥œ¤(€€€É•ÍÕ±ÑÌ€ôíô(€€€Í±½Ğ€ô¹½Ü¹ÍÑÉ™Ñ¥µ” ˆ• è•4ˆ¤((€€€µ¥É…Ñ¥½¹}‘…Ñ„°µ¥É…Ñ¥½¹}½‘”€ôµ¥É…Ñ•}•á¥ÍÑ¥¹}™É••}µ•µ‰•ÉÌ¡½¹™¥œ¤(€€€É•ÍÕ±ÑÍl‰µ•µ‰•ÉÍ¡¥Á}ÑÉ…¹Í¥Ñ¥½¹}µ¥É…Ñ¥½¸‰t€ôì(€€€€€€€€‰ÍÑ…ÑÕÌˆèµ¥É…Ñ¥½¹}½‘”°(€€€€€€€€‰É•ÍÕ±Ğˆèµ¥É…Ñ¥½¹}‘…Ñ„°(€€€ô(€€€€Œƒš¾?š²„É½¸ƒ¦÷–#¢s¦–"Ãšr¦3¢/ŠG¾ò3–7–~ß¢†3–"Ãšr¦f7Òk¾òm±…¥´½½ÕÑ‰½àƒšr¦bË¦7(€€€µ¥±•ÍÑ½¹•}‘…Ñ„°µ¥±•ÍÑ½¹•}½‘”€ôÍ•¹‘}ÑÉ¥…±}µ¥±•ÍÑ½¹•}¹½Ñ¥•Ì¡½¹™¥œ¤(€€€É•ÍÕ±ÑÍl‰ÑÉ¥…±}µ¥±•ÍÑ½¹•}¹½Ñ¥•Ì‰t€ôì(€€€€€€€€‰ÍÑ…ÑÕÌˆèµ¥±•ÍÑ½¹•}½‘”°(€€€€€€€€‰É•ÍÕ±Ğˆèµ¥±•ÍÑ½¹•}‘…Ñ„°(€€€ô(€€€•áÁ¥Éå}‘…Ñ„°•áÁ¥Éå}½‘”€ô…ÁÁ±å}•áÁ¥É•‘}Á±…¹}‘½İ¹É…‘•Ì¡½¹™¥œ¤(€€€É•ÍÕ±ÑÍl‰µ•µ‰•ÉÍ¡¥Á}•áÁ¥Éä‰t€ôì(€€€€€€€€‰ÍÑ…ÑÕÌˆè•áÁ¥Éå}½‘”°(€€€€€€€€‰É•ÍÕ±Ğˆè•áÁ¥Éå}‘…Ñ„°(€€€ô((€€€…±İ…åÌ€ôì(€€€€€€€€‰¡•­¥¹}É•µ¥¹‘•ÉÌˆèÍ•¹‘}¡•­¥¹}É•µ¥¹‘•ÉÌ°(€€€€€€€€‰‰¥¹‘¥¹}¹½Ñ¥™¥…Ñ¥½¹}É•ÑÉ¥•ÌˆèÉ•ÑÉå}Á•¹‘¥¹}‰¥¹‘}¹½Ñ¥™¥…Ñ¥½¹Ì°(€€€€€€€€‰ÁÉ½™¥±•}½µÁ±•Ñ¥½¹}É•µ¥¹‘•ÉÌˆèÍ•¹‘}ÁÉ½™¥±•}½µÁ±•Ñ¥½¹}É•µ¥¹‘•ÉÌ°(€€€€€€€€‰½Ù•É‘Õ•}…±•ÉÑÌˆèÍ•¹‘}‘Õ•}É•µ¥¹‘•ÉÌ°(€€€€€€€€‰Õ…É‘¥…¹}É½ÕÁ}‘…¥±å}ÍÕµµ…É¥•ÌˆèÍ•¹‘}Õ…É‘¥…¹}É½ÕÁ}‘…¥±å}ÍÕµµ…É¥•Ì°(€€€€€€€€‰Íµ…ÉÑ}É•µ¥¹‘•ÉÌˆèÍ•¹‘}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ°(€€€€€€€€‰Í½Í}•Í…±…Ñ¥½¹Ìˆè±…µ‰‘„™œè€ (€€€€€€€€€€€ÁÉ½•ÍÍ}Í½Í}•Í…±…Ñ¥½¹Ì¡™l‰Q}%1‰t°™œ°¹½Üõ¹½Ü¤°(€€€€€€€€€€€€ÈÀÀ°(€€€€€€€€¤°(€€€€€€€€‰Í½Í}±•…¹ÕÀˆè±•…¹ÕÁ}•áÁ¥É•‘}Í½Ì°(€€€ô(€€€™½È¹…µ”°Ñ…Í¬¥¸…±İ…åÌ¹¥Ñ•µÌ ¤è(€€€€€€€‘…Ñ„°½‘”€ôÑ…Í¬¡½¹™¥œ¤(€€€€€€€É•ÍÕ±ÑÍm¹…µ•t€ôì‰ÍÑ…ÑÕÌˆè½‘”°€‰É•ÍÕ±Ğˆè‘…Ñ…ô(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡‘…Ñ„°‘¥Ğ¤…¹‘…Ñ„¹•Ğ ‰ÍåÍÑ•µ}•ÉÉ½Èˆ¤è(€€€€€€€€€€€É•ÑÕÉ¸ì(€€€€€€€€€€€€€€€€‰½¬ˆè…±Í”°(€€€€€€€€€€€€€€€€‰ÍåÍÑ•µ}•ÉÉ½ÈˆèQÉÕ”°(€€€€€€€€€€€€€€€€‰É…¹}…Ğˆè¹½Ü¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€€€€€€€€€‰Ñ¥µ•é½¹”ˆè€‰Í¥„½Q…¥Á•¤ˆ°(€€€€€€€€€€€€€€€€‰Ñ…Í­ÌˆèÉ•ÍÕ±ÑÌ°(€€€€€€€€€€€ô°€ÈÀÀ((€€€Ñ½­•¸€ô½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ°€ˆˆ¤(€€€É•ÍÕ±ÑÍl‰Õ…É‘¥…¹}É½ÕÁ}É•™É•Í ‰t€ôÉ•™É•Í¡}…±±}Õ…É‘¥…¹}É½ÕÁÍ}½Õ¹Ğ (€€€€€€€½¹™¥l‰Q}%1‰t°(€€€€€€€Ñ½­•¸õÑ½­•¸°(€€€€¤((€€€‘…¥±ä€ôì(€€€€€€€€ˆÀäèÀÀˆè€ ‰‰¥ÉÑ¡‘…å}É•µ¥¹‘•ÉÌˆ°Í•¹‘}‰¥ÉÑ¡‘…å}É•µ¥¹‘•ÉÌ¤°(€€€€€€€€ˆÀäèÀÔˆè€ ‰½¹Ñ…Ñ}É•µ¥¹‘•ÉÌˆ°Í•¹‘}µ¥ÍÍ¥¹}½¹Ñ…Ñ}É•µ¥¹‘•ÉÌ¤°(€€€€€€€€ˆÄÀèÀÀˆè€ ‰É•¹•İ…±}É•µ¥¹‘•ÉÌˆ°Í•¹‘}É•¹•İ…±}É•µ¥¹‘•ÉÌ¤°(€€€€€€€€ˆÄäèÀÀˆè€ ‰‰•Ñ…}‘…¥±å}™••‘‰…¬ˆ°Í•¹‘}‰•Ñ…}‘…¥±å}™••‘‰…¬¤°(€€€€€€€€ˆÀÈèÌÀˆè€ ‰‘…Ñ…}±•…¹ÕÀˆ°±•…¹ÕÁ}•áÁ¥É•‘}‘…Ñ„¤°(€€€ô(€€€¥˜Í±½Ğ¥¸‘…¥±äè(€€€€€€€¹…µ”°Ñ…Í¬€ô‘…¥±åmÍ±½Ñt(€€€€€€€‘…Ñ„°½‘”€ôÑ…Í¬¡½¹™¥œ¤(€€€€€€€É•ÍÕ±ÑÍm¹…µ•t€ôì‰ÍÑ…ÑÕÌˆè½‘”°€‰É•ÍÕ±Ğˆè‘…Ñ…ô(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡‘…Ñ„°‘¥Ğ¤…¹‘…Ñ„¹•Ğ ‰ÍåÍÑ•µ}•ÉÉ½Èˆ¤è(€€€€€€€€€€€É•ÑÕÉ¸ì(€€€€€€€€€€€€€€€€‰½¬ˆè…±Í”°(€€€€€€€€€€€€€€€€‰ÍåÍÑ•µ}•ÉÉ½ÈˆèQÉÕ”°(€€€€€€€€€€€€€€€€‰É…¹}…Ğˆè¹½Ü¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€€€€€€€€€‰Ñ¥µ•é½¹”ˆè€‰Í¥„½Q…¥Á•¤ˆ°(€€€€€€€€€€€€€€€€‰Ñ…Í­ÌˆèÉ•ÍÕ±ÑÌ°(€€€€€€€€€€€ô°€ÈÀÀ((€€€É•ÑÕÉ¸ì(€€€€€€€€‰½¬ˆè…±° (€€€€€€€€€€€¥Ñ•´¹•Ğ ‰ÍÑ…ÑÕÌˆ°€ÈÀÀ¤€ğ€ÔÀÀ(€€€€€€€€€€€™½È¥Ñ•´¥¸É•ÍÕ±ÑÌ¹Ù…±Õ•Ì ¤(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡¥Ñ•´°‘¥Ğ¤(€€€€€€€€¤°(€€€€€€€€‰ÍåÍÑ•µ}•ÉÉ½Èˆè…±Í”°(€€€€€€€€‰É…¹}…Ğˆè¹½Ü¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€‰Ñ¥µ•é½¹”ˆè€‰Í¥„½Q…¥Á•¤ˆ°(€€€€€€€€‰Ñ…Í­ÌˆèÉ•ÍÕ±ÑÌ°(€€€ô°€ÈÀÀ(()‘•˜…ÁÁ}½¹™¥œ¡½¹™¥œ¤è(€€€Ñ½­•¸€ô€ (€€€€€€€½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤(€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤(€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰!991}MM}Q=-8ˆ¤(€€€€€€€½È€ˆˆ(€€€€¤¹ÍÑÉ¥À ¤(€€€Í•É•Ğ€ô€ (€€€€€€€½¹™¥œ¹•Ğ ‰1%9}!991}MIPˆ¤(€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MIPˆ¤(€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰!991}MIPˆ¤(€€€€€€€½È€ˆˆ(€€€€¤¹ÍÑÉ¥À ¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰±¥™™}¥ˆè½¹™¥œ¹•Ğ ‰1%}%ˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%}%ˆ¤½ÈU1Q}1%}%°(€€€€€€€€‰±•…å}±¥™™}¥ˆè€ (€€€€€€€€€€€½¹™¥œ¹•Ğ ‰1e}1%}%ˆ¤(€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1e}1%}%ˆ¤(€€€€€€€€€€€½ÈU1Q}1e}1%}%(€€€€€€€€¤°(€€€€€€€€‰ÁÕ‰±¥}ÕÉ°ˆè½¹™¥œ¹•Ğ ‰AA}AU	1%}UI0ˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰AA}AU	1%}UI0ˆ°€ˆˆ¤°(€€€€€€€€ŒY¥Í¥‰±”‘•Á±½äÍÑ…µÀ™½ÈÙ•É¥™å¥¹œI•¹‘•È…ÑÕ…±±äÉ½±±•Ñ¡”İ•±½µ”±•à¸(€€€€€€€€‰‘•Á±½å}Ù•ÉÍ¥½¸ˆè½Ì¹•¹Ù¥É½¸¹•Ğ ‰A1=e}YIM%=8ˆ¤½È€‰\ÈÔÀÜÈÕ ˆ°(€€€€€€€€Œ	½Ñ Ñ½­•¸…¹Í•É•Ğ…É”É•ÅÕ¥É•™½È1%9İ•‰¡½½¬€¼µ•ÍÍ…¥¹œ¸(€€€€€€€€‰±¥¹•}•¹…‰±•ˆè‰½½°¡Ñ½­•¸…¹Í•É•Ğ¤°(€€€€€€€€‰É•ÅÕ¥É•}±¥™™}…ÕÑ ˆèÍÑÈ (€€€€€€€€€€€½¹™¥œ¹•Ğ ‰IEU%I}1%}UQ ˆ¤(€€€€€€€€€€€¥˜½¹™¥œ¹•Ğ ‰IEU%I}1%}UQ ˆ¤¥Ì¹½Ğ9½¹”(€€€€€€€€€€€•±Í”½Ì¹•¹Ù¥É½¸¹•Ğ ‰IEU%I}1%}UQ ˆ°€ˆÀˆ¤(€€€€€€€€¤¹ÍÑÉ¥À ¤¹±½İ•È ¤(€€€€€€€¥¸ìˆÄˆ°€‰ÑÉÕ”ˆ°€‰å•Ìˆ°€‰½¸‰ô°(€€€€€€€€‰•Á…å}É•…‘äˆè‰½½°¡•Á…ä…¹•Á…ä¹•Á…å}½¹™¥ÕÉ•¡½¹™¥œ¤¤°(€€€€€€€€‰¹•İ•‰Á…å}É•…‘äˆè‰½½°¡¹•İ•‰Á…ä…¹¹•İ•‰Á…ä¹¹•İ•‰Á…å}½¹™¥ÕÉ•¡½¹™¥œ¤¤°(€€€€€€€€‰ÍµÍ}±¥Ù”ˆè‰½½° (€€€€€€€€€€€€¡½¹™¥œ¹•Ğ ‰M5M-%9}UMI95ˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰M5M-%9}UMI95ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€€€€€…¹€¡½¹™¥œ¹•Ğ ‰M5M-%9}AMM]=Iˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰M5M-%9}AMM]=Iˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€€¤°(€€€ô(()‘•˜…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…õ9½¹”°€¨°…ÉÌõ9½¹”°¡•…‘•ÉÌõ9½¹”°½¹™¥œõ9½¹”¤è(€€€€ˆˆ‰I•Í½±Ù”½¹”…±±•È¥‘•¹Ñ¥Ñäì¹•Ù•ÈÑÉÕÍĞ„É½ÕÑ”ÌÉ•ÅÕ•ÍÑ•µ•µ‰•È%¸ˆˆˆ(€€€Á…å±½…€ôÁ…å±½…½Èíô(€€€…ÉÌ€ô…ÉÌ½Èíô(€€€¡•…‘•ÉÌ€ô¡•…‘•ÉÌ½Èíô(€€€¥˜É•Í½±Ù•}±¥¹•}ÕÍ•É}¥¥Ì9½¹”è(€€€€€€€±…¥µ•€ôÍÑÈ¡Á…å±½…¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È…ÉÌ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€¥˜¹½Ğ±…¥µ•è(€€€€€€€€€€€É•ÑÕÉ¸9½¹”°€¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰µ¥ÍÍ¥¹œ±¥¹•}ÕÍ•É}¥‰ô°€ĞÀÀ¤(€€€€€€€É•ÑÕÉ¸±…¥µ•°9½¹”(€€€É•ÑÕÉ¸É•Í½±Ù•}±¥¹•}ÕÍ•É}¥ (€€€€€€€¡•…‘•ÉÌõ¡•…‘•ÉÌ°(€€€€€€€Á…å±½…õÁ…å±½…°(€€€€€€€…ÉÌõ…ÉÌ°(€€€€€€€½¹™¥œõ½¹™¥œ½Èíô°(€€€€¤(()‘•˜ÕÁ‘…Ñ•}½¹‰½…É‘¥¹}É•µ¥¹‘•È¡‘…Ñ…}™¥±”°±¥¹•}ÕÍ•É}¥°Á…å±½…¤è(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€ÁÉ½™¥±”€ô•Ñ}ÁÉ½™¥±”¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥¤(€€€µ…á}½Õ¹Ğ€ô¥¹Ğ¡Á±…¹}ÉÕ±•Ì¡ÁÉ½™¥±”¤¹•Ğ ‰‘…¥±å}É•µ¥¹‘•ÉÌˆ¤½È€Ä¤(€€€¥˜€‰É•µ¥¹‘•É}Ñ¥µ•Ìˆ¥¸Á…å±½…è(€€€€€€€É…Ü€ôÁ…å±½…¹•Ğ ‰É•µ¥¹‘•É}Ñ¥µ•Ìˆ¤(€€€€€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡É…Ü°±¥ÍĞ¤½È¹½ĞÉ…Üè(€€€€€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰É•µ¥¹‘•É}Ñ¥µ•ÌµÕÍĞ‰”„¹½¸µ•µÁÑä±¥ÍĞ‰ô°€ĞÀÀ(€€€€€€€¹½Éµ…±¥é•€ô¹½Éµ…±¥é•}É•µ¥¹‘•É}Ñ¥µ•Ì¡É…Ü°µ…á}½Õ¹Ğ¤(€€€€€€€¥˜¹½Ğ¹½Éµ…±¥é•è(€€€€€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰¥¹Ù…±¥É•µ¥¹‘•É}Ñ¥µ•Ì™½Éµ…Ğ°ÕÍ”! é54‰ô°€ĞÀÀ(€€€€€€€Ñ¥µ•Ì€ô…ÁÁ±å}É•µ¥¹‘•É}Ñ¥µ•Í}Ñ½}ÁÉ½™¥±”¡ÁÉ½™¥±”°Ñ¥µ•Ìõ¹½Éµ…±¥é•¤(€€€•±Í”è(€€€€€€€É•µ¥¹‘•É}Ñ¥µ”€ô€¡Á…å±½…¹•Ğ ‰É•µ¥¹‘•É}Ñ¥µ”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€¥˜¹½ĞI5%9I}Q%5}AQQI8¹µ…Ñ ¡É•µ¥¹‘•É}Ñ¥µ”¤è(€€€€€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰¥¹Ù…±¥É•µ¥¹‘•É}Ñ¥µ”™½Éµ…Ğ°ÕÍ”! é54‰ô°€ĞÀÀ(€€€€€€€Ñ¥µ•Ì€ô…ÁÁ±å}É•µ¥¹‘•É}Ñ¥µ•Í}Ñ½}ÁÉ½™¥±”¡ÁÉ½™¥±”°Í¥¹±”õÉ•µ¥¹‘•É}Ñ¥µ”¤(€€€¥˜€‰‘…¥±å}¡•­¥¹}É•µ¥¹‘•É}•¹…‰±•ˆ¥¸Á…å±½…è(€€€€€€€ÁÉ½™¥±•l‰‘…¥±å}¡•­¥¹}É•µ¥¹‘•É}•¹…‰±•‰t€ô‰½½° (€€€€€€€€€€€Á…å±½…¹•Ğ ‰‘…¥±å}¡•­¥¹}É•µ¥¹‘•É}•¹…‰±•ˆ¤(€€€€€€€€¤(€€€¥˜€‰É…•}¡½ÕÉÌˆ¥¸Á…å±½…è(€€€€€€€ÁÉ½™¥±•l‰É…•}¡½ÕÉÌ‰t€ô¹½Éµ…±¥é•}É…•}¡½ÕÉÌ¡Á…å±½…¹•Ğ ‰É…•}¡½ÕÉÌˆ¤¤(€€€•±Í”è(€€€€€€€ÁÉ½™¥±•l‰É…•}¡½ÕÉÌ‰t€ô¹½Éµ…±¥é•}É…•}¡½ÕÉÌ¡ÁÉ½™¥±”¹•Ğ ‰É…•}¡½ÕÉÌˆ¤¤(€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰½¬ˆèQÉÕ”°(€€€€€€€€‰É•µ¥¹‘•É}Ñ¥µ”ˆèÑ¥µ•ÍlÁt°(€€€€€€€€‰É•µ¥¹‘•É}Ñ¥µ•ÌˆèÑ¥µ•Ì°(€€€€€€€€‰‘…¥±å}É•µ¥¹‘•ÉÌˆèµ…á}½Õ¹Ğ°(€€€€€€€€‰‘…¥±å}¡•­¥¹}É•µ¥¹‘•É}•¹…‰±•ˆè‰½½° (€€€€€€€€€€€ÁÉ½™¥±”¹•Ğ ‰‘…¥±å}¡•­¥¹}É•µ¥¹‘•É}•¹…‰±•ˆ°QÉÕ”¤(€€€€€€€€¤°(€€€€€€€€‰É…•}¡½ÕÉÌˆè¹½Éµ…±¥é•}É…•}¡½ÕÉÌ¡ÁÉ½™¥±”¹•Ğ ‰É…•}¡½ÕÉÌˆ¤¤°(€€€€€€€€‰İ…É¹¥¹}…¹•±}µ¥¹ÕÑ•Ìˆè¥¹Ğ (€€€€€€€€€€€ÁÉ½™¥±”¹•Ğ ‰İ…É¹¥¹}…¹•±}µ¥¹ÕÑ•Ìˆ¤½ÈU1Q}]I9%9}91}5%9UQL(€€€€€€€€¤°(€€€€€€€€‰…±±½İ•‘}É…•}¡½ÕÉÌˆè±¥ÍĞ¡11=]}I}!=UIL¤°(€€€ô°€ÈÀÀ(()‘•˜½µÁ±•Ñ•}½¹‰½…É‘¥¹}™½É}ÕÍ•È¡‘…Ñ…}™¥±”°±¥¹•}ÕÍ•É}¥°Á…å±½…¤è(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€ÁÉ½™¥±”€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹•Ğ¡±¥¹•}ÕÍ•É}¥¤(€€€¥˜¹½ĞÁÉ½™¥±”è(€€€€€€€É•ÑÕÉ¸ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰ÕÍ•È¹½ĞÉ•¥ÍÑ•É•‰ô°€ĞÀĞ(€€€…•ÍÌ€ôµ•µ‰•É}…•ÍÍ}ÍÑ…Ñ”¡ÁÉ½™¥±”¤(€€€¥˜…•ÍÍl‰Õ…É‘¥…¹}É•ÅÕ¥É•‰tè(€€€€€€€É•ÑÕÉ¸ì(€€€€€€€€€€€€‰½¬ˆè…±Í”°(€€€€€€€€€€€€‰•ÉÉ½Èˆè€‰Õ…É‘¥…¹}É•ÅÕ¥É•ˆ°(€€€€€€€€€€€€‰µ•ÍÍ…”ˆè€‹–ş¦‚#–#–º3š"C¢Ï–ÂD€Äƒ’ö7–>¿š:—šRØ1%9ƒ¦k~—jš‚ã–ş–º#¢¶ß’êëÚ–ºhˆ°(€€€€€€€€€€€€¨©…•ÍÌ°(€€€€€€€ô°€ĞÀÀ(€€€ÁÉ½™¥±•l‰¥Í}½¹‰½…É‘¥¹}½µÁ±•Ñ•‰t€ôQÉÕ”(€€€¥˜€‰É•µ¥¹‘•É}Ñ¥µ•Ìˆ¥¸Á…å±½…½ÈÁ…å±½…¹•Ğ ‰É•µ¥¹‘•É}Ñ¥µ”ˆ¤è(€€€€€€€…ÁÁ±å}É•µ¥¹‘•É}Ñ¥µ•Í}Ñ½}ÁÉ½™¥±” (€€€€€€€€€€€ÁÉ½™¥±”°(€€€€€€€€€€€Ñ¥µ•ÌõÁ…å±½…¹•Ğ ‰É•µ¥¹‘•É}Ñ¥µ•Ìˆ¤°(€€€€€€€€€€€Í¥¹±”õÁ…å±½…¹•Ğ ‰É•µ¥¹‘•É}Ñ¥µ”ˆ¤°(€€€€€€€€¤(€€€•±Í”è(€€€€€€€…ÁÁ±å}É•µ¥¹‘•É}Ñ¥µ•Í}Ñ½}ÁÉ½™¥±”¡ÁÉ½™¥±”¤(€€€¥ÍÑ…Ñ”€ô•Ñ}½É}É•…Ñ•}¥¹Ñ•É…Ñ¥½¹}ÍÑ…Ñ”¡ÁÉ½™¥±”¤(€€€¥ÍÑ…Ñ•l‰½¹‰½…É‘¥¹}½µÁ±•Ñ•‰t€ôQÉÕ”(€€€¥˜€‰…‘‘}™¥ÉÍÑ}Õ…É‘¥…¸ˆ¹½Ğ¥¸¥ÍÑ…Ñ•l‰½µÁ±•Ñ•‘}ÍÑ•ÁÌ‰tè(€€€€€€€¥ÍÑ…Ñ•l‰½µÁ±•Ñ•‘}ÍÑ•ÁÌ‰t¹…ÁÁ•¹ ‰…‘‘}™¥ÉÍÑ}Õ…É‘¥…¸ˆ¤(€€€¥˜€‰Í•Ñ}É•µ¥¹‘•É}Ñ¥µ”ˆ¹½Ğ¥¸¥ÍÑ…Ñ•l‰½µÁ±•Ñ•‘}ÍÑ•ÁÌ‰tè(€€€€€€€¥ÍÑ…Ñ•l‰½µÁ±•Ñ•‘}ÍÑ•ÁÌ‰t¹…ÁÁ•¹ ‰Í•Ñ}É•µ¥¹‘•É}Ñ¥µ”ˆ¤(€€€¥˜¹½Ğ¥ÍÑ…Ñ”¹•Ğ ‰Á•¹‘¥¹}ÍÑ•ÁÌˆ¤è(€€€€€€€¥ÍÑ…Ñ•l‰Á•¹‘¥¹}ÍÑ•ÁÌ‰t€ôl(€€€€€€€€€€€€‰•áÁ±½É•}…ÁÀˆ°(€€€€€€€€€€€€‰É•…‘}¡•±Àˆ°(€€€€€€€€€€€€‰…‘‘}µ½É•}Õ…É‘¥…¹Í}¥™}Á…¥ˆ°(€€€€€€€t(€€€¥ÍÑ…Ñ•l‰±…ÍÑ}¥¹Ñ•É…Ñ¥½¹}…Ğ‰t€ô‘…Ñ•Ñ¥µ”¹¹½Ü ¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€Ñ¥µ•Ì€ôÉ•µ¥¹‘•É}Ñ¥µ•Í}™½É}ÁÉ½™¥±”¡ÁÉ½™¥±”¤(€€€É•ÑÕÉ¸ì(€€€€€€€€‰½¬ˆèQÉÕ”°(€€€€€€€€¨©µ•µ‰•É}…•ÍÍ}ÍÑ…Ñ”¡ÁÉ½™¥±”¤°(€€€€€€€€‰¥Í}½¹‰½…É‘¥¹}½µÁ±•Ñ•ˆèQÉÕ”°(€€€€€€€€‰Í•ÑÕÁ}½µÁ±•Ñ•ˆèQÉÕ”°(€€€€€€€€‰É•µ¥¹‘•É}Ñ¥µ”ˆèÑ¥µ•ÍlÁt°(€€€€€€€€‰É•µ¥¹‘•É}Ñ¥µ•ÌˆèÑ¥µ•Ì°(€€€€€€€€‰¥¹Ñ•É…Ñ¥½¹}ÍÑ…Ñ”ˆè¥ÍÑ…Ñ”°(€€€ô°€ÈÀÀ(()‘•˜¡•­¥¹}™½É}ÕÍ•È¡‘…Ñ…}™¥±”°±¥¹•}ÕÍ•É}¥°Á…å±½…°½¹™¥œõ9½¹”¤è(€€€Á…å±½…€ô‘¥Ğ¡Á…å±½…½Èíô¤(€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€¹½Ü€ôÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡½¹™¥œ½Èíô¤(€€€•Ù•¹Ñ}¥€ô˜‰¡•­¥¸éí±¥¹•}ÕÍ•É}¥‘ôéíÕÕ¥¹ÕÕ¥Ğ ¤¹¡•áôˆ(€€€µÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€‘…Ñ…}™¥±”°(€€€€€€€±…µ‰‘„ÕÉÉ•¹Ñ}ÍÑ…Ñ”èÕÉÉ•¹Ñ}ÍÑ…Ñ”¹Í•Ñ‘•™…Õ±Ğ (€€€€€€€€€€€€‰±…Õ¹¡}•Ù•¹ÑÌˆ°mt(€€€€€€€€¤¹…ÁÁ•¹¡ì(€€€€€€€€€€€€‰¥ˆè•Ù•¹Ñ}¥°(€€€€€€€€€€€€‰­¥¹ˆè€‰¡•­¥¸ˆ°(€€€€€€€€€€€€‰ÍÕ•ÍÌˆè…±Í”°(€€€€€€€€€€€€‰…Ğˆè¹½Ü¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€ô¤°(€€€€¤(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€¥˜±¥¹•}ÕÍ•É}¥¹½Ğ¥¸ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤è(€€€€€€€É•¥ÍÑ•É}±¥¹•}ÕÍ•È (€€€€€€€€€€€‘…Ñ…}™¥±”°(€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€‰‘¥ÍÁ±…å}¹…µ”ˆèÍÑÈ¡Á…å±½…¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤½È€‰1%9ƒ’öÿR£¢ˆ¤°(€€€€€€€€€€€ô°(€€€€€€€€¤(€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€…•ÍÌ€ôµ•µ‰•É}…•ÍÍ}ÍÑ…Ñ”¡ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹•Ğ¡±¥¹•}ÕÍ•É}¥¤¤(€€€¥˜…•ÍÍl‰Õ…É‘¥…¹}É•ÅÕ¥É•‰tè(€€€€€€€É•ÑÕÉ¸ì(€€€€€€€€€€€€‰½¬ˆè…±Í”°(€€€€€€€€€€€€‰•ÉÉ½Èˆè€‰Õ…É‘¥…¹}É•ÅÕ¥É•ˆ°(€€€€€€€€€€€€‰µ•ÍÍ…”ˆè€‹–ş¦‚#–#–º3š"C¢Ï–ÂD€Äƒ’ö7–>¿š:—šRØ1%9ƒ¦k~—jš‚ã–ş–º#¢¶ß’êëÚ–ºhˆ°(€€€€€€€€€€€€¨©…•ÍÌ°(€€€€€€€ô°€ĞÀÀ(€€€ÍÑ…ÑÕÌ€ôÉ•½É‘}¡•­¥¸¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€µÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€‘…Ñ…}™¥±”°(€€€€€€€±…µ‰‘„ÕÉÉ•¹Ñ}ÍÑ…Ñ”è¹•áĞ (€€€€€€€€€€€€ (€€€€€€€€€€€€€€€É½Ü¹ÕÁ‘…Ñ”¡ì‰ÍÕ•ÍÌˆèQÉÕ•ô¤(€€€€€€€€€€€€€€€™½ÈÉ½Ü¥¸ÕÉÉ•¹Ñ}ÍÑ…Ñ”¹•Ğ ‰±…Õ¹¡}•Ù•¹ÑÌˆ¤½Èmt(€€€€€€€€€€€€€€€¥˜É½Ü¹•Ğ ‰¥ˆ¤€ôô•Ù•¹Ñ}¥(€€€€€€€€€€€€¤°(€€€€€€€€€€€9½¹”°(€€€€€€€€¤°(€€€€¤(€€€ÍÑ…ÑÕÍl‰½¬‰t€ôQÉÕ”(€€€É•ÑÕÉ¸ÍÑ…ÑÕÌ°€ÈÀÀ(()‘•˜ÍÑ…ÑÕÍ}™½É}ÕÍ•È¡‘…Ñ…}™¥±”°±¥¹•}ÕÍ•É}¥°‘¥ÍÁ±…å}¹…µ”ôˆˆ¤è(€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤(€€€ÁÉ½™¥±”€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹•Ğ¡±¥¹•}ÕÍ•É}¥¤(€€€¥˜¹½ĞÁÉ½™¥±”è(€€€€€€€‘…Ñ„°½‘”€ôÉ•¥ÍÑ•É}±¥¹•}ÕÍ•È (€€€€€€€€€€€‘…Ñ…}™¥±”°(€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€‰‘¥ÍÁ±…å}¹…µ”ˆèÍÑÈ¡‘¥ÍÁ±…å}¹…µ”½È€ˆˆ¤¹ÍÑÉ¥À ¤½È€‰1%9ƒ’öÿR£¢ˆ°(€€€€€€€€€€€ô°(€€€€€€€€¤(€€€€€€€¥˜½‘”€„ô€ÈÀÀè(€€€€€€€€€€€É•ÑÕÉ¸‘…Ñ„°½‘”(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡‘…Ñ„°‘¥Ğ¤è(€€€€€€€€€€€‘…Ñ…l‰…ÕÑ½}É•¥ÍÑ•É•‰t€ôQÉÕ”(€€€€€€€É•ÑÕÉ¸‘…Ñ„°€ÈÀÀ(€€€‘¥ÉÑä€ôÍÉÕ‰}Í•±™}±¥¹•}¥‘Í}½¹}½¹Ñ…ÑÌ¡ÁÉ½™¥±”¤(€€€‘¥ÉÑä€ô•¹ÍÕÉ•}½¹‰½…É‘¥¹}½µÁ±•Ñ•‘}™±…œ¡ÁÉ½™¥±”¤½È‘¥ÉÑä(€€€Ñ½‘…ä€ôÑ½‘…å}ÍÑÉ¥¹œ ¤(€€€¥˜ÁÉ½™¥±•}¥Í}Ñ½‘…å}¡•­•¡ÁÉ½™¥±”¤…¹Ñ½‘…ä¹½Ğ¥¸Í•Ğ¡ÁÉ½™¥±”¹•Ğ ‰¡¥ÍÑ½Éäˆ¤½Èmt¤è(€€€€€€€¡¥ÍĞ€ôÍ•Ğ¡ÁÉ½™¥±”¹•Ğ ‰¡¥ÍÑ½Éäˆ¤½Èmt¤(€€€€€€€¡¥ÍĞ¹…‘¡Ñ½‘…ä¤(€€€€€€€ÁÉ½™¥±•l‰¡¥ÍÑ½Éä‰t€ôÍ½ÉÑ•¡¡¥ÍĞ¤(€€€€€€€‘¥ÉÑä€ôQÉÕ”(€€€‰•™½É•}É½ÕÁÌ€ô±¥ÍĞ¡ÁÉ½™¥±”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁ}¥‘Ìˆ¤½Èmt¤(€€€Íå¹}½İ¹•‘}Õ…É‘¥…¹}É½ÕÁ}¥‘Ì¡ÍÑ…Ñ”°ÁÉ½™¥±”¤(€€€¥˜±¥ÍĞ¡ÁÉ½™¥±”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁ}¥‘Ìˆ¤½Èmt¤€„ô‰•™½É•}É½ÕÁÌè(€€€€€€€‘¥ÉÑä€ôQÉÕ”(€€€¥˜‘¥ÉÑäè(€€€€€€€Í…Ù•}ÍÑ…Ñ”¡‘…Ñ…}™¥±”°ÍÑ…Ñ”¤(€€€É•ÑÕÉ¸‰Õ¥±‘}ÍÑ…ÑÕÌ¡ÁÉ½™¥±”°ÍÑ…Ñ”¤°€ÈÀÀ(()‘•˜É•…Ñ•}…ÁÀ¡½¹™¥œõ9½¹”¤è(€€€¥˜±…Í¬¥Ì9½¹”è(€€€€€€€É•ÑÕÉ¸5¥¹¥ÁÀ¡½¹™¥œ¤((€€€ÍÕÁÁ±¥•‘}½¹™¥œ€ô½¹™¥œ½Èíô(€€€±¥™™}¥€ô€ (€€€€€€€ÍÕÁÁ±¥•‘}½¹™¥œ¹•Ğ ‰1%}%ˆ¤(€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%}%ˆ¤(€€€€€€€½ÈU1Q}1%}%(€€€€¤¹ÍÑÉ¥À ¤½ÈU1Q}1%}%(€€€•áÁ±¥¥Ñ}¡…¹¹•±}¥€ô€ (€€€€€€€ÍÕÁÁ±¥•‘}½¹™¥œ¹•Ğ ‰1%9}1=%9}!991}%ˆ¤(€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}1=%9}!991}%ˆ¤(€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}1½¥¹}¡…¹¹•±}%ˆ¤(€€€€€€€½È€ˆˆ(€€€€¤¹ÍÑÉ¥À ¤(€€€±¥¹•}±½¥¹}¡…¹¹•±}¥€ô€ (€€€€€€€•áÁ±¥¥Ñ}¡…¹¹•±}¥(€€€€€€€½È±¥™™}¥¹ÍÁ±¥Ğ ˆ´ˆ°€Ä¥lÁt(€€€€€€€½ÈU1Q}1%9}1=%9}!991}%(€€€€¤((€€€…ÁÀ€ô±…Í¬¡}}¹…µ•}|°ÍÑ…Ñ¥}™½±‘•Èôˆ¸ˆ°ÍÑ…Ñ¥}ÕÉ±}Á…Ñ ôˆˆ¤(€€€…ÁÀ¹}ÍÑ…ÉÑ}Ñ¥µ”€ô‘…Ñ•Ñ¥µ”¹¹½Ü ¤€€Œ€ÈÀÈØ´ÀÜ´ÈÄÁ…Ñ €ÄÜèƒ’úl€½…Á¤½‰½Ğ½ÍÑ…ÑÕÌƒ¢¢#º\ÕÁÑ¥µ”((€€€…ÁÀ¹•ÉÉ½É¡…¹‘±•È¡½Õ¹Ñ5¥É…Ñ•‘ÉÉ½È¤(€€€‘•˜}…½Õ¹Ñ}µ¥É…Ñ•‘}•ÉÉ½È¡}•ÉÉ½È¤è(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡…½Õ¹Ñ}µ¥É…Ñ•‘}É•ÍÁ½¹Í” ¤¤°€ĞÀä((€€€…ÁÀ¹½¹™¥œ¹ÕÁ‘…Ñ” (€€€€€€€Q}%1õÉ•Í½±Ù•}‘…Ñ…}™¥±”¡½Ì¹•¹Ù¥É½¸¹•Ğ ‰Q}%1ˆ¤¤°(€€€€€€€5%9}AMM]=Iõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰5%9}AMM]=Iˆ°€ˆˆ¤°(€€€€€€€5%9}=AIQ%=9M}AMM]=Iõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰5%9}=AIQ%=9M}AMM]=Iˆ°€ˆˆ¤°(€€€€€€€5%9}%99}AMM]=Iõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰5%9}%99}AMM]=Iˆ°€ˆˆ¤°(€€€€€€€5%9}Y%]I}AMM]=Iõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰5%9}Y%]I}AMM]=Iˆ°€ˆˆ¤°(€€€€€€€5%9}MMM%=9}MIPõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰5%9}MMM%=9}MIPˆ°€ˆˆ¤°(€€€€€€€QIUMQ}AI=ae}!ILõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰QIUMQ}AI=ae}!ILˆ°€ˆˆ¤°(€€€€€€€11=]}=A9}5%8õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰11=]}=A9}5%8ˆ°€ˆˆ¤°(€€€€€€€5%9}=A8õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰5%9}=A8ˆ°€ˆˆ¤°(€€€€€€€AI599Q}MMM%=9}1%Q%5õÑ¥µ•‘•±Ñ„¡¡½ÕÉÌôà¤°(€€€€€€€MMM%=9}==-%}!QQA=91dõQÉÕ”°(€€€€€€€MMM%=9}==-%}MUIõQÉÕ”°(€€€€€€€MMM%=9}==-%}M5M%Qô‰MÑÉ¥Ğˆ°(€€€€€€€1%9}!991}MM}Q=-8ô (€€€€€€€€€€€½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤(€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰!991}MM}Q=-8ˆ¤(€€€€€€€€€€€½È€ˆˆ(€€€€€€€€¤°(€€€€€€€1%9}!991}MIPô (€€€€€€€€€€€½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MIPˆ¤(€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰!991}MIPˆ¤(€€€€€€€€€€€½È€ˆˆ(€€€€€€€€¤°(€€€€€€€€Œ•ÁĞ½‘…Í¥¹œ™É½´I•¹‘•ÈU$ÑåÁ½Ì€¡1%9}1½¥¹}¡…¹¹•±}%•ÑŒ¸¤(€€€€€€€1%9}1=%9}!991}%õ±¥¹•}±½¥¹}¡…¹¹•±}¥°(€€€€€€€1%9}1=%9}!991}MIPô (€€€€€€€€€€€½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}1=%9}!991}MIPˆ¤(€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}1½¥¹}!991}MIPˆ¤(€€€€€€€€€€€½È€ˆˆ(€€€€€€€€¤°(€€€€€€€1e}1%9}1=%9}!991}%õ½Ì¹•¹Ù¥É½¸¹•Ğ (€€€€€€€€€€€€‰1e}1%9}1=%9}!991}%ˆ°€ˆÈÀÄÀØÜĞàÀÌˆ(€€€€€€€€¤°(€€€€€€€1e}1%}%õ½Ì¹•¹Ù¥É½¸¹•Ğ (€€€€€€€€€€€€‰1e}1%}%ˆ°U1Q}1e}1%}%(€€€€€€€€¤°(€€€€€€€=U9Q}5%IQ%=9}MIPõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰=U9Q}5%IQ%=9}MIPˆ°€ˆˆ¤°(€€€€€€€=U9Q}5%IQ%=9}QQ1}M=9LôØÀÀ°(€€€€€€€1%}%õ±¥™™}¥°(€€€€€€€AA}AU	1%}UI0õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰AA}AU	1%}UI0ˆ°€ˆˆ¤°(€€€€€€€AA}Q%5i=9õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰AA}Q%5i=9ˆ°€‰Í¥„½Q…¥Á•¤ˆ¤°(€€€€€€€Ñ}AI=AIQe}%õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰Ñ}AI=AIQe}%ˆ°€ˆˆ¤°(€€€€€€€Ñ}MIY%}=U9Q})M=8õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰Ñ}MIY%}=U9Q})M=8ˆ°€ˆˆ¤°(€€€€€€€Ñ}5MUI59Q}%õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰Ñ}5MUI59Q}%ˆ°€‰´İ1PÄÑa1!4ˆ¤°(€€€€€€€]=IAIMM}M%Q}UI0õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰]=IAIMM}M%Q}UI0ˆ°€ˆˆ¤°(€€€€€€€]=IAIMM}UMI95õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰]=IAIMM}UMI95ˆ°€ˆˆ¤°(€€€€€€€]=IAIMM}AA1%Q%=9}AMM]=Iõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰]=IAIMM}AA1%Q%=9}AMM]=Iˆ°€ˆˆ¤°(€€€€€€€1%9}5=9Q!1e}5MM}1%5%Põ½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}5=9Q!1e}5MM}1%5%Pˆ°€ˆÈÀÀˆ¤°(€€€€€€€1%9}5MM}]I9%9}AI9Põ½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}5MM}]I9%9}AI9Pˆ°€ˆàÀˆ¤°(€€€€€€€1%9}5MM}!I}MQ=A}AI9Põ½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}5MM}!I}MQ=A}AI9Pˆ°€ˆÄÀÀˆ¤°(€€€€€€€I=9}MIPõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰I=9}MIPˆ°€ˆˆ¤°(€€€€€€€IEU%I}1%}UQ õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰IEU%I}1%}UQ ˆ°€ˆÀˆ¤°(€€€€€€€9]	Ae}5I!9Q}%õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰9]	Ae}5I!9Q}%ˆ°€ˆˆ¤°(€€€€€€€9]	Ae}!M!}-dõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰9]	Ae}!M!}-dˆ°€ˆˆ¤°(€€€€€€€9]	Ae}!M!}%Xõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰9]	Ae}!M!}%Xˆ°€ˆˆ¤°(€€€€€€€9]	Ae}MQõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰9]	Ae}MQˆ°€‰Í…¹‘‰½àˆ¤°(€€€€€€€9]	Ae}5A}UI0õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰9]	Ae}5A}UI0ˆ°€ˆˆ¤°(€€€€€€€Ae}5I!9Q}%õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰Ae}5I!9Q}%ˆ°€ˆˆ¤°(€€€€€€€Ae}!M!}-dõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰Ae}!M!}-dˆ°€ˆˆ¤°(€€€€€€€Ae}!M!}%Xõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰Ae}!M!}%Xˆ°€ˆˆ¤°(€€€€€€€Ae}MQõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰Ae}MQˆ°€‰Í…¹‘‰½àˆ¤°(€€€€€€€Ae}AI%=}Q%5Lõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰Ae}AI%=}Q%5Lˆ°€ˆääˆ¤°(€€€€€€€M5M-%9}UMI95õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰M5M-%9}UMI95ˆ°€ˆˆ¤°(€€€€€€€M5M-%9}AMM]=Iõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰M5M-%9}AMM]=Iˆ°€ˆˆ¤°(€€€€€€€M5QA}!=MPõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰M5QA}!=MPˆ°€ˆˆ¤°(€€€€€€€M5QA}A=IPõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰M5QA}A=IPˆ°€ˆÔàÜˆ¤°(€€€€€€€M5QA}UMI95õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰M5QA}UMI95ˆ°€ˆˆ¤°(€€€€€€€M5QA}AMM]=Iõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰M5QA}AMM]=Iˆ°€ˆˆ¤°(€€€€€€€M5QA}UM}Q1Lõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰M5QA}UM}Q1Lˆ°€‰ÑÉÕ”ˆ¤°(€€€€€€€MUAA=IQ}I=5}5%0õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰MUAA=IQ}I=5}5%0ˆ°€ˆˆ¤°(€€€€€€€HÉ}9A=%9Põ½Ì¹•¹Ù¥É½¸¹•Ğ ‰HÉ}9A=%9Pˆ°€ˆˆ¤°(€€€€€€€HÉ}MM}-e}%õ½Ì¹•¹Ù¥É½¸¹•Ğ ‰HÉ}MM}-e}%ˆ°€ˆˆ¤°(€€€€€€€HÉ}MIQ}MM}-dõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰HÉ}MIQ}MM}-dˆ°€ˆˆ¤°(€€€€€€€HÉ}	U-Põ½Ì¹•¹Ù¥É½¸¹•Ğ ‰HÉ}	U-Pˆ°€ˆˆ¤°(€€€€€€€HÉ}	-UA}9IeAQ%=9}-dõ½Ì¹•¹Ù¥É½¸¹•Ğ (€€€€€€€€€€€€‰HÉ}	-UA}9IeAQ%=9}-dˆ°€ˆˆ(€€€€€€€€¤°(€€€€€€€QMQ}1%9}UMI}%Lõ½Ì¹•¹Ù¥É½¸¹•Ğ ‰QMQ}1%9}UMI}%Lˆ°€ˆˆ¤°(€€€€¤(€€€¥˜½¹™¥œè(€€€€€€€…ÁÀ¹½¹™¥œ¹ÕÁ‘…Ñ”¡½¹™¥œ¤(€€€…ÁÀ¹Í•É•Ñ}­•ä€ô€ (€€€€€€€…ÁÀ¹½¹™¥œ¹•Ğ ‰5%9}MMM%=9}MIPˆ¤(€€€€€€€½ÈÍ•É•ÑÌ¹Ñ½­•¹}¡•à ÌÈ¤(€€€€¤((€€€‘•˜}…‘µ¥¹}Õ…É ¨°İÉ¥Ñ”õ…±Í”°Á•Éµ¥ÍÍ¥½¸õ9½¹”¤è(€€€€€€€¥˜¹½Ğ…‘µ¥¹}Í•ÕÉ¥Ñå}É•…‘ä¡…ÁÀ¹½¹™¥œ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰…‘µ¥¹}¹½Ñ}½¹™¥ÕÉ•‰ô¤°€ÔÀÌ(€€€€€€€¥˜Í•ÍÍ¥½¸¹•Ğ ‰…‘µ¥¹}…ÕÑ¡•¹Ñ¥…Ñ•ˆ¤¥Ì¹½ĞQÉÕ”è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô¤°€ĞÀÄ(€€€€€€€¥˜İÉ¥Ñ”è(€€€€€€€€€€€•áÁ•Ñ•€ôÍÑÈ¡Í•ÍÍ¥½¸¹•Ğ ‰…‘µ¥¹}ÍÉ˜ˆ¤½È€ˆˆ¤(€€€€€€€€€€€ÁÉ½Ù¥‘•€ôÍÑÈ¡É•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹•Ğ ‰`µMIµQ½­•¸ˆ¤½È€ˆˆ¤(€€€€€€€€€€€¥˜¹½Ğ•áÁ•Ñ•½È¹½ĞÍ•É•ÑÌ¹½µÁ…É•}‘¥•ÍĞ¡•áÁ•Ñ•°ÁÉ½Ù¥‘•¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰ÍÉ™}É•ÅÕ¥É•‰ô¤°€ĞÀÌ(€€€€€€€¥˜Á•Éµ¥ÍÍ¥½¸è(€€€€€€€€€€€É½±”€ôÍÑÈ¡Í•ÍÍ¥½¸¹•Ğ ‰…‘µ¥¹}É½±”ˆ¤½È€‰Ù¥•İ•Èˆ¤(€€€€€€€€€€€¥˜Á•Éµ¥ÍÍ¥½¸¹½Ğ¥¸5%9}I=1}AI5%MM%=9L¹•Ğ¡É½±”°Í•Ğ ¤¤è(€€€€€€€€€€€€€€€…ÁÁ•¹‘}…‘µ¥¹}…Õ‘¥Ğ (€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€€‰Á•Éµ¥ÍÍ¥½¸¹‘•¹¥•ˆ°(€€€€€€€€€€€€€€€€€€€€‰™…¥±•ˆ°(€€€€€€€€€€€€€€€€€€€ì‰É½±”ˆèÉ½±”°€‰É•ÅÕ¥É•‘}Á•Éµ¥ÍÍ¥½¸ˆèÁ•Éµ¥ÍÍ¥½¹ô°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰™½É‰¥‘‘•¸ˆ°€‰É•ÅÕ¥É•‘}Á•Éµ¥ÍÍ¥½¸ˆèÁ•Éµ¥ÍÍ¥½¹ô¤°€ĞÀÌ(€€€€€€€É•ÑÕÉ¸9½¹”((€€€‘•˜}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í”¡…Ñ¥½¸°‘…Ñ„°½‘”ôÈÀÀ¤è(€€€€€€€…ÁÁ•¹‘}…‘µ¥¹}…Õ‘¥Ğ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€…Ñ¥½¸°(€€€€€€€€€€€€‰ÍÕ•ÍÌˆ¥˜½‘”€ğ€ĞÀÀ•±Í”€‰™…¥±•ˆ°(€€€€€€€€€€€ì‰¡ÑÑÁ}ÍÑ…ÑÕÌˆè½‘•ô°(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€‘•˜}…‘µ¥¹}±½¥¹}ÑÉ…¹ÍÁ½ÉÑ}Í•ÕÉ” ¤è(€€€€€€€¥˜…ÁÀ¹½¹™¥œ¹•Ğ ‰QMQ%9ˆ¤¥ÌQÉÕ”è(€€€€€€€€€€€É•ÑÕÉ¸QÉÕ”(€€€€€€€¥˜É•ÅÕ•ÍĞ¹¥Í}Í•ÕÉ”è(€€€€€€€€€€€É•ÑÕÉ¸QÉÕ”(€€€€€€€¥˜ÍÑÈ¡É•ÅÕ•ÍĞ¹É•µ½Ñ•}…‘‘È½È€ˆˆ¤¥¸ìˆÄÈÜ¸À¸À¸Äˆ°€ˆèèÄ‰ôè(€€€€€€€€€€€É•ÑÕÉ¸QÉÕ”(€€€€€€€ÑÉÕÍÑ•‘}ÁÉ½áä€ô€ (€€€€€€€€€€€}•¹Ù}™±…}½¸ ‰I9Hˆ°…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€½È}•¹Ù}™±…}½¸ ‰QIUMQ}AI=ae}!ILˆ°…ÁÀ¹½¹™¥œ¤(€€€€€€€€¤(€€€€€€€™½Éİ…É‘•‘}ÁÉ½Ñ¼€ôÍÑÈ (€€€€€€€€€€€É•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹•Ğ ‰`µ½Éİ…É‘•µAÉ½Ñ¼ˆ¤½È€ˆˆ(€€€€€€€€¤¹ÍÁ±¥Ğ ˆ°ˆ°€Ä¥lÁt¹ÍÑÉ¥À ¤¹±½İ•È ¤(€€€€€€€É•ÑÕÉ¸ÑÉÕÍÑ•‘}ÁÉ½áä…¹™½Éİ…É‘•‘}ÁÉ½Ñ¼€ôô€‰¡ÑÑÁÌˆ((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½±½¥¸ˆ¤(€€€‘•˜…‘µ¥¹}±½¥¹}…Á¤ ¤è(€€€€€€€¥˜¹½Ğ}…‘µ¥¹}±½¥¹}ÑÉ…¹ÍÁ½ÉÑ}Í•ÕÉ” ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰¡ÑÑÁÍ}É•ÅÕ¥É•‰ô¤°€ĞÀÀ(€€€€€€€¥˜¹½Ğ…‘µ¥¹}Í•ÕÉ¥Ñå}É•…‘ä¡…ÁÀ¹½¹™¥œ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰…‘µ¥¹}¹½Ñ}½¹™¥ÕÉ•‰ô¤°€ÔÀÌ(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥•¹Ñ}­•ä€ôÍÑÈ¡É•ÅÕ•ÍĞ¹É•µ½Ñ•}…‘‘È½È€‰Õ¹­¹½İ¸ˆ¤(€€€€€€€¥˜…‘µ¥¹}±½¥¹}É…Ñ•}±¥µ¥Ñ•¡±¥•¹Ñ}­•ä¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰Ñ½½}µ…¹å}…ÑÑ•µÁÑÌ‰ô¤°€ĞÈä(€€€€€€€É½±”€ô…‘µ¥¹}É½±•}™½É}Á…ÍÍİ½É¡…ÁÀ¹½¹™¥œ°Á…å±½…¹•Ğ ‰Á…ÍÍİ½Éˆ¤¤(€€€€€€€¥˜É½±”¥Ì9½¹”è(€€€€€€€€€€€É•½É‘}…‘µ¥¹}±½¥¹}™…¥±ÕÉ”¡±¥•¹Ñ}­•ä¤(€€€€€€€€€€€…ÁÁ•¹‘}…‘µ¥¹}…Õ‘¥Ğ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°€‰Í•ÍÍ¥½¸¹±½¥¸ˆ°€‰™…¥±•ˆ¤(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰¥¹Ù…±¥‘}É•‘•¹Ñ¥…±Ì‰ô¤°€ĞÀÄ(€€€€€€€5%9}1=%9}QQ5AQL¹Á½À¡±¥•¹Ñ}­•ä°9½¹”¤(€€€€€€€Í•ÍÍ¥½¸¹±•…È ¤(€€€€€€€Í•ÍÍ¥½¸¹Á•Éµ…¹•¹Ğ€ôQÉÕ”(€€€€€€€Í•ÍÍ¥½¹l‰…‘µ¥¹}…ÕÑ¡•¹Ñ¥…Ñ•‰t€ôQÉÕ”(€€€€€€€Í•ÍÍ¥½¹l‰…‘µ¥¹}É½±”‰t€ôÉ½±”(€€€€€€€Í•ÍÍ¥½¹l‰…‘µ¥¹}ÍÉ˜‰t€ôÍ•É•ÑÌ¹Ñ½­•¹}ÕÉ±Í…™” ÌÈ¤(€€€€€€€…ÁÁ•¹‘}…‘µ¥¹}…Õ‘¥Ğ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°€‰Í•ÍÍ¥½¸¹±½¥¸ˆ°€‰ÍÕ•ÍÌˆ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì(€€€€€€€€€€€€‰½¬ˆèQÉÕ”°(€€€€€€€€€€€€‰ÍÉ™}Ñ½­•¸ˆèÍ•ÍÍ¥½¹l‰…‘µ¥¹}ÍÉ˜‰t°(€€€€€€€€€€€€‰É½±”ˆèÉ½±”°(€€€€€€€€€€€€‰Á•Éµ¥ÍÍ¥½¹Ìˆè…‘µ¥¹}Á•Éµ¥ÍÍ¥½¹Í}™½É}É½±”¡É½±”¤°(€€€€€€€€€€€€‰•áÁ¥É•Í}¥¸ˆè€à€¨€ØÀ€¨€ØÀ°(€€€€€€€ô¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…‘µ¥¸½Í•ÍÍ¥½¸ˆ¤(€€€‘•˜…‘µ¥¹}Í•ÍÍ¥½¹}…Á¤ ¤è(€€€€€€€¥˜¹½Ğ…‘µ¥¹}Í•ÕÉ¥Ñå}É•…‘ä¡…ÁÀ¹½¹™¥œ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰…ÕÑ¡•¹Ñ¥…Ñ•ˆè…±Í”°€‰•ÉÉ½Èˆè€‰…‘µ¥¹}¹½Ñ}½¹™¥ÕÉ•‰ô¤°€ÔÀÌ(€€€€€€€…ÕÑ¡•¹Ñ¥…Ñ•€ôÍ•ÍÍ¥½¸¹•Ğ ‰…‘µ¥¹}…ÕÑ¡•¹Ñ¥…Ñ•ˆ¤¥ÌQÉÕ”(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì(€€€€€€€€€€€€‰…ÕÑ¡•¹Ñ¥…Ñ•ˆè…ÕÑ¡•¹Ñ¥…Ñ•°(€€€€€€€€€€€€‰ÍÉ™}Ñ½­•¸ˆèÍ•ÍÍ¥½¸¹•Ğ ‰…‘µ¥¹}ÍÉ˜ˆ¤¥˜…ÕÑ¡•¹Ñ¥…Ñ••±Í”9½¹”°(€€€€€€€€€€€€‰É½±”ˆèÍ•ÍÍ¥½¸¹•Ğ ‰…‘µ¥¹}É½±”ˆ¤¥˜…ÕÑ¡•¹Ñ¥…Ñ••±Í”9½¹”°(€€€€€€€€€€€€‰Á•Éµ¥ÍÍ¥½¹Ìˆè…‘µ¥¹}Á•Éµ¥ÍÍ¥½¹Í}™½É}É½±”¡Í•ÍÍ¥½¸¹•Ğ ‰…‘µ¥¹}É½±”ˆ¤¤¥˜…ÕÑ¡•¹Ñ¥…Ñ••±Í”mt°(€€€€€€€ô¤°€ ÈÀÀ¥˜…ÕÑ¡•¹Ñ¥…Ñ••±Í”€ĞÀÄ¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½±½½ÕĞˆ¤(€€€‘•˜…‘µ¥¹}±½½ÕÑ}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€Í•ÍÍ¥½¸¹±•…È ¤(€€€€€€€…ÁÁ•¹‘}…‘µ¥¹}…Õ‘¥Ğ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°€‰Í•ÍÍ¥½¸¹±½½ÕĞˆ°€‰ÍÕ•ÍÌˆ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆèQÉÕ•ô¤((€€€‘•˜}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…õ9½¹”°€¨°ÕÍ•}…ÉÌõ…±Í”¤è(€€€€€€€€ˆˆ‰I•Í½±Ù”1%9ÕÍ•È™É½´Ù•É¥™¥•¥‘}Ñ½­•¸İ¡•¸É•ÅÕ¥É•¸ˆˆˆ(€€€€€€€Á…å±½…€ôÁ…å±½…¥˜Á…å±½…¥Ì¹½Ğ9½¹”•±Í”€¡É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô¤(€€€€€€€…ÉÌ€ôÉ•ÅÕ•ÍĞ¹…ÉÌ¥˜ÕÍ•}…ÉÌ•±Í”íô(€€€€€€€É•ÑÕÉ¸…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€Á…å±½…°(€€€€€€€€€€€…ÉÌõ…ÉÌ°(€€€€€€€€€€€¡•…‘•ÉÌõí­•äèÙ…±Õ”™½È­•ä°Ù…±Õ”¥¸É•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹¥Ñ•µÌ ¥ô°(€€€€€€€€€€€½¹™¥œõ…ÁÀ¹½¹™¥œ°(€€€€€€€€¤((€€€‘•˜}Í¡½Õ±‘}­••Á}±¥™™}•¹‘Á½¥¹Ñ}ÍÁ„ ¤è(€€€€€€€€ˆˆ‰1%¹‘Á½¥¹Ğ5UMP…±İ…åÌÍ•ÉÙ”Ñ¡”MAÑ¡…ĞÉÕ¹Ì±¥™˜¹¥¹¥Ğ ¤¸((€€€€€€€9•Ù•È€ÌÀÈ€¼ı¥¹Ù¥Ñ•}™É½´õ€€¡½È™É¥•¹‘}¥¹Ù¥Ñ”¤…İ…ä™É½´€½€è(€€€€€€€€´1%9½Á•¹Ì¹‘Á½¥¹Ğİ¥Ñ ÅÕ•Éä€¼±¥™˜¹ÍÑ…Ñ”(€€€€€€€€´1%91½¥¸É•ÑÕÉ¹Ì½‘•€½ÍÑ…Ñ•€½¸Ñ¡”Í…µ”¹‘Á½¥¹ĞUI0(€€€€€€€I•‘¥É•Ñ¥¹œÑ¡½Í”Ñ¼€½¥¹Ù¥Ñ•€ÍÑÉ¥ÁÌ=ÕÑ Á…É…µÌƒŠH¥=L­¹‘É½¥±½¥¸‘¥•Ì¸(€€€€€€€áÑ•É¹…°µ‰É½İÍ•È¥¹Ù¥Ñ••ÌÍ¡½Õ±ÕÍ”•áÁ±¥¥Ğ€½¥¹Ù¥Ñ•€Í¡½ÉĞ±¥¹­Ì¥¹ÍÑ•…¸(€€€€€€€€ˆˆˆ(€€€€€€€É•ÑÕÉ¸QÉÕ”((€€€…ÁÀ¹•Ğ ˆ¼ˆ¤(€€€‘•˜¥¹‘•à ¤è(€€€€€€€€Œ±İ…åÌÍ•ÉÙ”MA½¸1%¹‘Á½¥¹Ğ€½€€¡Í•”}Í¡½Õ±‘}­••Á}±¥™™}•¹‘Á½¥¹Ñ}ÍÁ„¤¸(€€€€€€€|€ô}Í¡½Õ±‘}­••Á}±¥™™}•¹‘Á½¥¹Ñ}ÍÁ„ ¤(€€€€€€€É•ÑÕÉ¸Í•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰¥¹‘•à¹¡Ñµ°ˆ¤((€€€…ÁÀ¹•Ğ ˆ½¥¹Ù¥Ñ”ˆ¤(€€€‘•˜¥¹Ù¥Ñ•}Í¡½ÉÑ}±¥¹¬ ¤è(€€€€€€€€ˆˆ‰%¹Ù¥Ñ”±…¹‘¥¹œ™½È•áÑ•É¹…°‰É½İÍ•ÉÌ½¹±ä€¡¹½ĞÑ¡”1%¹‘Á½¥¹Ğ¤¸ˆˆˆ(€€€€€€€É•ÑÕÉ¸Í•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰¥¹Ù¥Ñ”¹¡Ñµ°ˆ¤((€€€…ÁÀ¹•Ğ ˆ½‰•Ñ„¼Ìääˆ¤(€€€…ÁÀ¹•Ğ ˆ½‰•Ñ„¼Üääˆ¤(€€€‘•˜‰•Ñ…}É•¥ÍÑÉ…Ñ¥½¹}±…¹‘¥¹œ ¤è(€€€€€€€€ˆˆ‰AÕ‰±¥Œ€ÈÄµ‘…ä‰•Ñ„¥¹ÑÉ½‘ÕÑ¥½¸ìÑ¡”Q½¹Ñ¥¹Õ•Ì¥¸Ù•É¥™¥•1%¸ˆˆˆ(€€€€€€€É•ÑÕÉ¸Í•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰‰•Ñ„µÉ•¥ÍÑ•È¹¡Ñµ°ˆ¤((€€€…ÁÀ¹•Ğ ˆ½Õ…É‘¥…¸µÕ¥‘”ˆ¤(€€€‘•˜Õ…É‘¥…¹}Õ¥‘” ¤è(€€€€€€€€ˆˆ‰•Ñ…¥±•Õ…É‘¥…¸¹½Ñ¥”±¥¹­•™É½´Ñ¡”½¹¥Í”¥¹Ù¥Ñ”±…¹‘¥¹œ¸ˆˆˆ(€€€€€€€É•ÑÕÉ¸Í•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰Õ…É‘¥…¸µÕ¥‘”¹¡Ñµ°ˆ¤((€€€…ÁÀ¹•Ğ ˆ½¡•…±Ñ ˆ¤(€€€‘•˜¡•…±Ñ  ¤è(€€€€€€€Á•ÉÍ¥ÍĞ€ôÁ•ÉÍ¥ÍÑ•¹•}¥¹™¼¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆèQÉÕ”°€‰Á•ÉÍ¥ÍÑ•¹”ˆèÁ•ÉÍ¥ÍÑô¤((€€€…ÁÀ¹•Ğ ˆ½É½‰½ÑÌ¹ÑáĞˆ¤(€€€‘•˜É½‰½ÑÍ}ÑáĞ ¤è(€€€€€€€É•ÑÕÉ¸Í•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰É½‰½ÑÌ¹ÑáĞˆ°µ¥µ•ÑåÁ”ô‰Ñ•áĞ½Á±…¥¸ˆ¤((€€€…ÁÀ¹•Ğ ˆ½Í¥Ñ•µ…À¹áµ°ˆ¤(€€€‘•˜Í¥Ñ•µ…Á}áµ° ¤è(€€€€€€€É•ÑÕÉ¸Í•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰Í¥Ñ•µ…À¹áµ°ˆ°µ¥µ•ÑåÁ”ô‰…ÁÁ±¥…Ñ¥½¸½áµ°ˆ¤((€€€…ÁÀ¹•Ğ ˆ½…‘µ¥¸ˆ¤(€€€‘•˜…‘µ¥¸ ¤è(€€€€€€€É•ÍÀ€ôÍ•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰…‘µ¥¸¹¡Ñµ°ˆ¤(€€€€€€€€ŒÙ½¥ÍÑ…±”…¡•…‘µ¥¸U$€¡±½¥¸‰…È€¼Á…ÍÍİ½ÉU`¤…™Ñ•È‘•Á±½åÌ(€€€€€€€É•ÍÀ¹¡•…‘•ÉÍl‰…¡”µ½¹ÑÉ½°‰t€ô€‰¹¼µÍÑ½É”°¹¼µ…¡”°µÕÍĞµÉ•Ù…±¥‘…Ñ”°µ…àµ…”ôÀˆ(€€€€€€€É•ÍÀ¹¡•…‘•ÉÍl‰AÉ…µ„‰t€ô€‰¹¼µ…¡”ˆ(€€€€€€€É•ÑÕÉ¸É•ÍÀ((€€€…ÁÀ¹•Ğ ˆ½Ñ•ÍÑ}‰¥¹ˆ¤(€€€‘•˜Ñ•ÍÑ}‰¥¹ ¤è(€€€€€€€É•ÑÕÉ¸Í•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰Ñ•ÍÑ}‰¥¹¹¡Ñµ°ˆ¤((€€€…ÁÀ¹•Ğ ˆ½Ñ•ÉµÌˆ¤(€€€‘•˜Ñ•ÉµÌ ¤è(€€€€€€€É•ÑÕÉ¸Í•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰Ñ•ÉµÌ¹¡Ñµ°ˆ¤((€€€…ÁÀ¹•Ğ ˆ½ÁÉ¥Ù…äˆ¤(€€€‘•˜ÁÉ¥Ù…ä ¤è(€€€€€€€É•ÑÕÉ¸Í•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰ÁÉ¥Ù…ä¹¡Ñµ°ˆ¤((€€€…ÁÀ¹•Ğ ˆ½™…Äˆ¤(€€€‘•˜™…Ä ¤è(€€€€€€€É•ÑÕÉ¸Í•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰™…Ä¹¡Ñµ°ˆ¤((€€€…ÁÀ¹•Ğ ˆ½¡•±Àˆ¤(€€€‘•˜¡•±Á}Á…” ¤è(€€€€€€€É•ÑÕÉ¸Í•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰¡•±À¹¡Ñµ°ˆ¤((€€€…ÁÀ¹•Ğ ˆ½ÁÉ¥¥¹œˆ¤(€€€‘•˜ÁÉ¥¥¹}Á…” ¤è(€€€€€€€€ŒƒnÓ–ëšZçš†#¦‚¾ò3¦ÿ–4ÁÉ¥¥¹œ¹¡Ñµ°ƒŠH±¥™˜½ÁÉ¥¥¹œ¹¡Ñµ°ƒ¦ng¦7¢ö'¢ŞÌ(€€€€€€€É•ÑÕÉ¸Í•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰±¥™˜½ÁÉ¥¥¹œ¹¡Ñµ°ˆ¤((€€€‘•˜}±¥™™}•µ‰•‘}É•‘¥É•Ğ¡½Á•¹}…Ñ¥½¸õ9½¹”°™É…µ•¹Ğôˆˆ¤è(€€€€€€€€ˆˆ‹¢"(€½±¥™˜¼¨!QQALƒ¦ÖCšRç–Â;šÂã’æ–Ÿ–Ö3–—–>¾ò3¦ÿ–7–’[¦Z/?¢š÷–f£ˆˆˆ(€€€€€€€¥˜±¥™™}•¹ÑÉå}ÕÉ°¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€Ñ…É•Ğ€ô±¥™™}•¹ÑÉå}ÕÉ°¡½Á•¹}…Ñ¥½¸õ½Á•¹}…Ñ¥½¸°™É…µ•¹Ğõ™É…µ•¹Ğ¤(€€€€€€€•±Í”è(€€€€€€€€€€€±¥€ô€ (€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥œ¹•Ğ ‰1%}%ˆ¤(€€€€€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%}%ˆ¤(€€€€€€€€€€€€€€€½ÈU1Q}1%}%(€€€€€€€€€€€€¤¹ÍÑÉ¥À ¤(€€€€€€€€€€€Ñ…É•Ğ€ô˜‰¡ÑÑÁÌè¼½±¥™˜¹±¥¹”¹µ”½í±¥‘ôˆ(€€€€€€€€€€€¥˜½Á•¹}…Ñ¥½¸è(€€€€€€€€€€€€€€€Ñ…É•Ğ€¬ô˜ˆı½Á•¸õí½Á•¹}…Ñ¥½¹ôˆ(€€€€€€€€€€€•±¥˜™É…µ•¹Ğè(€€€€€€€€€€€€€€€Ñ…É•Ğ€¬ô˜ˆí™É…µ•¹Ğ¹±ÍÑÉ¥À œŒœ¥ôˆ(€€€€€€€¥˜É•‘¥É•Ğ¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€É•ÑÕÉ¸É•‘¥É•Ğ¡Ñ…É•Ğ°½‘”ôÌÀÈ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰É•‘¥É•ĞˆèÑ…É•Ñô¤°€ÌÀÈ((€€€€Œƒ–r[šZ¦ã–Z¸€¼ƒ¢"+¦ÖC¾òk–Â;–BD±¥™˜¹±¥¹”¹µ”ƒ–Ÿ–Ö3¾ò#–Z»’â ¹‘Á½¥¹Ğ€ô¥¹‘•à¹¡Ñµ³¾ò$(€€€…ÁÀ¹•Ğ ˆ½±¥™˜½Í¡…É”µ¥¹Ù¥Ñ”ˆ¤(€€€…ÁÀ¹•Ğ ˆ½±¥™˜½Í¡…É”µ¥¹Ù¥Ñ”¹¡Ñµ°ˆ¤(€€€‘•˜±¥™™}Í¡…É•}¥¹Ù¥Ñ•}Á…” ¤è(€€€€€€€€ˆˆ‹–Â#R£’â¦6×–"’ê¯¦‚¾ò#Ö˜1%ƒ–¶C¢Ş¿–úGnÓ¦¾òo’â7ÚLMA¡½µ—¾ò'ˆˆˆ(€€€€€€€É•ÑÕÉ¸Í•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰±¥™˜½Í¡…É”µ¥¹Ù¥Ñ”¹¡Ñµ°ˆ¤((€€€…ÁÀ¹•Ğ ˆ½±¥™˜½µ¥É…Ñ”¹¡Ñµ°ˆ¤(€€€‘•˜±¥™™}µ¥É…Ñ¥½¹}¡…¹‘½™™}Á…” ¤è(€€€€€€€€ˆˆ‰1•…ä1%¡…¹‘½™˜Ñ¡…Ğ…Í­ÌÕÍ•ÉÌÑ¼•áÁ±¥¥Ñ±äÉ•…ÕÑ¡½É¥é”¸ˆˆˆ(€€€€€€€É•ÑÕÉ¸Í•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰±¥™˜½µ¥É…Ñ”¹¡Ñµ°ˆ¤((€€€€Œ€ÈÀÈØ´ÀÜ´ÈÄÁ…Ñ €ÈĞè=¹‰½…É‘¥¹œƒšÖ¢,A$(€€€…ÁÀ¹•Ğ ˆ½±¥™˜½½¹‰½…É‘¥¹œˆ¤(€€€‘•˜±¥™™}½¹‰½…É‘¥¹œ ¤è(€€€€€€€É•ÑÕÉ¸}±¥™™}•µ‰•‘}É•‘¥É•Ğ¡½Á•¹}…Ñ¥½¸ô‰½¹‰½…É‘¥¹œˆ¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½½¹‰½…É‘¥¹œ½ÍÑ…Ñ”ˆ¤(€€€‘•˜½¹‰½…É‘¥¹}ÍÑ…Ñ•}…Á¤ ¤è(€€€€€€€€ˆˆ‹–>[–ú_’öÿR£¢½¹‰½…É‘¥¹œƒ.š,£–º#¢¶ß’êëšb¿–B›Ú–ºh€¬ƒš>C¦Kšf¦ZL§ˆˆˆ(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡íô°ÕÍ•}…ÉÌõQÉÕ”¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„°½‘”€ô½¹‰½…É‘¥¹}ÍÑ…ÑÕÍ}Á…å±½… (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€…±±½İ}µ¥ÍÍ¥¹}ÁÉ½™¥±”õQÉÕ”°(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½½¹‰½…É‘¥¹œ½É•µ¥¹‘•Èˆ¤(€€€‘•˜½¹‰½…É‘¥¹}É•µ¥¹‘•É}…Á¤ ¤è(€€€€€€€€ˆˆ‹¢¢·–ºk’öÿR£¢š¾?š^—š>C¦Kšf¦ZL£šR¿š>Ó–Z»’âš"[–’kšfšºÔ§ˆˆˆ(€€€€€€€‘…Ñ„€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡‘…Ñ„¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€É•ÍÕ±Ğ°½‘”€ôÕÁ‘…Ñ•}½¹‰½…É‘¥¹}É•µ¥¹‘•È (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°‘…Ñ„(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡É•ÍÕ±Ğ¤°½‘”((€€€…ÁÀ¹•Ğ ˆ½±¥™˜½Õ…É‘¥…¸ˆ¤(€€€‘•˜±¥™™}Õ…É‘¥…¸ ¤è(€€€€€€€€ŒƒšÂã’æ–—–>š'šb¼±¥™˜¹±¥¹”¹µ—¾òoš¶“¢Ş¿–úG’şwVgnã–ºç¾ò3–Â;–BG–Ÿ–Ö0½¹‰½…É‘¥¹Ÿ¾ò#–º#¢¶ß’êëŠKš>C¦K¾ò$(€€€€€€€É•ÑÕÉ¸}±¥™™}•µ‰•‘}É•‘¥É•Ğ¡½Á•¹}…Ñ¥½¸ô‰½¹‰½…É‘¥¹œˆ¤((€€€…ÁÀ¹•Ğ ˆ½±¥™˜½µ•µ‰•Èˆ¤(€€€‘•˜±¥™™}µ•µ‰•È ¤è(€€€€€€€É•ÑÕÉ¸}±¥™™}•µ‰•‘}É•‘¥É•Ğ¡½Á•¹}…Ñ¥½¸ô‰µ•µ‰•Èˆ¤((€€€…ÁÀ¹•Ğ ˆ½±¥™˜½Õ…É‘¥…¸µÉ½ÕÁÌˆ¤(€€€‘•˜±¥™™}Õ…É‘¥…¹}É½ÕÁÌ ¤è(€€€€€€€É•ÑÕÉ¸}±¥™™}•µ‰•‘}É•‘¥É•Ğ¡½Á•¹}…Ñ¥½¸ô‰Õ…É‘¥…¹Ìˆ¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½½¹™¥œˆ¤(€€€‘•˜½¹™¥}…Á¤ ¤è(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡…ÁÁ}½¹™¥œ¡…ÁÀ¹½¹™¥œ¤¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½‰½Ğ½ÍÑ…ÑÕÌˆ¤(€€€‘•˜‰½Ñ}ÍÑ…ÑÕÍ}…Á¤ ¤è(€€€€€€€€ˆˆˆÈÀÈØ´ÀÜ´ÈÄÁ…Ñ €ÄÜè	½ĞƒšVÓ¦®S–—–êß.š,£Ö›¢fÇ¢Fr,§((€€€€€€€I•ÑÕÉ¹Ìè(€€€€€€€€€€€€´Í•ÉÙ¥”è…±¥Ù”µ¡•­¥¸(€€€€€€€€€€€€´‰½Ñ}¹…µ”èƒš¾?š^—–æÏ–º$(€€€€€€€€€€€€´ÕÁÑ¥µ•}Í•½¹‘Ìèƒ¦Ë¢/–V–.W–ú3KšVà(€€€€€€€€€€€€´ÕÍ•ÉÍ}Ñ½Ñ…°èƒ¢¢ï–+’êëšVà(€€€€€€€€€€€€´Õ…É‘¥…¹}É½ÕÁÍ}Ñ½Ñ…°èƒ–º#¢¶ßú“Ú–ºkâ÷šVà(€€€€€€€€€€€€´Õ…É‘¥…¹}É½ÕÁÍ}…Ñ¥Ù”èƒšr'šV#j–º#¢¶ßú“šVà(€€€€€€€€€€€€´Ñ¥µ•ÍÑ…µÀèƒVÛ’â/šf¦ZL(€€€€€€€€€€€€´±¥¹•}Ñ½­•¹}¡…Í}Ù…±Õ”€¼±¥¹•}Í•É•Ñ}¡…Í}Ù…±Õ”è•¹Øƒšb¿–B›šr'–ó¾ò#’â7–n{–
+Ï–Ÿ–ºç¾ò$(€€€€€€€€€€€€´±¥¹•}Ñ½­•¹}½¬€¼±¥¹•}Ñ½­•¹}¡ÑÑÀèƒR €½ØÈ½‰½Ğ½¥¹™¼ƒš:‹šâ°Ñ½­•¸ƒšb¿–B›¢Š¬1%9ƒš:—–>\(€€€€€€€€ˆˆˆ(€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€É½ÕÁÌ€ôÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁÌˆ°íô¤(€€€€€€€…Ñ¥Ù•}É½ÕÁÌ€ôÍÕ´ Ä™½Èœ¥¸É½ÕÁÌ¹Ù…±Õ•Ì ¤¥˜œ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰…Ñ¥Ù”ˆ¤(€€€€€€€¹½Ü€ô‘…Ñ•Ñ¥µ”¹¹½Ü ¤(€€€€€€€ÁÉ½}ÍÑ…ÉĞ€ô•Ñ…ÑÑÈ¡…ÁÀ°€‰}ÍÑ…ÉÑ}Ñ¥µ”ˆ°9½¹”¤(€€€€€€€ÕÁÑ¥µ”€ô€¡¹½Ü€´ÁÉ½}ÍÑ…ÉĞ¤¹Ñ½Ñ…±}Í•½¹‘Ì ¤¥˜ÁÉ½}ÍÑ…ÉĞ•±Í”9½¹”(€€€€€€€Ñ½­•¸€ô€ (€€€€€€€€€€€…ÁÀ¹½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤(€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤(€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰!991}MM}Q=-8ˆ¤(€€€€€€€€€€€½È€ˆˆ(€€€€€€€€¤¹ÍÑÉ¥À ¤(€€€€€€€Í•É•Ğ€ô€ (€€€€€€€€€€€…ÁÀ¹½¹™¥œ¹•Ğ ‰1%9}!991}MIPˆ¤(€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MIPˆ¤(€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰!991}MIPˆ¤(€€€€€€€€€€€½È€ˆˆ(€€€€€€€€¤¹ÍÑÉ¥À ¤(€€€€€€€±¥¹•}Ñ½­•¹}½¬€ô9½¹”(€€€€€€€±¥¹•}Ñ½­•¹}¡ÑÑÀ€ô9½¹”(€€€€€€€¥˜Ñ½­•¸è(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€¥µÁ½ÉĞÕÉ±±¥ˆ¹É•ÅÕ•ÍĞ((€€€€€€€€€€€€€€€É•Ä€ôÕÉ±±¥ˆ¹É•ÅÕ•ÍĞ¹I•ÅÕ•ÍĞ (€€€€€€€€€€€€€€€€€€€€‰¡ÑÑÁÌè¼½…Á¤¹±¥¹”¹µ”½ØÈ½‰½Ğ½¥¹™¼ˆ°(€€€€€€€€€€€€€€€€€€€¡•…‘•ÉÌõì‰ÕÑ¡½É¥é…Ñ¥½¸ˆè˜‰	•…É•ÈíÑ½­•¹ô‰ô°(€€€€€€€€€€€€€€€€€€€µ•Ñ¡½ô‰Pˆ°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€İ¥Ñ ÕÉ±±¥ˆ¹É•ÅÕ•ÍĞ¹ÕÉ±½Á•¸¡É•Ä°Ñ¥µ•½ÕĞôà¤…ÌÉ•ÍÀè(€€€€€€€€€€€€€€€€€€€±¥¹•}Ñ½­•¹}¡ÑÑÀ€ô¥¹Ğ¡•Ñ…ÑÑÈ¡É•ÍÀ°€‰ÍÑ…ÑÕÌˆ°€ÈÀÀ¤½È€ÈÀÀ¤(€€€€€€€€€€€€€€€€€€€±¥¹•}Ñ½­•¹}½¬€ô±¥¹•}Ñ½­•¹}¡ÑÑÀ€ôô€ÈÀÀ(€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€½‘”€ô•Ñ…ÑÑÈ¡•Ñ…ÑÑÈ¡•áŒ°€‰½‘”ˆ°9½¹”¤°€‰É•…°ˆ°9½¹”¤½È•Ñ…ÑÑÈ¡•áŒ°€‰½‘”ˆ°9½¹”¤(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€±¥¹•}Ñ½­•¹}¡ÑÑÀ€ô¥¹Ğ¡½‘”¤¥˜½‘”¥Ì¹½Ğ9½¹”•±Í”9½¹”(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€€€€€€€€€€€€€±¥¹•}Ñ½­•¹}¡ÑÑÀ€ô9½¹”(€€€€€€€€€€€€€€€±¥¹•}Ñ½­•¹}½¬€ô…±Í”(€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹İ…É¹¥¹œ (€€€€€€€€€€€€€€€€€€€€‰±¥¹”Ñ½­•¸ÁÉ½‰”™…¥±•¡ÑÑÀô•Ì•ÉÈô•Ìˆ°(€€€€€€€€€€€€€€€€€€€±¥¹•}Ñ½­•¹}¡ÑÑÀ°(€€€€€€€€€€€€€€€€€€€ÑåÁ”¡•áŒ¤¹}}¹…µ•}|°(€€€€€€€€€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì(€€€€€€€€€€€€‰Í•ÉÙ¥”ˆè€‰…±¥Ù”µ¡•­¥¸ˆ°(€€€€€€€€€€€€‰‰½Ñ}¹…µ”ˆè€‹š¾?š^—–æÏ–º$ˆ°(€€€€€€€€€€€€‰‘•Á±½å}Ù•ÉÍ¥½¸ˆè½Ì¹•¹Ù¥É½¸¹•Ğ ‰A1=e}YIM%=8ˆ¤½È€‰\ÈÔÀÜÈÕ ˆ°(€€€€€€€€€€€€‰ÕÁÑ¥µ•}Í•½¹‘ÌˆèÉ½Õ¹¡ÕÁÑ¥µ”°€Ä¤¥˜ÕÁÑ¥µ”•±Í”9½¹”°(€€€€€€€€€€€€‰ÕÍ•ÉÍ}Ñ½Ñ…°ˆè±•¸¡ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¤°(€€€€€€€€€€€€‰Õ…É‘¥…¹}É½ÕÁÍ}Ñ½Ñ…°ˆè±•¸¡É½ÕÁÌ¤°(€€€€€€€€€€€€‰Õ…É‘¥…¹}É½ÕÁÍ}…Ñ¥Ù”ˆè…Ñ¥Ù•}É½ÕÁÌ°(€€€€€€€€€€€€‰Ñ¥µ•ÍÑ…µÀˆè¹½Ü¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€€€€€‰±¥¹•}Ñ½­•¹}¡…Í}Ù…±Õ”ˆè‰½½°¡Ñ½­•¸¤°(€€€€€€€€€€€€‰±¥¹•}Í•É•Ñ}¡…Í}Ù…±Õ”ˆè‰½½°¡Í•É•Ğ¤°(€€€€€€€€€€€€‰±¥¹•}Ñ½­•¹}½¬ˆè±¥¹•}Ñ½­•¹}½¬°(€€€€€€€€€€€€‰±¥¹•}Ñ½­•¹}¡ÑÑÀˆè±¥¹•}Ñ½­•¹}¡ÑÑÀ°(€€€€€€€ô¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½ÍÑ…ÑÕÌˆ¤(€€€‘•˜ÍÑ…ÑÕÌ ¤è(€€€€€€€€ˆˆ‰1%ƒ¦š[¢ò'¾òkšr'šr'šV#¢ê¯–"–ÂÄÕÁÍ•ÉÓ¾ò3¦ÿ–4ƒ¢Š¬•Á¡•µ•É…°‘¥Í¬ƒšâš:'–ú3–6„€ĞÀÓˆˆˆ(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡íô°ÕÍ•}…ÉÌõQÉÕ”¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„°½‘”€ôÍÑ…ÑÕÍ}™½É}ÕÍ•È (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€É•ÅÕ•ÍĞ¹…ÉÌ¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤°(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½±¥¹”½É•¥ÍÑ•Èˆ¤(€€€‘•˜±¥¹•}É•¥ÍÑ•È ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ôÉ•¥ÍÑ•É}±¥¹•}ÕÍ•È¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½‰•Ñ„½±…¥´ˆ¤(€€€‘•˜‰•Ñ…}±…¥µ}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€½¡½ÉĞ€ôÍÑÈ¡Á…å±½…¹•Ğ ‰‰•Ñ…}½¡½ÉĞˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¹ÕÁÁ•È ¤(€€€€€€€¥˜½¡½ÉĞ¹½Ğ¥¸ì‰Ìääˆ°€‰Üää‰ôè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰¥¹Ù…±¥‘}‰•Ñ…}±¥¹¬‰ô¤°€ĞÀÀ(€€€€€€€ÑÉäè(€€€€€€€€€€€É•ÍÕ±Ğ€ôµÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€±…µ‰‘„ÍÑ…Ñ”è±…¥µ}‰•Ñ…}±¥¹¬¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥°½¡½ÉĞ¤°(€€€€€€€€€€€€¤(€€€€€€€•á•ÁĞY…±Õ•ÉÉ½È…Ì•áŒè(€€€€€€€€€€€É•…Í½¸€ôÍÑÈ¡•áŒ¤(€€€€€€€€€€€µ•ÍÍ…•Ì€ôì(€€€€€€€€€€€€€€€€‰½¡½ÉÑ}™Õ±°ˆè€‹¦g’âÖ–Âšâ³–B7¦†7–ŞËšîüˆ°(€€€€€€€€€€€€€€€€‰…±É•…‘å}¥¹}½Ñ¡•É}½¡½ÉĞˆè€‹’öƒ–ŞË–*ƒ–—–>›’â–/–Âšâ³Ö–"”ˆ°(€€€€€€€€€€€€€€€€‰µ•µ‰•É}¹½Ñ}™½Õ¹ˆè€‹¢®/–#–º3š"@1%9ƒšr–N‡¢¢ï–(ˆ°(€€€€€€€€€€€€€€€€‰™É••}•±¥¥‰¥±¥Ñå}…±É•…‘å}ÕÍ•ˆè€‹’öƒ–ŞË’öÿR£¦;–7¢Êï¦®S¦¦_š"[–Âšâ³¢Îš‚ğˆ°(€€€€€€€€€€€ô(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì(€€€€€€€€€€€€€€€€‰½¬ˆè…±Í”°(€€€€€€€€€€€€€€€€‰•ÉÉ½ÈˆèÉ•…Í½¸°(€€€€€€€€€€€€€€€€‰µ•ÍÍ…”ˆèµ•ÍÍ…•Ì¹•Ğ¡É•…Í½¸°€‹‡šÎW–*ƒ–—–Âšâ°ˆ¤°(€€€€€€€€€€€ô¤°€ĞÀä¥˜É•…Í½¸€„ô€‰µ•µ‰•É}¹½Ñ}™½Õ¹ˆ•±Í”€ĞÀĞ(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆèQÉÕ”°€¨©É•ÍÕ±Ñô¤°€ÈÀÀ((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½¡•­¥¸ˆ¤(€€€‘•˜¡•­¥¸ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€É•ÍÕ±Ğ°½‘”€ô¡•­¥¹}™½É}ÕÍ•È (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°Á…å±½…°…ÁÀ¹½¹™¥œ(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡É•ÍÕ±Ğ¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…±±‰…¬ˆ¤(€€€‘•˜±¥¹•}…±±‰…¬ ¤è(€€€€€€€¥˜1¥¹•	½ÑÁ¤¥Ì9½¹”½È]•‰¡½½­!…¹‘±•È¥Ì9½¹”è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰±¥¹”µ‰½ĞµÍ‘¬¥Ì¹½Ğ¥¹ÍÑ…±±•‰ô¤°€ÔÀÌ(€€€€€€€Ñ½­•¸€ô€ (€€€€€€€€€€€…ÁÀ¹½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤(€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤(€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰!991}MM}Q=-8ˆ¤(€€€€€€€€€€€½È€ˆˆ(€€€€€€€€¤¹ÍÑÉ¥À ¤(€€€€€€€Í•É•Ğ€ô€ (€€€€€€€€€€€…ÁÀ¹½¹™¥œ¹•Ğ ‰1%9}!991}MIPˆ¤(€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MIPˆ¤(€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰!991}MIPˆ¤(€€€€€€€€€€€½È€ˆˆ(€€€€€€€€¤¹ÍÑÉ¥À ¤(€€€€€€€¥˜¹½ĞÑ½­•¸½È¹½ĞÍ•É•Ğè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰1%9É•‘•¹Ñ¥…±Ì…É”¹½Ğ½¹™¥ÕÉ•‰ô¤°€ÔÀÌ((€€€€€€€±¥¹•}‰½Ñ}…Á¤€ô1¥¹•	½ÑÁ¤¡Ñ½­•¸¤(€€€€€€€¡…¹‘±•È€ô]•‰¡½½­!…¹‘±•È¡Í•É•Ğ¤((€€€€€€€‘•˜}Í½Í}¡…¹‘±”¡±¥¹•}‰½Ñ}…Á¤°±¥¹•}ÕÍ•É}¥°½µµ…¹°É•Á±å}Ñ½­•¸õ9½¹”°É½ÕÁ}¥õ9½¹”¤è(€€€€€€€€€€€€ˆˆ‹¦r¢š–æ¯–şg¾òk¢+–’§–º“¦ê3Šë¢ª4€Ìƒš²‡–ú3¦–—–ÇR M=Lƒ’ê/’îÛ((€€€€€€€€€€€½µµ…¹è(€€€€€€€€€€€€€€´€Ÿ¦r¢š–æ¯–şdœ€¼€M=Lœ€¼€Í½Ìœ€¼€ŸŞ+š—šÆ–*¤œ€èƒÒ¿¢¢#’âš²‡Šë¢ª4(€€€€€€€€€€€€€€´€Ÿ–>[šÚ#¦r¢š–æ¯–şdœ€¼€M=Lƒ–>[šÚ œ€èƒ–>[šÚ Á•¹‘¥¹œ(€€€€€€€€€€€€ˆˆˆ(€€€€€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€€€€€ÁÉ½™¥±”€ô•Ñ}ÁÉ½™¥±”¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥¤¥˜±¥¹•}ÕÍ•É}¥•±Í”9½¹”(€€€€€€€€€€€…ÁÀ¹±½•È¹¥¹™¼ (€€€€€€€€€€€€€€€€‰Í½Í}¡…¹‘±”½µµ…¹ô•ÌÕÍ•Èô•ÌÉ½ÕÀô•Ìˆ°(€€€€€€€€€€€€€€€½µµ…¹°(€€€€€€€€€€€€€€€€¡±¥¹•}ÕÍ•É}¥½È€ˆˆ¥lèát°(€€€€€€€€€€€€€€€€¡É½ÕÁ}¥½È€ˆˆ¥lèát°(€€€€€€€€€€€€¤((€€€€€€€€€€€‘•˜É•Á±ä¡™±•à°…±Ñ}Ñ•áĞôˆˆ¤è(€€€€€€€€€€€€€€€µ•ÍÍ…•Ì€ômt(€€€€€€€€€€€€€€€¥˜±•áM•¹‘5•ÍÍ…”¥Ì¹½Ğ9½¹”…¹™±•à¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€€€€€µ•ÍÍ…•Ì¹…ÁÁ•¹¡±•áM•¹‘5•ÍÍ…”¡…±Ñ}Ñ•áĞõ…±Ñ}Ñ•áĞ°½¹Ñ•¹ÑÌõ™±•à¤¤(€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€µ•ÍÍ…•Ì¹…ÁÁ•¹¡Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõ…±Ñ}Ñ•áĞ½È€‹¦r¢š–æ¯–şdˆ¤¤(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€¥˜É•Á±å}Ñ½­•¸è(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…”¡É•Á±å}Ñ½­•¸°µ•ÍÍ…•Ì¤(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰Í½ÌÉ•Á±å}µ•ÍÍ…”™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€€€€€€ŒÉ•Á±å}Ñ½­•¸ƒ–’ÇšV_š"[šr«š>C’úlƒŠHÁÕÍ ƒ–"Ã–B3’â–/–Â7¢¦Ä(€€€€€€€€€€€€€€€ÁÕÍ¡}Ñ…É•Ğ€ôÉ½ÕÁ}¥½È±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€€€€€¥˜¹½ĞÁÕÍ¡}Ñ…É•Ğè(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•ÉÉ½È ‰Í½ÌÍ•¹…‰½ÉÑ•è¹¼ÁÕÍ Ñ…É•Ğˆ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹ÁÕÍ¡}µ•ÍÍ…”¡ÁÕÍ¡}Ñ…É•Ğ°µ•ÍÍ…•Ì¤(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰Í½ÌÁÕÍ¡}µ•ÍÍ…”™…¥±•è€•Ìˆ°•áŒ¤((€€€€€€€€€€€•¹ÑÉå}½µµ…¹‘Ì€ô€ ‹¦r¢š–æ¯–şdˆ°€‰M=Lˆ°€‰Í½Ìˆ°€‹Ş+š—šÆ–*¤ˆ¤(€€€€€€€€€€€€Œƒ–ŞË¦–"Ã¢+–’§–º“j¢"(±•àƒš2'¦"W‡šÎW–n{šRÛ¾òo’şwVg–ÛšZ–¶_–F÷’î“¾ò0(€€€€€€€€€€€€Œƒ’ö’â–ú/–>«–n{šZÃ& 1%ƒ–—–>¾ò3’â7–7–V–.W¢"+j¢+–’§.š/š¦(€€€€€€€€€€€±•…å}•¹ÑÉå}½µµ…¹‘Ì€ô€ (€€€€€€€€€€€€€€€€‹¦k~—–ºÛ’êèˆ°(€€€€€€€€€€€€€€€€‹¢¿Ö‡–ºÛ’êë¦š2$Ïš²„ˆ°(€€€€€€€€€€€€€€€€‹¦r¢š–æ¯–şgŠë¢ª4ˆ°(€€€€€€€€€€€€€€€€‰M=LƒŠë¢ª4€Èˆ°(€€€€€€€€€€€€€€€€‰M=LƒŠë¢ª4€Ìˆ°(€€€€€€€€€€€€¤(€€€€€€€€€€€…¹•±}½µµ…¹‘Ì€ô€ ‰M=Lƒ–>[šÚ ˆ°€‹–>[šÚ#¦r¢š–æ¯–şdˆ¤((€€€€€€€€€€€¥˜½µµ…¹¥¸…¹•±}½µµ…¹‘Ìè(€€€€€€€€€€€€€€€¥˜Í½Í}™±½Ü¹Í½Í}…¹•±}Á•¹‘¥¹œ¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥¤è(€€€€€€€€€€€€€€€€€€€Í…Ù•}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t°ÍÑ…Ñ”¤(€€€€€€€€€€€€€€€€€€€É•Á±ä¡Í½Í}™±½Ü¹Í½Í}…¹•±±•‘}™±•à ¤°€‹Šrƒ–ŞË–>[šÚ#¦r¢š–æ¯–şdˆ¤(€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€É•Á±ä¡9½¹”°€‹šÊKšr'–ú–>[šÚ#j¦r¢š–æ¯–şg¦k~”ˆ¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸((€€€€€€€€€€€€Œƒ¢+–’§–º“’şwVg¦ê0€Ìƒš²‡Šë¢ª7¾òo–r[šZ¦ã–Z»–&¦Z,1%ƒj–B3’â––\€Ìƒš²‡šÖ¢/(€€€€€€€€€€€¥˜½µµ…¹¥¸•¹ÑÉå}½µµ…¹‘Ì½È½µµ…¹¥¸±•…å}•¹ÑÉå}½µµ…¹‘Ìè(€€€€€€€€€€€€€€€Ñ…À€ôÍ½Í}™±½Ü¹Í½Í}Ñ…À¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥¤(€€€€€€€€€€€€€€€½Õ¹Ğ€ô¥¹Ğ ¡Ñ…À¹•Ğ ‰•¹ÑÉäˆ¤½Èíô¤¹•Ğ ‰Ñ…Á}½Õ¹Ğˆ¤½È€Ä¤(€€€€€€€€€€€€€€€Í…Ù•}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t°ÍÑ…Ñ”¤(€€€€€€€€€€€€€€€¥˜½Õ¹Ğ€ğ€Ìè(€€€€€€€€€€€€€€€€€€€É•Á±ä (€€€€€€€€€€€€€€€€€€€€€€€Í½Í}™±½Ü¹Í½Í}İ…É¹¥¹}™±•à¡½Õ¹Ğ¤°(€€€€€€€€€€€€€€€€€€€€€€€˜‹Â~`ƒ¦r¢š–æ¯–şgŠë¢ª4í½Õ¹Ñô¼Ìˆ°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€€€€€É•ÍÕ±Ğ°ÍÑ…ÑÕÍ}½‘”€ôÑÉ¥•É}Í½Ì (€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥‘ô°(€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥œ°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€¥˜ÍÑ…ÑÕÍ}½‘”€ôô€ÈÀÀè(€€€€€€€€€€€€€€€€€€€±…Ñ•ÍĞ€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€€€€€€€€€€€€€Í½Í}™±½Ü¹Í½Í}µ…É­}Í•¹Ğ (€€€€€€€€€€€€€€€€€€€€€€€±…Ñ•ÍĞ°±¥¹•}ÕÍ•É}¥°É•ÍÕ±Ğ¹•Ğ ‰•Ù•¹Ñ}¥ˆ¤(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€Í…Ù•}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t°±…Ñ•ÍĞ¤(€€€€€€€€€€€€€€€€€€€É•Á±ä (€€€€€€€€€€€€€€€€€€€€€€€Í½Í}™±½Ü¹Í½Í}Í•¹Ñ}™±•à ¤°(€€€€€€€€€€€€€€€€€€€€€€€˜‹Â~j M=Lƒ–ŞË¦–ë¾ò3–ŞË¦k~”í¥¹Ğ¡É•ÍÕ±Ğ¹•Ğ Í•¹Ğœ¤½È€À¥ôƒ–/–Â7¢Æ„ˆ°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€•±¥˜ÍÑÈ¡É•ÍÕ±Ğ¹•Ğ ‰•ÉÉ½Èˆ¤½È€ˆˆ¤€ôô€‰¹¼‰½Õ¹1%9Õ…É‘¥…¹Ìˆè(€€€€€€€€€€€€€€€€€€€É•Á±ä (€€€€€€€€€€€€€€€€€€€€€€€Í½Í}™±½Ü¹Í½Í}¹½}Õ…É‘¥…¹Í}™±•à ¤°(€€€€€€€€€€€€€€€€€€€€€€€Í½Í}ÕÍ•É}™…¥¹}•ÉÉ½È¡É•ÍÕ±Ğ¹•Ğ ‰•ÉÉ½Èˆ¤¤°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€É•Á±ä¡9½¹”°Í½Í}ÕÍ•É}™…¥¹}•ÉÉ½È¡É•ÍÕ±Ğ¹•Ğ ‰•ÉÉ½Èˆ¤¤¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸((€€€€€€€€€€€¥˜½µµ…¹¹½Ğ¥¸•¹ÑÉå}½µµ…¹‘Ì…¹½µµ…¹¹½Ğ¥¸±•…å}•¹ÑÉå}½µµ…¹‘Ìè(€€€€€€€€€€€€€€€É•Á±ä¡9½¹”°€‹¢®/–
+Ï¦3¦r¢š–æ¯–şg7¦Z/–VšÆ–*§¦ã¦‚ˆ¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸((€€€€€€€‘•˜}Í•¹‘}İ•±½µ”¡±¥¹•}‰½Ñ}…Á¤°É•Á±å}Ñ½­•¸õ9½¹”°±¥¹•}ÕÍ•É}¥õ9½¹”°‘¥ÍÁ±…å}¹…µ”õ9½¹”°ÑÉ¥•Èõ9½¹”¤è(€€€€€€€€€€€€ˆˆ‰½±±½Ü€¼ƒ¦^s¦6×–¶_–ÇR£¾òk¦İ•±½µ•}™±•ã¾ò3–’ÇšV_–¾¬±½œƒ’â˜ÁÕÍ ™…±±‰…¯ˆˆˆ(€€€€€€€€€€€€Œƒš¾?š²‡fó¦–&7–7–>[’âš²‡r–¾›šjÇ¢Ç¾ò#¦ÿ–4½±±½ÜƒVÛ’â,ÁÉ½™¥±”ƒ–’ÇšV_¢º+š"C¦ëf÷¾ò?3š
+£7¾ò$(€€€€€€€€€€€É•Í½±Ù•€ôÉ•Í½±Ù•}İ•±½µ•}‘¥ÍÁ±…å}¹…µ” (€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤õ±¥¹•}‰½Ñ}…Á¤°(€€€€€€€€€€€€€€€‘…Ñ…}™¥±”õ…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥õ±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€¡¥¹Ğõ‘¥ÍÁ±…å}¹…µ”°(€€€€€€€€€€€€€€€±½•Èõ…ÁÀ¹±½•È°(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜İ•±½µ•}É••Ñ¥¹}Ñ•áĞ¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€É••Ñ¥¹œ€ôİ•±½µ•}É••Ñ¥¹}Ñ•áĞ¡É•Í½±Ù•¤(€€€€€€€€€€€•±¥˜É•Í½±Ù•è(€€€€€€€€€€€€€€€É••Ñ¥¹œ€ô˜‹Â~F,íÉ•Í½±Ù•‘ôƒš
+£––÷¾ò3š¶‡¢ş;–*ƒ–—3š¾?š^—–æÏ–º'4ˆ(€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€É••Ñ¥¹œ€ô€‹Â~F,ƒš
+£––÷¾ò3š¶‡¢ş;–*ƒ–—3š¾?š^—–æÏ–º'4ˆ(€€€€€€€€€€€…ÁÀ¹±½•È¹¥¹™¼ (€€€€€€€€€€€€€€€€‰İ•±½µ•}™±•àÍÑ…ÉĞÑÉ¥•Èô•ÌÕÍ•Èô•Ì¹…µ”ô•È¡…Í}É•Á±äô•Ìˆ°(€€€€€€€€€€€€€€€ÑÉ¥•È½È€‰Õ¹­¹½İ¸ˆ°(€€€€€€€€€€€€€€€€¡±¥¹•}ÕÍ•É}¥½È€ˆˆ¥lèát°(€€€€€€€€€€€€€€€É•Í½±Ù•½È€ˆˆ°(€€€€€€€€€€€€€€€‰½½°¡É•Á±å}Ñ½­•¸¤°(€€€€€€€€€€€€¤(€€€€€€€€€€€Í•ÑÕÁ}ÕÉ¤€ô€ (€€€€€€€€€€€€€€€±¥™™}•¹ÑÉå}ÕÉ°¡½Á•¹}…Ñ¥½¸ô‰½¹‰½…É‘¥¹œˆ¤(€€€€€€€€€€€€€€€¥˜±¥™™}•¹ÑÉå}ÕÉ°(€€€€€€€€€€€€€€€•±Í”€‰¡ÑÑÁÌè¼½±¥™˜¹±¥¹”¹µ”¼ÈÀÄÀàĞàÌÌÀµU¥ÅAAeı½Á•¸õ½¹‰½…É‘¥¹œˆ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥¹Ù¥Ñ•}ÕÉ¤€ô€ (€€€€€€€€€€€€€€€Í¡…É•}¥¹Ù¥Ñ•}±¥™™}ÕÉ° ¤(€€€€€€€€€€€€€€€¥˜Í¡…É•}¥¹Ù¥Ñ•}±¥™™}ÕÉ°(€€€€€€€€€€€€€€€•±Í”€‰¡ÑÑÁÌè¼½±¥™˜¹±¥¹”¹µ”¼ÈÀÄÀàĞàÌÌÀµU¥ÅAAe½±¥™˜½Í¡…É”µ¥¹Ù¥Ñ”¹¡Ñµ°ˆ(€€€€€€€€€€€€¤(€€€€€€€€€€€¡•±Á}ÕÉ¤€ô€ (€€€€€€€€€€€€€€€±¥™™}•¹ÑÉå}ÕÉ°¡½Á•¹}…Ñ¥½¸ô‰¡•±Àˆ¤(€€€€€€€€€€€€€€€¥˜±¥™™}•¹ÑÉå}ÕÉ°(€€€€€€€€€€€€€€€•±Í”€‰¡ÑÑÁÌè¼½±¥™˜¹±¥¹”¹µ”¼ÈÀÄÀàĞàÌÌÀµU¥ÅAAeı½Á•¸õ¡•±Àˆ(€€€€€€€€€€€€¤(€€€€€€€€€€€İ•±½µ•}™…±±‰…¬€ô€ (€€€€€€€€€€€€€€€˜‰íÉ••Ñ¥¹õq¹q¸ˆ(€€€€€€€€€€€€€€€€‹š¾?–’¤€ÄÀƒK¾ò3–‚Ç–/–æÏ–º%q¸ˆ(€€€€€€€€€€€€€€€€‹–æÏ–âã’â7š&OšNû¾ò3šr'’ê/š&7¦k~—–º#¢¶ß’êéq¹q¸ˆ(€€€€€€€€€€€€€€€€‹¦Z/–/’öÿR£–&7–§–/š¶—¦¦¾òiq¸ˆ(€€€€€€€€€€€€€€€€‹ŠF€ƒšZÃ–Šx€Äƒ’ö7–º#¢¶ß’êéq¸ˆ(€€€€€€€€€€€€€€€€‹ŠF„ƒ¢¢·–ºkš¾?š^—š>C¦Kšf¦ZMq¹q¸ˆ(€€€€€€€€€€€€€€€€‹Â~:ƒ¦š[š²‡¢¢ï–+–>¿’ê¯’âš²„€ÄĞƒ–’§–º'–ş¦®S¦¦]q¸ˆ(€€€€€€€€€€€€€€€€‹Ş+š—.šÎ¢®/nÓš:—šJ—š&L€ÄÄäƒš"X€ÄÄÁq¹q¸ˆ(€€€€€€€€€€€€€€€˜‹–7¢Êï¦®S¦¦\€ÄĞƒ–’§¾òiíÍ•ÑÕÁ}ÕÉ¥õq¸ˆ(€€€€€€€€€€€€€€€˜‹’â¦6×–º#¢¶ß¦
+¢®/¾òií¥¹Ù¥Ñ•}ÕÉ¥õq¸ˆ(€€€€€€€€€€€€€€€˜‹’ê¢š¾?š^—–æÏ–º'¾òií¡•±Á}ÕÉ¥õq¸ˆ(€€€€€€€€€€€€€€€€‹–
+Ï3¦Z/–/7–>¿¦7š.ÿš¶‡¢ş;–6„ˆ(€€€€€€€€€€€€¤(€€€€€€€€€€€…±Ñ}Ñ•áĞ€ô€ (€€€€€€€€€€€€€€€˜‹š¾?š^—–æÏ–º'¾öqíÉ•Í½±Ù•‘ôƒš
+£––÷¾ò3š¶‡¢ş;–*ƒ–”ˆ(€€€€€€€€€€€€€€€¥˜É•Í½±Ù•(€€€€€€€€€€€€€€€•±Í”€‹š¾?š^—–æÏ–º'¾ösš
+£––÷¾ò3š¶‡¢ş;–*ƒ–”ˆ(€€€€€€€€€€€€¤(€€€€€€€€€€€™±•á}½¹Ñ•¹ÑÌ€ôİ•±½µ•}™±•à¡É•Í½±Ù•¤¥˜İ•±½µ•}™±•à¥Ì¹½Ğ9½¹”•±Í”9½¹”(€€€€€€€€€€€¥˜™±•á}½¹Ñ•¹ÑÌ¥Ì9½¹”è(€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•ÉÉ½È ‰İ•±½µ•}™±•à½¹Ñ•¹ÑÌ¥Ì9½¹”ƒŠP¡•¬¥µÁ½ÉĞˆ¤(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€¥˜±•áM•¹‘5•ÍÍ…”¥Ì¹½Ğ9½¹”…¹™±•á}½¹Ñ•¹ÑÌ¥Ì¹½Ğ9½¹”…¹É•Á±å}Ñ½­•¸è(€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€É•Á±å}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€€€€€±•áM•¹‘5•ÍÍ…”¡…±Ñ}Ñ•áĞõ…±Ñ}Ñ•áĞ°½¹Ñ•¹ÑÌõ™±•á}½¹Ñ•¹ÑÌ¤°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹¥¹™¼ ‰İ•±½µ•}™±•àÉ•Á±ä½¬¹…µ”ô•Èˆ°É•Í½±Ù•½È€ˆˆ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€€€€€¥˜É•Á±å}Ñ½­•¸è(€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…”¡É•Á±å}Ñ½­•¸°Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõİ•±½µ•}™…±±‰…¬¤¤(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹İ…É¹¥¹œ ‰İ•±½µ”Ñ•áĞÉ•Á±ä™…±±‰…¬ˆ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰İ•±½µ”É•Á±ä™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€¥˜±¥¹•}ÕÍ•É}¥…¹±•áM•¹‘5•ÍÍ…”¥Ì¹½Ğ9½¹”…¹™±•á}½¹Ñ•¹ÑÌ¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹ÁÕÍ¡}µ•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€€€€±•áM•¹‘5•ÍÍ…”¡…±Ñ}Ñ•áĞõ…±Ñ}Ñ•áĞ°½¹Ñ•¹ÑÌõ™±•á}½¹Ñ•¹ÑÌ¤°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹¥¹™¼ ‰İ•±½µ•}™±•àÁÕÍ ½¬¹…µ”ô•Èˆ°É•Í½±Ù•½È€ˆˆ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰İ•±½µ”ÁÕÍ ™±•à™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€€€€€€Œ…ÁÑÕÉ”•á…Ğ1%9•ÉÉ½È‰½‘äİ¡•¸…Ù…¥±…‰±”(€€€€€€€€€€€€€€€€€€€€€€€•ÉÉ}‰½‘ä€ô•Ñ…ÑÑÈ¡•áŒ°€‰•ÉÉ½Èˆ°9½¹”¤½È•Ñ…ÑÑÈ¡•áŒ°€‰É•ÍÁ½¹Í”ˆ°9½¹”¤(€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•ÉÉ½È ‰İ•±½µ”ÁÕÍ ™±•à1%9‘•Ñ…¥°è€•Ìˆ°•ÉÉ}‰½‘ä¤(€€€€€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€€€€€€€€€€€€€€€€€Á…ÍÌ(€€€€€€€€€€€¥˜±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹ÁÕÍ¡}µ•ÍÍ…”¡±¥¹•}ÕÍ•É}¥°Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõİ•±½µ•}™…±±‰…¬¤¤(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹İ…É¹¥¹œ ‰İ•±½µ”Ñ•áĞÁÕÍ ™…±±‰…¬ˆ¤(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰İ•±½µ”ÁÕÍ Ñ•áĞ™…¥±•è€•Ìˆ°•áŒ¤((€€€€€€€‘•˜}Õ…É‘¥…¹}¥¹ÑÉ½}µ•ÍÍ…•Ì¡½İ¹•É}¥¹™¼°¡¥¹Ñ}Ñ•áĞõ9½¹”¤è(€€€€€€€€€€€€ˆˆ‹¦Ëú“š¶‡¢ş;¾òk~·šZ–¶\€¬±•ã¾ò#¦ng’şw¦j«¾ò3¦ÿ–4±•àƒ¢Š¯š.KšfšVÓšº×šÚ#–’Ç¾ò'ˆˆˆ(€€€€€€€€€€€Ñ¥À€ô¡¥¹Ñ}Ñ•áĞ½È€ (€€€€€€€€€€€€€€€€‹Â~n‡¾â<ƒš¶‡¢ş;–*ƒ–—3š¾?š^—–æÏ–º'7–º#¢¶ßú‘q¸ˆ(€€€€€€€€€€€€€€€€‹–æÏšf’â7š&OšNû¾ò3–>«–r£¦r¢ššf¦k~—–’Ÿ–ºÛˆ(€€€€€€€€€€€€¤(€€€€€€€€€€€µ•ÍÍ…•Ì€ômQ•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõÑ¥À¥t(€€€€€€€€€€€¥˜±•áM•¹‘5•ÍÍ…”¥Ì¹½Ğ9½¹”…¹Õ…É‘¥…¹}É½ÕÁ}¥¹ÑÉ½}™±•à¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€µ•ÍÍ…•Ì¹…ÁÁ•¹ (€€€€€€€€€€€€€€€€€€€±•áM•¹‘5•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€…±Ñ}Ñ•áĞô‹Â~n‡¾â<ƒš¶‡¢ş;–*ƒ–—3š¾?š^—–æÏ–º'7–º#¢¶ßúˆ°(€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ•¹ÑÌõÕ…É‘¥…¹}É½ÕÁ}¥¹ÑÉ½}™±•à¡½İ¹•É}¥¹™¼¤°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸µ•ÍÍ…•Ì((€€€€€€€‘•˜}É•Á±å}µ¥É…Ñ•‘}…½Õ¹Ğ¡É•Á±å}Ñ½­•¸°É•¥ÍÑÉ…Ñ¥½¹}É•ÍÕ±Ğ¤è(€€€€€€€€€€€Õ¥‘…¹”€ôµ¥É…Ñ•‘}…½Õ¹Ñ}İ•‰¡½½­}Õ¥‘…¹” (€€€€€€€€€€€€€€€É•¥ÍÑÉ…Ñ¥½¹}É•ÍÕ±Ğ°(€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥œ¹•Ğ ‰1%}%ˆ¤½ÈU1Q}1%}%°(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜¹½ĞÕ¥‘…¹”è(€€€€€€€€€€€€€€€É•ÑÕÉ¸…±Í”(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…” (€€€€€€€€€€€€€€€€€€€É•Á±å}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõÕ¥‘…¹”¤°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ (€€€€€€€€€€€€€€€€€€€€‰µ¥É…Ñ•…½Õ¹ĞÕ¥‘…¹”É•Á±ä™…¥±•è€•Ìˆ°•áŒ(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸QÉÕ”((€€€€€€€‘•˜}•¹É¥¡}‰¥¹‘}É•ÍÕ±Ñ}™½É}™±•à¡É•ÍÕ±Ğ°±¥¹•}ÕÍ•É}¥¤è(€€€€€€€€€€€€ˆˆ‹¢s’â+¢Î¢¢+–6‡¾òkº‡B’êë¾ò?š‚ã–ş–º#¢¶ß’êë¾ò?Ş+š—¢¿Ö‡’êë¾ò?ú“Öš"C–N‡¾ò?š>C¦Kšf¦ZOˆˆˆ(€€€€€€€€€€€•¹É¥¡•€ô‘¥Ğ¡É•ÍÕ±Ğ½Èíô¤(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€€€€€€€€€ÁÉ½™¥±”€ô•Ñ}ÁÉ½™¥±”¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥¤½Èíô(€€€€€€€€€€€€€€€ÉÕ±•Ì€ôÁ±…¹}ÉÕ±•Ì¡ÁÉ½™¥±”¤(€€€€€€€€€€€€€€€Ñ¥µ•Ì€ôÉ•µ¥¹‘•É}Ñ¥µ•Í}™½É}ÁÉ½™¥±”¡ÁÉ½™¥±”¤½ÈlˆÀäèÀÀ‰t(€€€€€€€€€€€€€€€½¹Ñ…ÑÌ€ôÁÉ½™¥±”¹•Ğ ‰½¹Ñ…ÑÌˆ¤½Èmt(€€€€€€€€€€€€€€€€Œƒ–ŞËÚ–ºkš‚ã–ş–º#¢¶ß’êèƒŠ&€ƒú“Öš"C–N„ƒŠ&€ƒŞ+š—¢¿Ö‡’êë¾òo–>«R ½É”ƒ–B7¦†4(€€€€€€€€€€€€€€€Õ…É‘¥…¹}½Õ¹Ğ€ôÍÕ´ (€€€€€€€€€€€€€€€€€€€€Ä(€€€€€€€€€€€€€€€€€€€™½ÈŒ¥¸½¹Ñ…ÑÌ(€€€€€€€€€€€€€€€€€€€¥˜É•Í½±Ù•}½¹Ñ…Ñ}É½±”¡Œ¤€„ô€‰•µ•É•¹äˆ(€€€€€€€€€€€€€€€€€€€…¹½¹Ñ…Ñ}¥Í}‰½Õ¹‘}Õ…É‘¥…¸¡Œ°±¥¹•}ÕÍ•É}¥¤(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€•µ•É•¹å}½Õ¹Ğ€ôÍÕ´ (€€€€€€€€€€€€€€€€€€€€Ä™½ÈŒ¥¸½¹Ñ…ÑÌ¥˜É•Í½±Ù•}½¹Ñ…Ñ}É½±”¡Œ¤€ôô€‰•µ•É•¹äˆ(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ (€€€€€€€€€€€€€€€€€€€€‰‘¥ÍÁ±…å}¹…µ”ˆ°(€€€€€€€€€€€€€€€€€€€€¡ÁÉ½™¥±”¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤½È€‹º‡B–N„ˆ°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ ‰Õ…É‘¥…¹}½Õ¹Ğˆ°Õ…É‘¥…¹}½Õ¹Ğ¤(€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ (€€€€€€€€€€€€€€€€€€€€‰Õ…É‘¥…¹}±¥µ¥Ğˆ°(€€€€€€€€€€€€€€€€€€€¥¹Ğ¡ÉÕ±•Ì¹•Ğ ‰½É•}Õ…É‘¥…¹}…±•ÉÑ}±¥µ¥Ğˆ¤½È€Ô¤°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ ‰½É•}Õ…É‘¥…¹}…±•ÉÑ}±¥µ¥Ğˆ°¥¹Ğ¡ÉÕ±•Ì¹•Ğ ‰½É•}Õ…É‘¥…¹}…±•ÉÑ}±¥µ¥Ğˆ¤½È€Ô¤¤(€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ ‰•µ•É•¹å}½Õ¹Ğˆ°•µ•É•¹å}½Õ¹Ğ¤(€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ (€€€€€€€€€€€€€€€€€€€€‰•µ•É•¹å}±¥µ¥Ğˆ°(€€€€€€€€€€€€€€€€€€€¥¹Ğ¡ÉÕ±•Ì¹•Ğ ‰•µ•É•¹å}½¹Ñ…Ñ}±¥µ¥Ğˆ¤½È€È¤°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ (€€€€€€€€€€€€€€€€€€€€‰•µ•É•¹å}½¹Ñ…Ñ}±¥µ¥Ğˆ°(€€€€€€€€€€€€€€€€€€€¥¹Ğ¡ÉÕ±•Ì¹•Ğ ‰•µ•É•¹å}½¹Ñ…Ñ}±¥µ¥Ğˆ¤½È€È¤°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ ‰É•µ¥¹‘•É}Ñ¥µ”ˆ°ÍÑÈ¡Ñ¥µ•ÍlÁt¥˜Ñ¥µ•Ì•±Í”€ˆÀäèÀÀˆ¤¤(€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ ‰É•µ¥¹‘•É}Ñ¥µ•Ìˆ°±¥ÍĞ¡Ñ¥µ•Ì¤¤(€€€€€€€€€€€€€€€É½ÕÁ}¥€ô•¹É¥¡•¹•Ğ ‰É½ÕÁ}¥ˆ¤(€€€€€€€€€€€€€€€¥˜É½ÕÁ}¥è(€€€€€€€€€€€€€€€€€€€É•™É•Í¡•€ôÉ•™É•Í¡}Õ…É‘¥…¹}É½ÕÁ}µ•µ‰•É}Í¹…ÁÍ¡½Ğ (€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°É½ÕÁ}¥(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€¥˜É•™É•Í¡•…¹É•™É•Í¡•¹•Ğ ‰µ•µ‰•É}½Õ¹Ñ}…Ñ}‰¥¹ˆ¤¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€€€€€€€€€•¹É¥¡•‘l‰µ•µ‰•É}½Õ¹Ğ‰t€ôÉ•™É•Í¡•¹•Ğ ‰µ•µ‰•É}½Õ¹Ñ}…Ñ}‰¥¹ˆ¤(€€€€€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€€€€œ€ô€¡ÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁÌˆ¤½Èíô¤¹•Ğ¡É½ÕÁ}¥¤½Èíô(€€€€€€€€€€€€€€€€€€€€€€€¥˜œ¹•Ğ ‰µ•µ‰•É}½Õ¹Ñ}…Ñ}‰¥¹ˆ¤¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰µ•µ‰•É}½Õ¹Ğˆ°œ¹•Ğ ‰µ•µ‰•É}½Õ¹Ñ}…Ñ}‰¥¹ˆ¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰•¹É¥ ‰¥¹É•ÍÕ±Ğ™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ°€‹º‡B–N„ˆ¤(€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ ‰Õ…É‘¥…¹}½Õ¹Ğˆ°€À¤(€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ ‰Õ…É‘¥…¹}±¥µ¥Ğˆ°€Ô¤(€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ ‰•µ•É•¹å}½Õ¹Ğˆ°€À¤(€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ ‰•µ•É•¹å}±¥µ¥Ğˆ°€È¤(€€€€€€€€€€€€€€€•¹É¥¡•¹Í•Ñ‘•™…Õ±Ğ ‰É•µ¥¹‘•É}Ñ¥µ”ˆ°€ˆÀäèÀÀˆ¤(€€€€€€€€€€€É•ÑÕÉ¸•¹É¥¡•((€€€€€€€‘•˜}½İ¹•É}‘¥ÍÁ±…å}¹…µ”¡½İ¹•É}¥¹™¼¤è(€€€€€€€€€€€½İ¹•É}¥€ô€¡½İ¹•É}¥¹™¼½Èíô¤¹•Ğ ‰½İ¹•É}¥ˆ¤(€€€€€€€€€€€¥˜¹½Ğ½İ¹•É}¥è(€€€€€€€€€€€€€€€É•ÑÕÉ¸€‹–ºÛ’êèˆ(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€€€€€€€€€ÁÉ½™¥±”€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹•Ğ¡½İ¹•É}¥°íô¤½Èíô(€€€€€€€€€€€€€€€¹…µ”€ô€¡ÁÉ½™¥±”¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸¹…µ”½È€‹–ºÛ’êèˆ(€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€€€€€€€€€É•ÑÕÉ¸€‹–ºÛ’êèˆ((€€€€€€€‘•˜}±½…‘}É½ÕÁ}½İ¹•É}¥¹™¼¡É½ÕÁ}¥°±¥¹•}ÕÍ•É}¥õ9½¹”¤è(€€€€€€€€€€€½İ¹•É}¥¹™¼€ôì(€€€€€€€€€€€€€€€€‰‰½Õ¹ˆè…±Í”°(€€€€€€€€€€€€€€€€‰¥Í}½İ¹•Èˆè…±Í”°(€€€€€€€€€€€€€€€€‰½İ¹•É}¥ˆè9½¹”°(€€€€€€€€€€€€€€€€‰¥Í}…Ñ¥Ù”ˆè…±Í”°(€€€€€€€€€€€€€€€€‰½İ¹•É}Á±…¸ˆè9½¹”°(€€€€€€€€€€€ô(€€€€€€€€€€€¥˜¹½ĞÉ½ÕÁ}¥è(€€€€€€€€€€€€€€€É•ÑÕÉ¸½İ¹•É}¥¹™¼(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€€€€€€€€€•á¥ÍÑ¥¹}É½ÕÀ€ôÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁÌˆ°íô¤¹•Ğ¡É½ÕÁ}¥½È€ˆˆ°íô¤(€€€€€€€€€€€€€€€¥˜•á¥ÍÑ¥¹}É½ÕÀ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰…Ñ¥Ù”ˆè(€€€€€€€€€€€€€€€€€€€½İ¹•É}¥€ô•á¥ÍÑ¥¹}É½ÕÀ¹•Ğ ‰½İ¹•É}±¥¹•}ÕÍ•É}¥ˆ¤(€€€€€€€€€€€€€€€€€€€½İ¹•É}ÁÉ½™¥±”€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹•Ğ¡½İ¹•É}¥°íô¤(€€€€€€€€€€€€€€€€€€€½İ¹•É}Á±…¸€ô½İ¹•É}ÁÉ½™¥±”¹•Ğ ‰Á±…¸ˆ¤(€€€€€€€€€€€€€€€€€€€¥Í}…Ñ¥Ù”€ô‰½½°¡½İ¹•É}ÁÉ½™¥±”¤…¹Á…¥‘}µ•µ‰•ÉÍ¡¥Á}¥Í}…Ñ¥Ù”¡½İ¹•É}ÁÉ½™¥±”¤(€€€€€€€€€€€€€€€€€€€½İ¹•É}¥¹™¼€ôì(€€€€€€€€€€€€€€€€€€€€€€€€‰‰½Õ¹ˆèQÉÕ”°(€€€€€€€€€€€€€€€€€€€€€€€€‰¥Í}½İ¹•Èˆè€¡±¥¹•}ÕÍ•É}¥€ôô½İ¹•É}¥¤¥˜±¥¹•}ÕÍ•É}¥•±Í”…±Í”°(€€€€€€€€€€€€€€€€€€€€€€€€‰½İ¹•É}¥ˆè½İ¹•É}¥°(€€€€€€€€€€€€€€€€€€€€€€€€‰¥Í}…Ñ¥Ù”ˆè¥Í}…Ñ¥Ù”°(€€€€€€€€€€€€€€€€€€€€€€€€‰½İ¹•É}Á±…¸ˆè½İ¹•É}Á±…¸°(€€€€€€€€€€€€€€€€€€€ô(€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰É½ÕÀ½İ¹•É}¥¹™¼±½…™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€É•ÑÕÉ¸½İ¹•É}¥¹™¼((€€€€€€€¡…¹‘±•È¹…‘¡)½¥¹Ù•¹Ğ¤(€€€€€€€‘•˜¡…¹‘±•}É½ÕÁ}©½¥¸¡•Ù•¹Ğ¤è(€€€€€€€€€€€€ˆˆ‰	½Ğƒ¢Š¯¦
+¦ËúƒŠHƒ–ş¦–º#¢¶ßú“š¶‡¢ş;–6‡¾ò#’â7’úw¢ÎÓ¢«–.WÚ–ºkš"C–*¾ò'ˆˆˆ(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥€ô•Ñ…ÑÑÈ¡•Ù•¹Ğ¹Í½ÕÉ”°€‰ÕÍ•É}¥ˆ°9½¹”¤(€€€€€€€€€€€É½ÕÁ}¥€ô•Ñ…ÑÑÈ¡•Ù•¹Ğ¹Í½ÕÉ”°€‰É½ÕÁ}¥ˆ°9½¹”¤(€€€€€€€€€€€É½½µ}¥€ô•Ñ…ÑÑÈ¡•Ù•¹Ğ¹Í½ÕÉ”°€‰É½½µ}¥ˆ°9½¹”¤(€€€€€€€€€€€Ñ…É•Ñ}¥€ôÉ½ÕÁ}¥½ÈÉ½½µ}¥(€€€€€€€€€€€…ÁÀ¹±½•È¹¥¹™¼ (€€€€€€€€€€€€€€€€‰)½¥¹Ù•¹ĞÉ½ÕÀô•ÌÉ½½´ô•Ì¥¹Ù¥Ñ•Èô•Ìˆ°(€€€€€€€€€€€€€€€€¡É½ÕÁ}¥½È€ˆˆ¥lèÄÉt°(€€€€€€€€€€€€€€€€¡É½½µ}¥½È€ˆˆ¥lèÄÉt°(€€€€€€€€€€€€€€€€¡±¥¹•}ÕÍ•É}¥½È€ˆˆ¥lèát°(€€€€€€€€€€€€¤((€€€€€€€€€€€€Œ)½¥¹Ù•¹Ğƒ¦k–âãšÊKšr$ÕÍ•É}¥“¾òo’â7¢š–nƒ‡šÎW¢«–.WÚ–ºk–ÂÇš.K¦š¶‡¢ş;–6„(€€€€€€€€€€€½ÕÑ½µ”°}ÍÑ…ÑÕÌ€ôì‰É•Á±å}Ñ•áĞˆè€‹š¶‡¢ş;–*ƒ–—–º#¢¶ßúˆ°€‰Í¡½Õ±‘}±•…Ù”ˆè…±Í•ô°€ÈÀÀ(€€€€€€€€€€€¥˜±¥¹•}ÕÍ•É}¥…¹É½ÕÁ}¥è(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€½ÕÑ½µ”°}ÍÑ…ÑÕÌ€ôÕ…É‘¥…¹}É½ÕÁ}©½¥¹}½ÕÑ½µ” (€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°É½ÕÁ}¥(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰Õ…É‘¥…¹}É½ÕÁ}©½¥¹}½ÕÑ½µ”™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€€€€€€€€€½ÕÑ½µ”°}ÍÑ…ÑÕÌ€ôì‰É•Á±å}Ñ•áĞˆè€‹š¶‡¢ş;–*ƒ–—–º#¢¶ßúˆ°€‰Í¡½Õ±‘}±•…Ù”ˆè…±Í•ô°€ÈÀÀ((€€€€€€€€€€€½İ¹•É}¥¹™¼€ô}±½…‘}É½ÕÁ}½İ¹•É}¥¹™¼¡É½ÕÁ}¥°±¥¹•}ÕÍ•É}¥¤(€€€€€€€€€€€¥¹ÑÉ½}µÍÌ€ô}Õ…É‘¥…¹}¥¹ÑÉ½}µ•ÍÍ…•Ì¡½İ¹•É}¥¹™¼°½ÕÑ½µ”¹•Ğ ‰É•Á±å}Ñ•áĞˆ¤¥˜½İ¹•É}¥¹™¼¹•Ğ ‰‰½Õ¹ˆ¤•±Í”9½¹”¤((€€€€€€€€€€€Í•¹Ğ€ô…±Í”(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…”¡•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°¥¹ÑÉ½}µÍÌ¤(€€€€€€€€€€€€€€€Í•¹Ğ€ôQÉÕ”(€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹¥¹™¼ ‰)½¥¹Ù•¹ĞÉ•Á±ä¥¹ÑÉ¼½¬É½ÕÀô•Ìˆ°€¡É½ÕÁ}¥½È€ˆˆ¥lèÄÉt¤(€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰)½¥¹Ù•¹ĞÉ•Á±ä¥¹ÑÉ¼™…¥±•è€•Ìˆ°•áŒ¤((€€€€€€€€€€€¥˜¹½ĞÍ•¹Ğ…¹Ñ…É•Ñ}¥è(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹ÁÕÍ¡}µ•ÍÍ…”¡Ñ…É•Ñ}¥°¥¹ÑÉ½}µÍÌ¤(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹¥¹™¼ ‰)½¥¹Ù•¹ĞÁÕÍ ¥¹ÑÉ¼½¬É½ÕÀô•Ìˆ°€¡É½ÕÁ}¥½È€ˆˆ¥lèÄÉt¤(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰)½¥¹Ù•¹ĞÁÕÍ ¥¹ÑÉ¼™…¥±•è€•Ìˆ°•áŒ¤((€€€€€€€€€€€€Œƒ––r£ú“–ŞË¢Š¯–Û’î[šr–N‡’öSR£šf¦n‹¦Z,(€€€€€€€€€€€¥˜É½ÕÁ}¥…¹}ÍÑ…ÑÕÌ€ôô€ĞÀäè(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹±•…Ù•}É½ÕÀ¡É½ÕÁ}¥¤(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰±•…Ù•}É½ÕÀ™…¥±•è€•Ìˆ°•áŒ¤((€€€€€€€¡…¹‘±•È¹…‘¡½±±½İÙ•¹Ğ¤(€€€€€€€‘•˜¡…¹‘±•}™½±±½Ü¡•Ù•¹Ğ¤è(€€€€€€€€€€€€ˆˆ‹–*ƒ––÷–>/š¶‡¢ş;¾òk–«–#–nx±•à£r–¾›šjÇ¢Ç–V?–d€¬ƒ®/–6Ï¦Z/–/¢¢·–ºh§ˆˆˆ(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥€ô•Ñ…ÑÑÈ¡•Ù•¹Ğ¹Í½ÕÉ”°€‰ÕÍ•É}¥ˆ°9½¹”¤(€€€€€€€€€€€‘¥ÍÁ±…å}¹…µ”€ôÉ•Í½±Ù•}İ•±½µ•}‘¥ÍÁ±…å}¹…µ” (€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤õ±¥¹•}‰½Ñ}…Á¤°(€€€€€€€€€€€€€€€‘…Ñ…}™¥±”õ…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥õ±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€±½•Èõ…ÁÀ¹±½•È°(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€€€€€€Œ½±±½ÜƒVÛ’â/–ÂÇ–¾¯–”ÕÍ•ÉÏ¾ò3’æ/–ú3¦Z,1%ƒ’â7šr–nƒòèÉ½Üƒ¢0€ĞÀĞ(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€É•¥ÍÑÉ…Ñ¥½¹}É•ÍÕ±Ğ€ôÉ•¥ÍÑ•É}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰‘¥ÍÁ±…å}¹…µ”ˆè‘¥ÍÁ±…å}¹…µ”½È€ˆˆ°(€€€€€€€€€€€€€€€€€€€€€€€ô°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€¥˜}É•Á±å}µ¥É…Ñ•‘}…½Õ¹Ğ (€€€€€€€€€€€€€€€€€€€€€€€•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°É•¥ÍÑÉ…Ñ¥½¹}É•ÍÕ±Ğ(€€€€€€€€€€€€€€€€€€€€¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€€€€€€€€€É•…Ñ¥Ù…Ñ•}±¥¹•}ÁÕÍ¡}™½É}™½±±½Ü¡…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥¤(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰½±±½İÙ•¹ĞÉ•¥ÍÑ•È™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€…ÁÀ¹±½•È¹¥¹™¼ (€€€€€€€€€€€€€€€€‰½±±½İÙ•¹Ğİ•±½µ”ÑÉ¥•ÈÕÍ•Èô•Ì¹…µ”ô•Èˆ°(€€€€€€€€€€€€€€€€¡±¥¹•}ÕÍ•É}¥½È€ˆˆ¥lèát°(€€€€€€€€€€€€€€€‘¥ÍÁ±…å}¹…µ”½È€ˆˆ°(€€€€€€€€€€€€¤(€€€€€€€€€€€}Í•¹‘}İ•±½µ” (€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤°(€€€€€€€€€€€€€€€É•Á±å}Ñ½­•¸õ•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°(€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥õ±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€‘¥ÍÁ±…å}¹…µ”õ‘¥ÍÁ±…å}¹…µ”°(€€€€€€€€€€€€€€€ÑÉ¥•Èô‰™½±±½Üˆ°(€€€€€€€€€€€€¤((€€€€€€€¡…¹‘±•È¹…‘¡5•µ‰•É)½¥¹•‘Ù•¹Ğ¤(€€€€€€€‘•˜¡…¹‘±•}µ•µ‰•É}©½¥¹•¡•Ù•¹Ğ¤è(€€€€€€€€€€€€Œ€ÈÀÈØ´ÀÜ´ÈÀƒ¢v›¢FŒ…‘‘•èƒ¢Ú¦8€ÔÀƒ’êë’â+¦fCšf³¢®/–ëšZÃš"C–N„(€€€€€€€€€€€€Œ€ÈÀÈØ´ÀÜ´ÈĞèƒš"C–N‡¦Ëú“’æ¢sš¶‡¢ş;¾ò?Ú–ºkš>C¦K¾ò!)½¥¹Ù•¹Ğƒšò?¦šfj–
+gš>Ó¾ò$(€€€€€€€€€€€€Œ€ÈÀÈØ´ÀÜ´ÈÔèƒ¦Ëú“–"ßšZÃú“š"C–N‡šVã¾òošZš†#–6–"3ú“Öš"C–N‡5ÙÏ3–ŞËÚ–ºk–º#¢¶ß’êë4(€€€€€€€€€€€¥˜•Ñ…ÑÑÈ¡•Ù•¹Ğ¹Í½ÕÉ”°€‰ÑåÁ”ˆ°9½¹”¤€„ô€‰É½ÕÀˆè(€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€É½ÕÁ}¥€ô•Ñ…ÑÑÈ¡•Ù•¹Ğ¹Í½ÕÉ”°€‰É½ÕÁ}¥ˆ°9½¹”¤(€€€€€€€€€€€¥˜¹½ĞÉ½ÕÁ}¥è(€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€¹•İ}¥‘Ì€ôm´¹ÕÍ•É}¥™½È´¥¸€¡•Ù•¹Ğ¹©½¥¹•¹µ•µ‰•ÉÌ½Èmt¤¥˜•Ñ…ÑÑÈ¡´°€‰ÕÍ•É}¥ˆ°9½¹”¥t(€€€€€€€€€€€€€€€½İ¹•É}¥¹™¼€ô}±½…‘}É½ÕÁ}½İ¹•É}¥¹™¼¡É½ÕÁ}¥¤(€€€€€€€€€€€€€€€€Œƒ–ŞËÚ–ºk–º#¢¶ßú“¾òk–"ßšZÃú“Öš"C–N‡šVã–ş¯Ÿ¾ò#’â7–öÇ¦~ÿ–ŞËÚ–ºk–º#¢¶ß’êë¢¢#šVã¾ò$(€€€€€€€€€€€€€€€¥˜½İ¹•É}¥¹™¼¹•Ğ ‰‰½Õ¹ˆ¤è(€€€€€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€€€€€É•™É•Í¡}Õ…É‘¥…¹}É½ÕÁ}µ•µ‰•É}Í¹…ÁÍ¡½Ğ (€€€€€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°É½ÕÁ}¥(€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰5•µ‰•É)½¥¹•µ•µ‰•ÈÍ¹…ÁÍ¡½ĞÉ•™É•Í ™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€€€€€€Œƒšr«Ú–ºk¾òkš:£š¶‡¢ş;–6‡¾ò3¢®/º‡B–N‡¦î{3Ú–ºk–º#¢¶ßú“4(€€€€€€€€€€€€€€€€Œƒ–ŞËÚ–ºk¾òkÂ‡~·š¶‡¢ş;šZÃš"C–N‡¾ò#¦ËúƒŠ&€ƒ’â¦6×¦
+¢®/Ú–ºk¾ò$(€€€€€€€€€€€€€€€¥˜¹½Ğ½İ¹•É}¥¹™¼¹•Ğ ‰‰½Õ¹ˆ¤è(€€€€€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹ÁÕÍ¡}µ•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€É½ÕÁ}¥°(€€€€€€€€€€€€€€€€€€€€€€€€€€€}Õ…É‘¥…¹}¥¹ÑÉ½}µ•ÍÍ…•Ì¡½İ¹•É}¥¹™¼¤°(€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹¥¹™¼ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰5•µ‰•É)½¥¹•Õ¹‰½Õ¹¥¹ÑÉ¼ÁÕÍ É½ÕÀô•Ì¹•Üô•Ìˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€É½ÕÁ}¥‘lèÄÉt°(€€€€€€€€€€€€€€€€€€€€€€€€€€€±•¸¡¹•İ}¥‘Ì¤°(€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰5•µ‰•É)½¥¹•¥¹ÑÉ¼ÁÕÍ ™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€€€€€•±¥˜¹•İ}¥‘Ìè(€€€€€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€€€€€¥¹Ù¥Ñ•É}¹…µ”€ô}½İ¹•É}‘¥ÍÁ±…å}¹…µ”¡½İ¹•É}¥¹™¼¤(€€€€€€€€€€€€€€€€€€€€€€€µ•µ‰•É}µÍÌ€ômt(€€€€€€€€€€€€€€€€€€€€€€€¥˜±•áM•¹‘5•ÍÍ…”¥Ì¹½Ğ9½¹”…¹Õ…É‘¥…¹}É½ÕÁ}µ•µ‰•É}©½¥¹•‘}™±•à¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€€€€€€€€€€€€€µ•µ‰•É}µÍÌ¹…ÁÁ•¹ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€±•áM•¹‘5•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€…±Ñ}Ñ•áĞõ˜‹Šv“¾â<ƒš¶‡¢ş;–*ƒ–”í¥¹Ù¥Ñ•É}¹…µ•ôƒj–º#¢¶ßúˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ•¹ÑÌõÕ…É‘¥…¹}É½ÕÁ}µ•µ‰•É}©½¥¹•‘}™±•à¡¥¹Ù¥Ñ•É}¹…µ”¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€€€€€€€€µ•µ‰•É}µÍÌ¹…ÁÁ•¹ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Q•áÑM•¹‘5•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Ñ•áĞô (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€˜‹Šv“¾â<ƒš¶‡¢ş;–*ƒ–”í¥¹Ù¥Ñ•É}¹…µ•ôƒj–º#¢¶ßú‘q¸ˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‹š
+£–ŞË–*ƒ–—3š¾?š^—–æÏ–º'51%9ƒ–º#¢¶ßú“	q¸ˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‹ú“–Ÿ–>¿šRÛš>C¦K¾òo¢.—¢šš"C
+ë–/’êë–ŞËÚ–ºk–º#¢¶ß’êë¾ò0ˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‹¢®/¢®/–Â7šZçR£3’â¦6×¦
+¢®/7–7Ú’âš²‡ˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹ÁÕÍ¡}µ•ÍÍ…”¡É½ÕÁ}¥°µ•µ‰•É}µÍÌ¤(€€€€€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰5•µ‰•É)½¥¹•İ•±½µ”™±•à™…¥±•è€•Ìˆ°•áŒ¤((€€€€€€€€€€€€€€€É•ÍÕ±Ğ°½‘”€ô•¹™½É•}É½ÕÁ}µ•µ‰•É}±¥µ¥Ğ¡É½ÕÁ}¥°‘¥Ğ¡…ÁÀ¹½¹™¥œ¤¤(€€€€€€€€€€€€€€€¥˜½‘”€„ô€ÈÀÀ½È¹½ĞÉ•ÍÕ±Ğ¹•Ğ ‰•¹™½É•ˆ¤è(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€€€€€µÍ}±¥¹•Ì€ôl(€€€€€€€€€€€€€€€€€€€˜‹Šjƒ¾â<ƒ–º#¢¶ßú“¢Ú¦8íI=UA}55	I}1%5%Qôƒ’êë’â+¦fCˆ°(€€€€€€€€€€€€€€€€€€€˜‹n»–&7š"C–N‡šVàéíÉ•ÍÕ±Ğ¹•Ğ ÕÉÉ•¹Ñ}½Õ¹Ğœ¥ô½íI=UA}55	I}1%5%Qôˆ°(€€€€€€€€€€€€€€€t(€€€€€€€€€€€€€€€¥˜É•ÍÕ±Ğ¹•Ğ ‰­¥­•ˆ¤è(€€€€€€€€€€€€€€€€€€€µÍ}±¥¹•Ì¹…ÁÁ•¹¡˜‹–ŞË¢®/–èí±•¸¡É•ÍÕ±Ñl­¥­•t¥ôƒ’ö7šZÃš"C–N‡ˆ¤(€€€€€€€€€€€€€€€¥˜É•ÍÕ±Ğ¹•Ğ ‰‰½Ñ}¹½Ñ}…‘µ¥¹}½Õ¹Ğˆ¤è(€€€€€€€€€€€€€€€€€€€µÍ}±¥¹•Ì¹…ÁÁ•¹ (€€€€€€€€€€€€€€€€€€€€€€€˜‹Šjƒ¾â<ƒ3š¾?š^—–æÏ–º'7n»–&7‡šÎW¢®/–ë¢Ú¦†7š"C–N‡¾ò#–>›šr$íÉ•ÍÕ±Ñl‰½Ñ}¹½Ñ}…‘µ¥¹}½Õ¹Ğuôƒ’ö7¾ò'ˆ(€€€€€€€€€€€€€€€€€€€€€€€€‹¢®/º‡B–N‡š&/–.W¦–ë¢Ú¦†7š"C–N‡¾ò3š"[–ş¢ššfš*+3š¾?š^—–æÏ–º'7¢¢·
+ëú“Öº‡B–N‡–ú3–7¢¦›ˆ(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€¥˜É•ÍÕ±Ğ¹•Ğ ‰™…¥±•ˆ¤…¹¹½ĞÉ•ÍÕ±Ğ¹•Ğ ‰‰½Ñ}¹½Ñ}…‘µ¥¹}½Õ¹Ğˆ¤è(€€€€€€€€€€€€€€€€€€€µÍ}±¥¹•Ì¹…ÁÁ•¹¡˜‹¢®/–ë–’ÇšV\éí±•¸¡É•ÍÕ±Ñl™…¥±•t¥ôƒ’ö7ˆ¤(€€€€€€€€€€€€€€€€Œƒ––r 	½Ğƒ‡º‡B–N‡š²+¦fCrj¢â‹’êë–’ÇšV_šfš&7š>C’ë¾òo–6Òk¾ò?Ú–ºk–ú3’öÿR£¢–ŞË¢«–.Wšb¿–º#¢¶ßú“º‡B–N„(€€€€€€€€€€€€€€€¥˜É•ÍÕ±Ğ¹•Ğ ‰‰½Ñ}¹½Ñ}…‘µ¥¹}½Õ¹Ğˆ¤è(€€€€€€€€€€€€€€€€€€€µÍ}±¥¹•Ì¹…ÁÁ•¹ ‹Â~J„ƒ¢.—¦r¢®/–ë¢Ú¦†7š"C–N‡¾ò3–>¿–r£ú“¢‡š&O3º‡B–N‡¢¢·–ºk7r/šVg–¶ã¾ò#¦v{–ş¢š¦Z/¦kš¶—¦¦¾ò$ˆ¤(€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹ÁÕÍ¡}µ•ÍÍ…”¡É½ÕÁ}¥°Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞô‰q¸ˆ¹©½¥¸¡µÍ}±¥¹•Ì¤¤¤(€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€€€€€€€€€Á…ÍÌ((€€€€€€€¥˜A½ÍÑ‰…­Ù•¹Ğ¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€¡…¹‘±•È¹…‘¡A½ÍÑ‰…­Ù•¹Ğ¤(€€€€€€€€€€€‘•˜¡…¹‘±•}Á½ÍÑ‰…¬¡•Ù•¹Ğ¤è(€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥€ô•Ñ…ÑÑÈ¡•Ù•¹Ğ¹Í½ÕÉ”°€‰ÕÍ•É}¥ˆ°9½¹”¤(€€€€€€€€€€€€€€€‘…Ñ„€ô€ˆˆ(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€‘…Ñ„€ôÍÑÈ¡•Ñ…ÑÑÈ¡•Ù•¹Ğ¹Á½ÍÑ‰…¬°€‰‘…Ñ„ˆ°€ˆˆ¤½È€ˆˆ¤(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€€€€€€€€€€€€€‘…Ñ„€ô€ˆˆ(€€€€€€€€€€€€€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥½È¹½Ğ‘…Ñ„è(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€€€€€É•Á±ä€ô9½¹”(€€€€€€€€€€€€€€€€Œƒš¾?š^—š:£šJ·3š"G–æÏ–º'7¾òk–r 1%9ƒ–Ÿ¦î{¦ã–6Ï–¾¯–—Â÷–"Ã¾ò#¢"1%ƒ–B3’â––\É•½É‘}¡•­¥»¾ò$(€€€€€€€€€€€€€€€¥˜¥Í}¡•­¥¹}Á½ÍÑ‰…¬¡‘…Ñ„¤è(€€€€€€€€€€€€€€€€€€€É•Á±ä€ô¡…¹‘±•}¡•­¥¹}Á½ÍÑ‰…¬¡…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€€€€€•±¥˜¥Í}•áÁ¥Éå}½ÁÑ}½ÕÑ}Á½ÍÑ‰…¬¡‘…Ñ„¤è(€€€€€€€€€€€€€€€€€€€É•Á±ä€ô¡…¹‘±•}•áÁ¥Éå}½ÁÑ}½ÕÑ}Á½ÍÑ‰…¬¡…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥¤(€€€€€€€€€€€€€€€•±¥˜‘…Ñ„¹ÍÑ…ÉÑÍİ¥Ñ  ‰‰•Ñ…}™••‘‰…¬èˆ¤è(€€€€€€€€€€€€€€€€€€€É•Á±ä€ô¡…¹‘±•}‰•Ñ…}™••‘‰…­}Á½ÍÑ‰…¬ (€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°‘…Ñ„(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€•±¥˜‘…Ñ„¹ÍÑ…ÉÑÍİ¥Ñ  ‰Í½Ìèˆ¤è(€€€€€€€€€€€€€€€€€€€Á…ÉÑÌ€ô‘…Ñ„¹ÍÁ±¥Ğ ˆèˆ°€È¤(€€€€€€€€€€€€€€€€€€€¥˜±•¸¡Á…ÉÑÌ¤€ôô€Ìè(€€€€€€€€€€€€€€€€€€€€€€€É•ÍÕ±Ğ°ÍÑ…ÑÕÍ}½‘”€ôÉ•ÍÁ½¹‘}Ñ½}Í½Í}•Ù•¹Ğ (€€€€€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰…Ñ¥½¸ˆèÁ…ÉÑÍlÅt°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰•Ù•¹Ñ}¥ˆèÁ…ÉÑÍlÉt°(€€€€€€€€€€€€€€€€€€€€€€€€€€€ô°(€€€€€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥œ°(€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€¥˜ÍÑ…ÑÕÍ}½‘”€ôô€ÈÀÀè(€€€€€€€€€€€€€€€€€€€€€€€€€€€É½±•}Ñ•áĞ€ô€ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‹’öƒšb¿’âï¢šš:—š&/’êèˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥˜É•ÍÕ±Ğ¹•Ğ ‰É½±”ˆ¤€ôô€‰ÁÉ¥µ…Éäˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€•±Í”€‹–ŞËšr'–º#¢¶ß’êë–#š:—š&/¾ò3’öƒ–ŞË–*ƒ–—–6S–*¤ˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥˜É•ÍÕ±Ğ¹•Ğ ‰É½±”ˆ¤€ôô€‰…ÍÍ¥ÍÑ…¹Ğˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€•±Í”€‹–ŞË¢¢c¦2’öƒj–n{š$ˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€É•Á±ä€ô˜‹ŠríÉ½±•}Ñ•áÑõq»ÎïÖÇ–ŞË–sš¶‹¦7¢’–
+³’ş¾òo¢®/æóê3¢¿Ö‡šr³’êèˆ(€€€€€€€€€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€€€€€€€€É•Á±ä€ô€‹¦g¶M=Lƒ‡šÎWšnÓšZÃ¾ò3–>¿¢÷–ŞËÖCš†#š"[’öƒ’â7šb¿šr³š²‡šRÛ’îÛ’êèˆ(€€€€€€€€€€€€€€€•±¥˜‘…Ñ„¹ÍÑ…ÉÑÍİ¥Ñ  ‰Íµ…ÉĞèˆ¤è(€€€€€€€€€€€€€€€€€€€É•Á±ä€ô¡…¹‘±•}Íµ…ÉÑ}É•µ¥¹‘•É}Á½ÍÑ‰…¬ (€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°‘…Ñ„°…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€Œƒnã–ºç¢"+&#–>[šÚ#¢¶›–‚ÄÁ½ÍÑ‰…¯¾òk’æ¢š[
+ë’î+š^—–‚Ç–æÏ–º$(€€€€€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€€€€€™É½´…±•ÉÑÌ¹Á½ÍÑ‰…¬¥µÁ½ÉĞ¥Í}…±•ÉÑ}…¹•±}Á½ÍÑ‰…¬(€€€€€€€€€€€€€€€€€€€€€€€¥˜¥Í}…±•ÉÑ}…¹•±}Á½ÍÑ‰…¬¡‘…Ñ„¤è(€€€€€€€€€€€€€€€€€€€€€€€€€€€É•Á±ä€ô¡…¹‘±•}¡•­¥¹}Á½ÍÑ‰…¬ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€€€€€€€€€€€€€€€€€É•Á±ä€ô9½¹”(€€€€€€€€€€€€€€€¥˜É•Á±äè(€€€€€€€€€€€€€€€€€€€¥Ñ•µÌ€ô¹½Éµ…±¥é•}±¥¹•}É•Á±å}¥Ñ•µÌ¡É•Á±ä¤(€€€€€€€€€€€€€€€€€€€µ•ÍÍ…•Ì€ômt(€€€€€€€€€€€€€€€€€€€™½È¥Ñ•´¥¸¥Ñ•µÌè(€€€€€€€€€€€€€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡¥Ñ•´°‘¥Ğ¤…¹¥Ñ•´¹•Ğ ‰ÑåÁ”ˆ¤€ôô€‰™±•àˆè(€€€€€€€€€€€€€€€€€€€€€€€€€€€¥˜±•áM•¹‘5•ÍÍ…”¥Ì9½¹”è(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€µ•ÍÍ…•Ì¹…ÁÁ•¹ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Q•áÑM•¹‘5•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Ñ•áĞõÍÑÈ¡¥Ñ•´¹•Ğ ‰…±ÑQ•áĞˆ¤½È€‹š¾?š^—–æÏ–º$ˆ¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€µ•ÍÍ…•Ì¹…ÁÁ•¹ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€±•áM•¹‘5•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€…±Ñ}Ñ•áĞõÍÑÈ¡¥Ñ•´¹•Ğ ‰…±ÑQ•áĞˆ¤½È€‹š¾?š^—–æÏ–º$ˆ¥lèĞÀÁt°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ•¹ÑÌõ¥Ñ•´¹•Ğ ‰½¹Ñ•¹ÑÌˆ¤½Èíô°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€€€€€€€€µ•ÍÍ…•Ì¹…ÁÁ•¹¡Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõÍÑÈ¡¥Ñ•´¤¤¤(€€€€€€€€€€€€€€€€€€€¥˜µ•ÍÍ…•Ìè(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…”¡•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°µ•ÍÍ…•Ì¤((€€€€€€€¡…¹‘±•È¹…‘¡5•ÍÍ…•Ù•¹Ğ°µ•ÍÍ…”õQ•áÑ5•ÍÍ…”¤(€€€€€€€‘•˜¡…¹‘±•}Ñ•áÑ}µ•ÍÍ…”¡•Ù•¹Ğ¤è(€€€€€€€€€€€Ñ•áĞ€ô•Ù•¹Ğ¹µ•ÍÍ…”¹Ñ•áĞ(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥€ô•Ñ…ÑÑÈ¡•Ù•¹Ğ¹Í½ÕÉ”°€‰ÕÍ•É}¥ˆ°9½¹”¤(€€€€€€€€€€€É½ÕÁ}¥€ô•Ñ…ÑÑÈ¡•Ù•¹Ğ¹Í½ÕÉ”°€‰É½ÕÁ}¥ˆ°9½¹”¤(€€€€€€€€€€€ÍÑÉ¥ÁÁ•€ôÑ•áĞ¹ÍÑÉ¥À ¤((€€€€€€€€€€€€Œƒš¶‡¢ş;¢¦{¦^s¦6×–¶_¾ò#–ŞËšb¿––÷–>/’æ–>¿¦7š.ÿš¶‡¢ş;–6‡¾òo’â7¦r–>[šÚ#––÷–>/¾ò$(€€€€€€€€€€€€ŒƒÒS¦^s¦6×–¶_š"[3¦Z/–/¾ò7¶'š¢g¦î{’æ–>¿¢ãfó¾ò3¦ÿ–4=ƒš&Oš.o–Fó¢"+¢¢+¦ƒš"C¢ª“šr(€€€€€€€€€€€İ•±½µ•}­•åÌ€ô€ ‹¦Z/–,ˆ°€‹š¶‡¢ş8ˆ°€‹¢ª«šb8ˆ°€‹š¶‡¢ş;¢¦xˆ¤(€€€€€€€€€€€¥˜ÍÑÉ¥ÁÁ•¥¸İ•±½µ•}­•åÌ½ÈÍÑÉ¥ÁÁ•¹ÉÍÑÉ¥À ‹¾ò‡¹û¾öx€ˆ¤¥¸İ•±½µ•}­•åÌè(€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹¥¹™¼ (€€€€€€€€€€€€€€€€€€€€‰İ•±½µ”­•åİ½É¡¥ĞÑ•áĞô•ÈÕÍ•Èô•Ìˆ°(€€€€€€€€€€€€€€€€€€€ÍÑÉ¥ÁÁ•‘lèÈÁt°(€€€€€€€€€€€€€€€€€€€€¡±¥¹•}ÕÍ•É}¥½È€ˆˆ¥lèát°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€‘¥ÍÁ±…å}¹…µ”€ôÉ•Í½±Ù•}İ•±½µ•}‘¥ÍÁ±…å}¹…µ” (€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤õ±¥¹•}‰½Ñ}…Á¤°(€€€€€€€€€€€€€€€€€€€‘…Ñ…}™¥±”õ…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥õ±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€±½•Èõ…ÁÀ¹±½•È°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€¥˜±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€€€€€É•¥ÍÑÉ…Ñ¥½¹}É•ÍÕ±Ğ€ôÉ•¥ÍÑ•É}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰‘¥ÍÁ±…å}¹…µ”ˆè‘¥ÍÁ±…å}¹…µ”½È€‰1%9ƒ’öÿR£¢ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€ô°(€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€¥˜}É•Á±å}µ¥É…Ñ•‘}…½Õ¹Ğ (€€€€€€€€€€€€€€€€€€€€€€€€€€€•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°É•¥ÍÑÉ…Ñ¥½¹}É•ÍÕ±Ğ(€€€€€€€€€€€€€€€€€€€€€€€€¤è(€€€€€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰İ•±½µ”­•åİ½ÉÉ•¥ÍÑ•È™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€€€€€}Í•¹‘}İ•±½µ” (€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤°(€€€€€€€€€€€€€€€€€€€É•Á±å}Ñ½­•¸õ•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥õ±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€‘¥ÍÁ±…å}¹…µ”õ‘¥ÍÁ±…å}¹…µ”°(€€€€€€€€€€€€€€€€€€€ÑÉ¥•Èõ˜‰­•åİ½ÉéíÍÑÉ¥ÁÁ•‘lèÈÁuôˆ°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸((€€€€€€€€€€€€Œƒ’â¦6×¦
+¢®/¾òkV—¦81%ƒ–’Ÿš2'¦"W¦‚ƒŠHƒ–nx±•àUI'¾ò!±¥¹”¹µ”½H½Í¡…É—¾ò'nÓš:—¦Z/––÷–>/¦ãšN(€€€€€€€€€€€¥˜ÍÑÉ¥ÁÁ•¥¸€ ‹’â¦6×¦
+¢®,ˆ°€‹’â¦6×¦
+¢®/–º#¢¶ß’êèˆ°€‹¦
+¢®/–º#¢¶ß’êèˆ¤è(€€€€€€€€€€€€€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€€€€€Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞô‹¢®/–#–*ƒ3š¾?š^—–æÏ–º'7
+ë––÷–>/¾ò3–7¦î{’â¦6×¦
+¢®/ˆ¤°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€É•¥ÍÑÉ…Ñ¥½¹}É•ÍÕ±Ğ€ôÉ•¥ÍÑ•É}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€€€€€ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°€‰‘¥ÍÁ±…å}¹…µ”ˆè€‰1%9ƒ’öÿR£¢‰ô°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€¥˜}É•Á±å}µ¥É…Ñ•‘}…½Õ¹Ğ (€€€€€€€€€€€€€€€€€€€€€€€•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°É•¥ÍÑÉ…Ñ¥½¹}É•ÍÕ±Ğ(€€€€€€€€€€€€€€€€€€€€¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰¥¹Ù¥Ñ”­•åİ½ÉÉ•¥ÍÑ•È™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€€€€€¥˜±•áM•¹‘5•ÍÍ…”¥Ì¹½Ğ9½¹”…¹Í¡…É•}¥¹Ù¥Ñ•}™±•à¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€€€€€™±•à€ôÍ¡…É•}¥¹Ù¥Ñ•}™±•à¡±¥¹•}ÕÍ•É}¥¤(€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€€€€€±•áM•¹‘5•ÍÍ…”¡…±Ñ}Ñ•áĞô‹¦
+¢®/–ºÛ’êëVÛ–º#¢¶ß’êë¾ös¦î{šN+–
+ÏÖ›–ºÛ’êèˆ°½¹Ñ•¹ÑÌõ™±•à¤°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€€€€€€Œ™…±±‰…¯¾òkÒSšZ–¶_¦f’â+–:R–"’ê¯ÚË–v (€€€€€€€€€€€€€€€¥˜Õ…É‘¥…¹}¥¹Ù¥Ñ•}Í¡…É•}Ñ•áĞ¥Ì¹½Ğ9½¹”…¹±¥¹•}¹…Ñ¥Ù•}Í¡…É•}ÕÉ°¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€€€€€Í¡…É•}Ñ•áĞ€ôÕ…É‘¥…¹}¥¹Ù¥Ñ•}Í¡…É•}Ñ•áĞ¡±¥¹•}ÕÍ•É}¥¤(€€€€€€€€€€€€€€€€€€€Í¡…É•}ÕÉ¤€ô±¥¹•}¹…Ñ¥Ù•}Í¡…É•}ÕÉ°¡Í¡…É•}Ñ•áĞ¤(€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€€€€€Q•áÑM•¹‘5•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€Ñ•áĞô (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‹¢®/¦î{¦Z/’â/¦v‹¦ÖC¾ò3¦ã’â’ö7–ºÛ’êë–
+Ï¦¦
+¢®/¾òiq¸ˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€˜‰íÍ¡…É•}ÕÉ¥ôˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€€€€€Í¡…É•}Á…”€ô€ (€€€€€€€€€€€€€€€€€€€Í¡…É•}¥¹Ù¥Ñ•}±¥™™}ÕÉ° ¤(€€€€€€€€€€€€€€€€€€€¥˜Í¡…É•}¥¹Ù¥Ñ•}±¥™™}ÕÉ°(€€€€€€€€€€€€€€€€€€€•±Í”€‰¡ÑÑÁÌè¼½±¥™˜¹±¥¹”¹µ”¼ÈÀÄÀàĞàÌÌÀµU¥ÅAAe½±¥™˜½Í¡…É”µ¥¹Ù¥Ñ”¹¡Ñµ°ˆ(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…” (€€€€€€€€€€€€€€€€€€€•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõ˜‹¢®/¦Z/–V¦
+¢®/¦‚–"’ê¯Ö›–ºÛ’êë¾òiq¹íÍ¡…É•}Á…•ôˆ¤°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸((€€€€€€€€€€€€Œƒ¦r¢š–æ¯–şg¾ò?Ş+š—šÆ–*§¾òk¢+–’§–º“–>«–n{ÖÇ’â 1%ƒ–—–>Œ(€€€€€€€€€€€¥˜Í½Í}™±½Ü¥Ì¹½Ğ9½¹”…¹ÍÑÉ¥ÁÁ•¥¸€ (€€€€€€€€€€€€€€€€‹¦r¢š–æ¯–şdˆ°(€€€€€€€€€€€€€€€€‰M=Lˆ°(€€€€€€€€€€€€€€€€‰Í½Ìˆ°(€€€€€€€€€€€€€€€€‹Ş+š—šÆ–*¤ˆ°(€€€€€€€€€€€€€€€€‹¦k~—–ºÛ’êèˆ°(€€€€€€€€€€€€€€€€‹¢¿Ö‡–ºÛ’êë¦š2$Ïš²„ˆ°(€€€€€€€€€€€€€€€€‹¦r¢š–æ¯–şgŠë¢ª4ˆ°(€€€€€€€€€€€€€€€€‰M=LƒŠë¢ª4€Èˆ°(€€€€€€€€€€€€€€€€‰M=LƒŠë¢ª4€Ìˆ°(€€€€€€€€€€€€€€€€‰M=Lƒ–>[šÚ ˆ°(€€€€€€€€€€€€€€€€‹–>[šÚ#¦r¢š–æ¯–şdˆ°(€€€€€€€€€€€€¤è(€€€€€€€€€€€€€€€}Í½Í}¡…¹‘±” (€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤°(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€ÍÑÉ¥ÁÁ•°(€€€€€€€€€€€€€€€€€€€É•Á±å}Ñ½­•¸õ•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€É½ÕÁ}¥õÉ½ÕÁ}¥°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸((€€€€€€€€€€€€Œ€ÈÀÈØ´ÀÜ´ÈÄÁ…Ñ €ÄÜè	=Pƒ.š/š~—¢¦ˆ¡4€¬ƒú“Ö¦÷–>¿R ¤(€€€€€€€€€€€¥˜ÍÑÉ¥ÁÁ•¥¸€ ‰	=Pƒ.š,ˆ°€‰‰½Ğƒ.š,ˆ°€‹š¦–f£’êë.š,ˆ°€‹š¦–f£’êë.šÎˆ¤è(€€€€€€€€€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€€€€€€€€€É½ÕÁÌ€ôÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁÌˆ°íô¤(€€€€€€€€€€€€€€€…Ñ¥Ù•}É½ÕÁÌ€ôÍÕ´ Ä™½Èœ¥¸É½ÕÁÌ¹Ù…±Õ•Ì ¤¥˜œ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰…Ñ¥Ù”ˆ¤(€€€€€€€€€€€€€€€ÕÁÑ¥µ•}Í•Œ€ô€¡‘…Ñ•Ñ¥µ”¹¹½Ü ¤€´…ÁÀ¹}ÍÑ…ÉÑ}Ñ¥µ”¤¹Ñ½Ñ…±}Í•½¹‘Ì ¤(€€€€€€€€€€€€€€€¡½ÕÉÌ€ô¥¹Ğ¡ÕÁÑ¥µ•}Í•Œ€¼¼€ÌØÀÀ¤(€€€€€€€€€€€€€€€µ¥¹ÕÑ•Ì€ô¥¹Ğ ¡ÕÁÑ¥µ•}Í•Œ€”€ÌØÀÀ¤€¼¼€ØÀ¤(€€€€€€€€€€€€€€€ÍÑ…ÑÕÍ}Ñ•áĞ€ô€ (€€€€€€€€€€€€€€€€€€€˜‹Â~’Xƒš"Gšb¿3š¾?š^—–æÏ–º'5qq¸ˆ(€€€€€€€€€€€€€€€€€€€˜‹–Æ³šZó3š¾?š^—–æÏ–º'7¦g–/šr7–.eqq¹qq¸ˆ(€€€€€€€€€€€€€€€€€€€˜‹Šrƒn»–&7–VR£’â´£–ŞË¦ê0í¡½ÕÉÍôƒ–Â?šfíµ¥¹ÕÑ•Íôƒ–"¥qq¸ˆ(€€€€€€€€€€€€€€€€€€€˜‹Â~F”ƒ–ŞË¢¢ï–+’êëšVàéí±•¸¡ÍÑ…Ñ”¹•Ğ ÕÍ•ÉÌœ°íô¤¥õqq¸ˆ(€€€€€€€€€€€€€€€€€€€˜‹Â~n‡¾â<ƒ–º#¢¶ßúéí…Ñ¥Ù•}É½ÕÁÍôƒú“šr'šV#Ú–ºiqq¹qq¸ˆ(€€€€€€€€€€€€€€€€€€€˜‹Â~Rœƒ–>¿R£š2’î£¢¢(¤éqq¸ˆ(€€€€€€€€€€€€€€€€€€€˜‹ŠˆƒÂ÷–"À€¼ƒ–‚Ç–æÏ–º%qq¸ˆ(€€€€€€€€€€€€€€€€€€€˜‹ŠˆƒÚ–ºk–º#¢¶ß’êéqq¸ˆ(€€€€€€€€€€€€€€€€€€€˜‹Šˆƒš~—r/šZçš† €¼ƒš"Gj.š-qq¹qq¸ˆ(€€€€€€€€€€€€€€€€€€€˜‹Â~F”ƒú“Öš2’îë–º#¢¶ßú“.š,€¼ƒÚ–ºk–º#¢¶ßú€¼ƒ’öÿR£¢ª«šb8ˆ(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…”¡•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõÍÑ…ÑÕÍ}Ñ•áĞ¤¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸((€€€€€€€€€€€€Œ€ÈÀÈØ´ÀÜ´ÈÄÁ…Ñ €ÄÄèƒ–º#¢¶ßú“nã¦^p€Ğƒ–,±•àƒš2’î£ú“Ö¦fC–ºh¤(€€€€€€€€€€€¥˜É½ÕÁ}¥è(€€€€€€€€€€€€€€€€Œ€Ä¤ƒÚ–ºk–º#¢¶ßú£’şwVg¢"+š2’î…±¥…Ì¤(€€€€€€€€€€€€€€€¥˜ÍÑÉ¥ÁÁ•¥¸€ ‹¦î{š"GÚ–ºk–º#¢¶ßúˆ°€‹Ú–ºk–º#¢¶ßúˆ°€‹Ú–ºk–æÏ–º'–º#¢¶ß–*§Bˆ¤è(€€€€€€€€€€€€€€€€€€€É•ÍÕ±Ğ°½‘”€ô‰¥¹‘}Õ…É‘¥…¹}É½ÕÀ (€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€€€€€ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°€‰É½ÕÁ}¥ˆèÉ½ÕÁ}¥‘ô°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€¥˜±•áM•¹‘5•ÍÍ…”¥Ì¹½Ğ9½¹”…¹Õ…É‘¥…¹}É½ÕÁ}‰¥¹‘}½¹™¥Éµ}™±•à¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€€€€€€€€€¥˜½‘”€ôô€ÈÀÀè(€€€€€€€€€€€€€€€€€€€€€€€€€€€•¹É¥¡•€ô}•¹É¥¡}‰¥¹‘}É•ÍÕ±Ñ}™½É}™±•à¡É•ÍÕ±Ğ°±¥¹•}ÕÍ•É}¥¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€ÍÕ•ÍÍ}µÍÌ€ôl(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€±•áM•¹‘5•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€…±Ñ}Ñ•áĞô‹Â~N,ƒ–º#¢¶ßú“¢Î¢¢(ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ•¹ÑÌõÕ…É‘¥…¹}É½ÕÁ}‰¥¹‘}½¹™¥Éµ}™±•à¡•¹É¥¡•¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€t(€€€€€€€€€€€€€€€€€€€€€€€€€€€€ŒƒÚ–ºkš"C–*–ú3’â7¢š–s–r£¢Î¢¢+–6‡¾òk–4¹Õ‘”ƒ–º3š"C–º#¢¶ß’êë¾ò?š>C¦K¢¢·–ºh(€€€€€€€€€€€€€€€€€€€€€€€€€€€¥˜¹½ĞÉ•ÍÕ±Ğ¹•Ğ ‰…±É•…‘å}‰½Õ¹ˆ¤è(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¹Õ‘”€ô€ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Õ…É‘¥…¹}É½ÕÁ}Í•ÑÕÁ}¹Õ‘•}Ñ•áĞ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€•¹É¥¡•¹•Ğ ‰Õ…É‘¥…¹}½Õ¹Ğˆ°€À¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€•¹É¥¡•¹•Ğ ‰Õ…É‘¥…¹}±¥µ¥Ğˆ°€Ô¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€•¹É¥¡•¹•Ğ ‰•µ•É•¹å}½Õ¹Ğˆ°€À¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€•¹É¥¡•¹•Ğ ‰•µ•É•¹å}±¥µ¥Ğˆ°€È¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥˜Õ…É‘¥…¹}É½ÕÁ}Í•ÑÕÁ}¹Õ‘•}Ñ•áĞ¥Ì¹½Ğ9½¹”(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€•±Í”€ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‹Â~:$ƒ–º#¢¶ßú“–ŞË–îë®/š"C–*¾òq¸ˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‹–îë¢¶Ã–7–º3š"C¾òkšZÃ–Š{š‚ã–ş–º#¢¶ß’êëŞ+š—¢¿Ö‡’êë¢¢·–ºkš¾?š^—š>C¦Kšf¦ZOˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€ÍÕ•ÍÍ}µÍÌ¹…ÁÁ•¹¡Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõ¹Õ‘”¤¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…”¡•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°ÍÕ•ÍÍ}µÍÌ¤(€€€€€€€€€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€€€€€€€€É•…Í½¸€ôÉ•ÍÕ±Ğ¹•Ğ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰É•Á±å}Ñ•áĞˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‹¦g–/ú“Ön»–&7‡šÎW–VR£–º#¢¶ß–*¢ô³¢®/šª‹š~”€Üääƒ¢¢¦ZÇ.š/š"[RÇ–:–îë®/¢šN7’öpˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€±•áM•¹‘5•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€…±Ñ}Ñ•áĞô‹Šv0ƒ‡šÎWÚ–ºkš¶“úˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ•¹ÑÌõÕ…É‘¥…¹}É½ÕÁ}‰¥¹‘}™…¥±}™±•à¡É•…Í½¸¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€€€€€Œ™…±±‰…¬ƒÒSšZ–¶_¾òkš"C–*–n{¢š–në–ºk3š"G–ŞË–º3š"C–º#¢¶ßú“¢¢·–ºk4(€€€€€€€€€€€€€€€€€€€€€€€¥˜½‘”€ôô€ÈÀÀè(€€€€€€€€€€€€€€€€€€€€€€€€€€€É•Á±å}Ñ•áĞ€ô€ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‹š"G–ŞË–º3š"C–º#¢¶ßú“¢¢·–ºiq¸ˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€˜‹n»–&7–ŞËÚ–ºhíÉ•ÍÕ±Ğ¹•Ğ Õ…É‘¥…¹}É½ÕÁ}½Õ¹Ğœ°€Ä¥ô¼ˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€˜‰íÉ•ÍÕ±Ğ¹•Ğ Õ…É‘¥…¹}É½ÕÁ}±¥µ¥Ğœ°€Ì¥ôƒ–/ú“Öˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€¥˜¹½ĞÉ•ÍÕ±Ğ¹•Ğ ‰…±É•…‘å}‰½Õ¹ˆ¤…¹Õ…É‘¥…¹}É½ÕÁ}Í•ÑÕÁ}¹Õ‘•}Ñ•áĞ¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€•¹É¥¡•€ô}•¹É¥¡}‰¥¹‘}É•ÍÕ±Ñ}™½É}™±•à¡É•ÍÕ±Ğ°±¥¹•}ÕÍ•É}¥¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€É•Á±å}Ñ•áĞ€ô€ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€É•Á±å}Ñ•áĞ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¬€‰q¹q¸ˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¬Õ…É‘¥…¹}É½ÕÁ}Í•ÑÕÁ}¹Õ‘•}Ñ•áĞ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€•¹É¥¡•¹•Ğ ‰Õ…É‘¥…¹}½Õ¹Ğˆ°€À¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€•¹É¥¡•¹•Ğ ‰Õ…É‘¥…¹}±¥µ¥Ğˆ°€Ô¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€•¹É¥¡•¹•Ğ ‰•µ•É•¹å}½Õ¹Ğˆ°€À¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€•¹É¥¡•¹•Ğ ‰•µ•É•¹å}±¥µ¥Ğˆ°€È¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€•±¥˜É•ÍÕ±Ğ¹•Ğ ‰Í¡½Õ±‘}±•…Ù”ˆ¤è(€€€€€€€€€€€€€€€€€€€€€€€€€€€É•Á±å}Ñ•áĞ€ô€ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‹¦g–/ú“Ön»–&7‡šÎW–VR£–º#¢¶ß–*¢÷–º#¢¶ßú“¦fCšr'šV#j€Üääƒšr#¢Êïš"[–æÓ¢Êïšr–N‡–îë®/¾òošr#¢Êïšr–’h€Äƒú“¾ò3–æÓ¢Êïšr–’h€Ìƒú“	q¸ˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€‹¢®/–#–º3š"C–6Òk¾ò3–7¦7šZÃ¦
+¢®/3š¾?š^—–æÏ–º'7¾òoš"G>û–r£šr¦–ëú“Öˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€€€€€€€€É•Á±å}Ñ•áĞ€ô€‹¦g–/ú“Ö–ŞËÚ–ºk–Û’î[šr–N‡¾ò3¢®/RÇ–:–îë®/¢º‡B–º#¢¶ß¢¢·–ºkˆ(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…”¡•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõÉ•Á±å}Ñ•áĞ¤¤(€€€€€€€€€€€€€€€€€€€¥˜É•ÍÕ±Ğ¹•Ğ ‰Í¡½Õ±‘}±•…Ù”ˆ¤è(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹±•…Ù•}É½ÕÀ¡É½ÕÁ}¥¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸((€€€€€€€€€€€€€€€€Œ€È¤ƒ–º#¢¶ßú“.š/¾ò#–B¯3š~—r/–º#¢¶ßú“¾ò?š~—r/–º#¢¶ßú“.š/7š2'¦"W–"—–B7¾ò$(€€€€€€€€€€€€€€€¥˜ÍÑÉ¥ÁÁ•¥¸€ ‹–º#¢¶ßú“.š,ˆ°€‹ú“.š,ˆ°€‹.š,ˆ°€‹š~—r/–º#¢¶ßúˆ°€‹š~—r/–º#¢¶ßú“.š,ˆ¤è(€€€€€€€€€€€€€€€€€€€€Œƒš~—¢¦‹–&7–#–"ßšZÃšr³ú“š"C–N‡šVã¾ò3¦ÿ–7’î7¦†¿’ëÚ–ºkVÛ’â/j¢"+–ş¯œ(€€€€€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€€€€€É•™É•Í¡}Õ…É‘¥…¹}É½ÕÁ}µ•µ‰•É}Í¹…ÁÍ¡½Ğ (€€€€€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°É½ÕÁ}¥(€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰ÍÑ…ÑÕÌµ•µ‰•ÈÍ¹…ÁÍ¡½ĞÉ•™É•Í ™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€€€€€€€€€€€€€ÁÉ½™¥±”€ô•Ñ}ÁÉ½™¥±”¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥¤½Èíô(€€€€€€€€€€€€€€€€€€€¥˜±•áM•¹‘5•ÍÍ…”¥Ì¹½Ğ9½¹”…¹Õ…É‘¥…¹}É½ÕÁ}ÍÑ…ÑÕÍ}™±•à¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€€€€€€€€€±•áM•¹‘5•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€…±Ñ}Ñ•áĞô‹–º#¢¶ßú“.š/¾ò#ú“Öš"C–N‡šVã¾ò$ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ•¹ÑÌõÕ…É‘¥…¹}É½ÕÁ}ÍÑ…ÑÕÍ}™±•à¡ÁÉ½™¥±”°ÍÑ…Ñ”¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€€€€É•Á±å}Ñ•áĞ€ô˜‹–º#¢¶ßú“šVã¦?¾òií±•¸¡ÁÉ½™¥±”¹•Ğ Õ…É‘¥…¹}É½ÕÁ}¥‘Ìœ¤½Èmt¥ôˆ(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…”¡•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõÉ•Á±å}Ñ•áĞ¤¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸((€€€€€€€€€€€€€€€€Œ€È´Ä¤ƒ’î+š^—–æÏ–º'–B7–Z»¾òk–>«šr'ú“Ö–îë®/¢¿º‡B–N‡–>¿r/¢¦ÏÒÃ¢ÎšZd(€€€€€€€€€€€€€€€¥˜ÍÑÉ¥ÁÁ•¥¸%1e}I=MQI}-e]=ILè(€€€€€€€€€€€€€€€€€€€É•Á±å}Ñ•áĞ°}ÍÑ…ÑÕÌ€ôÕ…É‘¥…¹}É½ÕÁ}‘…¥±å}ÍÑ…ÑÕÍ}Ñ•áĞ (€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°É½ÕÁ}¥(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…”¡•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõÉ•Á±å}Ñ•áĞ¤¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸((€€€€€€€€€€€€€€€€Œ€Ì¤ƒ’öÿR£¢ª«šb8€¼ƒ’öÿR£¢¢ª«šb8(€€€€€€€€€€€€€€€¥˜ÍÑÉ¥ÁÁ•¥¸€ ‹’öÿR£¢ª«šb8ˆ°€‹’öÿR£¢¢ª«šb8ˆ°€‹šVg–¶àˆ°€‹š;¦êóR ˆ¤è(€€€€€€€€€€€€€€€€€€€¥˜±•áM•¹‘5•ÍÍ…”¥Ì¹½Ğ9½¹”…¹Õ…É‘¥…¹}É½ÕÁ}ÕÍ•É}Õ¥‘•}™±•à¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€€€€€€€€€±•áM•¹‘5•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€…±Ñ}Ñ•áĞô‹Â~NXƒ–º#¢¶ßú“’öÿR£¢ª«šb8ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ•¹ÑÌõÕ…É‘¥…¹}É½ÕÁ}ÕÍ•É}Õ¥‘•}™±•à ¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€€€€€€€€€Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞô‹’öÿR£¢ª«šb8èÄ»–6Òh€ÜääƒŠH€È»–îëúƒŠH€Ì»¦
+3š¾?š^—–æÏ–º'7¦ËúƒŠH€Ğ»¦î{3Ú–ºk–º#¢¶ßú“7¾ò#–6Òk¾ò?Ú–ºk–ú3¢«–.Wš"C
+ë–º#¢¶ßú“º‡B–N‡¾ò$ˆ¤°(€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸((€€€€€€€€€€€€€€€€Œ€Ğ¤ƒº‡B–N‡¢¢·–ºh€¼ƒš;¦êó¢¢·º‡B–N„€¼ƒú“Ö¢¢·–ºh(€€€€€€€€€€€€€€€¥˜ÍÑÉ¥ÁÁ•¥¸€ ‹º‡B–N‡¢¢·–ºhˆ°€‹¢¢·º‡B–N„ˆ°€‹š;¦êó¢¢·º‡B–N„ˆ°€ˆÛš¶—¦¦|ˆ°€‹ú“Ö¢¢·–ºhˆ¤è(€€€€€€€€€€€€€€€€€€€¥˜±•áM•¹‘5•ÍÍ…”¥Ì¹½Ğ9½¹”…¹Õ…É‘¥…¹}É½ÕÁ}…‘µ¥¹}Í•ÑÕÁ}™±•à¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€€€€€€€€€±•áM•¹‘5•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€…±Ñ}Ñ•áĞô‹Šjg¾â<ƒ¢¢·–ºk3š¾?š^—–æÏ–º'7
+ëº‡B–N„€Øƒš¶—¦¦|ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ•¹ÑÌõÕ…É‘¥…¹}É½ÕÁ}…‘µ¥¹}Í•ÑÕÁ}™±•à ¤°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€€€€€€€€€Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞô‹º‡B–N‡¢¢·–ºh€Øƒš¶—¦¦|èÄ»ú“–>Ï’â+3Š&‡7ŠH€È»¦ãš"C–N„ƒŠH€Ì»¦Vßš2'3š¾?š^—–æÏ–º'4ƒŠH€Ğ»¢¢·
+ëº‡B–N„ƒŠH€Ô»Šë–ºhƒŠH€Ø»–º3š"@ˆ¤°(€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸((€€€€€€€€€€€€€€€€Œƒšr«²›–B#’â+¢şÃšb;Šëš2’î“¾òkú“¢+’şwš2–º'¦vs¾ò3¦ÿ–7š&OšNû–ºÛ’êë–Â7¢¦Ç(€€€€€€€€€€€€€€€€Œ1%9=ƒ–ú3–>Ãj¢«–.W–n{š'’æš'¦^s¦Z'¾ò3–B›–&’î7–>¿¢÷RÇ–ú3–>Ã–>›–’[–n{šZ–¶_(€€€€€€€€€€€€€€€¥˜É½ÕÁ}¥è(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸((€€€€€€€€€€€€Œƒ¢¢+¾òkº‡B–N‡–>¿š~—3’î+–’§¢ªÃ¦
+šÊK–‚Ç–æÏ–º'7¾ò#’â7¦r¦Z/ú“Öš>C¦K¾ò$(€€€€€€€€€€€¥˜¹½ĞÉ½ÕÁ}¥…¹ÍÑÉ¥ÁÁ•¥¸%1e}I=MQI}-e]=ILè(€€€€€€€€€€€€€€€É•Á±å}Ñ•áĞ°}ÍÑ…ÑÕÌ€ô½İ¹•É}Ñ½‘…å}Í…™•Ñå}É½ÍÑ•É}Ñ•áĞ (€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°½¹™¥œõ…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…”¡•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõÉ•Á±å}Ñ•áĞ¤¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸((€€€€€€€€€€€ÍÑ…ÑÕÌ€ô9½¹”(€€€€€€€€€€€¥˜…¹ä¡­•åİ½É¥¸Ñ•áĞ™½È­•åİ½É¥¸!-%9}-e]=IL¤è(€€€€€€€€€€€€€€€ÍÑ…ÑÕÌ€ôÉ•½É‘}¡•­¥¸ (€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥‘ô°(€€€€€€€€€€€€€€€€€€€½¹™¥œõ…ÁÀ¹½¹™¥œ°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€É•Á±å}¥Ñ•µÌ€ô¹½Éµ…±¥é•}±¥¹•}É•Á±å}¥Ñ•µÌ (€€€€€€€€€€€€€€€€€€€‰Õ¥±‘}¡•­¥¹}ÍÕ•ÍÍ}Ñ•áĞ¡ÍÑ…ÑÕÌ°½¹™¥œõ…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€€€€€€€€€ÁÉ½™¥±”€ô•Ñ}ÁÉ½™¥±”¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥¤(€€€€€€€€€€€€€€€É•Á±å}¥Ñ•µÌ€ôµ…å‰•}…ÑÑ…¡}•áÁ¥Éå}É•µ¥¹ (€€€€€€€€€€€€€€€€€€€É•Á±å}¥Ñ•µÌ°(€€€€€€€€€€€€€€€€€€€ÁÉ½™¥±”°(€€€€€€€€€€€€€€€€€€€¹½ÜõÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡…ÁÀ¹½¹™¥œ¤°(€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”õÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€‘…Ñ…}™¥±”õ…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€µ•ÍÍ…•Ì€ômt(€€€€€€€€€€€€€€€™½È¥Ñ•´¥¸É•Á±å}¥Ñ•µÌè(€€€€€€€€€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡¥Ñ•´°‘¥Ğ¤…¹¥Ñ•´¹•Ğ ‰ÑåÁ”ˆ¤€ôô€‰™±•àˆè(€€€€€€€€€€€€€€€€€€€€€€€¥˜±•áM•¹‘5•ÍÍ…”¥Ì¹½Ğ9½¹”è(€€€€€€€€€€€€€€€€€€€€€€€€€€€µ•ÍÍ…•Ì¹…ÁÁ•¹ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€±•áM•¹‘5•ÍÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€…±Ñ}Ñ•áĞõÍÑÈ¡¥Ñ•´¹•Ğ ‰…±ÑQ•áĞˆ¤½È€‹šZçš†#š>C¦Hˆ¥lèĞÀÁt°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€½¹Ñ•¹ÑÌõ¥Ñ•´¹•Ğ ‰½¹Ñ•¹ÑÌˆ¤½Èíô°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€€€€€€€€µ•ÍÍ…•Ì¹…ÁÁ•¹ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõÍÑÈ¡¥Ñ•´¹•Ğ ‰…±ÑQ•áĞˆ¤½È€‹šZçš†#š>C¦Hˆ¤¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€€€€µ•ÍÍ…•Ì¹…ÁÁ•¹¡Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõÍÑÈ¡¥Ñ•´¤¤¤(€€€€€€€€€€€€€€€¥˜Í¡½Õ±‘}É•…Ñ•}ÍÕÁÁ½ÉÑ}Ñ¥­•Ğ¡Ñ•áĞ¤è(€€€€€€€€€€€€€€€€€€€É•…Ñ•}ÍÕÁÁ½ÉÑ}Ñ¥­•Ğ (€€€€€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰µ•ÍÍ…”ˆèÑ•áĞ°(€€€€€€€€€€€€€€€€€€€€€€€ô°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€¥˜µ•ÍÍ…•Ìè(€€€€€€€€€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…”¡•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°µ•ÍÍ…•Ì¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€•±¥˜…¹ä¡­•åİ½É¥¸Ñ•áĞ™½È­•åİ½É¥¸MQQUM}-e]=IL¤è(€€€€€€€€€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€€€€€€€€€ÍÑ…ÑÕÌ€ô‰Õ¥±‘}ÍÑ…ÑÕÌ¡•Ñ}ÁÉ½™¥±”¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥¤¤(€€€€€€€€€€€¥˜Í¡½Õ±‘}É•…Ñ•}ÍÕÁÁ½ÉÑ}Ñ¥­•Ğ¡Ñ•áĞ¤è(€€€€€€€€€€€€€€€É•…Ñ•}ÍÕÁÁ½ÉÑ}Ñ¥­•Ğ (€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€€€€€‰µ•ÍÍ…”ˆèÑ•áĞ°(€€€€€€€€€€€€€€€€€€€ô°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€É•Á±å}Ñ•áĞ€ô€ (€€€€€€€€€€€€€€€€€€€€‹’öƒj–V?¦†3–ŞËÚO¢¢c¦2’â/’úˆ(€€€€€€€€€€€€€€€€€€€€‹Â~N¤1%9ƒVg¢¢ €ÈĞƒ–Â?šf–Ÿn‡–ş¯–n{¢šˆ(€€€€€€€€€€€€€€€€€€€€‹¢.—šb¿®/–6Ï–6Ç¦j«¾ò3¢®/–#šJ—š&L€ÄÄçˆ(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€É•Á±å}Ñ•áĞ€ô±¥¹•}…ÕÑ½}É•Á±å}Ñ•áĞ¡Ñ•áĞ°ÍÑ…ÑÕÌ¤(€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹É•Á±å}µ•ÍÍ…”¡•Ù•¹Ğ¹É•Á±å}Ñ½­•¸°Q•áÑM•¹‘5•ÍÍ…”¡Ñ•áĞõÉ•Á±å}Ñ•áĞ¤¤((€€€€€€€Í¥¹…ÑÕÉ”€ôÉ•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹•Ğ ‰`µ1¥¹”µM¥¹…ÑÕÉ”ˆ°€ˆˆ¤(€€€€€€€€ŒUÍ”É…Ü‰åÑ•ÌÑ¡•¸‘•½‘”Í¼!5µ…Ñ¡•Ì1%9ÌÍ¥¹•‰½‘ä•á…Ñ±ä(€€€€€€€‰½‘å}‰åÑ•Ì€ôÉ•ÅÕ•ÍĞ¹•Ñ}‘…Ñ„¡…¡”õQÉÕ”°…Í}Ñ•áĞõ…±Í”¤½Èˆˆˆ(€€€€€€€ÑÉäè(€€€€€€€€€€€‰½‘ä€ô‰½‘å}‰åÑ•Ì¹‘•½‘” ‰ÕÑ˜´àˆ¤(€€€€€€€•á•ÁĞU¹¥½‘••½‘•ÉÉ½Èè(€€€€€€€€€€€€Œ1%9½¹Í½±”Y•É¥™äµÕÍĞ¹•Ù•ÈÍ•”¹½¸´ÈÀÀ(€€€€€€€€€€€…ÁÀ¹±½•È¹•ÉÉ½È ‰…±±‰…¬‰½‘ä¹½ĞÕÑ˜´à±•¸ô•Ìˆ°±•¸¡‰½‘å}‰åÑ•Ì¤¤(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆèQÉÕ”°€‰Ù•É¥™äˆèQÉÕ•ô¤((€€€€€€€€ŒM½™Ğµ…•ÁĞè•µÁÑä€¼¹¼µ•Ù•¹ÑÌÁ…å±½…‘Ì…±İ…åÌ€ÈÀÀ€¡1%9Y•É¥™ä‰ÕÑÑ½¸¤(€€€€€€€ÍÑÉ¥ÁÁ•€ô€¡‰½‘ä½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€¥˜¹½ĞÍÑÉ¥ÁÁ•è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆèQÉÕ”°€‰Ù•É¥™äˆèQÉÕ•ô¤(€€€€€€€ÑÉäè(€€€€€€€€€€€ÁÉ½‰”€ô©Í½¸¹±½…‘Ì¡ÍÑÉ¥ÁÁ•¤(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡ÁÉ½‰”°‘¥Ğ¤…¹¹½Ğ€¡ÁÉ½‰”¹•Ğ ‰•Ù•¹ÑÌˆ¤½Èmt¤è(€€€€€€€€€€€€€€€€ŒMÑ¥±°ÉÕ¸¡…¹‘±•Èİ¡•¸Í¥¹…ÑÕÉ”¥ÌÙ…±¥ì½¸µ¥Íµ…Ñ É•ÑÕÉ¸€ÈÀÀ(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€¡…¹‘±•È¹¡…¹‘±”¡‰½‘ä°Í¥¹…ÑÕÉ”¤(€€€€€€€€€€€€€€€•á•ÁĞ%¹Ù…±¥‘M¥¹…ÑÕÉ•ÉÉ½Èè(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹İ…É¹¥¹œ (€€€€€€€€€€€€€€€€€€€€€€€€‰1%9Ù•É¥™ä½•µÁÑä•Ù•¹ÑÌ‰…Í¥¹…ÑÕÉ”‰½‘å}±•¸ô•ÌÍ•É•Ñ}±•¸ô•Ìˆ°(€€€€€€€€€€€€€€€€€€€€€€€±•¸¡‰½‘å}‰åÑ•Ì¤°(€€€€€€€€€€€€€€€€€€€€€€€±•¸¡Í•É•Ğ½È€ˆˆ¤°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè€€Œ¹½Å„è	1ÀÀÄ(€€€€€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹İ…É¹¥¹œ ‰1%9Ù•É¥™ä½•µÁÑä¡…¹‘±”Í­¥Àè€•Ìˆ°ÑåÁ”¡•áŒ¤¹}}¹…µ•}|¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆèQÉÕ”°€‰Ù•É¥™äˆèQÉÕ•ô¤(€€€€€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€€€€€Á…ÍÌ((€€€€€€€ÑÉäè(€€€€€€€€€€€¡…¹‘±•È¹¡…¹‘±”¡‰½‘ä°Í¥¹…ÑÕÉ”¤(€€€€€€€•á•ÁĞ%¹Ù…±¥‘M¥¹…ÑÕÉ•ÉÉ½Èè(€€€€€€€€€€€€Œ1%9‘½Ìè…±İ…åÌÉ•ÑÕÉ¸€ÈÀÀÑ¼Ñ¡”Á±…Ñ™½É´ì‘¼¹½ĞÁÉ½•ÍÌ‰…µÍ¥œ•Ù•¹ÑÌ(€€€€€€€€€€€…ÁÀ¹±½•È¹İ…É¹¥¹œ (€€€€€€€€€€€€€€€€‰¥¹Ù…±¥1%9Í¥¹…ÑÕÉ”¥¹½É•‰½‘å}±•¸ô•ÌÍ¥}±•¸ô•ÌÍ•É•Ñ}±•¸ô•Ìˆ°(€€€€€€€€€€€€€€€±•¸¡‰½‘å}‰åÑ•Ì¤°(€€€€€€€€€€€€€€€±•¸¡Í¥¹…ÑÕÉ”½È€ˆˆ¤°(€€€€€€€€€€€€€€€±•¸¡Í•É•Ğ½È€ˆˆ¤°(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆèQÉÕ”°€‰Í¥¹…ÑÕÉ”ˆè€‰¥¹½É•‰ô¤(€€€€€€€•á•ÁĞ1¥¹•	½ÑÁ¥ÉÉ½È…Ì•áŒè(€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰…±±‰…¬1¥¹•	½ÑÁ¥ÉÉ½Èè€•Ìˆ°•áŒ¤(€€€€€€€€€€€€ŒMÑ¥±°€ÈÀÀÍ¼1%9‘½•Ì¹½Ğ‘¥Í…‰±”İ•‰¡½½¬€¼™…¥°Y•É¥™äµ±¥­”ÁÉ½‰•Ì(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆèQÉÕ”°€‰±¥¹•}…Á¥}•ÉÉ½ÈˆèQÉÕ•ô¤(€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè€€Œ¹½Å„è	1ÀÀÄ(€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰…±±‰…¬Õ¹•áÁ•Ñ•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆèQÉÕ”°€‰•ÉÉ½É}¥¹½É•ˆèQÉÕ•ô¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆèQÉÕ•ô¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½İ…É¹¥¹œ½…¹•°ˆ¤(€€€‘•˜İ…É¹¥¹}…¹•±}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡…¹•±}İ…É¹¥¹œ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°…ÁÀ¹½¹™¥œ¤¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Í•ÑÑ¥¹Ìˆ¤(€€€‘•˜Í•ÑÑ¥¹Ì ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡Í…Ù•}Í•ÑÑ¥¹Í}™½É}ÁÉ½™¥±”¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½‰¥±±¥¹œ½ÁÉ•™•É•¹•Ìˆ¤(€€€‘•˜‰¥±±¥¹}ÁÉ•™•É•¹•Í}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ôÍ…Ù•}‰¥±±¥¹}ÁÉ•™•É•¹•Ì¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½‰¥±±¥¹œ½…¹•°ˆ¤(€€€‘•˜‰¥±±¥¹}…¹•±}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ô…¹•±}É•ÕÉÉ¥¹}ÍÕ‰ÍÉ¥ÁÑ¥½¸ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°…ÁÀ¹½¹™¥œ(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Á…åµ•¹ÑÌ½½É‘•ÉÌˆ¤(€€€‘•˜Á…åµ•¹Ñ}½É‘•ÉÍ}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ôÉ•…Ñ•}Á…åµ•¹Ñ}½É‘•È¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½İ•‰¡½½¬½¹•İ•‰Á…äˆ¤(€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Á…åµ•¹Ğ½¹•İ•‰Á…ä½¹½Ñ¥™äˆ¤(€€€‘•˜¹•İ•‰Á…å}İ•‰¡½½¬ ¤è(€€€€€€€€ˆˆ‹¢^7šZÀ9½Ñ¥™åUI0ƒŠPƒ¦¦_Â÷–ú3¢«–.W¦Z/¦kšZçš†#¾ò#–«¶$½¹™¥É·¾ò'((€€€€€€€ƒ–§–/¢Ş¿–úG¶'šV#¾ò3šN’â–†¯–—–V–ê_–ú3–>Ã–6Ï–>¿¾òh(€€€€€€€€´€½…Á¤½Á…åµ•¹Ğ½¹•İ•‰Á…ä½¹½Ñ¥™ç¾ò!¡•­½ÕĞƒ¦‚C¢¢·¾ò$(€€€€€€€€´€½İ•‰¡½½¬½¹•İ•‰Á…ä(€€€€€€€ƒš"C–*šf–n{–
+ÏÒSšZ–¶\MUMO¾ò#¢^7šZÃ–?––÷¾ò'(€€€€€€€€ˆˆˆ(€€€€€€€™½É´€ôÉ•ÅÕ•ÍĞ¹™½É´¹Ñ½}‘¥Ğ ¤¥˜É•ÅÕ•ÍĞ¹™½É´•±Í”€¡É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô¤(€€€€€€€¥˜¹•İ•‰Á…ä¥Ì9½¹”è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰¹•İ•‰Á…äµ½‘Õ±”µ¥ÍÍ¥¹œ‰ô¤°€ÔÀÌ(€€€€€€€Á…ÉÍ•°•ÉÉ½È€ô¹•İ•‰Á…ä¹Á…ÉÍ•}¹½Ñ¥™å}Á…å±½…¡™½É´°…ÁÀ¹½¹™¥œ¤(€€€€€€€¥˜•ÉÉ½Èè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè•ÉÉ½Éô¤°€ĞÀÀ(€€€€€€€¥˜¹½Ğ¹•İ•‰Á…ä¹¹½Ñ¥™å}ÍÕ•ÍÌ¡Á…ÉÍ•¤è(€€€€€€€€€€€É•ÑÕÉ¸I•ÍÁ½¹Í” ‰MUMLˆ°µ¥µ•ÑåÁ”ô‰Ñ•áĞ½Á±…¥¸ˆ¤°€ÈÀÀ(€€€€€€€‘…Ñ„°½‘”€ô½¹™¥Éµ}Á…åµ•¹Ñ}½É‘•È (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€‰½É‘•É}¥ˆèÁ…ÉÍ•¹•Ğ ‰½É‘•É}¥ˆ¤°(€€€€€€€€€€€€€€€€‰ÑÉ…¹Í…Ñ¥½¹}¥ˆèÁ…ÉÍ•¹•Ğ ‰ÑÉ…¹Í…Ñ¥½¹}¥ˆ¤°(€€€€€€€€€€€€€€€€‰…µ½Õ¹ĞˆèÁ…ÉÍ•¹•Ğ ‰…µ½Õ¹Ğˆ¤°(€€€€€€€€€€€€€€€€‰ÁÉ½Ù¥‘•Èˆè€‰¹•İ•‰Á…äˆ°(€€€€€€€€€€€ô°(€€€€€€€€€€€…ÁÀ¹½¹™¥œ°(€€€€€€€€¤(€€€€€€€¥˜½‘”€øô€ĞÀÀè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”(€€€€€€€É•ÑÕÉ¸I•ÍÁ½¹Í” ‰MUMLˆ°µ¥µ•ÑåÁ”ô‰Ñ•áĞ½Á±…¥¸ˆ¤°€ÈÀÀ((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Á…åµ•¹Ğ½•Á…ä½¹½Ñ¥™äˆ¤(€€€‘•˜•Á…å}İ•‰¡½½¬ ¤è(€€€€€€€™½É´€ôÉ•ÅÕ•ÍĞ¹™½É´¹Ñ½}‘¥Ğ ¤¥˜É•ÅÕ•ÍĞ¹™½É´•±Í”€¡É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô¤(€€€€€€€¥˜•Á…ä¥Ì9½¹”è(€€€€€€€€€€€É•ÑÕÉ¸I•ÍÁ½¹Í” ˆÁñÁ…åµ•¹Ğµ½‘Õ±”µ¥ÍÍ¥¹œˆ°µ¥µ•ÑåÁ”ô‰Ñ•áĞ½Á±…¥¸ˆ¤°€ÔÀÌ(€€€€€€€Á…ÉÍ•°•ÉÉ½È€ô•Á…ä¹Á…ÉÍ•}¹½Ñ¥™å}Á…å±½…¡™½É´°…ÁÀ¹½¹™¥œ¤(€€€€€€€¥˜•ÉÉ½Èè(€€€€€€€€€€€É•ÑÕÉ¸I•ÍÁ½¹Í”¡˜ˆÁñí•ÉÉ½Éôˆ°µ¥µ•ÑåÁ”ô‰Ñ•áĞ½Á±…¥¸ˆ¤°€ĞÀÀ(€€€€€€€¥˜¹½Ğ•Á…ä¹¹½Ñ¥™å}ÍÕ•ÍÌ¡Á…ÉÍ•°…ÁÀ¹½¹™¥œ¤è(€€€€€€€€€€€É•ÑÕÉ¸I•ÍÁ½¹Í” ˆÅñ=,ˆ°µ¥µ•ÑåÁ”ô‰Ñ•áĞ½Á±…¥¸ˆ¤°€ÈÀÀ(€€€€€€€‘…Ñ„°½‘”€ô½¹™¥Éµ}Á…åµ•¹Ñ}½É‘•È (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€‰½É‘•É}¥ˆèÁ…ÉÍ•¹•Ğ ‰½É‘•É}¥ˆ¤°(€€€€€€€€€€€€€€€€‰ÑÉ…¹Í…Ñ¥½¹}¥ˆèÁ…ÉÍ•¹•Ğ ‰ÑÉ…¹Í…Ñ¥½¹}¥ˆ¤°(€€€€€€€€€€€€€€€€‰…µ½Õ¹ĞˆèÁ…ÉÍ•¹•Ğ ‰…µ½Õ¹Ğˆ¤°(€€€€€€€€€€€€€€€€‰ÁÉ½Ù¥‘•Èˆè€‰•Á…äˆ°(€€€€€€€€€€€ô°(€€€€€€€€€€€…ÁÀ¹½¹™¥œ°(€€€€€€€€¤(€€€€€€€¥˜½‘”€øô€ĞÀÀè(€€€€€€€€€€€É•ÑÕÉ¸I•ÍÁ½¹Í”¡˜ˆÁñí‘…Ñ„¹•Ğ •ÉÉ½Èœ°€½É‘•ÈÕÁ‘…Ñ”™…¥±•œ¥ôˆ°µ¥µ•ÑåÁ”ô‰Ñ•áĞ½Á±…¥¸ˆ¤°½‘”(€€€€€€€É•ÑÕÉ¸I•ÍÁ½¹Í” ˆÅñ=,ˆ°µ¥µ•ÑåÁ”ô‰Ñ•áĞ½Á±…¥¸ˆ¤°€ÈÀÀ((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Á…åµ•¹Ğ½•Á…ä½Á•É¥½µ¹½Ñ¥™äˆ¤(€€€‘•˜•Á…å}Á•É¥½‘}İ•‰¡½½¬ ¤è(€€€€€€€™½É´€ôÉ•ÅÕ•ÍĞ¹™½É´¹Ñ½}‘¥Ğ ¤¥˜É•ÅÕ•ÍĞ¹™½É´•±Í”€¡É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô¤(€€€€€€€¥˜•Á…ä¥Ì9½¹”è(€€€€€€€€€€€É•ÑÕÉ¸I•ÍÁ½¹Í” ˆÁñÁ…åµ•¹Ğµ½‘Õ±”µ¥ÍÍ¥¹œˆ°µ¥µ•ÑåÁ”ô‰Ñ•áĞ½Á±…¥¸ˆ¤°€ÔÀÌ(€€€€€€€Á…ÉÍ•°•ÉÉ½È€ô•Á…ä¹Á…ÉÍ•}¹½Ñ¥™å}Á…å±½…¡™½É´°…ÁÀ¹½¹™¥œ¤(€€€€€€€¥˜•ÉÉ½Èè(€€€€€€€€€€€É•ÑÕÉ¸I•ÍÁ½¹Í”¡˜ˆÁñí•ÉÉ½Éôˆ°µ¥µ•ÑåÁ”ô‰Ñ•áĞ½Á±…¥¸ˆ¤°€ĞÀÀ(€€€€€€€¥˜¹½Ğ•Á…ä¹¹½Ñ¥™å}ÍÕ•ÍÌ¡Á…ÉÍ•°…ÁÀ¹½¹™¥œ¤è(€€€€€€€€€€€É•ÑÕÉ¸I•ÍÁ½¹Í” ˆÅñ=,ˆ°µ¥µ•ÑåÁ”ô‰Ñ•áĞ½Á±…¥¸ˆ¤°€ÈÀÀ(€€€€€€€Á…ÉÍ•¹ÕÁ‘…Ñ”¡ì‰ÍÑ…ÑÕÌˆè€‰MUMLˆ°€‰ÁÉ½Ù¥‘•Èˆè€‰•Á…ä‰ô¤(€€€€€€€‘…Ñ„°½‘”€ôÁÉ½•ÍÍ}Á•É¥½‘}¹½Ñ¥™¥…Ñ¥½¸ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…ÉÍ•°…ÁÀ¹½¹™¥œ(€€€€€€€€¤(€€€€€€€¥˜½‘”€øô€ĞÀÀè(€€€€€€€€€€€É•ÑÕÉ¸I•ÍÁ½¹Í”¡˜ˆÁñí‘…Ñ„¹•Ğ •ÉÉ½Èœ°€½É‘•ÈÕÁ‘…Ñ”™…¥±•œ¥ôˆ°µ¥µ•ÑåÁ”ô‰Ñ•áĞ½Á±…¥¸ˆ¤°½‘”(€€€€€€€É•ÑÕÉ¸I•ÍÁ½¹Í” ˆÅñ=,ˆ°µ¥µ•ÑåÁ”ô‰Ñ•áĞ½Á±…¥¸ˆ¤°€ÈÀÀ((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Á…åµ•¹Ğ½¹•İ•‰Á…ä½Á•É¥½µ¹½Ñ¥™äˆ¤(€€€‘•˜¹•İ•‰Á…å}Á•É¥½‘}İ•‰¡½½¬ ¤è(€€€€€€€™½É´€ôÉ•ÅÕ•ÍĞ¹™½É´¹Ñ½}‘¥Ğ ¤¥˜É•ÅÕ•ÍĞ¹™½É´•±Í”€¡É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô¤(€€€€€€€¥˜¹•İ•‰Á…ä¥Ì9½¹”è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰¹•İ•‰Á…äµ½‘Õ±”µ¥ÍÍ¥¹œ‰ô¤°€ÔÀÌ(€€€€€€€Á…ÉÍ•°•ÉÉ½È€ô¹•İ•‰Á…ä¹Á…ÉÍ•}Á•É¥½‘}Á…å±½…¡™½É´°…ÁÀ¹½¹™¥œ¤(€€€€€€€¥˜•ÉÉ½Èè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè•ÉÉ½Éô¤°€ĞÀÀ(€€€€€€€‘…Ñ„°½‘”€ôÁÉ½•ÍÍ}Á•É¥½‘}¹½Ñ¥™¥…Ñ¥½¸ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…ÉÍ•°…ÁÀ¹½¹™¥œ(€€€€€€€€¤(€€€€€€€¥˜½‘”€øô€ĞÀÀè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”(€€€€€€€É•ÑÕÉ¸I•ÍÁ½¹Í” ‰MUMLˆ°µ¥µ•ÑåÁ”ô‰Ñ•áĞ½Á±…¥¸ˆ¤°€ÈÀÀ((€€€…ÁÀ¹É½ÕÑ” ˆ½Á…åµ•¹ĞµÍÕ•ÍÌˆ°µ•Ñ¡½‘Ìõl‰Pˆ°€‰A=MP‰t¤(€€€‘•˜Á…åµ•¹Ñ}ÍÕ•ÍÍ}Á…” ¤è(€€€€€€€€Œƒ¢^7šZÀI•ÑÕÉ¹UI0ƒ–âã’î”A=MPƒ–âÛ–n{’îcš²ûÖCšzs¾òo¢"Pƒ–B3š¢–n{–
+ÌMA(€€€€€€€É•ÑÕÉ¸Í•¹‘}™É½µ}‘¥É•Ñ½Éä¡…ÁÀ¹ÍÑ…Ñ¥}™½±‘•È°€‰¥¹‘•à¹¡Ñµ°ˆ¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½½¹Ñ…ÑÌˆ¤(€€€‘•˜½¹Ñ…ÑÍ}•Ğ ¤è(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡íô°ÕÍ•}…ÉÌõQÉÕ”¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•Ñ}½¹Ñ…ÑÌ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥¤¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½½¹Ñ…ÑÌˆ¤(€€€‘•˜½¹Ñ…ÑÍ}Á½ÍĞ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ôÍ…Ù•}½¹Ñ…ÑÌ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…±•¹‘…Èµ¹½Ñ•Ìˆ¤(€€€‘•˜…±•¹‘…É}¹½Ñ•Í}•Ğ ¤è(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡íô°ÕÍ•}…ÉÌõQÉÕ”¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„€ô•Ñ}…±•¹‘…É}¹½Ñ•Ì (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°€ÈÀÀ¥˜‘…Ñ„¹•Ğ ‰½¬ˆ¤•±Í”€ĞÀÌ((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…±•¹‘…Èµ¹½Ñ•Ìˆ¤(€€€‘•˜…±•¹‘…É}¹½Ñ•Í}Á½ÍĞ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ôÍ…Ù•}…±•¹‘…É}¹½Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½½¹Ñ…ÑÌ½…‘ˆ¤(€€€‘•˜½¹Ñ…ÑÍ}…‘ ¤è(€€€€€€€€ˆˆ‹šZÃ–Š{–Z»’â–º#¢¶ß’êë¢¿Ö‡’êëˆˆˆ(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„°½‘”€ô…‘‘}Í¥¹±•}½¹Ñ…Ğ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°Á…å±½…¤(€€€€€€€¥˜½‘”€ôô€ÈÀÀè(€€€€€€€€€€€É•ÍÁ½¹Í”€ôì‰½¬ˆèQÉÕ”°€‰½¹Ñ…Ğˆè‘…Ñ…l‰½¹Ñ…Ğ‰t°€‰½¹Ñ…ÑÌˆè‘…Ñ…l‰½¹Ñ…ÑÌ‰t°€‰½¹Ñ…Ñ}±¥µ¥Ğˆè‘…Ñ…l‰½¹Ñ…Ñ}±¥µ¥Ğ‰uô(€€€€€€€•±Í”è(€€€€€€€€€€€É•ÍÁ½¹Í”€ôì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè‘…Ñ„¹•Ğ ‰•ÉÉ½Èˆ¤°€‰™¥•±‘Ìˆè‘…Ñ„¹•Ğ ‰™¥•±‘Ìˆ¤°€‰½¹Ñ…Ñ}±¥µ¥Ğˆè‘…Ñ„¹•Ğ ‰½¹Ñ…Ñ}±¥µ¥Ğˆ¤°€‰ÕÉÉ•¹Ñ}½Õ¹Ğˆè‘…Ñ„¹•Ğ ‰ÕÉÉ•¹Ñ}½Õ¹Ğˆ¤°€‰µ•ÍÍ…”ˆè‘…Ñ„¹•Ğ ‰µ•ÍÍ…”ˆ¥ô(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡É•ÍÁ½¹Í”¤°½‘”((€€€…ÁÀ¹ÁÕĞ ˆ½…Á¤½½¹Ñ…ÑÌ¼ñ½¹Ñ…Ñ}¥øˆ¤(€€€‘•˜½¹Ñ…ÑÍ}ÕÁ‘…Ñ”¡½¹Ñ…Ñ}¥¤è(€€€€€€€€ˆˆ‹šnÓšZÃ–Z»’â–º#¢¶ß’êë¢¿Ö‡’êëˆˆˆ(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„°½‘”€ôÕÁ‘…Ñ•}Í¥¹±•}½¹Ñ…Ğ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°½¹Ñ…Ñ}¥°Á…å±½…¤(€€€€€€€¥˜½‘”€ôô€ÈÀÀè(€€€€€€€€€€€É•ÍÁ½¹Í”€ôì‰½¬ˆèQÉÕ”°€‰½¹Ñ…Ğˆè‘…Ñ…l‰½¹Ñ…Ğ‰t°€‰½¹Ñ…ÑÌˆè‘…Ñ…l‰½¹Ñ…ÑÌ‰uô(€€€€€€€•±Í”è(€€€€€€€€€€€É•ÍÁ½¹Í”€ôì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè‘…Ñ„¹•Ğ ‰•ÉÉ½Èˆ¤°€‰™¥•±‘Ìˆè‘…Ñ„¹•Ğ ‰™¥•±‘Ìˆ¥ô(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡É•ÍÁ½¹Í”¤°½‘”((€€€…ÁÀ¹‘•±•Ñ” ˆ½…Á¤½½¹Ñ…ÑÌ¼ñ½¹Ñ…Ñ}¥øˆ¤(€€€‘•˜½¹Ñ…ÑÍ}‘•±•Ñ”¡½¹Ñ…Ñ}¥¤è(€€€€€€€€ˆˆ‹–"«¦f“–Z»’â–º#¢¶ß’êë¢¿Ö‡’êëˆˆˆ(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡íô°ÕÍ•}…ÉÌõQÉÕ”¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„°½‘”€ô‘•±•Ñ•}Í¥¹±•}½¹Ñ…Ğ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°½¹Ñ…Ñ}¥¤(€€€€€€€¥˜½‘”€ôô€ÈÀÀè(€€€€€€€€€€€É•ÍÁ½¹Í”€ôì‰½¬ˆèQÉÕ”°€‰‘•±•Ñ•ˆèQÉÕ”°€‰½¹Ñ…Ñ}¥ˆè‘…Ñ…l‰½¹Ñ…Ñ}¥‰t°€‰½¹Ñ…ÑÌˆè‘…Ñ…l‰½¹Ñ…ÑÌ‰uô(€€€€€€€•±Í”è(€€€€€€€€€€€É•ÍÁ½¹Í”€ôì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè‘…Ñ„¹•Ğ ‰•ÉÉ½Èˆ¤°€‰½¹Ñ…Ñ}¥ˆè‘…Ñ„¹•Ğ ‰½¹Ñ…Ñ}¥ˆ¥ô(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡É•ÍÁ½¹Í”¤°½‘”((€€€…ÁÀ¹•Ğ ˆ½…Á¤½½¹‰½…É‘¥¹œˆ¤(€€€‘•˜½¹‰½…É‘¥¹}•Ğ ¤è(€€€€€€€€ˆˆ‹–n{–
+Ï’öÿR£¢½¹‰½…É‘¥¹œƒ.š/ˆˆˆ(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡íô°ÕÍ•}…ÉÌõQÉÕ”¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„°½‘”€ô½¹‰½…É‘¥¹}ÍÑ…ÑÕÍ}Á…å±½… (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹•Ğ ˆ½…Á¤½¥¹Ñ•É…Ñ¥½¸µÍÑ…Ñ”ˆ¤(€€€‘•˜¥¹Ñ•É…Ñ¥½¹}ÍÑ…Ñ•}•Ğ ¤è(€€€€€€€€ˆˆ‹¢º–>[’öÿR£¢’êK–.W.š,£¦bËš¾?š^—¦7¢’nã–B3–Ÿ–ºçR §ˆˆˆ(€€€€€€€±¥¹•}ÕÍ•É}¥€ô€¡É•ÅÕ•ÍĞ¹…ÉÌ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰µ¥ÍÍ¥¹œ±¥¹•}ÕÍ•É}¥‰ô¤°€ĞÀÀ(€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€ÁÉ½™¥±”€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹•Ğ¡±¥¹•}ÕÍ•É}¥¤(€€€€€€€¥˜¹½ĞÁÉ½™¥±”è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰ÕÍ•È¹½ĞÉ•¥ÍÑ•É•‰ô¤°€ĞÀĞ(€€€€€€€¥ÍÑ…Ñ”€ô•Ñ}½É}É•…Ñ•}¥¹Ñ•É…Ñ¥½¹}ÍÑ…Ñ”¡ÁÉ½™¥±”¤(€€€€€€€Í…Ù•}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t°ÍÑ…Ñ”¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆèQÉÕ”°€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°€‰¥¹Ñ•É…Ñ¥½¹}ÍÑ…Ñ”ˆè¥ÍÑ…Ñ•ô¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½¥¹Ñ•É…Ñ¥½¸µÍÑ…Ñ”ˆ¤(€€€‘•˜¥¹Ñ•É…Ñ¥½¹}ÍÑ…Ñ•}Á½ÍĞ ¤è(€€€€€€€€ˆˆ‹šnÓšZÃ’öÿR£¢’êK–.W.š,¡½µÁ±•Ñ•‘}ÍÑ•ÁÌ€¼‘¥Íµ¥ÍÍ•‘}ÁÉ½µÁÑÌ€¼±…ÍÑ}±½Í¥¹}µ•ÍÍ…”ƒ¶$§ˆˆˆ(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥€ô€¡Á…å±½…¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰µ¥ÍÍ¥¹œ±¥¹•}ÕÍ•É}¥‰ô¤°€ĞÀÀ(€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€ÁÉ½™¥±”€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹•Ğ¡±¥¹•}ÕÍ•É}¥¤(€€€€€€€¥˜¹½ĞÁÉ½™¥±”è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰ÕÍ•È¹½ĞÉ•¥ÍÑ•É•‰ô¤°€ĞÀĞ(€€€€€€€¥ÍÑ…Ñ”€ô•Ñ}½É}É•…Ñ•}¥¹Ñ•É…Ñ¥½¹}ÍÑ…Ñ”¡ÁÉ½™¥±”¤(€€€€€€€€Œƒ–B#’ö×–¢¢ÇšnÓšZÃjš²’ö4(€€€€€€€™½È™¥•±¥¸€ ‰±…ÍÑ}¥¹Ñ•É…Ñ¥½¹}…Ğˆ°€‰±…ÍÑ}¥¹Ñ•É…Ñ¥½¹}ÍÕµµ…Éäˆ°(€€€€€€€€€€€€€€€€€€€€€€‰¹•áÑ}É•µ¥¹‘•É}…Ğˆ°€‰±…ÍÑ}±½Í¥¹}µ•ÍÍ…”ˆ°(€€€€€€€€€€€€€€€€€€€€€€‰½¹‰½…É‘¥¹}½µÁ±•Ñ•ˆ°€‰Õ…É‘¥…¹}ÁÉ½µÁÑ}ÍÑ…ÑÕÌˆ¤è(€€€€€€€€€€€¥˜™¥•±¥¸Á…å±½…è(€€€€€€€€€€€€€€€¥ÍÑ…Ñ•m™¥•±‘t€ôÁ…å±½…‘m™¥•±‘t(€€€€€€€¥˜€‰½µÁ±•Ñ•‘}ÍÑ•ÁÌˆ¥¸Á…å±½……¹¥Í¥¹ÍÑ…¹”¡Á…å±½…‘l‰½µÁ±•Ñ•‘}ÍÑ•ÁÌ‰t°±¥ÍĞ¤è(€€€€€€€€€€€¥ÍÑ…Ñ•l‰½µÁ±•Ñ•‘}ÍÑ•ÁÌ‰t€ô±¥ÍĞ¡Í•Ğ¡¥ÍÑ…Ñ”¹•Ğ ‰½µÁ±•Ñ•‘}ÍÑ•ÁÌˆ°mt¤€¬Á…å±½…‘l‰½µÁ±•Ñ•‘}ÍÑ•ÁÌ‰t¤¤(€€€€€€€¥˜€‰Á•¹‘¥¹}ÍÑ•ÁÌˆ¥¸Á…å±½……¹¥Í¥¹ÍÑ…¹”¡Á…å±½…‘l‰Á•¹‘¥¹}ÍÑ•ÁÌ‰t°±¥ÍĞ¤è(€€€€€€€€€€€¥ÍÑ…Ñ•l‰Á•¹‘¥¹}ÍÑ•ÁÌ‰t€ôÁ…å±½…‘l‰Á•¹‘¥¹}ÍÑ•ÁÌ‰t(€€€€€€€¥˜€‰‘¥Íµ¥ÍÍ•‘}ÁÉ½µÁÑÌˆ¥¸Á…å±½……¹¥Í¥¹ÍÑ…¹”¡Á…å±½…‘l‰‘¥Íµ¥ÍÍ•‘}ÁÉ½µÁÑÌ‰t°‘¥Ğ¤è(€€€€€€€€€€€µ•É•€ô¥ÍÑ…Ñ”¹•Ğ ‰‘¥Íµ¥ÍÍ•‘}ÁÉ½µÁÑÌˆ°íô¤(€€€€€€€€€€€µ•É•¹ÕÁ‘…Ñ”¡Á…å±½…‘l‰‘¥Íµ¥ÍÍ•‘}ÁÉ½µÁÑÌ‰t¤(€€€€€€€€€€€¥ÍÑ…Ñ•l‰‘¥Íµ¥ÍÍ•‘}ÁÉ½µÁÑÌ‰t€ôµ•É•(€€€€€€€¥ÍÑ…Ñ•l‰±…ÍÑ}¥¹Ñ•É…Ñ¥½¹}…Ğ‰t€ô‘…Ñ•Ñ¥µ”¹¹½Ü ¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€€€€€Í…Ù•}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t°ÍÑ…Ñ”¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆèQÉÕ”°€‰¥¹Ñ•É…Ñ¥½¹}ÍÑ…Ñ”ˆè¥ÍÑ…Ñ•ô¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Õ…É‘¥…¸µÉ•µ¥¹‘•È½‘¥Íµ¥ÍÌˆ¤(€€€‘•˜Õ…É‘¥…¹}É•µ¥¹‘•É}‘¥Íµ¥ÍÌ ¤è(€€€€€€€€ˆˆ‹’öÿR£¢–Â7–º#¢¶ß’êë–º3š"C–ê›š>C’ëj–n{š'((€€€€€€€‰½‘ä¹ÁÉ•™•É•¹”è€¹½Üœğ€Ñ½µ½ÉÉ½Üœğ€‘¥Íµ¥ÍÍ|İœğ€‘¥Íµ¥ÍÍ•œ(€€€€€€€€ˆˆˆ(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥€ô€¡Á…å±½…¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€ÁÉ•˜€ô€¡Á…å±½…¹•Ğ ‰ÁÉ•™•É•¹”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰µ¥ÍÍ¥¹œ±¥¹•}ÕÍ•É}¥‰ô¤°€ĞÀÀ(€€€€€€€¥˜ÁÉ•˜¹½Ğ¥¸€ ‰¹½Üˆ°€‰Ñ½µ½ÉÉ½Üˆ°€‰‘¥Íµ¥ÍÍ|İˆ°€‰‘¥Íµ¥ÍÍ•ˆ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰¥¹Ù…±¥ÁÉ•™•É•¹”‰ô¤°€ĞÀÀ(€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€ÁÉ½™¥±”€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹•Ğ¡±¥¹•}ÕÍ•É}¥¤(€€€€€€€¥˜¹½ĞÁÉ½™¥±”è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰ÕÍ•È¹½ĞÉ•¥ÍÑ•É•‰ô¤°€ĞÀĞ(€€€€€€€¥ÍÑ…Ñ”€ô•Ñ}½É}É•…Ñ•}¥¹Ñ•É…Ñ¥½¹}ÍÑ…Ñ”¡ÁÉ½™¥±”¤(€€€€€€€¥ÍÑ…Ñ•l‰Õ…É‘¥…¹}É•µ¥¹‘•É}ÁÉ•™•É•¹”‰t€ôÁÉ•˜(€€€€€€€¥ÍÑ…Ñ•l‰Õ…É‘¥…¹}±…ÍÑ}ÁÉ½µÁÑ•‘}…Ğ‰t€ô‘…Ñ•Ñ¥µ”¹¹½Ü ¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€€€€€¹½Ü€ô‘…Ñ•Ñ¥µ”¹¹½Ü ¤(€€€€€€€¥˜ÁÉ•˜€ôô€‰Ñ½µ½ÉÉ½Üˆè(€€€€€€€€€€€¥ÍÑ…Ñ•l‰Õ…É‘¥…¹}É•µ¥¹‘•É}Í¹½½é•‘}Õ¹Ñ¥°‰t€ô€¡¹½Ü€¬Ñ¥µ•‘•±Ñ„¡‘…åÌôÄ¤¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€€€€€•±¥˜ÁÉ•˜€ôô€‰‘¥Íµ¥ÍÍ|İˆè(€€€€€€€€€€€¥ÍÑ…Ñ•l‰Õ…É‘¥…¹}É•µ¥¹‘•É}Í¹½½é•‘}Õ¹Ñ¥°‰t€ô€¡¹½Ü€¬Ñ¥µ•‘•±Ñ„¡‘…åÌôÜ¤¤¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤(€€€€€€€•±Í”è(€€€€€€€€€€€¥ÍÑ…Ñ•l‰Õ…É‘¥…¹}É•µ¥¹‘•É}Í¹½½é•‘}Õ¹Ñ¥°‰t€ô€ˆˆ(€€€€€€€Í…Ù•}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t°ÍÑ…Ñ”¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆèQÉÕ”°€‰¥¹Ñ•É…Ñ¥½¹}ÍÑ…Ñ”ˆè¥ÍÑ…Ñ•ô¤((((€€€€ŒAÉ½‘ÕÑ¥½¸ƒ–º3–£’â7¢¢ï–(‘•Ø•¹‘Á½¥¹Ğ¡Õ¹¥½É¸ƒ’â7¢ŞD…ÁÀ¹ÉÕ¸ ¤±‘•‰Õœƒšb¼…±Í”¤(€€€}¥Í}‘•Ø€ô€ (€€€€€€€½Ì¹•¹Ù¥É½¸¹•Ğ ‰Y}5=ˆ°€ˆˆ¤¹±½İ•È ¤¥¸€ ˆÄˆ°€‰ÑÉÕ”ˆ°€‰å•Ìˆ¤(€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1M-}9Xˆ°€ˆˆ¤¹±½İ•È ¤¥¸€ ‰‘•Ù•±½Áµ•¹Ğˆ°€‰‘•Øˆ¤(€€€€€€€½È…ÁÀ¹‘•‰Õœ(€€€€¤((€€€¥˜}¥Í}‘•Øè(€€€€€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½‘•Ø½ÕÁÉ…‘”µÁ±…¸ˆ¤(€€€€€€€‘•˜‘•Ù}ÕÁÉ…‘•}Á±…¸ ¤è(€€€€€€€€€€€€ˆˆ‰X=91dèƒ–6ÒhÁ±…¸€£šâ³¢¦›R §((€€€€€€€AÉ½‘ÕÑ¥½¸ƒ’â–ú/–nx€ĞÀÓ–>«šr'’î—’â/ššÎš&7–¢¢Ç–Fó–>¬è(€€€€€€€€Ä¸É•ÅÕ•ÍĞ¹É•µ½Ñ•}…‘‘Èƒšb¼€ÄÈÜ¸À¸À¸Ä€¼€èèÄ€£šr³š¦|¤(€€€€€€€€È¸ƒš"X•¹ØY}5=õÑÉÕ”ƒšb;Šë–VR (€€€€€€€€Ì¸ƒš"X¡½ÍĞ¡•…‘•Èƒšb¼±½…±¡½ÍĞ€¼€ÄÈÜ¸À¸À¸Ä(€€€€€€€€ˆˆˆ(€€€€€€€€Œ€Ä¸ƒšr³š¦|%@ƒ–¢¢Ä(€€€€€€€É•µ½Ñ”€ô€¡É•ÅÕ•ÍĞ¹É•µ½Ñ•}…‘‘È½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€¡½ÍĞ€ô€¡É•ÅÕ•ÍĞ¹¡½ÍĞ½È€ˆˆ¤¹±½İ•È ¤(€€€€€€€¥Í}±½…°€ôÉ•µ½Ñ”¥¸€ ˆÄÈÜ¸À¸À¸Äˆ°€ˆèèÄˆ°€‰±½…±¡½ÍĞˆ¤½È¡½ÍĞ¹ÍÑ…ÉÑÍİ¥Ñ  ‰±½…±¡½ÍĞˆ¤½È¡½ÍĞ¹ÍÑ…ÉÑÍİ¥Ñ  ˆÄÈÜ¸ˆ¤(€€€€€€€€Œ€È¸•¹Øƒšb;Šë–VR (€€€€€€€‘•Ù}µ½‘•}•¹…‰±•€ô½Ì¹•¹Ù¥É½¸¹•Ğ ‰Y}5=ˆ°€ˆˆ¤¹±½İ•È ¤¥¸€ ˆÄˆ°€‰ÑÉÕ”ˆ°€‰å•Ìˆ¤(€€€€€€€¥˜¹½Ğ€¡¥Í}±½…°½È‘•Ù}µ½‘•}•¹…‰±•¤è(€€€€€€€€€€€€ŒAÉ½‘ÕÑ¥½¸ƒJÃ–Š³š.KÖW–¶c–>X£’â7¦?¦rÈ•¹‘Á½¥¹Ğƒ–¶c–r ¤(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰¹½Ñ}™½Õ¹‰ô¤°€ĞÀĞ(€€€€€€€€Œƒ¦k¦;šª‹š~”³–~ß¢†0‘•Øƒ¦
+?¢ò¼(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥€ô€¡Á…å±½…¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€Á±…¸€ô€¡Á…å±½…¹•Ğ ‰Á±…¸ˆ¤½È€‰Á…¥‘|Üäå}å•…Èˆ¤¹ÍÑÉ¥À ¤(€€€€€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰µ¥ÍÍ¥¹œ±¥¹•}ÕÍ•É}¥‰ô¤°€ĞÀÀ(€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€ÁÉ½™¥±”€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹•Ğ¡±¥¹•}ÕÍ•É}¥¤(€€€€€€€¥˜¹½ĞÁÉ½™¥±”è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰ÕÍ•È¹½ĞÉ•¥ÍÑ•É•‰ô¤°€ĞÀĞ(€€€€€€€ÁÉ½™¥±•l‰Á±…¸‰t€ôÁ±…¸(€€€€€€€Í…Ù•}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t°ÍÑ…Ñ”¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆèQÉÕ”°€‰Á±…¸ˆèÁ±…¹ô¤°€ÈÀÀ((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½½¹‰½…É‘¥¹œ½½µÁ±•Ñ”ˆ¤(€€€‘•˜½¹‰½…É‘¥¹}½µÁ±•Ñ” ¤è(€€€€€€€€ˆˆ‹š¢g¢¢`½¹‰½…É‘¥¹œƒ–º3š"@£–ş¦‚#¢Ï–ÂGšr$€Äƒ’ö7–º#¢¶ß’êè§ˆˆˆ(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€É•ÍÕ±Ğ°½‘”€ô½µÁ±•Ñ•}½¹‰½…É‘¥¹}™½É}ÕÍ•È (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°Á…å±½…(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡É•ÍÕ±Ğ¤°½‘”((€€€…ÁÀ¹•Ğ ˆ½…Á¤½•µ•É•¹äµ½¹Ñ…Ğ½¥¹Ù¥Ñ”µÁÉ•Ù¥•Üˆ¤(€€€‘•˜•µ•É•¹å}½¹Ñ…Ñ}¥¹Ù¥Ñ•}ÁÉ•Ù¥•İ}…Á¤ ¤è(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡íô°ÕÍ•}…ÉÌõQÉÕ”¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…€ôì(€€€€€€€€€€€€‰¥¹Ù¥Ñ•}™É½´ˆèÉ•ÅÕ•ÍĞ¹…ÉÌ¹•Ğ ‰¥¹Ù¥Ñ•}™É½´ˆ¤½ÈÉ•ÅÕ•ÍĞ¹…ÉÌ¹•Ğ ‰™É½´ˆ¤½È€ˆˆ°(€€€€€€€€€€€€‰¥¹Ù¥Ñ•}Ñ½­•¸ˆèÉ•ÅÕ•ÍĞ¹…ÉÌ¹•Ğ ‰¥¹Ù¥Ñ•}Ñ½­•¸ˆ¤½È€ˆˆ°(€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€ô(€€€€€€€‘…Ñ„°½‘”€ô¥¹Ù¥Ñ•}‰¥¹‘}ÁÉ•Ù¥•Ü¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½•µ•É•¹äµ½¹Ñ…Ğ½¥¹Ù¥Ñ”ˆ¤(€€€‘•˜•µ•É•¹å}½¹Ñ…Ñ}¥¹Ù¥Ñ•}É•…Ñ•}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„°½‘”€ôÉ•…Ñ•}Õ…É‘¥…¹}¥¹Ù¥Ñ” (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°Á…å±½…(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½•µ•É•¹äµ½¹Ñ…Ğ½‰¥¹ˆ¤(€€€‘•˜•µ•É•¹å}½¹Ñ…Ñ}‰¥¹‘}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰½¹Ñ…Ñ}±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ô‰¥¹‘}•µ•É•¹å}½¹Ñ…Ğ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Õ…É‘¥…¸µÉ½ÕÁÌ½‰¥¹ˆ¤(€€€‘•˜Õ…É‘¥…¹}É½ÕÁÍ}‰¥¹‘}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ô‰¥¹‘}Õ…É‘¥…¹}É½ÕÀ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€¥˜½‘”€ôô€ÈÀÀ…¹‘…Ñ„¹•Ğ ‰ÑÉ¥…±}Ñ•ÍÑ}µ•ÍÍ…”ˆ¤è(€€€€€€€€€€€Ñ½­•¸€ô…ÁÀ¹½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ (€€€€€€€€€€€€€€€€‰1%9}!991}MM}Q=-8ˆ°€ˆˆ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜¹½ĞÑ½­•¸è(€€€€€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì(€€€€€€€€€€€€€€€€€€€€¨©‘…Ñ„°(€€€€€€€€€€€€€€€€€€€€‰ÑÉ¥…±}Ñ•ÍÑ}‘•±¥Ù•Éäˆè€‰™…¥±•ˆ°(€€€€€€€€€€€€€€€€€€€€‰•ÉÉ½Èˆè€‰1%9}!991}MM}Q=-8¥Ì¹½ĞÍ•Ğˆ°(€€€€€€€€€€€€€€€ô¤°€ÔÀÌ(€€€€€€€€€€€Í•¹‘•È€ô…ÁÀ¹½¹™¥œ¹•Ğ ‰1%9}AUM!}M9Hˆ¤½È±¥¹•}ÁÕÍ¡}µ•ÍÍ…”(€€€€€€€€€€€É•ÑÉå}­•ä€ô‘…Ñ„¹•Ğ ‰ÑÉ¥…±}Ñ•ÍÑ}É•ÑÉå}­•äˆ¤½È}±¥¹•}É•ÑÉå}­•ä (€€€€€€€€€€€€€€€˜‰ÑÉ¥…°µÉ½ÕÀµÑ•ÍĞéí±¥¹•}ÕÍ•É}¥‘ôéíÁ…å±½…¹•Ğ É½ÕÁ}¥œ¥ôˆ(€€€€€€€€€€€€¤(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€}Í•¹‘}±¥¹•}İ¥Ñ¡}É•ÑÉå}­•ä (€€€€€€€€€€€€€€€€€€€Í•¹‘•È°(€€€€€€€€€€€€€€€€€€€Ñ½­•¸°(€€€€€€€€€€€€€€€€€€€Á…å±½…¹•Ğ ‰É½ÕÁ}¥ˆ¤°(€€€€€€€€€€€€€€€€€€€‘…Ñ…l‰ÑÉ¥…±}Ñ•ÍÑ}µ•ÍÍ…”‰t°(€€€€€€€€€€€€€€€€€€€É•ÑÉå}­•ä°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€‘…Ñ…l‰ÑÉ¥…±}Ñ•ÍÑ}‘•±¥Ù•Éä‰t€ô€‰Í•¹Ğˆ(€€€€€€€€€€€€€€€µÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€±…µ‰‘„ÍÑ…Ñ”è€ (€€€€€€€€€€€€€€€€€€€€€€€€¡ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô¤¹•Ğ¡±¥¹•}ÕÍ•É}¥°íô¤¹Í•Ñ‘•™…Õ±Ğ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰ÑÉ¥…±}É½ÕÁ}Ñ•ÍÑ}‘•±¥Ù•Éäˆ°íô(€€€€€€€€€€€€€€€€€€€€€€€€¤¹ÕÁ‘…Ñ”¡ì(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰ÍÑ…ÑÕÌˆè€‰Í•¹Ğˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰Í•¹Ñ}…ĞˆèÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡…ÁÀ¹½¹™¥œ¤¹¥Í½™½Éµ…Ğ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€€€€ô¤°(€€€€€€€€€€€€€€€€€€€€€€€É•½É‘}±¥¹•}µ•ÍÍ…•}ÕÍ…” (€€€€€€€€€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€€€€€€€€€…Ñ•½Éäô‰ÑÉ¥…±}É½ÕÁ}Ñ•ÍĞˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€½İ¹•É}±¥¹•}ÕÍ•É}¥õ±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€€€€€€€€É•¥Á¥•¹Ñ}½Õ¹ĞôÄ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€•Ù•¹Ñ}¥õÉ•ÑÉå}­•ä°(€€€€€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€€¥l´Åt°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€‘…Ñ…l‰ÑÉ¥…±}Ñ•ÍÑ}‘•±¥Ù•Éä‰t€ô€‰™…¥±•ˆ(€€€€€€€€€€€€€€€‘…Ñ…l‰•ÉÉ½È‰t€ô€‹šâ³¢¦›¦k~—šj¯šf‡šÎW¦–ë¾ò3¢®/¢7–ú3–7¢¦›ˆ(€€€€€€€€€€€€€€€µÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€±…µ‰‘„ÍÑ…Ñ”è€¡ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô¤¹•Ğ (€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°íô(€€€€€€€€€€€€€€€€€€€€¤¹Í•Ñ‘•™…Õ±Ğ ‰ÑÉ¥…±}É½ÕÁ}Ñ•ÍÑ}‘•±¥Ù•Éäˆ°íô¤¹ÕÁ‘…Ñ”¡ì(€€€€€€€€€€€€€€€€€€€€€€€€‰ÍÑ…ÑÕÌˆè€‰™…¥±•ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰±…ÍÑ}•ÉÉ½ÈˆèÍÑÈ¡•áŒ¥lèÈÀÁt°(€€€€€€€€€€€€€€€€€€€ô¤°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹İ…É¹¥¹œ ‰ÑÉ¥…°É½ÕÀÑ•ÍĞ‘•±¥Ù•Éä™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°€ÔÀÈ(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Õ…É‘¥…¸µÉ½ÕÁÌ½Õ¹‰¥¹ˆ¤(€€€‘•˜Õ…É‘¥…¹}É½ÕÁÍ}Õ¹‰¥¹‘}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ôÕ¹‰¥¹‘}Õ…É‘¥…¹}É½ÕÀ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Õ…É‘¥…¸µÉ½ÕÁÌ½ÁÉ•™•É•¹•Ìˆ¤(€€€‘•˜Õ…É‘¥…¹}É½ÕÁÍ}ÁÉ•™•É•¹•Í}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ôÕÁ‘…Ñ•}Õ…É‘¥…¹}É½ÕÁ}ÁÉ•™•É•¹•Ì (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹•Ğ ˆ½…Á¤½Õ…É‘¥…¸µÉ½ÕÁÌ½Í•ÑÑ¥¹Ìˆ¤(€€€‘•˜Õ…É‘¥…¹}É½ÕÁÍ}Í•ÑÑ¥¹Í}…Á¤ ¤è(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡íô°ÕÍ•}…ÉÌõQÉÕ”¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„°½‘”€ôÕ…É‘¥…¹}É½ÕÁ}Í•ÑÑ¥¹Í}™½É}ÕÍ•È (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€€Œ€ôôôôô€ÈÀÈØ´ÀÜ´ÈÀƒ¢v›¢FŒ…‘‘•èƒšâ³¢¦›¦‚•¹‘Á½¥¹ÑÌ€ôôôôô(€€€QMQ}UMI}AI%`€ô€‰U}QMQ|ˆ((€€€…ÁÀ¹•Ğ ˆ½…Á¤½Õ…É‘¥…¸µÉ½ÕÁÌ½Ñ•ÍĞµÕÍ•ÉÌˆ¤(€€€‘•˜Õ…É‘¥…¹}É½ÕÁÍ}Ñ•ÍÑ}ÕÍ•ÉÍ}…Á¤ ¤è(€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€ÕÍ•ÉÌ€ômt(€€€€€€€™½ÈÕ¥°ÁÉ½™¥±”¥¸€¡ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô¤¹¥Ñ•µÌ ¤è(€€€€€€€€€€€¥˜¹½ĞÕ¥¹ÍÑ…ÉÑÍİ¥Ñ ¡QMQ}UMI}AI%`¤è(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€Á±…¸€ôÁÉ½™¥±”¹•Ğ ‰Á±…¸ˆ¤½È€‰ÑÉ¥…°ˆ(€€€€€€€€€€€¥Í}å•…È€ôÁ±…¸€ôô€‰Á…¥‘|Üäå}å•…Èˆ(€€€€€€€€€€€¥Í}µ½¹Ñ €ôÁ±…¸€ôô€‰Á…¥‘|Üääˆ(€€€€€€€€€€€•±¥¥‰±”€ô€¡¥Í}å•…È½È¥Í}µ½¹Ñ ¤…¹Á…¥‘}µ•µ‰•ÉÍ¡¥Á}¥Í}…Ñ¥Ù”¡ÁÉ½™¥±”¤(€€€€€€€€€€€ÕÍ•ÉÌ¹…ÁÁ•¹¡ì(€€€€€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆèÕ¥°(€€€€€€€€€€€€€€€€‰‘¥ÍÁ±…å}¹…µ”ˆèÁÉ½™¥±”¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ°€ˆˆ¤°(€€€€€€€€€€€€€€€€‰Á±…¸ˆèÁ±…¸°(€€€€€€€€€€€€€€€€‰Á…¥‘}Õ¹Ñ¥°ˆèÁÉ½™¥±”¹•Ğ ‰Á…¥‘}Õ¹Ñ¥°ˆ°€ˆˆ¤°(€€€€€€€€€€€€€€€€‰Á…åµ•¹Ñ}ÍÑ…ÑÕÌˆèÁÉ½™¥±”¹•Ğ ‰Á…åµ•¹Ñ}ÍÑ…ÑÕÌˆ°€ˆˆ¤°(€€€€€€€€€€€€€€€€‰‰¥¹‘}½Õ¹Ğˆè±•¸¡ÁÉ½™¥±”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁ}¥‘Ìˆ¤½Èmt¤°(€€€€€€€€€€€€€€€€‰µ…á}É½ÕÁÌˆè€ Ì¥˜¥Í}å•…È•±Í”€Ä¤¥˜•±¥¥‰±”•±Í”€À°(€€€€€€€€€€€€€€€€‰•±¥¥‰±”ˆè•±¥¥‰±”°(€€€€€€€€€€€€€€€€‰ÍÑ…ÑÕÌˆè€‰•±¥¥‰±”ˆ¥˜•±¥¥‰±”•±Í”€‰¥¹•±¥¥‰±”ˆ°(€€€€€€€€€€€€€€€€‰Õ…É‘¥…¹}É½ÕÁ}¥‘ÌˆèÁÉ½™¥±”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁ}¥‘Ìˆ°mt¤°(€€€€€€€€€€€ô¤(€€€€€€€É½ÕÁÌ€ôl(€€€€€€€€€€€ì‰É½ÕÁ}¥ˆè¥°€¨©¥¹™½ô(€€€€€€€€€€€™½È¥°¥¹™¼¥¸€¡ÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁÌˆ¤½Èíô¤¹¥Ñ•µÌ ¤(€€€€€€€t(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰ÕÍ•ÉÌˆèÕÍ•ÉÌ°€‰É½ÕÁÌˆèÉ½ÕÁÌ°€‰ÁÉ•™¥àˆèQMQ}UMI}AI%aô¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Õ…É‘¥…¸µÉ½ÕÁÌ½Ñ•ÍĞµÉ•Í•Ğˆ¤(€€€‘•˜Õ…É‘¥…¹}É½ÕÁÍ}Ñ•ÍÑ}É•Í•Ñ}…Á¤ ¤è(€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€Õ¥‘Ì€ômÕ¥™½ÈÕ¥¥¸ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹­•åÌ ¤¥˜Õ¥¹ÍÑ…ÉÑÍİ¥Ñ ¡QMQ}UMI}AI%`¥t(€€€€€€€™½ÈÕ¥¥¸Õ¥‘Ìè(€€€€€€€€€€€ÍÑ…Ñ•l‰ÕÍ•ÉÌ‰t¹Á½À¡Õ¥°9½¹”¤(€€€€€€€™½ÈÁÉ½™¥±”¥¸ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹Ù…±Õ•Ì ¤è(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡ÁÉ½™¥±”¹•Ğ ‰½¹Ñ…ÑÌˆ¤°±¥ÍĞ¤è(€€€€€€€€€€€€€€€ÁÉ½™¥±•l‰½¹Ñ…ÑÌ‰t€ômŒ™½ÈŒ¥¸ÁÉ½™¥±•l‰½¹Ñ…ÑÌ‰t¥˜Œ¹•Ğ ‰±¥¹•}¥ˆ¤¹½Ğ¥¸Õ¥‘Ít(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡ÁÉ½™¥±”¹•Ğ ‰™É¥•¹‘Ìˆ¤°±¥ÍĞ¤è(€€€€€€€€€€€€€€€ÁÉ½™¥±•l‰™É¥•¹‘Ì‰t€ôm˜™½È˜¥¸ÁÉ½™¥±•l‰™É¥•¹‘Ì‰t¥˜˜¹½Ğ¥¸Õ¥‘Ít(€€€€€€€™½È¥¥¸±¥ÍĞ¡ÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁÌˆ°íô¤¹­•åÌ ¤¤è(€€€€€€€€€€€½İ¹•È€ôÍÑ…Ñ•l‰Õ…É‘¥…¹}É½ÕÁÌ‰um¥‘t¹•Ğ ‰½İ¹•É}±¥¹•}ÕÍ•É}¥ˆ°€ˆˆ¤(€€€€€€€€€€€¥˜½İ¹•È¹ÍÑ…ÉÑÍİ¥Ñ ¡QMQ}UMI}AI%`¤è(€€€€€€€€€€€€€€€ÍÑ…Ñ•l‰Õ…É‘¥…¹}É½ÕÁÌ‰t¹Á½À¡¥°9½¹”¤(€€€€€€€™½ÈÁÉ½™¥±”¥¸ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤¹Ù…±Õ•Ì ¤è(€€€€€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡ÁÉ½™¥±”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁ}¥‘Ìˆ¤°±¥ÍĞ¤è(€€€€€€€€€€€€€€€ÁÉ½™¥±•l‰Õ…É‘¥…¹}É½ÕÁ}¥‘Ì‰t€ômt(€€€€€€€Í…Ù•}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t°ÍÑ…Ñ”¤(€€€€€€€‘•™…Õ±ÑÌ€ôl(€€€€€€€€€€€€ ‰U}QMQ}å•…É±å|ÀÀÄˆ°€‰Á…¥‘|Üäå}å•…Èˆ°€‹šâ³¢¦˜·–æÓ¢Êìäääˆ°€ˆÈÀää´ÄÈ´ÌÅPÀÀèÀÀèÀÀˆ°€‰…Ñ¥Ù”ˆ¤°(€€€€€€€€€€€€ ‰U}QMQ}µ½¹Ñ¡±å|ÀÀÄˆ°€‰Á…¥‘|Üääˆ°€‹šâ³¢¦˜·šr#¢Êìˆ°€ˆÈÀää´ÄÈ´ÌÅPÀÀèÀÀèÀÀˆ°€‰…Ñ¥Ù”ˆ¤°(€€€€€€€€€€€€ ‰U}QMQ|Ìäå|ÀÀÄˆ°€‰Á…¥‘|Ìääˆ°€‹šâ³¢¦˜´Ìääƒ’â7²›¢Îš‚ğˆ°€ˆÈÀää´ÄÈ´ÌÅPÀÀèÀÀèÀÀˆ°€‰…Ñ¥Ù”ˆ¤°(€€€€€€€€€€€€ ‰U}QMQ}ÑÉ¥…±|ÀÀÄˆ°€‰ÑÉ¥…°ˆ°€‹šâ³¢¦˜µÑÉ¥…°ˆ°€ˆˆ°€‰ÑÉ¥…°ˆ¤°(€€€€€€€t(€€€€€€€É•…Ñ•€ômt(€€€€€€€™½ÈÕ¥°Á±…¸°¹…µ”°Á…¥‘}Õ¹Ñ¥°°Á…åµ•¹Ñ}ÍÑ…ÑÕÌ¥¸‘•™…Õ±ÑÌè(€€€€€€€€€€€¥˜Õ¥¥¸ÍÑ…Ñ•l‰ÕÍ•ÉÌ‰tè(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”(€€€€€€€€€€€ÍÑ…Ñ•l‰ÕÍ•ÉÌ‰umÕ¥‘t€ôì(€€€€€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆèÕ¥°€‰‘¥ÍÁ±…å}¹…µ”ˆè¹…µ”°€‰Á±…¸ˆèÁ±…¸°(€€€€€€€€€€€€€€€€‰Á…¥‘}Õ¹Ñ¥°ˆèÁ…¥‘}Õ¹Ñ¥°°€‰Á…åµ•¹Ñ}ÍÑ…ÑÕÌˆèÁ…åµ•¹Ñ}ÍÑ…ÑÕÌ°(€€€€€€€€€€€€€€€€‰Õ…É‘¥…¹}É½ÕÁ}¥‘Ìˆèmt°€‰½¹Ñ…ÑÌˆèmt°€‰™É¥•¹‘Ìˆèmt°(€€€€€€€€€€€ô(€€€€€€€€€€€É•…Ñ•¹…ÁÁ•¹¡Õ¥¤(€€€€€€€Í…Ù•}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t°ÍÑ…Ñ”¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰É•Í•ĞˆèQÉÕ”°€‰‘•±•Ñ•‘}ÕÍ•ÉÌˆè±•¸¡Õ¥‘Ì¤°€‰É•…Ñ•ˆèÉ•…Ñ•‘ô¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Õ…É‘¥…¸µÉ½ÕÁÌ½Ñ•ÍĞµ•¹™½É”ˆ¤(€€€‘•˜Õ…É‘¥…¹}É½ÕÁÍ}Ñ•ÍÑ}•¹™½É•}…Á¤ ¤è(€€€€€€€‰½‘ä€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€É½ÕÁ}¥€ôÍÑÈ¡‰½‘ä¹•Ğ ‰É½ÕÁ}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€Í¥µÕ±…Ñ•‘}½Õ¹Ğ€ô‰½‘ä¹•Ğ ‰Í¥µÕ±…Ñ•‘}½Õ¹Ğˆ¤(€€€€€€€Í¥µÕ±…Ñ•‘}¹•İ}¥‘Ì€ô‰½‘ä¹•Ğ ‰Í¥µÕ±…Ñ•‘}¹•İ}¥‘Ìˆ¤½Èmt(€€€€€€€¥˜¹½ĞÉ½ÕÁ}¥è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰µ¥ÍÍ¥¹œÉ½ÕÁ}¥‰ô¤°€ĞÀÀ(€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€É½ÕÁ}¥¹™¼€ôÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁÌˆ°íô¤¹•Ğ¡É½ÕÁ}¥¤(€€€€€€€¥˜¹½ĞÉ½ÕÁ}¥¹™¼è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰É½ÕÀ¹½Ğ‰½Õ¹‰ô¤°€ĞÀĞ(€€€€€€€¥˜É½ÕÁ}¥¹™¼¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€„ô€‰…Ñ¥Ù”ˆè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰É½ÕÀ¥¹…Ñ¥Ù”‰ô¤°€ĞÀä(€€€€€€€¥˜Í¥µÕ±…Ñ•‘}½Õ¹Ğ¥Ì9½¹”è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰Í¥µÕ±…Ñ•‘}½Õ¹ĞÉ•ÅÕ¥É•‰ô¤°€ĞÀÀ(€€€€€€€ÕÉÉ•¹Ñ}½Õ¹Ğ€ô¥¹Ğ¡Í¥µÕ±…Ñ•‘}½Õ¹Ğ¤(€€€€€€€¥˜ÕÉÉ•¹Ñ}½Õ¹Ğ€ğôI=UA}55	I}1%5%Pè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì(€€€€€€€€€€€€€€€€‰½¬ˆèQÉÕ”°€‰•¹™½É•ˆè…±Í”°(€€€€€€€€€€€€€€€€‰ÕÉÉ•¹Ñ}½Õ¹ĞˆèÕÉÉ•¹Ñ}½Õ¹Ğ°€‰±¥µ¥ĞˆèI=UA}55	I}1%5%P°(€€€€€€€€€€€€€€€€‰­¥­•ˆèmt°€‰™…¥±•ˆèmt°(€€€€€€€€€€€€€€€€‰É½ÕÁ}¥ˆèÉ½ÕÁ}¥°(€€€€€€€€€€€€€€€€‰¹½Ñ”ˆè€‹šr«¢Ú¦;’â+¦f@³’â7¦r •Ù¥Ğˆ°(€€€€€€€€€€€ô¤°€ÈÀÀ(€€€€€€€‰¥¹‘}¥‘Ì€ôÍ•Ğ¡É½ÕÁ}¥¹™¼¹•Ğ ‰µ•µ‰•É}¥‘Í}…Ñ}‰¥¹ˆ¤½Èmt¤(€€€€€€€…¹‘¥‘…Ñ•}¥‘Ì€ô±¥ÍĞ¡Í¥µÕ±…Ñ•‘}¹•İ}¥‘Ì¤(€€€€€€€½Ù•É™±½Ü€ôÕÉÉ•¹Ñ}½Õ¹Ğ€´I=UA}55	I}1%5%P(€€€€€€€Ñ½}­¥¬€ô…¹‘¥‘…Ñ•}¥‘Ílé½Ù•É™±½İt¥˜½Ù•É™±½Ü€ø€À•±Í”€¡…¹‘¥‘…Ñ•}¥‘ÍlèÅt¥˜…¹‘¥‘…Ñ•}¥‘Ì•±Í”mt¤(€€€€€€€­¥­•€ô±¥ÍĞ¡Ñ½}­¥¬¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì(€€€€€€€€€€€€‰½¬ˆèQÉÕ”°€‰•¹™½É•ˆèQÉÕ”°(€€€€€€€€€€€€‰ÕÉÉ•¹Ñ}½Õ¹ĞˆèÕÉÉ•¹Ñ}½Õ¹Ğ°€‰±¥µ¥ĞˆèI=UA}55	I}1%5%P°(€€€€€€€€€€€€‰½Ù•É™±½Üˆè½Ù•É™±½Ü°(€€€€€€€€€€€€‰…¹‘¥‘…Ñ•}½Õ¹Ğˆè±•¸¡…¹‘¥‘…Ñ•}¥‘Ì¤°(€€€€€€€€€€€€‰‰¥¹‘}Í¹…ÁÍ¡½Ñ}½Õ¹Ğˆè±•¸¡‰¥¹‘}¥‘Ì¤°(€€€€€€€€€€€€‰­¥­•ˆè­¥­•°€‰™…¥±•ˆèmt°(€€€€€€€€€€€€‰É½ÕÁ}¥ˆèÉ½ÕÁ}¥°(€€€€€€€€€€€€‰¹½Ñ”ˆè€‹šâ³¢¦›š¢‡šN°¡¹½Ó–¾›¦još&L1%9A$¤ˆ°(€€€€€€€ô¤°€ÈÀÀ((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½™É¥•¹‘Ì½¥¹Ù¥Ñ”ˆ¤(€€€‘•˜™É¥•¹‘Í}¥¹Ù¥Ñ•}…Á¤ ¤è(€€€€€€€‘…Ñ„°½‘”€ôÉ•…Ñ•}™É¥•¹‘}¥¹Ù¥Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t°É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½™É¥•¹‘Ì½…•ÁĞˆ¤(€€€‘•˜™É¥•¹‘Í}…•ÁÑ}…Á¤ ¤è(€€€€€€€‘…Ñ„°½‘”€ô…•ÁÑ}™É¥•¹‘}¥¹Ù¥Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t°É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹•Ğ ˆ½…Á¤½™É¥•¹‘Ì½±½…Ñ¥½¹Ìˆ¤(€€€‘•˜™É¥•¹‘Í}±½…Ñ¥½¹Í}…Á¤ ¤è(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡™É¥•¹‘}±½…Ñ¥½¹Ì¡…ÁÀ¹½¹™¥l‰Q}%1‰t°É•ÅÕ•ÍĞ¹…ÉÌ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤¤¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½±½…Ñ¥½¸½ÍÑ…ÑÕÌˆ¤(€€€‘•˜±½…Ñ¥½¹}ÍÑ…ÑÕÍ}…Á¤ ¤è(€€€€€€€±¥¹•}ÕÍ•É}¥€ôÍÑÈ¡É•ÅÕ•ÍĞ¹…ÉÌ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰µ¥ÍÍ¥¹œ±¥¹•}ÕÍ•É}¥‰ô¤°€ĞÀÀ(€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€ÁÉ½™¥±”€ô•Ñ}ÁÉ½™¥±”¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆèQÉÕ”°€‰Í…™•Ñå}Õ…ÉˆèÍ…™•Ñå}Õ…É‘}Í¹…ÁÍ¡½Ğ¡ÁÉ½™¥±”¥ô¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½±½…Ñ¥½¸½ÕÁ‘…Ñ”ˆ¤(€€€‘•˜±½…Ñ¥½¹}ÕÁ‘…Ñ•}…Á¤ ¤è(€€€€€€€‘…Ñ„°½‘”€ôÕÁ‘…Ñ•}±½…Ñ¥½¸ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô°(€€€€€€€€€€€…ÁÀ¹½¹™¥œ°(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½±½…Ñ¥½¸½ÍÑ½Àˆ¤(€€€‘•˜±½…Ñ¥½¹}ÍÑ½Á}…Á¤ ¤è(€€€€€€€‘…Ñ„°½‘”€ôÍÑ½Á}±½…Ñ¥½¹}Í¡…É¥¹œ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Í½Ìˆ¤(€€€‘•˜Í½Í}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ôÑÉ¥•É}Í½Ì¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½ÑÉ¥…°½Ñ•ÍĞµ…Ñ¥½¸ˆ¤(€€€‘•˜ÑÉ¥…±}Ñ•ÍÑ}…Ñ¥½¹}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„°½‘”€ô…ÕÑ¡½É¥é•}±…‰•±•‘}Ñ•ÍÑ}…Ñ¥½¸ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€Á…å±½…¹•Ğ ‰…Ñ¥½¸ˆ¤°(€€€€€€€€¤(€€€€€€€¥˜½‘”€ôô€ÈÀÀ…¹‘…Ñ„¹•Ğ ‰…±±½İ•ˆ¤è(€€€€€€€€€€€Ñ½­•¸€ô…ÁÀ¹½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤½È½Ì¹•¹Ù¥É½¸¹•Ğ (€€€€€€€€€€€€€€€€‰1%9}!991}MM}Q=-8ˆ°€ˆˆ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜¹½ĞÑ½­•¸è(€€€€€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì(€€€€€€€€€€€€€€€€€€€€¨©‘…Ñ„°(€€€€€€€€€€€€€€€€€€€€‰…±±½İ•ˆè…±Í”°(€€€€€€€€€€€€€€€€€€€€‰É•…Í½¸ˆè€‰ÁÕÍ¡}Õ¹…Ù…¥±…‰±”ˆ°(€€€€€€€€€€€€€€€ô¤°€ÔÀÌ(€€€€€€€€€€€Í•¹‘•È€ô…ÁÀ¹½¹™¥œ¹•Ğ ‰1%9}AUM!}M9Hˆ¤½È±¥¹•}ÁÕÍ¡}µ•ÍÍ…”(€€€€€€€€€€€É•ÑÉå}­•ä€ô}±¥¹•}É•ÑÉå}­•ä¡‘…Ñ…l‰•Ù•¹Ñ}¥‰t¤(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€}Í•¹‘}±¥¹•}İ¥Ñ¡}É•ÑÉå}­•ä (€€€€€€€€€€€€€€€€€€€Í•¹‘•È°Ñ½­•¸°±¥¹•}ÕÍ•É}¥°‘…Ñ…l‰µ•ÍÍ…”‰t°É•ÑÉå}­•ä(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€µÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€±…µ‰‘„ÍÑ…Ñ”èÉ•½É‘}±¥¹•}µ•ÍÍ…•}ÕÍ…” (€€€€€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€€€€€…Ñ•½Éäõ˜‰ÑÉ¥…±}íÁ…å±½…¹•Ğ …Ñ¥½¸œ¥õ}Ñ•ÍĞˆ°(€€€€€€€€€€€€€€€€€€€€€€€½İ¹•É}±¥¹•}ÕÍ•É}¥õ±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€€€€É•¥Á¥•¹Ñ}½Õ¹ĞôÄ°(€€€€€€€€€€€€€€€€€€€€€€€•Ù•¹Ñ}¥õ‘…Ñ…l‰•Ù•¹Ñ}¥‰t°(€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€‘…Ñ…l‰‘•±¥Ù•Éä‰t€ô€‰Í•¹Ğˆ(€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€€€€€…ÁÀ¹±½•È¹İ…É¹¥¹œ ‰ÑÉ¥…°Ñ•ÍĞ‘•±¥Ù•Éä™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€€€€€‘…Ñ…l‰‘•±¥Ù•Éä‰t€ô€‰™…¥±•ˆ(€€€€€€€€€€€€€€€‘…Ñ…l‰É•…Í½¸‰t€ô€‰ÁÕÍ¡}™…¥±•ˆ(€€€€€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°€ÔÀÈ(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Í½Ì½…¹•°ˆ¤(€€€‘•˜Í½Í}…¹•±}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ô…¹•±}Í½Í}•Ù•¹Ğ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Í½Ì½É•ÑÉäˆ¤(€€€‘•˜Í½Í}É•ÑÉå}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ôÉ•ÑÉå}Í½Í}•Ù•¹Ğ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹•Ğ ˆ½…Á¤½Í½Ì½ÍÑ…ÑÕÌˆ¤(€€€‘•˜Í½Í}ÍÑ…ÑÕÍ}…Á¤ ¤è(€€€€€€€Á…å±½…€ôì‰±¥¹•}ÕÍ•É}¥ˆèÉ•ÅÕ•ÍĞ¹…ÉÌ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ°€ˆˆ¥ô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„°½‘”€ô•Ñ}Í½Í}•Ù•¹Ñ}ÍÑ…ÑÕÌ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€É•ÅÕ•ÍĞ¹…ÉÌ¹•Ğ ‰•Ù•¹Ñ}¥ˆ°€ˆˆ¤°(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Í½Ì½É•ÍÁ½¹ˆ¤(€€€‘•˜Í½Í}É•ÍÁ½¹‘}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ôÉ•ÍÁ½¹‘}Ñ½}Í½Í}•Ù•¹Ğ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°…ÁÀ¹½¹™¥œ(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Í½Ì½Í…™”ˆ¤(€€€‘•˜Í½Í}Í…™•}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ô±½Í•}Í½Í}…Í}Í…™” (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°…ÁÀ¹½¹™¥œ(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹•Ğ ˆ½…Á¤½‰½Ğ½Õ…É‘¥…¸µÉ½ÕÁÌˆ¤(€€€‘•˜‰½Ñ}Õ…É‘¥…¹}É½ÕÁÍ}…Á¤ ¤è(€€€€€€€€ˆˆˆÈÀÈØ´ÀÜ´ÈÄÁ…Ñ €ÈÈèƒ¢şS–n{š&šr'–º#¢¶ßú“šâ–Z¸£’úl‰½Ñ}…‘µ¥¸¹¡Ñµ°§ˆˆˆ(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•((€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€É½ÕÁÌ€ôÍÑ…Ñ”¹•Ğ ‰Õ…É‘¥…¹}É½ÕÁÌˆ°íô¤(€€€€€€€ÕÍ•ÉÌ€ôÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ°íô¤(€€€€€€€½ÕĞ€ômt(€€€€€€€™½È¥°œ¥¸É½ÕÁÌ¹¥Ñ•µÌ ¤è(€€€€€€€€€€€½İ¹•É}¥€ôœ¹•Ğ ‰½İ¹•É}±¥¹•}ÕÍ•É}¥ˆ°€ˆˆ¤(€€€€€€€€€€€½İ¹•É}ÁÉ½™¥±”€ôÕÍ•ÉÌ¹•Ğ¡½İ¹•É}¥°íô¤(€€€€€€€€€€€½ÕĞ¹…ÁÁ•¹¡ì(€€€€€€€€€€€€€€€€‰É½ÕÁ}¥ˆè¥°(€€€€€€€€€€€€€€€€‰½İ¹•É}¥ˆè½İ¹•É}¥‘lèÙt€¬€ˆ¸¸¸ˆ€¬½İ¹•É}¥‘l´Ğét¥˜½İ¹•É}¥•±Í”9½¹”°(€€€€€€€€€€€€€€€€‰½İ¹•É}Á±…¸ˆè½İ¹•É}ÁÉ½™¥±”¹•Ğ ‰Á±…¸ˆ¤°(€€€€€€€€€€€€€€€€‰µ•µ‰•É}½Õ¹Ñ}…Ñ}‰¥¹ˆèœ¹•Ğ ‰µ•µ‰•É}½Õ¹Ñ}…Ñ}‰¥¹ˆ¤°(€€€€€€€€€€€€€€€€‰É•…Ñ•‘}…Ğˆèœ¹•Ğ ‰É•…Ñ•‘}…Ğˆ¤°(€€€€€€€€€€€€€€€€‰ÍÑ…ÑÕÌˆèœ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤°(€€€€€€€€€€€ô¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰É½ÕÁÌˆè½ÕĞ°€‰Ñ½Ñ…°ˆè±•¸¡½ÕĞ¥ô¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½‰½Ğ½Í½ÌµÁ•¹‘¥¹œˆ¤(€€€‘•˜‰½Ñ}Í½Í}Á•¹‘¥¹}…Á¤ ¤è(€€€€€€€€ˆˆ‰I•ÑÕÉ¸M=LÁÉ½É•ÍÌ°‘•±¥Ù•Éä•Ù•¹ÑÌ…¹É…‘•Í…™•ÑäÉ•ÍÑÉ¥Ñ¥½¹Ì¸ˆˆˆ(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•((€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€Á•¹‘¥¹œ€ôÍÑ…Ñ”¹•Ğ ‰Í½Í}Á•¹‘¥¹œˆ°íô¤(€€€€€€€½ÕĞ€ômt(€€€€€€€™½ÈÕ¥°À¥¸Á•¹‘¥¹œ¹¥Ñ•µÌ ¤è(€€€€€€€€€€€½ÕĞ¹…ÁÁ•¹¡ì(€€€€€€€€€€€€€€€€‰ÕÍ•É}¥ˆèÕ¥‘lèÙt€¬€ˆ¸¸¸ˆ€¬Õ¥‘l´Ğét°(€€€€€€€€€€€€€€€€‰ÍÑ…”ˆèÀ¹•Ğ ‰ÍÑ…”ˆ¤°(€€€€€€€€€€€€€€€€‰Ñ…Á}½Õ¹ĞˆèÀ¹•Ğ ‰Ñ…Á}½Õ¹Ğˆ¤°(€€€€€€€€€€€€€€€€‰™¥ÉÍÑ}Ñ…Á}…ĞˆèÀ¹•Ğ ‰™¥ÉÍÑ}Ñ…Á}…Ğˆ¤°(€€€€€€€€€€€€€€€€‰±…ÍÑ}Ñ…Á}…ĞˆèÀ¹•Ğ ‰±…ÍÑ}Ñ…Á}…Ğˆ¤°(€€€€€€€€€€€€€€€€‰Í•¹Ñ}…ĞˆèÀ¹•Ğ ‰Í•¹Ñ}…Ğˆ¤°(€€€€€€€€€€€€€€€€‰•Ù•¹Ñ}¥ˆèÀ¹•Ğ ‰•Ù•¹Ñ}¥ˆ¤°(€€€€€€€€€€€€€€€€‰…¹•±±•‘}…ĞˆèÀ¹•Ğ ‰…¹•±±•‘}…Ğˆ¤°(€€€€€€€€€€€ô¤(€€€€€€€€Œ…Ñ¥Ù”ƒ–r£–&4£¢¶›–F(½İ…É¹¥¹œ¤±Í•¹Ğ±…¹•±±•ƒ–r£–ú0(€€€€€€€½ÕĞ¹Í½ÉĞ¡­•äõ±…µ‰‘„àè€¡à¹•Ğ ‰ÍÑ…”ˆ°€ˆˆ¤¹½Ğ¥¸€ ‰İ…É¹¥¹|Äˆ°€‰İ…É¹¥¹|Èˆ°€‰İ…É¹¥¹|Ìˆ¤°à¹•Ğ ‰±…ÍÑ}Ñ…Á}…Ğˆ¤½È€ˆˆ¤¤(€€€€€€€•Ù•¹ÑÌ€ômt(€€€€€€€™½È•Ù•¹Ğ¥¸€¡ÍÑ…Ñ”¹•Ğ ‰Í½Í}•Ù•¹ÑÌˆ¤½Èíô¤¹Ù…±Õ•Ì ¤è(€€€€€€€€€€€½İ¹•È€ôÍÑÈ¡•Ù•¹Ğ¹•Ğ ‰½İ¹•É}±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤(€€€€€€€€€€€‘•±¥Ù•É¥•Ì€ô•Ù•¹Ğ¹•Ğ ‰‘•±¥Ù•É¥•Ìˆ¤½Èmt(€€€€€€€€€€€•Ù•¹ÑÌ¹…ÁÁ•¹¡ì(€€€€€€€€€€€€€€€€‰•Ù•¹Ñ}¥ˆè•Ù•¹Ğ¹•Ğ ‰•Ù•¹Ñ}¥ˆ¤°(€€€€€€€€€€€€€€€€‰½İ¹•É}¥ˆè½İ¹•ÉlèÙt€¬€ˆ¸¸¸ˆ€¬½İ¹•Él´Ğét¥˜½İ¹•È•±Í”9½¹”°(€€€€€€€€€€€€€€€€‰½İ¹•É}‘¥ÍÁ±…å}¹…µ”ˆè•Ù•¹Ğ¹•Ğ ‰½İ¹•É}‘¥ÍÁ±…å}¹…µ”ˆ¤°(€€€€€€€€€€€€€€€€‰ÍÑ…ÑÕÌˆè•Ù•¹Ğ¹•Ğ ‰ÍÑ…ÑÕÌˆ¤°(€€€€€€€€€€€€€€€€‰Í•¹Ñ}…Ğˆè•Ù•¹Ğ¹•Ğ ‰Í•¹Ñ}…Ğˆ¤°(€€€€€€€€€€€€€€€€‰…¹•±±•‘}…Ğˆè•Ù•¹Ğ¹•Ğ ‰…¹•±±•‘}…Ğˆ¤°(€€€€€€€€€€€€€€€€‰Í•¹ĞˆèÍÕ´ Ä™½È¥Ñ•´¥¸‘•±¥Ù•É¥•Ì¥˜¥Ñ•´¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰Í•¹Ğˆ¤°(€€€€€€€€€€€€€€€€‰™…¥±•ˆèÍÕ´ Ä™½È¥Ñ•´¥¸‘•±¥Ù•É¥•Ì¥˜¥Ñ•´¹•Ğ ‰ÍÑ…ÑÕÌˆ¤€ôô€‰™…¥±•ˆ¤°(€€€€€€€€€€€€€€€€‰…‰ÕÍ•}µ½‘”ˆè•Ù•¹Ğ¹•Ğ ‰…‰ÕÍ•}µ½‘”ˆ¤½È€‰¹½Éµ…°ˆ°(€€€€€€€€€€€ô¤(€€€€€€€•Ù•¹ÑÌ¹Í½ÉĞ¡­•äõ±…µ‰‘„¥Ñ•´è¥Ñ•´¹•Ğ ‰Í•¹Ñ}…Ğˆ¤½È€ˆˆ°É•Ù•ÉÍ”õQÉÕ”¤(€€€€€€€…‰ÕÍ”€ôì‰½‰Í•ÉÙ…Ñ¥½¸ˆè€À°€‰É•ÍÑÉ¥Ñ•ˆè€Áô(€€€€€€€™½ÈÁÉ½™¥±”¥¸€¡ÍÑ…Ñ”¹•Ğ ‰ÕÍ•ÉÌˆ¤½Èíô¤¹Ù…±Õ•Ì ¤è(€€€€€€€€€€€µ½‘”€ôÍ½Í}…‰ÕÍ•}ÍÑ…Ñ”¡ÁÉ½™¥±”°ÕÉÉ•¹Ñ}…ÁÁ}Ñ¥µ”¡…ÁÀ¹½¹™¥œ¤¤¹•Ğ ‰µ½‘”ˆ¤(€€€€€€€€€€€¥˜µ½‘”¥¸…‰ÕÍ”è(€€€€€€€€€€€€€€€…‰ÕÍ•mµ½‘•t€¬ô€Ä(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì(€€€€€€€€€€€€‰Á•¹‘¥¹œˆè½ÕĞ°(€€€€€€€€€€€€‰Ñ½Ñ…°ˆè±•¸¡½ÕĞ¤°(€€€€€€€€€€€€‰•Ù•¹ÑÌˆè•Ù•¹ÑÍlèÔÁt°(€€€€€€€€€€€€‰•Ù•¹Ñ}Ñ½Ñ…°ˆè±•¸¡•Ù•¹ÑÌ¤°(€€€€€€€€€€€€‰…‰ÕÍ”ˆè…‰ÕÍ”°(€€€€€€€ô¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½‰½Ğ½É••¹Ğµ•Ù•¹ÑÌˆ¤(€€€‘•˜‰½Ñ}É••¹Ñ}•Ù•¹ÑÍ}…Á¤ ¤è(€€€€€€€€ˆˆˆÈÀÈØ´ÀÜ´ÈÄÁ…Ñ €ÈÈèƒ¢şS–n{šr¢şGjİ•‰¡½½¬ƒ’ê/’îØ£’öÿR ¹½Ñ¥™¥…Ñ¥½¹}±½œ§ˆˆˆ(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•((€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€±½œ€ôÍÑ…Ñ”¹•Ğ ‰¹½Ñ¥™¥…Ñ¥½¹}±½œˆ°mt¤(€€€€€€€É••¹Ğ€ô±½l´ÈÀét€€Œƒšr¢şD€ÈÀƒšŠt(€€€€€€€É••¹Ğ¹É•Ù•ÉÍ” ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰É••¹ĞˆèÉ••¹Ğ°€‰Ñ½Ñ…°ˆè±•¸¡±½œ¥ô¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Í½Ì½¡•¬µÍ¡•‘Õ±•ˆ¤(€€€‘•˜Í½Í}¡•­}Í¡•‘Õ±•‘}…Á¤ ¤è(€€€€€€€€ˆˆˆÈÀÈØ´ÀÜ´ÈÄÁ…Ñ €ÈÄèÉ½¸ƒ®¿¦îxƒŠPƒšâB¦;šr|M=LƒÒ¦2((€€€€€€€€ÌµÑ…ÀƒšÖ¢/šr®/–6Ïfó¦³š&’î—¦g–,É½¸ƒ–>«¢Êƒ¢Ê°è(€€€€€€€€Ä¸ƒšâš:$€Äƒ–Â?šf’î—–&7jÍ•¹Ğ½…¹•±±•ƒÒ¦2£¦ÿ–4ÍÑ…Ñ”ƒ¢£¢Ô¤(€€€€€€€ƒšr«’ú–>¿–*€ë–r Í•¹Ñ}…Ğƒ–ú0€Ôƒ–"¦Bcš>C¦K3–>¿’î—–>[šÚ#’ê7¶$(€€€€€€€€ˆˆˆ(€€€€€€€™É½´Í½Í}™±½Ü¥µÁ½ÉĞÍ½Í}ÁÕÉ•}½±(€€€€€€€™É½´‘…Ñ•Ñ¥µ”¥µÁ½ÉĞ‘…Ñ•Ñ¥µ”((€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€¹½Ü€ô‘…Ñ•Ñ¥µ”¹¹½Ü ¤(€€€€€€€É•µ½Ù•€ôÍ½Í}ÁÕÉ•}½±¡ÍÑ…Ñ”°­••Á}µ¥¹ÕÑ•ÌôØÀ¤(€€€€€€€Í…Ù•}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t°ÍÑ…Ñ”¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì(€€€€€€€€€€€€‰¡•­•‘}…Ğˆè¹½Ü¹¥Í½™½Éµ…Ğ¡Ñ¥µ•ÍÁ•Œô‰Í•½¹‘Ìˆ¤°(€€€€€€€€€€€€‰ÁÕÉ•ˆè±•¸¡É•µ½Ù•¤°(€€€€€€€ô¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…½Õ¹Ğ½‘•±•Ñ”ˆ¤(€€€‘•˜…½Õ¹Ñ}‘•±•Ñ•}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ô‘•±•Ñ•}…½Õ¹Ğ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…½Õ¹Ğ½•áÁ½ÉĞˆ¤(€€€‘•˜…½Õ¹Ñ}•áÁ½ÉÑ}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ô•áÁ½ÉÑ}…½Õ¹Ñ}‘…Ñ„¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…½Õ¹Ğ½¡¥ÍÑ½Éä½‘•±•Ñ”ˆ¤(€€€‘•˜…½Õ¹Ñ}¡¥ÍÑ½Éå}‘•±•Ñ•}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ô‘•±•Ñ•}Á•ÉÍ½¹…±}¡¥ÍÑ½Éä¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€‘•˜}µ¥É…Ñ¥½¹}Ù•É¥™¥•‘}ÍÕ‰©•Ğ¡Á…å±½…°¡…¹¹•±}­•ä¤è(€€€€€€€¥˜¹½Ğ…½Õ¹Ñ}µ¥É…Ñ¥½¹}É•…‘ä¡…ÁÀ¹½¹™¥œ¤è(€€€€€€€€€€€É•ÑÕÉ¸9½¹”°€¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰µ¥É…Ñ¥½¹}Õ¹…Ù…¥±…‰±”‰ô°€ÔÀÌ¤(€€€€€€€¥˜•áÑÉ…Ñ}¥‘}Ñ½­•¸¥Ì9½¹”½ÈÙ•É¥™å}±¥¹•}¥‘}Ñ½­•¹}™½É}¡…¹¹•°¥Ì9½¹”è(€€€€€€€€€€€É•ÑÕÉ¸9½¹”°€¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰µ¥É…Ñ¥½¹}Õ¹…Ù…¥±…‰±”‰ô°€ÔÀÌ¤(€€€€€€€Ñ½­•¸€ô•áÑÉ…Ñ}¥‘}Ñ½­•¸ (€€€€€€€€€€€í­•äèÙ…±Õ”™½È­•ä°Ù…±Õ”¥¸É•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹¥Ñ•µÌ ¥ô°(€€€€€€€€€€€Á…å±½…°(€€€€€€€€€€€íô°(€€€€€€€€¤(€€€€€€€ÍÕ‰©•Ğ€ôÙ•É¥™å}±¥¹•}¥‘}Ñ½­•¹}™½É}¡…¹¹•° (€€€€€€€€€€€Ñ½­•¸°(€€€€€€€€€€€…ÁÀ¹½¹™¥œ¹•Ğ¡¡…¹¹•±}­•ä¤°(€€€€€€€€¤(€€€€€€€¥˜¹½ĞÍÕ‰©•Ğè(€€€€€€€€€€€É•ÑÕÉ¸9½¹”°€¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰¥¹Ù…±¥‘}Ñ½­•¸‰ô°€ĞÀÄ¤(€€€€€€€É•ÑÕÉ¸ÍÕ‰©•Ğ°9½¹”((€€€…ÁÀ¹…™Ñ•É}É•ÅÕ•ÍĞ(€€€‘•˜}‘¥Í…‰±•}…½Õ¹Ñ}µ¥É…Ñ¥½¹}É•ÍÁ½¹Í•}…¡¥¹œ¡É•ÍÁ½¹Í”¤è(€€€€€€€¥˜É•ÅÕ•ÍĞ¹Á…Ñ ¹ÍÑ…ÉÑÍİ¥Ñ  ˆ½…Á¤½…½Õ¹Ğµµ¥É…Ñ¥½¸¼ˆ¤è(€€€€€€€€€€€É•ÍÁ½¹Í”¹¡•…‘•ÉÍl‰…¡”µ½¹ÑÉ½°‰t€ô€‰¹¼µÍÑ½É”ˆ(€€€€€€€É•ÑÕÉ¸É•ÍÁ½¹Í”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…½Õ¹Ğµµ¥É…Ñ¥½¸½ÍÑ…ÉĞˆ¤(€€€‘•˜…½Õ¹Ñ}µ¥É…Ñ¥½¹}ÍÑ…ÉÑ}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤(€€€€€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡Á…å±½…°‘¥Ğ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰¥¹Ù…±¥‘}É•ÅÕ•ÍĞ‰ô¤°€ĞÀÀ(€€€€€€€½±‘}±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}µ¥É…Ñ¥½¹}Ù•É¥™¥•‘}ÍÕ‰©•Ğ (€€€€€€€€€€€Á…å±½…°(€€€€€€€€€€€€‰1e}1%9}1=%9}!991}%ˆ°(€€€€€€€€¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„°½‘”€ôÉ•…Ñ•}…½Õ¹Ñ}µ¥É…Ñ¥½¹}Ñ¥­•Ğ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€½±‘}±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€…ÁÀ¹½¹™¥œ°(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…½Õ¹Ğµµ¥É…Ñ¥½¸½ÍÑ…ÑÕÌˆ¤(€€€‘•˜…½Õ¹Ñ}µ¥É…Ñ¥½¹}ÍÑ…ÑÕÍ}…Á¤ ¤è(€€€€€€€½±‘}±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}µ¥É…Ñ¥½¹}Ù•É¥™¥•‘}ÍÕ‰©•Ğ (€€€€€€€€€€€íô°(€€€€€€€€€€€€‰1e}1%9}1=%9}!991}%ˆ°(€€€€€€€€¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„€ô…½Õ¹Ñ}µ¥É…Ñ¥½¹}Ñ¥­•Ñ}ÍÑ…ÑÕÌ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€½±‘}±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€…ÁÀ¹½¹™¥œ°(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…½Õ¹Ğµµ¥É…Ñ¥½¸½É•‘••´ˆ¤(€€€‘•˜…½Õ¹Ñ}µ¥É…Ñ¥½¹}É•‘••µ}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤(€€€€€€€¥˜¹½Ğ¥Í¥¹ÍÑ…¹”¡Á…å±½…°‘¥Ğ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰¥¹Ù…±¥‘}É•ÅÕ•ÍĞ‰ô¤°€ĞÀÀ(€€€€€€€¹•İ}±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}µ¥É…Ñ¥½¹}Ù•É¥™¥•‘}ÍÕ‰©•Ğ (€€€€€€€€€€€Á…å±½…°(€€€€€€€€€€€€‰1%9}1=%9}!991}%ˆ°(€€€€€€€€¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„°½‘”€ôÉ•‘••µ}…½Õ¹Ñ}µ¥É…Ñ¥½¹}Ñ¥­•Ğ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€Á…å±½…¹•Ğ ‰µ¥É…Ñ¥½¹}½‘”ˆ¤°(€€€€€€€€€€€¹•İ}±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€…ÁÀ¹½¹™¥œ°(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…½Õ¹Ğ½ÁÉ¥Ù…äµÉ•ÅÕ•ÍĞˆ¤(€€€‘•˜…½Õ¹Ñ}ÁÉ¥Ù…å}É•ÅÕ•ÍÑ}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ôÉ•…Ñ•}ÁÉ¥Ù…å}É•ÅÕ•ÍĞ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…‘µ¥¸½ÍÕµµ…Éäˆ¤(€€€‘•˜…‘µ¥¹}ÍÕµµ…Éå}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡…‘µ¥¹}ÍÕµµ…Éä¡…ÁÀ¹½¹™¥l‰Q}%1‰t°…ÁÀ¹½¹™¥œ¤¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…‘µ¥¸½Ñ•ÍĞµ•¹Ñ•Èˆ¤(€€€‘•˜…‘µ¥¹}Ñ•ÍÑ}•¹Ñ•É}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡…‘µ¥¹}Ñ•ÍÑ}•¹Ñ•É}ÍÑ…ÑÕÌ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°…ÁÀ¹½¹™¥œ¤¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½Ñ•ÍĞµ•¹Ñ•È½ÉÕ¸ˆ¤(€€€‘•˜…‘µ¥¹}Ñ•ÍÑ}•¹Ñ•É}ÉÕ¹}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ôÉÕ¹}…‘µ¥¹}Ñ•ÍĞ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€…ÁÀ¹½¹™¥œ°(€€€€€€€€€€€É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô°(€€€€€€€€¤(€€€€€€€…ÁÁ•¹‘}…‘µ¥¹}…Õ‘¥Ğ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€˜‰Ñ•ÍÑ}•¹Ñ•È¹í‘…Ñ„¹•Ğ Ñ•ÍÑ}¥œ¤½È€Õ¹­¹½İ¸ôˆ°(€€€€€€€€€€€€‰ÍÕ•ÍÌˆ¥˜½‘”€ğ€ĞÀÀ•±Í”€‰™…¥±•ˆ°(€€€€€€€€€€€ì‰¡ÑÑÁ}ÍÑ…ÑÕÌˆè½‘”°€‰Ñ•ÍÑ}µ½‘”ˆèQÉÕ•ô°(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…‘µ¥¸½…½Õ¹Ğµµ¥É…Ñ¥½¹Ìˆ¤(€€€‘•˜…‘µ¥¹}…½Õ¹Ñ}µ¥É…Ñ¥½¹Í}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä (€€€€€€€€€€€…‘µ¥¹}…½Õ¹Ñ}µ¥É…Ñ¥½¹Ì (€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥œ°(€€€€€€€€€€€€¤(€€€€€€€€¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…‘µ¥¸½‰•Ñ„µµ•µ‰•ÉÌˆ¤(€€€‘•˜…‘µ¥¹}‰•Ñ…}µ•µ‰•ÉÍ}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‰•Ñ…}µ•µ‰•ÉÍ}Í¹…ÁÍ¡½Ğ¡±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤¤¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…‘µ¥¸½±¥¹”µ…•ÁÑ…¹”ˆ¤(€€€‘•˜…‘µ¥¹}±¥¹•}…•ÁÑ…¹•}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä (€€€€€€€€€€€±¥¹•}…•ÁÑ…¹•}Í¹…ÁÍ¡½Ğ¡±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤¤(€€€€€€€€¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½±¥¹”µ…•ÁÑ…¹”ˆ¤(€€€‘•˜…‘µ¥¹}±¥¹•}…•ÁÑ…¹•}É•…Ñ•}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€ÑÉäè(€€€€€€€€€€€É•ÍÕ±Ğ€ôµÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€±…µ‰‘„ÍÑ…Ñ”èÉ•…Ñ•}±¥¹•}…•ÁÑ…¹•}…Í”¡ÍÑ…Ñ”°Á…å±½…¤°(€€€€€€€€€€€€¤(€€€€€€€•á•ÁĞY…±Õ•ÉÉ½È…Ì•áŒè(€€€€€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” (€€€€€€€€€€€€€€€€‰±¥¹•}…•ÁÑ…¹”¹É•…Ñ”ˆ°(€€€€€€€€€€€€€€€ì‰½¬ˆè…±Í”°€‰•ÉÉ½ÈˆèÍÑÈ¡•áŒ¥ô°(€€€€€€€€€€€€€€€€ĞÀÀ°(€€€€€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” (€€€€€€€€€€€€‰±¥¹•}…•ÁÑ…¹”¹É•…Ñ”ˆ°(€€€€€€€€€€€ì‰½¬ˆèQÉÕ”°€¨©É•ÍÕ±Ñô°(€€€€€€€€¤((€€€…ÁÀ¹Á…Ñ  ˆ½…Á¤½…‘µ¥¸½±¥¹”µ…•ÁÑ…¹”¼ñ…Í•}¥øˆ¤(€€€‘•˜…‘µ¥¹}±¥¹•}…•ÁÑ…¹•}É•Ù¥•İ}…Á¤¡…Í•}¥¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€ÑÉäè(€€€€€€€€€€€É•ÍÕ±Ğ€ôµÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€±…µ‰‘„ÍÑ…Ñ”èÉ•Ù¥•İ}±¥¹•}…•ÁÑ…¹•}…Í” (€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°…Í•}¥°Á…å±½…(€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€¤(€€€€€€€•á•ÁĞY…±Õ•ÉÉ½È…Ì•áŒè(€€€€€€€€€€€•ÉÉ½È€ôÍÑÈ¡•áŒ¤(€€€€€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” (€€€€€€€€€€€€€€€€‰±¥¹•}…•ÁÑ…¹”¹É•Ù¥•Üˆ°(€€€€€€€€€€€€€€€ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè•ÉÉ½Éô°(€€€€€€€€€€€€€€€€ĞÀĞ¥˜•ÉÉ½È€ôô€‰…•ÁÑ…¹•}…Í•}¹½Ñ}™½Õ¹ˆ•±Í”€ĞÀÀ°(€€€€€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” (€€€€€€€€€€€€‰±¥¹•}…•ÁÑ…¹”¹É•Ù¥•Üˆ°(€€€€€€€€€€€ì‰½¬ˆèQÉÕ”°€¨©É•ÍÕ±Ñô°(€€€€€€€€¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…‘µ¥¸½‰ÕÍ¥¹•ÍÌµ‘…Í¡‰½…Éˆ¤(€€€‘•˜…‘µ¥¹}‰ÕÍ¥¹•ÍÍ}‘…Í¡‰½…É‘}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡…‘µ¥¹}‰ÕÍ¥¹•ÍÍ}‘…Í¡‰½…É¡…ÁÀ¹½¹™¥l‰Q}%1‰t°…ÁÀ¹½¹™¥œ¤¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…‘µ¥¸½‰•Ñ„µÁÉ½É…´ˆ¤(€€€‘•˜…‘µ¥¹}‰•Ñ…}ÁÉ½É…µ}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡Á•Éµ¥ÍÍ¥½¸ô‰‰•Ñ„¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡…‘µ¥¹}‰•Ñ…}ÍÕµµ…Éä¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½‰•Ñ„µÁÉ½É…´½…ÍÍ¥¸ˆ¤(€€€‘•˜…‘µ¥¹}‰•Ñ…}ÁÉ½É…µ}…ÍÍ¥¹}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”°Á•Éµ¥ÍÍ¥½¸ô‰‰•Ñ„¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ô…ÍÍ¥¹}‰•Ñ…}µ•µ‰•È (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰‰•Ñ„¹…ÍÍ¥¸ˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½‰•Ñ„µµ•µ‰•ÉÌˆ¤(€€€‘•˜…‘µ¥¹}‰•Ñ…}µ•µ‰•É}…ÍÍ¥¹}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ô…‘µ¥¹}…ÍÍ¥¹}‰•Ñ…}µ•µ‰•È (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰‰•Ñ„¹…ÍÍ¥¸ˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹‘•±•Ñ” ˆ½…Á¤½…‘µ¥¸½‰•Ñ„µµ•µ‰•ÉÌ¼ñ±¥¹•}ÕÍ•É}¥øˆ¤(€€€‘•˜…‘µ¥¹}‰•Ñ…}µ•µ‰•É}É•Ù½­•}…Á¤¡±¥¹•}ÕÍ•É}¥¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ô…‘µ¥¹}É•Ù½­•}‰•Ñ…}µ•µ‰•È (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰‰•Ñ„¹É•Ù½­”ˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…‘µ¥¸½±…Õ¹ µÉ•…‘¥¹•ÍÌˆ¤(€€€‘•˜…‘µ¥¹}±…Õ¹¡}É•…‘¥¹•ÍÍ}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä (€€€€€€€€€€€±…Õ¹¡}É•…‘¥¹•ÍÍ}Í¹…ÁÍ¡½Ğ¡±½…‘}ÍÑ…Ñ”¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤¤(€€€€€€€€¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½±…Õ¹ µÙ…±¥‘…Ñ¥½¸ˆ¤(€€€‘•˜…‘µ¥¹}±…Õ¹¡}Ù…±¥‘…Ñ¥½¹}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€ÑÉäè(€€€€€€€€€€€Í•¹…É¥¼€ôµÕÑ…Ñ•}ÍÑ…Ñ•}…Ñ½µ¥…±±ä (€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€±…µ‰‘„ÍÑ…Ñ”èÉ•½É‘}±…Õ¹¡}Ù…±¥‘…Ñ¥½¹}ÍÑ•À (€€€€€€€€€€€€€€€€€€€ÍÑ…Ñ”°(€€€€€€€€€€€€€€€€€€€Á…å±½…¹•Ğ ‰Í•¹…É¥½}¥ˆ¤°(€€€€€€€€€€€€€€€€€€€Á…å±½…¹•Ğ ‰­¥¹ˆ¤°(€€€€€€€€€€€€€€€€€€€Á…å±½…¹•Ğ ‰ÍÑ•Àˆ¤°(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥õÁ…å±½…¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ°(€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€¤(€€€€€€€•á•ÁĞY…±Õ•ÉÉ½È…Ì•áŒè(€€€€€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” (€€€€€€€€€€€€€€€€‰±…Õ¹¡}Ù…±¥‘…Ñ¥½¸¹É•½Éˆ°(€€€€€€€€€€€€€€€ì‰½¬ˆè…±Í”°€‰•ÉÉ½ÈˆèÍÑÈ¡•áŒ¥ô°(€€€€€€€€€€€€€€€€ĞÀÀ°(€€€€€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” (€€€€€€€€€€€€‰±…Õ¹¡}Ù…±¥‘…Ñ¥½¸¹É•½Éˆ°(€€€€€€€€€€€ì‰½¬ˆèQÉÕ”°€‰Í•¹…É¥¼ˆèÍ•¹…É¥½ô°(€€€€€€€€€€€€ÈÀÀ°(€€€€€€€€¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½‰•Ñ„µÁÉ½É…´½ÕÁ‘…Ñ”ˆ¤(€€€‘•˜…‘µ¥¹}‰•Ñ…}ÁÉ½É…µ}ÕÁ‘…Ñ•}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”°Á•Éµ¥ÍÍ¥½¸ô‰‰•Ñ„¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ôÕÁ‘…Ñ•}‰•Ñ…}µ•µ‰•È (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰‰•Ñ„¹ÕÁ‘…Ñ”ˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…‘µ¥¸½ÁÉ¥Ù…äµÉ•ÅÕ•ÍÑÌˆ¤(€€€‘•˜…‘µ¥¹}ÁÉ¥Ù…å}É•ÅÕ•ÍÑÍ}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡Á•Éµ¥ÍÍ¥½¸ô‰ÁÉ¥Ù…ä¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡…‘µ¥¹}ÁÉ¥Ù…å}É•ÅÕ•ÍÑÌ¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½ÁÉ¥Ù…äµÉ•ÅÕ•ÍÑÌ½ÕÁ‘…Ñ”ˆ¤(€€€‘•˜…‘µ¥¹}ÁÉ¥Ù…å}É•ÅÕ•ÍÑÍ}ÕÁ‘…Ñ•}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”°Á•Éµ¥ÍÍ¥½¸ô‰ÁÉ¥Ù…ä¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ôÕÁ‘…Ñ•}ÁÉ¥Ù…å}É•ÅÕ•ÍĞ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô°(€€€€€€€€€€€ÍÑÈ¡Í•ÍÍ¥½¸¹•Ğ ‰…‘µ¥¹}É½±”ˆ¤½È€‰Ù¥•İ•Èˆ¤°(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰ÁÉ¥Ù…ä¹ÕÁ‘…Ñ”ˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…‘µ¥¸½ÍÕÁÁ½ÉĞµÑ¥­•ÑÌˆ¤(€€€‘•˜…‘µ¥¹}ÍÕÁÁ½ÉÑ}Ñ¥­•ÑÍ}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡…‘µ¥¹}ÍÕÁÁ½ÉÑ}Ñ¥­•ÑÌ¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½ÍÕÁÁ½ÉĞ½Ñ¥­•ÑÌˆ¤(€€€‘•˜µ•µ‰•É}ÍÕÁÁ½ÉÑ}Ñ¥­•ÑÍ}…Á¤ ¤è(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡íô°ÕÍ•}…ÉÌõQÉÕ”¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„°½‘”€ôµ•µ‰•É}ÍÕÁÁ½ÉÑ}Ñ¥­•ÑÌ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½ÍÕÁÁ½ÉĞ½Ñ¥­•ÑÌˆ¤(€€€‘•˜µ•µ‰•É}ÍÕÁÁ½ÉÑ}Ñ¥­•Ñ}É•…Ñ•}…Á¤ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ôÉ•…Ñ•}ÍÕÁÁ½ÉÑ}Ñ¥­•Ğ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…‘µ¥¸½‰…­ÕÁÌˆ¤(€€€‘•˜…‘µ¥¹}‰…­ÕÁÍ}±¥ÍÑ}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡±¥ÍÑ}…‘µ¥¹}‰…­ÕÁÌ¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½‰…­ÕÁÌˆ¤(€€€‘•˜…‘µ¥¹}‰…­ÕÁÍ}É•…Ñ•}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”°Á•Éµ¥ÍÍ¥½¸ô‰‰…­ÕÀ¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ôÉ•…Ñ•}…‘µ¥¹}‰…­ÕÀ¡…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰‰…­ÕÀ¹É•…Ñ”ˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½‰…­ÕÁÌ½ÈÈˆ¤(€€€‘•˜…‘µ¥¹}ÈÉ}‰…­ÕÁ}É•…Ñ•}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ôÉ•…Ñ•}ÈÉ}•¹ÉåÁÑ•‘}‰…­ÕÀ¡…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰‰…­ÕÀ¹ÈÈ¹É•…Ñ”ˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…‘µ¥¸½‰…­ÕÁÌ¼ñ‰…­ÕÁ}¥øˆ¤(€€€‘•˜…‘µ¥¹}‰…­ÕÁÍ}‘½İ¹±½…‘}…Á¤¡‰…­ÕÁ}¥¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ôÉ•…‘}…‘µ¥¹}‰…­ÕÀ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°‰…­ÕÁ}¥¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½ÍÕÁÁ½ÉĞµÉ•Á±äˆ¤(€€€‘•˜…‘µ¥¹}ÍÕÁÁ½ÉÑ}É•Á±å}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”°Á•Éµ¥ÍÍ¥½¸ô‰ÍÕÁÁ½ÉĞ¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ô…‘µ¥¹}É•Á±å}ÍÕÁÁ½ÉÑ}Ñ¥­•Ğ¡…ÁÀ¹½¹™¥l‰Q}%1‰t°É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô°…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰ÍÕÁÁ½ÉĞ¹É•Á±äˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½Í•¹µÉ•µ¥¹‘•ÉÌˆ¤(€€€‘•˜Í•¹‘}É•µ¥¹‘•ÉÍ}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”°Á•Éµ¥ÍÍ¥½¸ô‰¹½Ñ¥™¥…Ñ¥½¸¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}‘Õ•}É•µ¥¹‘•ÉÌ¡…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰É•µ¥¹‘•È¹Í•¹ˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½Í•¹µ½¹Ñ…ĞµÉ•µ¥¹‘•ÉÌˆ¤(€€€‘•˜Í•¹‘}½¹Ñ…Ñ}É•µ¥¹‘•ÉÍ}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”°Á•Éµ¥ÍÍ¥½¸ô‰¹½Ñ¥™¥…Ñ¥½¸¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}µ¥ÍÍ¥¹}½¹Ñ…Ñ}É•µ¥¹‘•ÉÌ¡…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰½¹Ñ…Ñ}É•µ¥¹‘•È¹Í•¹ˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½Í•¹µÉ•¹•İ…°µÉ•µ¥¹‘•ÉÌˆ¤(€€€‘•˜Í•¹‘}É•¹•İ…±}É•µ¥¹‘•ÉÍ}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”°Á•Éµ¥ÍÍ¥½¸ô‰¹½Ñ¥™¥…Ñ¥½¸¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}É•¹•İ…±}É•µ¥¹‘•ÉÌ¡…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰É•¹•İ…±}É•µ¥¹‘•È¹Í•¹ˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½Í•¹µ‰¥ÉÑ¡‘…äµÉ•µ¥¹‘•ÉÌˆ¤(€€€‘•˜Í•¹‘}‰¥ÉÑ¡‘…å}É•µ¥¹‘•ÉÍ}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”°Á•Éµ¥ÍÍ¥½¸ô‰¹½Ñ¥™¥…Ñ¥½¸¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}‰¥ÉÑ¡‘…å}É•µ¥¹‘•ÉÌ¡…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰‰¥ÉÑ¡‘…å}É•µ¥¹‘•È¹Í•¹ˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½Á…åµ•¹ÑÌ½½¹™¥É´ˆ¤(€€€‘•˜…‘µ¥¹}Á…åµ•¹Ñ}½¹™¥Éµ}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”°Á•Éµ¥ÍÍ¥½¸ô‰½É‘•È¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ô½¹™¥Éµ}Á…åµ•¹Ñ}½É‘•È¡…ÁÀ¹½¹™¥l‰Q}%1‰t°É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô°…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰Á…åµ•¹Ğ¹½¹™¥É´ˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½Á…åµ•¹ÑÌ½É•™Õ¹ˆ¤(€€€‘•˜…‘µ¥¹}Á…åµ•¹Ñ}É•™Õ¹‘}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€Á…å±½…‘l‰É•ÅÕ•ÍÑ•‘}‰ä‰t€ô€‰…‘µ¥¹}Í•ÍÍ¥½¸ˆ(€€€€€€€‘…Ñ„°½‘”€ôÉ•™Õ¹‘}Á…åµ•¹Ñ}½É‘•È (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°…ÁÀ¹½¹™¥œ(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰Á…åµ•¹Ğ¹É•™Õ¹ˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½É½¸½Ñ¥¬ˆ¤(€€€‘•˜É½¹}Ñ¥­}…Á¤ ¤è(€€€€€€€Í•É•Ğ€ôÉ•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹•Ğ ‰`µÉ½¸µM•É•Ğˆ°€ˆˆ¤(€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡…ÁÀ¹½¹™¥œ°Í•É•Ğ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô¤°€ĞÀÄ(€€€€€€€‘…Ñ„°½‘”€ôÉÕ¹}É½¹}Ñ¥¬¡…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹É½ÕÑ” ˆ½…Á¤½É½¸½½¹Ñ…ĞµÉ•µ¥¹‘•ÉÌˆ°µ•Ñ¡½‘Ìõl‰Pˆ°€‰A=MP‰t¤(€€€‘•˜É½¹}½¹Ñ…Ñ}É•µ¥¹‘•ÉÍ}…Á¤ ¤è(€€€€€€€Í•É•Ğ€ôÉ•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹•Ğ ‰`µÉ½¸µM•É•Ğˆ°€ˆˆ¤(€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡…ÁÀ¹½¹™¥œ°Í•É•Ğ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô¤°€ĞÀÄ(€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}µ¥ÍÍ¥¹}½¹Ñ…Ñ}É•µ¥¹‘•ÉÌ¡…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹É½ÕÑ” ˆ½…Á¤½É½¸½¡•­¥¸µÉ•µ¥¹‘•ÉÌˆ°µ•Ñ¡½‘Ìõl‰Pˆ°€‰A=MP‰t¤(€€€‘•˜É½¹}¡•­¥¹}É•µ¥¹‘•ÉÍ}…Á¤ ¤è(€€€€€€€Í•É•Ğ€ôÉ•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹•Ğ ‰`µÉ½¸µM•É•Ğˆ°€ˆˆ¤(€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡…ÁÀ¹½¹™¥œ°Í•É•Ğ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô¤°€ĞÀÄ(€€€€€€€€Œ€ıµ½‘”õ‰É½…‘…ÍĞƒš"X™½É”ôÄƒŠHƒ¦7šZÃš:£šJ·Ö›–£¦£–ŞË¢¢ï–+šr–N‡¾ò#–B¯’î+š^—–ŞËÂ÷–"Ã¾ò$(€€€€€€€µ½‘”€ôÍÑÈ¡É•ÅÕ•ÍĞ¹…ÉÌ¹•Ğ ‰µ½‘”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¹±½İ•È ¤(€€€€€€€™½É”€ôÍÑÈ¡É•ÅÕ•ÍĞ¹…ÉÌ¹•Ğ ‰™½É”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¹±½İ•È ¤¥¸ìˆÄˆ°€‰ÑÉÕ”ˆ°€‰å•Ìˆ°€‰½¸‰ô(€€€€€€€¥˜µ½‘”¥¸ì‰‰É½…‘…ÍĞˆ°€‰É•ÁÕÍ ˆ°€‰…±°‰ô½È™½É”è(€€€€€€€€€€€‘…Ñ„°½‘”€ô‰É½…‘…ÍÑ}¡•­¥¹}É•µ¥¹‘•ÉÌ¡…ÁÀ¹½¹™¥œ¤(€€€€€€€•±Í”è(€€€€€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}¡•­¥¹}É•µ¥¹‘•ÉÌ¡…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹É½ÕÑ” ˆ½…Á¤½É½¸½¡•­¥¸µ‰É½…‘…ÍĞˆ°µ•Ñ¡½‘Ìõl‰Pˆ°€‰A=MP‰t¤(€€€‘•˜É½¹}¡•­¥¹}‰É½…‘…ÍÑ}…Á¤ ¤è(€€€€€€€€ˆˆ‹¦7šZÃš:£šJ·–Â#R£¾òk–Â7šr$±¥¹•}ÕÍ•É}¥ƒjšr–N‡¦šZÃ&#š¾?š^—–æÏ–º$±•ãˆˆˆ(€€€€€€€Í•É•Ğ€ôÉ•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹•Ğ ‰`µÉ½¸µM•É•Ğˆ°€ˆˆ¤(€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡…ÁÀ¹½¹™¥œ°Í•É•Ğ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô¤°€ĞÀÄ(€€€€€€€‘…Ñ„°½‘”€ô‰É½…‘…ÍÑ}¡•­¥¹}É•µ¥¹‘•ÉÌ¡…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹É½ÕÑ” ˆ½…Á¤½É½¸½½Ù•É‘Õ”µ…±•ÉÑÌˆ°µ•Ñ¡½‘Ìõl‰Pˆ°€‰A=MP‰t¤(€€€‘•˜É½¹}½Ù•É‘Õ•}…±•ÉÑÍ}…Á¤ ¤è(€€€€€€€Í•É•Ğ€ôÉ•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹•Ğ ‰`µÉ½¸µM•É•Ğˆ°€ˆˆ¤(€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡…ÁÀ¹½¹™¥œ°Í•É•Ğ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô¤°€ĞÀÄ(€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}‘Õ•}É•µ¥¹‘•ÉÌ¡…ÁÀ¹½¹™¥œ¤(€€€€€€€‘…¥±ä°}‘…¥±å}½‘”€ôÍ•¹‘}Õ…É‘¥…¹}É½ÕÁ}‘…¥±å}ÍÕµµ…É¥•Ì¡…ÁÀ¹½¹™¥œ¤(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡‘…Ñ„°‘¥Ğ¤è(€€€€€€€€€€€‘…Ñ„€ô‘¥Ğ¡‘…Ñ„¤(€€€€€€€€€€€‘…Ñ…l‰‘…¥±å}É½ÕÁ}ÍÕµµ…Éä‰t€ô‘…¥±ä(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹É½ÕÑ” ˆ½…Á¤½É½¸½É•¹•İ…°µÉ•µ¥¹‘•ÉÌˆ°µ•Ñ¡½‘Ìõl‰Pˆ°€‰A=MP‰t¤(€€€‘•˜É½¹}É•¹•İ…±}É•µ¥¹‘•ÉÍ}…Á¤ ¤è(€€€€€€€Í•É•Ğ€ôÉ•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹•Ğ ‰`µÉ½¸µM•É•Ğˆ°€ˆˆ¤(€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡…ÁÀ¹½¹™¥œ°Í•É•Ğ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô¤°€ĞÀÄ(€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}É•¹•İ…±}É•µ¥¹‘•ÉÌ¡…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹É½ÕÑ” ˆ½…Á¤½É½¸½‰¥ÉÑ¡‘…äµÉ•µ¥¹‘•ÉÌˆ°µ•Ñ¡½‘Ìõl‰Pˆ°€‰A=MP‰t¤(€€€‘•˜É½¹}‰¥ÉÑ¡‘…å}É•µ¥¹‘•ÉÍ}…Á¤ ¤è(€€€€€€€Í•É•Ğ€ôÉ•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹•Ğ ‰`µÉ½¸µM•É•Ğˆ°€ˆˆ¤(€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡…ÁÀ¹½¹™¥œ°Í•É•Ğ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô¤°€ĞÀÄ(€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}‰¥ÉÑ¡‘…å}É•µ¥¹‘•ÉÌ¡…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹É½ÕÑ” ˆ½…Á¤½É½¸½Íµ…ÉĞµÉ•µ¥¹‘•ÉÌˆ°µ•Ñ¡½‘Ìõl‰Pˆ°€‰A=MP‰t¤(€€€‘•˜É½¹}Íµ…ÉÑ}É•µ¥¹‘•ÉÍ}…Á¤ ¤è(€€€€€€€Í•É•Ğ€ôÉ•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹•Ğ ‰`µÉ½¸µM•É•Ğˆ°€ˆˆ¤(€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡…ÁÀ¹½¹™¥œ°Í•É•Ğ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô¤°€ĞÀÄ(€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ¡…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹•Ğ ˆ½…Á¤½Íµ…ÉĞµÉ•µ¥¹‘•ÉÌˆ¤(€€€‘•˜Íµ…ÉÑ}É•µ¥¹‘•ÉÍ}•Ğ ¤è(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡íô°ÕÍ•}…ÉÌõQÉÕ”¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•Ñ}Íµ…ÉÑ}É•µ¥¹‘•ÉÍ}Á…å±½…¡…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥¤¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½Íµ…ÉĞµÉ•µ¥¹‘•ÉÌˆ¤(€€€‘•˜Íµ…ÉÑ}É•µ¥¹‘•ÉÍ}Á½ÍĞ ¤è(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€‘…Ñ„°½‘”€ôÍ…Ù•}Íµ…ÉÑ}É•µ¥¹‘•È¡…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹‘•±•Ñ” ˆ½…Á¤½Íµ…ÉĞµÉ•µ¥¹‘•ÉÌ¼ñÉ•µ¥¹‘•É}¥øˆ¤(€€€‘•˜Íµ…ÉÑ}É•µ¥¹‘•ÉÍ}‘•±•Ñ”¡É•µ¥¹‘•É}¥¤è(€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡íô°ÕÍ•}…ÉÌõQÉÕ”¤(€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€Œ±Í¼…•ÁĞ)M=8‰½‘ä™½È±¥•¹ÑÌÑ¡…ĞÍ•¹±¥¹•}ÕÍ•É}¥Ñ¡•É”(€€€€€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô}…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡•ÉÉlÁt¤°•ÉÉlÅt(€€€€€€€‘…Ñ„°½‘”€ô‘•±•Ñ•}Íµ…ÉÑ}É•µ¥¹‘•È¡…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°É•µ¥¹‘•É}¥¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹É½ÕÑ” ˆ½…Á¤½É½¸½µ•µ‰•ÉÍ¡¥Àµ•áÁ¥Éäˆ°µ•Ñ¡½‘Ìõl‰Pˆ°€‰A=MP‰t¤(€€€‘•˜É½¹}µ•µ‰•ÉÍ¡¥Á}•áÁ¥Éå}…Á¤ ¤è(€€€€€€€Í•É•Ğ€ôÉ•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹•Ğ ‰`µÉ½¸µM•É•Ğˆ°€ˆˆ¤(€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡…ÁÀ¹½¹™¥œ°Í•É•Ğ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô¤°€ĞÀÄ(€€€€€€€‘…Ñ„°½‘”€ô…ÁÁ±å}•áÁ¥É•‘}Á±…¹}‘½İ¹É…‘•Ì¡…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹É½ÕÑ” ˆ½…Á¤½É½¸½‘…Ñ„µ±•…¹ÕÀˆ°µ•Ñ¡½‘Ìõl‰Pˆ°€‰A=MP‰t¤(€€€‘•˜É½¹}‘…Ñ…}±•…¹ÕÁ}…Á¤ ¤è(€€€€€€€Í•É•Ğ€ôÉ•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹•Ğ ‰`µÉ½¸µM•É•Ğˆ°€ˆˆ¤(€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡…ÁÀ¹½¹™¥œ°Í•É•Ğ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô¤°€ĞÀÄ(€€€€€€€‘…Ñ„°½‘”€ô±•…¹ÕÁ}•áÁ¥É•‘}‘…Ñ„¡…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹É½ÕÑ” ˆ½…Á¤½É½¸½‰…­™¥±°µ‰¥¹µ¹½Ñ¥™äˆ°µ•Ñ¡½‘Ìõl‰Pˆ°€‰A=MP‰t¤(€€€‘•˜É½¹}‰…­™¥±±}‰¥¹‘}¹½Ñ¥™å}…Á¤ ¤è(€€€€€€€€ˆˆ‰=¹”µÍ¡½Ğèƒ¢sfóš¶ß–>Ë–ŞËÚ–ºk¦ngšZçjÚ–ºkš"C–*|1%9¾ò#–«¶$‰¥¹‘}¹½Ñ¥™å}Í•¹Ñ}…Ó¾ò'ˆˆˆ(€€€€€€€Í•É•Ğ€ôÉ•ÅÕ•ÍĞ¹¡•…‘•ÉÌ¹•Ğ ‰`µÉ½¸µM•É•Ğˆ°€ˆˆ¤(€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡…ÁÀ¹½¹™¥œ°Í•É•Ğ¤è(€€€€€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô¤°€ĞÀÄ(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€‘Éå}ÉÕ¸€ôÍÑÈ (€€€€€€€€€€€É•ÅÕ•ÍĞ¹…ÉÌ¹•Ğ ‰‘Éå}ÉÕ¸ˆ¤(€€€€€€€€€€€½ÈÁ…å±½…¹•Ğ ‰‘Éå}ÉÕ¸ˆ¤(€€€€€€€€€€€½È€ˆˆ(€€€€€€€€¤¹ÍÑÉ¥À ¤¹±½İ•È ¤¥¸ìˆÄˆ°€‰ÑÉÕ”ˆ°€‰å•Ìˆ°€‰½¸‰ô(€€€€€€€ÑÉäè(€€€€€€€€€€€±¥µ¥Ğ€ô¥¹Ğ¡É•ÅÕ•ÍĞ¹…ÉÌ¹•Ğ ‰±¥µ¥Ğˆ¤½ÈÁ…å±½…¹•Ğ ‰±¥µ¥Ğˆ¤½È€À¤(€€€€€€€•á•ÁĞ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€€€€€±¥µ¥Ğ€ô€À(€€€€€€€‘…Ñ„°½‘”€ô‰…­™¥±±}‰¥¹‘}¹½Ñ¥™ä¡…ÁÀ¹½¹™¥œ°‘Éå}ÉÕ¸õ‘Éå}ÉÕ¸°±¥µ¥Ğõ±¥µ¥Ğ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹•Ğ ˆ½…Á¤½…‘µ¥¸½É¥ µµ•¹Ôˆ¤(€€€‘•˜…‘µ¥¹}É¥¡}µ•¹Õ}¥¹ÍÁ•Ñ}…Á¤ ¤è(€€€€€€€€ˆˆ‹š~—¢¦‹n»–&7¦‚C¢¢·–r[šZ¦ã–Z»¾ò#–B¯’â¦6×¦
+¢®,UI'¾ò'’â7–n{–
+ÌÑ½­•»ˆˆˆ(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ô¥¹ÍÁ•Ñ}‘•™…Õ±Ñ}É¥¡}µ•¹Ô¡…ÁÀ¹½¹™¥œ¤(€€€€€€€É•ÑÕÉ¸©Í½¹¥™ä¡‘…Ñ„¤°½‘”((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½É¥ µµ•¹Ô½‘•Á±½äˆ¤(€€€‘•˜…‘µ¥¹}É¥¡}µ•¹Õ}‘•Á±½å}…Á¤ ¤è(€€€€€€€€ˆˆ‹R I•¹‘•Èƒ’â+j1%9}!991}MM}Q=-8ƒ’â+–
+Ï’â›¢¢·
+ë¦‚C¢¢·–r[šZ¦ã–Z»ˆˆˆ(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”°Á•Éµ¥ÍÍ¥½¸ô‰ÍåÍÑ•´¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ô‘•Á±½å}‘•™…Õ±Ñ}É¥¡}µ•¹Ô¡…ÁÀ¹½¹™¥œ¤(€€€€€€€¥˜‘…Ñ„¹•Ğ ‰½¬ˆ¤è(€€€€€€€€€€€…ÁÀ¹±½•È¹¥¹™¼ (€€€€€€€€€€€€€€€€‰É¥ µ•¹Ô‘•Á±½å•É¥¡5•¹Õ%ô•Ì¹…µ”ô•Ìˆ°(€€€€€€€€€€€€€€€‘…Ñ„¹•Ğ ‰É¥¡5•¹Õ%ˆ¤°(€€€€€€€€€€€€€€€‘…Ñ„¹•Ğ ‰¹…µ”ˆ¤°(€€€€€€€€€€€€¤(€€€€€€€•±Í”è(€€€€€€€€€€€…ÁÀ¹±½•È¹İ…É¹¥¹œ (€€€€€€€€€€€€€€€€‰É¥ µ•¹Ô‘•Á±½ä™…¥±•ÍÑ•Àô•Ì¡ÑÑÀô•Ìˆ°(€€€€€€€€€€€€€€€‘…Ñ„¹•Ğ ‰ÍÑ•Àˆ¤°(€€€€€€€€€€€€€€€‘…Ñ„¹•Ğ ‰¡ÑÑÀˆ¤°(€€€€€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰É¥¡}µ•¹Ô¹‘•Á±½äˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½ÁÕÍ µİ•±½µ”ˆ¤(€€€‘•˜…‘µ¥¹}ÁÕÍ¡}İ•±½µ•}…Á¤ ¤è(€€€€€€€€ˆˆ‹º‡B–N‡¢sš:£š¶‡¢ş8±•ã¾ò#¦r–ŞË–*ƒ––÷–>/¾ò'	‰½‘äèí±¥¹•}ÕÍ•É}¥°‘¥ÍÁ±…å}¹…µ”ıôˆˆˆ(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”°Á•Éµ¥ÍÍ¥½¸ô‰¹½Ñ¥™¥…Ñ¥½¸¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€¥˜1¥¹•	½ÑÁ¤¥Ì9½¹”½È±•áM•¹‘5•ÍÍ…”¥Ì9½¹”½Èİ•±½µ•}™±•à¥Ì9½¹”è(€€€€€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” (€€€€€€€€€€€€€€€€‰İ•±½µ”¹ÁÕÍ ˆ°(€€€€€€€€€€€€€€€ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰±¥¹”Í‘¬½Èİ•±½µ•}™±•àÕ¹…Ù…¥±…‰±”‰ô°(€€€€€€€€€€€€€€€€ÔÀÌ°(€€€€€€€€€€€€¤(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€±¥¹•}ÕÍ•É}¥€ôÍÑÈ¡Á…å±½…¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤(€€€€€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” (€€€€€€€€€€€€€€€€‰İ•±½µ”¹ÁÕÍ ˆ°(€€€€€€€€€€€€€€€ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰µ¥ÍÍ¥¹œ±¥¹•}ÕÍ•É}¥‰ô°(€€€€€€€€€€€€€€€€ĞÀÀ°(€€€€€€€€€€€€¤(€€€€€€€Ñ½­•¸€ô€ (€€€€€€€€€€€…ÁÀ¹½¹™¥œ¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤(€€€€€€€€€€€½È½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ¤(€€€€€€€€€€€½È€ˆˆ(€€€€€€€€¤¹ÍÑÉ¥À ¤(€€€€€€€¥˜¹½ĞÑ½­•¸è(€€€€€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” (€€€€€€€€€€€€€€€€‰İ•±½µ”¹ÁÕÍ ˆ°(€€€€€€€€€€€€€€€ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰1%9}!991}MM}Q=-8¹½ĞÍ•Ğ‰ô°(€€€€€€€€€€€€€€€€ÔÀÌ°(€€€€€€€€€€€€¤(€€€€€€€±¥¹•}‰½Ñ}…Á¤€ô1¥¹•	½ÑÁ¤¡Ñ½­•¸¤(€€€€€€€¡¥¹Ğ€ôÍÑÈ¡Á…å±½…¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤½È9½¹”(€€€€€€€É•Í½±Ù•€ôÉ•Í½±Ù•}İ•±½µ•}‘¥ÍÁ±…å}¹…µ” (€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤õ±¥¹•}‰½Ñ}…Á¤°(€€€€€€€€€€€‘…Ñ…}™¥±”õ…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥õ±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€¡¥¹Ğõ¡¥¹Ğ°(€€€€€€€€€€€±½•Èõ…ÁÀ¹±½•È°(€€€€€€€€¤(€€€€€€€ÑÉäè(€€€€€€€€€€€É•¥ÍÑ•É}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€ì‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°€‰‘¥ÍÁ±…å}¹…µ”ˆèÉ•Í½±Ù•½È€‰1%9ƒ’öÿR£¢‰ô°(€€€€€€€€€€€€¤(€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€…ÁÀ¹±½•È¹İ…É¹¥¹œ ‰…‘µ¥¸ÁÕÍ µİ•±½µ”É•¥ÍÑ•È™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€½¹Ñ•¹ÑÌ€ôİ•±½µ•}™±•à¡É•Í½±Ù•¤(€€€€€€€É••Ñ¥¹œ€ô€ (€€€€€€€€€€€İ•±½µ•}É••Ñ¥¹}Ñ•áĞ¡É•Í½±Ù•¤(€€€€€€€€€€€¥˜İ•±½µ•}É••Ñ¥¹}Ñ•áĞ¥Ì¹½Ğ9½¹”(€€€€€€€€€€€•±Í”€¡˜‹Â~F,íÉ•Í½±Ù•‘ôƒš
+£––÷¾ò3š¶‡¢ş;–*ƒ–—3š¾?š^—–æÏ–º'4ˆ¥˜É•Í½±Ù••±Í”€‹Â~F,ƒš
+£––÷¾ò3š¶‡¢ş;–*ƒ–—3š¾?š^—–æÏ–º'4ˆ¤(€€€€€€€€¤(€€€€€€€…±Ñ}Ñ•áĞ€ô€ (€€€€€€€€€€€˜‹š¾?š^—–æÏ–º'¾öqíÉ•Í½±Ù•‘ôƒš
+£––÷¾ò3š¶‡¢ş;–*ƒ–”ˆ(€€€€€€€€€€€¥˜É•Í½±Ù•(€€€€€€€€€€€•±Í”€‹š¾?š^—–æÏ–º'¾ösš
+£––÷¾ò3š¶‡¢ş;–*ƒ–”ˆ(€€€€€€€€¤(€€€€€€€ÑÉäè(€€€€€€€€€€€±¥¹•}‰½Ñ}…Á¤¹ÁÕÍ¡}µ•ÍÍ…” (€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€±•áM•¹‘5•ÍÍ…”¡…±Ñ}Ñ•áĞõ…±Ñ}Ñ•áĞ°½¹Ñ•¹ÑÌõ½¹Ñ•¹ÑÌ¤°(€€€€€€€€€€€€¤(€€€€€€€€€€€…ÁÀ¹±½•È¹¥¹™¼ (€€€€€€€€€€€€€€€€‰…‘µ¥¸ÁÕÍ µİ•±½µ”½¬ÕÍ•Èô•Ì¹…µ”ô•Èˆ°(€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥‘lèát°(€€€€€€€€€€€€€€€É•Í½±Ù•½È€ˆˆ°(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” (€€€€€€€€€€€€€€€€‰İ•±½µ”¹ÁÕÍ ˆ°(€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€‰½¬ˆèQÉÕ”°(€€€€€€€€€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€‰‘¥ÍÁ±…å}¹…µ”ˆèÉ•Í½±Ù•°(€€€€€€€€€€€€€€€€€€€€‰É••Ñ¥¹œˆèÉ••Ñ¥¹œ°(€€€€€€€€€€€€€€€ô°(€€€€€€€€€€€€¤(€€€€€€€•á•ÁĞ1¥¹•	½ÑÁ¥ÉÉ½È…Ì•áŒè(€€€€€€€€€€€‘•Ñ…¥°€ôÍÑÈ¡•áŒ¤(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€‘•Ñ…¥°€ô•Ñ…ÑÑÈ¡•áŒ°€‰•ÉÉ½Èˆ°9½¹”¤½È‘•Ñ…¥°(€€€€€€€€€€€•á•ÁĞá•ÁÑ¥½¸è(€€€€€€€€€€€€€€€Á…ÍÌ(€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰…‘µ¥¸ÁÕÍ µİ•±½µ”1%9•ÉÉ½Èè€•Ìˆ°‘•Ñ…¥°¤(€€€€€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” (€€€€€€€€€€€€€€€€‰İ•±½µ”¹ÁÕÍ ˆ°(€€€€€€€€€€€€€€€ì‰½¬ˆè…±Í”°€‰•ÉÉ½Èˆè€‰±¥¹•}…Á¥}•ÉÉ½Èˆ°€‰‘•Ñ…¥°ˆèÍÑÈ¡‘•Ñ…¥°¥ô°(€€€€€€€€€€€€€€€€ÔÀÈ°(€€€€€€€€€€€€¤(€€€€€€€•á•ÁĞá•ÁÑ¥½¸…Ì•áŒè(€€€€€€€€€€€…ÁÀ¹±½•È¹•á•ÁÑ¥½¸ ‰…‘µ¥¸ÁÕÍ µİ•±½µ”™…¥±•è€•Ìˆ°•áŒ¤(€€€€€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” (€€€€€€€€€€€€€€€€‰İ•±½µ”¹ÁÕÍ ˆ°(€€€€€€€€€€€€€€€ì‰½¬ˆè…±Í”°€‰•ÉÉ½ÈˆèÍÑÈ¡•áŒ¥ô°(€€€€€€€€€€€€€€€€ÔÀÀ°(€€€€€€€€€€€€¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½ÕÍ•ÈµÁ±…¸ˆ¤(€€€‘•˜…‘µ¥¹}ÕÍ•É}Á±…¹}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”°Á•Éµ¥ÍÍ¥½¸ô‰µ•µ‰•È¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ô…‘µ¥¹}ÕÁ‘…Ñ•}ÕÍ•É}Á±…¸¡…ÁÀ¹½¹™¥l‰Q}%1‰t°É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰ÕÍ•É}Á±…¸¹ÕÁ‘…Ñ”ˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½Í•Ğµ½É”µÕ…É‘¥…¸ˆ¤(€€€‘•˜…‘µ¥¹}Í•Ñ}½É•}Õ…É‘¥…¹}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”°Á•Éµ¥ÍÍ¥½¸ô‰µ•µ‰•È¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€‘…Ñ„°½‘”€ô…‘µ¥¹}Í•Ñ}½É•}Õ…É‘¥…¸¡…ÁÀ¹½¹™¥l‰Q}%1‰t°É•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” ‰½É•}Õ…É‘¥…¸¹Í•Ğˆ°‘…Ñ„°½‘”¤((€€€…ÁÀ¹Á½ÍĞ ˆ½…Á¤½…‘µ¥¸½¥¹¥‘•¹ÑÌ½É•Í½±Ù”ˆ¤(€€€‘•˜…‘µ¥¹}¥¹¥‘•¹Ñ}É•Í½±Ù•}…Á¤ ¤è(€€€€€€€‘•¹¥•€ô}…‘µ¥¹}Õ…É¡İÉ¥Ñ”õQÉÕ”°Á•Éµ¥ÍÍ¥½¸ô‰¥¹¥‘•¹Ğ¹µ…¹…”ˆ¤(€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€É•ÑÕÉ¸‘•¹¥•(€€€€€€€Á…å±½…€ôÉ•ÅÕ•ÍĞ¹•Ñ}©Í½¸¡Í¥±•¹ĞõQÉÕ”¤½Èíô(€€€€€€€‘…Ñ„°½‘”€ôÉ•Í½±Ù•}…‘µ¥¹}¥¹¥‘•¹Ğ (€€€€€€€€€€€…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€Á…å±½…°(€€€€€€€€€€€Í•ÍÍ¥½¸¹•Ğ ‰…‘µ¥¹}É½±”ˆ¤°(€€€€€€€€¤(€€€€€€€É•ÑÕÉ¸}…‘µ¥¹}µÕÑ…Ñ¥½¹}É•ÍÁ½¹Í” (€€€€€€€€€€€€‰¥¹¥‘•¹Ğ¹É•Í½±Ù”ˆ°(€€€€€€€€€€€‘…Ñ„°(€€€€€€€€€€€½‘”°(€€€€€€€€¤((€€€É•ÑÕÉ¸…ÁÀ(()±…ÍÌ5¥¹¥I•ÍÁ½¹Í”è(€€€‘•˜}}¥¹¥Ñ}|¡Í•±˜°‘…Ñ„°ÍÑ…ÑÕÍ}½‘”ôÈÀÀ°¡•…‘•ÉÌõ9½¹”¤è(€€€€€€€Í•±˜¹}‘…Ñ„€ô‘…Ñ„(€€€€€€€Í•±˜¹ÍÑ…ÑÕÍ}½‘”€ôÍÑ…ÑÕÍ}½‘”(€€€€€€€Í•±˜¹¡•…‘•ÉÌ€ô¡•…‘•ÉÌ½Èíô((€€€‘•˜•Ñ}©Í½¸¡Í•±˜¤è(€€€€€€€É•ÑÕÉ¸Í•±˜¹}‘…Ñ„((€€€‘•˜±½Í”¡Í•±˜¤è(€€€€€€€É•ÑÕÉ¸9½¹”((€€€‘•˜•Ñ}‘…Ñ„¡Í•±˜°…Í}Ñ•áĞõ…±Í”¤è(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡Í•±˜¹}‘…Ñ„°‰åÑ•Ì¤è(€€€€€€€€€€€É•ÑÕÉ¸Í•±˜¹}‘…Ñ„¹‘•½‘” ‰ÕÑ˜´àˆ¤¥˜…Í}Ñ•áĞ•±Í”Í•±˜¹}‘…Ñ„(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡Í•±˜¹}‘…Ñ„°ÍÑÈ¤è(€€€€€€€€€€€É•ÑÕÉ¸Í•±˜¹}‘…Ñ„¥˜…Í}Ñ•áĞ•±Í”Í•±˜¹}‘…Ñ„¹•¹½‘” ‰ÕÑ˜´àˆ¤(€€€€€€€É•¹‘•É•€ô©Í½¸¹‘ÕµÁÌ¡Í•±˜¹}‘…Ñ„°•¹ÍÕÉ•}…Í¥¤õ…±Í”¤(€€€€€€€É•ÑÕÉ¸É•¹‘•É•¥˜…Í}Ñ•áĞ•±Í”É•¹‘•É•¹•¹½‘” ‰ÕÑ˜´àˆ¤(()±…ÍÌ5¥¹¥±¥•¹Ğè(€€€‘•˜}}¥¹¥Ñ}|¡Í•±˜°…ÁÀ¤è(€€€€€€€Í•±˜¹…ÁÀ€ô…ÁÀ((€€€‘•˜•Ğ¡Í•±˜°Á…Ñ °¡•…‘•ÉÌõ9½¹”¤è(€€€€€€€É½ÕÑ”°|°ÅÕ•Éä€ôÁ…Ñ ¹Á…ÉÑ¥Ñ¥½¸ ˆüˆ¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸ˆ½ÈÉ½ÕÑ”¹ÍÑ…ÉÑÍİ¥Ñ  ˆ½…Á¤½…‘µ¥¸¼ˆ¤è(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰…‘µ¥¹}¹½Ñ}½¹™¥ÕÉ•‰ô°€ÔÀÌ¤(€€€€€€€Á…É…µÌ€ô‘¥Ğ¡ÕÉ±±¥ˆ¹Á…ÉÍ”¹Á…ÉÍ•}ÅÍ°¡ÅÕ•Éä¤¤(€€€€€€€¡•…‘•ÉÌ€ô¡•…‘•ÉÌ½Èíô(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½½¹™¥œˆè(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡…ÁÁ}½¹™¥œ¡Í•±˜¹…ÁÀ¹½¹™¥œ¤¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½¡•…±Ñ ˆè(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰½¬ˆèQÉÕ•ô¤(€€€€€€€¥˜É½ÕÑ”¥¸€ ˆ½É½‰½ÑÌ¹ÑáĞˆ°€ˆ½Í¥Ñ•µ…À¹áµ°ˆ¤è(€€€€€€€€€€€™¥±•¹…µ”€ôÉ½ÕÑ”¹±ÍÑÉ¥À ˆ¼ˆ¤(€€€€€€€€€€€Á…Ñ¡}½‰¨€ôA…Ñ ¡}}™¥±•}|¤¹É•Í½±Ù” ¤¹Á…É•¹Ğ€¼™¥±•¹…µ”(€€€€€€€€€€€¥˜Á…Ñ¡}½‰¨¹•á¥ÍÑÌ ¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡Á…Ñ¡}½‰¨¹É•…‘}Ñ•áĞ¡•¹½‘¥¹œô‰ÕÑ˜´àˆ¤¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰¹½Ğ™½Õ¹‰ô°€ĞÀĞ¤(€€€€€€€¥˜É½ÕÑ”¥¸€ ˆ½Ñ•ÉµÌˆ°€ˆ½ÁÉ¥Ù…äˆ¤è(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰½¬ˆèQÉÕ•ô¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½±¥™˜½µ¥É…Ñ”¹¡Ñµ°ˆè(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰½¬ˆèQÉÕ•ô¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½±¥™˜½½¹‰½…É‘¥¹œˆè(€€€€€€€€€€€±¥™™}¥€ôÍÑÈ¡Í•±˜¹…ÁÀ¹½¹™¥œ¹•Ğ ‰1%}%ˆ¤½ÈU1Q}1%}%¤¹ÍÑÉ¥À ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í” (€€€€€€€€€€€€€€€ì‰½¬ˆèQÉÕ•ô°(€€€€€€€€€€€€€€€€ÌÀÈ°(€€€€€€€€€€€€€€€ì‰1½…Ñ¥½¸ˆè˜‰¡ÑÑÁÌè¼½±¥™˜¹±¥¹”¹µ”½í±¥™™}¥‘ôı½Á•¸õ½¹‰½…É‘¥¹œ‰ô°(€€€€€€€€€€€€¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½ÍÑ…ÑÕÌˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€íô°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€‰½‘ä°½‘”€ôÍÑ…ÑÕÍ}™½É}ÕÍ•È (€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€Á…É…µÌ¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤°(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½½¹‰½…É‘¥¹œˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€íô°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€‰½‘ä°½‘”€ô½¹‰½…É‘¥¹}ÍÑ…ÑÕÍ}Á…å±½… (€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½½¹‰½…É‘¥¹œ½ÍÑ…Ñ”ˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€íô°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€‰½‘ä°½‘”€ô½¹‰½…É‘¥¹}ÍÑ…ÑÕÍ}Á…å±½… (€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€…±±½İ}µ¥ÍÍ¥¹}ÁÉ½™¥±”õQÉÕ”°(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Õ…É‘¥…¸µÉ½ÕÁÌ½Í•ÑÑ¥¹Ìˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€íô°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€‰½‘ä°½‘”€ôÕ…É‘¥…¹}É½ÕÁ}Í•ÑÑ¥¹Í}™½É}ÕÍ•È (€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½ÍÕµµ…Éäˆè(€€€€€€€€€€€‘•¹¥•€ô…‘µ¥¹}…ÕÑ¡}•ÉÉ½É}Á…å±½…¡Í•±˜¹…ÁÀ¹½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤(€€€€€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€€€€€Á…å±½…°½‘”€ô‘•¹¥•(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡Á…å±½…°½‘”¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡…‘µ¥¹}ÍÕµµ…Éä¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Í•±˜¹…ÁÀ¹½¹™¥œ¤¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½ÍÕÁÁ½ÉĞµÑ¥­•ÑÌˆè(€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡…‘µ¥¹}ÍÕÁÁ½ÉÑ}Ñ¥­•ÑÌ¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t¤¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½ÍÕÁÁ½ÉĞ½Ñ¥­•ÑÌˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€íô°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€‰½‘ä°½‘”€ôµ•µ‰•É}ÍÕÁÁ½ÉÑ}Ñ¥­•ÑÌ (€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½‰…­ÕÁÌˆè(€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡±¥ÍÑ}…‘µ¥¹}‰…­ÕÁÌ¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t¤¤(€€€€€€€¥˜É½ÕÑ”¹ÍÑ…ÉÑÍİ¥Ñ  ˆ½…Á¤½…‘µ¥¸½‰…­ÕÁÌ¼ˆ¤è(€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€‰…­ÕÁ}¥€ôÉ½ÕÑ”¹ÉÍÁ±¥Ğ ˆ¼ˆ°€Ä¥l´Åt(€€€€€€€€€€€‰½‘ä°½‘”€ôÉ•…‘}…‘µ¥¹}‰…­ÕÀ¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°‰…­ÕÁ}¥¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½½¹Ñ…ÑÌˆè(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•Ñ}½¹Ñ…ÑÌ¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…É…µÌ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤¤¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½•µ•É•¹äµ½¹Ñ…Ğ½¥¹Ù¥Ñ”µÁÉ•Ù¥•Üˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€íô°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€‰½‘ä°½‘”€ô¥¹Ù¥Ñ•}‰¥¹‘}ÁÉ•Ù¥•Ü (€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€‰¥¹Ù¥Ñ•}™É½´ˆèÁ…É…µÌ¹•Ğ ‰¥¹Ù¥Ñ•}™É½´ˆ¤½ÈÁ…É…µÌ¹•Ğ ‰™É½´ˆ¤½È€ˆˆ°(€€€€€€€€€€€€€€€€€€€€‰¥¹Ù¥Ñ•}Ñ½­•¸ˆèÁ…É…µÌ¹•Ğ ‰¥¹Ù¥Ñ•}Ñ½­•¸ˆ¤½È€ˆˆ°(€€€€€€€€€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€ô°(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…±•¹‘…Èµ¹½Ñ•Ìˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€íô°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€‰½‘ä€ô•Ñ}…±•¹‘…É}¹½Ñ•Ì¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°€ÈÀÀ¥˜‰½‘ä¹•Ğ ‰½¬ˆ¤•±Í”€ĞÀÌ¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Íµ…ÉĞµÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€íô°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í” (€€€€€€€€€€€€€€€•Ñ}Íµ…ÉÑ}É•µ¥¹‘•ÉÍ}Á…å±½… (€€€€€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½™É¥•¹‘Ì½±½…Ñ¥½¹Ìˆè(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡™É¥•¹‘}±½…Ñ¥½¹Ì¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…É…µÌ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤¤¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½±½…Ñ¥½¸½ÍÑ…ÑÕÌˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥€ôÁ…É…µÌ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤(€€€€€€€€€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰µ¥ÍÍ¥¹œ±¥¹•}ÕÍ•É}¥‰ô°€ĞÀÀ¤(€€€€€€€€€€€ÁÉ½™¥±”€ô•Ñ}ÁÉ½™¥±”¡±½…‘}ÍÑ…Ñ”¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t¤°±¥¹•}ÕÍ•É}¥¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰½¬ˆèQÉÕ”°€‰Í…™•Ñå}Õ…ÉˆèÍ…™•Ñå}Õ…É‘}Í¹…ÁÍ¡½Ğ¡ÁÉ½™¥±”¥ô¤(€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰¹½Ğ™½Õ¹‰ô°€ĞÀĞ¤((€€€‘•˜Á½ÍĞ¡Í•±˜°Á…Ñ °‘…Ñ„õ9½¹”°½¹Ñ•¹Ñ}ÑåÁ”õ9½¹”°¡•…‘•ÉÌõ9½¹”°€¨©­İ…ÉÌ¤è(€€€€€€€É½ÕÑ”°|°ÅÕ•Éä€ôÁ…Ñ ¹Á…ÉÑ¥Ñ¥½¸ ˆüˆ¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸ˆ½ÈÉ½ÕÑ”¹ÍÑ…ÉÑÍİ¥Ñ  ˆ½…Á¤½…‘µ¥¸¼ˆ¤è(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰…‘µ¥¹}¹½Ñ}½¹™¥ÕÉ•‰ô°€ÔÀÌ¤(€€€€€€€Á…É…µÌ€ô‘¥Ğ¡ÕÉ±±¥ˆ¹Á…ÉÍ”¹Á…ÉÍ•}ÅÍ°¡ÅÕ•Éä¤¤(€€€€€€€¡•…‘•ÉÌ€ô¡•…‘•ÉÌ½Èíô(€€€€€€€É½¹}Í•É•Ğ€ô€ (€€€€€€€€€€€¡•…‘•ÉÌ¹•Ğ ‰`µÉ½¸µM•É•Ğˆ¤(€€€€€€€€€€€½È¡•…‘•ÉÌ¹•Ğ ‰àµÉ½¸µÍ•É•Ğˆ¤(€€€€€€€€€€€½È€ˆˆ(€€€€€€€€¤(€€€€€€€Á…å±½…€ôíô(€€€€€€€©Í½¹}Á…å±½…€ô­İ…ÉÌ¹•Ğ ‰©Í½¸ˆ¤(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡©Í½¹}Á…å±½…°‘¥Ğ¤è(€€€€€€€€€€€Á…å±½…€ô‘¥Ğ¡©Í½¹}Á…å±½…¤(€€€€€€€•±¥˜‘…Ñ„…¹½¹Ñ•¹Ñ}ÑåÁ”€ôô€‰…ÁÁ±¥…Ñ¥½¸½©Í½¸ˆè(€€€€€€€€€€€Á…å±½…€ô©Í½¸¹±½…‘Ì¡‘…Ñ„¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½±¥¹”½É•¥ÍÑ•Èˆè(€€€€€€€€€€€‰½‘ä°½‘”€ôÉ•¥ÍÑ•É}±¥¹•}ÕÍ•È¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½¡•­¥¸ˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€Á…å±½…°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€É•ÍÕ±Ğ°½‘”€ô¡•­¥¹}™½É}ÕÍ•È (€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°Á…å±½…°Í•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡É•ÍÕ±Ğ°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½½¹‰½…É‘¥¹œ½É•µ¥¹‘•Èˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€Á…å±½…°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€É•ÍÕ±Ğ°½‘”€ôÕÁ‘…Ñ•}½¹‰½…É‘¥¹}É•µ¥¹‘•È (€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°Á…å±½…(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡É•ÍÕ±Ğ°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½½¹‰½…É‘¥¹œ½½µÁ±•Ñ”ˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€Á…å±½…°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€É•ÍÕ±Ğ°½‘”€ô½µÁ±•Ñ•}½¹‰½…É‘¥¹}™½É}ÕÍ•È (€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°Á…å±½…(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡É•ÍÕ±Ğ°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½İ…É¹¥¹œ½…¹•°ˆè(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡…¹•±}İ…É¹¥¹œ¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°Í•±˜¹…ÁÀ¹½¹™¥œ¤¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Í•ÑÑ¥¹Ìˆè(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡Í…Ù•}Í•ÑÑ¥¹Í}™½É}ÁÉ½™¥±”¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½‰¥±±¥¹œ½ÁÉ•™•É•¹•Ìˆè(€€€€€€€€€€€‰½‘ä°½‘”€ôÍ…Ù•}‰¥±±¥¹}ÁÉ•™•É•¹•Ì¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Á…åµ•¹ÑÌ½½É‘•ÉÌˆè(€€€€€€€€€€€‰½‘ä°½‘”€ôÉ•…Ñ•}Á…åµ•¹Ñ}½É‘•È¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”¥¸ìˆ½…Á¤½Á…åµ•¹Ğ½•Á…ä½¹½Ñ¥™äˆ°€ˆ½…Á¤½Á…åµ•¹Ğ½•Á…ä½Á•É¥½µ¹½Ñ¥™ä‰ôè(€€€€€€€€€€€™½É´€ô‘¥Ğ¡‘…Ñ„¤¥˜¥Í¥¹ÍÑ…¹”¡‘…Ñ„°‘¥Ğ¤•±Í”Á…å±½…(€€€€€€€€€€€¥˜•Á…ä¥Ì9½¹”è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í” ˆÁñÁ…åµ•¹Ğµ½‘Õ±”µ¥ÍÍ¥¹œˆ°€ÔÀÌ¤(€€€€€€€€€€€Á…ÉÍ•°•ÉÉ½È€ô•Á…ä¹Á…ÉÍ•}¹½Ñ¥™å}Á…å±½…¡™½É´°Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€¥˜•ÉÉ½Èè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡˜ˆÁñí•ÉÉ½Éôˆ°€ĞÀÀ¤(€€€€€€€€€€€¥˜¹½Ğ•Á…ä¹¹½Ñ¥™å}ÍÕ•ÍÌ¡Á…ÉÍ•°Í•±˜¹…ÁÀ¹½¹™¥œ¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í” ˆÅñ=,ˆ°€ÈÀÀ¤(€€€€€€€€€€€¥˜É½ÕÑ”¹•¹‘Íİ¥Ñ  ˆ½Á•É¥½µ¹½Ñ¥™äˆ¤è(€€€€€€€€€€€€€€€Á…ÉÍ•¹ÕÁ‘…Ñ”¡ì‰ÍÑ…ÑÕÌˆè€‰MUMLˆ°€‰ÁÉ½Ù¥‘•Èˆè€‰•Á…ä‰ô¤(€€€€€€€€€€€€€€€‰½‘ä°½‘”€ôÁÉ½•ÍÍ}Á•É¥½‘}¹½Ñ¥™¥…Ñ¥½¸ (€€€€€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…ÉÍ•°Í•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€‰½‘ä°½‘”€ô½¹™¥Éµ}Á…åµ•¹Ñ}½É‘•È (€€€€€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°(€€€€€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€€€€€‰½É‘•É}¥ˆèÁ…ÉÍ•¹•Ğ ‰½É‘•É}¥ˆ¤°(€€€€€€€€€€€€€€€€€€€€€€€€‰ÑÉ…¹Í…Ñ¥½¹}¥ˆèÁ…ÉÍ•¹•Ğ ‰ÑÉ…¹Í…Ñ¥½¹}¥ˆ¤°(€€€€€€€€€€€€€€€€€€€€€€€€‰…µ½Õ¹ĞˆèÁ…ÉÍ•¹•Ğ ‰…µ½Õ¹Ğˆ¤°(€€€€€€€€€€€€€€€€€€€€€€€€‰ÁÉ½Ù¥‘•Èˆè€‰•Á…äˆ°(€€€€€€€€€€€€€€€€€€€ô°(€€€€€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥œ°(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜½‘”€øô€ĞÀÀè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í” (€€€€€€€€€€€€€€€€€€€˜ˆÁñí‰½‘ä¹•Ğ •ÉÉ½Èœ°€½É‘•ÈÕÁ‘…Ñ”™…¥±•œ¥ôˆ°½‘”(€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í” ˆÅñ=,ˆ°€ÈÀÀ¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½½¹Ñ…ÑÌˆè(€€€€€€€€€€€‰½‘ä°½‘”€ôÍ…Ù•}½¹Ñ…ÑÌ¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…±•¹‘…Èµ¹½Ñ•Ìˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€Á…å±½…°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€‰½‘ä°½‘”€ôÍ…Ù•}…±•¹‘…É}¹½Ñ”¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Íµ…ÉĞµÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€Á…å±½…°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€‰½‘ä°½‘”€ôÍ…Ù•}Íµ…ÉÑ}É•µ¥¹‘•È¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”¥¸ìˆ½…Á¤½É½¸½Íµ…ÉĞµÉ•µ¥¹‘•ÉÌˆ°€ˆ½…Á¤½É½¸½‰¥ÉÑ¡‘…äµÉ•µ¥¹‘•ÉÌ‰ôè(€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°É½¹}Í•É•Ğ¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€Ñ…Í¬€ô€ (€€€€€€€€€€€€€€€Í•¹‘}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ(€€€€€€€€€€€€€€€¥˜É½ÕÑ”¹•¹‘Íİ¥Ñ  ‰Íµ…ÉĞµÉ•µ¥¹‘•ÉÌˆ¤(€€€€€€€€€€€€€€€•±Í”Í•¹‘}‰¥ÉÑ¡‘…å}É•µ¥¹‘•ÉÌ(€€€€€€€€€€€€¤(€€€€€€€€€€€‰½‘ä°½‘”€ôÑ…Í¬¡Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½•µ•É•¹äµ½¹Ñ…Ğ½‰¥¹ˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È¡Á…å±½…°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€Á…å±½…‘l‰½¹Ñ…Ñ}±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€‰½‘ä°½‘”€ô‰¥¹‘}•µ•É•¹å}½¹Ñ…Ğ¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½•µ•É•¹äµ½¹Ñ…Ğ½¥¹Ù¥Ñ”ˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€Á…å±½…°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€‰½‘ä°½‘”€ôÉ•…Ñ•}Õ…É‘¥…¹}¥¹Ù¥Ñ” (€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°Á…å±½…(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Õ…É‘¥…¸µÉ½ÕÁÌ½‰¥¹ˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€Á…å±½…°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€‰½‘ä°½‘”€ô‰¥¹‘}Õ…É‘¥…¹}É½ÕÀ¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Õ…É‘¥…¸µÉ½ÕÁÌ½ÁÉ•™•É•¹•Ìˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€Á…å±½…°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€‰½‘ä°½‘”€ôÕÁ‘…Ñ•}Õ…É‘¥…¹}É½ÕÁ}ÁÉ•™•É•¹•Ì (€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Õ…É‘¥…¸µÉ½ÕÁÌ½Õ¹‰¥¹ˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€Á…å±½…°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€‰½‘ä°½‘”€ôÕ¹‰¥¹‘}Õ…É‘¥…¹}É½ÕÀ¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½™É¥•¹‘Ì½¥¹Ù¥Ñ”ˆè(€€€€€€€€€€€‰½‘ä°½‘”€ôÉ•…Ñ•}™É¥•¹‘}¥¹Ù¥Ñ”¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½™É¥•¹‘Ì½…•ÁĞˆè(€€€€€€€€€€€‰½‘ä°½‘”€ô…•ÁÑ}™É¥•¹‘}¥¹Ù¥Ñ”¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½±½…Ñ¥½¸½ÕÁ‘…Ñ”ˆè(€€€€€€€€€€€‰½‘ä°½‘”€ôÕÁ‘…Ñ•}±½…Ñ¥½¸¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½±½…Ñ¥½¸½ÍÑ½Àˆè(€€€€€€€€€€€‰½‘ä°½‘”€ôÍÑ½Á}±½…Ñ¥½¹}Í¡…É¥¹œ¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Í½Ìˆè(€€€€€€€€€€€‰½‘ä°½‘”€ôÑÉ¥•É}Í½Ì¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Í½Ì½…¹•°ˆè(€€€€€€€€€€€‰½‘ä°½‘”€ô…¹•±}Í½Í}•Ù•¹Ğ¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Í½Ì½É•ÑÉäˆè(€€€€€€€€€€€‰½‘ä°½‘”€ôÉ•ÑÉå}Í½Í}•Ù•¹Ğ¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…½Õ¹Ğ½‘•±•Ñ”ˆè(€€€€€€€€€€€‰½‘ä°½‘”€ô‘•±•Ñ•}…½Õ¹Ğ¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…½Õ¹Ğ½•áÁ½ÉĞˆè(€€€€€€€€€€€‰½‘ä°½‘”€ô•áÁ½ÉÑ}…½Õ¹Ñ}‘…Ñ„¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…½Õ¹Ğ½¡¥ÍÑ½Éä½‘•±•Ñ”ˆè(€€€€€€€€€€€‰½‘ä°½‘”€ô‘•±•Ñ•}Á•ÉÍ½¹…±}¡¥ÍÑ½Éä¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½Í•¹µÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€‰½‘ä°½‘”€ôÍ•¹‘}‘Õ•}É•µ¥¹‘•ÉÌ¡Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½Í•¹µ½¹Ñ…ĞµÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€‰½‘ä°½‘”€ôÍ•¹‘}µ¥ÍÍ¥¹}½¹Ñ…Ñ}É•µ¥¹‘•ÉÌ¡Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½Í•¹µÉ•¹•İ…°µÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€‰½‘ä°½‘”€ôÍ•¹‘}É•¹•İ…±}É•µ¥¹‘•ÉÌ¡Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½Á…åµ•¹ÑÌ½½¹™¥É´ˆè(€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€‰½‘ä°½‘”€ô½¹™¥Éµ}Á…åµ•¹Ñ}½É‘•È¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½‰…­ÕÁÌˆè(€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€‰½‘ä°½‘”€ôÉ•…Ñ•}…‘µ¥¹}‰…­ÕÀ¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½Ñ¥¬ˆè(€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°É½¹}Í•É•Ğ¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€‰½‘ä°½‘”€ôÉÕ¹}É½¹}Ñ¥¬¡Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½½¹Ñ…ĞµÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°É½¹}Í•É•Ğ¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€‰½‘ä°½‘”€ôÍ•¹‘}µ¥ÍÍ¥¹}½¹Ñ…Ñ}É•µ¥¹‘•ÉÌ¡Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½¡•­¥¸µÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°É½¹}Í•É•Ğ¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€µ½‘”€ôÍÑÈ¡Á…É…µÌ¹•Ğ ‰µ½‘”ˆ°€ˆˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¹±½İ•È ¤(€€€€€€€€€€€™½É”€ôÍÑÈ¡Á…É…µÌ¹•Ğ ‰™½É”ˆ°€ˆˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¹±½İ•È ¤¥¸ìˆÄˆ°€‰ÑÉÕ”ˆ°€‰å•Ìˆ°€‰½¸‰ô(€€€€€€€€€€€¥˜µ½‘”¥¸ì‰‰É½…‘…ÍĞˆ°€‰É•ÁÕÍ ˆ°€‰…±°‰ô½È™½É”è(€€€€€€€€€€€€€€€‰½‘ä°½‘”€ô‰É½…‘…ÍÑ}¡•­¥¹}É•µ¥¹‘•ÉÌ¡Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€‰½‘ä°½‘”€ôÍ•¹‘}¡•­¥¹}É•µ¥¹‘•ÉÌ¡Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½¡•­¥¸µ‰É½…‘…ÍĞˆè(€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°É½¹}Í•É•Ğ¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€‰½‘ä°½‘”€ô‰É½…‘…ÍÑ}¡•­¥¹}É•µ¥¹‘•ÉÌ¡Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½É•¹•İ…°µÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°É½¹}Í•É•Ğ¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€‰½‘ä°½‘”€ôÍ•¹‘}É•¹•İ…±}É•µ¥¹‘•ÉÌ¡Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½‘…Ñ„µ±•…¹ÕÀˆè(€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°É½¹}Í•É•Ğ¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€‰½‘ä°½‘”€ô±•…¹ÕÁ}•áÁ¥É•‘}‘…Ñ„¡Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½‰…­™¥±°µ‰¥¹µ¹½Ñ¥™äˆè(€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°É½¹}Í•É•Ğ¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€‘Éå}ÉÕ¸€ôÍÑÈ¡Á…É…µÌ¹•Ğ ‰‘Éå}ÉÕ¸ˆ¤½ÈÁ…å±½…¹•Ğ ‰‘Éå}ÉÕ¸ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¹±½İ•È ¤¥¸ì(€€€€€€€€€€€€€€€€ˆÄˆ°(€€€€€€€€€€€€€€€€‰ÑÉÕ”ˆ°(€€€€€€€€€€€€€€€€‰å•Ìˆ°(€€€€€€€€€€€€€€€€‰½¸ˆ°(€€€€€€€€€€€ô(€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€±¥µ¥Ğ€ô¥¹Ğ¡Á…É…µÌ¹•Ğ ‰±¥µ¥Ğˆ¤½ÈÁ…å±½…¹•Ğ ‰±¥µ¥Ğˆ¤½È€À¤(€€€€€€€€€€€•á•ÁĞ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€€€€€€€€€±¥µ¥Ğ€ô€À(€€€€€€€€€€€‰½‘ä°½‘”€ô‰…­™¥±±}‰¥¹‘}¹½Ñ¥™ä¡Í•±˜¹…ÁÀ¹½¹™¥œ°‘Éå}ÉÕ¸õ‘Éå}ÉÕ¸°±¥µ¥Ğõ±¥µ¥Ğ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½ÕÍ•ÈµÁ±…¸ˆè(€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€‰½‘ä°½‘”€ô…‘µ¥¹}ÕÁ‘…Ñ•}ÕÍ•É}Á±…¸¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½Í•Ğµ½É”µÕ…É‘¥…¸ˆè(€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€‰½‘ä°½‘”€ô…‘µ¥¹}Í•Ñ}½É•}Õ…É‘¥…¸¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½ÍÕÁÁ½ÉĞµÉ•Á±äˆè(€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡Í•±˜¹…ÁÀ¹½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€‰½‘ä°½‘”€ô…‘µ¥¹}É•Á±å}ÍÕÁÁ½ÉÑ}Ñ¥­•Ğ¡Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…°Í•±˜¹…ÁÀ¹½¹™¥œ¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½ÍÕÁÁ½ÉĞ½Ñ¥­•ÑÌˆè(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€Á…å±½…°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€‰½‘ä°½‘”€ôÉ•…Ñ•}ÍÕÁÁ½ÉÑ}Ñ¥­•Ğ (€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°Á…å±½…(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰¹½Ğ™½Õ¹‰ô°€ĞÀĞ¤((€€€‘•˜‘•±•Ñ”¡Í•±˜°Á…Ñ °¡•…‘•ÉÌõ9½¹”¤è(€€€€€€€É½ÕÑ”°|°ÅÕ•Éä€ôÁ…Ñ ¹Á…ÉÑ¥Ñ¥½¸ ˆüˆ¤(€€€€€€€Á…É…µÌ€ô‘¥Ğ¡ÕÉ±±¥ˆ¹Á…ÉÍ”¹Á…ÉÍ•}ÅÍ°¡ÅÕ•Éä¤¤(€€€€€€€¡•…‘•ÉÌ€ô¡•…‘•ÉÌ½Èíô(€€€€€€€¥˜É½ÕÑ”¹ÍÑ…ÉÑÍİ¥Ñ  ˆ½…Á¤½Íµ…ÉĞµÉ•µ¥¹‘•ÉÌ¼ˆ¤è(€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€íô°…ÉÌõÁ…É…µÌ°¡•…‘•ÉÌõ¡•…‘•ÉÌ°½¹™¥œõÍ•±˜¹…ÁÀ¹½¹™¥œ(€€€€€€€€€€€€¤(€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€É•µ¥¹‘•É}¥€ôÉ½ÕÑ”¹ÉÍÁ±¥Ğ ˆ¼ˆ°€Ä¥l´Åt(€€€€€€€€€€€‰½‘ä°½‘”€ô‘•±•Ñ•}Íµ…ÉÑ}É•µ¥¹‘•È (€€€€€€€€€€€€€€€Í•±˜¹…ÁÀ¹½¹™¥l‰Q}%1‰t°±¥¹•}ÕÍ•É}¥°É•µ¥¹‘•É}¥(€€€€€€€€€€€€¤(€€€€€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡‰½‘ä°½‘”¤(€€€€€€€É•ÑÕÉ¸5¥¹¥I•ÍÁ½¹Í”¡ì‰•ÉÉ½Èˆè€‰¹½Ğ™½Õ¹‰ô°€ĞÀĞ¤(()±…ÍÌ5¥¹¥ÁÀè(€€€‘•˜}}¥¹¥Ñ}|¡Í•±˜°½¹™¥œõ9½¹”¤è(€€€€€€€Í•±˜¹½¹™¥œ€ôì(€€€€€€€€€€€€‰Q}%1ˆèÉ•Í½±Ù•}‘…Ñ…}™¥±”¡½Ì¹•¹Ù¥É½¸¹•Ğ ‰Q}%1ˆ¤¤°(€€€€€€€€€€€€‰5%9}AMM]=Iˆè½Ì¹•¹Ù¥É½¸¹•Ğ ‰5%9}AMM]=Iˆ°€ˆˆ¤°(€€€€€€€€€€€€‰5%9}MMM%=9}MIPˆè½Ì¹•¹Ù¥É½¸¹•Ğ ‰5%9}MMM%=9}MIPˆ°€ˆˆ¤°(€€€€€€€€€€€€‰11=]}=A9}5%8ˆè½Ì¹•¹Ù¥É½¸¹•Ğ ‰11=]}=A9}5%8ˆ°€ˆˆ¤°(€€€€€€€€€€€€‰5%9}=A8ˆè½Ì¹•¹Ù¥É½¸¹•Ğ ‰5%9}=A8ˆ°€ˆˆ¤°(€€€€€€€€€€€€‰1%9}!991}MM}Q=-8ˆè½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MM}Q=-8ˆ°€ˆˆ¤°(€€€€€€€€€€€€‰1%9}!991}MIPˆè½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}!991}MIPˆ°€ˆˆ¤°(€€€€€€€€€€€€‰1%}%ˆè½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%}%ˆ¤½ÈU1Q}1%}%°(€€€€€€€€€€€€‰1%9}1=%9}!991}%ˆè€ (€€€€€€€€€€€€€€€½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%9}1=%9}!991}%ˆ¤(€€€€€€€€€€€€€€€½È€¡½Ì¹•¹Ù¥É½¸¹•Ğ ‰1%}%ˆ¤½ÈU1Q}1%}%¤¹ÍÁ±¥Ğ ˆ´ˆ°€Ä¥lÁt(€€€€€€€€€€€€€€€½ÈU1Q}1%9}1=%9}!991}%(€€€€€€€€€€€€¤°(€€€€€€€€€€€€‰1e}1%9}1=%9}!991}%ˆè½Ì¹•¹Ù¥É½¸¹•Ğ (€€€€€€€€€€€€€€€€‰1e}1%9}1=%9}!991}%ˆ°€ˆÈÀÄÀØÜĞàÀÌˆ(€€€€€€€€€€€€¤°(€€€€€€€€€€€€‰1e}1%}%ˆè½Ì¹•¹Ù¥É½¸¹•Ğ ‰1e}1%}%ˆ°U1Q}1e}1%}%¤°(€€€€€€€€€€€€‰=U9Q}5%IQ%=9}MIPˆè½Ì¹•¹Ù¥É½¸¹•Ğ ‰=U9Q}5%IQ%=9}MIPˆ°€ˆˆ¤°(€€€€€€€€€€€€‰AA}AU	1%}UI0ˆè½Ì¹•¹Ù¥É½¸¹•Ğ ‰AA}AU	1%}UI0ˆ°€ˆˆ¤°(€€€€€€€€€€€€‰AA}Q%5i=9ˆè½Ì¹•¹Ù¥É½¸¹•Ğ ‰AA}Q%5i=9ˆ°€‰Í¥„½Q…¥Á•¤ˆ¤°(€€€€€€€€€€€€‰I=9}MIPˆè½Ì¹•¹Ù¥É½¸¹•Ğ ‰I=9}MIPˆ°€ˆˆ¤°(€€€€€€€ô(€€€€€€€¥˜½¹™¥œè(€€€€€€€€€€€Í•±˜¹½¹™¥œ¹ÕÁ‘…Ñ”¡½¹™¥œ¤((€€€‘•˜Ñ•ÍÑ}±¥•¹Ğ¡Í•±˜¤è(€€€€€€€É•ÑÕÉ¸5¥¹¥±¥•¹Ğ¡Í•±˜¤((€€€‘•˜ÍÑ…ÑÕÌ¡Í•±˜°±¥¹•}ÕÍ•É}¥õ9½¹”¤è(€€€€€€€ÍÑ…Ñ”€ô±½…‘}ÍÑ…Ñ”¡Í•±˜¹½¹™¥l‰Q}%1‰t¤(€€€€€€€É•ÑÕÉ¸‰Õ¥±‘}ÍÑ…ÑÕÌ¡•Ñ}ÁÉ½™¥±”¡ÍÑ…Ñ”°±¥¹•}ÕÍ•É}¥¤¤((€€€‘•˜ÉÕ¸¡Í•±˜°¡½ÍĞôˆÄÈÜ¸À¸À¸Äˆ°Á½ÉĞôÔÀÀÀ°‘•‰Õœõ…±Í”¤è(€€€€€€€‘…Ñ…}™¥±”€ôÍ•±˜¹½¹™¥l‰Q}%1‰t(€€€€€€€½¹™¥œ€ôÍ•±˜¹½¹™¥œ(€€€€€€€ÍÑ…Ñ¥}É½½Ğ€ôA…Ñ ¡}}™¥±•}|¤¹É•Í½±Ù” ¤¹Á…É•¹Ğ((€€€€€€€±…ÍÌ!…¹‘±•È¡	…Í•!QQAI•ÅÕ•ÍÑ!…¹‘±•È¤è(€€€€€€€€€€€‘•˜Í•¹‘}©Í½¸¡¡…¹‘±•È°Á…å±½…°ÍÑ…ÑÕÌôÈÀÀ¤è(€€€€€€€€€€€€€€€‰½‘ä€ô©Í½¸¹‘ÕµÁÌ¡Á…å±½…°•¹ÍÕÉ•}…Í¥¤õ…±Í”¤¹•¹½‘” ‰ÕÑ˜´àˆ¤(€€€€€€€€€€€€€€€¡…¹‘±•È¹Í•¹‘}É•ÍÁ½¹Í”¡ÍÑ…ÑÕÌ¤(€€€€€€€€€€€€€€€¡…¹‘±•È¹Í•¹‘}¡•…‘•È ‰½¹Ñ•¹ĞµQåÁ”ˆ°€‰…ÁÁ±¥…Ñ¥½¸½©Í½¸ì¡…ÉÍ•ĞõÕÑ˜´àˆ¤(€€€€€€€€€€€€€€€¡…¹‘±•È¹Í•¹‘}¡•…‘•È ‰½¹Ñ•¹Ğµ1•¹Ñ ˆ°ÍÑÈ¡±•¸¡‰½‘ä¤¤¤(€€€€€€€€€€€€€€€¡…¹‘±•È¹•¹‘}¡•…‘•ÉÌ ¤(€€€€€€€€€€€€€€€¡…¹‘±•È¹İ™¥±”¹İÉ¥Ñ”¡‰½‘ä¤((€€€€€€€€€€€‘•˜É•…‘}Á…å±½…¡¡…¹‘±•È¤è(€€€€€€€€€€€€€€€±•¹Ñ €ô¥¹Ğ¡¡…¹‘±•È¹¡•…‘•ÉÌ¹•Ğ ‰½¹Ñ•¹Ğµ1•¹Ñ ˆ¤½È€À¤(€€€€€€€€€€€€€€€¥˜¹½Ğ±•¹Ñ è(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸íô(€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸©Í½¸¹±½…‘Ì¡¡…¹‘±•È¹É™¥±”¹É•…¡±•¹Ñ ¤¹‘•½‘” ‰ÕÑ˜´àˆ¤¤(€€€€€€€€€€€€€€€•á•ÁĞ©Í½¸¹)M=9•½‘•ÉÉ½Èè(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸íô((€€€€€€€€€€€‘•˜ÅÕ•Éä¡¡…¹‘±•È¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸‘¥Ğ¡ÕÉ±±¥ˆ¹Á…ÉÍ”¹Á…ÉÍ•}ÅÍ°¡ÕÉ±±¥ˆ¹Á…ÉÍ”¹ÕÉ±ÍÁ±¥Ğ¡¡…¹‘±•È¹Á…Ñ ¤¹ÅÕ•Éä¤¤((€€€€€€€€€€€‘•˜É½¹}Í•É•Ğ¡¡…¹‘±•È¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹¡•…‘•ÉÌ¹•Ğ ‰`µÉ½¸µM•É•Ğˆ°€ˆˆ¤((€€€€€€€€€€€‘•˜É½ÕÑ”¡¡…¹‘±•È¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸ÕÉ±±¥ˆ¹Á…ÉÍ”¹ÕÉ±ÍÁ±¥Ğ¡¡…¹‘±•È¹Á…Ñ ¤¹Á…Ñ ((€€€€€€€€€€€‘•˜…ÕÑ¡•¹Ñ¥…Ñ•‘}ÕÍ•È¡¡…¹‘±•È°Á…å±½…õ9½¹”°Á…É…µÌõ9½¹”¤è(€€€€€€€€€€€€€€€É•ÑÕÉ¸…ÕÑ¡•¹Ñ¥…Ñ•‘}±¥¹•}ÕÍ•È (€€€€€€€€€€€€€€€€€€€Á…å±½…½Èíô°(€€€€€€€€€€€€€€€€€€€…ÉÌõÁ…É…µÌ½Èíô°(€€€€€€€€€€€€€€€€€€€¡•…‘•ÉÌõ‘¥Ğ¡¡…¹‘±•È¹¡•…‘•ÉÌ¹¥Ñ•µÌ ¤¤°(€€€€€€€€€€€€€€€€€€€½¹™¥œõ½¹™¥œ°(€€€€€€€€€€€€€€€€¤((€€€€€€€€€€€‘•˜‘½}P¡¡…¹‘±•È¤è(€€€€€€€€€€€€€€€É½ÕÑ”€ô¡…¹‘±•È¹É½ÕÑ” ¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸ˆ½ÈÉ½ÕÑ”¹ÍÑ…ÉÑÍİ¥Ñ  ˆ½…Á¤½…‘µ¥¸¼ˆ¤è(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰…‘µ¥¹}¹½Ñ}½¹™¥ÕÉ•‰ô°€ÔÀÌ¤(€€€€€€€€€€€€€€€Á…É…µÌ€ô¡…¹‘±•È¹ÅÕ•Éä ¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½½¹™¥œˆè(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡…ÁÁ}½¹™¥œ¡½¹™¥œ¤¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½¡•…±Ñ ˆè(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰½¬ˆèQÉÕ•ô¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½ÍÑ…ÑÕÌˆè(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô¡…¹‘±•È¹…ÕÑ¡•¹Ñ¥…Ñ•‘}ÕÍ•È¡Á…É…µÌõÁ…É…µÌ¤(€€€€€€€€€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÍÑ…ÑÕÍ}™½É}ÕÍ•È (€€€€€€€€€€€€€€€€€€€€€€€‘…Ñ…}™¥±”°(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€€€€Á…É…µÌ¹•Ğ ‰‘¥ÍÁ±…å}¹…µ”ˆ¤°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½½¹‰½…É‘¥¹œˆè(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô¡…¹‘±•È¹…ÕÑ¡•¹Ñ¥…Ñ•‘}ÕÍ•È¡Á…É…µÌõÁ…É…µÌ¤(€€€€€€€€€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô½¹‰½…É‘¥¹}ÍÑ…ÑÕÍ}Á…å±½…¡‘…Ñ…}™¥±”°±¥¹•}ÕÍ•É}¥¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½½¹‰½…É‘¥¹œ½ÍÑ…Ñ”ˆè(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô¡…¹‘±•È¹…ÕÑ¡•¹Ñ¥…Ñ•‘}ÕÍ•È¡Á…É…µÌõÁ…É…µÌ¤(€€€€€€€€€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô½¹‰½…É‘¥¹}ÍÑ…ÑÕÍ}Á…å±½… (€€€€€€€€€€€€€€€€€€€€€€€‘…Ñ…}™¥±”°(€€€€€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€€€€…±±½İ}µ¥ÍÍ¥¹}ÁÉ½™¥±”õQÉÕ”°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½ÍÕµµ…Éäˆè(€€€€€€€€€€€€€€€€€€€‘•¹¥•€ô…‘µ¥¹}…ÕÑ¡}•ÉÉ½É}Á…å±½…¡½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤(€€€€€€€€€€€€€€€€€€€¥˜‘•¹¥•è(€€€€€€€€€€€€€€€€€€€€€€€Á…å±½…°½‘”€ô‘•¹¥•(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡Á…å±½…°½‘”¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡…‘µ¥¹}ÍÕµµ…Éä¡‘…Ñ…}™¥±”°½¹™¥œ¤¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½½¹Ñ…ÑÌˆè(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡•Ñ}½¹Ñ…ÑÌ¡‘…Ñ…}™¥±”°Á…É…µÌ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤¤¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½•µ•É•¹äµ½¹Ñ…Ğ½¥¹Ù¥Ñ”µÁÉ•Ù¥•Üˆè(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô¡…¹‘±•È¹…ÕÑ¡•¹Ñ¥…Ñ•‘}ÕÍ•È¡íô°Á…É…µÌ¤(€€€€€€€€€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô¥¹Ù¥Ñ•}‰¥¹‘}ÁÉ•Ù¥•Ü (€€€€€€€€€€€€€€€€€€€€€€€‘…Ñ…}™¥±”°(€€€€€€€€€€€€€€€€€€€€€€€ì(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰¥¹Ù¥Ñ•}™É½´ˆèÁ…É…µÌ¹•Ğ ‰¥¹Ù¥Ñ•}™É½´ˆ¤½ÈÁ…É…µÌ¹•Ğ ‰™É½´ˆ¤½È€ˆˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰¥¹Ù¥Ñ•}Ñ½­•¸ˆèÁ…É…µÌ¹•Ğ ‰¥¹Ù¥Ñ•}Ñ½­•¸ˆ¤½È€ˆˆ°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰±¥¹•}ÕÍ•É}¥ˆè±¥¹•}ÕÍ•É}¥°(€€€€€€€€€€€€€€€€€€€€€€€ô°(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…±•¹‘…Èµ¹½Ñ•Ìˆè(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô¡…¹‘±•È¹…ÕÑ¡•¹Ñ¥…Ñ•‘}ÕÍ•È¡Á…É…µÌõÁ…É…µÌ¤(€€€€€€€€€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€€€€€€€€€‰½‘ä€ô•Ñ}…±•¹‘…É}¹½Ñ•Ì¡‘…Ñ…}™¥±”°±¥¹•}ÕÍ•É}¥¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸ (€€€€€€€€€€€€€€€€€€€€€€€‰½‘ä°ÍÑ…ÑÕÌôÈÀÀ¥˜‰½‘ä¹•Ğ ‰½¬ˆ¤•±Í”€ĞÀÌ(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Íµ…ÉĞµÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô¡…¹‘±•È¹…ÕÑ¡•¹Ñ¥…Ñ•‘}ÕÍ•È¡Á…É…µÌõÁ…É…µÌ¤(€€€€€€€€€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸ (€€€€€€€€€€€€€€€€€€€€€€€•Ñ}Íµ…ÉÑ}É•µ¥¹‘•ÉÍ}Á…å±½…¡‘…Ñ…}™¥±”°±¥¹•}ÕÍ•É}¥¤(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½™É¥•¹‘Ì½±½…Ñ¥½¹Ìˆè(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡™É¥•¹‘}±½…Ñ¥½¹Ì¡‘…Ñ…}™¥±”°Á…É…µÌ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤¤¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½±½…Ñ¥½¸½ÍÑ…ÑÕÌˆè(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥€ôÁ…É…µÌ¹•Ğ ‰±¥¹•}ÕÍ•É}¥ˆ¤(€€€€€€€€€€€€€€€€€€€¥˜¹½Ğ±¥¹•}ÕÍ•É}¥è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰µ¥ÍÍ¥¹œ±¥¹•}ÕÍ•É}¥‰ô°€ĞÀÀ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì(€€€€€€€€€€€€€€€€€€€€€€€€‰½¬ˆèQÉÕ”°(€€€€€€€€€€€€€€€€€€€€€€€€‰Í…™•Ñå}Õ…ÉˆèÍ…™•Ñå}Õ…É‘}Í¹…ÁÍ¡½Ğ¡•Ñ}ÁÉ½™¥±”¡±½…‘}ÍÑ…Ñ”¡‘…Ñ…}™¥±”¤°±¥¹•}ÕÍ•É}¥¤¤°(€€€€€€€€€€€€€€€€€€€ô¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½½¹Ñ…ĞµÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡½¹™¥œ°¡…¹‘±•È¹É½¹}Í•É•Ğ ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}µ¥ÍÍ¥¹}½¹Ñ…Ñ}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½¡•­¥¸µÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡½¹™¥œ°¡…¹‘±•È¹É½¹}Í•É•Ğ ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€µ½‘”€ôÍÑÈ¡Á…É…µÌ¹•Ğ ‰µ½‘”ˆ°€ˆˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¹±½İ•È ¤(€€€€€€€€€€€€€€€€€€€™½É”€ôÍÑÈ¡Á…É…µÌ¹•Ğ ‰™½É”ˆ°€ˆˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¹±½İ•È ¤¥¸ìˆÄˆ°€‰ÑÉÕ”ˆ°€‰å•Ìˆ°€‰½¸‰ô(€€€€€€€€€€€€€€€€€€€¥˜µ½‘”¥¸ì‰‰É½…‘…ÍĞˆ°€‰É•ÁÕÍ ˆ°€‰…±°‰ô½È™½É”è(€€€€€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô‰É½…‘…ÍÑ}¡•­¥¹}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}¡•­¥¹}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½¡•­¥¸µ‰É½…‘…ÍĞˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡½¹™¥œ°¡…¹‘±•È¹É½¹}Í•É•Ğ ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô‰É½…‘…ÍÑ}¡•­¥¹}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½‘…Ñ„µ±•…¹ÕÀˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡½¹™¥œ°¡…¹‘±•È¹É½¹}Í•É•Ğ ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô±•…¹ÕÁ}•áÁ¥É•‘}‘…Ñ„¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½‰…­™¥±°µ‰¥¹µ¹½Ñ¥™äˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡½¹™¥œ°¡…¹‘±•È¹É½¹}Í•É•Ğ ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘Éå}ÉÕ¸€ôÍÑÈ¡Á…É…µÌ¹•Ğ ‰‘Éå}ÉÕ¸ˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¹±½İ•È ¤¥¸ì(€€€€€€€€€€€€€€€€€€€€€€€€ˆÄˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰ÑÉÕ”ˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰å•Ìˆ°(€€€€€€€€€€€€€€€€€€€€€€€€‰½¸ˆ°(€€€€€€€€€€€€€€€€€€€ô(€€€€€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€€€€€±¥µ¥Ğ€ô¥¹Ğ¡Á…É…µÌ¹•Ğ ‰±¥µ¥Ğˆ¤½È€À¤(€€€€€€€€€€€€€€€€€€€•á•ÁĞ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€€€€€€€€€€€€€€€€€±¥µ¥Ğ€ô€À(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô‰…­™¥±±}‰¥¹‘}¹½Ñ¥™ä¡½¹™¥œ°‘Éå}ÉÕ¸õ‘Éå}ÉÕ¸°±¥µ¥Ğõ±¥µ¥Ğ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤((€€€€€€€€€€€€€€€™¥±•}¹…µ”€ô€‰¥¹‘•à¹¡Ñµ°ˆ¥˜É½ÕÑ”€ôô€ˆ¼ˆ•±Í”É½ÕÑ”¹±ÍÑÉ¥À ˆ¼ˆ¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…‘µ¥¸ˆè(€€€€€€€€€€€€€€€€€€€™¥±•}¹…µ”€ô€‰…‘µ¥¸¹¡Ñµ°ˆ(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½Ñ•ÉµÌˆè(€€€€€€€€€€€€€€€€€€€™¥±•}¹…µ”€ô€‰Ñ•ÉµÌ¹¡Ñµ°ˆ(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½ÁÉ¥Ù…äˆè(€€€€€€€€€€€€€€€€€€€™¥±•}¹…µ”€ô€‰ÁÉ¥Ù…ä¹¡Ñµ°ˆ(€€€€€€€€€€€€€€€™¥±•}Á…Ñ €ôÍÑ…Ñ¥}É½½Ğ€¼™¥±•}¹…µ”(€€€€€€€€€€€€€€€¥˜¹½Ğ™¥±•}Á…Ñ ¹•á¥ÍÑÌ ¤½È¹½Ğ™¥±•}Á…Ñ ¹¥Í}™¥±” ¤è(€€€€€€€€€€€€€€€€€€€¡…¹‘±•È¹Í•¹‘}É•ÍÁ½¹Í” ĞÀĞ¤(€€€€€€€€€€€€€€€€€€€¡…¹‘±•È¹•¹‘}¡•…‘•ÉÌ ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸(€€€€€€€€€€€€€€€‰½‘ä€ô™¥±•}Á…Ñ ¹É•…‘}‰åÑ•Ì ¤(€€€€€€€€€€€€€€€½¹Ñ•¹Ñ}ÑåÁ”€ô€‰Ñ•áĞ½¡Ñµ°ì¡…ÉÍ•ĞõÕÑ˜´àˆ¥˜™¥±•}Á…Ñ ¹ÍÕ™™¥à€ôô€ˆ¹¡Ñµ°ˆ•±Í”€‰Ñ•áĞ½Á±…¥¸ì¡…ÉÍ•ĞõÕÑ˜´àˆ(€€€€€€€€€€€€€€€¡…¹‘±•È¹Í•¹‘}É•ÍÁ½¹Í” ÈÀÀ¤(€€€€€€€€€€€€€€€¡…¹‘±•È¹Í•¹‘}¡•…‘•È ‰½¹Ñ•¹ĞµQåÁ”ˆ°½¹Ñ•¹Ñ}ÑåÁ”¤(€€€€€€€€€€€€€€€¡…¹‘±•È¹Í•¹‘}¡•…‘•È ‰½¹Ñ•¹Ğµ1•¹Ñ ˆ°ÍÑÈ¡±•¸¡‰½‘ä¤¤¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…‘µ¥¸ˆè(€€€€€€€€€€€€€€€€€€€¡…¹‘±•È¹Í•¹‘}¡•…‘•È ‰…¡”µ½¹ÑÉ½°ˆ°€‰¹¼µÍÑ½É”°¹¼µ…¡”°µÕÍĞµÉ•Ù…±¥‘…Ñ”°µ…àµ…”ôÀˆ¤(€€€€€€€€€€€€€€€€€€€¡…¹‘±•È¹Í•¹‘}¡•…‘•È ‰AÉ…µ„ˆ°€‰¹¼µ…¡”ˆ¤(€€€€€€€€€€€€€€€¡…¹‘±•È¹•¹‘}¡•…‘•ÉÌ ¤(€€€€€€€€€€€€€€€¡…¹‘±•È¹İ™¥±”¹İÉ¥Ñ”¡‰½‘ä¤((€€€€€€€€€€€‘•˜‘½}A=MP¡¡…¹‘±•È¤è(€€€€€€€€€€€€€€€É½ÕÑ”€ô¡…¹‘±•È¹É½ÕÑ” ¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸ˆ½ÈÉ½ÕÑ”¹ÍÑ…ÉÑÍİ¥Ñ  ˆ½…Á¤½…‘µ¥¸¼ˆ¤è(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰…‘µ¥¹}¹½Ñ}½¹™¥ÕÉ•‰ô°€ÔÀÌ¤(€€€€€€€€€€€€€€€Á…É…µÌ€ô¡…¹‘±•È¹ÅÕ•Éä ¤(€€€€€€€€€€€€€€€Á…å±½…€ô¡…¹‘±•È¹É•…‘}Á…å±½… ¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½±¥¹”½É•¥ÍÑ•Èˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÉ•¥ÍÑ•É}±¥¹•}ÕÍ•È¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½¡•­¥¸ˆè(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô¡…¹‘±•È¹…ÕÑ¡•¹Ñ¥…Ñ•‘}ÕÍ•È¡Á…å±½…°Á…É…µÌ¤(€€€€€€€€€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô¡•­¥¹}™½É}ÕÍ•È (€€€€€€€€€€€€€€€€€€€€€€€‘…Ñ…}™¥±”°±¥¹•}ÕÍ•É}¥°Á…å±½…°½¹™¥œ(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½½¹‰½…É‘¥¹œ½É•µ¥¹‘•Èˆè(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô¡…¹‘±•È¹…ÕÑ¡•¹Ñ¥…Ñ•‘}ÕÍ•È¡Á…å±½…°Á…É…µÌ¤(€€€€€€€€€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÕÁ‘…Ñ•}½¹‰½…É‘¥¹}É•µ¥¹‘•È (€€€€€€€€€€€€€€€€€€€€€€€‘…Ñ…}™¥±”°±¥¹•}ÕÍ•É}¥°Á…å±½…(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½½¹‰½…É‘¥¹œ½½µÁ±•Ñ”ˆè(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô¡…¹‘±•È¹…ÕÑ¡•¹Ñ¥…Ñ•‘}ÕÍ•È¡Á…å±½…°Á…É…µÌ¤(€€€€€€€€€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô½µÁ±•Ñ•}½¹‰½…É‘¥¹}™½É}ÕÍ•È (€€€€€€€€€€€€€€€€€€€€€€€‘…Ñ…}™¥±”°±¥¹•}ÕÍ•É}¥°Á…å±½…(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½İ…É¹¥¹œ½…¹•°ˆè(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡…¹•±}İ…É¹¥¹œ¡‘…Ñ…}™¥±”°Á…å±½…°½¹™¥œ¤¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Í•ÑÑ¥¹Ìˆè(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡Í…Ù•}Í•ÑÑ¥¹Í}™½É}ÁÉ½™¥±”¡‘…Ñ…}™¥±”°Á…å±½…¤¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½‰¥±±¥¹œ½ÁÉ•™•É•¹•Ìˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÍ…Ù•}‰¥±±¥¹}ÁÉ•™•É•¹•Ì¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Á…åµ•¹ÑÌ½½É‘•ÉÌˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÉ•…Ñ•}Á…åµ•¹Ñ}½É‘•È¡‘…Ñ…}™¥±”°Á…å±½…°½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½½¹Ñ…ÑÌˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÍ…Ù•}½¹Ñ…ÑÌ¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…±•¹‘…Èµ¹½Ñ•Ìˆè(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô¡…¹‘±•È¹…ÕÑ¡•¹Ñ¥…Ñ•‘}ÕÍ•È¡Á…å±½…°Á…É…µÌ¤(€€€€€€€€€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€€€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÍ…Ù•}…±•¹‘…É}¹½Ñ”¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Íµ…ÉĞµÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô¡…¹‘±•È¹…ÕÑ¡•¹Ñ¥…Ñ•‘}ÕÍ•È¡Á…å±½…°Á…É…µÌ¤(€€€€€€€€€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€€€€€€€€€Á…å±½…‘l‰±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÍ…Ù•}Íµ…ÉÑ}É•µ¥¹‘•È¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”¥¸ì(€€€€€€€€€€€€€€€€€€€€ˆ½…Á¤½É½¸½Íµ…ÉĞµÉ•µ¥¹‘•ÉÌˆ°(€€€€€€€€€€€€€€€€€€€€ˆ½…Á¤½É½¸½‰¥ÉÑ¡‘…äµÉ•µ¥¹‘•ÉÌˆ°(€€€€€€€€€€€€€€€ôè(€€€€€€€€€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡½¹™¥œ°¡…¹‘±•È¹É½¹}Í•É•Ğ ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€Ñ…Í¬€ô€ (€€€€€€€€€€€€€€€€€€€€€€€Í•¹‘}Íµ…ÉÑ}É•µ¥¹‘•ÉÌ(€€€€€€€€€€€€€€€€€€€€€€€¥˜É½ÕÑ”¹•¹‘Íİ¥Ñ  ‰Íµ…ÉĞµÉ•µ¥¹‘•ÉÌˆ¤(€€€€€€€€€€€€€€€€€€€€€€€•±Í”Í•¹‘}‰¥ÉÑ¡‘…å}É•µ¥¹‘•ÉÌ(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÑ…Í¬¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½•µ•É•¹äµ½¹Ñ…Ğ½‰¥¹ˆè(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô¡…¹‘±•È¹…ÕÑ¡•¹Ñ¥…Ñ•‘}ÕÍ•È¡Á…å±½…°Á…É…µÌ¤(€€€€€€€€€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€€€€€€€€€Á…å±½…‘l‰½¹Ñ…Ñ}±¥¹•}ÕÍ•É}¥‰t€ô±¥¹•}ÕÍ•É}¥(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô‰¥¹‘}•µ•É•¹å}½¹Ñ…Ğ¡‘…Ñ…}™¥±”°Á…å±½…°½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½•µ•É•¹äµ½¹Ñ…Ğ½¥¹Ù¥Ñ”ˆè(€€€€€€€€€€€€€€€€€€€±¥¹•}ÕÍ•É}¥°•ÉÈ€ô¡…¹‘±•È¹…ÕÑ¡•¹Ñ¥…Ñ•‘}ÕÍ•È¡Á…å±½…°Á…É…µÌ¤(€€€€€€€€€€€€€€€€€€€¥˜•ÉÈè(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡•ÉÉlÁt°•ÉÉlÅt¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÉ•…Ñ•}Õ…É‘¥…¹}¥¹Ù¥Ñ” (€€€€€€€€€€€€€€€€€€€€€€€‘…Ñ…}™¥±”°±¥¹•}ÕÍ•É}¥°Á…å±½…(€€€€€€€€€€€€€€€€€€€€¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Õ…É‘¥…¸µÉ½ÕÁÌ½‰¥¹ˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô‰¥¹‘}Õ…É‘¥…¹}É½ÕÀ¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Õ…É‘¥…¸µÉ½ÕÁÌ½Õ¹‰¥¹ˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÕ¹‰¥¹‘}Õ…É‘¥…¹}É½ÕÀ¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½™É¥•¹‘Ì½¥¹Ù¥Ñ”ˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÉ•…Ñ•}™É¥•¹‘}¥¹Ù¥Ñ”¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½™É¥•¹‘Ì½…•ÁĞˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô…•ÁÑ}™É¥•¹‘}¥¹Ù¥Ñ”¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½±½…Ñ¥½¸½ÕÁ‘…Ñ”ˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÕÁ‘…Ñ•}±½…Ñ¥½¸¡‘…Ñ…}™¥±”°Á…å±½…°½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½±½…Ñ¥½¸½ÍÑ½Àˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÍÑ½Á}±½…Ñ¥½¹}Í¡…É¥¹œ¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Í½Ìˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÑÉ¥•É}Í½Ì¡‘…Ñ…}™¥±”°Á…å±½…°½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Í½Ì½…¹•°ˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô…¹•±}Í½Í}•Ù•¹Ğ¡‘…Ñ…}™¥±”°Á…å±½…°½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½Í½Ì½É•ÑÉäˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÉ•ÑÉå}Í½Í}•Ù•¹Ğ¡‘…Ñ…}™¥±”°Á…å±½…°½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…½Õ¹Ğ½‘•±•Ñ”ˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô‘•±•Ñ•}…½Õ¹Ğ¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…½Õ¹Ğ½•áÁ½ÉĞˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô•áÁ½ÉÑ}…½Õ¹Ñ}‘…Ñ„¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…½Õ¹Ğ½¡¥ÍÑ½Éä½‘•±•Ñ”ˆè(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô‘•±•Ñ•}Á•ÉÍ½¹…±}¡¥ÍÑ½Éä¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½Í•¹µÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}‘Õ•}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½Í•¹µ½¹Ñ…ĞµÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}µ¥ÍÍ¥¹}½¹Ñ…Ñ}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½Í•¹µÉ•¹•İ…°µÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}É•¹•İ…±}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½Á…åµ•¹ÑÌ½½¹™¥É´ˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô½¹™¥Éµ}Á…åµ•¹Ñ}½É‘•È¡‘…Ñ…}™¥±”°Á…å±½…°½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½Ñ¥¬ˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡½¹™¥œ°¡…¹‘±•È¹É½¹}Í•É•Ğ ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÉÕ¹}É½¹}Ñ¥¬¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½½¹Ñ…ĞµÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡½¹™¥œ°¡…¹‘±•È¹É½¹}Í•É•Ğ ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}µ¥ÍÍ¥¹}½¹Ñ…Ñ}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½¡•­¥¸µÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡½¹™¥œ°¡…¹‘±•È¹É½¹}Í•É•Ğ ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€µ½‘”€ôÍÑÈ¡Á…É…µÌ¹•Ğ ‰µ½‘”ˆ°€ˆˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¹±½İ•È ¤(€€€€€€€€€€€€€€€€€€€™½É”€ôÍÑÈ¡Á…É…µÌ¹•Ğ ‰™½É”ˆ°€ˆˆ¤½È€ˆˆ¤¹ÍÑÉ¥À ¤¹±½İ•È ¤¥¸ìˆÄˆ°€‰ÑÉÕ”ˆ°€‰å•Ìˆ°€‰½¸‰ô(€€€€€€€€€€€€€€€€€€€¥˜µ½‘”¥¸ì‰‰É½…‘…ÍĞˆ°€‰É•ÁÕÍ ˆ°€‰…±°‰ô½È™½É”è(€€€€€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô‰É½…‘…ÍÑ}¡•­¥¹}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€•±Í”è(€€€€€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}¡•­¥¹}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½¡•­¥¸µ‰É½…‘…ÍĞˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡½¹™¥œ°¡…¹‘±•È¹É½¹}Í•É•Ğ ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô‰É½…‘…ÍÑ}¡•­¥¹}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½É•¹•İ…°µÉ•µ¥¹‘•ÉÌˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡½¹™¥œ°¡…¹‘±•È¹É½¹}Í•É•Ğ ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ôÍ•¹‘}É•¹•İ…±}É•µ¥¹‘•ÉÌ¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½‘…Ñ„µ±•…¹ÕÀˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡½¹™¥œ°¡…¹‘±•È¹É½¹}Í•É•Ğ ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô±•…¹ÕÁ}•áÁ¥É•‘}‘…Ñ„¡½¹™¥œ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½É½¸½‰…­™¥±°µ‰¥¹µ¹½Ñ¥™äˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½ĞÉ½¹}…±±½İ•¡½¹™¥œ°¡…¹‘±•È¹É½¹}Í•É•Ğ ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘Éå}ÉÕ¸€ôÍÑÈ (€€€€€€€€€€€€€€€€€€€€€€€Á…É…µÌ¹•Ğ ‰‘Éå}ÉÕ¸ˆ¤½ÈÁ…å±½…¹•Ğ ‰‘Éå}ÉÕ¸ˆ¤½È€ˆˆ(€€€€€€€€€€€€€€€€€€€€¤¹ÍÑÉ¥À ¤¹±½İ•È ¤¥¸ìˆÄˆ°€‰ÑÉÕ”ˆ°€‰å•Ìˆ°€‰½¸‰ô(€€€€€€€€€€€€€€€€€€€ÑÉäè(€€€€€€€€€€€€€€€€€€€€€€€±¥µ¥Ğ€ô¥¹Ğ¡Á…É…µÌ¹•Ğ ‰±¥µ¥Ğˆ¤½ÈÁ…å±½…¹•Ğ ‰±¥µ¥Ğˆ¤½È€À¤(€€€€€€€€€€€€€€€€€€€•á•ÁĞ€¡QåÁ•ÉÉ½È°Y…±Õ•ÉÉ½È¤è(€€€€€€€€€€€€€€€€€€€€€€€±¥µ¥Ğ€ô€À(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô‰…­™¥±±}‰¥¹‘}¹½Ñ¥™ä¡½¹™¥œ°‘Éå}ÉÕ¸õ‘Éå}ÉÕ¸°±¥µ¥Ğõ±¥µ¥Ğ¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½ÕÍ•ÈµÁ±…¸ˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô…‘µ¥¹}ÕÁ‘…Ñ•}ÕÍ•É}Á±…¸¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¥˜É½ÕÑ”€ôô€ˆ½…Á¤½…‘µ¥¸½Í•Ğµ½É”µÕ…É‘¥…¸ˆè(€€€€€€€€€€€€€€€€€€€¥˜¹½Ğ…‘µ¥¹}…±±½İ•¡½¹™¥œ°Á…É…µÌ¹•Ğ ‰Á…ÍÍİ½Éˆ°€ˆˆ¤¤è(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰Õ¹…ÕÑ¡½É¥é•‰ô°€ĞÀÄ¤(€€€€€€€€€€€€€€€€€€€‘…Ñ„°½‘”€ô…‘µ¥¹}Í•Ñ}½É•}Õ…É‘¥…¸¡‘…Ñ…}™¥±”°Á…å±½…¤(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸¡…¹‘±•È¹Í•¹‘}©Í½¸¡‘…Ñ„°½‘”¤(€€€€€€€€€€€€€€€¡…¹‘±•È¹Í•¹‘}©Í½¸¡ì‰•ÉÉ½Èˆè€‰¹½Ğ™½Õ¹‰ô°€ĞÀĞ¤((€€€€€€€ÁÉ¥¹Ğ ‰±…Í¬¥Ì¹½Ğ¥¹ÍÑ…±±•¸UÍ¥¹œÑ¡”‰Õ¥±Ğµ¥¸™…±±‰…¬Í•ÉÙ•È¸ˆ¤(€€€€€€€ÁÉ¥¹Ğ¡˜‰=Á•¸¡ÑÑÀè¼½í¡½ÍÑôéíÁ½ÉÑôˆ¤(€€€€€€€Q¡É•…‘¥¹!QQAM•ÉÙ•È ¡¡½ÍĞ°Á½ÉĞ¤°!…¹‘±•È¤¹Í•ÉÙ•}™½É•Ù•È ¤(()…ÁÀ€ôÉ•…Ñ•}…ÁÀ ¤(()¥˜}}¹…µ•}|€ôô€‰}}µ…¥¹}|ˆè(€€€…ÁÀ¹ÉÕ¸¡¡½ÍĞôˆÄÈÜ¸À¸À¸Äˆ°Á½ÉĞõ¥¹Ğ¡½Ì¹•¹Ù¥É½¸¹•Ğ ‰A=IPˆ°€ˆÔÀÀÀˆ¤¤°‘•‰ÕœõQÉÕ”¤(

@@ -3846,6 +3846,13 @@
           <a class="family" id="sosDialPrimary" href="tel:" hidden>第一聯絡人</a>
         </div>
         <p class="sos-feedback" id="sosFeedback" aria-live="polite"></p>
+        <section id="sosLiveStatus" class="sos-plan-status" aria-live="polite" hidden>
+          <strong id="sosLiveTitle">等待守護人回應</strong>
+          <div id="sosRecipientStatus"></div>
+          <p id="sosResponseStatus">已送達不代表已讀，系統會顯示守護人的按鈕回應</p>
+          <button class="action-btn" id="sosRefreshStatusBtn" type="button">再次查看狀態</button>
+          <button class="action-btn primary" id="sosSafeCloseBtn" type="button" hidden>我已安全，結束求助</button>
+        </section>
         <button class="action-btn" id="sosCancelSentBtn" type="button" hidden>我已安全／取消通知</button>
         <a class="sos-upgrade-link" id="sosUpgradeLink" href="https://alive-checkin.onrender.com/liff/pricing.html">查看守護方案</a>
         <div class="actions">
@@ -5814,6 +5821,60 @@
         throw error;
       }
       return data;
+    }
+
+    async function apiSosStatus(eventId) {
+      const query = new URLSearchParams({ line_user_id: lineUserId, event_id: eventId });
+      const res = await fetch(`/api/sos/status?${query}`, { headers: await authHeaders() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "sos status failed");
+      return data;
+    }
+
+    async function apiCloseSosSafe(eventId) {
+      const res = await fetch("/api/sos/safe", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ line_user_id: lineUserId, event_id: eventId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "sos safe close failed");
+      return data;
+    }
+
+    function renderSosLiveStatus(snapshot) {
+      const panel = $("sosLiveStatus");
+      if (!panel || !snapshot) return;
+      panel.hidden = false;
+      const closed = ["safe_closed", "cancelled", "resolved", "closed"].includes(snapshot.status);
+      $("sosLiveTitle").textContent = closed
+        ? "✅ SOS 已結束"
+        : snapshot.status === "contacted"
+          ? "✅ 守護人已聯繫到本人"
+          : snapshot.primary_responder
+            ? `✅ ${snapshot.primary_responder} 已接手`
+            : "🆘 等待守護人回應";
+      $("sosRecipientStatus").innerHTML = (snapshot.recipients || []).map((row) => {
+        const response = row.response_status === "contacted" ? "已聯繫本人"
+          : row.role === "primary" ? "主要接手"
+          : row.role === "assistant" ? "協助處理"
+          : row.response_status === "unable" ? "無法處理"
+          : row.delivery_status === "sent" ? "已送達，等待回應" : "傳送失敗";
+        return `<div><strong>${escapeHtml(row.name || "守護人")}</strong>：${escapeHtml(response)}</div>`;
+      }).join("");
+      $("sosResponseStatus").textContent = snapshot.primary_responder
+        ? `目前由 ${snapshot.primary_responder} 接手${(snapshot.assistants || []).length ? `，${snapshot.assistants.join("、")} 協助` : ""}`
+        : snapshot.escalation_round
+          ? `尚無人接手，系統已進行第 ${snapshot.escalation_round} 輪提醒`
+          : "已送達不代表已讀，系統正在等待守護人按鈕回應";
+      $("sosSafeCloseBtn").hidden = closed;
+    }
+
+    async function refreshSosLiveStatus(eventId) {
+      if (!eventId) return;
+      try { renderSosLiveStatus(await apiSosStatus(eventId)); } catch (_error) {
+        $("sosResponseStatus").textContent = "狀態更新暫時失敗，請稍後再試";
+      }
     }
 
     async function apiUnbindGuardianGroup(groupId) {
@@ -9430,6 +9491,17 @@
           cancelSentBtn.hidden = false;
           cancelSentBtn.dataset.eventId = result.event_id;
         }
+        if (result.event_id) {
+          $("sosLiveStatus").dataset.eventId = result.event_id;
+          renderSosLiveStatus({
+            event_id: result.event_id,
+            status: "sent",
+            recipients: [
+              ...(result.guardians || []).map((row) => ({ ...row, delivery_status: row.status, response_status: "waiting" })),
+              ...(result.groups || []).map((row) => ({ ...row, kind: "group", delivery_status: row.status, response_status: "waiting" }))
+            ]
+          });
+        }
         if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
       } catch (error) {
         const details = (error && error.details) || {};
@@ -11070,6 +11142,14 @@
           }
         });
       }
+      $("sosRefreshStatusBtn")?.addEventListener("click", () => {
+        refreshSosLiveStatus($("sosLiveStatus").dataset.eventId || "");
+      });
+      $("sosSafeCloseBtn")?.addEventListener("click", async () => {
+        const eventId = $("sosLiveStatus").dataset.eventId || "";
+        if (!eventId || !confirm("確認你目前安全，並結束這次 SOS？")) return;
+        renderSosLiveStatus(await apiCloseSosSafe(eventId));
+      });
       modal.addEventListener("click", (event) => {
         if (event.target === modal) { resetSosTap(); modal.hidden = true; }
       });
