@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 115571)
-Total output lines: 11258
-
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
@@ -5345,7 +5342,1409 @@ Total output lines: 11258
     async function withAuthQuery(url) {
       const token = await getLineIdToken();
       if (!token) return url;
-      const sep …15571 tokens truncated… const inviteBtn = event.target.closest(".member-invite-guardian, .one-tap-invite-btn");
+      const sep = String(url).includes("?") ? "&" : "?";
+      return `${url}${sep}id_token=${encodeURIComponent(token)}`;
+    }
+
+    async function apiGetStatus() {
+      if (useLocalMode) return buildLocalStatus(loadLocalState());
+      if (!lineUserId) {
+        throw new Error("需要 LINE 登入,或在 URL 加 ?line_user_id=XXX 進入 dev 模式");
+      }
+      const res = await fetch(await withAuthQuery(`/api/status?line_user_id=${encodeURIComponent(lineUserId)}`), {
+        headers: await authHeaders()
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(friendlyApiFailure(res.status, text));
+      }
+      return await res.json();
+    }
+
+    function friendlyApiFailure(httpStatus, rawText) {
+      const text = String(rawText || "").trim();
+      let err = "";
+      try {
+        const data = JSON.parse(text);
+        err = String(data.error || data.message || "").trim();
+      } catch (_) {
+        err = "";
+      }
+      if (err === "user not registered") {
+        return "尚未建立帳號資料。請先在 LINE 傳「開始」給每日平安，或重新開啟本頁。";
+      }
+      if (err === "invalid id_token" || err === "missing id_token") {
+        return "LINE 登入已過期，請關閉後重新從 LINE 開啟。";
+      }
+      if (err === "LINE credentials are not configured") {
+        return "伺服器尚未設定 LINE 金鑰，暫時無法連線。請稍後再試或聯絡管理員。";
+      }
+      if (httpStatus === 503) {
+        return "服務暫時無法使用，請稍後再試。";
+      }
+      if (httpStatus === 401 || httpStatus === 403) {
+        return "登入驗證失敗，請重新從 LINE 開啟本服務。";
+      }
+      if (err) {
+        // 已知英文錯誤碼改成中文；其餘不把原始 JSON dump 到 UI
+        const map = {
+          "missing line_user_id": "缺少使用者身分，請從 LINE 重新開啟。",
+          "line_user_id mismatch": "登入身分不一致，請重新從 LINE 開啟。",
+        };
+        return map[err] || ("載入失敗（" + err + "）");
+      }
+      return "載入失敗，請稍後再試。";
+    }
+
+    async function apiGetCalendarNotes() {
+      if (useLocalMode) return { ok: true, notes: loadLocalState().calendar_notes || {} };
+      if (!lineUserId) return { ok: true, notes: {} };
+      const res = await fetch(
+        await withAuthQuery(`/api/calendar-notes?line_user_id=${encodeURIComponent(lineUserId)}`),
+        { headers: await authHeaders() }
+      );
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error || "calendar notes failed");
+      return data;
+    }
+
+    async function apiSaveCalendarNote(date, content, birthday = {}) {
+      if (useLocalMode) {
+        const state = loadLocalState();
+        const notes = { ...(state.calendar_notes || {}) };
+        const cleanContent = String(content || "").trim();
+        const birthdayPayload = normalizeBirthdayPayload(birthday);
+        if (cleanContent || birthdayPayload.birthday_name) {
+          notes[date] = {
+            content: cleanContent,
+            ...birthdayPayload
+          };
+        }
+        else delete notes[date];
+        state.calendar_notes = notes;
+        saveLocalState(state);
+        return { ok: true, notes };
+      }
+      const res = await fetch("/api/calendar-notes", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ line_user_id: lineUserId, date, content, ...normalizeBirthdayPayload(birthday) })
+      });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error || "calendar note save failed");
+      return data;
+    }
+
+    async function apiCheckin() {
+      if (useLocalMode) {
+        const state = loadLocalState();
+        const today = getToday();
+        state.last_check_in = new Date().toISOString();
+        state.history = Array.from(new Set([...(state.history || []), today])).sort();
+        saveLocalState(state);
+        return buildLocalStatus(state);
+      }
+      if (!lineUserId) {
+        throw new Error("需要 LINE 登入才能簽到,或在 URL 加 ?line_user_id=XXX 進入 dev 模式");
+      }
+      const res = await fetch("/api/checkin", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ line_user_id: lineUserId })
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`checkin ${res.status}: ${text.slice(0, 80)}`);
+      }
+      return await res.json();
+    }
+
+    async function apiSaveSettings(payload) {
+      if (useLocalMode) {
+        const state = { ...loadLocalState(), ...payload };
+        saveLocalState(state);
+        return buildLocalStatus(state);
+      }
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ ...payload, line_user_id: lineUserId })
+      });
+      if (!res.ok) throw new Error("settings failed");
+      return await res.json();
+    }
+
+    async function apiCreatePaymentOrder(plan) {
+      const res = await fetch("/api/payments/orders", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ line_user_id: lineUserId, plan })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "payment order failed");
+      return data;
+    }
+
+    async function apiSaveBillingPreferences(autoRenewRequested) {
+      const res = await fetch("/api/billing/preferences", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({
+          line_user_id: lineUserId,
+          auto_renew_requested: Boolean(autoRenewRequested)
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "billing preferences failed");
+      return data;
+    }
+
+    async function cancelAutoRenew() {
+      if (!confirm("確定取消後續自動扣款？已付款的使用期限不受影響。")) return;
+      const button = $("memberCancelAutoRenewBtn");
+      button.disabled = true;
+      try {
+        const res = await fetch("/api/billing/cancel", {
+          method: "POST",
+          headers: await authHeaders(),
+          body: JSON.stringify({ line_user_id: lineUserId })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "cancel billing failed");
+        await refresh();
+      } catch (_error) {
+        alert("取消自動續費失敗，請聯絡客服協助。");
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function apiCreateSupportTicket(payload) {
+      const res = await fetch("/api/support/tickets", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ ...payload, line_user_id: lineUserId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "support ticket failed");
+      await loadMemberSupportTickets();
+      return data;
+    }
+
+    async function apiGetSupportTickets() {
+      const res = await fetch(
+        await withAuthQuery(`/api/support/tickets?line_user_id=${encodeURIComponent(lineUserId)}`),
+        { headers: await authHeaders() }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "support tickets failed");
+      return data;
+    }
+
+    function renderMemberSupportTickets(tickets) {
+      const list = document.getElementById("memberSupportList");
+      if (!list) return;
+      const labels = {
+        submitted: "已送出",
+        processing: "處理中",
+        waiting_user: "等待你回覆",
+        resolved: "已結案"
+      };
+      list.innerHTML = tickets.length
+        ? tickets.map((ticket) => `
+          <div class="member-data-row" style="display:block;">
+            <strong>${escapeHtml(ticket.category || "其他")}｜${escapeHtml(ticket.subject || "客服工單")}</strong>
+            <p>${escapeHtml(ticket.message || "")}</p>
+            <small>工單 ${escapeHtml(ticket.id || "-")}・${escapeHtml(labels[ticket.status] || ticket.status || "已送出")}</small>
+            ${ticket.reply ? `<p><strong>客服回覆：</strong>${escapeHtml(ticket.reply)}</p>` : ""}
+          </div>
+        `).join("")
+        : '<div class="member-data-row"><span>客服紀錄</span><strong>目前沒有工單</strong></div>';
+    }
+
+    async function loadMemberSupportTickets() {
+      if (!lineUserId) return;
+      try {
+        const data = await apiGetSupportTickets();
+        renderMemberSupportTickets(data.tickets || []);
+      } catch (_error) {
+        const feedback = document.getElementById("memberSupportFeedback");
+        if (feedback) feedback.textContent = "客服紀錄暫時無法載入，請稍後再試";
+      }
+    }
+
+    async function submitMemberSupportTicket(event) {
+      event.preventDefault();
+      const feedback = $("memberSupportFeedback");
+      const button = $("memberSupportSubmitBtn");
+      const replyChannel = $("memberSupportReplyChannel").value;
+      const email = $("memberSupportEmail").value.trim();
+      if (replyChannel === "email" && !email) {
+        feedback.textContent = "選擇 Email 回覆時，請填寫 Email";
+        return;
+      }
+      button.disabled = true;
+      feedback.textContent = "正在送出";
+      try {
+        const data = await apiCreateSupportTicket({
+          category: $("memberSupportCategory").value,
+          subject: $("memberSupportSubject").value.trim(),
+          message: $("memberSupportMessage").value.trim(),
+          email,
+          reply_channel: replyChannel
+        });
+        feedback.textContent = `已送出，工單編號：${data.ticket.id}`;
+        $("memberSupportMessage").value = "";
+      } catch (_error) {
+        feedback.textContent = "送出失敗，請稍後再試";
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    function submitNewebpayCheckout(checkout) {
+      if (!checkout || !checkout.form) return false;
+      const gatewayUrl = checkout.checkout_url;
+      if (!gatewayUrl || !checkout.form) return false;
+      const form = document.createElement("form");
+      form.method = "POST";
+      form.action = gatewayUrl;
+      form.acceptCharset = "UTF-8";
+      Object.entries(checkout.form).forEach(([key, value]) => {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = key;
+        input.value = value;
+        form.appendChild(input);
+      });
+      document.body.appendChild(form);
+      form.submit();
+      return true;
+    }
+
+    async function apiTriggerSos(extra = {}) {
+      const body = { line_user_id: lineUserId, ...(extra || {}) };
+      const res = await fetch("/api/sos", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const error = new Error(data.error || "sos failed");
+        error.status = res.status;
+        error.details = data;
+        throw error;
+      }
+      return data;
+    }
+
+    async function apiCancelSos(eventId, reason) {
+      const res = await fetch("/api/sos/cancel", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({
+          line_user_id: lineUserId,
+          event_id: eventId,
+          reason: reason || "誤觸"
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const error = new Error(data.error || "sos cancel failed");
+        error.status = res.status;
+        error.details = data;
+        throw error;
+      }
+      return data;
+    }
+
+    async function apiUnbindGuardianGroup(groupId) {
+      const res = await fetch("/api/guardian-groups/unbind", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ line_user_id: lineUserId, group_id: groupId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "guardian group unbind failed");
+      return data;
+    }
+
+    async function apiSaveGuardianGroupPreferences(groupId, preferences) {
+      const res = await fetch("/api/guardian-groups/preferences", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ line_user_id: lineUserId, group_id: groupId, ...preferences })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "guardian group preferences failed");
+      return data;
+    }
+
+    async function apiGetContacts() {
+      if (useLocalMode) {
+        return { contacts: loadLocalState().contacts || [], contact_limit: 1 };
+      }
+      const query = lineUserId ? `?line_user_id=${encodeURIComponent(lineUserId)}` : "";
+      const res = await fetch(await withAuthQuery(`/api/contacts${query}`), {
+        headers: await authHeaders()
+      });
+      if (!res.ok) throw new Error("contacts failed");
+      return await res.json();
+    }
+
+    async function apiSaveContacts(requireCompleteGuardian = false) {
+      if (useLocalMode) {
+        const state = loadLocalState();
+        state.contacts = contactData;
+        saveLocalState(state);
+        return { contacts: contactData, contact_limit: 1 };
+      }
+      const res = await fetch("/api/contacts", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({
+          line_user_id: lineUserId,
+          contacts: contactData,
+          require_complete_guardian: requireCompleteGuardian
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "contacts failed");
+      return data;
+    }
+
+    async function apiDeleteCheckinHistory() {
+      if (useLocalMode) {
+        const state = loadLocalState();
+        const removedCount = (state.history || []).length;
+        state.history = [];
+        state.last_check_in = null;
+        saveLocalState(state);
+        return { deleted: true, record_type: "checkins", removed_count: removedCount };
+      }
+      const res = await fetch("/api/account/history/delete", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ line_user_id: lineUserId, record_type: "checkins" })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "delete history failed");
+      return data;
+    }
+
+    async function apiExportMyData() {
+      if (useLocalMode || !lineUserId) {
+        const state = loadLocalState();
+        return {
+          exported_at: new Date().toISOString(),
+          member: state,
+          orders: [],
+          support_tickets: [],
+          guardian_groups: [],
+          contact_rewards: [],
+          notification_logs: []
+        };
+      }
+      const res = await fetch("/api/account/export", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ line_user_id: lineUserId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "export failed");
+      return data;
+    }
+
+    async function apiDeleteAccount() {
+      if (useLocalMode) {
+        localStorage.removeItem(STORAGE_KEY);
+        return { deleted: true };
+      }
+      const res = await fetch("/api/account/delete", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ line_user_id: lineUserId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "delete account failed");
+      return data;
+    }
+
+    function buildContactInvite(nickname = "") {
+      const safeId = sanitizeInviteUserId(lineUserId);
+      const shareParams = safeId
+        ? { invite_from: safeId }
+        : { open: "onboarding" };
+      // 單一乾淨 URL：Android 用 line.me/R/app 強制進 LINE，避免雙連結被截斷
+      const bindUrl = buildShareInviteUrl(shareParams);
+      const fallbackUrl = safeId
+        ? buildShortInviteFallbackUrl(safeId)
+        : buildPublicAppUrl({}, "/invite");
+      const nameText = nickname ? `嗨 ${nickname}，` : "";
+      const text = (
+        `${nameText}我想邀請你成為「每日平安」的守護人\n` +
+        `有緊急或我沒報平安時，系統會通知你\n` +
+        `請先加入 LINE 官方帳號「每日平安」，再點下面連結完成綁定\n` +
+        `${bindUrl}`
+      );
+      return { bindUrl, fallbackUrl, text };
+    }
+
+    async function apiBindEmergencyContact(inviterLineUserId, options = {}) {
+      if (useLocalMode || !lineUserId || !inviterLineUserId || inviterLineUserId === lineUserId) return null;
+      const body = {
+        inviter_line_user_id: inviterLineUserId,
+        contact_line_user_id: lineUserId,
+        contact_display_name: lineDisplayName || "LINE 聯絡人",
+        contact_picture_url: linePictureUrl || (currentStatusData && currentStatusData.picture_url) || "",
+        recipient_consent: true
+      };
+      const inviteToken = String(getAppParam("invite_token") || "").trim();
+      if (inviteToken) body.invite_token = inviteToken;
+      if (options && options.mutual_core) {
+        body.mutual_core = true;
+      }
+      body.activate_trial = Boolean(options && options.activate_trial);
+      body.contact_display_name = String(options.contact_display_name || body.contact_display_name || "").trim();
+      body.contact_relationship = String(options.contact_relationship || "").trim();
+      body.contact_phone = String(options.contact_phone || "").trim();
+      const res = await fetch("/api/emergency-contact/bind", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify(body)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = data.message || data.error || "";
+        if (String(msg).includes("contact_limit") || data.code === "contact_limit") {
+          const friendly = data.message || "對方的守護人名額已滿，請請對方升級方案後再邀請你";
+          const err = new Error(friendly);
+          err.code = "contact_limit";
+          err.payload = data;
+          throw err;
+        }
+        throw new Error(data.message || data.error || "綁定失敗，請稍後再試");
+      }
+      return data;
+    }
+
+    async function apiInviteBindPreview(inviterLineUserId) {
+      if (useLocalMode || !lineUserId || !inviterLineUserId || inviterLineUserId === lineUserId) {
+        return { ok: true, is_reverse_invite: false, inviter_display_name: "親友" };
+      }
+      const qs = new URLSearchParams({
+        invite_from: inviterLineUserId,
+        line_user_id: lineUserId,
+      });
+      const inviteToken = String(getAppParam("invite_token") || "").trim();
+      if (inviteToken) qs.set("invite_token", inviteToken);
+      const res = await fetch(await withAuthQuery(`/api/emergency-contact/invite-preview?${qs.toString()}`), {
+        headers: await authHeaders(),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          ok: false,
+          is_reverse_invite: false,
+          inviter_display_name: "親友",
+          error: data.error || data.message || "preview failed",
+        };
+      }
+      return data;
+    }
+
+    async function apiCreateFriendInvite() {
+      if (useLocalMode) throw new Error("好友地圖需要連上後端和 LINE 會員。");
+      const res = await fetch("/api/friends/invite", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ line_user_id: lineUserId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "invite failed");
+      return data;
+    }
+
+    async function apiAcceptFriendInvite(inviteCode) {
+      if (useLocalMode) throw new Error("好友地圖需要連上後端和 LINE 會員。");
+      const res = await fetch("/api/friends/accept", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ line_user_id: lineUserId, invite_code: inviteCode })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "accept failed");
+      return data;
+    }
+
+    async function apiUpdateLocation(positionOrLat, maybeLngOrCity, maybeCity, options = {}) {
+      if (useLocalMode) throw new Error("安全守護需要連上後端和 LINE 會員。");
+      let latitude;
+      let longitude;
+      let city;
+      let opts = options;
+      if (positionOrLat && typeof positionOrLat === "object" && positionOrLat.coords) {
+        latitude = positionOrLat.coords.latitude;
+        longitude = positionOrLat.coords.longitude;
+        city = maybeLngOrCity;
+        opts = maybeCity && typeof maybeCity === "object" ? maybeCity : options;
+      } else {
+        latitude = positionOrLat;
+        longitude = maybeLngOrCity;
+        city = maybeCity;
+      }
+      const body = {
+        line_user_id: lineUserId,
+        latitude,
+        longitude,
+        city: city || "",
+      };
+      if (opts.refreshOnly) {
+        body.refresh_only = true;
+      } else {
+        body.duration = Number(opts.duration || selectedSafetyGuardDuration()) || 1;
+        body.guardian_line_user_ids = Array.isArray(opts.guardianLineUserIds)
+          ? opts.guardianLineUserIds
+          : selectedSafetyGuardGuardianIds();
+      }
+      const res = await fetch("/api/location/update", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify(body)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const allowed = Array.isArray(data.allowed_hours) ? data.allowed_hours.join("／") : "";
+        const code = String(data.error_code || "").trim();
+        const base = data.message || data.error || "開啟安全守護失敗";
+        if (code === "guardian_required" || String(base).includes("還沒完成綁定守護人")) {
+          const err = new Error(base);
+          err.code = "guardian_required";
+          throw err;
+        }
+        throw new Error(allowed ? `${base}（目前方案可用：${allowed} 小時）` : base);
+      }
+      return data;
+    }
+
+    async function apiStopLocation() {
+      if (useLocalMode) throw new Error("安全守護需要連上後端和 LINE 會員。");
+      const res = await fetch("/api/location/stop", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ line_user_id: lineUserId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "stop failed");
+      return data;
+    }
+
+    async function apiGetFriendLocations() {
+      if (useLocalMode || !lineUserId) return { friends: [] };
+      const res = await fetch(`/api/friends/locations?line_user_id=${encodeURIComponent(lineUserId)}`);
+      if (!res.ok) throw new Error("locations failed");
+      return await res.json();
+    }
+
+    function planLabel(plan) {
+      return {
+        trial: "14 天安心體驗",
+        free: "未訂閱",
+        paid_199: "199 活著價",
+        paid_199_year: "199 活著價年費",
+        paid_399: "399 安心版",
+        paid_399_year: "399 安心版年費",
+        paid_799: "799 守護版",
+        paid_799_year: "799 守護版年費"
+      }[plan] || "試用中";
+    }
+
+    function planPresentation(plan, trialDaysLeft) {
+      if (plan === "trial") {
+        return {
+          state: "安心體驗",
+          detail: `還有 ${trialDaysLeft ?? 0} 天完整體驗`,
+          tone: "trial"
+        };
+      }
+      if (plan === "free") {
+        return {
+          state: "服務已暫停",
+          detail: "可查看資料、求助電話與基礎 SOS；一般提醒已暫停",
+          tone: "free"
+        };
+      }
+      return {
+        state: "守護已啟用",
+        detail: planLabel(plan),
+        tone: "active"
+      };
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>'"]/g, (character) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "'": "&#39;",
+        '"': "&quot;"
+      })[character]);
+    }
+
+    const RELATIONSHIP_SELECTS = [
+      ["mvpContactRelation", "mvpContactRelationOther"],
+      ["gRelationship", "gRelationshipOther"],
+      ["obRelationship", "obRelationshipOther"],
+    ];
+
+    function bindRelationshipOther(selectId, inputId) {
+      const select = $(selectId);
+      const input = $(inputId);
+      if (!select || !input || select.dataset.otherBound === "true") return;
+      select.dataset.otherBound = "true";
+      const sync = () => {
+        const show = select.value === "其他";
+        input.hidden = !show;
+        if (!show) input.value = "";
+      };
+      select.addEventListener("change", sync);
+      sync();
+    }
+
+    function bindRelationshipFields() {
+      RELATIONSHIP_SELECTS.forEach(([selectId, inputId]) => bindRelationshipOther(selectId, inputId));
+    }
+
+    function readRelationship(selectId, inputId) {
+      const selected = ($(selectId)?.value || "").trim();
+      if (selected !== "其他") return selected;
+      return ($(inputId)?.value || "").trim();
+    }
+
+    function setRelationshipValue(selectId, inputId, value) {
+      const select = $(selectId);
+      const input = $(inputId);
+      const relation = String(value || "").trim();
+      if (!select) return;
+      const hasOption = Array.from(select.options).some((option) => option.value === relation);
+      if (relation && !hasOption) {
+        select.value = "其他";
+        if (input) {
+          input.hidden = false;
+          input.value = relation;
+        }
+        return;
+      }
+      select.value = relation;
+      if (input) {
+        input.hidden = relation !== "其他";
+        if (relation !== "其他") input.value = "";
+      }
+    }
+
+    function renderContacts() {
+      $("contactList").innerHTML = contactData.length
+        ? contactData.map((contact, index) => {
+          const bound = isContactBound(contact);
+          const roleLabel = contactRoleOf(contact) === "emergency" ? "緊急聯絡人" : "守護人";
+          const status = bound
+            ? `<span class="guardian-bind-ok">✓ 已綁定</span>`
+            : `<span class="guardian-bind-row"><span class="guardian-bind-pending">LINE 未綁定</span> <button class="one-tap-invite-btn" type="button" onclick="openShareInviteForContact()">一鍵邀請</button></span>`;
+          return `
+          <div class="contact-item">
+            <span class="contact-main"><strong>優先 ${index + 1}</strong>｜${escapeHtml(contact.name || "未命名")}｜${escapeHtml(contact.relationship || roleLabel)}<br>${escapeHtml(contact.phone || "未填手機")}｜${status}</span>
+            <span class="contact-actions">
+              <button class="contact-icon-btn" type="button" onclick="moveContact(${index}, -1)" aria-label="提高聯絡順位" title="提高順位" ${index === 0 ? "disabled" : ""}>↑</button>
+              <button class="contact-icon-btn" type="button" onclick="moveContact(${index}, 1)" aria-label="降低聯絡順位" title="降低順位" ${index === contactData.length - 1 ? "disabled" : ""}>↓</button>
+              <button class="contact-icon-btn" type="button" onclick="removeContact(${index})" aria-label="刪除聯絡人" title="刪除">×</button>
+            </span>
+          </div>`;
+        }).join("")
+        : `<div class="helper">還沒加入聯絡人。</div>`;
+      const boundCount = contactData.filter((contact) => isContactBound(contact)).length;
+      if ($("guardianCircleText")) {
+        $("guardianCircleText").textContent = boundCount
+          ? `已綁定守護人 ${boundCount} 位`
+          : "尚未綁定";
+      }
+      if ($("guardianRequirementStatus")) {
+        $("guardianRequirementStatus").textContent = boundCount
+          ? `已完成 ${boundCount} 位 LINE 綁定。系統會依「優先 1、2、3」順序聯絡守護人。`
+          : "尚未完成 LINE 綁定。請至少邀請 1 位守護人，系統每天會提醒一次。";
+      }
+      renderHomeBoundSummary(contactData);
+      renderMemberCenter();
+    }
+
+    function syncInviteUiForBoundState(hasBound) {
+      // ≥1 已綁守護人：首頁／安全守護不再催「一鍵邀請」；僅 0 位時說明
+      const reward = $("mvpRewardInviteCard");
+      const guardInvite = $("mvpGuardInviteCard");
+      if (reward) reward.hidden = Boolean(hasBound);
+      if (guardInvite) guardInvite.hidden = Boolean(hasBound);
+    }
+
+
+    function contactPeerLineId(contact) {
+      return String((contact && (contact.line_user_id || contact.line_id)) || "").trim();
+    }
+
+    function contactPictureUrl(contact) {
+      return String((contact && (contact.picture_url || contact.pictureUrl)) || "").trim();
+    }
+
+    /** 對方 LINE 暱稱（displayName）；勿顯示 raw userId。 */
+    function contactPeerDisplayName(contact) {
+      const nick = String(
+        (contact && (contact.line_display_name || contact.display_name || contact.displayName)) || ""
+      ).trim();
+      if (nick && nick !== "LINE 聯絡人" && nick !== "LINE 使用者" && !/^未取得暱稱/.test(nick)) {
+        return nick;
+      }
+      const fallback = String((contact && contact.name) || "").trim();
+      return fallback || "未命名守護人";
+    }
+
+    function guardianAvatarHtml(contact, className) {
+      const cls = className || "guardian-avatar";
+      const pic = contactPictureUrl(contact);
+      const initial = contactPeerDisplayName(contact).trim().slice(0, 1) || "?";
+      if (pic) {
+        return (
+          `<span class="${cls}" aria-hidden="true">` +
+          `<img src="${escapeHtml(pic)}" alt="" loading="lazy" referrerpolicy="no-referrer" ` +
+          `onerror="this.style.display='none';var f=this.nextElementSibling;if(f)f.hidden=false;">` +
+          `<span class="${cls}-fallback" hidden>${escapeHtml(initial)}</span>` +
+          `</span>`
+        );
+      }
+      return `<span class="${cls}" aria-hidden="true"><span class="${cls}-fallback">${escapeHtml(initial)}</span></span>`;
+    }
+
+    function renderHomeBoundSummary(contacts) {
+      const box = $("mvpBoundSummary");
+      const countEl = $("mvpBoundCountText");
+      const listEl = $("mvpBoundList");
+      const bound = (contacts || []).filter((c) =>
+        c && (c.binding_status === "accepted" || c.consent_status === "accepted" || c.line_id || c.line_user_id)
+      );
+      const hasBound = bound.length > 0;
+      syncInviteUiForBoundState(hasBound);
+      if (!box || !countEl || !listEl) return;
+      if (!hasBound) {
+        box.hidden = true;
+        listEl.innerHTML = "";
+        countEl.textContent = "已綁定守護人 0 位";
+        return;
+      }
+      box.hidden = false;
+      countEl.textContent = `已綁定守護人 ${bound.length} 位`;
+      listEl.innerHTML = bound.map((c) => {
+        const nick = contactPeerDisplayName(c);
+        const rel = String(c.relationship || "").trim();
+        return `<div class="bound-row">${guardianAvatarHtml(c, "bound-avatar")}<div class="bound-meta"><span class="bound-name">${escapeHtml(nick)}</span>${rel ? `<small>${escapeHtml(rel)}</small>` : ""}</div></div>`;
+      }).join("");
+    }
+
+    function moveContact(index, direction) {
+      const target = index + direction;
+      if (target < 0 || target >= contactData.length) return;
+      [contactData[index], contactData[target]] = [contactData[target], contactData[index]];
+      contactData = contactData.map((contact, position) => ({ ...contact, priority: position + 1 }));
+      renderContacts();
+    }
+
+    function memberPlanBenefits(plan) {
+      return {
+        paid_199: { cycle: "199 平安版｜月費方案", contacts: 2, emergencies: 4, detail: "核心 2／緊急 4、LINE 預警 1 次／日、安全守護 15 分鐘（每日 2 次）、SOS、月曆。" },
+        paid_199_year: { cycle: "199 平安版｜年費方案", contacts: 3, emergencies: 10, detail: "核心 3／緊急 10、LINE 預警 2 次／日、安全守護 15 分鐘（每日 2 次）、SOS、月曆。" },
+        paid_399: { cycle: "399 安心版｜月費方案", contacts: 5, emergencies: 15, detail: "核心 5／緊急 15、LINE 預警 2 次／日、安全守護 1／3 小時（每日 3 次）、SOS、月曆。" },
+        paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 7, emergencies: 25, detail: "核心 7／緊急 25、LINE 預警 3 次／日、安全守護 1／3 小時（每日 3 次）、SOS、月曆。" },
+        paid_799: { cycle: "799 守護版｜月費進階", contacts: 10, emergencies: 35, detail: "核心 10／緊急 35、早中晚與多階段、安全守護 1／3／6／8（每日 5 次）、智慧提醒、1 個守護群。" },
+        paid_799_year: { cycle: "799 守護版｜年費進階", contacts: 15, emergencies: 50, detail: "核心 15／緊急 50、付 10 個月送 2 個月、安全守護每日 5 次、早中晚與多階段、3 個守護群、智慧提醒。" },
+        free: { cycle: "未訂閱", contacts: 1, emergencies: 2, detail: "一般提醒已暫停；仍可查看資料、求助電話與基礎 SOS。" },
+        trial: { cycle: "14 天安心體驗", contacts: 1, emergencies: 2, detail: "體驗 399 核心權益；可另做一次標示為測試的守護群通知，不開放一般群組排程。" }
+      }[plan] || { cycle: "尚未選擇方案", contacts: 1, emergencies: 2, detail: "請先選擇適合你的守護方案。" };
+    }
+
+    function planQuotaLabel(plan) {
+      const p = plan || "trial";
+      if (p === "trial") return "14 天安心體驗";
+      if (p === "free") return "未訂閱";
+      if (String(p).startsWith("paid_199")) return "199 方案";
+      if (String(p).startsWith("paid_399")) return "399 方案";
+      if (String(p).startsWith("paid_799")) return "799 方案";
+      return "目前方案";
+    }
+
+    function isContactBound(contact) {
+      if (!contact) return false;
+      const selfId = String(lineUserId || (currentStatusData && currentStatusData.line_user_id) || "").trim();
+      const lid = String(contact.line_id || contact.line_user_id || "").trim();
+      // 本人 ID 寫進聯絡人 = 表單污染，不算已綁定
+      if (lid && selfId && lid === selfId) return false;
+      return Boolean(
+        contact.binding_status === "accepted"
+        || contact.consent_status === "accepted"
+        || lid
+      );
+    }
+
+    function contactRoleOf(contact) {
+      // 只用 contact_role。不可讀 role（那是「核心／一般」層級，讀錯會把守護人列濾空）
+      const raw = String(
+        contact?.contact_role || contact?.type || contact?.kind || "guardian"
+      ).trim().toLowerCase();
+      if (raw === "emergency" || raw === "emergency_contact" || raw === "聯絡人" || raw === "緊急聯絡人") {
+        return "emergency";
+      }
+      return "guardian";
+    }
+
+    function contactsByRole(role) {
+      return (ensureSyncedContactData() || []).filter((c) => contactRoleOf(c) === role);
+    }
+
+    function ensureSyncedContactData() {
+      const status = currentStatusData || {};
+      let list = Array.isArray(contactData) ? contactData.slice() : [];
+      const statusContacts = Array.isArray(status.contacts) ? status.contacts : [];
+      const boundGuardians = Array.isArray(status.bound_guardians) ? status.bound_guardians : [];
+
+      // contacts API 空、但 status 有資料時，用 status 補齊（修 count≥1 列表空白）
+      if (!list.length && statusContacts.length) {
+        list = statusContacts.slice();
+      }
+      if (!list.length && boundGuardians.length) {
+        list = boundGuardians.map((g) => ({
+          id: g.id || (`line-${g.line_user_id || ""}`),
+          name: g.name || "",
+          display_name: g.display_name || g.line_display_name || g.name || "",
+          line_display_name: g.line_display_name || g.display_name || "",
+          relationship: g.relationship || "",
+          phone: g.phone || "",
+          email: g.email || "",
+          line_user_id: g.line_user_id || "",
+          line_id: g.line_user_id || g.line_id || "",
+          picture_url: g.picture_url || "",
+          binding_status: g.binding_status || "accepted",
+          consent_status: "accepted",
+          is_primary: Boolean(g.is_primary),
+          accepted_at: g.accepted_at || "",
+          contact_role: "guardian",
+        }));
+      }
+
+      // 用 bound_guardians 補齊姓名／電話／LINE（對方綁定後寫入的資料）
+      if (boundGuardians.length && list.length) {
+        const byId = new Map();
+        const byLine = new Map();
+        boundGuardians.forEach((g) => {
+          if (g && g.id) byId.set(String(g.id), g);
+          const lid = String(g.line_user_id || g.line_id || "").trim();
+          if (lid) byLine.set(lid, g);
+        });
+        list = list.map((c) => {
+          const lid = String(c.line_user_id || c.line_id || "").trim();
+          const match = (c.id && byId.get(String(c.id))) || (lid && byLine.get(lid));
+          if (!match) return { ...c, contact_role: contactRoleOf(c) };
+          return {
+            ...c,
+            name: c.name || match.name || "",
+            display_name: c.display_name || match.display_name || match.line_display_name || "",
+            line_display_name: c.line_display_name || match.line_display_name || match.display_name || "",
+            relationship: c.relationship || match.relationship || "",
+            phone: c.phone || match.phone || "",
+            email: c.email || match.email || "",
+            line_user_id: c.line_user_id || match.line_user_id || "",
+            line_id: c.line_id || match.line_user_id || match.line_id || "",
+            picture_url: c.picture_url || match.picture_url || "",
+            binding_status: c.binding_status || match.binding_status || "accepted",
+            is_primary: c.is_primary != null ? c.is_primary : match.is_primary,
+            accepted_at: c.accepted_at || match.accepted_at || "",
+            contact_role: contactRoleOf(c),
+          };
+        });
+      } else {
+        list = list.map((c) => ({ ...c, contact_role: contactRoleOf(c) }));
+      }
+
+      contactData = list;
+      return contactData;
+    }
+
+    function openShareInviteForContact() {
+      openShareInvitePage("member");
+    }
+
+    let smartReminderCache = { entitled: false, reminders: [], categories: [] };
+    let smartReminderEditingId = null;
+    let selectedDailyReminderCount = null;
+    let selectedGraceHours = null;
+
+    function planIs799(plan) {
+      return plan === "paid_799" || plan === "paid_799_year";
+    }
+
+    function updateGuardianGroupBindStatusCard(status) {
+      const card = $("guardianGroupBindStatusCard");
+      if (!card) return;
+      const ids = (status && status.guardian_group_ids) || [];
+      const limit = Number((status && status.guardian_group_limit) || 0);
+      const bound = ids.length > 0;
+      card.dataset.bound = bound ? "true" : "false";
+      if (limit <= 0) {
+        card.textContent = "目前方案不含守護群。升級 799 後即可綁定 LINE 守護群。";
+        return;
+      }
+      if (bound) {
+        card.innerHTML = `目前狀態：<strong>已綁定</strong> ${ids.length}/${limit} 個守護群。可到「會員中心 → 我的守護群」管理通知偏好。`;
+      } else {
+        card.innerHTML = `目前狀態：<strong>尚未綁定守護群</strong>。請在群組點「綁定守護群」完成後，這裡會顯示已綁定。`;
+      }
+    }
+
+    async function refreshSmartRemindersUi() {
+      const upgrade = $("smartReminderUpgrade");
+      const controls = $("smartReminderControls");
+      const listEl = $("smartReminderList");
+      const hint = $("smartReminderHint");
+      const plan = String((currentStatusData && currentStatusData.plan) || "trial");
+      if (!lineUserId) {
+        if (upgrade) upgrade.hidden = true;
+        if (controls) controls.hidden = true;
+        return;
+      }
+      try {
+        const res = await fetch(`/api/smart-reminders?line_user_id=${encodeURIComponent(lineUserId)}`, {
+          headers: await authHeaders()
+        });
+        const data = await res.json();
+        smartReminderCache = data || smartReminderCache;
+        const entitled = Boolean(data.entitled);
+        if (hint) {
+          hint.textContent = data.state === "recovering"
+            ? "帳號資料正在安全恢復，完成後會自動取回既有智慧提醒，不需要重新購買。"
+            : (entitled
+              ? "生活提醒預設只通知自己，也可選一位已綁核心守護人。守護群不會收到生日等生活提醒。"
+              : "智能提醒為 799 守護版功能。免費／399 僅顯示升級說明。");
+        }
+        if (upgrade) upgrade.hidden = entitled;
+        if (controls) controls.hidden = !entitled;
+        if (!entitled || !listEl) return;
+        const rows = data.reminders || [];
+        listEl.innerHTML = rows.length
+          ? rows.map((r) => `
+            <div class="member-guardian-manage-row" data-smart-id="${escapeHtml(r.id)}">
+              <div class="member-guardian-manage-meta">
+                <span class="guardian-manage-name">${escapeHtml(r.emoji || "🗓️")} ${escapeHtml(r.target_name || "")}</span>
+                <span>${escapeHtml(r.category_label || r.category || "")} ／ ${escapeHtml(String(r.month || ""))}/${escapeHtml(String(r.day || ""))}${r.remind_time ? ` ／ ${escapeHtml(r.remind_time)}` : ""}</span>
+                <small>${String(r.delivery_target || "private").startsWith("guardian:") ? "核心守護人私訊" : "只通知自己"}</small>
+              </div>
+              <div class="member-guardian-manage-actions">
+                <button class="action-btn smart-edit-btn" type="button" data-id="${escapeHtml(r.id)}">編輯</button>
+                <button class="action-btn danger-action smart-delete-btn" type="button" data-id="${escapeHtml(r.id)}">刪除</button>
+              </div>
+            </div>`).join("")
+          : `<div class="member-data-row"><span>目前狀態</span><strong>尚未新增提醒</strong></div>`;
+        listEl.querySelectorAll(".smart-edit-btn").forEach((btn) => {
+          btn.addEventListener("click", () => openSmartReminderEditor(btn.dataset.id));
+        });
+        listEl.querySelectorAll(".smart-delete-btn").forEach((btn) => {
+          btn.addEventListener("click", () => deleteSmartReminder(btn.dataset.id));
+        });
+      } catch (err) {
+        console.warn("smart reminders load failed", err);
+      }
+    }
+
+    function fillSmartReminderCategoryOptions(selected) {
+      const select = $("smartReminderCategory");
+      if (!select) return;
+      const categories = (smartReminderCache.categories && smartReminderCache.categories.length)
+        ? smartReminderCache.categories
+        : [
+          { id: "birthday", emoji: "🎂", label: "生日" },
+          { id: "wedding", emoji: "💍", label: "結婚紀念日" },
+          { id: "checkup", emoji: "💊", label: "回診" },
+          { id: "medicine", emoji: "💊", label: "吃藥" },
+          { id: "schedule", emoji: "📅", label: "行程" },
+          { id: "greeting", emoji: "❤️", label: "問候" },
+          { id: "custom", emoji: "🗓️", label: "自訂" }
+        ];
+      select.innerHTML = categories.map((c) =>
+        `<option value="${escapeHtml(c.id)}" ${(selected || "birthday") === c.id ? "selected" : ""}>${escapeHtml((c.emoji || "") + " " + (c.label || c.id))}</option>`
+      ).join("");
+      syncSmartReminderCustomTitleVisibility();
+    }
+
+    function syncSmartReminderCustomTitleVisibility() {
+      const wrap = $("smartReminderCustomTitleWrap");
+      const select = $("smartReminderCategory");
+      if (!wrap || !select) return;
+      wrap.hidden = select.value !== "custom";
+    }
+
+    function openSmartReminderEditor(id) {
+      const existing = (smartReminderCache.reminders || []).find((r) => r.id === id) || null;
+      smartReminderEditingId = existing ? existing.id : null;
+      const modal = $("smartReminderEditorModal");
+      const title = $("smartReminderEditorTitle");
+      if (title) title.textContent = existing ? "編輯智能提醒" : "新增智能提醒";
+      fillSmartReminderCategoryOptions(existing ? existing.category : "birthday");
+      if ($("smartReminderName")) $("smartReminderName").value = existing ? (existing.target_name || "") : "";
+      if ($("smartReminderCustomTitle")) $("smartReminderCustomTitle").value = existing ? (existing.custom_title || "") : "";
+      if ($("smartReminderNote")) $("smartReminderNote").value = existing ? (existing.note || "") : "";
+      if ($("smartReminderTime")) $("smartReminderTime").value = existing && existing.remind_time ? existing.remind_time : "09:00";
+      const targetSelect = $("smartReminderDeliveryTarget");
+      if (targetSelect) {
+        const guardians = smartReminderCache.bound_guardians || [];
+        targetSelect.innerHTML = [
+          '<option value="private">只通知自己（預設）</option>',
+          ...guardians.map((g) => `<option value="guardian:${escapeHtml(g.line_user_id)}">通知核心守護人：${escapeHtml(g.name || "守護人")}</option>`)
+        ].join("");
+        targetSelect.value = existing && existing.delivery_target ? existing.delivery_target : "private";
+        if (!targetSelect.value) targetSelect.value = "private";
+      }
+      const usageEl = $("smartReminderDailyUsage");
+      if (usageEl) {
+        const usage = smartReminderCache.daily_usage || {};
+        const limits = smartReminderCache.daily_limits || { private: 2, guardian: 1 };
+        usageEl.textContent = `今日智慧提醒：自己已使用 ${Number(usage.private) || 0}／${Number(limits.private) || 2} 則；核心守護人 ${Number(usage.guardian) || 0}／${Number(limits.guardian) || 1} 則`;
+      }
+      const yearly = $("smartReminderYearly");
+      if (yearly) {
+        const isYearly = !(existing && existing.year);
+        yearly.checked = existing ? isYearly : true;
+      }
+      const dateEl = $("smartReminderDate");
+      if (dateEl) {
+        const now = new Date();
+        const y = existing && existing.year ? existing.year : now.getFullYear();
+        const m = existing ? Number(existing.month || 1) : (now.getMonth() + 1);
+        const d = existing ? Number(existing.day || 1) : now.getDate();
+        dateEl.value = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      }
+      if (modal) modal.hidden = false;
+    }
+
+    function closeSmartReminderEditor() {
+      const modal = $("smartReminderEditorModal");
+      if (modal) modal.hidden = true;
+      smartReminderEditingId = null;
+    }
+
+    async function submitSmartReminderEditor() {
+      if (!requireMemberActionReady("data")) return false;
+      const name = String(($("smartReminderName") && $("smartReminderName").value) || "").trim();
+      const category = String(($("smartReminderCategory") && $("smartReminderCategory").value) || "birthday").trim();
+      const customTitle = String(($("smartReminderCustomTitle") && $("smartReminderCustomTitle").value) || "").trim();
+      const dateVal = String(($("smartReminderDate") && $("smartReminderDate").value) || "").trim();
+      const timeVal = String(($("smartReminderTime") && $("smartReminderTime").value) || "09:00").trim();
+      const note = String(($("smartReminderNote") && $("smartReminderNote").value) || "").trim();
+      const deliveryTarget = String(($("smartReminderDeliveryTarget") && $("smartReminderDeliveryTarget").value) || "private");
+      const yearly = Boolean($("smartReminderYearly") && $("smartReminderYearly").checked);
+      if (!name) {
+        alert("請填寫對象名稱");
+        return;
+      }
+      if (category === "custom" && !customTitle) {
+        alert("自訂類型請填寫標題");
+        return;
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
+        alert("請選擇日期");
+        return;
+      }
+      const [y, m, d] = dateVal.split("-").map((x) => parseInt(x, 10));
+      await saveSmartReminder({
+        id: smartReminderEditingId || undefined,
+        target_name: name,
+        category,
+        custom_title: customTitle,
+        month: m || 1,
+        day: d || 1,
+        year: yearly ? null : y,
+        date: dateVal,
+        yearly,
+        remind_time: timeVal || "09:00",
+        note,
+        delivery_target: deliveryTarget,
+        notify_private: true,
+        notify_group: false,
+        eve_remind: true,
+        defaults: { notify_private: true, notify_group: false }
+      });
+      closeSmartReminderEditor();
+    }
+
+    async function saveSmartReminder(payload) {
+      try {
+        const res = await fetch("/api/smart-reminders", {
+          method: "POST",
+          headers: await authHeaders(),
+          body: JSON.stringify({ ...payload, line_user_id: lineUserId })
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) {
+          alert(data.upgrade_hint || data.error || "儲存失敗");
+          return;
+        }
+        await refreshSmartRemindersUi();
+        showInlineSuccess("智能提醒已儲存（到期日會私訊提醒）");
+      } catch (err) {
+        alert("儲存失敗：" + (err.message || ""));
+      }
+    }
+
+    async function deleteSmartReminder(id) {
+      if (!requireMemberActionReady("data")) return false;
+      if (!id || !confirm("確定刪除此智能提醒？")) return;
+      try {
+        const res = await fetch(`/api/smart-reminders/${encodeURIComponent(id)}?line_user_id=${encodeURIComponent(lineUserId)}`, {
+          method: "DELETE",
+          headers: await authHeaders()
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) {
+          alert(data.error || "刪除失敗");
+          return;
+        }
+        await refreshSmartRemindersUi();
+      } catch (err) {
+        alert("刪除失敗：" + (err.message || ""));
+      }
+    }
+
+    function renderContactManageRows(list, emptyText) {
+      if (!list.length) {
+        return `<div class="member-data-row"><span>目前狀態</span><strong>${escapeHtml(emptyText)}</strong></div>`;
+      }
+      return list.map((contact, index) => {
+        const cid = escapeHtml(contact.id || "");
+        const cardKey = String(contact.id || index).replace(/[^a-zA-Z0-9_-]/g, "") || String(index);
+        const bodyId = `member-contact-body-${cardKey}-${index}`;
+        const bound = isContactBound(contact);
+        const tier = contact.is_primary || (index === 0 && !list.some((c) => c.is_primary))
+          ? "核心"
+          : "一般";
+        const added = formatGuardianAddedAt(contact);
+        const nick = contactPeerDisplayName(contact);
+        const statusHtml = bound
+          ? `<strong class="guardian-bind-ok">✓ 已綁定</strong>`
+          : `<div class="guardian-bind-row">
+              <strong class="guardian-bind-pending">等待 LINE 綁定</strong>
+              <button class="one-tap-invite-btn member-invite-guardian" type="button" data-id="${cid}" aria-label="一鍵邀請尚未綁定的對象">一鍵邀請</button>
+            </div>`;
+        return `
+          <div class="member-guardian-manage-row" data-id="${cid}">
+            <button class="member-contact-card-toggle" type="button" aria-expanded="false" aria-controls="${bodyId}" data-contact-card-toggle="${bodyId}">
+              <span class="member-guardian-manage-head">${guardianAvatarHtml(contact)}<span class="guardian-manage-meta"><span class="guardian-manage-name">${escapeHtml(nick)}</span><small>${escapeHtml(contact.relationship || "關係未設定")}・${tier}${contact.is_primary ? "・主要" : ""}</small></span></span>
+              <span class="member-contact-card-chevron" aria-hidden="true">⌄</span>
+            </button>
+            <div class="member-contact-card-body" id="${bodyId}" hidden>
+              <div class="member-guardian-manage-meta">
+              <span>${escapeHtml(contact.relationship || "關係未設定")} ／ ${escapeHtml(contact.phone || contact.email || "未填電話")} ／ ${tier}${contact.is_primary ? "／主要" : ""}</span>
+              ${statusHtml}
+              ${added ? `<small>新增日期：${escapeHtml(added)}</small>` : ""}
+              </div>
+              <div class="member-guardian-manage-actions">
+                <button class="action-btn member-edit-guardian" type="button" data-id="${cid}" aria-label="編輯">編輯</button>
+                <button class="action-btn danger-action member-delete-guardian" type="button" data-id="${cid}" aria-label="解除守護關係">解除守護關係</button>
+              </div>
+            </div>
+          </div>`;
+      }).join("");
+    }
+
+    function formatGuardianAddedAt(contact) {
+      const raw = String(contact?.accepted_at || contact?.created_at || contact?.updated_at || "").trim();
+      if (!raw) return "";
+      try {
+        const d = new Date(raw);
+        if (Number.isNaN(d.getTime())) return raw.slice(0, 10);
+        return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+      } catch (_) {
+        return raw.slice(0, 10);
+      }
+    }
+
+    function planEmergencyLimit(plan, contactLimit) {
+      const status = currentStatusData || {};
+      const fromStatus = Number(status.emergency_contact_limit);
+      if (Number.isFinite(fromStatus) && fromStatus > 0) return fromStatus;
+      const p = String(plan || "trial");
+      if (p === "paid_799_year") return 50;
+      if (p === "paid_799") return 35;
+      if (p === "paid_399_year") return 25;
+      if (p === "paid_399") return 15;
+      if (p === "paid_199_year") return 10;
+      if (p === "paid_199") return 4;
+      return 2;
+    }
+
+    function planCoreGuardianLimit(status) {
+      const raw = Number(status && status.core_guardian_alert_limit);
+      if (Number.isFinite(raw) && raw > 0) return raw;
+      const plan = String((status && status.plan) || "trial");
+      if (plan === "paid_799_year") return 15;
+      if (plan === "paid_799") return 10;
+      if (plan === "paid_399_year") return 7;
+      if (plan === "paid_399") return 5;
+      if (plan === "paid_199_year") return 3;
+      if (plan === "paid_199") return 2;
+      return 1;
+    }
+
+    function setMemberContactTab(tabName) {
+      const tab = tabName === "emergency" ? "emergency" : "core";
+      document.querySelectorAll(".member-contact-tab").forEach((btn) => {
+        const selected = btn.getAttribute("data-contact-tab") === tab;
+        btn.setAttribute("aria-selected", selected ? "true" : "false");
+      });
+      document.querySelectorAll(".member-contact-panel").forEach((panel) => {
+        panel.hidden = panel.getAttribute("data-contact-panel") !== tab;
+      });
+    }
+
+    function renderMemberCenter() {
+      const status = currentStatusData || {};
+      const displayName = lineDisplayName || status.display_name || "LINE 會員";
+      const memberPlan = status.plan || "trial";
+      const isPaidPlan = String(memberPlan).startsWith("paid_");
+      const guardians = contactsByRole("guardian");
+      const emergencies = contactsByRole("emergency");
+      const limit = Number(status.contact_limit || currentContactLimit || 1);
+      const coreLimit = planCoreGuardianLimit(status);
+      const emergencyLimit = planEmergencyLimit(memberPlan, limit);
+      const totalCount = guardians.length;
+      const boundCount = guardians.filter((contact) => isContactBound(contact)).length;
+      const realCore = guardians.filter((c) => isContactBound(c) && c.is_primary).length;
+      const shownCore = realCore > 0 ? realCore : (boundCount > 0 ? Math.min(1, boundCount) : 0);
+      const shownGeneral = Math.max(0, boundCount - shownCore);
+      $("memberDisplayName").textContent = displayName;
+      $("memberAvatar").textContent = displayName.trim().slice(0, 1) || "我";
+      $("memberPlanText").textContent = planLabel(memberPlan);
+      $("memberExpiryText").textContent = status.paid_until
+        ? `使用期限 ${status.paid_until}`
+        : memberPlan === "trial"
+          ? (status.trial_days_text || `體驗剩 ${status.trial_days_left ?? 14} 天`)
+          : "尚未設定到期日";
+      $("memberLineAccount").textContent = lineUserId || status.line_user_id ? "LINE 已綁定" : "尚未綁定 LINE";
+      $("memberContactEmail").textContent = status.contact_email || "尚未填寫";
+      if ($("memberSupportEmail") && !$("memberSupportEmail").value) {
+        $("memberSupportEmail").value = status.contact_email || "";
+      }
+      $("memberGuardianQuota").textContent = `核心守護人 ${shownCore}/${coreLimit}`;
+      const quotaLine = $("memberGuardianQuotaLine");
+      if (quotaLine) quotaLine.textContent = `核心守護人 ${shownCore}/${coreLimit}`;
+      const emergencyQuota = $("memberEmergencyQuotaLine");
+      if (emergencyQuota) emergencyQuota.textContent = `緊急聯絡人 ${emergencies.length}/${emergencyLimit}`;
+      const coreLine = $("memberCoreGeneralLine");
+      if (coreLine) {
+        coreLine.textContent = `可新增 ${coreLimit} 位・已新增 ${shownCore} 位`;
+      }
+      const guardianTip = $("memberGuardianPlanTip");
+      if (guardianTip) {
+        guardianTip.hidden = isPaidPlan;
+        if (!isPaidPlan) {
+          guardianTip.innerHTML = `<strong>體驗期建議</strong>：1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。`;
+        }
+      }
+      const emergencyTip = $("memberEmergencyPlanTip");
+      if (emergencyTip) {
+        emergencyTip.hidden = isPaidPlan;
+        if (!isPaidPlan) {
+          emergencyTip.innerHTML = `<strong>體驗期建議</strong>：2 位（爸媽，或配偶＋好友）。可先填姓名與電話。`;
+        } else {
+          emergencyTip.hidden = false;
+          emergencyTip.innerHTML = `<strong>方案名額</strong>：最多 ${emergencyLimit} 位電話備援。可先填姓名與電話。`;
+        }
+      }
+      $("memberBillingPlan").textContent = planLabel(memberPlan);
+      $("memberBillingCycle").textContent = {
+        monthly: "月繳",
+        yearly: "年繳",
+        trial: "安心體驗"
+      }[status.billing_cycle] || "尚未設定";
+      $("memberPaymentStatus").textContent = {
+        active: "付款成功，方案使用中",
+        trial: "安心體驗中",
+        pending: "等待付款確認",
+        failed: "付款未完成",
+        expired: "方案已到期"
+      }[status.payment_status] || "尚未付費";
+      $("memberBillingExpiry").textContent = status.paid_until || (memberPlan === "trial" ? "試用中" : "尚未設定");
+      $("memberAutoRenewStatus").textContent = {
+        active: "已開啟",
+        pending_gateway: "等待自動續費授權完成",
+        cancellation_pending: "取消處理中",
+        terminated: "已取消",
+        off: "未開啟"
+      }[status.auto_renew_status] || "未開啟";
+      $("memberAutoRenewRequested").checked = Boolean(status.auto_renew_requested);
+      $("memberCancelAutoRenewBtn").hidden = !status.auto_renew_enabled;
+      const benefits = memberPlanBenefits(memberPlan);
+      $("memberPlanCycle").textContent = benefits.cycle;
+      $("memberPlanBenefits").textContent = `${benefits.contacts} 位`;
+      $("memberLocationQuota").textContent = `${benefits.emergencies != null ? benefits.emergencies : emergencyLimit} 位`;
+      $("memberPlanBenefitDetail").textContent = benefits.detail;
+      const atLimit = totalCount >= coreLimit;
+      const limitBanner = $("memberGuardianLimitBanner");
+      if (limitBanner) {
+        // 已有 ≥1 位守護人時顯示橫幅；名額未滿也顯示，方便繼續建立守護圈。
+        const showBanner = totalCount >= 1;
+        limitBanner.hidden = !showBanner;
+        if (showBanner) {
+          const title = $("memberLimitTitle");
+          const body = $("memberLimitBody");
+          if (title) title.textContent = `你已經有 ${totalCount} 位守護人囉`;
+          if (body) {
+            body.textContent = atLimit
+              ? `${planQuotaLabel(memberPlan)}最多 ${coreLimit} 位核心守護人。仍可點「再邀請」了解升級名額。`
+              : `${planQuotaLabel(memberPlan)}上限 ${coreLimit} 位核心守護人。`;
+          }
+          const upgradeBtn = $("memberLimitUpgradeBtn");
+          if (upgradeBtn) upgradeBtn.hidden = !atLimit;
+        }
+      }
+      const addBtn = $("memberAddGuardianBtn");
+      if (addBtn) addBtn.textContent = atLimit ? "➕ 名額已滿（可升級）" : "➕ 新增守護人資料";
+      const reinviteBtn = $("memberReinviteGuardianBtn");
+      if (reinviteBtn) {
+        reinviteBtn.hidden = false;
+        reinviteBtn.textContent = totalCount >= 1 ? "再邀請一位守護人" : "一鍵邀請守護人";
+      }
+      const inviteMoreBtn = $("memberInviteMoreGuardianBtn");
+      if (inviteMoreBtn) {
+        inviteMoreBtn.textContent = atLimit ? "再邀請（需升級名額）" : "再邀請一位守護人";
+      }
+
+      $("memberBillingExpiry").textContent =
+        status.plan_expires_text
+        || status.paid_until
+        || (memberPlan === "trial"
+          ? (status.trial_days_text || `試用中｜剩 ${status.trial_days_left ?? 7} 天`)
+          : "尚未設定");
+      if (status.contacts_retain_days_left != null && status.contacts_retain_until) {
+        const retainHint = $("memberInviteRewardHint");
+        if (retainHint && Number(status.contacts_retain_days_left) >= 0) {
+          retainHint.textContent =
+            `方案已到期：請查看方案並續約，以恢復完整守護服務。`;
+        }
+      }
+      renderMemberDailyReminderUi();
+      $("memberGuardianList").innerHTML = renderContactManageRows(guardians, "尚未綁定守護人");
+      const emergencyList = $("memberEmergencyList");
+      if (emergencyList) {
+        emergencyList.innerHTML = renderContactManageRows(emergencies, "尚未新增緊急聯絡人");
+      }
+      const bindManageList = (listEl) => {
+        if (!listEl || listEl.dataset.bound === "true") return;
+        listEl.dataset.bound = "true";
+        listEl.addEventListener("click", (event) => {
+          const inviteBtn = event.target.closest(".member-invite-guardian, .one-tap-invite-btn");
           const editBtn = event.target.closest(".member-edit-guardian");
           const deleteBtn = event.target.closest(".member-delete-guardian");
           const toggleBtn = event.target.closest("[data-contact-card-toggle]");
