@@ -283,7 +283,7 @@ PLAN_LIMITS = {
     # 最終方案總覽（2026-07）：
     # core_guardian_alert_limit＝核心守護人；emergency_contact_limit＝緊急聯絡人；
     # contact_limit＝兩者合計（相容舊欄位）；daily_reminders＝LINE 私聊預警／日；
-    # 不賣簡訊／免提／好友地圖／軌跡；safety_guard_hours：免/199＝1；399＝1/3；799＝1/3/6/8
+    # 不賣簡訊／免提／好友地圖／軌跡；199＝15 分鐘；399＝1/3 小時；799＝1/3/6/8 小時
     "free": {
         "contact_limit": 3,
         "emergency_contact_limit": 2,
@@ -325,7 +325,7 @@ PLAN_LIMITS = {
         "offline_sync_days": 0,
         "sos_enabled": True,
         "guardian_group_limit": 0,
-        "safety_guard_hours": [1],
+        "safety_guard_hours": [0.25],
     },
     "paid_199_year": {
         "contact_limit": 13,
@@ -340,7 +340,7 @@ PLAN_LIMITS = {
         "offline_sync_days": 0,
         "sos_enabled": True,
         "guardian_group_limit": 0,
-        "safety_guard_hours": [1],
+        "safety_guard_hours": [0.25],
     },
     "paid_399": {
         "contact_limit": 20,
@@ -1880,14 +1880,16 @@ def plan_rules(profile, now=None):
 
 
 def allowed_safety_guard_hours(profile):
-    """依方案回傳可選安全守護時數（小時）。免費／試用僅 1；399＝1/3；799＝1/3/6/8。"""
+    """依方案回傳可選安全守護時數（小時）；0.25 代表 15 分鐘。"""
     raw = plan_rules(profile).get("safety_guard_hours") or [1]
     hours = []
     for item in raw:
         try:
-            value = int(item)
+            value = float(item)
         except (TypeError, ValueError):
             continue
+        if value.is_integer():
+            value = int(value)
         if value > 0 and value not in hours:
             hours.append(value)
     return hours or [1]
@@ -7401,11 +7403,11 @@ def _parse_safety_guard_duration(payload, allowed_hours=None):
     Allowed windows: 1 / 3 / 6 / 8 hours (plan-gated). until_stop is no longer offered.
     Returns (hours, until_stop=False) or raises ValueError for unauthorized duration.
     """
-    allowed = [int(h) for h in (allowed_hours or [1, 3, 6, 8]) if int(h) > 0]
+    allowed = [float(h) for h in (allowed_hours or [1, 3, 6, 8]) if float(h) > 0]
     if not allowed:
         allowed = [1]
     allowed_set = set(allowed)
-    known = {1, 3, 6, 8}
+    known = {0.25, 1, 3, 6, 8}
     raw = payload.get("duration")
     if raw is None or raw == "":
         raw = payload.get("share_hours")
@@ -7413,7 +7415,7 @@ def _parse_safety_guard_duration(payload, allowed_hours=None):
     if text in ("until_stop", "until-stop", "untilstop", "stop", "manual"):
         raise ValueError("until_stop is not available; choose a timed duration for your plan")
     try:
-        hours = int(float(text.replace("h", "").replace("hr", "").replace("小時", "") or 0))
+        hours = float(text.replace("h", "").replace("hr", "").replace("小時", "") or 0)
     except (TypeError, ValueError):
         hours = 0
     if hours in allowed_set:
@@ -7464,6 +7466,7 @@ def safety_guard_snapshot(profile, now=None):
         "ended_at": location.get("ended_at") or "",
         "until_stop": bool(location.get("until_stop")),
         "duration_hours": location.get("duration_hours"),
+        "guardian_line_user_ids": list(location.get("guardian_line_user_ids") or []),
         "latitude": location.get("latitude") if active else None,
         "longitude": location.get("longitude") if active else None,
         "city": location.get("city", "") if active else "",
@@ -7476,7 +7479,14 @@ def safety_guard_snapshot(profile, now=None):
     }
 
 
-def notify_safety_guard_started(state, profile, line_user_id, duration_hours, config=None):
+def notify_safety_guard_started(
+    state,
+    profile,
+    line_user_id,
+    duration_hours,
+    config=None,
+    selected_guardian_ids=None,
+):
     """Notify bound LINE guardians that 安全守護 started. Mutates notification_logs on state.
 
     Returns a small status dict for the LIFF UI (sent / failed / no_guardians / reason).
@@ -7485,7 +7495,8 @@ def notify_safety_guard_started(state, profile, line_user_id, duration_hours, co
     location = profile.get("location") or {}
     name = (profile.get("display_name") or "").strip() or "你的親友"
     city = str(location.get("city") or "").strip()
-    hours = int(duration_hours or 1)
+    hours = float(duration_hours or 1)
+    duration_label = "15 分鐘" if hours == 0.25 else f"{int(hours)} 小時"
     place = f"（{city}）" if city else ""
     map_url = ""
     try:
@@ -7496,7 +7507,7 @@ def notify_safety_guard_started(state, profile, line_user_id, duration_hours, co
     except (TypeError, ValueError):
         map_url = ""
     message = (
-        f"🛡️【安全守護】{name} 已開啟安全守護（{hours} 小時）\n"
+        f"🛡️【安全守護】{name} 已開啟安全守護（{duration_label}）\n"
         f"目前大致位置{place}"
         + (f"：\n{map_url}" if map_url else "：已分享定位")
         + "\n時間到會自動結束；若對方提前結束，你就不會再看到這次分享。"
@@ -7506,13 +7517,25 @@ def notify_safety_guard_started(state, profile, line_user_id, duration_hours, co
         profile.get("contacts") or [],
         key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
     )
-    targets = []
+    eligible_targets = []
     for contact in contacts:
         if not contact_is_notifiable_line_guardian(contact, line_user_id):
             continue
+        if not bool(contact.get("is_primary")):
+            continue
         target = get_contact_line_id(contact)
-        if target and target not in targets:
-            targets.append(target)
+        if target and target not in eligible_targets:
+            eligible_targets.append(target)
+    selected_set = {
+        str(target).strip()
+        for target in (selected_guardian_ids or [])
+        if str(target).strip()
+    }
+    targets = (
+        [target for target in eligible_targets if target in selected_set]
+        if selected_guardian_ids is not None
+        else eligible_targets
+    )
 
     if not targets:
         # 進一步診斷：分辨「完全沒聯絡人」、「只有緊急聯絡人」、「有聯絡人但未走 LINE 綁定」
@@ -7606,6 +7629,8 @@ def notify_safety_guard_started(state, profile, line_user_id, duration_hours, co
         "reason_code": reason_code,
         "message": summary,
         "failed_reasons": failed_reasons,
+        "selected_target_count": len(targets),
+        "selected_target_ids": list(targets),
     }
 
 
@@ -7687,6 +7712,9 @@ def update_location(data_file, payload, config=None):
             "allowed_hours": allowed_hours,
             "safety_guard_hours": allowed_hours,
         }, 403
+    selected_guardian_ids = payload.get("guardian_line_user_ids")
+    if selected_guardian_ids is not None and not isinstance(selected_guardian_ids, list):
+        return {"error": "guardian_line_user_ids must be a list"}, 400
     started_at = (
         existing.get("started_at")
         if was_active
@@ -7707,13 +7735,22 @@ def update_location(data_file, payload, config=None):
         "ended_at": "",
         "until_stop": until_stop,
         "duration_hours": duration_hours,
+        "guardian_line_user_ids": [],
         "sharing": True,
         "active": True,
         "mode": "safety_guard",
     }
     # Notify guardians when starting (or restarting) a timed session — not on silent refresh.
     guardian_notify = notify_safety_guard_started(
-        state, profile, line_user_id, duration_hours, config=config
+        state,
+        profile,
+        line_user_id,
+        duration_hours,
+        config=config,
+        selected_guardian_ids=selected_guardian_ids,
+    )
+    profile["location"]["guardian_line_user_ids"] = list(
+        guardian_notify.get("selected_target_ids") or []
     )
     save_state(data_file, state)
     snap = safety_guard_snapshot(profile, now)
