@@ -4501,7 +4501,7 @@
       <div class="helper">在指定時段分享平安狀態與位置；可隨時停止。時長依方案：免費／199＝1 小時、399＝1／3 小時、799＝1／3／6／8 小時。</div>
       <div class="safety-guard-card" id="safetyGuardCard">
         <div class="settings-title">開啟安全守護</div>
-        <p class="helper">開始前請先選擇時長，再分享位置給指定家人。需要更新時再按「更新目前位置」。</p>
+        <p class="helper">開始前請先選擇時長。安全守護開啟後，只要 LINE 頁面保持開啟，位置會自動持續更新；鎖屏或切到背景後不保證更新。</p>
         <div class="safety-guard-status" id="safetyGuardStatus" data-active="false">目前未開啟安全守護</div>
         <div class="mvp-guard-feedback" id="safetyGuardFeedback" role="status" aria-live="polite" hidden></div>
         <div class="safety-guard-duration" id="safetyGuardDuration" role="radiogroup" aria-label="安全守護時段">
@@ -7570,7 +7570,7 @@
               <div class="friend-pin">
                 <div>
                   <strong>${friend.display_name || "LINE 好友"}</strong>
-                  <small>${safety}｜${friend.city || "未填縣市"}｜更新 ${formatMapTime(friend.updated_at)}${until ? `｜${until}` : ""}</small>
+                  <small>${safety}｜${friend.city || "未填縣市"}｜更新 ${formatMapTime(friend.updated_at)}｜${friendLocationFreshness(friend.updated_at).label}${until ? `｜${until}` : ""}</small>
                 </div>
                 <a href="${mapUrl}" target="_blank" rel="noopener">開地圖</a>
               </div>
@@ -7733,6 +7733,11 @@
           }
         });
       }
+      if (active) {
+        startContinuousLocationTracking();
+      } else {
+        stopContinuousLocationTracking();
+      }
       updateSafetyGuardStartLabels();
     }
 
@@ -7808,6 +7813,132 @@
       });
     }
 
+    const CONTINUOUS_LOCATION_MIN_INTERVAL_MS = 20000;
+    const CONTINUOUS_LOCATION_MIN_DISTANCE_METERS = 20;
+    const CONTINUOUS_LOCATION_HEARTBEAT_MS = 60000;
+    const CONTINUOUS_LOCATION_STALE_MS = 120000;
+    let continuousLocationState = {
+      active: false,
+      watchId: null,
+      heartbeatId: null,
+      generation: 0,
+      lastPosition: null,
+      lastUploadAt: 0,
+      lastSuccessAt: 0,
+      uploadInFlight: false,
+    };
+
+    function locationDistanceMeters(fromPosition, toPosition) {
+      if (!fromPosition?.coords || !toPosition?.coords) return Number.POSITIVE_INFINITY;
+      const toRad = (value) => Number(value) * Math.PI / 180;
+      const lat1 = toRad(fromPosition.coords.latitude);
+      const lat2 = toRad(toPosition.coords.latitude);
+      const deltaLat = lat2 - lat1;
+      const deltaLng = toRad(toPosition.coords.longitude - fromPosition.coords.longitude);
+      const value = Math.sin(deltaLat / 2) ** 2
+        + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
+      return 6371000 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+    }
+
+    function shouldUploadContinuousLocation(position, now = Date.now()) {
+      if (!continuousLocationState.active || continuousLocationState.uploadInFlight) return false;
+      const elapsed = now - continuousLocationState.lastUploadAt;
+      if (elapsed >= CONTINUOUS_LOCATION_HEARTBEAT_MS) return true;
+      if (elapsed < CONTINUOUS_LOCATION_MIN_INTERVAL_MS) return false;
+      return locationDistanceMeters(continuousLocationState.lastPosition, position)
+        >= CONTINUOUS_LOCATION_MIN_DISTANCE_METERS;
+    }
+
+    function friendLocationFreshness(updatedAt, now = Date.now()) {
+      const updated = new Date(updatedAt || "").getTime();
+      const stale = !Number.isFinite(updated) || now - updated > CONTINUOUS_LOCATION_STALE_MS;
+      return {
+        stale,
+        label: stale ? "⚠️ 定位可能中斷" : "🟢 持續定位中",
+      };
+    }
+
+    async function uploadContinuousLocation(position, generation, now = Date.now()) {
+      if (generation !== continuousLocationState.generation || !continuousLocationState.active) return false;
+      if (!shouldUploadContinuousLocation(position, now)) return false;
+      continuousLocationState.uploadInFlight = true;
+      try {
+        const city = inferTaiwanCounty(position.coords.latitude, position.coords.longitude);
+        const data = await apiUpdateLocation(position, city, { refreshOnly: true });
+        if (generation !== continuousLocationState.generation || !continuousLocationState.active) return false;
+        const guard = data.safety_guard || { active: false };
+        if (!guard.active) {
+          stopContinuousLocationTracking();
+          renderSafetyGuardUi(guard);
+          setSafetyGuardFeedback("安全守護時段已結束，持續定位已停止。", "info");
+          return false;
+        }
+        continuousLocationState.lastPosition = position;
+        continuousLocationState.lastUploadAt = now;
+        continuousLocationState.lastSuccessAt = Date.now();
+        if (currentStatusData) currentStatusData.safety_guard = guard;
+        renderSafetyGuardUi(guard);
+        setSafetyGuardFeedback(`持續定位中｜最後更新 ${new Date().toLocaleTimeString("zh-TW", {hour: "2-digit", minute: "2-digit", second: "2-digit"})}`, "ok");
+        return true;
+      } catch (error) {
+        if (generation !== continuousLocationState.generation || !continuousLocationState.active) return false;
+        setSafetyGuardFeedback(`位置暫時更新失敗，將自動重試：${error?.message || "請確認網路連線"}`, "err");
+        return false;
+      } finally {
+        continuousLocationState.uploadInFlight = false;
+      }
+    }
+
+    function startContinuousLocationTracking(initialPosition = null, now = Date.now()) {
+      if (!navigator.geolocation || continuousLocationState.watchId !== null) return false;
+      const generation = continuousLocationState.generation + 1;
+      continuousLocationState = {
+        active: true,
+        watchId: null,
+        heartbeatId: null,
+        generation,
+        lastPosition: initialPosition,
+        lastUploadAt: initialPosition ? now : 0,
+        lastSuccessAt: initialPosition ? now : 0,
+        uploadInFlight: false,
+      };
+      const watchId = navigator.geolocation.watchPosition(
+        (position) => uploadContinuousLocation(position, generation),
+        (error) => {
+          if (generation !== continuousLocationState.generation || !continuousLocationState.active) return;
+          if (error?.code === 1) {
+            stopContinuousLocationTracking();
+            setSafetyGuardFeedback("定位權限已關閉，持續定位已停止。請到手機設定允許定位後重新開啟。", "err");
+            return;
+          }
+          setSafetyGuardFeedback("暫時收不到 GPS 位置，系統會在頁面開啟期間自動重試。", "err");
+        },
+        {enableHighAccuracy: true, timeout: 15000, maximumAge: 10000},
+      );
+      continuousLocationState.watchId = watchId;
+      continuousLocationState.heartbeatId = setInterval(() => {
+        if (!continuousLocationState.active) return;
+        const elapsed = Date.now() - continuousLocationState.lastSuccessAt;
+        if (continuousLocationState.lastSuccessAt && elapsed > CONTINUOUS_LOCATION_STALE_MS) {
+          setSafetyGuardFeedback("⚠️ 超過 2 分鐘沒有更新位置，定位可能中斷。請保持 LINE 頁面開啟並確認網路與定位權限。", "err");
+        }
+      }, 30000);
+      setSafetyGuardFeedback("🟢 持續定位中，請保持 LINE 頁面開啟。", "ok");
+      return true;
+    }
+
+    function stopContinuousLocationTracking() {
+      const watchId = continuousLocationState.watchId;
+      const heartbeatId = continuousLocationState.heartbeatId;
+      continuousLocationState.active = false;
+      continuousLocationState.generation += 1;
+      continuousLocationState.watchId = null;
+      continuousLocationState.heartbeatId = null;
+      continuousLocationState.uploadInFlight = false;
+      if (watchId !== null && navigator.geolocation) navigator.geolocation.clearWatch(watchId);
+      if (heartbeatId !== null) clearInterval(heartbeatId);
+    }
+
     function formatGuardianNotifyMessage(notify, hours, city) {
       const h = Number(hours) || 1;
       const place = city ? `（${city}）` : "";
@@ -7841,7 +7972,7 @@
         if (!inviteCode) throw new Error("無法產生好友邀請碼，請稍後再試。");
         const inviteUrl = buildShareInviteUrl({ friend_invite: inviteCode });
         const text = (
-          `我正在使用「每日平安」安全守護，想邀請你互相查看平安狀態與單次定位（可隨時停止）。\n` +
+          `我正在使用「每日平安」安全守護，想邀請你互相查看平安狀態與持續定位（可隨時停止）。\n` +
           `請用 LINE 點開下面連結\n\n` +
           `${inviteUrl}`
         );
@@ -8017,6 +8148,7 @@
         };
         if (currentStatusData) currentStatusData.safety_guard = guard;
         renderSafetyGuardUi(guard);
+        startContinuousLocationTracking(position);
         await refreshFriendLocations().catch(() => {});
         const msg = formatGuardianNotifyMessage(notify, duration, city);
         const tone = notifiedCount > 0
@@ -8066,6 +8198,7 @@
       if (!requireMemberActionReady("status")) return false;
       try {
         if (!lineUserId) throw new Error("請先從 LINE 裡開啟，完成會員綁定。");
+        stopContinuousLocationTracking();
         const data = await apiStopLocation();
         if (currentStatusData) currentStatusData.safety_guard = data.safety_guard || { active: false };
         renderSafetyGuardUi(data.safety_guard || { active: false });
@@ -8078,6 +8211,8 @@
         alert(message);
       }
     }
+
+    window.addEventListener("pagehide", stopContinuousLocationTracking);
 
     function formatLiffError(error) {
       const code = String(error?.code || "").trim();
