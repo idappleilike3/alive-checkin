@@ -298,6 +298,8 @@ class SchedulerTickTests(unittest.TestCase):
             profile["membership_source"] = "expired"
             profile.pop("trial_policy_version", None)
             profile.pop("trial_end", None)
+            profile.pop("free_eligibility_source", None)
+            profile.pop("free_eligibility_used_at", None)
             alive_app.save_state(data_file, state)
 
             result, code = alive_app.run_cron_tick(
