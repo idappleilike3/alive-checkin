@@ -299,6 +299,7 @@ PLAN_LIMITS = {
         "sos_enabled": True,
         "guardian_group_limit": 0,
         "safety_guard_hours": [],
+        "safety_guard_daily_limit": 0,
     },
     "trial": {
         "contact_limit": 3,
@@ -313,6 +314,7 @@ PLAN_LIMITS = {
         "sos_enabled": True,
         "guardian_group_limit": 0,
         "safety_guard_hours": [1],
+        "safety_guard_daily_limit": 1,
     },
     "paid_199": {
         "contact_limit": 6,
@@ -328,6 +330,7 @@ PLAN_LIMITS = {
         "sos_enabled": True,
         "guardian_group_limit": 0,
         "safety_guard_hours": [0.25],
+        "safety_guard_daily_limit": 2,
     },
     "paid_199_year": {
         "contact_limit": 13,
@@ -343,6 +346,7 @@ PLAN_LIMITS = {
         "sos_enabled": True,
         "guardian_group_limit": 0,
         "safety_guard_hours": [0.25],
+        "safety_guard_daily_limit": 2,
     },
     "paid_399": {
         "contact_limit": 20,
@@ -358,6 +362,7 @@ PLAN_LIMITS = {
         "sos_enabled": True,
         "guardian_group_limit": 0,
         "safety_guard_hours": [1, 3],
+        "safety_guard_daily_limit": 3,
     },
     "paid_399_year": {
         "contact_limit": 32,
@@ -374,6 +379,7 @@ PLAN_LIMITS = {
         "guardian_group_limit": 0,
         "realtime_trial_days": 30,
         "safety_guard_hours": [1, 3],
+        "safety_guard_daily_limit": 3,
     },
     "paid_799": {
         "contact_limit": 45,
@@ -390,6 +396,7 @@ PLAN_LIMITS = {
         "guardian_group_limit": 1,
         "guardian_group_member_limit": 50,
         "safety_guard_hours": [1, 3, 6, 8],
+        "safety_guard_daily_limit": 5,
     },
     "paid_799_year": {
         "contact_limit": 65,
@@ -406,12 +413,13 @@ PLAN_LIMITS = {
         "guardian_group_limit": 3,
         "guardian_group_member_limit": 50,
         "safety_guard_hours": [1, 3, 6, 8],
+        "safety_guard_daily_limit": 5,
     },
 }
 
 PAYMENT_PRODUCTS = {
     # 產品政策：SOS 全方案開放；799 賣「更完整守護」（更多核心／緊急、早中晚、守護群等）
-    "paid_199": {"amount": 199, "billing_cycle": "monthly", "duration_days": 30, "display_name": "199 平安版(月)", "tagline": "2 位核心守護人＋1 小時安全守護"},
+    "paid_199": {"amount": 199, "billing_cycle": "monthly", "duration_days": 30, "display_name": "199 平安版(月)", "tagline": "2 位核心守護人＋15 分鐘安全守護（每日 2 次）"},
     "paid_199_year": {"amount": 1990, "billing_cycle": "yearly", "duration_days": 365, "display_name": "199 平安版(年)", "tagline": "付 10 個月送 2 個月：3 位核心守護人＋每日 2 次 LINE 預警"},
     "paid_399": {"amount": 399, "billing_cycle": "monthly", "duration_days": 30, "display_name": "399 安心版(月)", "tagline": "5 位核心守護人＋安全守護 1／3 小時"},
     "paid_399_year": {"amount": 3990, "billing_cycle": "yearly", "duration_days": 365, "display_name": "399 安心版(年)", "tagline": "付 10 個月送 2 個月：7 位核心守護人＋安全守護 1／3 小時"},
@@ -2405,6 +2413,9 @@ def plan_rules_for_effective_entitlement(profile, now=None):
         # with the same 15-minute window as the paid 199 plan.
         rules["safety_guard_hours"] = (
             [0.25] if membership_access_active(profile, now) else []
+        )
+        rules["safety_guard_daily_limit"] = (
+            1 if membership_access_active(profile, now) else 0
         )
     return rules
 
@@ -7823,19 +7834,37 @@ def update_location(data_file, payload, config=None):
         }, 403
 
     is_trial = str(profile.get("plan") or "") == "trial"
-    trial_usage_date = now.strftime("%Y-%m-%d")
+    usage_date = now.strftime("%Y-%m-%d")
+    daily_limit = int(plan_rules(profile).get("safety_guard_daily_limit") or 0)
+    stored_usage_date = (
+        profile.get("safety_guard_usage_date")
+        or profile.get("safety_guard_trial_usage_date")
+    )
+    stored_usage_count = int(
+        profile.get("safety_guard_usage_count")
+        if profile.get("safety_guard_usage_count") is not None
+        else profile.get("safety_guard_trial_usage_count") or 0
+    )
+    usage_count = stored_usage_count if stored_usage_date == usage_date else 0
     if (
-        is_trial
-        and not was_active
-        and profile.get("safety_guard_trial_usage_date") == trial_usage_date
-        and int(profile.get("safety_guard_trial_usage_count") or 0) >= 1
+        not was_active
+        and daily_limit > 0
+        and usage_count >= daily_limit
     ):
         return {
             "ok": False,
-            "error": "trial safety guard daily limit reached",
-            "error_code": "trial_daily_limit_reached",
-            "message": "今天的安全守護體驗已使用，明天可以再使用 1 次",
-            "daily_limit": 1,
+            "error": "safety guard daily limit reached",
+            "error_code": (
+                "trial_daily_limit_reached"
+                if is_trial
+                else "safety_guard_daily_limit_reached"
+            ),
+            "message": (
+                "今天的安全守護體驗已使用，明天可以再使用 1 次"
+                if is_trial
+                else f"今天已使用安全守護 {daily_limit} 次，明天可再使用"
+            ),
+            "daily_limit": daily_limit,
         }, 429
 
     allowed_hours = allowed_safety_guard_hours(profile)
@@ -7902,9 +7931,12 @@ def update_location(data_file, payload, config=None):
     profile["location"]["guardian_line_user_ids"] = list(
         guardian_notify.get("selected_target_ids") or []
     )
-    if is_trial and not was_active:
-        profile["safety_guard_trial_usage_date"] = trial_usage_date
-        profile["safety_guard_trial_usage_count"] = 1
+    if not was_active:
+        profile["safety_guard_usage_date"] = usage_date
+        profile["safety_guard_usage_count"] = usage_count + 1
+        if is_trial:
+            profile["safety_guard_trial_usage_date"] = usage_date
+            profile["safety_guard_trial_usage_count"] = usage_count + 1
     save_state(data_file, state)
     snap = safety_guard_snapshot(profile, now)
     snap["notified_count"] = int(guardian_notify.get("sent") or 0)
@@ -8608,6 +8640,18 @@ def trigger_sos(data_file, payload, config=None):
     limit = int(rules.get("core_guardian_alert_limit") or 1)
     if abuse["mode"] == "restricted":
         limit = 1
+    selected_guardian_ids = payload.get("guardian_line_user_ids")
+    if selected_guardian_ids is not None and not isinstance(selected_guardian_ids, list):
+        return {"error": "guardian_line_user_ids must be a list"}, 400
+    selected_guardian_set = (
+        {
+            str(target).strip()
+            for target in selected_guardian_ids
+            if str(target).strip()
+        }
+        if selected_guardian_ids is not None
+        else None
+    )
     # 核心守護人（is_primary）優先收到 SOS；其餘依 priority
     # 與安全守護相同：只用 contact_is_bound_guardian，排除本人 ID／緊急聯絡人
     contacts = sorted(
@@ -8624,6 +8668,8 @@ def trigger_sos(data_file, payload, config=None):
         target = get_contact_line_id(contact)
         if not target or target == line_user_id:
             continue
+        if selected_guardian_set is not None and target not in selected_guardian_set:
+            continue
         methods = contact.get("notify_methods")
         if methods is not None and len(methods) == 0:
             methods = ["line"]
@@ -8638,7 +8684,11 @@ def trigger_sos(data_file, payload, config=None):
             break
 
     active_group_ids = []
-    if rules.get("guardian_group_limit") and abuse["mode"] != "restricted":
+    if (
+        selected_guardian_set is None
+        and rules.get("guardian_group_limit")
+        and abuse["mode"] != "restricted"
+    ):
         groups = state.get("guardian_groups", {})
         active_group_ids = [
             group_id for group_id in (profile.get("guardian_group_ids") or [])
@@ -8787,6 +8837,8 @@ def trigger_sos(data_file, payload, config=None):
         target = get_contact_line_id(contact)
         if not target or target == line_user_id:
             continue
+        if selected_guardian_set is not None and target not in selected_guardian_set:
+            continue
         methods = contact.get("notify_methods")
         if methods is not None and len(methods) == 0:
             methods = ["line"]
@@ -8798,7 +8850,11 @@ def trigger_sos(data_file, payload, config=None):
         if len(line_contacts) >= limit:
             break
     active_group_ids = []
-    if rules.get("guardian_group_limit") and abuse["mode"] != "restricted":
+    if (
+        selected_guardian_set is None
+        and rules.get("guardian_group_limit")
+        and abuse["mode"] != "restricted"
+    ):
         groups = state.get("guardian_groups") or {}
         active_group_ids = [
             group_id

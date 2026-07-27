@@ -84,6 +84,59 @@ class SosRulesTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(result["sent"], 1)
 
+    def test_sos_only_notifies_selected_eligible_core_guardians(self):
+        targets = []
+        profile = {
+            "line_user_id": "U-owner",
+            "display_name": "測試會員",
+            "plan": "paid_799",
+            "contacts": [
+                {
+                    "name": "媽媽",
+                    "line_id": "U-mom",
+                    "binding_status": "accepted",
+                    "is_primary": True,
+                    "priority": 1,
+                    "notify_methods": ["line"],
+                },
+                {
+                    "name": "姊姊",
+                    "line_id": "U-sister",
+                    "binding_status": "accepted",
+                    "is_primary": True,
+                    "priority": 2,
+                    "notify_methods": ["line"],
+                },
+            ],
+        }
+        data_file = self.make_data_file(profile)
+
+        result, status = trigger_sos(
+            data_file,
+            {
+                "line_user_id": "U-owner",
+                "guardian_line_user_ids": ["U-sister", "U-forged"],
+                "latitude": 25.033,
+                "longitude": 121.5654,
+            },
+            {
+                "LINE_CHANNEL_ACCESS_TOKEN": "test-token",
+                "LINE_PUSH_SENDER": (
+                    lambda _token, target, _message:
+                    targets.append(target) or {"ok": True}
+                ),
+            },
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(
+            [target for target in targets if target != "U-owner"], ["U-sister"]
+        )
+        self.assertEqual(
+            [row["name"] for row in result["guardians"]], ["姊姊"]
+        )
+
     def test_active_799_does_not_attach_stale_location(self):
         messages = []
         profile = {

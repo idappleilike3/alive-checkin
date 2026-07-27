@@ -267,6 +267,54 @@ class SafetyGuardTests(unittest.TestCase):
         self.assertEqual(second.get("error_code"), "trial_daily_limit_reached")
         self.assertIn("明天", second.get("message") or "")
 
+    def test_paid_plans_enforce_daily_session_limits(self):
+        cases = [
+            ("paid_199", 0.25, 2),
+            ("paid_199_year", 0.25, 2),
+            ("paid_399", 1, 3),
+            ("paid_399_year", 1, 3),
+            ("paid_799", 1, 5),
+            ("paid_799_year", 1, 5),
+        ]
+        for plan, duration, daily_limit in cases:
+            with self.subTest(plan=plan):
+                user_id = f"user_{plan}"
+                state = alive_app.load_state(self.data_file)
+                owner = alive_app.get_profile(state, user_id)
+                owner["plan"] = plan
+                _add_bound_guardian(owner, f"guardian_{plan}")
+                alive_app.save_state(self.data_file, state)
+
+                for _ in range(daily_limit):
+                    body, code = alive_app.update_location(
+                        self.data_file,
+                        {
+                            "line_user_id": user_id,
+                            "latitude": 25.0,
+                            "longitude": 121.5,
+                            "duration": duration,
+                        },
+                    )
+                    self.assertEqual(code, 200, body)
+                    alive_app.stop_location_sharing(
+                        self.data_file, {"line_user_id": user_id}
+                    )
+
+                denied, denied_code = alive_app.update_location(
+                    self.data_file,
+                    {
+                        "line_user_id": user_id,
+                        "latitude": 25.0,
+                        "longitude": 121.5,
+                        "duration": duration,
+                    },
+                )
+                self.assertEqual(denied_code, 429)
+                self.assertEqual(
+                    denied.get("error_code"), "safety_guard_daily_limit_reached"
+                )
+                self.assertEqual(denied.get("daily_limit"), daily_limit)
+
     def test_expired_trial_cannot_start_safety_guard(self):
         state = alive_app.load_state(self.data_file)
         owner = alive_app.get_profile(state, "u_expired_trial")
