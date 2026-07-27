@@ -85,14 +85,17 @@
     .open-btn {
       display: block;
       width: 100%;
-      padding: 18px 20px;
+      min-height: 66px;
+      padding: 18px 16px;
       border: 0;
       border-radius: 15px;
       background: var(--line);
       color: #fff;
-      font-size: 1.15rem;
+      font-size: clamp(1.22rem, 4.8vw, 1.42rem);
       font-weight: 800;
-      letter-spacing: 0.02em;
+      line-height: 1.35;
+      letter-spacing: 0.01em;
+      text-align: center;
       text-decoration: none;
       box-shadow: 0 10px 24px rgba(6, 199, 85, 0.28);
     }
@@ -355,7 +358,7 @@
         <p class="eyebrow">安全守護邀請</p>
         <h1 class="lead" id="inviteTitle">朋友邀請你成為核心守護人</h1>
         <p class="hint">當對方忘記報平安或遇到緊急狀況時，你可以及時收到 LINE 通知並協助聯絡。</p>
-        <a class="open-btn" id="openInLine" href="#" aria-describedby="lineOpenHelp">請用 LINE 開啟並確認</a>
+        <a class="open-btn" id="openInLine" href="#" aria-describedby="lineOpenHelp">請用 LINE 開啟並加入官方 LINE 綁定</a>
         <p class="privacy-note" id="lineOpenHelp">開啟後會先顯示邀請人與守護關係，經你同意才完成綁定</p>
 
         <div class="flow" aria-label="綁定流程">
@@ -376,7 +379,7 @@
       </section>
 
       <section class="story" aria-label="女兒與獨居媽媽的三幕守護故事">
-        <img class="story-image" src="/assets/guardian-story-mother-daughter.webp" alt="女兒惦記獨居媽媽，媽媽報平安後兩人安心聯絡的三格漫畫" width="720" height="1518">
+        <img class="story-image" src="/assets/guardian-story-mother-daughter-mobile.webp" alt="女兒透過 LINE 請媽媽每天按我平安，媽媽完成報平安後女兒收到通知的直立三格漫畫" width="941" height="1672">
         <div class="story-captions">
           <article class="story-caption">
             <span>01</span>

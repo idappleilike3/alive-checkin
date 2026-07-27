@@ -703,7 +703,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("_should_keep_liff_endpoint_spa", backend)
         self.assertNotIn("_redirect_invite_to_landing", backend)
         self.assertNotIn("bounced = _redirect_invite_to_landing()", backend)
-        self.assertIn("請用 LINE 開啟", landing)
+        self.assertIn("請用 LINE 開啟並加入官方 LINE 綁定", landing)
         self.assertIn("line.me/R/app/", landing)
         self.assertIn("liff.line.me/", landing)
         self.assertIn("formatLiffError", page)
@@ -728,6 +728,7 @@ class ProductRulesTests(unittest.TestCase):
 
         self.assertIn("邀請你成為核心守護人", landing)
         self.assertIn('aria-describedby="lineOpenHelp"', landing)
+        self.assertIn("font-size: clamp(1.22rem, 4.8vw, 1.42rem)", landing)
         self.assertIn("複製 LINE 連結", landing)
         self.assertIn("若無法開啟", landing)
         self.assertIn('href="/guardian-guide"', landing)
@@ -749,7 +750,7 @@ class ProductRulesTests(unittest.TestCase):
     def test_invite_landing_tells_three_panel_story_and_has_safe_checkin_demo(self):
         landing = (ROOT / "invite.html").read_text(encoding="utf-8")
 
-        self.assertIn("assets/guardian-story-mother-daughter.webp", landing)
+        self.assertIn("assets/guardian-story-mother-daughter-mobile.webp", landing)
         self.assertIn("女兒忙著工作，心裡還是惦記媽媽", landing)
         self.assertIn("媽媽按下「我平安」", landing)
         self.assertIn("女兒收到消息，放心繼續生活", landing)
