@@ -72,6 +72,42 @@ def test_guardian_invitation_uses_story_comic_before_acceptance():
     assert "接受邀請只會讓你免費接收對方通知" in html
 
 
+def test_guardian_invitation_explains_the_complete_join_and_binding_flow():
+    html = (ROOT / "invite.html").read_text(encoding="utf-8")
+    assert 'id="joinOfficialLineCta"' in html
+    assert 'href="https://line.me/R/ti/p/%40042kwqib"' in html
+    assert "先加入每日平安官方 LINE" in html
+    assert "使用 LINE 一鍵登入" in html
+    assert "填寫姓名、關係、手機" in html
+    assert "確認綁定核心守護人" in html
+    assert 'id="guardianBindingPreview"' in html
+    assert "您的姓名（必填）" in html
+    assert "您與邀請人的關係（必填）" in html
+    assert "您的手機號碼（必填）" in html
+    assert "登入後會回到這個邀請流程" in html
+
+
+def test_guardian_invitation_names_the_inviter_when_provided():
+    html = (ROOT / "invite.html").read_text(encoding="utf-8")
+    assert 'id="inviterName"' in html
+    assert 'params.get("inviter_name")' in html
+    assert 'inviterNameEl.textContent = inviterName' in html
+
+
+def test_guardian_invitation_preserves_identity_in_line_login():
+    html = (ROOT / "invite.html").read_text(encoding="utf-8")
+    assert 'q.set("inviter_name", inviterName)' in html
+    assert 'q.set("return_to", "guardian_binding")' in html
+
+
+def test_member_shares_the_story_landing_not_a_bare_liff_bind_url():
+    html = (ROOT / "index.html").read_text(encoding="utf-8")
+    assert "const landingUrl = buildInviteLandingUrl" in html
+    assert "invite_from: safeId" in html
+    assert "inviter_name: lineDisplayName" in html
+    assert "const bindUrl = landingUrl;" in html
+
+
 def test_guardian_acceptance_cannot_activate_a_trial():
     html = (ROOT / "index.html").read_text(encoding="utf-8")
     assert "mutual_core: false" in html

@@ -375,6 +375,26 @@
       line-height: 1.55;
       text-align: center;
     }
+    .join-line-btn { margin-top: 14px; }
+    .binding-guide {
+      margin-top: 18px;
+      padding: 20px;
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      background: #fff;
+      box-shadow: 0 16px 44px rgba(20, 74, 42, 0.08);
+    }
+    .binding-guide h2 { margin: 0 0 8px; text-align: center; font-size: 1.35rem; }
+    .binding-guide-intro { margin: 0 0 16px; color: var(--muted); line-height: 1.65; text-align: center; }
+    .binding-steps { display: grid; gap: 10px; margin-bottom: 18px; }
+    .binding-step { display: grid; grid-template-columns: 42px 1fr; gap: 12px; align-items: center; padding: 13px; border: 1px solid #d7eadf; border-radius: 15px; background: #f8fffa; }
+    .binding-step b { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: var(--forest); color: #fff; }
+    .binding-step strong { display: block; margin-bottom: 3px; }
+    .binding-step span { color: var(--muted); font-size: .86rem; line-height: 1.5; }
+    .binding-preview { display: grid; gap: 12px; padding: 16px; border: 2px dashed #b8d9c2; border-radius: 17px; background: #f7fbf8; }
+    .binding-preview label { color: var(--ink); font-size: .9rem; font-weight: 800; }
+    .binding-preview input { width: 100%; margin-top: 6px; padding: 13px; border: 1px solid #cbd9cf; border-radius: 11px; background: #fff; color: #748078; font: inherit; }
+    .binding-preview-note { margin: 0; color: var(--forest); font-size: .86rem; font-weight: 750; line-height: 1.55; text-align: center; }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
     }
@@ -386,17 +406,18 @@
       <p class="brand"><img class="brand-logo" src="assets/daily-peace-logo.png" alt="">每日平安</p>
       <section class="hero" aria-labelledby="inviteTitle">
         <p class="eyebrow">安全守護邀請</p>
-        <h1 class="lead" id="inviteTitle">朋友邀請你成為核心守護人</h1>
+        <h1 class="lead" id="inviteTitle"><span id="inviterName">朋友</span>邀請你成為核心守護人</h1>
         <p class="hint">當對方忘記報平安或遇到緊急狀況時，你可以及時收到 LINE 通知並協助聯絡。</p>
-        <a class="open-btn" id="acceptGuardianCta" href="#" aria-describedby="lineOpenHelp">接受成為核心守護人</a>
+        <a class="open-btn join-line-btn" id="joinOfficialLineCta" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener">第一步：加入每日平安官方 LINE</a>
+        <a class="open-btn secondary" id="acceptGuardianCta" href="#" aria-describedby="lineOpenHelp">第二步：使用 LINE 登入，接受成為核心守護人</a>
         <p class="privacy-note" id="lineOpenHelp">開啟後會先顯示邀請人與守護關係，經你同意才完成綁定</p>
         <p class="privacy-note">接受邀請只會讓你免費接收對方通知，不會開啟自己的報平安功能。綁定完成後，若你也想報平安，可再按「我也要報平安｜免費體驗 14 天」。</p>
 
         <div class="flow" aria-label="綁定流程">
-          <div class="flow-step"><span class="step-number">1</span>LINE 開啟</div>
-          <div class="flow-step"><span class="step-number">2</span>加入官方帳號</div>
-          <div class="flow-step"><span class="step-number">3</span>確認關係</div>
-          <div class="flow-step"><span class="step-number">4</span>完成通知</div>
+          <div class="flow-step"><span class="step-number">1</span>加入官方</div>
+          <div class="flow-step"><span class="step-number">2</span>LINE 登入</div>
+          <div class="flow-step"><span class="step-number">3</span>填寫資料</div>
+          <div class="flow-step"><span class="step-number">4</span>確認綁定</div>
         </div>
 
         <div class="fallback">
@@ -409,8 +430,25 @@
         </div>
       </section>
 
+      <section class="binding-guide" aria-labelledby="bindingGuideTitle">
+        <h2 id="bindingGuideTitle">照著 4 步驟完成守護綁定</h2>
+        <p class="binding-guide-intro">第一次使用也不用擔心，加入官方 LINE 後，系統會帶你回來完成資料與同意。成為核心守護人後，重要時刻才會收到通知。</p>
+        <div class="binding-steps">
+          <div class="binding-step"><b>1</b><div><strong>先加入每日平安官方 LINE</strong><span>加入好友後，才能收到對方的平安與緊急通知。</span></div></div>
+          <div class="binding-step"><b>2</b><div><strong>使用 LINE 一鍵登入</strong><span>登入只建立會員身分，不會直接自動綁定。</span></div></div>
+          <div class="binding-step"><b>3</b><div><strong>填寫姓名、關係、手機</strong><span>確認你和邀請人的關係，必要時才能正確聯絡。</span></div></div>
+          <div class="binding-step"><b>4</b><div><strong>確認綁定核心守護人</strong><span>由你親自同意後，才正式開始接收守護通知。</span></div></div>
+        </div>
+        <div class="binding-preview" id="guardianBindingPreview" aria-label="登入後要填寫的守護人資料">
+          <label>您的姓名（必填）<input type="text" placeholder="登入後填寫" disabled></label>
+          <label>您與邀請人的關係（必填）<input type="text" placeholder="例如：女兒、朋友、鄰居" disabled></label>
+          <label>您的手機號碼（必填）<input type="tel" placeholder="例如：0912345678" disabled></label>
+          <p class="binding-preview-note">登入後會回到這個邀請流程，表單即可填寫；按下確認才完成綁定。</p>
+        </div>
+      </section>
+
       <section class="story" aria-label="女兒與獨居媽媽的三幕守護故事">
-        <img class="story-image" src="/assets/guardian-story-mother-daughter-mobile.webp" alt="女兒透過 LINE 請媽媽每天按我平安，媽媽完成報平安後女兒收到通知的直立三格漫畫" width="941" height="1672">
+        <img class="invite-story-comic" src="assets/daily-peace-story-comic.png" alt="女兒透過 LINE 請媽媽每天按我平安，媽媽完成報平安後女兒收到通知的三格故事圖">
         <div class="story-captions">
           <article class="story-caption">
             <span>01</span>
@@ -461,7 +499,9 @@
       var inviteFrom = (params.get("from") || params.get("invite_from") || params.get("invite") || "").trim();
       var inviteToken = (params.get("invite_token") || "").trim();
       var friendInvite = (params.get("friend_invite") || "").trim();
+      var inviterName = (params.get("inviter_name") || "").trim();
       var openAction = (params.get("open") || "").trim();
+      var inviterNameEl = document.getElementById("inviterName");
       var statusEl = document.getElementById("status");
       var openBtn = document.getElementById("acceptGuardianCta");
       var altBtn = document.getElementById("openLiffAlt");
@@ -469,6 +509,10 @@
       var demoBtn = document.getElementById("demoCheckinButton");
       var demoResult = document.getElementById("demoResult");
       var pageShareLinks = document.querySelectorAll(".current-page-line-share");
+
+      if (inviterName && inviterNameEl) {
+        inviterNameEl.textContent = inviterName;
+      }
 
       if (demoBtn && demoResult) {
         demoBtn.addEventListener("click", function () {
@@ -499,6 +543,8 @@
         if (inviteFrom) q.set("invite_from", inviteFrom);
         if (inviteToken) q.set("invite_token", inviteToken);
         if (friendInvite) q.set("friend_invite", friendInvite);
+        if (inviterName) q.set("inviter_name", inviterName);
+        q.set("return_to", "guardian_binding");
         if (openAction) q.set("open", openAction);
         if (!inviteFrom && !friendInvite && !openAction) q.set("open", "onboarding");
         return q.toString();
