@@ -31,13 +31,31 @@ def test_onboarding_share_keeps_the_member_identity():
 def test_share_picker_sends_the_story_and_binding_page_to_the_friend():
     html = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
 
+    assert 'id="startShare"' in html
+    assert "請先停留在這個頁面" in html
+    assert "第一步：加入「每日平安」官方 LINE" in html
+    assert "第二步：我已加入，選擇 LINE 好友分享" in html
+    assert "liff.getFriendship" in html
+    assert "window.location.href = buildLineAppShareUrl()" in html
+    assert "await openShare();" in html
     assert 'const inviteUrl = new URL("/invite", appPublicOrigin())' in html
     assert 'inviteUrl.searchParams.set("invite_from", safeId)' in html
     assert 'inviteUrl.searchParams.set("invite_token", inviteToken)' in html
     assert 'inviteUrl.searchParams.set("inviter_name", inviterName)' in html
     assert "liff.shareTargetPicker" in html
     assert "bindUrl = inviteUrl.toString()" in html
+    assert "填寫姓名、關係與手機" in html
+    assert "確認同意後才完成綁定" in html
     assert "`https://line.me/R/app/${LIFF_ID}?invite_from=" not in html
+
+
+def test_share_page_waits_for_the_explicit_second_step_instead_of_auto_sharing():
+    html = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
+
+    initialized = html.split("async function initializeLiff()", 1)[1]
+    initialized = initialized.split('window.addEventListener("pageshow"', 1)[0]
+    assert "await openShare();" not in initialized
+    assert "已準備好。完成第一步後，請按第二步選擇 LINE 好友。" in initialized
 
 
 def test_every_member_share_entry_uses_the_same_picker_page():
