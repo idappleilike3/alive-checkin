@@ -85,6 +85,15 @@ class InviteOnboardingFlowTests(unittest.TestCase):
         self.assertNotIn("同時互相設為核心守護人", html)
         self.assertNotIn("同意互相成為核心守護人", html)
 
+    def test_public_invite_cannot_bundle_guardian_acceptance_with_a_trial(self):
+        invite_html = (ROOT / "invite.html").read_text(encoding="utf-8")
+        home_html = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("acceptAndTrialCta", invite_html)
+        self.assertNotIn("trial_after_guardian", invite_html)
+        self.assertIn("接受邀請只會讓你免費接收對方通知", invite_html)
+        self.assertNotIn("activate_trial: trialAfterGuardian", home_html)
+        self.assertIn("activate_trial: false", home_html)
+
     def test_trial_home_has_share_and_guardian_status_entry_points(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("一鍵分享邀請核心守護人", html)
