@@ -3879,7 +3879,7 @@
         <div class="first-entry-guide" aria-label="第一次設定教學">
           <p class="first-entry-guide-title">第一次使用，照著 4 步驟完成設定</p>
           <div class="first-entry-step" id="lineGuideJoin" data-step="1">加入「每日平安」官方 LINE</div>
-          <div class="first-entry-step" id="lineGuideLogin" data-step="2">使用 LINE 一鍵登入</div>
+          <div class="first-entry-step" id="lineGuideLogin" data-step="2">系統自動確認 LINE 身分</div>
           <div class="first-entry-step" id="lineGuideProfile" data-step="3">填寫守護資料並發送邀請</div>
           <div class="first-entry-step" id="lineGuideGuardian" data-step="4">核心守護人接受邀請，完成綁定</div>
         </div>
@@ -3892,8 +3892,8 @@
           </div>
         </div>
         <div id="lineEntryLoginStep" hidden>
-          <h2>使用 LINE 一鍵登入</h2>
-          <p>請按一下登入。登入後，系統會立即確認官方帳號好友狀態，再安全帶回你的會員資料與守護設定。</p>
+          <h2>需要時使用 LINE 登入</h2>
+          <p>從 LINE 內開啟時會自動確認身分；只有外部瀏覽器或自動登入失敗時，才需要按下方按鈕。</p>
           <div class="line-entry-actions">
             <button id="lineEntryLoginBtn" type="button">使用 LINE 一鍵登入</button>
           </div>
@@ -4159,7 +4159,7 @@
           <div class="first-entry-guide" aria-label="第一次設定教學">
             <p class="first-entry-guide-title">還沒綁定守護人，請完成以下設定</p>
             <div class="first-entry-step" id="onboardingGuideJoin" data-step="1">加入「每日平安」官方 LINE</div>
-            <div class="first-entry-step" id="onboardingGuideLogin" data-step="2">使用 LINE 一鍵登入</div>
+            <div class="first-entry-step" id="onboardingGuideLogin" data-step="2">系統自動確認 LINE 身分</div>
             <div class="first-entry-step" id="onboardingGuideProfile" data-step="3">填寫守護資料並發送邀請</div>
             <div class="first-entry-step" id="onboardingGuideGuardian" data-step="4">核心守護人接受邀請，完成綁定</div>
           </div>
@@ -8869,6 +8869,18 @@
             return appConfig;
           })
           .catch(() => ({}));
+
+        // In the LINE app, continue directly into the secure LINE login flow.
+        // External browsers keep the explicit fallback button so users are not
+        // unexpectedly redirected and can reopen the page in LINE.
+        if (
+          !liff.isLoggedIn()
+          && typeof liff.isInClient === "function"
+          && liff.isInClient()
+        ) {
+          startLineLogin(readSafeDeepLinkParams());
+          return false;
+        }
 
         // 2) 未登入無權呼叫 getFriendship；登入後才以實際結果判斷好友狀態。
         const entryStep = await resolveLineEntryGate();

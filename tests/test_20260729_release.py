@@ -193,6 +193,13 @@ class Release20260729Tests(unittest.TestCase):
         self.assertIn("return url;", auth_query)
         self.assertNotIn("id_token=", auth_query)
 
+    def test_line_in_app_login_is_automatic_with_external_fallback(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn('typeof liff.isInClient === "function"', page)
+        self.assertIn("&& liff.isInClient()", page)
+        self.assertIn("startLineLogin(readSafeDeepLinkParams());", page)
+        self.assertIn("只有外部瀏覽器或自動登入失敗時", page)
+
 
 if __name__ == "__main__":
     unittest.main()
