@@ -1,0 +1,47 @@
+name: Apply 2026-07-29 fixes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-20260729-fixes.yml'
+      - 'scripts/apply_20260729_fixes.py'
+      - 'assets/ux-fixes-20260729.js'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply patches
+        run: python scripts/apply_20260729_fixes.py
+      - name: Verify Python syntax
+        run: python -m py_compile app.py
+      - name: Verify expected files
+        run: |
+          grep -q '199 活著版' liff/onboarding.html
+          grep -q 'ux-fixes-20260729.js' index.html
+          grep -q 'ux-fixes-20260729.js' liff/member.html
+          grep -q 'ux-fixes-20260729.js' beta-register.html
+          grep -q 'ux-fixes-20260729.js' liff/share-invite.html
+      - name: Commit applied changes
+        run: |
+          if git diff --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app.py render.yaml index.html beta-register.html liff/onboarding.html liff/member.html liff/share-invite.html
+          git commit -m 'fix: apply 199 trial and member center UX updates'
+          git push origin HEAD:main
