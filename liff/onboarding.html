@@ -218,7 +218,7 @@
     <img src="/assets/guardian-story-mother-daughter-mobile.webp" alt="媽媽每日報平安，女兒透過 LINE 收到通知的母女圖文故事">
     <div class="beginner-story-copy">
       <h2>14 天免費體驗｜199 活著版</h2>
-      <p>先設定每日提醒時間，再邀請核心守護人。體驗權益與 199 活著版月方案相同，不用刷卡，也不會自動扣款。</p>
+      <p>先邀請核心守護人，再確認每日提醒時間。若未選擇，系統會自動使用方案預設；之後也能到「我的會員」修改。</p>
     </div>
   </section>
   <div id="loading" class="card loading">
@@ -256,6 +256,10 @@ let state = {
 function defaultTimesForCount(count) {
   const n = Math.max(1, Math.min(3, Number(count) || 1));
   return (DEFAULT_REMINDER_TIMES_BY_COUNT[n] || DEFAULT_REMINDER_TIMES_BY_COUNT[1]).slice();
+}
+
+function onboardingDefaultReminderCount() {
+  return Math.min(Math.max(1, Number(state.dailyReminders) || 1), 2);
 }
 
 async function resolveLiffId() {
@@ -406,8 +410,8 @@ function renderStep() {
       location.assign(`/liff/share-invite.html?${params.toString()}`);
     });
   } else if (state.currentStep === 3) {
-    const count = state.dailyReminders || 1;
-    const defaults = state.defaultReminderTimes || defaultTimesForCount(count);
+    const count = onboardingDefaultReminderCount();
+    const defaults = (state.defaultReminderTimes || defaultTimesForCount(count)).slice(0, count);
     content.innerHTML = `
       <div class="card">
         <div class="step-indicator">
@@ -417,7 +421,7 @@ function renderStep() {
         </div>
         <div class="icon-big">⏰</div>
         <h2 style="text-align:center;">私訊預警通知提醒設定</h2>
-        <p style="color:#888;margin-bottom:16px;">你的方案每日可提醒 ${count} 次。不更改則使用預設時段。</p>
+        <p style="color:#666;margin-bottom:16px;line-height:1.7;">若未選擇，系統會自動使用預設時間：${count === 1 ? "中午 12:00" : "中午 12:00、晚上 18:00"}。之後可到「我的會員」修改次數與時間${state.dailyReminders > 2 ? "（799 最多可設 3 次）" : ""}。</p>
         ${renderReminderSlots(defaults.slice(0, count))}
         <button class="btn btn-secondary" type="button" id="useDefaultsBtn">使用方案預設時間</button>
         <button class="btn btn-primary" id="saveReminderBtn" onclick="saveReminder()">✓ 完成設定</button>
@@ -457,7 +461,7 @@ function renderStep() {
 }
 
 async function saveReminder() {
-  const count = state.dailyReminders || 1;
+  const count = onboardingDefaultReminderCount();
   let times = readReminderSlots(count);
   if (times.length < count) {
     times = defaultTimesForCount(count);
