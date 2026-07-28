@@ -110,6 +110,52 @@
       background: #f0fdf4;
       font-weight: 800;
     }
+    .trial-plan-note {
+      display: grid;
+      gap: 12px;
+      margin-top: 18px;
+      padding: 17px;
+      border: 2px solid #bbf7d0;
+      border-radius: 18px;
+      background: linear-gradient(145deg, #f0fdf4, #ffffff);
+    }
+    .trial-plan-note h2 {
+      font-size: 21px;
+      color: #166534;
+    }
+    .trial-plan-note p {
+      margin: 0;
+      color: #365c49;
+      font-size: 15px;
+    }
+    .trial-plan-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .trial-plan-card {
+      display: grid;
+      gap: 5px;
+      padding: 13px;
+      border: 1px solid #86efac;
+      border-radius: 14px;
+      background: #fff;
+    }
+    .trial-plan-card strong { font-size: 16px; }
+    .trial-plan-card span { color: #15803d; font-size: 18px; font-weight: 900; }
+    .trial-plan-link {
+      display: grid;
+      place-items: center;
+      min-height: 48px;
+      border: 2px solid #16a34a;
+      border-radius: 999px;
+      color: #166534;
+      font-weight: 900;
+      text-decoration: none;
+    }
+    @media (max-width: 380px) {
+      .trial-plan-grid { grid-template-columns: 1fr; }
+    }
     .desktop-share {
       display: grid;
       gap: 12px;
@@ -159,6 +205,15 @@
       <li>2. 對方登入並同意</li>
       <li>3. 綁定完成後立即生效</li>
     </ol>
+    <section class="trial-plan-note" aria-label="14 天免費體驗與 199 活著版">
+      <h2>14 天免費體驗｜199 活著版</h2>
+      <p>新會員可免費體驗一次，不用刷卡、不會自動扣款。成為守護人免費，只接收對方的平安、逾時與 SOS 通知，不會自動購買自己的報平安方案。</p>
+      <div class="trial-plan-grid">
+        <div class="trial-plan-card"><strong>199 活著版｜月費</strong><span>NT$199／月</span></div>
+        <div class="trial-plan-card"><strong>199 活著版｜年費</strong><span>NT$1,990／年</span></div>
+      </div>
+      <a class="trial-plan-link" href="/trial-14.html">查看 14 天體驗與 199 詳細方案</a>
+    </section>
     <section id="desktopShare" class="desktop-share" hidden aria-live="polite">
       <h2>電腦版分享</h2>
       <p>可直接開啟 LINE 分享；也能複製專屬邀請連結，或用手機掃描 QR Code。</p>
@@ -347,7 +402,7 @@
       const bindUrl = inviteUrl.toString();
       return {
         bindUrl,
-        message: `${inviterName || "你的親友"}邀請你成為「每日平安」核心守護人。\n請查看圖文步驟並完成 LINE 登入與資料綁定：\n${bindUrl}`,
+        message: `${inviterName || "你的親友"}邀請你成為「每日平安」核心守護人。\n成為守護人免費，不會自動購買方案。\n請查看圖文步驟並完成 LINE 登入與資料綁定：\n${bindUrl}`,
       };
     }
 
