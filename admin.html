@@ -1864,8 +1864,8 @@
             ${ticket.reply ? `<small>已回覆：${ticket.reply}</small>` : ""}
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
               <select data-support-channel="${ticket.id}">
-                <option value="email" ${ticket.reply_channel === "email" ? "selected" : ""}>Email</option>
-                <option value="line" ${ticket.reply_channel !== "email" ? "selected" : ""}>LINE 私訊</option>
+                <option value="email" ${ticket.reply_channel === "email" ? "selected" : ""}>Email（不使用 LINE 額度）</option>
+                <option value="line" ${ticket.reply_channel !== "email" ? "selected" : ""}>LINE 私訊（主動推播，計入訊息量）</option>
               </select>
               <select data-support-status="${ticket.id}">
                 <option value="waiting_user">等待使用者回覆</option>
