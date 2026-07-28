@@ -3770,6 +3770,8 @@ def build_status(profile, state=None, now=None):
                 "line_user_id": get_contact_line_id(c),
                 "relationship": str(c.get("relationship") or "").strip(),
                 "binding_status": str(c.get("binding_status") or "").strip() or "accepted",
+                "official_line_friend": bool(c.get("official_line_friend") or c.get("official_line_friend_verified_at")),
+                "official_line_friend_verified_at": str(c.get("official_line_friend_verified_at") or "").strip(),
                 "phone": str(c.get("phone") or "").strip(),
                 "email": str(c.get("email") or "").strip(),
                 "is_primary": bool(c.get("is_primary")),
@@ -6450,6 +6452,25 @@ def bind_emergency_contact(
     if inviter_id == contact_line_user_id:
         return {"ok": False, "error": "不能綁定自己成為守護人", "code": "self_bind"}, 400
 
+    # 核心守護人必須先加入「每日平安」官方 LINE；否則不能標記為綁定完成。
+    friend_token = (
+        ((config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") if hasattr(config or {}, "get") else None)
+        or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+        or os.environ.get("CHANNEL_ACCESS_TOKEN", "")
+    )
+    friend_profile = fetch_line_profile_dict(friend_token, contact_line_user_id) if friend_token else None
+    if config and friend_token and not friend_profile:
+        return {
+            "ok": False,
+            "bound": False,
+            "error": "請先加入「每日平安」官方 LINE，再回來接受核心守護人邀請",
+            "code": "official_line_friend_required",
+            "official_line_friend": False,
+        }, 409
+    official_line_friend_verified_at = (
+        datetime.now().isoformat(timespec="seconds") if friend_profile else ""
+    )
+
     state = load_state(data_file)
     invite_token = str(payload.get("invite_token") or "").strip()
     inviter_invites = [
@@ -6569,6 +6590,9 @@ def bind_emergency_contact(
         row["invited_by"] = inviter_id
         row["notify_methods"] = list(dict.fromkeys([*(row.get("notify_methods") or []), "line"]))
         row["contact_role"] = "guardian"
+        if official_line_friend_verified_at:
+            row["official_line_friend"] = True
+            row["official_line_friend_verified_at"] = official_line_friend_verified_at
         if peer_picture:
             row["picture_url"] = peer_picture
         elif not str(row.get("picture_url") or "").strip():
@@ -6633,6 +6657,8 @@ def bind_emergency_contact(
                 "accepted_at": accepted_at,
                 "invited_by": inviter_id,
                 "contact_role": "guardian",
+                "official_line_friend": bool(official_line_friend_verified_at),
+                "official_line_friend_verified_at": official_line_friend_verified_at,
                 "note": "LINE 一鍵授權綁定",
             }
         )
@@ -6674,7 +6700,8 @@ def bind_emergency_contact(
 
     # New verified invitations are genuinely reciprocal: validate the other half
     # before saving either side, then mutate both profiles in this one state write.
-    reciprocal = bool(pending_invite and (activate_trial or legacy_reciprocal))
+    # 接受邀請只建立「受邀者守護邀請人」；申請 14 天體驗也不自動互綁。
+    reciprocal = False
     reciprocal_contact = None
     if reciprocal:
         if activate_trial:
