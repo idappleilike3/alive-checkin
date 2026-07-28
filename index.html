@@ -5552,10 +5552,10 @@
     }
 
     async function withAuthQuery(url) {
-      const token = await getLineIdToken();
-      if (!token) return url;
-      const sep = String(url).includes("?") ? "&" : "?";
-      return `${url}${sep}id_token=${encodeURIComponent(token)}`;
+      // Never place an ID token in the URL. Query strings are commonly copied
+      // into proxy and deployment logs; authenticated requests already send the
+      // token in the Authorization/X-Line-Id-Token headers via authHeaders().
+      return url;
     }
 
     async function apiGetStatus() {

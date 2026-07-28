@@ -177,6 +177,22 @@ class Release20260729Tests(unittest.TestCase):
             index + member + trial + beta + share,
         )
 
+    def test_help_has_visual_checkin_dialogue_sop(self):
+        page = (ROOT / "help.html").read_text(encoding="utf-8")
+        self.assertIn("assets/help-checkin-sop.gif", page)
+        self.assertIn("核心守護人會收到", page)
+        self.assertIn("不是只有一個打勾", page)
+        self.assertIn("open=checkin", page)
+        self.assertIn("一鍵邀請守護人", page)
+
+    def test_line_id_token_is_never_added_to_url(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        auth_query = page.split("async function withAuthQuery(url)", 1)[1].split(
+            "async function apiGetStatus", 1
+        )[0]
+        self.assertIn("return url;", auth_query)
+        self.assertNotIn("id_token=", auth_query)
+
 
 if __name__ == "__main__":
     unittest.main()

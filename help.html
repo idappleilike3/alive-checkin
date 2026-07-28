@@ -81,6 +81,63 @@
     .nav-btn.home { background: #ecfdf5; color: #065f46; border-color: #34d399; }
     .nav-btn.upgrade { background: linear-gradient(135deg, #ef4444 0%, #e11d48 100%); color: #fff; box-shadow: 0 12px 26px rgba(225, 29, 72, 0.22); }
     .nav-btn.faq { background: #fff7ed; color: #9a3412; border-color: #fb923c; }
+    .nav-btn.checkin { background: #06c755; color: #fff; box-shadow: 0 12px 26px rgba(6, 199, 85, 0.22); }
+    .nav-btn.invite { background: #eff6ff; color: #1d4ed8; border-color: #60a5fa; }
+    .walkthrough {
+      margin: 20px 0;
+      padding: 20px;
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.96);
+      border: 3px solid #34d399;
+      box-shadow: 0 16px 34px rgba(6, 95, 70, 0.14);
+    }
+    .walkthrough h2 {
+      color: #065f46;
+      font-size: clamp(28px, 7vw, 36px);
+      line-height: 1.35;
+      text-align: center;
+    }
+    .walkthrough > p {
+      margin: 8px 0 16px;
+      color: #3f1d2d;
+      font-size: clamp(20px, 5vw, 24px);
+      font-weight: 850;
+      text-align: center;
+    }
+    .walkthrough img {
+      display: block;
+      width: min(100%, 540px);
+      height: auto;
+      margin: 0 auto;
+      border-radius: 22px;
+      border: 2px solid #f9a8d4;
+      background: #fff1f7;
+    }
+    .walkthrough figcaption {
+      margin-top: 14px;
+      padding: 14px;
+      border-radius: 16px;
+      background: #ecfdf5;
+      color: #14532d;
+      font-size: clamp(18px, 4.7vw, 22px);
+      font-weight: 900;
+      text-align: center;
+    }
+    .sop-line {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .sop-line span {
+      padding: 10px 6px;
+      border-radius: 14px;
+      background: #fff7ed;
+      color: #7c2d12;
+      font-size: 16px;
+      font-weight: 900;
+      text-align: center;
+    }
     .guide-grid {
       display: grid;
       gap: 16px;
@@ -166,6 +223,7 @@
     @media (max-width: 520px) {
       .quick-actions,
       .bottom-actions { grid-template-columns: 1fr; }
+      .sop-line { grid-template-columns: repeat(2, 1fr); }
     }
   </style>
 </head>
@@ -177,9 +235,24 @@
     </section>
 
     <nav class="quick-actions" aria-label="教學快速操作">
-      <a class="nav-btn upgrade" href="https://alive-checkin.onrender.com/liff/pricing.html">立即升級守護</a>
-      <a class="nav-btn faq" href="https://liff.line.me/2010848330-UAiqPPYD?open=faq">問與答</a>
+      <a class="nav-btn checkin" href="https://liff.line.me/2010848330-UAiqPPYD?open=checkin">開始報平安</a>
+      <a class="nav-btn invite" href="https://alive-checkin.onrender.com/liff/share-invite.html">一鍵邀請守護人</a>
+      <a class="nav-btn upgrade" href="https://alive-checkin.onrender.com/pricing">查看方案</a>
+      <a class="nav-btn faq" href="https://alive-checkin.onrender.com/faq">常見問題</a>
     </nav>
+
+    <figure class="walkthrough" aria-labelledby="walkthroughTitle">
+      <h2 id="walkthroughTitle">先看一次：從提醒到家人收到通知</h2>
+      <p>動畫會自動重播。照著手指點，不需要輸入文字。</p>
+      <img src="assets/help-checkin-sop.gif" width="540" height="900" loading="eager" alt="每日平安實際流程動畫：收到 LINE 提醒，手指點我平安，畫面顯示回報成功，核心守護人收到含姓名與時間的 LINE 對話">
+      <div class="sop-line" aria-label="四步驟摘要">
+        <span>① 收到提醒</span>
+        <span>② 點我平安</span>
+        <span>③ 看成功時間</span>
+        <span>④ 家人收到對話</span>
+      </div>
+      <figcaption>看到「今天已完成報平安」和時間才算成功；守護人端會收到完整訊息，不是只有一個打勾。</figcaption>
+    </figure>
 
     <section class="guide-grid" aria-label="使用教學圖文步驟">
       <article class="guide-card">
@@ -196,7 +269,8 @@
 
       <article class="guide-card">
         <h2><span class="num">3</span>每天點我平安</h2>
-        <p>首頁大按鈕點一下，就完成今天的平安回報。你主動簽到時，不會打擾任何人。</p>
+        <p>收到「每日平安」LINE 提醒後，開啟首頁，手指點一次「我平安」。畫面顯示成功日期與時間，就完成今天的回報。</p>
+        <div class="note soft">核心守護人會收到「誰已報平安、幾點完成」的 LINE 訊息，雙方都看得到結果。</div>
       </article>
 
       <article class="guide-card">
@@ -240,13 +314,14 @@
       </article>
 
       <article class="guide-card">
-        <h2><span class="num">8</span>平安紀錄月曆</h2>
+        <h2><span class="num">9</span>平安紀錄月曆</h2>
         <p>進入「平安紀錄」會直接展開月曆，也可以自己收合。重要節日會用紅字標示，點日期可新增記事。</p>
         <div class="note soft">之後若要串接 Google 日曆，可以把記事同步到自己的行事曆。</div>
       </article>
     </section>
     <nav class="bottom-actions" aria-label="教學頁底部操作">
-      <a class="nav-btn upgrade" href="https://alive-checkin.onrender.com/liff/pricing.html">立即升級守護</a>
+      <a class="nav-btn checkin" href="https://liff.line.me/2010848330-UAiqPPYD?open=checkin">開始報平安</a>
+      <a class="nav-btn upgrade" href="https://alive-checkin.onrender.com/pricing">查看方案</a>
       <a class="nav-btn home" href="https://liff.line.me/2010848330-UAiqPPYD?open=home">回到首頁</a>
     </nav>
   </main>
