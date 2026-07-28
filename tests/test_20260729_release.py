@@ -219,6 +219,43 @@ class Release20260729Tests(unittest.TestCase):
         self.assertIn("min-height:44px", beta)
         self.assertIn("min-height: 48px;", pricing)
 
+    def test_member_contact_arrows_and_guarding_empty_state_are_clear(self):
+        index = (ROOT / "index.html").read_text(encoding="utf-8")
+        member = (ROOT / "liff" / "member.html").read_text(encoding="utf-8")
+        self.assertIn("member-contact-tab-arrow", index)
+        self.assertIn('aria-expanded="false"', index)
+        self.assertIn("目前尚未守護其他人", index)
+        self.assertIn("一鍵邀請守護人", index)
+        self.assertIn("點擊展開", member)
+        self.assertIn("點擊收合", member)
+
+    def test_399_and_799_onboarding_fall_back_to_two_default_times(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        onboarding = (ROOT / "liff" / "onboarding.html").read_text(encoding="utf-8")
+        profile = {
+            "line_user_id": "U-799-default",
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": "2099-01-01T00:00:00",
+        }
+        payload, code = app.onboarding_status_payload(
+            self.data_file, profile["line_user_id"], allow_missing_profile=True
+        )
+        # Missing profiles retain the safe one-reminder default.
+        self.assertEqual(code, 200)
+        self.assertEqual(payload["default_reminder_times"], ["12:00"])
+
+        app.save_state(self.data_file, {"users": {profile["line_user_id"]: profile}})
+        payload, code = app.onboarding_status_payload(
+            self.data_file, profile["line_user_id"]
+        )
+        self.assertEqual(code, 200)
+        self.assertEqual(payload["daily_reminders"], 3)
+        self.assertEqual(payload["default_reminder_times"], ["12:00", "18:00"])
+        self.assertIn("onboardingDefaultReminderCount", page)
+        self.assertIn("399／799 預設每日 2 次", page)
+        self.assertIn("之後可到「我的會員」修改次數與時間", onboarding)
+
 
 if __name__ == "__main__":
     unittest.main()
