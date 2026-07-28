@@ -108,8 +108,17 @@
     cursor: pointer;
   }
   .member-contact-block > summary::-webkit-details-marker { display: none; }
-  .member-contact-block > summary::after { content: "⌄"; }
-  .member-contact-block[open] > summary::after { content: "⌃"; }
+  .member-contact-block > summary::after {
+    content: "⌄ 點擊展開";
+    color: #15803d;
+    font-size: 14px;
+    font-weight: 800;
+    transition: transform .18s ease;
+  }
+  .member-contact-block[open] > summary::after {
+    content: "⌄ 點擊收合";
+    transform: rotate(180deg);
+  }
   .contact-card-body { display: grid; gap: 8px; padding: 0 16px 16px; border-top: 1px solid #E8E8E8; }
   .contact-card-body[hidden] { display: none; }
   .guardian-name { font-weight: 800; font-size: 18px; color: #00B900; }
