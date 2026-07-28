@@ -4025,12 +4025,14 @@ def register_line_user(data_file, payload):
             preserved["interaction_state"] = dict(preserved["interaction_state"])
 
     requested_beta = str(payload.get("beta_cohort") or "").strip().upper()
+    guardian_only = bool(payload.get("guardian_only"))
+    activate_own_trial = bool(payload.get("activate_own_trial"))
     if requested_beta and requested_beta not in {"B399", "B799"}:
         return {"ok": False, "error": "invalid_beta_link"}, 400
     user = get_profile(
         state,
         line_user_id,
-        start_public_trial=not bool(requested_beta),
+        start_public_trial=not bool(requested_beta) and not guardian_only,
     )
     # Re-apply preserved fields after get_profile defaults (merge, don't replace).
     for key, value in preserved.items():
@@ -4047,6 +4049,20 @@ def register_line_user(data_file, payload):
 
     if isinstance(existing, dict) and str(user.get("plan") or "") == "free":
         ensure_membership_trial(user, source="transition_trial")
+    own_trial_activated = False
+    if activate_own_trial:
+        used_source = free_eligibility_source(user)
+        if used_source and not membership_access_active(user):
+            return {
+                "ok": False,
+                "error": "free_eligibility_already_used",
+                "message": "你已使用過免費體驗；請選擇正式方案繼續使用報平安。",
+            }, 409
+        if not used_source:
+            own_trial_activated = ensure_membership_trial(
+                user,
+                source="public_trial",
+            )
 
     token = (
         (payload.get("access_token") if isinstance(payload, dict) else None)
@@ -4079,6 +4095,8 @@ def register_line_user(data_file, payload):
     status = build_status(user, state)
     status["beta_cohort"] = str(user.get("beta_cohort") or "")
     status["existing_user"] = bool(existing)
+    status["guardian_only"] = guardian_only
+    status["own_trial_activated"] = bool(own_trial_activated)
     return status, 200
 
 
@@ -6058,9 +6076,9 @@ def invite_bind_preview(data_file, payload):
         "invite_status": (pending or {}).get("status") or "legacy",
         "guardian_purpose": "你會收到對方的報平安、逾時未報平安、SOS 與安全守護通知。",
         "privacy_explanation": "定位只在對方主動求助或啟用安全守護時通知；你可隨時解除綁定，資料只用於守護通知。",
-        "requires_reciprocal_consent": bool(pending),
+        "requires_reciprocal_consent": False,
         "message": (
-            f"{inviter_name} 已是你的守護對象／已加入，是否互相設為守護人？"
+            f"{inviter_name} 已是你的守護人；本次邀請仍需你另外同意，才會新增另一方向的守護關係。"
             if is_reverse
             else "您收到一位親友的守護邀請"
         ),
@@ -6446,7 +6464,9 @@ def bind_emergency_contact(
     ).strip()
     activate_trial = bool(payload.get("activate_trial"))
     legacy_reciprocal = "activate_trial" not in payload
-    mutual_core = bool(payload.get("mutual_core"))
+    # 每一個守護方向都必須有自己的邀請與同意紀錄；舊客戶端即使傳入
+    # mutual_core=true，也不能跳過第二次同意直接改成雙向核心守護。
+    mutual_core = False
     if not inviter_id or not contact_line_user_id:
         return {"ok": False, "error": "缺少邀請人或守護人資料", "code": "missing_ids"}, 400
     if inviter_id == contact_line_user_id:
@@ -6764,7 +6784,7 @@ def bind_emergency_contact(
         pending_invite["accepted_at"] = accepted_at
         pending_invite["invitee_line_user_id"] = contact_line_user_id
 
-    # 互綁可選：兩邊互相設為核心（各受方案 core_guardian_alert_limit 約束）
+    # 反向邀請完成時，本次只建立新的單向關係；不修改另一方向的核心順位。
     mutual_core_applied = False
     if is_reverse_invite and mutual_core:
         inviter_core_ok = apply_is_primary_to_contact_line(
@@ -7016,10 +7036,7 @@ def bind_emergency_contact(
     )
     bind_message = ALREADY_BOUND_MESSAGE if was_duplicate else "綁定完成！你已成為對方的守護人。"
     if is_reverse_invite and not was_duplicate:
-        bind_message = (
-            f"互綁完成！你與「{inviter_name}」已互相設為守護人。"
-            + ("（已同時設為核心守護人）" if mutual_core_applied else "")
-        )
+        bind_message = f"綁定完成！你現在也會守護「{inviter_name}」。雙方的兩個守護方向均已各自同意。"
     owner_notice = {"status": "sent" if inviter_notified else "failed"}
     invitee_notice = {"status": "sent" if guardian_notified else "failed"}
     return {
