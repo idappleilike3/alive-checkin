@@ -176,6 +176,8 @@ class Release20260729Tests(unittest.TestCase):
         self.assertIn("199 活著版｜年費", share)
         self.assertIn("成為守護人免費，不會自動購買方案", share)
         self.assertIn("查看 14 天體驗與 199 詳細方案", share)
+        self.assertIn("請先停留在這個頁面", share)
+        self.assertIn("第二步：我已加入，選擇 LINE 好友分享", share)
         self.assertIn("body.post-share-visible .guide", share)
         self.assertIn('document.body.classList.add("post-share-visible")', share)
         self.assertIn('document.body.classList.remove("post-share-visible")', share)
