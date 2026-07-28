@@ -256,6 +256,24 @@ class Release20260729Tests(unittest.TestCase):
         self.assertIn("399／799 預設每日 2 次", page)
         self.assertIn("之後可到「我的會員」修改次數與時間", onboarding)
 
+    def test_beta_199_and_member_collapsible_history_support_and_calendar(self):
+        index = (ROOT / "index.html").read_text(encoding="utf-8")
+        beta = (ROOT / "beta-register.html").read_text(encoding="utf-8")
+        admin = (ROOT / "admin.html").read_text(encoding="utf-8")
+        self.assertIn("199 平安版｜月費", beta)
+        self.assertIn("199 平安版｜年費", beta)
+        self.assertIn('id="memberHistoryToggleBtn"', index)
+        self.assertIn('id="memberHistoryPanel" hidden', index)
+        self.assertIn('id="memberSupportToggleBtn"', index)
+        self.assertIn('id="memberSupportPanel" hidden', index)
+        self.assertNotIn("data-checkin-history-toggle", index)
+        self.assertIn(
+            'history: ["簽到月曆與平安紀錄", "799 日期備忘提醒", "簽到狀態"]',
+            index,
+        )
+        self.assertIn("799 守護版可點日期新增、查看或修改備忘提醒", index)
+        self.assertIn("LINE 私訊（主動推播，計入訊息量）", admin)
+
 
 if __name__ == "__main__":
     unittest.main()
