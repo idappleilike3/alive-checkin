@@ -389,9 +389,8 @@
         <h1 class="lead" id="inviteTitle">朋友邀請你成為核心守護人</h1>
         <p class="hint">當對方忘記報平安或遇到緊急狀況時，你可以及時收到 LINE 通知並協助聯絡。</p>
         <a class="open-btn" id="acceptGuardianCta" href="#" aria-describedby="lineOpenHelp">接受成為核心守護人</a>
-        <a class="open-btn secondary" id="acceptAndTrialCta" href="#" aria-describedby="trialOpenHelp">完成守護資料後，我也要申請 14 天體驗</a>
         <p class="privacy-note" id="lineOpenHelp">開啟後會先顯示邀請人與守護關係，經你同意才完成綁定</p>
-        <p class="privacy-note" id="trialOpenHelp">選擇體驗仍會先完成守護資料；不會自動互相綁定，也不會自動扣款</p>
+        <p class="privacy-note">接受邀請只會讓你免費接收對方通知，不會開啟自己的報平安功能。綁定完成後，若你也想報平安，可再按「我也要報平安｜免費體驗 14 天」。</p>
 
         <div class="flow" aria-label="綁定流程">
           <div class="flow-step"><span class="step-number">1</span>LINE 開啟</div>
@@ -465,7 +464,6 @@
       var openAction = (params.get("open") || "").trim();
       var statusEl = document.getElementById("status");
       var openBtn = document.getElementById("acceptGuardianCta");
-      var trialBtn = document.getElementById("acceptAndTrialCta");
       var altBtn = document.getElementById("openLiffAlt");
       var copyBtn = document.getElementById("copyLink");
       var demoBtn = document.getElementById("demoCheckinButton");
@@ -485,25 +483,24 @@
         return window.__INVITE_LIFF_ID__ || DEFAULT_LIFF_ID;
       }
 
-      function buildQuery(wantsTrial) {
+      function buildQuery() {
         var q = new URLSearchParams();
         if (inviteFrom) q.set("invite_from", inviteFrom);
         if (inviteToken) q.set("invite_token", inviteToken);
         if (friendInvite) q.set("friend_invite", friendInvite);
         if (openAction) q.set("open", openAction);
         if (!inviteFrom && !friendInvite && !openAction) q.set("open", "onboarding");
-        if (wantsTrial) q.set("trial_after_guardian", "1");
         return q.toString();
       }
 
       // 兩種官方入口：用 ? 不要用 /?（避免 LIFF 閘道 400）
-      function buildLiffUrl(wantsTrial) {
-        var qs = buildQuery(wantsTrial);
+      function buildLiffUrl() {
+        var qs = buildQuery();
         return "https://liff.line.me/" + getLiffId() + "?" + qs;
       }
 
-      function buildLineAppUrl(wantsTrial) {
-        var qs = buildQuery(wantsTrial);
+      function buildLineAppUrl() {
+        var qs = buildQuery();
         return "https://line.me/R/app/" + getLiffId() + "?" + qs;
       }
 
@@ -517,14 +514,10 @@
 
       var liffUrl = buildLiffUrl();
       var lineAppUrl = buildLineAppUrl();
-      var trialLiffUrl = buildLiffUrl(true);
-      var trialLineAppUrl = buildLineAppUrl(true);
       // Android：優先 line.me/R/app 強制喚起 LINE；其餘用 liff.line.me
       var primaryUrl = isAndroid() ? lineAppUrl : liffUrl;
       var secondaryUrl = isAndroid() ? liffUrl : lineAppUrl;
-      var trialUrl = isAndroid() ? trialLineAppUrl : trialLiffUrl;
       openBtn.href = primaryUrl;
-      trialBtn.href = trialUrl;
       if (altBtn) altBtn.href = secondaryUrl;
 
       function setStatus(text) {
@@ -534,13 +527,9 @@
       function refreshUrls() {
         liffUrl = buildLiffUrl();
         lineAppUrl = buildLineAppUrl();
-        trialLiffUrl = buildLiffUrl(true);
-        trialLineAppUrl = buildLineAppUrl(true);
         primaryUrl = isAndroid() ? lineAppUrl : liffUrl;
         secondaryUrl = isAndroid() ? liffUrl : lineAppUrl;
-        trialUrl = isAndroid() ? trialLineAppUrl : trialLiffUrl;
         openBtn.href = primaryUrl;
-        trialBtn.href = trialUrl;
         if (altBtn) altBtn.href = secondaryUrl;
       }
 
@@ -558,10 +547,6 @@
       openBtn.addEventListener("click", function (e) {
         e.preventDefault();
         openLine(primaryUrl);
-      });
-      trialBtn.addEventListener("click", function (e) {
-        e.preventDefault();
-        openLine(trialUrl);
       });
 
       if (altBtn) {
