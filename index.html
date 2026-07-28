@@ -82,7 +82,7 @@
       z-index: 2;
     }
     .theme-btn {
-      min-height: 38px;
+      min-height: 44px;
       border: 1px solid transparent;
       border-radius: 999px;
       cursor: pointer;
@@ -698,13 +698,14 @@
     }
     .member-subpanel-toggle {
       width: 100%;
+      min-height: 48px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
       border: 0;
       background: transparent;
-      padding: 0;
+      padding: 8px 0;
       color: inherit;
       font: inherit;
       font-size: 21px;
@@ -759,8 +760,17 @@
       display: flex;
       align-items: center;
       gap: 10px;
+      min-height: 48px;
+      padding: 6px 0;
       margin: 8px 0 12px;
       font-weight: 750;
+      cursor: pointer;
+    }
+    .daily-remind-toggle-row input {
+      width: 24px;
+      height: 24px;
+      flex: 0 0 24px;
+      accent-color: var(--accent);
     }
     .daily-remind-count-row {
       display: flex;
@@ -3721,6 +3731,7 @@
       display: grid;
       gap: 8px;
     }
+    .member-limit-banner[hidden] { display: none !important; }
     .member-limit-banner strong { color: #9a3412; font-size: 1.02rem; }
     .member-limit-banner p { margin: 0; color: #9a3412; line-height: 1.45; }
     .member-role-intro {
@@ -3754,13 +3765,46 @@
     }
     .member-role-intro-dismiss {
       flex-shrink: 0;
+      min-width: 64px;
+      min-height: 44px;
       border: 0;
       background: transparent;
       color: #64748b;
       font-size: 0.85rem;
       font-weight: 700;
-      padding: 4px 6px;
+      padding: 8px 10px;
       cursor: pointer;
+    }
+    #memberSupportForm label {
+      display: grid;
+      gap: 6px;
+      color: var(--text);
+      font-weight: 750;
+      text-align: left;
+    }
+    #memberSupportForm input,
+    #memberSupportForm select,
+    #memberSupportForm textarea {
+      width: 100%;
+      min-height: 48px;
+      padding: 11px 12px;
+      border: 1.5px solid var(--line);
+      border-radius: 10px;
+      color: var(--text);
+      background: var(--input);
+      font-size: 16px;
+    }
+    #memberSupportForm textarea {
+      min-height: 132px;
+      line-height: 1.55;
+      resize: vertical;
+    }
+    #memberSupportSubmitBtn { min-height: 48px; }
+    .legal-links a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      padding: 0 8px;
     }
     .member-role-card {
       padding: 12px 14px;
@@ -6928,7 +6972,7 @@
       }
       return rows.map((row) => {
         const name = escapeHtml(row?.display_name || "親友");
-        const accepted = formatMemberDate(row?.accepted_at || "");
+        const accepted = formatGuardianAddedAt({ accepted_at: row?.accepted_at || "" });
         const reminderTimes = Array.isArray(row?.reminder_times) && row.reminder_times.length
           ? row.reminder_times.join("、")
           : "尚未設定";
