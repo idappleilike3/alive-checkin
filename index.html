@@ -10201,7 +10201,7 @@
         listEl.innerHTML = guardians.map((c) => {
           const bound = isContactBound(c);
           const statusClass = bound ? "guardian-bind-ok" : "guardian-bind-pending";
-          const statusText = bound ? "✓ 已綁定" : "等待 LINE 綁定";
+          const statusText = bound ? "✓ 已完成綁定守護人" : "等待 LINE 綁定";
           const nick = contactPeerDisplayName(c);
           const inviteBtn = bound
             ? ""
