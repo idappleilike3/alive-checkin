@@ -5028,8 +5028,7 @@
       const source = params || readAppParams();
       const invite = {
         invite_from: String(source.get ? source.get("invite_from") : source.invite_from || "").trim(),
-        invite_token: String(source.get ? source.get("invite_token") : source.invite_token || "").trim(),
-        trial_after_guardian: String(source.get ? source.get("trial_after_guardian") : source.trial_after_guardian || "").trim()
+        invite_token: String(source.get ? source.get("invite_token") : source.invite_token || "").trim()
       };
       if (!invite.invite_from) return invite;
       try { sessionStorage.setItem(PENDING_GUARDIAN_INVITE_KEY, JSON.stringify(invite)); } catch (_) {}
@@ -5360,9 +5359,6 @@
       if (/^[A-Z0-9]{6,8}$/.test(friendInvite)) out.friend_invite = friendInvite;
       const betaCohort = String(read("beta_cohort") || "").trim().toUpperCase();
       if (betaCohort === "B399" || betaCohort === "B799") out.beta_cohort = betaCohort;
-      if (String(read("trial_after_guardian") || "").trim() === "1") {
-        out.trial_after_guardian = "1";
-      }
       for (const key of ["open", "page"]) {
         const action = String(read(key) || "").trim().toLowerCase();
         if (LOGIN_CONTINUATION_ACTIONS.has(action)) out[key] = action;
@@ -7897,7 +7893,6 @@
         btn.disabled = true;
         btn.textContent = "綁定中…";
       }
-      const trialAfterGuardian = getAppParam("trial_after_guardian") === "1";
       const guardianName = String($("inviteGuardianName")?.value || lineDisplayName || "").trim();
       const guardianRelationship = String($("inviteGuardianRelationship")?.value || "").trim();
       const guardianPhone = String($("inviteGuardianPhone")?.value || "").trim();
@@ -7912,7 +7907,7 @@
       try {
         const bindResult = await completeGuardianBindOnce(inviteFrom, {
           mutual_core: false,
-          activate_trial: trialAfterGuardian,
+          activate_trial: false,
           contact_display_name: guardianName,
           contact_relationship: guardianRelationship,
           contact_phone: guardianPhone
