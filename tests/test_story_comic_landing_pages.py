@@ -66,15 +66,17 @@ def test_guardian_invitation_uses_story_comic_before_acceptance():
     assert 'src="assets/daily-peace-logo.png"' in html
     assert 'id="acceptGuardianCta"' in html
     assert "接受成為核心守護人" in html
-    assert 'id="acceptAndTrialCta"' in html
-    assert "完成守護資料後，我也要申請 14 天體驗" in html
-    assert 'q.set("trial_after_guardian", "1")' in html
+    assert 'id="acceptAndTrialCta"' not in html
+    assert "完成守護資料後，我也要申請 14 天體驗" not in html
+    assert 'q.set("trial_after_guardian", "1")' not in html
+    assert "接受邀請只會讓你免費接收對方通知" in html
 
 
-def test_guardian_trial_opt_in_does_not_create_mutual_binding():
+def test_guardian_acceptance_cannot_activate_a_trial():
     html = (ROOT / "index.html").read_text(encoding="utf-8")
-    assert '"trial_after_guardian"' in html
-    assert 'const trialAfterGuardian = getAppParam("trial_after_guardian") === "1";' in html
     assert "mutual_core: false" in html
-    assert "activate_trial: trialAfterGuardian" in html
+    assert "activate_trial: false" in html
+    assert 'const trialAfterGuardian = getAppParam("trial_after_guardian") === "1";' not in html
+    assert "activate_trial: trialAfterGuardian" not in html
+    assert "activate_own_trial: true" in html
     assert "同時互相設為核心守護人" not in html
