@@ -200,6 +200,25 @@ class Release20260729Tests(unittest.TestCase):
         self.assertIn("startLineLogin(readSafeDeepLinkParams());", page)
         self.assertIn("只有外部瀏覽器或自動登入失敗時", page)
 
+    def test_member_center_render_does_not_call_missing_date_formatter(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("formatMemberDate(", page)
+        self.assertIn(
+            'formatGuardianAddedAt({ accepted_at: row?.accepted_at || "" })',
+            page,
+        )
+
+    def test_responsive_touch_targets_and_hidden_smart_reminder_banner(self):
+        index = (ROOT / "index.html").read_text(encoding="utf-8")
+        trial = (ROOT / "trial-14.html").read_text(encoding="utf-8")
+        beta = (ROOT / "beta-register.html").read_text(encoding="utf-8")
+        pricing = (ROOT / "liff" / "pricing.html").read_text(encoding="utf-8")
+        self.assertIn(".member-limit-banner[hidden] { display: none !important; }", index)
+        self.assertIn("min-height: 48px;", index)
+        self.assertIn("min-height:44px", trial)
+        self.assertIn("min-height:44px", beta)
+        self.assertIn("min-height: 48px;", pricing)
+
 
 if __name__ == "__main__":
     unittest.main()
