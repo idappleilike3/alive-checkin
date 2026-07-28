@@ -213,11 +213,11 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('id="pricingPageLink"', page)
         self.assertIn("查看完整方案與價目", page)
         self.assertIn(
-            "<tr><td>核心守護人</td><td>1</td><td>2</td><td>3</td><td>5</td><td>7</td><td>10</td><td>15</td></tr>",
+            "<tr><td>核心守護人</td><td>2</td><td>2</td><td>3</td><td>5</td><td>7</td><td>10</td><td>15</td></tr>",
             pricing,
         )
         self.assertIn(
-            "<tr><td>緊急聯絡人</td><td>2</td><td>4</td><td>10</td><td>15</td><td>25</td><td>35</td><td>50</td></tr>",
+            "<tr><td>緊急聯絡人</td><td>4</td><td>4</td><td>10</td><td>15</td><td>25</td><td>35</td><td>50</td></tr>",
             pricing,
         )
         self.assertIn(
@@ -233,14 +233,18 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("<tr><td>SOS</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td><td class=\"yes\">✓</td></tr>", pricing)
         self.assertNotIn("長照專線 1966", pricing)
 
-    def test_free_and_trial_include_sos_and_one_core_guardian(self):
+    def test_free_and_trial_include_sos_with_their_own_contact_limits(self):
         plans = load_plan_limits()
-        for plan in ("free", "trial"):
+        expected = {
+            "free": (1, 2, 3),
+            "trial": (2, 4, 6),
+        }
+        for plan, limits in expected.items():
             with self.subTest(plan=plan):
                 self.assertTrue(plans[plan]["sos_enabled"])
-                self.assertEqual(plans[plan]["core_guardian_alert_limit"], 1)
-                self.assertEqual(plans[plan]["emergency_contact_limit"], 2)
-                self.assertEqual(plans[plan]["contact_limit"], 3)
+                self.assertEqual(plans[plan]["core_guardian_alert_limit"], limits[0])
+                self.assertEqual(plans[plan]["emergency_contact_limit"], limits[1])
+                self.assertEqual(plans[plan]["contact_limit"], limits[2])
                 self.assertEqual(plans[plan]["friend_location_limit"], 0)
         self.assertEqual(plans["paid_799"]["core_guardian_alert_limit"], 10)
         self.assertEqual(plans["paid_799_year"]["core_guardian_alert_limit"], 15)
@@ -662,7 +666,9 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("立即升級守護", help_page)
         self.assertIn("問與答", help_page)
         self.assertIn("常見問題", faq_page)
-        self.assertIn("家人要怎麼先體驗 799 守護版", faq_page)
+        self.assertIn("14 天免費體驗包含哪些功能", faq_page)
+        self.assertIn("SOS 要怎麼送出？第三次按下會發生什麼", faq_page)
+        self.assertNotIn("測試階段", faq_page)
 
     def test_line_upgrade_reply_uses_online_liff_link_not_local_file(self):
         backend = (ROOT / "app.py").read_text(encoding="utf-8")

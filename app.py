@@ -304,19 +304,21 @@ PLAN_LIMITS = {
         "safety_guard_daily_limit": 0,
     },
     "trial": {
-        "contact_limit": 3,
-        "emergency_contact_limit": 2,
+        # 14 天免費體驗固定比照 199 活著版（月方案）。
+        "contact_limit": 6,
+        "emergency_contact_limit": 4,
         "friend_location_limit": 0,
         "daily_reminders": 1,
         "channels": ["line"],
-        "core_guardian_alert_limit": 1,
+        "location_mode": "snapshot_24h",
+        "core_guardian_alert_limit": 2,
         "realtime_tracking": False,
         "trajectory_days": 0,
         "offline_sync_days": 0,
         "sos_enabled": True,
         "guardian_group_limit": 0,
-        "safety_guard_hours": [1],
-        "safety_guard_daily_limit": 1,
+        "safety_guard_hours": [0.25],
+        "safety_guard_daily_limit": 2,
     },
     "paid_199": {
         "contact_limit": 6,
@@ -370,7 +372,7 @@ PLAN_LIMITS = {
         "contact_limit": 32,
         "emergency_contact_limit": 25,
         "friend_location_limit": 0,
-        "daily_reminders": 3,
+        "daily_reminders": 2,
         "channels": ["line"],
         "location_mode": "realtime",
         "core_guardian_alert_limit": 7,
@@ -2405,10 +2407,10 @@ def beta_access_active(profile, now=None):
 
 
 def effective_entitlement_plan(profile, now=None):
-    """Active public/transition trials receive 399 core rights, never 799 rights."""
+    """Active public/transition trials receive the paid 199 monthly rights."""
     now = now or current_app_time({})
     if str(profile.get("plan") or "") == "trial" and membership_access_active(profile, now):
-        return "paid_399"
+        return "paid_199"
     if beta_access_active(profile, now):
         return BETA_COHORT_PLAN.get(str(profile.get("beta_cohort") or ""), "paid_399")
     if str(profile.get("membership_source") or "") == "beta":
@@ -2421,15 +2423,14 @@ def plan_rules_for_effective_entitlement(profile, now=None):
         PLAN_LIMITS.get(effective_entitlement_plan(profile, now), PLAN_LIMITS["free"])
     )
     if str(profile.get("plan") or "") == "trial":
-        # One labeled group test is handled separately and never enables schedules.
+        # The 199-equivalent trial never unlocks guardian groups.
         rules["guardian_group_limit"] = 0
-        # The 14-day public trial may sample Safety Guard once per day,
-        # with the same 15-minute window as the paid 199 plan.
+        # Keep the same 15-minute Safety Guard rights and quota as paid 199.
         rules["safety_guard_hours"] = (
             [0.25] if membership_access_active(profile, now) else []
         )
         rules["safety_guard_daily_limit"] = (
-            1 if membership_access_active(profile, now) else 0
+            2 if membership_access_active(profile, now) else 0
         )
     return rules
 
@@ -3708,6 +3709,47 @@ def build_status(profile, state=None, now=None):
                 state, profile, now=now
             )
 
+    guarding_details = []
+    for raw_detail in profile.get("guarding_details") or []:
+        if not isinstance(raw_detail, dict):
+            continue
+        detail = dict(raw_detail)
+        peer_id = str(detail.get("line_user_id") or "").strip()
+        peer = ((state or {}).get("users") or {}).get(peer_id) or {}
+        peer_times = reminder_times_for_profile(peer) if peer else []
+        detail["reminder_times"] = peer_times
+        detail["today_status"] = (
+            "已報平安" if peer and profile_is_today_checked(peer, now=now)
+            else "尚未報平安"
+        )
+        detail["latest_sos_status"] = ""
+        if state is not None and peer_id:
+            peer_events = [
+                event
+                for event in ((state.get("sos_events") or {}).values())
+                if isinstance(event, dict)
+                and str(event.get("owner_line_user_id") or "") == peer_id
+                and any(
+                    str(delivery.get("target") or "") == owner_id
+                    for delivery in (event.get("deliveries") or [])
+                    if isinstance(delivery, dict)
+                )
+            ]
+            if peer_events:
+                peer_events.sort(
+                    key=lambda event: str(
+                        event.get("updated_at")
+                        or event.get("sent_at")
+                        or event.get("created_at")
+                        or ""
+                    ),
+                    reverse=True,
+                )
+                detail["latest_sos_status"] = str(
+                    peer_events[0].get("status") or "sent"
+                )
+        guarding_details.append(detail)
+
     return {
         "ok": True,
         **access,
@@ -3752,11 +3794,9 @@ def build_status(profile, state=None, now=None):
             for c in (profile.get("contacts") or [])
             if contact_is_notifiable_line_guardian(c, owner_id) and bool(c.get("is_primary"))
         ),
-        "general_guardian_count": sum(
-            1
-            for c in (profile.get("contacts") or [])
-            if contact_is_notifiable_line_guardian(c, owner_id) and not bool(c.get("is_primary"))
-        ),
+        # Legacy field retained for old clients; user-facing "一般" guardians no
+        # longer exist. Accepted LINE guardians are presented as core guardians.
+        "general_guardian_count": 0,
         "bound_guardians": [
             {
                 "id": str(c.get("id") or "").strip(),
@@ -3777,8 +3817,9 @@ def build_status(profile, state=None, now=None):
                 "is_primary": bool(c.get("is_primary")),
                 "accepted_at": str(c.get("accepted_at") or c.get("created_at") or "").strip(),
                 "picture_url": str(c.get("picture_url") or c.get("pictureUrl") or "").strip(),
-                # role = 核心／一般層級；contact_role = 守護人／緊急聯絡人（勿混用）
-                "role": "核心" if c.get("is_primary") else "一般",
+                "bind_notify_status": copy.deepcopy(c.get("bind_notify_status") or {}),
+                "bind_notify_sent_at": str(c.get("bind_notify_sent_at") or "").strip(),
+                "role": "核心守護人",
                 "contact_role": resolve_contact_role(c),
             }
             for c in (profile.get("contacts") or [])
@@ -3788,7 +3829,7 @@ def build_status(profile, state=None, now=None):
             1 for c in (profile.get("contacts") or []) if contact_is_profile_complete(c)
         ),
         "guarding_for": list(profile.get("guarding_for") or []),
-        "guarding_details": list(profile.get("guarding_details") or []),
+        "guarding_details": guarding_details,
         "invited_by": str(profile.get("invited_by") or "").strip(),
         "contact_capacity_reminder_enabled": bool(profile.get("contact_capacity_reminder_enabled", False)),
         "guardian_details_reminder_enabled": bool(profile.get("guardian_details_reminder_enabled", True)),
@@ -6093,11 +6134,10 @@ def build_bind_success_notices(inviter, contacts, inviter_id, guardian_name, *, 
     core_n = sum(1 for c in bound_rows if c.get("is_primary"))
     if bound_rows and core_n == 0:
         core_n = 1
-    general_n = max(0, len(bound_rows) - core_n)
     inviter_notice = (
         "✅ 綁定成功\n\n"
         f"對方：{guardian_name}（已成為你的守護人）\n"
-        f"目前：核心守護人 {core_n} 位／一般守護人 {general_n} 位。\n\n"
+        f"目前：核心守護人 {len(bound_rows)} 位。\n\n"
         "之後若你逾時未報平安或發出 SOS，系統會透過 LINE 私訊通知對方。\n"
         "請點「完成資料」補齊自己的聯絡資料；LINE 通知已立即啟用。"
     )
@@ -6567,6 +6607,25 @@ def bind_emergency_contact(
         ),
         None,
     )
+    # A guardian relationship is unique per inviter/invitee pair. Collapse
+    # legacy duplicate rows before applying the accepted invitation.
+    duplicate_rows = [
+        contact
+        for contact in contacts
+        if get_contact_line_id(contact) == contact_line_user_id
+    ]
+    if len(duplicate_rows) > 1:
+        keep = existing
+        for duplicate in duplicate_rows[1:]:
+            for key, value in duplicate.items():
+                if key not in keep or keep.get(key) in (None, "", [], {}):
+                    keep[key] = value
+        contacts = [
+            contact
+            for contact in contacts
+            if contact is keep
+            or get_contact_line_id(contact) != contact_line_user_id
+        ]
     # 名額已滿時：優先把 LINE 綁到尚未綁定的聯絡人資料列（避免 Android 看到 contact_limit exceeded）
     unbound_slot = None
     if not existing:
@@ -6686,8 +6745,9 @@ def bind_emergency_contact(
     # 首位守護人自動設為核心（is_primary）
     if existing is not None:
         existing["contact_role"] = "guardian"
-    if contacts and not any(bool(c.get("is_primary")) for c in contacts):
-        contacts[0]["is_primary"] = True
+        existing["is_primary"] = True
+    elif contacts:
+        contacts[-1]["is_primary"] = True
     inviter["contacts"] = contacts
 
     # Reverse index on invitee: who they guard (admin + home can show 邀請人)
@@ -7492,6 +7552,7 @@ def bind_guardian_group(data_file, payload):
         trial_test
         and str(profile.get("plan") or "") == "trial"
         and membership_access_active(profile)
+        and effective_entitlement_plan(profile) == "paid_399"
     )
     trial_claim = None
     if trial_test_eligible:
@@ -7502,6 +7563,7 @@ def bind_guardian_group(data_file, payload):
             if (
                 str(current_profile.get("plan") or "") != "trial"
                 or not membership_access_active(current_profile)
+                or effective_entitlement_plan(current_profile) != "paid_399"
             ):
                 raise ValueError("trial_group_test_not_eligible")
             claim = claim_trial_group_test(current_profile, group_id)
@@ -9482,8 +9544,8 @@ def trigger_sos(data_file, payload, config=None):
         if selected_guardian_ids is not None
         else None
     )
-    # 核心守護人（is_primary）優先收到 SOS；其餘依 priority
-    # 與安全守護相同：只用 contact_is_bound_guardian，排除本人 ID／緊急聯絡人
+    # SOS directly consumes the accepted core-guardian relationship. A second,
+    # reciprocal invitation is not required for the guardian to receive help.
     contacts = sorted(
         profile.get("contacts") or [],
         key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
@@ -9491,9 +9553,9 @@ def trigger_sos(data_file, payload, config=None):
     phone_contacts = collect_phone_only_contacts(contacts)
     line_contacts = []
     for contact in contacts:
-        if not contact_is_reciprocal_core_guardian(
-            state, line_user_id, contact
-        ):
+        if not contact_is_notifiable_line_guardian(contact, line_user_id):
+            continue
+        if not bool(contact.get("is_primary")):
             continue
         target = get_contact_line_id(contact)
         if not target or target == line_user_id:
@@ -9660,9 +9722,9 @@ def trigger_sos(data_file, payload, config=None):
     phone_contacts = collect_phone_only_contacts(contacts)
     line_contacts = []
     for contact in contacts:
-        if not contact_is_reciprocal_core_guardian(
-            state, line_user_id, contact
-        ):
+        if not contact_is_notifiable_line_guardian(contact, line_user_id):
+            continue
+        if not bool(contact.get("is_primary")):
             continue
         target = get_contact_line_id(contact)
         if not target or target == line_user_id:
@@ -15064,6 +15126,7 @@ def normalize_smart_reminder(raw, index=0):
         "notify_group": notify_group,
         "delivery_target": delivery_target,
         "eve_remind": bool(raw.get("eve_remind", True)),
+        "enabled": bool(raw.get("enabled", True)),
         "created_at": str(raw.get("created_at") or datetime.now().isoformat(timespec="seconds")),
         "updated_at": str(raw.get("updated_at") or ""),
     }
@@ -15460,6 +15523,9 @@ def send_smart_reminders(config):
         }
         due_groups = {}
         for reminder in list_smart_reminders(user):
+            if not reminder.get("enabled", True):
+                skipped += 1
+                continue
             rid = reminder.get("id")
             remind_hm = str(reminder.get("remind_time") or "09:00").strip()
             if not REMINDER_TIME_PATTERN.match(remind_hm):

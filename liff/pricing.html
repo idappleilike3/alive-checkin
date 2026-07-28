@@ -38,15 +38,62 @@
   .logo { font-size: 42px; }
   h1 { margin: 8px 0 6px; font-size: 26px; }
   .header p { margin: 0; color: var(--muted); }
-  .policy {
-    background: rgba(46, 204, 113, 0.12);
-    border: 1px solid rgba(46, 204, 113, 0.35);
-    border-radius: 14px;
-    padding: 14px 16px;
-    margin-bottom: 20px;
-    line-height: 1.55;
+  .trial-callout {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 14px;
+    align-items: start;
+    margin: 0 0 22px;
+    padding: 18px;
+    border: 1px solid rgba(46, 204, 113, 0.55);
+    border-radius: 18px;
+    background: linear-gradient(135deg, rgba(46, 204, 113, 0.18), rgba(15, 118, 110, 0.16));
+    box-shadow: 0 14px 38px rgba(0, 0, 0, 0.16);
   }
-  .policy strong { color: var(--ok); }
+  .trial-callout-icon {
+    width: 48px;
+    height: 48px;
+    display: grid;
+    place-items: center;
+    border-radius: 14px;
+    background: rgba(46, 204, 113, 0.2);
+    font-size: 26px;
+  }
+  .trial-callout-label {
+    display: inline-flex;
+    width: fit-content;
+    margin-bottom: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: rgba(46, 204, 113, 0.2);
+    color: #86efac;
+    font-size: 12px;
+    font-weight: 800;
+  }
+  .trial-callout h2 { margin: 0 0 7px; font-size: 20px; color: #dcfce7; }
+  .trial-callout p { margin: 0; color: #cbd5e1; line-height: 1.7; }
+  .trial-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+  .trial-chips span {
+    padding: 5px 9px;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.35);
+    color: #e2e8f0;
+    font-size: 12px;
+  }
+  .policy {
+    margin-bottom: 24px;
+  }
+  .policy > h2 { margin: 0 0 12px; font-size: 19px; }
+  .policy-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .policy-item {
+    padding: 14px;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 14px;
+    background: rgba(30, 41, 59, 0.72);
+  }
+  .policy-item strong { display: block; margin-bottom: 6px; color: var(--ok); }
+  .policy-item p { margin: 0; color: #cbd5e1; font-size: 14px; line-height: 1.65; }
   .plans-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -132,10 +179,19 @@
   .footer-notes { margin-top: 24px; color: var(--muted); font-size: 13px; line-height: 1.6; }
   .footer-notes .warning { color: #fbbf24; }
   .footer-notes .emergency { color: #f87171; }
+  @media (max-width: 620px) {
+    .container { padding: 20px 14px 40px; }
+    .header { margin-bottom: 22px; }
+    .trial-callout { grid-template-columns: 1fr; gap: 10px; padding: 16px; }
+    .trial-callout-icon { width: 42px; height: 42px; font-size: 23px; }
+    .policy-grid { grid-template-columns: 1fr; }
+    .plan-card { padding: 20px 18px; gap: 10px; }
+    .plan-features { gap: 11px; }
+    .plan-features li { font-size: 15px; line-height: 1.55; }
+  }
 </style>
 </head>
 <body>
-  <p class="notice"><strong>新會員可享一次 14 天安心體驗。</strong>體驗到期不會自動扣款，可自行選擇 199／399／799 方案；邀請守護人不會延長體驗。</p>
 <div class="container">
 
   <header class="header">
@@ -144,24 +200,39 @@
     <p>陪您守護家人，也守護自己</p>
   </header>
 
-  <div class="policy">
-    <strong>全方案共通：</strong>可綁 1 位核心守護人起跳，SOS 緊急求助附單次即時定位；完成今日簽到後，當天剩餘提醒自動停止。
-    <br>⏱ <strong>安全守護：</strong>14 天體驗＝15 分鐘／每日 1 次；199＝15 分鐘／每日 2 次；399＝1／3 小時／每日 3 次；799＝1／3／6／8 小時／每日 5 次。免費會員不含持續定位。
-    <br>⏰ <strong>提醒設定：</strong>399 月費／年費：每日可選 1～2 次；799 月費／年費：每日可選 1～3 次。兩者預設 12:00、18:00，799 第 3 次預設 22:00。
-    <br>⭐ <strong>799 樂年方案：</strong>更多核心／緊急聯絡人、多階段未回報提醒、平安紀錄、備忘錄、智慧提醒、守護群（僅安全事件）。
-  </div>
+  <section class="trial-callout" aria-labelledby="trialCalloutTitle">
+    <div class="trial-callout-icon" aria-hidden="true">🎁</div>
+    <div>
+      <span class="trial-callout-label">新會員限定一次</span>
+      <h2 id="trialCalloutTitle">14 天免費體驗｜199 活著版</h2>
+      <p>不用刷卡、不會自動扣款。體驗結束後，再自行選擇是否使用 199／399／799 正式方案。</p>
+      <div class="trial-chips" aria-label="免費體驗權益">
+        <span>2 位核心守護人</span><span>4 位緊急聯絡人</span><span>15 分鐘安全守護</span><span>SOS</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="policy" aria-labelledby="policyTitle">
+    <h2 id="policyTitle">先看懂方案差異</h2>
+    <div class="policy-grid">
+      <article class="policy-item"><strong>✓ 每日報平安</strong><p>完成今日簽到後，當天剩餘提醒自動停止，不重複打擾。</p></article>
+      <article class="policy-item"><strong>⏱ 安全守護</strong><p>14 天體驗＝199 活著版：15 分鐘、每日 2 次。399 提供 1／3 小時；799 提供 1／3／6／8 小時。</p></article>
+      <article class="policy-item"><strong>⏰ 提醒設定</strong><p>399 月費／年費：每日可選 1～2 次；799 月費／年費：每日可選 1～3 次。預設 12:00、18:00，第三次為 22:00。</p></article>
+      <article class="policy-item"><strong>⭐ 799 專屬</strong><p>日期備忘、智能提醒、多階段未回報與守護群，適合需要多人共同守護的家庭。</p></article>
+    </div>
+  </section>
 
   <div class="plans-grid">
 
     <div class="plan-card">
-      <div class="plan-name">免費／試用</div>
+      <div class="plan-name">14 天免費體驗</div>
       <div class="plan-price">NT$0</div>
-      <div class="plan-cycle">基本守護</div>
+      <div class="plan-cycle">199 活著版月方案完整體驗</div>
       <ul class="plan-features">
-        <li>核心守護人 1 位、緊急聯絡人 2 位</li>
+        <li>核心守護人 2 位、緊急聯絡人 4 位</li>
         <li>LINE 私聊預警 1 次／日</li>
-        <li>免費：SOS 單次即時定位</li>
-        <li>14 天體驗：安全守護 15 分鐘／每日 1 次</li>
+        <li>SOS 緊急求助與單次即時定位</li>
+        <li>安全守護 15 分鐘／每日 2 次</li>
         <li>簽到後停止當日提醒</li>
         <li class="disabled">多階段提醒／守護群</li>
       </ul>
@@ -267,7 +338,7 @@
       <thead>
         <tr>
           <th>權益</th>
-          <th>免費</th>
+          <th>14天體驗</th>
           <th>199月</th>
           <th>199年</th>
           <th>399月</th>
@@ -277,10 +348,10 @@
         </tr>
       </thead>
       <tbody>
-        <tr><td>核心守護人</td><td>1</td><td>2</td><td>3</td><td>5</td><td>7</td><td>10</td><td>15</td></tr>
-        <tr><td>緊急聯絡人</td><td>2</td><td>4</td><td>10</td><td>15</td><td>25</td><td>35</td><td>50</td></tr>
+        <tr><td>核心守護人</td><td>2</td><td>2</td><td>3</td><td>5</td><td>7</td><td>10</td><td>15</td></tr>
+        <tr><td>緊急聯絡人</td><td>4</td><td>4</td><td>10</td><td>15</td><td>25</td><td>35</td><td>50</td></tr>
         <tr><td>LINE 私聊預警／日</td><td>1 次</td><td>1 次</td><td>2 次</td><td>1～2 次</td><td>1～2 次</td><td>1～3 次</td><td>1～3 次</td></tr>
-        <tr><td>安全守護</td><td>免費無；體驗 15 分鐘×1</td><td>15 分鐘×2</td><td>15 分鐘×2</td><td>1／3h×3</td><td>1／3h×3</td><td>1／3／6／8h×5</td><td>1／3／6／8h×5</td></tr>
+        <tr><td>安全守護</td><td>15 分鐘×2</td><td>15 分鐘×2</td><td>15 分鐘×2</td><td>1／3h×3</td><td>1／3h×3</td><td>1／3／6／8h×5</td><td>1／3／6／8h×5</td></tr>
         <tr><td>SOS</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
         <tr><td>月曆備忘</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td></tr>
         <tr><td>早中晚／多階段／智慧提醒</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td></tr>

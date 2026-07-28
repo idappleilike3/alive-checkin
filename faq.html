@@ -48,7 +48,7 @@
       box-shadow: 0 12px 28px rgba(6, 95, 70, 0.08);
     }
     .intro h2 { font-size: clamp(26px, 6.4vw, 32px); font-weight: 950; color: #065f46; margin-bottom: 10px; }
-    .intro p, .intro li { font-size: clamp(20px, 5vw, 24px); font-weight: 820; color: #14532d; }
+    .intro p, .intro li { font-size: clamp(17px, 4.4vw, 20px); font-weight: 760; color: #14532d; }
     .intro ul { margin: 10px 0 0 24px; }
     .intro li + li { margin-top: 8px; }
     .actions { display: grid; gap: 12px; margin: 18px 0; grid-template-columns: repeat(3, 1fr); }
@@ -65,16 +65,48 @@
     .home { background: #ecfdf5; color: #065f46; border: 2px solid #34d399; }
     .price { background: linear-gradient(135deg, #ef4444, #e11d48); color: #fff; box-shadow: 0 12px 26px rgba(225, 29, 72, 0.22); }
     .help { background: #fff7ed; color: #9a3412; border: 2px solid #fb923c; }
-    .faq-list { display: grid; gap: 16px; }
-    article {
-      padding: 22px;
-      border-radius: 22px;
+    .faq-list { display: grid; gap: 12px; }
+    .faq-group-title {
+      margin: 14px 4px 0;
+      font-size: clamp(21px, 5.4vw, 26px);
+      font-weight: 950;
+      color: #831843;
+    }
+    details {
+      overflow: hidden;
+      border-radius: 18px;
       background: rgba(255, 255, 255, 0.95);
-      border: 2px solid #f9a8d4;
+      border: 1px solid #f9a8d4;
       box-shadow: 0 12px 28px rgba(91, 21, 53, 0.08);
     }
-    h2 { font-size: clamp(28px, 7vw, 34px); font-weight: 950; color: #5b1535; line-height: 1.3; margin-bottom: 10px; }
-    p, li { font-size: clamp(22px, 5.6vw, 26px); font-weight: 820; color: #3f1d2d; }
+    summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 18px 20px;
+      color: #5b1535;
+      font-size: clamp(18px, 4.8vw, 22px);
+      font-weight: 920;
+      line-height: 1.45;
+      cursor: pointer;
+      list-style: none;
+    }
+    summary::-webkit-details-marker { display: none; }
+    summary::after {
+      content: "＋";
+      flex: 0 0 auto;
+      color: #be185d;
+      font-size: 24px;
+    }
+    details[open] summary {
+      background: linear-gradient(135deg, #fff1f2, #fdf2f8);
+      border-bottom: 1px solid #fbcfe8;
+    }
+    details[open] summary::after { content: "−"; }
+    .answer { padding: 18px 20px 20px; }
+    .answer p + p, .answer ul + p { margin-top: 12px; }
+    p, li { font-size: clamp(17px, 4.4vw, 20px); font-weight: 740; color: #3f1d2d; }
     ul { margin-left: 24px; }
     li + li { margin-top: 10px; }
     .warn {
@@ -87,7 +119,11 @@
       font-size: clamp(20px, 5.2vw, 24px);
       font-weight: 950;
     }
-    @media (max-width: 560px) { .actions { grid-template-columns: 1fr; } }
+    @media (max-width: 560px) {
+      .actions { grid-template-columns: 1fr; }
+      summary { padding: 17px 16px; }
+      .answer { padding: 16px; }
+    }
   </style>
 </head>
 <body>
@@ -99,13 +135,11 @@
 
     <section class="intro" aria-label="每日平安是什麼">
       <h2>每日平安在做什麼？</h2>
-      <p>幫你每天報一次平安。若超過你設定的時間還沒報，或按下 SOS／開啟安全守護，系統會用 <strong>LINE 私訊</strong>通知已綁定的核心守護人。不自動簡訊、不自動撥電話。</p>
+      <p>幫你每天用一個按鈕報平安。逾時未回報、發出 SOS 或開啟安全守護時，系統會依功能用 <strong>LINE 私訊</strong>通知已綁定的核心守護人。</p>
       <ul>
-        <li><strong>核心守護人</strong>：完成 LINE 綁定後，可收逾時未報平安、SOS、安全守護等通知。</li>
-        <li><strong>緊急聯絡人</strong>：電話備援（手動撥打），平時不收每日未報提醒，也不會自動推播。</li>
-        <li><strong>逾時未報平安</strong>：可在會員中心選 <strong>24／48／72 小時</strong>（預設 48）。滿設定時數後通知；另有約 15 分鐘可取消預警緩衝。</li>
-        <li><strong>守護群</strong>（799）：群組只收安全事件；個人私訊仍需「一鍵邀請」綁定。群組通知為選用、預設關閉。</li>
-        <li><strong>一次安心體驗</strong>：新會員可享一次 14 天體驗；邀請核心守護人不會延長體驗。</li>
+        <li><strong>核心守護人</strong>：完成 LINE 邀請與同意後，接收重要通知。</li>
+        <li><strong>緊急聯絡人</strong>：保存姓名與電話，供需要時手動聯絡。</li>
+        <li><strong>14 天免費體驗</strong>：新會員限用一次，功能比照 199 活著版。</li>
       </ul>
     </section>
 
@@ -116,75 +150,95 @@
     </nav>
 
     <section class="faq-list" aria-label="常見問題">
-      <article>
-        <h2>未報平安多久會通知家人？</h2>
-        <p>在「會員中心 → 每日提醒／逾時設定」選擇 <strong>24 小時、48 小時或 72 小時</strong>（新會員預設 48）。從上次報平安起算，滿你選的時數後會通知核心守護人；系統另保留約 15 分鐘緩衝，方便你一鍵取消誤報。</p>
-        <p>對外說明可簡記為「滿 N 小時後通知」。</p>
-      </article>
-      <article>
-        <h2>核心守護人 vs 緊急聯絡人？</h2>
-        <ul>
-          <li><strong>核心守護人</strong>：需加入官方帳號並完成邀請綁定，才有合法 LINE 通知通道。會收到逾時未報、SOS、安全守護等重要通知。</li>
-          <li><strong>緊急聯絡人</strong>：留下姓名與電話當備援；不會自動簡訊或自動撥號。</li>
-        </ul>
-      </article>
-      <article>
-        <h2>各方案差在哪裡？</h2>
-        <p>全方案都有 SOS，可指定核心守護人並附上單次即時位置。免費會員不含持續定位；14 天體驗為 15 分鐘、每日 1 次；199 為 15 分鐘、每日 2 次；399 可選 1／3 小時、每日 3 次；799 可選 1／3／6／8 小時、每日 5 次。799 另含早中晚、多階段未回報、智慧提醒與守護群（僅安全事件）。</p>
-      </article>
-      <article>
-        <h2>家人要怎麼先體驗 799 守護版？</h2>
-        <p>測試階段可以先讓家人加入「每日平安」官方帳號，再用 LIFF 登入一次。免費／試用就能綁 1 位核心守護人並測試 SOS；若要測守護群與更多核心名額，再到後台把該會員調整成 799 守護版。</p>
-      </article>
-      <article>
-        <h2>守護人一定要加入官方帳號嗎？</h2>
-        <p>要。核心守護人需要加入官方帳號並點開邀請連結同意綁定，系統才有合法授權，也才有 LINE 通知通道。緊急聯絡人只作電話備援，不會自動推播。</p>
-      </article>
-      <article>
-        <h2>一鍵邀請守護人是什麼？</h2>
-        <p>使用者按下按鈕後，會直接開啟 LINE 分享，把綁定邀請傳給家人。對方不用另外註冊帳號，點同意後就能成為核心守護人。邀請不會延長 14 天體驗。綁定成功後，雙方都會收到確認私訊（對方是誰、何時會通知）。</p>
-      </article>
-      <article>
-        <h2>SOS 每個人都可以用嗎？</h2>
-        <p>可以。SOS／需要幫忙不依方案價格分級，所有會員都能使用。連續按 3 次才會通知家人，避免誤觸。送出後 10 分鐘內可回報「我已安全／取消通知」。兩次誤報會進入 3 天加強確認；一週內重複誤報會限制一般群發 7 天，但仍可撥打 110／119，並保留通知一位主要核心守護人的入口。</p>
-        <p>智慧生活提醒預設只通知自己，每日最多 2 則；可改選一位已綁核心守護人，每日最多 1 則。同一時段會合併，不會送到守護群。</p>
-        <div class="warn">有立即危險請先撥打 119 或 110，再使用系統通知守護人。</div>
-      </article>
-      <article>
-        <h2>安全守護怎麼用？守護人收得到通知嗎？</h2>
-        <ul>
-          <li>先用「一鍵邀請」讓家人完成 LINE 綁定（對方需加入官方帳號好友）</li>
-          <li>選擇時長 → 點「開始安全守護」→ 允許位置權限</li>
-          <li>畫面會顯示「已通知幾位守護人」；若為 0 會說明原因（例如未綁定、未加好友、封鎖）</li>
-        </ul>
-        <p>只有「守護人」會收到 LINE 推播；緊急聯絡人僅作電話備援，不會自動推播。安全守護是主動開啟的時段內定位分享，可隨時停止；不提供軌跡重播或好友地圖追蹤。</p>
-      </article>
-      <article>
-        <h2>守護群怎麼綁定？群組會吵嗎？</h2>
-        <ul>
-          <li>在 LINE 建立家人群組</li>
-          <li>把「每日平安」官方帳號邀進群</li>
-          <li>由會員本人或管理員點「點我綁定守護群」</li>
-          <li>看到「我已完成守護群設定」就完成</li>
-        </ul>
-        <p>799 月費最多 1 群、年費最多 3 群；每群約 50 人上限。群組只收安全事件；逾時／SOS 預設仍私訊核心守護人，群組通知需另行開啟。進群 ≠ 已綁定個人守護人。</p>
-      </article>
-      <article>
-        <h2>可以中途升級嗎？要重設資料嗎？</h2>
-        <p>可以。補差額即可升級，不必重新設定聯絡人。另有 7 天考慮期，方便家人一起決定是否升級。</p>
-      </article>
-      <article>
-        <h2>聯絡客服多久會回覆？</h2>
-        <p>📩 LINE 留言 24 小時內盡快回覆。若是立即危險，請先撥打 119 或 110。</p>
-      </article>
-      <article>
-        <h2>付款和信用卡安全嗎？</h2>
-        <p>付款會前往藍新金流安全頁完成。平台不保存完整信用卡號，只保存訂單狀態、付款結果與必要的交易資訊。年費方案為付 10 個月送 2 個月（等同年繳享 12 個月服務）。</p>
-      </article>
-      <article>
-        <h2>我可以刪除自己的資料嗎？</h2>
-        <p>可以。所有會員都能查看、匯出與刪除自己的資料，這是基本個資權利，不會拿來當付費差異。方案到期後，付費提醒與付費定位會暫停；守護人、緊急聯絡人與會員設定不會因固定期限自動刪除，續費後可直接恢復。若要刪除資料，可在會員中心提出申請並完成身分確認。</p>
-      </article>
+      <h2 class="faq-group-title">開始使用</h2>
+      <details open>
+        <summary>14 天免費體驗包含哪些功能？</summary>
+        <div class="answer">
+          <p>14 天免費體驗比照 <strong>199 活著版月方案</strong>：2 位核心守護人、4 位緊急聯絡人、每日 1 次 LINE 私聊預警、15 分鐘安全守護每日 2 次，以及 SOS。每位新會員限用一次，不用刷卡，也不會自動扣款。</p>
+        </div>
+      </details>
+      <details>
+        <summary>每天要怎麼報平安？多久沒報會通知？</summary>
+        <div class="answer">
+          <p>在首頁點一次「我平安」即可完成當日回報，完成後當天剩餘提醒會自動停止。逾時門檻可在會員中心選擇 <strong>24／48／72 小時</strong>，預設為 48 小時；滿設定時數仍未回報時，系統才通知核心守護人。</p>
+        </div>
+      </details>
+
+      <h2 class="faq-group-title">守護人與通知</h2>
+      <details>
+        <summary>核心守護人和緊急聯絡人有什麼不同？</summary>
+        <div class="answer">
+          <ul>
+            <li><strong>核心守護人</strong>需加入官方 LINE，並接受你的邀請；可接收逾時未報、SOS 與安全守護通知。</li>
+            <li><strong>緊急聯絡人</strong>是姓名與電話備援，供需要時手動聯絡；系統不會自動簡訊或自動撥號。</li>
+          </ul>
+        </div>
+      </details>
+      <details>
+        <summary>怎麼邀請核心守護人？綁定後會通知雙方嗎？</summary>
+        <div class="answer">
+          <p>在首頁或會員中心點「一鍵邀請核心守護人」，選擇 LINE 好友分享。對方加入官方帳號、登入並同意後即完成綁定；邀請人與守護人都會收到綁定完成通知。</p>
+        </div>
+      </details>
+      <details>
+        <summary>同一位家人可以重複綁定嗎？會自動變成互相守護嗎？</summary>
+        <div class="answer">
+          <p>同一人不會重複建立資料。一次邀請只建立一個守護方向；若雙方都想成為彼此的核心守護人，另一方也要另外發出邀請並取得同意。</p>
+        </div>
+      </details>
+
+      <h2 class="faq-group-title">提醒與安全功能</h2>
+      <details>
+        <summary>SOS 要怎麼送出？第三次按下會發生什麼？</summary>
+        <div class="answer">
+          <p>SOS 需要連續按 3 次，前兩次是防誤觸確認；第三次才會正式送出，通知你選擇的核心守護人。送出後可回報「我已安全」或取消通知。</p>
+          <div class="warn">若有立即危險，請先撥打 119、110 或 112。本服務是輔助通知工具，不取代報警或救護。</div>
+        </div>
+      </details>
+      <details>
+        <summary>安全守護會一直追蹤位置嗎？</summary>
+        <div class="answer">
+          <p>不會。安全守護只有在你主動開始後，才於所選時段分享位置；可隨時停止，時間到也會自動結束。14 天體驗與 199 為 15 分鐘；399 可選 1／3 小時；799 可選 1／3／6／8 小時。</p>
+        </div>
+      </details>
+      <details>
+        <summary>智能提醒與日期備忘怎麼使用？</summary>
+        <div class="answer">
+          <p>這兩項是 799 守護版功能。日期備忘可先新增日期、內容與提醒時間；智能提醒可新增生日、紀念日、回診等事項，也可暫停後再重新開啟。生活提醒以 LINE 私訊送出，不會送進守護群。</p>
+        </div>
+      </details>
+      <details>
+        <summary>守護群是什麼？每個方案都有嗎？</summary>
+        <div class="answer">
+          <p>守護群是 799 專屬的家庭 LINE 群通知：月費最多 1 群，年費最多 3 群，每群上限約 50 人。把官方帳號加入群組並依畫面完成綁定即可；加入守護群不等於已完成個人核心守護人綁定。</p>
+        </div>
+      </details>
+
+      <h2 class="faq-group-title">方案、付款與資料</h2>
+      <details>
+        <summary>各方案差在哪裡？</summary>
+        <div class="answer">
+          <p>199 適合基本報平安與短時間安全守護；399 增加守護人名額、每日最多 2 次私聊預警，以及 1／3 小時安全守護；799 再加入每日最多 3 次預警、多階段未回報、智能提醒、日期備忘與守護群。完整人數與年費差異請看「方案與價目」。</p>
+        </div>
+      </details>
+      <details>
+        <summary>可以升級、取消或停止續費嗎？</summary>
+        <div class="answer">
+          <p>可以在會員中心查看目前方案與到期日，並依頁面提供的方式升級或停止續費。升級後原有守護人、緊急聯絡人與提醒設定會保留，不必重新輸入。</p>
+        </div>
+      </details>
+      <details>
+        <summary>付款安全嗎？可以刪除自己的資料嗎？</summary>
+        <div class="answer">
+          <p>付款會前往金流服務的安全頁面，平台不保存完整信用卡號。你也可以在會員中心查看、匯出或申請刪除自己的資料；個資權利不因方案不同而改變。</p>
+        </div>
+      </details>
+      <details>
+        <summary>遇到問題要怎麼聯絡？</summary>
+        <div class="answer">
+          <p>可透過「每日平安」官方 LINE 留言，客服會在 24 小時內盡快回覆。若是立即危險，請直接撥打 119、110 或 112。</p>
+        </div>
+      </details>
     </section>
   </main>
 </body>

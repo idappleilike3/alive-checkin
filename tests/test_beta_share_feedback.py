@@ -23,7 +23,7 @@ class BetaShareFeedbackTests(unittest.TestCase):
         onboarding = (ROOT / "liff" / "onboarding.html").read_text(encoding="utf-8")
         invite = (ROOT / "invite.html").read_text(encoding="utf-8")
         guide = (ROOT / "guardian-guide.html").read_text(encoding="utf-8")
-        self.assertIn("14 天新會員安心體驗", onboarding)
+        self.assertIn("14 天免費體驗｜199 活著版", onboarding)
         self.assertIn("guardian-story-mother-daughter", onboarding)
         self.assertIn("guardian-story-mother-daughter", invite)
         self.assertIn("不會全天偷追蹤", guide)

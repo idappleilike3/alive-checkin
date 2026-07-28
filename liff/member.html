@@ -95,6 +95,21 @@
   .contact-card-toggle:focus-visible { outline: 3px solid #00B900; outline-offset: -3px; }
   .contact-card-chevron { color: #00B900; font-size: 20px; transition: transform .18s ease; }
   .contact-card-toggle[aria-expanded="true"] .contact-card-chevron { transform: rotate(180deg); }
+  .member-contact-block > summary {
+    list-style: none;
+    min-height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: #166534;
+    font-size: 20px;
+    font-weight: 900;
+    cursor: pointer;
+  }
+  .member-contact-block > summary::-webkit-details-marker { display: none; }
+  .member-contact-block > summary::after { content: "⌄"; }
+  .member-contact-block[open] > summary::after { content: "⌃"; }
   .contact-card-body { display: grid; gap: 8px; padding: 0 16px 16px; border-top: 1px solid #E8E8E8; }
   .contact-card-body[hidden] { display: none; }
   .guardian-name { font-weight: 800; font-size: 18px; color: #00B900; }
@@ -311,8 +326,8 @@
 </div>
 
 <!-- 守護人管理（會員中心：編輯／刪除在此） -->
-<div class="card">
-  <h2>👨‍👩‍👧 守護人（Guardian）</h2>
+<details class="card member-contact-block" id="guardianDataBlock">
+  <summary>核心守護人</summary>
   <p class="hint"><strong>用途</strong>：平常每天守護你的人。<strong>會收到</strong>：未報平安／SOS／安全守護。<strong>免費建議</strong>：1 位，請用一鍵邀請完成 LINE 綁定。</p>
   <p class="hint">守護人必須透過 LINE 登入並同意後，才會完成雙向綁定。</p>
   <div id="guardianList">
@@ -323,7 +338,7 @@
     <button class="btn" type="button" id="addGuardianBtn">＋ 新增守護人資料</button>
   </div>
   <p class="hint" id="shareHint" style="display:none;color:#006400;"></p>
-</div>
+</details>
 
 <div class="card" id="smartReminderCard">
   <button class="btn" type="button" id="smartRemindersToggleBtn" aria-expanded="false" aria-controls="smartRemindersPanel" style="width:100%;display:flex;justify-content:space-between;align-items:center;font-weight:800;">
@@ -346,8 +361,8 @@
   </div>
 </div>
 
-<div class="card">
-  <h2>☎️ 緊急聯絡人（Emergency Contact）</h2>
+<details class="card member-contact-block" id="emergencyDataBlock">
+  <summary>緊急聯絡人</summary>
   <p class="hint"><strong>用途</strong>：電話備援，緊急時可手動撥打（不會自動群發）。與守護人的 LINE 通知分開。<strong>免費建議</strong>：2 位（爸媽，或配偶＋好友）。</p>
   <div id="emergencyList">
     <div class="empty">載入中...</div>
@@ -355,7 +370,7 @@
   <div class="contact-actions">
     <button class="btn btn-primary" type="button" id="addEmergencyBtn">＋ 新增緊急聯絡人</button>
   </div>
-</div>
+</details>
 
 <!-- 每日提醒時間設定 -->
 <div class="card">
@@ -652,8 +667,9 @@ async function refreshSmartReminders() {
     listEl.innerHTML = state.smartReminders.length
       ? state.smartReminders.map((r) => `
         <div class="guardian-row">
-          <div class="guardian-name">${escape(r.emoji || "🗓️")} ${escape(r.target_name)} ／ ${escape(r.category_label || "")} ／ ${escape(r.month)}/${escape(r.day)}</div>
+          <div class="guardian-name">${escape(r.emoji || "🗓️")} ${escape(r.target_name)} ／ ${escape(r.category_label || "")} ／ ${escape(r.month)}/${escape(r.day)} ／ ${r.enabled === false ? "已停用" : "已啟用"}</div>
           <div class="guardian-actions">
+            <button class="btn" type="button" data-smart-toggle="${escape(r.id)}" data-enabled="${r.enabled === false ? "false" : "true"}">${r.enabled === false ? "啟用" : "停用"}</button>
             <button class="btn btn-edit" type="button" data-smart-edit="${escape(r.id)}">編輯</button>
             <button class="btn btn-danger" type="button" data-smart-del="${escape(r.id)}">刪除</button>
           </div>
@@ -661,6 +677,12 @@ async function refreshSmartReminders() {
       : `<div class="empty">尚未新增提醒</div>`;
     listEl.querySelectorAll("[data-smart-edit]").forEach((btn) => {
       btn.addEventListener("click", () => editSmartReminder(btn.dataset.smartEdit));
+    });
+    listEl.querySelectorAll("[data-smart-toggle]").forEach((btn) => {
+      btn.addEventListener("click", () => toggleSmartReminder(
+        btn.dataset.smartToggle,
+        btn.dataset.enabled !== "true"
+      ));
     });
     listEl.querySelectorAll("[data-smart-del]").forEach((btn) => {
       btn.addEventListener("click", () => deleteSmartReminder(btn.dataset.smartDel));
@@ -741,7 +763,10 @@ async function submitSmartReminder() {
       note,
       notify_private: true,
       notify_group: false,
-      eve_remind: true
+      eve_remind: true,
+      enabled: state.smartEditingId
+        ? ((state.smartReminders || []).find((row) => row.id === state.smartEditingId)?.enabled !== false)
+        : true
     })
   });
   const data = await res.json();
@@ -763,6 +788,22 @@ async function deleteSmartReminder(id) {
   const data = await res.json();
   if (!res.ok || data.ok === false) {
     alert(data.error || "刪除失敗");
+    return;
+  }
+  await refreshSmartReminders();
+}
+
+async function toggleSmartReminder(id, enabled) {
+  const existing = (state.smartReminders || []).find((row) => row.id === id);
+  if (!existing) return;
+  const res = await fetch(`${API_BASE}/api/smart-reminders`, {
+    method: "POST",
+    headers: lineAuthHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ ...existing, line_user_id: state.lineUserId, enabled: Boolean(enabled) })
+  });
+  const data = await res.json();
+  if (!res.ok || data.ok === false) {
+    alert(data.error || "更新失敗");
     return;
   }
   await refreshSmartReminders();

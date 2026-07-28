@@ -223,7 +223,7 @@ class SafetyGuardTests(unittest.TestCase):
         expires = datetime.fromisoformat(body["safety_guard"]["expires_at"])
         self.assertEqual(expires - started, timedelta(minutes=15))
 
-    def test_active_trial_gets_one_fifteen_minute_session_per_day(self):
+    def test_active_trial_gets_two_fifteen_minute_sessions_per_day(self):
         state = alive_app.load_state(self.data_file)
         owner = alive_app.get_profile(state, "u_trial_guard")
         owner["plan"] = "trial"
@@ -263,9 +263,25 @@ class SafetyGuardTests(unittest.TestCase):
                 "duration": 0.25,
             },
         )
-        self.assertEqual(second_code, 429)
-        self.assertEqual(second.get("error_code"), "trial_daily_limit_reached")
-        self.assertIn("明天", second.get("message") or "")
+        self.assertEqual(second_code, 200)
+        self.assertEqual(second["safety_guard"]["duration_hours"], 0.25)
+
+        alive_app.stop_location_sharing(
+            self.data_file, {"line_user_id": "u_trial_guard"}
+        )
+        third, third_code = alive_app.update_location(
+            self.data_file,
+            {
+                "line_user_id": "u_trial_guard",
+                "latitude": 25.002,
+                "longitude": 121.502,
+                "city": "台北市",
+                "duration": 0.25,
+            },
+        )
+        self.assertEqual(third_code, 429)
+        self.assertEqual(third.get("error_code"), "trial_daily_limit_reached")
+        self.assertIn("明天", third.get("message") or "")
 
     def test_paid_plans_enforce_daily_session_limits(self):
         cases = [

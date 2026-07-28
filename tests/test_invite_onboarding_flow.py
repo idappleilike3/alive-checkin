@@ -54,15 +54,14 @@ class InviteOnboardingFlowTests(unittest.TestCase):
             self.assertTrue(app_module.membership_access_active(guardian))
             self.assertTrue(result["own_trial_activated"])
 
-    def test_share_page_explains_official_line_and_four_steps(self):
+    def test_share_page_explains_official_line_and_three_steps(self):
         html = (ROOT / "liff/share-invite.html").read_text(encoding="utf-8")
         self.assertIn("加入「每日平安」官方 LINE", html)
         self.assertIn("https://line.me/R/ti/p/%40042kwqib", html)
         for copy in (
-            "1. 加入官方 LINE",
-            "2. LINE 登入",
-            "3. 選擇好友分享",
-            "4. 對方填資料並接受綁定",
+            "1. 選擇 LINE 好友",
+            "2. 對方登入並同意",
+            "3. 綁定完成後立即生效",
         ):
             self.assertIn(copy, html)
 

@@ -18,10 +18,10 @@ class TrialEntitlementTests(unittest.TestCase):
             "trial_end": (self.now + timedelta(days=14)).isoformat(timespec="seconds"),
         }
 
-    def test_active_trial_gets_399_core_entitlement_not_799(self):
+    def test_active_trial_gets_199_entitlement(self):
         self.assertEqual(
             app_module.effective_entitlement_plan(self.profile, self.now),
-            "paid_399",
+            "paid_199",
         )
         self.assertEqual(
             app_module.plan_rules_for_effective_entitlement(self.profile, self.now)[
@@ -30,17 +30,12 @@ class TrialEntitlementTests(unittest.TestCase):
             0,
         )
 
-    def test_trial_may_claim_exactly_one_labeled_group_test(self):
+    def test_trial_does_not_include_a_guardian_group_test(self):
         first = app_module.claim_trial_group_test(
             self.profile, "C-family", now=self.now
         )
-        second = app_module.claim_trial_group_test(
-            self.profile, "C-other", now=self.now + timedelta(minutes=1)
-        )
-        self.assertTrue(first["claimed"])
-        self.assertTrue(first["message"].startswith("這是測試通知"))
-        self.assertFalse(second["claimed"])
-        self.assertEqual(second["reason"], "already_used")
+        self.assertFalse(first["claimed"])
+        self.assertEqual(first["reason"], "not_eligible")
 
     def test_labeled_test_actions_are_two_per_day_and_ten_minutes_apart(self):
         first = app_module.consume_labeled_test_action(
@@ -72,7 +67,7 @@ class TrialEntitlementTests(unittest.TestCase):
 
             self.assertEqual(
                 app_module.plan_rules(profile)["daily_reminders"],
-                app_module.PLAN_LIMITS["paid_399"]["daily_reminders"],
+                app_module.PLAN_LIMITS["paid_199"]["daily_reminders"],
             )
             self.assertEqual(
                 app_module.plan_rules(profile)["guardian_group_limit"], 0
@@ -85,21 +80,10 @@ class TrialEntitlementTests(unittest.TestCase):
                     "trial_test": True,
                 },
             )
-            self.assertEqual(code, 200)
-            self.assertTrue(result["trial_test"])
-            self.assertIn("這是測試通知", result["trial_test_message"])
-            second, second_code = app_module.bind_guardian_group(
-                data_file,
-                {
-                    "line_user_id": "U-owner",
-                    "group_id": "C-test-2",
-                    "trial_test": True,
-                },
-            )
-            self.assertEqual(second_code, 409)
-            self.assertEqual(second["error"], "trial_group_test_already_used")
+            self.assertEqual(code, 403)
+            self.assertEqual(result["required_plan"], "paid_799")
 
-    def test_parallel_trial_group_binds_claim_only_one_test(self):
+    def test_parallel_trial_group_binds_are_both_rejected(self):
         with TemporaryDirectory() as temp_dir:
             data_file = Path(temp_dir) / "data.json"
             app_module.save_state(data_file, {
@@ -123,11 +107,11 @@ class TrialEntitlementTests(unittest.TestCase):
                     )[1],
                     ("C-one", "C-two"),
                 ))
-            self.assertEqual(sorted(codes), [200, 409])
+            self.assertEqual(sorted(codes), [403, 403])
             state = app_module.load_state(data_file)
-            self.assertEqual(len(state.get("guardian_groups") or {}), 1)
+            self.assertEqual(len(state.get("guardian_groups") or {}), 0)
 
-    def test_failed_trial_group_delivery_is_retryable_with_same_key(self):
+    def test_trial_group_request_does_not_create_delivery_state(self):
         with TemporaryDirectory() as temp_dir:
             data_file = Path(temp_dir) / "data.json"
             app_module.save_state(data_file, {
@@ -147,26 +131,12 @@ class TrialEntitlementTests(unittest.TestCase):
                     "trial_test": True,
                 },
             )
+            self.assertEqual(first_code, 403)
+            self.assertEqual(first["required_plan"], "paid_799")
             state = app_module.load_state(data_file)
-            delivery = state["users"]["U-owner"]["trial_group_test_delivery"]
-            original_key = delivery["retry_key"]
-            delivery["status"] = "failed"
-            app_module.save_state(data_file, state)
-
-            retry, retry_code = app_module.bind_guardian_group(
-                data_file,
-                {
-                    "line_user_id": "U-owner",
-                    "group_id": "C-test",
-                    "trial_test": True,
-                },
-            )
-
-            self.assertEqual((first_code, retry_code), (200, 200))
-            self.assertTrue(retry["trial_test_recovered"])
-            self.assertEqual(retry["trial_test_retry_key"], original_key)
-            self.assertEqual(
-                first["trial_test_retry_key"], retry["trial_test_retry_key"]
+            self.assertNotIn(
+                "trial_group_test_delivery",
+                state["users"]["U-owner"],
             )
 
 
