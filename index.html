@@ -3715,6 +3715,19 @@
       font-weight: 800;
       font-size: 0.95rem;
       cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .member-contact-tab-arrow {
+      display: inline-block;
+      font-size: 1.18rem;
+      line-height: 1;
+      transition: transform .18s ease;
+    }
+    .member-contact-tab[aria-expanded="true"] .member-contact-tab-arrow {
+      transform: rotate(180deg);
     }
     .member-contact-tab[aria-selected="true"] {
       background: #15803d;
@@ -3722,6 +3735,25 @@
       color: #fff;
     }
     .member-contact-panel[hidden] { display: none !important; }
+    .guarding-empty-state {
+      padding: 18px;
+      border: 1.5px dashed #86efac;
+      border-radius: 14px;
+      background: linear-gradient(145deg, #f0fdf4, #ffffff);
+      text-align: center;
+    }
+    .guarding-empty-state strong {
+      display: block;
+      color: #166534;
+      font-size: 1.02rem;
+      margin-bottom: 6px;
+    }
+    .guarding-empty-state p {
+      margin: 0;
+      color: #4b5563;
+      line-height: 1.65;
+      font-size: 0.92rem;
+    }
     .member-limit-banner {
       margin: 12px 0;
       padding: 14px 16px;
@@ -4414,8 +4446,8 @@
 
         <div class="member-data-section" id="memberContactsManageSection">
           <div class="member-contact-tabs" role="tablist" aria-label="聯絡人類型">
-            <button class="member-contact-tab" id="memberTabCoreBtn" type="button" role="tab" aria-selected="false" aria-expanded="false" aria-controls="memberGuardianSection" data-contact-tab="core">核心守護人</button>
-            <button class="member-contact-tab" id="memberTabEmergencyBtn" type="button" role="tab" aria-selected="false" aria-expanded="false" aria-controls="memberEmergencySection" data-contact-tab="emergency">緊急聯絡人</button>
+            <button class="member-contact-tab" id="memberTabCoreBtn" type="button" role="tab" aria-selected="false" aria-expanded="false" aria-controls="memberGuardianSection" data-contact-tab="core"><span>核心守護人</span><span class="member-contact-tab-arrow" aria-hidden="true">⌄</span></button>
+            <button class="member-contact-tab" id="memberTabEmergencyBtn" type="button" role="tab" aria-selected="false" aria-expanded="false" aria-controls="memberEmergencySection" data-contact-tab="emergency"><span>緊急聯絡人</span><span class="member-contact-tab-arrow" aria-hidden="true">⌄</span></button>
           </div>
 
           <div class="member-contact-panel" id="memberGuardianSection" role="tabpanel" data-contact-panel="core" hidden>
@@ -4472,7 +4504,10 @@
           <h4 style="margin:14px 0 8px;">我正在守護的人</h4>
           <p class="helper">成為守護人免費，可免費接收對方的報平安、逾時與 SOS 通知；不會自動取得自己的報平安方案。</p>
           <div class="member-data-list" id="memberGuardingForList">
-            <div class="member-data-row"><span>目前狀態</span><strong>尚未守護其他人</strong></div>
+            <div class="guarding-empty-state">
+              <strong>目前尚未守護其他人</strong>
+              <p>想守護家人時，請對方從會員中心點「一鍵邀請守護人」傳給你；你登入並同意後，對方的報平安與重要通知就會顯示在這裡。</p>
+            </div>
           </div>
         </div>
 
@@ -6968,7 +7003,7 @@
     function renderGuardingForRows(details) {
       const rows = Array.isArray(details) ? details : [];
       if (!rows.length) {
-        return '<div class="member-data-row"><span>目前狀態</span><strong>尚未守護其他人</strong></div>';
+        return '<div class="guarding-empty-state"><strong>目前尚未守護其他人</strong><p>想守護家人時，請對方從會員中心點「一鍵邀請守護人」傳給你；你登入並同意後，對方的報平安與重要通知就會顯示在這裡。</p></div>';
       }
       return rows.map((row) => {
         const name = escapeHtml(row?.display_name || "親友");
@@ -10188,6 +10223,10 @@
       return 1;
     }
 
+    function onboardingDefaultReminderCount(status) {
+      return Math.min(planDailyReminderCount(status), 2);
+    }
+
     function reminderSlotLabel(index, total) {
       if (total <= 1) return "每日提醒時間";
       return `第 ${index + 1} 次提醒`;
@@ -10271,19 +10310,18 @@
       if (guardianStep) guardianStep.hidden = true;
       if (reminderStep) reminderStep.hidden = false;
 
-      const count = planDailyReminderCount(currentStatusData || {});
+      const maxCount = planDailyReminderCount(currentStatusData || {});
+      const count = onboardingDefaultReminderCount(currentStatusData || {});
       const defaults = defaultReminderTimesForCount(count);
       renderOnboardingReminderSlots(defaults);
 
       $("onboardingTitle").textContent = "私訊預警通知提醒設定";
-      $("onboardingIntro").textContent = "守護人已新增。接下來請確認每日簽到提醒時間；不調整也可直接使用預設。";
-      $("onboardingStepLabel").textContent = `步驟 4／4　私訊預警通知提醒設定（本方案 ${count} 次）`;
+      $("onboardingIntro").textContent = "守護人已新增。請確認每日簽到提醒時間；若不選，系統會自動使用預設時間。";
+      $("onboardingStepLabel").textContent = `步驟 4／4　私訊預警通知提醒設定（預設 ${count} 次）`;
       $("onboardingReminderHint").textContent =
         count === 1
-          ? "預設中午 12:00。可自行更改。"
-          : count === 2
-            ? "預設中午 12:00、晚上 18:00。可自行更改。"
-            : "預設 12:00、18:00、晚上 22:00。可自行更改。";
+          ? "預設中午 12:00。之後可到「我的會員」修改時間。"
+          : `399／799 預設每日 2 次：中午 12:00、晚上 18:00。之後可到「我的會員」修改次數與時間${maxCount > 2 ? "（799 最多可設 3 次）" : ""}。`;
       // Scroll overlay to top so step-2 reminder controls below the fold are reachable
       const modal = $("onboardingModal");
       if (modal) {
@@ -10737,15 +10775,9 @@
       const errorEl = $("onboardingReminderError");
       const saveBtn = $("onboardingReminderSaveBtn");
       if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
-      const times = readOnboardingReminderTimes();
-      const expected = planDailyReminderCount(currentStatusData || {});
-      if (times.length < expected) {
-        if (errorEl) {
-          errorEl.textContent = `請設定完整 ${expected} 個提醒時間`;
-          errorEl.hidden = false;
-        }
-        return;
-      }
+      const expected = onboardingDefaultReminderCount(currentStatusData || {});
+      let times = readOnboardingReminderTimes().slice(0, expected);
+      if (times.length < expected) times = defaultReminderTimesForCount(expected);
       saveBtn.disabled = true;
       saveBtn.textContent = "儲存中...";
       try {
