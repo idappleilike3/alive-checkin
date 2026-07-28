@@ -1571,8 +1571,8 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertTrue(dry["dry_run"])
         self.assertEqual(dry["pairs_notified"], 0)
 
-    def test_reverse_invite_preview_and_mutual_core_bind(self):
-        """媽媽已綁女兒後，女兒反向邀請媽媽 → is_reverse + 可互設核心。"""
+    def test_reverse_invite_requires_a_second_independent_consent(self):
+        """媽媽、女兒要互相守護，必須完成兩次獨立邀請與同意。"""
         first, code1 = app_module.bind_emergency_contact(
             self.data_file,
             {
@@ -1597,7 +1597,7 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(pcode, 200)
         self.assertTrue(preview["is_reverse_invite"])
         self.assertEqual(preview["inviter_display_name"], "女兒")
-        self.assertIn("已是你的守護對象", preview["message"])
+        self.assertIn("本次邀請仍需你另外同意", preview["message"])
 
         preview2, pcode2 = app_module.invite_bind_preview(
             self.data_file,
@@ -1618,9 +1618,10 @@ class BindAndHomeGateTests(unittest.TestCase):
         )
         self.assertEqual(code2, 200)
         self.assertTrue(second["is_reverse_invite"])
-        self.assertTrue(second["mutual_core_requested"])
-        self.assertTrue(second["mutual_core_applied"])
-        self.assertIn("互綁完成", second["message"])
+        self.assertFalse(second["mutual_core_requested"])
+        self.assertFalse(second["mutual_core_applied"])
+        self.assertNotIn("互綁完成", second["message"])
+        self.assertIn("兩個守護方向均已各自同意", second["message"])
 
         state2 = app_module.load_state(self.data_file)
         mom = state2["users"]["U-mom"]
@@ -1636,14 +1637,15 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertIn("U-daughter", mom.get("guarding_for") or [])
         self.assertIn("U-mom", daughter.get("guarding_for") or [])
 
-    def test_spa_has_mutual_core_invite_ui(self):
+    def test_spa_has_one_way_guardian_and_separate_trial_ui(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
-        self.assertIn("mutualCoreCheckbox", page)
-        self.assertIn("同時互相設為核心守護人", page)
         self.assertIn("apiInviteBindPreview", page)
-        self.assertIn("確認互相設為守護人", page)
         self.assertIn("is_reverse_invite", page)
-        self.assertIn("mutual_core", page)
+        self.assertIn("我也要報平安｜免費體驗 14 天", page)
+        self.assertIn("startMyOwnTrialFromGuardianSuccess", page)
+        self.assertIn("guardian_only: Boolean(inviteFrom", page)
+        self.assertNotIn("mutualCoreCheckbox", page)
+        self.assertNotIn("同時互相設為核心守護人", page)
 
 
 if __name__ == "__main__":
