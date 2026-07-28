@@ -3951,7 +3951,9 @@
           <strong>邀請信任的親友一起守護</strong>
           <span>對方先加入「每日平安」官方 LINE，再登入並同意後，才會完成「對方守護你」的綁定</span>
         </div>
-        <button class="mvp-reward-btn share-contact-invite-btn" type="button">一鍵邀請守護人</button>
+        <button class="mvp-reward-btn share-contact-invite-btn" type="button">一鍵分享邀請核心守護人</button>
+        <button class="mvp-reward-btn" type="button" onclick="showTab('member')">查看核心守護人綁定狀態</button>
+        <small>狀態會顯示：等待加入官方 LINE／等待接受，或已加入官方 LINE 並完成綁定</small>
       </div>
       <div class="mvp-bound-summary" id="mvpBoundSummary" hidden>
         <strong id="mvpBoundCountText">已綁定守護人 0 位</strong>
@@ -4412,6 +4414,16 @@
           </div>
         </div>
 
+        <div class="member-data-section" id="memberGuardianDirectionSection">
+          <h3>守護關係</h3>
+          <p class="helper"><strong>守護我的人</strong>會收到我的報平安與重要通知；名單請在上方「核心守護人」查看。</p>
+          <h4 style="margin:14px 0 8px;">我正在守護的人</h4>
+          <p class="helper">成為守護人免費，可免費接收對方的報平安、逾時與 SOS 通知；不會自動取得自己的報平安方案。</p>
+          <div class="member-data-list" id="memberGuardingForList">
+            <div class="member-data-row"><span>目前狀態</span><strong>尚未守護其他人</strong></div>
+          </div>
+        </div>
+
         <div class="member-data-section" id="memberDailyReminderSection">
           <h3>每日提醒與逾時設定</h3>
           <p class="helper" id="dailyReminderPlanHint">依方案設定每日提醒次數與時段。</p>
@@ -4727,6 +4739,7 @@
       <div class="line-trust"><span class="line-logo">LINE</span> LINE 官方授權綁定</div>
       <h2 id="inviteAcceptTitle">您收到一位親友的守護邀請</h2>
       <p id="inviteAcceptBody">成為核心守護人免費。你將收到對方的報平安、逾時未報平安、SOS 與安全守護通知；定位只在對方主動求助或啟用安全守護時通知，也可隨時解除綁定。</p>
+      <p><strong>這次只會由您守護邀請人，不會自動互相綁定。</strong></p>
       <div class="invite-profile-fields">
         <label>您的姓名（必填）
           <input id="inviteGuardianName" type="text" maxlength="40" autocomplete="name" required>
@@ -4739,6 +4752,18 @@
         </label>
       </div>
       <button class="agree-btn" id="acceptGuardianInviteBtn" type="button">同意成為守護人</button>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="guardianBindSuccessPrompt" hidden>
+    <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="guardianBindSuccessTitle">
+      <h2 id="guardianBindSuccessTitle">核心守護綁定完成</h2>
+      <p>您現在可以免費收到對方的報平安、逾時與 SOS 通知。這次只完成「您守護對方」。</p>
+      <p>若您也想按「我平安」讓家人收到通知，需要另外開通自己的 14 天體驗或正式方案。</p>
+      <div class="actions">
+        <button class="action-btn primary" id="startOwnTrialBtn" type="button">我也要報平安｜免費體驗 14 天</button>
+        <button class="action-btn" id="guardianBindSuccessCloseBtn" type="button">完成，我只接收通知</button>
+      </div>
     </div>
   </div>
 
@@ -4991,7 +5016,37 @@
     }
 
     function getAppParam(key) {
-      return String(readAppParams().get(key) || "").trim();
+      const direct = String(readAppParams().get(key) || "").trim();
+      if (direct) return direct;
+      const restored = restorePendingGuardianInvite();
+      return String(restored[key] || "").trim();
+    }
+
+    const PENDING_GUARDIAN_INVITE_KEY = "alive_pending_guardian_invite_v1";
+
+    function rememberPendingGuardianInvite(params = null) {
+      const source = params || readAppParams();
+      const invite = {
+        invite_from: String(source.get ? source.get("invite_from") : source.invite_from || "").trim(),
+        invite_token: String(source.get ? source.get("invite_token") : source.invite_token || "").trim(),
+        trial_after_guardian: String(source.get ? source.get("trial_after_guardian") : source.trial_after_guardian || "").trim()
+      };
+      if (!invite.invite_from) return invite;
+      try { sessionStorage.setItem(PENDING_GUARDIAN_INVITE_KEY, JSON.stringify(invite)); } catch (_) {}
+      return invite;
+    }
+
+    function restorePendingGuardianInvite() {
+      try {
+        const parsed = JSON.parse(sessionStorage.getItem(PENDING_GUARDIAN_INVITE_KEY) || "{}");
+        return parsed && typeof parsed === "object" ? parsed : {};
+      } catch (_) {
+        return {};
+      }
+    }
+
+    function clearPendingGuardianInvite() {
+      try { sessionStorage.removeItem(PENDING_GUARDIAN_INVITE_KEY); } catch (_) {}
     }
 
     let pendingAccountMigrationCode = "";
@@ -5344,6 +5399,13 @@
     }
 
     function startLineLogin(extraParams = {}) {
+      if (typeof rememberPendingGuardianInvite === "function") {
+        rememberPendingGuardianInvite({
+          ...(typeof restorePendingGuardianInvite === "function" ? restorePendingGuardianInvite() : {}),
+          ...readSafeDeepLinkParams(),
+          ...extraParams
+        });
+      }
       if (!window.liff || typeof liff.login !== "function") {
         showLineLoginRequired(extraParams);
         return false;
@@ -6020,9 +6082,6 @@
       };
       const inviteToken = String(getAppParam("invite_token") || "").trim();
       if (inviteToken) body.invite_token = inviteToken;
-      if (options && options.mutual_core) {
-        body.mutual_core = true;
-      }
       body.activate_trial = Boolean(options && options.activate_trial);
       body.contact_display_name = String(options.contact_display_name || body.contact_display_name || "").trim();
       body.contact_relationship = String(options.contact_relationship || "").trim();
@@ -6826,6 +6885,18 @@
       });
     }
 
+    function renderGuardingForRows(details) {
+      const rows = Array.isArray(details) ? details : [];
+      if (!rows.length) {
+        return '<div class="member-data-row"><span>目前狀態</span><strong>尚未守護其他人</strong></div>';
+      }
+      return rows.map((row) => {
+        const name = escapeHtml(row?.display_name || "親友");
+        const accepted = formatMemberDate(row?.accepted_at || "");
+        return `<div class="member-data-row"><span>${name}</span><strong>已完成單向守護${accepted ? `・${escapeHtml(accepted)}` : ""}</strong></div>`;
+      }).join("");
+    }
+
     function renderMemberCenter() {
       const status = currentStatusData || {};
       const displayName = lineDisplayName || status.display_name || "LINE 會員";
@@ -6957,6 +7028,10 @@
       const emergencyList = $("memberEmergencyList");
       if (emergencyList) {
         emergencyList.innerHTML = renderContactManageRows(emergencies, "尚未新增緊急聯絡人");
+      }
+      const guardingForList = $("memberGuardingForList");
+      if (guardingForList) {
+        guardingForList.innerHTML = renderGuardingForRows(status.guarding_details || []);
       }
       const bindManageList = (listEl) => {
         if (!listEl || listEl.dataset.bound === "true") return;
@@ -7621,6 +7696,52 @@
       } catch (_) {}
     }
 
+    function showInviteGuardianProfileForm() {
+      const modal = $("inviteAcceptPrompt");
+      if (!modal) return;
+      modal.hidden = false;
+      document.body.classList.add("invite-modal-open");
+      const first = $("inviteGuardianName");
+      if (first && typeof first.focus === "function") setTimeout(() => first.focus(), 50);
+    }
+
+    async function startMyOwnTrialFromGuardianSuccess() {
+      const button = $("startOwnTrialBtn");
+      if (!lineUserId || !button) return;
+      const originalText = button.textContent;
+      button.disabled = true;
+      button.textContent = "正在開通 14 天體驗…";
+      try {
+        const response = await fetch("/api/" + "line/register", {
+          method: "POST",
+          headers: await authHeaders(),
+          body: JSON.stringify({
+            line_user_id: lineUserId,
+            display_name: lineDisplayName,
+            picture_url: linePictureUrl || "",
+            activate_own_trial: true
+          })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          if (result.error === "free_eligibility_already_used") {
+            window.location.href = "liff/pricing.html";
+            return;
+          }
+          throw new Error(result.message || "目前無法開通體驗，請稍後再試。");
+        }
+        $("guardianBindSuccessPrompt").hidden = true;
+        await refreshStatus().catch(() => {});
+        alert("14 天免費體驗已開通。接著請邀請一位親友成為你的核心守護人。");
+        openShareInvitePage("home");
+      } catch (error) {
+        alert(error?.message || "目前無法開通體驗，請稍後再試。");
+      } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    }
+
     /**
      * 守護人邀請綁定只跑一次：成功後設 bindDone、清 URL、只 alert 一次。
      * 擋住 Android 雙擊、自動綁定 + 同意按鈕雙路徑、URL 殘留重入。
@@ -7633,10 +7754,8 @@
       if (!inviteFrom || inviteFrom === lineUserId) return null;
       bindInFlight = true;
       try {
-        const mutualCore = Boolean(options && options.mutual_core);
         const activateTrial = Boolean(options && options.activate_trial);
         const bindResult = await apiBindEmergencyContact(inviteFrom, {
-          mutual_core: mutualCore,
           activate_trial: activateTrial,
           contact_display_name: options.contact_display_name,
           contact_relationship: options.contact_relationship,
@@ -7645,6 +7764,7 @@
         if (bindResult?.bound || bindResult?.already_bound || bindResult?.ok) {
           bindDone = true;
           clearInviteFromUrl();
+          clearPendingGuardianInvite();
           closeInviteAcceptPrompt();
           if (bindResult?.already_bound && bindResult?.binding_complete === false) {
             alert(bindResult?.message || "你已經是守護人了，請把邀請轉傳給其他好友");
@@ -7668,6 +7788,8 @@
             } catch (_) {}
             // 邀請方／本人進會員中心時，若尚未關閉介紹卡則帶一下免費體驗說明
             renderMemberRoleIntro({ autoExpand: false });
+            const successPrompt = $("guardianBindSuccessPrompt");
+            if (successPrompt && bindResult?.binding_complete !== false) successPrompt.hidden = false;
           }
         }
         return bindResult;
@@ -7692,7 +7814,7 @@
       const btn = $("acceptGuardianInviteBtn");
       if (titleEl) titleEl.textContent = "您收到一位親友的守護邀請";
       if (bodyEl) {
-        bodyEl.textContent = "成為核心守護人免費。你將收到對方的報平安、逾時未報平安、SOS 與安全守護通知；定位只在對方主動求助或啟用安全守護時通知，也可隨時解除綁定。";
+        bodyEl.textContent = "請填寫您的資料，確認後才會完成核心守護綁定。成為核心守護人免費；你將收到邀請人的報平安、逾時、SOS 與安全守護通知。這次只會由您守護邀請人，不會自動互相綁定。";
       }
       const nameInput = $("inviteGuardianName");
       if (nameInput && !nameInput.value) nameInput.value = lineDisplayName || "";
@@ -7710,10 +7832,10 @@
       const modal = $("inviteAcceptPrompt");
       if (!modal) return;
       resetInviteAcceptPromptUi();
-      modal.hidden = false;
-      document.body.classList.add("invite-modal-open");
+      rememberPendingGuardianInvite();
+      showInviteGuardianProfileForm();
 
-      // 反向互綁：改文案＋顯示「同時互相設為核心」
+      // 若雙方已有另一方向的守護關係，仍必須以本次新邀請逐次同意。
       try {
         if (lineUserId) {
           const preview = await apiInviteBindPreview(inviteFrom);
@@ -7722,8 +7844,8 @@
             const titleEl = $("inviteAcceptTitle");
             const bodyEl = $("inviteAcceptBody");
             const btn = $("acceptGuardianInviteBtn");
-            if (titleEl) titleEl.textContent = "互相守護邀請";
-            if (bodyEl) bodyEl.textContent = `${name} 邀請你成為核心守護人。成為守護人免費；若你從邀請頁選擇 14 天體驗，系統會在守護資料完成後替你開啟自己的體驗，但不會自動互相綁定。`;
+            if (titleEl) titleEl.textContent = `${name} 邀請你成為核心守護人`;
+            if (bodyEl) bodyEl.textContent = `${name} 已經守護你；這是另一個方向的新邀請。請填寫資料並同意後，才會新增「你守護 ${name}」的關係，不會自動互相綁定。`;
             if (btn) btn.textContent = "接受成為核心守護人";
           }
         }
@@ -8721,6 +8843,7 @@
         if (!lineUserId) return false;
 
         const betaCohort = String(getAppParam("beta_cohort") || "").trim().toUpperCase();
+        const inviteFrom = String(getAppParam("invite_from") || "").trim();
         const registrationResponse = await fetch("/api/line/register", {
           method: "POST",
           headers: await authHeaders(),
@@ -8728,7 +8851,8 @@
             line_user_id: lineUserId,
             display_name: lineDisplayName,
             picture_url: linePictureUrl || "",
-            beta_cohort: betaCohort === "B399" || betaCohort === "B799" ? betaCohort : ""
+            beta_cohort: betaCohort === "B399" || betaCohort === "B799" ? betaCohort : "",
+            guardian_only: Boolean(inviteFrom && inviteFrom !== lineUserId)
           })
         });
         const registrationResult = await registrationResponse.json().catch(() => ({}));
@@ -8738,7 +8862,6 @@
         }
         hideLineEntryGate();
 
-        const inviteFrom = String(getAppParam("invite_from") || "").trim();
         if (inviteFrom && inviteFrom !== lineUserId) {
           console.log("成功抓到邀請人 ID:", inviteFrom);
           // 不在 init 自動 bind+alert；只顯示同意視窗
@@ -11271,6 +11394,11 @@
     $("promptInviteBtn").addEventListener("click", goGuardianInvite);
     $("dismissGuardianPromptBtn").addEventListener("click", closeGuardianPrompt);
     $("acceptGuardianInviteBtn").addEventListener("click", acceptGuardianInviteFromPrompt);
+    $("startOwnTrialBtn")?.addEventListener("click", startMyOwnTrialFromGuardianSuccess);
+    $("guardianBindSuccessCloseBtn")?.addEventListener("click", () => {
+      $("guardianBindSuccessPrompt").hidden = true;
+      showTab("home");
+    });
     $("cancelWarningBtn").addEventListener("click", hideWarningPrompt);
     $("confirmWarningBtn").addEventListener("click", hideWarningPrompt);
     $("openPrivacyExplainBtn").addEventListener("click", openPrivacyExplain);
