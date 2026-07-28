@@ -32,11 +32,10 @@ def test_share_picker_sends_the_story_and_binding_page_to_the_friend():
     html = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
 
     assert 'id="startShare"' in html
-    assert "請先停留在這個頁面" in html
-    assert "第一步：加入「每日平安」官方 LINE" in html
-    assert "第二步：我已加入，選擇 LINE 好友分享" in html
-    assert "liff.getFriendship" in html
-    assert "window.location.href = buildLineAppShareUrl()" in html
+    assert "立即選擇 LINE 好友分享" in html
+    assert "不會先跳到每日平安首頁" in html
+    assert "liff.getFriendship" not in html
+    assert "window.location.href = buildDirectLiffShareUrl()" in html
     assert "await openShare();" in html
     assert 'const inviteUrl = new URL("/invite", appPublicOrigin())' in html
     assert 'inviteUrl.searchParams.set("invite_from", safeId)' in html
@@ -49,13 +48,25 @@ def test_share_picker_sends_the_story_and_binding_page_to_the_friend():
     assert "`https://line.me/R/app/${LIFF_ID}?invite_from=" not in html
 
 
-def test_share_page_waits_for_the_explicit_second_step_instead_of_auto_sharing():
+def test_share_page_auto_opens_picker_in_line_without_showing_member_home():
     html = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
 
     initialized = html.split("async function initializeLiff()", 1)[1]
     initialized = initialized.split('window.addEventListener("pageshow"', 1)[0]
-    assert "await openShare();" not in initialized
-    assert "已準備好。完成第一步後，請按第二步選擇 LINE 好友。" in initialized
+    assert "if (isInsideLine() && !shareAttempted)" in initialized
+    assert "await openShare();" in initialized
+    assert "buildDirectLiffShareUrl" in html
+
+
+def test_invitee_page_shows_the_optional_14_day_199_trial():
+    html = (ROOT / "invite.html").read_text(encoding="utf-8")
+
+    assert "14 天免費體驗｜199 活著版" in html
+    assert "2 位核心守護人" in html
+    assert "4 位緊急聯絡人" in html
+    assert "每日 1 次 LINE 預警" in html
+    assert "15 分鐘安全守護" in html
+    assert "不用刷卡、不會自動扣款" in html
 
 
 def test_every_member_share_entry_uses_the_same_picker_page():
