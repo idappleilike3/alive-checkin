@@ -3949,14 +3949,14 @@
       <div class="mvp-reward-card" id="mvpRewardInviteCard" aria-label="綁定守護人獎勵">
         <div>
           <strong>邀請信任的親友一起守護</strong>
-          <span>對方登入 LINE 並同意後，才會完成雙向綁定</span>
+          <span>對方先加入「每日平安」官方 LINE，再登入並同意後，才會完成「對方守護你」的綁定</span>
         </div>
         <button class="mvp-reward-btn share-contact-invite-btn" type="button">一鍵邀請守護人</button>
       </div>
       <div class="mvp-bound-summary" id="mvpBoundSummary" hidden>
         <strong id="mvpBoundCountText">已綁定守護人 0 位</strong>
         <div class="mvp-bound-list" id="mvpBoundList"></div>
-        <p class="mvp-bound-hint">已綁定完成，不用再填聯絡人資料。若要再邀請其他人，請點上方「一鍵邀請守護人」轉傳分享。</p>
+        <p class="mvp-bound-hint">對方已加入「每日平安」官方 LINE 並完成綁定。若要再邀請其他人，請點上方「一鍵邀請守護人」轉傳分享。</p>
       </div>
       <div class="mvp-checkin-banner" id="mvpCheckinBanner" hidden>✅ 今天已完成平安回報</div>
       <div class="mvp-checkin-banner" id="mvpNextReminderBanner" hidden style="background:#ecfdf3;color:#166534;"></div>
@@ -4384,7 +4384,7 @@
                 <button class="action-btn primary" id="memberInviteMoreGuardianBtn" type="button">再邀請一位守護人</button>
                 <button class="action-btn" id="memberLimitUpgradeBtn" type="button">立即升級</button>
               </div>
-              <p class="helper" id="memberInviteRewardHint" style="margin-top:8px;">對方登入 LINE 並同意後，才會完成雙向綁定。</p>
+              <p class="helper" id="memberInviteRewardHint" style="margin-top:8px;">對方先加入「每日平安」官方 LINE，再登入並同意後，才會完成「對方守護你」的綁定。</p>
             </div>
             <div class="member-data-actions" id="memberGuardianInviteActions">
               <button class="action-btn primary share-contact-invite-btn" id="memberReinviteGuardianBtn" type="button">一鍵邀請守護人</button>
@@ -6267,8 +6267,8 @@
           const bound = isContactBound(contact);
           const roleLabel = contactRoleOf(contact) === "emergency" ? "緊急聯絡人" : "守護人";
           const status = bound
-            ? `<span class="guardian-bind-ok">✓ 已綁定</span>`
-            : `<span class="guardian-bind-row"><span class="guardian-bind-pending">LINE 未綁定</span> <button class="one-tap-invite-btn" type="button" onclick="openShareInviteForContact()">一鍵邀請</button></span>`;
+            ? `<span class="guardian-bind-ok">✓ 已加入官方 LINE並完成綁定</span>`
+            : `<span class="guardian-bind-row"><span class="guardian-bind-pending">等待加入官方 LINE／接受邀請</span> <button class="one-tap-invite-btn" type="button" onclick="openShareInviteForContact()">一鍵邀請</button></span>`;
           return `
           <div class="contact-item">
             <span class="contact-main"><strong>優先 ${index + 1}</strong>｜${escapeHtml(contact.name || "未命名")}｜${escapeHtml(contact.relationship || roleLabel)}<br>${escapeHtml(contact.phone || "未填手機")}｜${status}</span>
