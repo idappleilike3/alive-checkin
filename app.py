@@ -16143,6 +16143,11 @@ def create_app(config=None):
         """Public 21-day beta introduction; the CTA continues in verified LIFF."""
         return send_from_directory(app.static_folder, "beta-register.html")
 
+    @app.get("/trial/14")
+    def public_trial_landing():
+        """Public 14-day trial introduction and guided registration."""
+        return send_from_directory(app.static_folder, "trial-14.html")
+
     @app.get("/guardian-guide")
     def guardian_guide():
         """Detailed guardian notice linked from the concise invite landing."""
