@@ -77,7 +77,7 @@
             <div class="success-benefit"><strong>需要時求救</strong><span>SOS 快速聯絡</span></div>
           </div>
         </div>
-        <a class="cta secondary" href="https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html">一鍵分享邀請核心守護人</a>
+        <a class="cta secondary current-page-line-share" href="#">一鍵分享這個頁面給 LINE 好友</a>
       </section>
       <section class="guide">
         <a href="/guardian-guide">查看完整守護說明</a>
@@ -155,5 +155,23 @@
       continueRegistration.setAttribute("aria-disabled", String(!consent.checked));
     });
   </script>
-<script>document.querySelectorAll('.demo-live-button').forEach(function(btn){btn.addEventListener('click',function(){btn.textContent='今日已報平安';btn.classList.add('is-done');btn.setAttribute('aria-pressed','true');var result=btn.nextElementSibling;if(result)result.hidden=false;});});</script></body>
+<script>
+    document.querySelectorAll('.demo-live-button').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        btn.textContent='今日已報平安';
+        btn.classList.add('is-done');
+        btn.setAttribute('aria-pressed','true');
+        var result=btn.nextElementSibling;
+        if(result) result.hidden=false;
+      });
+    });
+    document.querySelectorAll('.current-page-line-share').forEach(function(link){
+      link.addEventListener('click',function(event){
+        event.preventDefault();
+        var pageUrl=window.location.href;
+        var message='邀請你看看「每日平安」：每天 10 秒，讓家人放心\n'+pageUrl;
+        window.location.href='https://line.me/R/msg/text/?'+encodeURIComponent(message);
+      });
+    });
+  </script></body>
 </html>

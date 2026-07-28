@@ -44,6 +44,19 @@ class CheckinDemoCardTests(unittest.TestCase):
                 self.assertIn("@keyframes tapHint", html)
                 self.assertIn("一鍵分享", html)
 
+    def test_share_button_opens_line_with_the_current_page_url(self):
+        for file_name in PAGES:
+            with self.subTest(file_name=file_name):
+                html = (ROOT / file_name).read_text(encoding="utf-8")
+                self.assertIn('class="cta secondary current-page-line-share"', html)
+                self.assertIn("window.location.href", html)
+                self.assertIn("https://line.me/R/msg/text/?", html)
+                self.assertIn("encodeURIComponent", html)
+                self.assertNotIn(
+                    'class="cta secondary" href="https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html">一鍵分享邀請核心守護人</a>',
+                    html,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
