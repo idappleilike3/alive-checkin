@@ -148,6 +148,7 @@
     let shareBlocked = false;
     let autoShareAttempted = false;
     let activeInviteToken = "";
+    let inviterName = "";
 
     function sanitizeUserId(raw) {
       return String(raw || "").trim().replace(/[^a-zA-Z0-9_-]/g, "");
@@ -292,10 +293,14 @@
           throw new Error("shareTargetPicker unavailable");
         }
         const inviteToken = await createGuardianInvite();
-        const bindUrl = `https://line.me/R/app/${LIFF_ID}?invite_from=${encodeURIComponent(safeId)}&invite_token=${encodeURIComponent(inviteToken)}`;
+        const inviteUrl = new URL("/invite", appPublicOrigin());
+        inviteUrl.searchParams.set("invite_from", safeId);
+        inviteUrl.searchParams.set("invite_token", inviteToken);
+        if (inviterName) inviteUrl.searchParams.set("inviter_name", inviterName);
+        const bindUrl = inviteUrl.toString();
         const result = await liff.shareTargetPicker([{
           type: "text",
-          text: `想邀請你成為我的每日平安守護人。\n${bindUrl}`,
+          text: `${inviterName || "你的親友"}邀請你成為「每日平安」核心守護人。\n請查看圖文步驟並完成 LINE 登入與資料綁定：\n${bindUrl}`,
         }]);
         return Boolean(result);
       } catch (_) {
@@ -350,8 +355,12 @@
         try {
           const profile = await liff.getProfile();
           myUserId = (profile && profile.userId) || "";
+          inviterName = String(
+            urlParams.get("inviter_name") || (profile && profile.displayName) || ""
+          ).trim();
         } catch (_) {
           myUserId = "";
+          inviterName = String(urlParams.get("inviter_name") || "").trim();
         }
         if (inviteFrom && myUserId && inviteFrom !== myUserId) {
           shareBlocked = true;

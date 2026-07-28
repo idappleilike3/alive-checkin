@@ -8,8 +8,8 @@ def test_beta_pages_use_story_comic_and_keep_plan_specific_content():
     html = (ROOT / "beta-register.html").read_text(encoding="utf-8")
     assert "/assets/daily-peace-story-comic.png" in html
     assert 'class="story-comic"' in html
-    assert "399 安心版｜21 天封測" in html
-    assert "799 守護版｜21 天封測" in html
+    assert "399 年費安心版｜21 天封測" in html
+    assert "799 年費守護版｜21 天封測" in html
     assert "beta_cohort=${cohort}" in html
     assert 'id="addOfficialLine"' in html
     assert 'href="https://line.me/R/ti/p/%40042kwqib"' in html

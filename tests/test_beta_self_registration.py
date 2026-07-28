@@ -126,8 +126,8 @@ class BetaSelfRegistrationTests(unittest.TestCase):
 
         self.assertIn('@app.get("/beta/399")', backend)
         self.assertIn('@app.get("/beta/799")', backend)
-        self.assertIn("399 安心版｜21 天封測", page)
-        self.assertIn("799 守護版｜21 天封測", page)
+        self.assertIn("399 年費安心版｜21 天封測", page)
+        self.assertIn("799 年費守護版｜21 天封測", page)
         self.assertIn("年費版完整功能", page)
         self.assertIn("這 21 天請協助測試", page)
         self.assertIn("beta_cohort", member)
@@ -138,13 +138,11 @@ class BetaSelfRegistrationTests(unittest.TestCase):
         member = (ROOT / "index.html").read_text(encoding="utf-8")
         backend = (ROOT / "app.py").read_text(encoding="utf-8")
 
-        self.assertIn("我也要免費體驗 14 天", member)
+        self.assertIn("我也要報平安｜免費體驗 14 天", member)
         self.assertIn("activate_trial", member)
         self.assertIn('activate_trial = bool(payload.get("activate_trial"))', backend)
-        self.assertIn(
-            "reciprocal = bool(pending_invite and (activate_trial or legacy_reciprocal))",
-            backend,
-        )
+        self.assertIn("reciprocal = False", backend)
+        self.assertIn("申請 14 天體驗也不自動互綁", backend)
 
 
 if __name__ == "__main__":
