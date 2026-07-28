@@ -66,7 +66,7 @@
       left: 50%;
       top: 42%;
       transform: translate(-50%, -50%);
-      z-index: 1;
+      z-index: 4;
       width: min(88vw, 340px);
       text-align: center;
       color: #14532d;
@@ -76,11 +76,55 @@
       pointer-events: none;
     }
     #hint.is-visible { display: block; }
+    .guide {
+      position: relative;
+      z-index: 4;
+      width: min(92vw, 420px);
+      margin: 24px auto 180px;
+      padding: 22px;
+      border: 1px solid #86efac;
+      border-radius: 22px;
+      background: rgba(255,255,255,0.96);
+      box-shadow: 0 18px 50px rgba(21,128,61,0.14);
+      color: #14532d;
+    }
+    .guide h1 { font-size: 24px; margin-bottom: 8px; }
+    .guide p { line-height: 1.65; margin-bottom: 14px; }
+    .official-line {
+      display: grid;
+      place-items: center;
+      min-height: 52px;
+      margin-bottom: 16px;
+      border-radius: 999px;
+      background: #06c755;
+      color: #fff;
+      font-size: 18px;
+      font-weight: 900;
+      text-decoration: none;
+    }
+    .steps { display: grid; gap: 10px; list-style: none; }
+    .steps li {
+      padding: 11px 13px;
+      border-radius: 12px;
+      background: #f0fdf4;
+      font-weight: 800;
+    }
   </style>
 </head>
 <body>
+  <main class="guide">
+    <h1>一鍵分享邀請核心守護人</h1>
+    <p>先確認自己已加入「每日平安」官方 LINE，再用 LINE 選擇要邀請的親友。</p>
+    <a class="official-line" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener">加入「每日平安」官方 LINE</a>
+    <ol class="steps" aria-label="核心守護人邀請步驟">
+      <li>1. 加入官方 LINE</li>
+      <li>2. LINE 登入</li>
+      <li>3. 選擇好友分享</li>
+      <li>4. 對方填資料並接受綁定</li>
+    </ol>
+  </main>
   <button id="tapLayer" type="button" aria-label="再試一次" disabled></button>
-  <p id="hint">分享完成後，請按下方按鈕回到原本頁面。受邀親友會先看到守護用途、通知內容、定位限制、解除方式與個資用途說明，再自行加入官方帳號、登入並同意互相成為核心守護人。</p>
+  <p id="hint">分享完成後，請按下方按鈕回到原本頁面。受邀親友加入官方帳號、LINE 登入、填寫自己的資料並同意後，才會成為你的核心守護人；不會自動互相綁定。</p>
   <div id="actions">
     <button id="retry" type="button">再分享一次</button>
     <button id="doneHome" type="button">完成，返回原位置</button>
