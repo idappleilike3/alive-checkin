@@ -10523,7 +10523,10 @@
     }
 
     async function saveOnboardingGuardian() {
-      if (!requireMemberActionReady("data")) return false;
+      if (!lineUserId) {
+        showLineLoginRequired({ open: "onboarding" });
+        return false;
+      }
       const errorEl = $("onboardingError");
       const saveBtn = $("onboardingSaveBtn");
       if (!saveBtn) return;
@@ -10610,7 +10613,10 @@
     }
 
     async function saveOnboardingReminder() {
-      if (!requireMemberActionReady("data")) return false;
+      if (!lineUserId) {
+        showLineLoginRequired({ open: "onboarding" });
+        return false;
+      }
       const errorEl = $("onboardingReminderError");
       const saveBtn = $("onboardingReminderSaveBtn");
       if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
@@ -10692,8 +10698,7 @@
         "saveDailyReminderBtn", "smartReminderSaveBtn",
         "deleteCheckinHistoryBtn", "deleteAccountBtn",
         "saveGuardianBtn", "confirmDeleteGuardianBtn",
-        "memberAddGuardianBtn", "memberAddEmergencyBtn",
-        "onboardingSaveBtn", "onboardingReminderSaveBtn"
+        "memberAddGuardianBtn", "memberAddEmergencyBtn"
       ];
       ids.forEach((id) => {
         const element = $(id);

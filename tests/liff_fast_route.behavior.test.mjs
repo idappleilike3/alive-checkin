@@ -218,8 +218,6 @@ test("member mutations execute the shared gate before any operation", async () =
     "sendSosAlert",
     "saveGuardian",
     "executeDeleteGuardian",
-    "saveOnboardingGuardian",
-    "saveOnboardingReminder",
     "saveMvpContact",
     "saveContacts",
     "saveSelectedCalendarNote",

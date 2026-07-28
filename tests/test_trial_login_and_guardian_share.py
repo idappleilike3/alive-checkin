@@ -60,3 +60,30 @@ def test_trial_and_beta_pages_offer_a_direct_member_guardian_share_action():
     for html in (trial, beta):
         assert direct_liff_share in html
         assert "LINE 登入後，一鍵分享邀請核心守護人" in html
+def test_guardian_share_page_has_a_desktop_fallback_after_line_login():
+    html = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
+
+    assert 'id="desktopShare"' in html
+    assert 'id="desktopLineShare"' in html
+    assert 'id="copyInviteLink"' in html
+    assert 'id="inviteQrCode"' in html
+    assert "電腦版分享" in html
+    assert "buildInvitePayload" in html
+    assert "renderDesktopFallback" in html
+    assert "https://line.me/R/msg/text/?" in html
+    assert "navigator.clipboard.writeText" in html
+
+
+def test_beta_page_explains_that_the_full_21_day_flow_works_on_computers():
+    html = (ROOT / "beta-register.html").read_text(encoding="utf-8")
+
+    assert "電腦版也能完成 21 天封測" in html
+    assert "開啟 LINE 分享、複製專屬連結或掃描 QR Code" in html
+
+
+def test_home_and_member_show_explicit_completed_guardian_binding_status():
+    home = (ROOT / "index.html").read_text(encoding="utf-8")
+    member = (ROOT / "liff" / "member.html").read_text(encoding="utf-8")
+
+    assert "✓ 已完成綁定守護人" in home
+    assert "✓ 已完成綁定守護人" in member

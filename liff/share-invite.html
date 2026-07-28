@@ -6,6 +6,7 @@
   <meta name="alive-deploy" content="W250724ir">
   <title>邀請</title>
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -109,6 +110,43 @@
       background: #f0fdf4;
       font-weight: 800;
     }
+    .desktop-share {
+      display: grid;
+      gap: 12px;
+      margin-top: 18px;
+      padding: 18px;
+      border: 2px solid #86efac;
+      border-radius: 18px;
+      background: #fff;
+      text-align: center;
+    }
+    .desktop-share[hidden] { display: none; }
+    .desktop-share h2 { font-size: 21px; }
+    .desktop-share p { line-height: 1.6; }
+    .desktop-share a,
+    .desktop-share button {
+      display: grid;
+      place-items: center;
+      min-height: 52px;
+      border: 0;
+      border-radius: 999px;
+      background: #06c755;
+      color: #fff;
+      font-size: 17px;
+      font-weight: 900;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .desktop-share button { background: #0f766e; }
+    #inviteQrCode {
+      width: 180px;
+      height: 180px;
+      margin: 0 auto;
+      padding: 8px;
+      border: 1px solid #bbf7d0;
+      border-radius: 12px;
+      background: #fff;
+    }
   </style>
 </head>
 <body>
@@ -122,6 +160,14 @@
       <li>3. 選擇好友分享</li>
       <li>4. 對方填資料並接受綁定</li>
     </ol>
+    <section id="desktopShare" class="desktop-share" hidden aria-live="polite">
+      <h2>電腦版分享</h2>
+      <p>可直接開啟 LINE 分享；也能複製專屬邀請連結，或用手機掃描 QR Code。</p>
+      <a id="desktopLineShare" href="#" target="_blank" rel="noopener">一鍵開啟 LINE 分享</a>
+      <button id="copyInviteLink" type="button">複製專屬邀請連結</button>
+      <canvas id="inviteQrCode" width="180" height="180" aria-label="專屬邀請連結 QR Code"></canvas>
+      <p id="desktopShareStatus"></p>
+    </section>
   </main>
   <button id="tapLayer" type="button" aria-label="再試一次" disabled></button>
   <p id="hint">分享完成後，請按下方按鈕回到原本頁面。受邀親友加入官方帳號、LINE 登入、填寫自己的資料並同意後，才會成為你的核心守護人；不會自動互相綁定。</p>
@@ -141,6 +187,11 @@
     const doneHomeBtn = document.getElementById("doneHome");
     const actions = document.getElementById("actions");
     const hint = document.getElementById("hint");
+    const desktopShare = document.getElementById("desktopShare");
+    const desktopLineShare = document.getElementById("desktopLineShare");
+    const copyInviteLink = document.getElementById("copyInviteLink");
+    const inviteQrCode = document.getElementById("inviteQrCode");
+    const desktopShareStatus = document.getElementById("desktopShareStatus");
 
     let myUserId = "";
     let ready = false;
@@ -286,25 +337,57 @@
       return activeInviteToken;
     }
 
+    async function buildInvitePayload(inviterId) {
+      const safeId = sanitizeUserId(inviterId);
+      if (!safeId) throw new Error("missing_inviter_id");
+      const inviteToken = activeInviteToken || await createGuardianInvite();
+      const inviteUrl = new URL("/invite", appPublicOrigin());
+      inviteUrl.searchParams.set("invite_from", safeId);
+      inviteUrl.searchParams.set("invite_token", inviteToken);
+      if (inviterName) inviteUrl.searchParams.set("inviter_name", inviterName);
+      const bindUrl = inviteUrl.toString();
+      return {
+        bindUrl,
+        message: `${inviterName || "你的親友"}邀請你成為「每日平安」核心守護人。\n請查看圖文步驟並完成 LINE 登入與資料綁定：\n${bindUrl}`,
+      };
+    }
+
+    async function renderDesktopFallback(inviterId) {
+      try {
+        const payload = await buildInvitePayload(inviterId);
+        desktopLineShare.href = "https://line.me/R/msg/text/?" + encodeURIComponent(payload.message);
+        copyInviteLink.dataset.url = payload.bindUrl;
+        desktopShare.hidden = false;
+        desktopShareStatus.textContent = "這是你的專屬邀請，受邀者完成同意後才會正式綁定。";
+        if (window.QRCode && typeof window.QRCode.toCanvas === "function") {
+          await window.QRCode.toCanvas(inviteQrCode, payload.bindUrl, {
+            width: 180,
+            margin: 1,
+            color: { dark: "#14532d", light: "#ffffff" },
+          });
+        }
+        return true;
+      } catch (_) {
+        desktopShare.hidden = false;
+        desktopShareStatus.textContent = "請先完成 LINE 登入，才能建立專屬邀請連結。";
+        return false;
+      }
+    }
+
     async function openGuardianShare(inviterId) {
       const safeId = sanitizeUserId(inviterId);
       try {
         if (!safeId || !window.liff || typeof liff.shareTargetPicker !== "function") {
           throw new Error("shareTargetPicker unavailable");
         }
-        const inviteToken = await createGuardianInvite();
-        const inviteUrl = new URL("/invite", appPublicOrigin());
-        inviteUrl.searchParams.set("invite_from", safeId);
-        inviteUrl.searchParams.set("invite_token", inviteToken);
-        if (inviterName) inviteUrl.searchParams.set("inviter_name", inviterName);
-        const bindUrl = inviteUrl.toString();
+        const payload = await buildInvitePayload(safeId);
         const result = await liff.shareTargetPicker([{
           type: "text",
-          text: `${inviterName || "你的親友"}邀請你成為「每日平安」核心守護人。\n請查看圖文步驟並完成 LINE 登入與資料綁定：\n${bindUrl}`,
+          text: payload.message,
         }]);
         return Boolean(result);
       } catch (_) {
-        alertFail(SHARE_REOPEN_MESSAGE);
+        await renderDesktopFallback(safeId);
         return false;
       }
     }
@@ -315,7 +398,8 @@
       tapLayer.disabled = true;
       hidePostShareUi();
       try {
-        await openGuardianShare(myUserId);
+        const shared = await openGuardianShare(myUserId);
+        if (!shared) await renderDesktopFallback(myUserId);
         // 分享完成或使用者取消後都留在專用頁，讓使用者自行決定何時返回。
         showPostShareUi();
       } finally {
@@ -400,6 +484,16 @@
         event.stopPropagation();
       }
       goNextStep();
+    });
+    copyInviteLink.addEventListener("click", async function () {
+      const url = String(copyInviteLink.dataset.url || "");
+      if (!url) return;
+      try {
+        await navigator.clipboard.writeText(url);
+        desktopShareStatus.textContent = "已複製專屬邀請連結，可以貼給 LINE 好友。";
+      } catch (_) {
+        window.prompt("請複製這個專屬邀請連結", url);
+      }
     });
     initializeLiff();
   </script>
