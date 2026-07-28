@@ -2180,7 +2180,8 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
         "reminder_time": times[0] if times else "12:00",
         "reminder_times": times,
         "daily_reminders": daily_reminders,
-        "default_reminder_times": default_reminder_times_for_count(daily_reminders),
+        # 首次綁定不強迫 799 填滿 3 次；399／799 未選時皆預設 12:00、18:00。
+        "default_reminder_times": default_reminder_times_for_count(min(daily_reminders, 2)),
         "grace_hours": normalize_grace_hours(profile.get("grace_hours")),
         "warning_cancel_minutes": int(
             profile.get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
