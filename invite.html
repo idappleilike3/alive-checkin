@@ -395,6 +395,40 @@
     .binding-preview label { color: var(--ink); font-size: .9rem; font-weight: 800; }
     .binding-preview input { width: 100%; margin-top: 6px; padding: 13px; border: 1px solid #cbd9cf; border-radius: 11px; background: #fff; color: #748078; font: inherit; }
     .binding-preview-note { margin: 0; color: var(--forest); font-size: .86rem; font-weight: 750; line-height: 1.55; text-align: center; }
+    .invite-trial {
+      margin-top: 18px;
+      padding: 20px;
+      border: 2px solid #b7dec5;
+      border-radius: 20px;
+      background: linear-gradient(145deg, #edf8f0, #fff);
+      text-align: center;
+    }
+    .invite-trial h2 { margin: 0 0 8px; color: var(--forest); font-size: 1.35rem; }
+    .invite-trial p { margin: 0; color: var(--muted); line-height: 1.65; }
+    .invite-trial-benefits {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 9px;
+      margin: 15px 0;
+    }
+    .invite-trial-benefits span {
+      padding: 10px 8px;
+      border-radius: 12px;
+      background: #fff;
+      color: var(--ink);
+      font-size: .88rem;
+      font-weight: 800;
+    }
+    .invite-trial-link {
+      display: grid;
+      place-items: center;
+      min-height: 50px;
+      border: 2px solid var(--line);
+      border-radius: 999px;
+      color: var(--forest);
+      font-weight: 900;
+      text-decoration: none;
+    }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
     }
@@ -445,6 +479,18 @@
           <label>您的手機號碼（必填）<input type="tel" placeholder="例如：0912345678" disabled></label>
           <p class="binding-preview-note">登入後會回到這個邀請流程，表單即可填寫；按下確認才完成綁定。</p>
         </div>
+      </section>
+
+      <section class="invite-trial" aria-labelledby="inviteTrialTitle">
+        <h2 id="inviteTrialTitle">14 天免費體驗｜199 活著版</h2>
+        <p>接受守護邀請本身免費，不會自動開通自己的方案。完成綁定後，如果你也想每天報平安，可自行啟用一次 14 天免費體驗；不用刷卡、不會自動扣款。</p>
+        <div class="invite-trial-benefits" aria-label="14 天免費體驗內容">
+          <span>2 位核心守護人</span>
+          <span>4 位緊急聯絡人</span>
+          <span>每日 1 次 LINE 預警</span>
+          <span>15 分鐘安全守護</span>
+        </div>
+        <a class="invite-trial-link" href="/trial-14.html">查看 14 天免費體驗完整內容</a>
       </section>
 
       <section class="story" aria-label="女兒與獨居媽媽的三幕守護故事">
