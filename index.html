@@ -9297,7 +9297,7 @@
       const text = $("calendarNoteQuickText");
       if (!card) return;
       const enabled = status.calendar_notes_enabled === true;
-      card.hidden = !enabled;
+      card.hidden = !enabled || location.hash !== "#history";
       if (!enabled || !text) return;
       const count = Object.keys(calendarNotes || {}).length;
       text.textContent = count
