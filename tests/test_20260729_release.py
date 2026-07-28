@@ -271,6 +271,7 @@ class Release20260729Tests(unittest.TestCase):
             'history: ["簽到月曆與平安紀錄", "799 日期備忘提醒", "簽到狀態"]',
             index,
         )
+        self.assertIn('card.hidden = !enabled || location.hash !== "#history";', index)
         self.assertIn("799 守護版可點日期新增、查看或修改備忘提醒", index)
         self.assertIn("LINE 私訊（主動推播，計入訊息量）", admin)
 
