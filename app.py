@@ -370,7 +370,7 @@ PLAN_LIMITS = {
         "contact_limit": 32,
         "emergency_contact_limit": 25,
         "friend_location_limit": 0,
-        "daily_reminders": 2,
+        "daily_reminders": 3,
         "channels": ["line"],
         "location_mode": "realtime",
         "core_guardian_alert_limit": 7,
