@@ -117,6 +117,38 @@
       font-weight: 900;
       text-decoration: none;
     }
+    .stay-note {
+      padding: 14px;
+      border: 2px solid #facc15;
+      border-radius: 14px;
+      background: #fefce8;
+      color: #713f12;
+      text-align: center;
+    }
+    .share-now {
+      display: grid;
+      place-items: center;
+      width: 100%;
+      min-height: 56px;
+      margin-bottom: 10px;
+      padding: 12px 18px;
+      border: 0;
+      border-radius: 999px;
+      background: #15803d;
+      color: #fff;
+      font-size: 18px;
+      font-weight: 900;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    .share-ready-status {
+      min-height: 24px;
+      margin-bottom: 14px;
+      color: #365c49;
+      font-size: 14px;
+      font-weight: 750;
+      text-align: center;
+    }
     .steps { display: grid; gap: 10px; list-style: none; }
     .steps li {
       padding: 11px 13px;
@@ -212,12 +244,15 @@
 <body>
   <main class="guide">
     <h1>一鍵分享邀請核心守護人</h1>
-    <p>選擇一位親友分享。對方完成 LINE 登入並同意後，才會正式成為核心守護人。</p>
-    <a class="official-line" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener">加入「每日平安」官方 LINE</a>
+    <p class="stay-note"><strong>請先停留在這個頁面。</strong><br>完成第一步加入好友後，再回來按第二步分享。</p>
+    <a class="official-line" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener">第一步：加入「每日平安」官方 LINE</a>
+    <button class="share-now" id="startShare" type="button">第二步：我已加入，選擇 LINE 好友分享</button>
+    <p class="share-ready-status" id="shareReadyStatus" aria-live="polite">分享前不會自動跳轉；請先完成第一步。</p>
     <ol class="steps" aria-label="核心守護人邀請步驟">
-      <li>1. 選擇 LINE 好友</li>
-      <li>2. 對方登入並同意</li>
-      <li>3. 綁定完成後立即生效</li>
+      <li>1. 你先加入每日平安官方 LINE</li>
+      <li>2. 按上方按鈕，直接選擇 LINE 好友</li>
+      <li>3. 對方查看說明、加入官方 LINE 並登入</li>
+      <li>4. 對方填寫資料並同意後，綁定才生效</li>
     </ol>
     <section class="trial-plan-note" aria-label="14 天免費體驗與 199 活著版">
       <h2>14 天免費體驗｜199 活著版</h2>
@@ -253,6 +288,8 @@
     const tapLayer = document.getElementById("tapLayer");
     const retryBtn = document.getElementById("retry");
     const doneHomeBtn = document.getElementById("doneHome");
+    const startShareBtn = document.getElementById("startShare");
+    const shareReadyStatus = document.getElementById("shareReadyStatus");
     const actions = document.getElementById("actions");
     const hint = document.getElementById("hint");
     const desktopShare = document.getElementById("desktopShare");
@@ -265,7 +302,7 @@
     let ready = false;
     let sharing = false;
     let shareBlocked = false;
-    let autoShareAttempted = false;
+    let shareAttempted = false;
     let activeInviteToken = "";
     let inviterName = "";
 
@@ -351,6 +388,40 @@
       return appPublicOrigin() + resolveReturnPathOnly();
     }
 
+    function buildLineAppShareUrl() {
+      const current = new URLSearchParams(window.location.search || "");
+      const params = new URLSearchParams();
+      params.set("open", "share-invite");
+      params.set("return", resolveReturnPathOnly());
+      ["inviter_id", "inviter_name"].forEach(function (key) {
+        const value = String(current.get(key) || "").trim();
+        if (value) params.set(key, value);
+      });
+      return `https://line.me/R/app/${LIFF_ID}?${params.toString()}`;
+    }
+
+    function isInsideLine() {
+      try {
+        return Boolean(window.liff && liff.isInClient && liff.isInClient());
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function setShareReadyStatus(message) {
+      if (shareReadyStatus) shareReadyStatus.textContent = String(message || "");
+    }
+
+    async function hasOfficialLineFriendship() {
+      try {
+        if (!window.liff || typeof liff.getFriendship !== "function") return true;
+        const relationship = await liff.getFriendship();
+        return Boolean(relationship && relationship.friendFlag);
+      } catch (_) {
+        return true;
+      }
+    }
+
     function markShareDone() {
       try { sessionStorage.setItem(DONE_KEY, "1"); } catch (_) {}
     }
@@ -418,7 +489,7 @@
       const bindUrl = inviteUrl.toString();
       return {
         bindUrl,
-        message: `${inviterName || "你的親友"}邀請你成為「每日平安」核心守護人。\n成為守護人免費，不會自動購買方案。\n請查看圖文步驟並完成 LINE 登入與資料綁定：\n${bindUrl}`,
+        message: `${inviterName || "你的親友"}邀請你成為「每日平安」核心守護人。\n成為守護人免費，不會自動購買方案。\n\n打開後會看到完整流程：\n1. 加入每日平安官方 LINE\n2. 使用 LINE 登入\n3. 填寫姓名、關係與手機\n4. 確認同意後才完成綁定\n\n${bindUrl}`,
       };
     }
 
@@ -464,6 +535,7 @@
 
     async function openShare() {
       if (sharing || shareBlocked || !ready) return;
+      shareAttempted = true;
       sharing = true;
       tapLayer.disabled = true;
       hidePostShareUi();
@@ -486,6 +558,33 @@
       openShare();
     }
 
+    async function onStartShare(event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      if (!isInsideLine()) {
+        setShareReadyStatus("正在開啟 LINE，進入後會回到第二步讓你選擇好友。");
+        window.location.href = buildLineAppShareUrl();
+        return;
+      }
+      if (!window.liff || !liff.isLoggedIn()) {
+        try {
+          liff.login({ redirectUri: buildSafeRedirectUri() });
+        } catch (_) {
+          alertFail(SHARE_REOPEN_MESSAGE);
+        }
+        return;
+      }
+      if (!(await hasOfficialLineFriendship())) {
+        setShareReadyStatus("尚未加入官方好友，請先完成第一步，再回來按分享。");
+        alertFail("請先加入「每日平安」官方 LINE，再選擇好友分享。");
+        return;
+      }
+      setShareReadyStatus("正在開啟 LINE 好友選擇器…");
+      await openShare();
+    }
+
     async function initializeLiff() {
       resolveReturnUrl();
       try {
@@ -493,14 +592,7 @@
         await liff.init({ liffId: LIFF_ID });
 
         if (!liff.isLoggedIn()) {
-          try {
-            liff.login({ redirectUri: buildSafeRedirectUri() });
-          } catch (_) {
-            try { liff.login(); } catch (_) {
-              alertFail(SHARE_REOPEN_MESSAGE);
-              showPostShareUi();
-            }
-          }
+          setShareReadyStatus("請先完成第一步；按第二步後會使用 LINE 登入並分享。");
           return;
         }
 
@@ -525,27 +617,19 @@
         }
 
         ready = true;
-
-        // 同一次文件載入只自動開一次；新的 Flex 邀請載入新頁時會重新自動開啟。
-        if (autoShareAttempted) {
-          showPostShareUi();
-          return;
-        }
-
-        autoShareAttempted = true;
-        await openShare();
+        setShareReadyStatus("已準備好。完成第一步後，請按第二步選擇 LINE 好友。");
       } catch (_) {
-        alertFail(SHARE_REOPEN_MESSAGE);
-        showPostShareUi();
+        setShareReadyStatus("請先加入官方好友，再按第二步使用 LINE 開啟分享。");
       }
     }
 
     window.addEventListener("pageshow", function (event) {
-      if (event && event.persisted && !shareBlocked) {
+      if (event && event.persisted && shareAttempted && !shareBlocked) {
         showPostShareUi();
       }
     });
 
+    startShareBtn.addEventListener("click", onStartShare);
     tapLayer.addEventListener("click", onRetry);
     retryBtn.addEventListener("click", onRetry);
     doneHomeBtn.addEventListener("click", function (event) {
