@@ -7099,7 +7099,7 @@
       const isPaid = String(status.plan || "").startsWith("paid_");
       $("memberUpgradeBtn").hidden = isPaid;
       renderSosAccess();
-      await loadMemberSupportTickets();
+      loadMemberSupportTickets().catch(() => {});
       const guardianGroupIds = status.guardian_group_ids || [];
       const guardianGroups = status.guardian_groups || [];
       const groupById = Object.fromEntries(guardianGroups.map((group) => [group.group_id, group]));
