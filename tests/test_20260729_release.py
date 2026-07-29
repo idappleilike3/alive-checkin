@@ -123,6 +123,109 @@ class Release20260729Tests(unittest.TestCase):
         self.assertIn("U-guardian", targets)
         self.assertEqual(result["guardians"][0]["status"], "sent")
 
+    def test_sos_without_checked_target_defaults_to_first_two_core_guardians(self):
+        contacts = [
+            {
+                "name": name,
+                "line_user_id": line_id,
+                "binding_status": "accepted",
+                "contact_role": "guardian",
+                "is_primary": True,
+                "priority": priority,
+                "notify_methods": ["line"],
+            }
+            for priority, (name, line_id) in enumerate(
+                [("媽媽", "U-mom"), ("姊姊", "U-sister"), ("弟弟", "U-brother")],
+                start=1,
+            )
+        ]
+        app.save_state(self.data_file, {
+            "users": {
+                "U-owner": {
+                    "line_user_id": "U-owner",
+                    "display_name": "小美",
+                    "plan": "paid_799",
+                    "payment_status": "active",
+                    "paid_until": "2099-01-01T00:00:00",
+                    "contacts": contacts,
+                }
+            }
+        })
+        targets = []
+        result, code = app.trigger_sos(
+            self.data_file,
+            {"line_user_id": "U-owner", "guardian_line_user_ids": []},
+            {
+                "LINE_CHANNEL_ACCESS_TOKEN": "test-token",
+                "LINE_PUSH_SENDER": lambda _token, target, _message: (
+                    targets.append(target) or {"ok": True}
+                ),
+            },
+        )
+        self.assertEqual(code, 200)
+        self.assertEqual(result["sent"], 2)
+        self.assertEqual(
+            [target for target in targets if target != "U-owner"],
+            ["U-mom", "U-sister"],
+        )
+
+    def test_trial_checkin_pushes_guardians_once_and_deduplicates_same_person(self):
+        app.save_state(self.data_file, {
+            "users": {
+                "U-trial": {
+                    "line_user_id": "U-trial",
+                    "display_name": "小美",
+                    "plan": "trial",
+                    "contacts": [
+                        {
+                            "name": "媽媽",
+                            "line_user_id": "U-mom",
+                            "binding_status": "accepted",
+                            "contact_role": "guardian",
+                            "is_primary": True,
+                            "priority": 1,
+                            "notify_methods": ["line"],
+                        },
+                        {
+                            "name": "媽媽重複資料",
+                            "line_user_id": "U-mom",
+                            "binding_status": "accepted",
+                            "contact_role": "guardian",
+                            "is_primary": True,
+                            "priority": 2,
+                            "notify_methods": ["line"],
+                        },
+                        {
+                            "name": "姊姊",
+                            "line_user_id": "U-sister",
+                            "binding_status": "accepted",
+                            "contact_role": "guardian",
+                            "is_primary": True,
+                            "priority": 3,
+                            "notify_methods": ["line"],
+                        },
+                    ],
+                }
+            }
+        })
+        targets = []
+        config = {
+            "LINE_CHANNEL_ACCESS_TOKEN": "test-token",
+            "LINE_PUSH_SENDER": lambda _token, target, _message: (
+                targets.append(target) or {"ok": True}
+            ),
+            "CRON_NOW": datetime(2026, 7, 29, 12, 0, 0),
+        }
+        first = app.record_checkin(
+            self.data_file, {"line_user_id": "U-trial"}, config=config
+        )
+        second = app.record_checkin(
+            self.data_file, {"line_user_id": "U-trial"}, config=config
+        )
+        self.assertEqual(first["guardian_notify"]["sent"], 2)
+        self.assertEqual(second["guardian_notify"]["reason"], "already_checked_today")
+        self.assertEqual(targets, ["U-mom", "U-sister"])
+
     def test_disabled_smart_reminder_is_not_sent(self):
         now = datetime(2026, 7, 29, 12, 0, 0)
         app.save_state(self.data_file, {
