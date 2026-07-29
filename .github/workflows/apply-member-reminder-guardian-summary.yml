@@ -1,0 +1,42 @@
+name: Apply member reminder and guardian summary fixes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/apply_member_reminder_guardian_summary.py'
+      - '.github/workflows/apply-member-reminder-guardian-summary.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply targeted member page patch
+        run: python scripts/apply_member_reminder_guardian_summary.py
+      - name: Verify expected changes
+        run: |
+          grep -q 'member-reminder-guardian-summary-20260729' liff/member.html
+          grep -q '我正在守護' liff/member.html
+          grep -q '已套用方案預設時間' liff/member.html
+          grep -q 'saveReminderBtn.addEventListener' liff/member.html
+      - name: Commit patched member page
+        run: |
+          if git diff --quiet -- liff/member.html; then
+            echo 'No changes needed'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add liff/member.html
+          git commit -m 'fix: repair reminder controls and simplify guardian relationships'
+          git push
