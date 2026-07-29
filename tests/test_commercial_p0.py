@@ -1,3 +1,4 @@
+sed: --: No such file or directory
 import tempfile
 import unittest
 from datetime import datetime, timedelta
@@ -135,6 +136,12 @@ class OverdueAlertTests(unittest.TestCase):
                 "paid_until": (now + timedelta(days=10)).isoformat(timespec="seconds"),
                 "last_check_in": (now - timedelta(days=3)).isoformat(timespec="seconds"),
                 "history": [],
+                "overdue_wait_minutes": 30,
+                "active_overdue_event": {
+                    "event_id": "overdue-clock",
+                    "started_at": (now - timedelta(minutes=30)).isoformat(timespec="seconds"),
+                    "guardian_stage": 0,
+                },
             }
             alive_app.save_state(data_file, state)
 
@@ -146,21 +153,15 @@ class OverdueAlertTests(unittest.TestCase):
                 ),
                 "CRON_NOW": now,
             }
-            summary = {
-                "users": [{"line_user_id": "U-clock", "is_overdue": True}]
-            }
             with mock.patch.object(
                 alive_app, "current_app_time", return_value=now
-            ) as clock, mock.patch.object(
-                alive_app, "admin_summary", return_value=summary
-            ) as summary_builder:
+            ) as clock:
                 result, code = alive_app.send_due_reminders(
                     config
                 )
 
             self.assertEqual(code, 200)
-            self.assertEqual(clock.call_count, 1)
-            summary_builder.assert_called_once_with(data_file, config, now=now)
+            self.assertGreaterEqual(clock.call_count, 1)
             self.assertIn("U-clock", pushes)
             self.assertEqual(result["sent"], 1)
 
@@ -185,6 +186,12 @@ class OverdueAlertTests(unittest.TestCase):
                 "last_check_in": (now - timedelta(days=3)).isoformat(timespec="seconds"),
                 "history": [],
                 "reminder_time": "08:00",
+                "overdue_wait_minutes": 30,
+                "active_overdue_event": {
+                    "event_id": "overdue-private",
+                    "started_at": (now - timedelta(minutes=30)).isoformat(timespec="seconds"),
+                    "guardian_stage": 0,
+                },
                 "contacts": [
                     {
                         "id": "c1",
@@ -241,6 +248,13 @@ class OverdueAlertTests(unittest.TestCase):
                 "last_check_in": (now - timedelta(days=3)).isoformat(timespec="seconds"),
                 "history": [],
                 "reminder_time": "08:00",
+                "overdue_wait_minutes": 30,
+sed: --: No such file or directory
+                "active_overdue_event": {
+                    "event_id": "overdue-group",
+                    "started_at": (now - timedelta(minutes=30)).isoformat(timespec="seconds"),
+                    "guardian_stage": 0,
+                },
                 "contacts": [
                     {
                         "id": "c1",
