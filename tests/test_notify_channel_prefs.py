@@ -187,11 +187,11 @@ class NotifyChannelPrefsTests(unittest.TestCase):
 
     def test_member_ui_has_channel_checkboxes(self):
         page = (Path(__file__).resolve().parents[1] / "index.html").read_text(encoding="utf-8")
-        self.assertIn("私訊提醒（預設，建議）", page)
-        self.assertIn("群組提醒（選用）", page)
+        self.assertIn("未報平安時，先私訊核心守護人", page)
+        self.assertIn("未報平安時，也通知這個 LINE 群", page)
         self.assertIn("notify_group_on_overdue === true", page)
         self.assertIn("今天誰還沒報平安", page)
-        self.assertIn("生日／生活提醒只會私訊", page)
+        self.assertIn("生日、回診與生活備忘只會私訊本人", page)
 
 
 if __name__ == "__main__":
