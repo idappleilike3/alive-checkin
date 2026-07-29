@@ -1,3 +1,4 @@
+sed: --: No such file or directory
 import tempfile
 import unittest
 from datetime import datetime, timedelta
@@ -61,8 +62,8 @@ class GuardianGroupJoinTests(unittest.TestCase):
 
         body_text = str(intro["body"])
         self.assertIn("一個群組，一起守護重要的人", body_text)
-        self.assertIn("逾時未報平安", body_text)
-        self.assertIn("24／48／72", body_text)
+        self.assertIn("未報平安", body_text)
+        self.assertIn("15／30／60", body_text)
         self.assertIn("安全事件", body_text)
         self.assertIn("今日守護宣言", body_text)
         # 不再用長文牆講資格／上限
