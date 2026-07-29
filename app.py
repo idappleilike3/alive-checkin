@@ -640,7 +640,7 @@ def line_auto_reply_text(text, status=None):
         faq_url = line_liff_url("faq")
         return (
             "客服在這裡。請直接在此 LINE 留言你的問題，我們會協助你設定簽到、守護人與方案。\n\n"
-            "📩 LINE 留言 24 小時內盡快回覆。\n\n"
+            "📩 已收到的問題會在 1–3 個工作天內回覆。\n\n"
             f"也可以先看問與答：{faq_url}\n\n"
             "提醒：若是立即危險或醫療緊急狀況，請先撥打 119。"
         )
@@ -17643,8 +17643,9 @@ def create_app(config=None):
                     },
                 )
                 reply_text = (
-                    "你的問題已經記錄下來。"
-                    "📩 LINE 留言 24 小時內盡快回覆。"
+                    "你的問題已經記錄下來。\n\n"
+                    "📩 客服會在 1–3 個工作天內透過 LINE 官方帳號回覆。\n\n"
+                    f"也可以先看常見問題：{line_liff_url('faq')}\n\n"
                     "若是立即危險，請先撥打 119。"
                 )
             else:
