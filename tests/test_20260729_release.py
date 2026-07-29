@@ -190,6 +190,19 @@ class Release20260729Tests(unittest.TestCase):
             index + member + trial + beta + share,
         )
 
+    def test_rich_menu_invite_uses_permanent_liff_share_entry(self):
+        rich_menu = (ROOT / "line-rich-menu-config.json").read_text(encoding="utf-8")
+        backend = (ROOT / "app.py").read_text(encoding="utf-8")
+        direct_entry = (
+            "https://liff.line.me/2010848330-UAiqPPYD?open=share-invite"
+        )
+        self.assertIn(f'"uri": "{direct_entry}"', rich_menu)
+        self.assertNotIn(
+            "2010848330-UAiqPPYD/liff/share-invite.html",
+            rich_menu,
+        )
+        self.assertIn('invite_query.get("open") == ["share-invite"]', backend)
+
     def test_help_has_visual_checkin_dialogue_sop(self):
         page = (ROOT / "help.html").read_text(encoding="utf-8")
         self.assertIn("assets/help-checkin-sop.gif", page)
