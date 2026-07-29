@@ -72,7 +72,7 @@ class BetaSelfRegistrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already_in_other_cohort"):
             app.claim_beta_link(state, "U-member", "B399")
 
-    def test_public_trial_user_cannot_claim_beta_after_free_eligibility_was_used(self):
+    def test_public_trial_user_can_upgrade_to_beta_without_reentering_profile_data(self):
         state = {
             "users": {
                 "U-trial": {
@@ -81,17 +81,26 @@ class BetaSelfRegistrationTests(unittest.TestCase):
                     "membership_source": "public_trial",
                     "free_eligibility_source": "public_trial",
                     "free_eligibility_used_at": "2026-07-01T12:00:00",
+                    "contacts": [{"id": "guardian-1", "name": "女兒"}],
+                    "daily_reminder_times": ["09:00"],
                 }
             }
         }
 
-        with self.assertRaisesRegex(ValueError, "free_eligibility_already_used"):
-            app.claim_beta_link(
-                state,
-                "U-trial",
-                "B399",
-                now=datetime(2026, 7, 27, 12, 0, 0),
-            )
+        result = app.claim_beta_link(
+            state,
+            "U-trial",
+            "B799",
+            now=datetime(2026, 7, 27, 12, 0, 0),
+        )
+
+        profile = state["users"]["U-trial"]
+        self.assertTrue(result["assigned"])
+        self.assertEqual(profile["plan"], "paid_799_year")
+        self.assertEqual(profile["membership_source"], "beta")
+        self.assertEqual(profile["beta_cohort"], "B799")
+        self.assertEqual(profile["contacts"], [{"id": "guardian-1", "name": "女兒"}])
+        self.assertEqual(profile["daily_reminder_times"], ["09:00"])
 
     def test_beta_registration_claims_first_free_eligibility_atomically(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -119,6 +128,37 @@ class BetaSelfRegistrationTests(unittest.TestCase):
                 )
             )
 
+    def test_existing_trial_member_clicking_799_beta_keeps_guardian_data(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_file = str(Path(tmp) / "state.json")
+            app.register_line_user(
+                data_file,
+                {"line_user_id": "U-trial-upgrade", "display_name": "體驗者"},
+            )
+            state = app.load_state(data_file)
+            state["users"]["U-trial-upgrade"]["contacts"] = [
+                {"id": "guardian-1", "name": "女兒", "line_user_id": "U-daughter"}
+            ]
+            state["users"]["U-trial-upgrade"]["daily_reminder_times"] = ["08:30"]
+            app.save_state(data_file, state)
+
+            result, code = app.register_line_user(
+                data_file,
+                {
+                    "line_user_id": "U-trial-upgrade",
+                    "display_name": "體驗者",
+                    "beta_cohort": "B799",
+                },
+            )
+
+            saved = app.load_state(data_file)["users"]["U-trial-upgrade"]
+            self.assertEqual(code, 200)
+            self.assertEqual(result["plan"], "paid_799_year")
+            self.assertEqual(result["membership_source"], "beta")
+            self.assertEqual(saved["beta_cohort"], "B799")
+            self.assertEqual(saved["contacts"][0]["line_user_id"], "U-daughter")
+            self.assertEqual(saved["daily_reminder_times"], ["08:30"])
+
     def test_public_links_and_liff_claim_hook_are_present(self):
         backend = (ROOT / "app.py").read_text(encoding="utf-8")
         page = (ROOT / "beta-register.html").read_text(encoding="utf-8")
@@ -134,11 +174,12 @@ class BetaSelfRegistrationTests(unittest.TestCase):
         self.assertIn('beta_cohort: betaCohort', member)
         self.assertNotIn('fetch("/api/beta/claim"', member)
 
-    def test_guardian_trial_and_mutual_binding_are_explicit_opt_in(self):
+    def test_guardian_trial_is_automatic_but_mutual_binding_still_requires_consent(self):
         member = (ROOT / "index.html").read_text(encoding="utf-8")
         backend = (ROOT / "app.py").read_text(encoding="utf-8")
 
-        self.assertIn("我也要報平安｜免費體驗 14 天", member)
+        self.assertIn("activateOwnTrialAfterGuardianBind", member)
+        self.assertIn("您的 14 天免費體驗已自動開通", member)
         self.assertIn("activate_trial", member)
         self.assertIn('activate_trial = bool(payload.get("activate_trial"))', backend)
         self.assertIn("reciprocal = False", backend)
