@@ -1,4 +1,3 @@
-sed: --: No such file or directory
 import tempfile
 import unittest
 from datetime import datetime, timedelta
