@@ -2217,6 +2217,31 @@ def profile_has_bound_line_guardian(profile):
     return any(contact_is_notifiable_line_guardian(c, owner) for c in contacts)
 
 
+def pending_guardian_invite_count(state, inviter_line_user_id, now=None):
+    """分享邀請只算等待中；受邀人填資料並同意後才算完成綁定。"""
+    inviter_id = str(inviter_line_user_id or "").strip()
+    if not inviter_id:
+        return 0
+    current = now or current_app_time({})
+    count = 0
+    for row in (state or {}).get("guardian_invites") or []:
+        if (
+            not isinstance(row, dict)
+            or row.get("inviter_line_user_id") != inviter_id
+            or row.get("status") != "pending"
+        ):
+            continue
+        expires_at = parse_datetime(row.get("expires_at"))
+        if expires_at:
+            comparable_now, comparable_expiry = _comparable_datetimes(
+                current, expires_at
+            )
+            if comparable_expiry <= comparable_now:
+                continue
+        count += 1
+    return count
+
+
 def contact_is_reciprocal_core_guardian(state, owner_id, contact):
     """Require a live, bilateral core-guardian relationship."""
     if (
@@ -2285,6 +2310,9 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
         "setup_completed": access["home_ready"],
         "has_guardian": has_guardian,
         "guardian_count": len(contacts),
+        "pending_guardian_invite_count": pending_guardian_invite_count(
+            state, line_user_id
+        ),
         "reminder_time": times[0] if times else "12:00",
         "reminder_times": times,
         "daily_reminders": daily_reminders,
@@ -2664,7 +2692,12 @@ def assign_beta_cohort(
             "line_user_id": line_user_id,
         }
     used_source = free_eligibility_source(profile)
-    if used_source:
+    # A public 14-day trial is the 199-plan preview. If the same member later
+    # joins a capped 21-day beta cohort, upgrade the existing profile in place:
+    # keep guardians/settings/history and replace only the active entitlement.
+    # Previous beta participation and other free entitlements remain one-time.
+    beta_upgrade_sources = {"public_trial", "transition_trial"}
+    if used_source and used_source not in beta_upgrade_sources:
         raise ValueError("free_eligibility_already_used")
     active_count = sum(
         1
@@ -3969,6 +4002,10 @@ def build_status(profile, state=None, now=None):
         "contact_capacity_reminder_enabled": bool(profile.get("contact_capacity_reminder_enabled", False)),
         "guardian_details_reminder_enabled": bool(profile.get("guardian_details_reminder_enabled", True)),
         "guardian_details_complete": any(complete_guardian_contact(contact) for contact in (profile.get("contacts") or [])),
+        "pending_guardian_invite_count": (
+            pending_guardian_invite_count(state, owner_id, now)
+            if state is not None else 0
+        ),
         "plan": profile.get("plan", "trial"),
         "membership_source": str(profile.get("membership_source") or ""),
         "payment_status": profile.get("payment_status", "trial"),
