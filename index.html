@@ -4957,11 +4957,10 @@
   <div class="modal-backdrop" id="guardianBindSuccessPrompt" hidden>
     <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="guardianBindSuccessTitle">
       <h2 id="guardianBindSuccessTitle">核心守護綁定完成</h2>
-      <p>您現在可以免費收到對方的報平安、逾時與 SOS 通知。這次只完成「您守護對方」。</p>
-      <p>若您也想按「我平安」讓家人收到通知，需要另外開通自己的 14 天體驗或正式方案。</p>
+      <p id="guardianBindSuccessDetail">您現在可以免費收到對方的報平安、逾時與 SOS 通知。</p>
+      <p id="guardianBindNextStep">系統正在確認您的會員方案與下一步。</p>
       <div class="actions">
-        <button class="action-btn primary" id="startOwnTrialBtn" type="button">我也要報平安｜免費體驗 14 天</button>
-        <button class="action-btn" id="guardianBindSuccessCloseBtn" type="button">完成，我只接收通知</button>
+        <button class="action-btn primary" id="guardianBindSuccessCloseBtn" type="button">確定，繼續</button>
       </div>
     </div>
   </div>
@@ -7156,8 +7155,11 @@
       }
       const guardianTip = $("memberGuardianPlanTip");
       if (guardianTip) {
-        guardianTip.hidden = isPaidPlan;
-        if (!isPaidPlan) {
+        const isBetaWaiting = status.membership_source === "beta" && boundCount === 0;
+        guardianTip.hidden = isPaidPlan && !isBetaWaiting;
+        if (isBetaWaiting) {
+          guardianTip.innerHTML = `<strong>21 天封測尚未完成設定</strong>：請先邀請至少 1 位核心守護人；對方填完姓名、關係、手機並同意後，才算完成綁定。`;
+        } else if (!isPaidPlan) {
           guardianTip.innerHTML = `<strong>體驗期建議</strong>：1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。`;
         }
       }
@@ -7244,7 +7246,12 @@
         }
       }
       renderMemberDailyReminderUi();
-      $("memberGuardianList").innerHTML = renderContactManageRows(guardians, "尚未綁定守護人", "guardian");
+      const pendingInviteCount = Number(status.pending_guardian_invite_count || 0);
+      $("memberGuardianList").innerHTML = guardians.length
+        ? renderContactManageRows(guardians, "尚未綁定守護人", "guardian")
+        : pendingInviteCount > 0
+          ? `<div class="guarding-empty-state"><strong>等待受邀人完成綁定</strong><p>已送出 ${pendingInviteCount} 份邀請。受邀人要填完姓名、關係、手機並按下同意後，才會計入核心守護人；目前會員設定仍未完成。</p></div>`
+          : renderContactManageRows(guardians, "尚未綁定守護人", "guardian");
       const emergencyList = $("memberEmergencyList");
       if (emergencyList) {
         emergencyList.innerHTML = renderContactManageRows(emergencies, "尚未新增緊急聯絡人", "emergency");
@@ -7930,12 +7937,8 @@
       if (first && typeof first.focus === "function") setTimeout(() => first.focus(), 50);
     }
 
-    async function startMyOwnTrialFromGuardianSuccess() {
-      const button = $("startOwnTrialBtn");
-      if (!lineUserId || !button) return;
-      const originalText = button.textContent;
-      button.disabled = true;
-      button.textContent = "正在開通 14 天體驗…";
+    async function activateOwnTrialAfterGuardianBind() {
+      if (!lineUserId) return { ok: false, skipped: true };
       try {
         const response = await fetch("/api/" + "line/register", {
           method: "POST",
@@ -7950,21 +7953,59 @@
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
           if (result.error === "free_eligibility_already_used") {
-            window.location.href = "liff/pricing.html";
-            return;
+            return { ok: false, already_used: true, result };
           }
           throw new Error(result.message || "目前無法開通體驗，請稍後再試。");
         }
-        $("guardianBindSuccessPrompt").hidden = true;
-        await refreshStatus().catch(() => {});
-        alert("14 天免費體驗已開通。接著請邀請一位親友成為你的核心守護人。");
-        openShareInvitePage("home");
+        return {
+          ok: true,
+          activated: result.own_trial_activated === true,
+          result
+        };
       } catch (error) {
-        alert(error?.message || "目前無法開通體驗，請稍後再試。");
-      } finally {
-        button.disabled = false;
-        button.textContent = originalText;
+        return { ok: false, error };
       }
+    }
+
+    function showGuardianBindSuccessForCurrentPlan(trialActivation = {}) {
+      const status = trialActivation.result || currentStatusData || {};
+      const plan = String(status.plan || "free");
+      const source = String(status.membership_source || "");
+      const title = $("guardianBindSuccessTitle");
+      const detail = $("guardianBindSuccessDetail");
+      const next = $("guardianBindNextStep");
+      const button = $("guardianBindSuccessCloseBtn");
+      const guardianRequired = status.guardian_required === true;
+
+      if (title) {
+        title.textContent = trialActivation.activated
+          ? "綁定完成，14 天體驗已開通"
+          : "核心守護綁定完成";
+      }
+      if (detail) {
+        if (source === "beta") {
+          detail.textContent = `您目前仍是 ${planLabel(plan)}｜21 天封測，方案沒有被改成 14 天體驗。`;
+        } else if (plan.startsWith("paid_")) {
+          detail.textContent = `您目前仍是 ${planLabel(plan)}，方案沒有被改成 14 天體驗。`;
+        } else if (plan === "trial") {
+          detail.textContent = "您的 14 天免費體驗已自動開通，不需要再點一次邀請連結。";
+        } else {
+          detail.textContent = "您已可免費接收對方的報平安、逾時與 SOS 通知。";
+        }
+      }
+      if (next) {
+        next.textContent = guardianRequired
+          ? "要完成自己的會員設定，還需要邀請至少一位親友成為您的核心守護人。按下確定後會直接進入分享流程。"
+          : "您的會員設定與原方案都已保留，可以直接繼續使用。";
+      }
+      if (button) {
+        button.textContent = guardianRequired
+          ? "確定，邀請我的守護人"
+          : "確定，回到首頁";
+        button.dataset.nextAction = guardianRequired ? "invite" : "home";
+      }
+      const prompt = $("guardianBindSuccessPrompt");
+      if (prompt) prompt.hidden = false;
     }
 
     /**
@@ -8013,8 +8054,11 @@
             } catch (_) {}
             // 邀請方／本人進會員中心時，若尚未關閉介紹卡則帶一下免費體驗說明
             renderMemberRoleIntro({ autoExpand: false });
-            const successPrompt = $("guardianBindSuccessPrompt");
-            if (successPrompt && bindResult?.binding_complete !== false) successPrompt.hidden = false;
+            if (bindResult?.binding_complete !== false) {
+              const trialActivation = await activateOwnTrialAfterGuardianBind();
+              await refreshStatus().catch(() => {});
+              showGuardianBindSuccessForCurrentPlan(trialActivation);
+            }
           }
         }
         return bindResult;
@@ -11730,10 +11774,14 @@
     $("promptInviteBtn").addEventListener("click", goGuardianInvite);
     $("dismissGuardianPromptBtn").addEventListener("click", closeGuardianPrompt);
     $("acceptGuardianInviteBtn").addEventListener("click", acceptGuardianInviteFromPrompt);
-    $("startOwnTrialBtn")?.addEventListener("click", startMyOwnTrialFromGuardianSuccess);
     $("guardianBindSuccessCloseBtn")?.addEventListener("click", () => {
       $("guardianBindSuccessPrompt").hidden = true;
-      showTab("home");
+      const button = $("guardianBindSuccessCloseBtn");
+      if (button?.dataset.nextAction === "invite") {
+        openShareInvitePage("home");
+      } else {
+        showTab("home");
+      }
     });
     $("cancelWarningBtn").addEventListener("click", hideWarningPrompt);
     $("confirmWarningBtn").addEventListener("click", hideWarningPrompt);
