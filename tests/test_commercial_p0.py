@@ -1,4 +1,3 @@
-sed: --: No such file or directory
 import tempfile
 import unittest
 from datetime import datetime, timedelta
@@ -249,7 +248,6 @@ class OverdueAlertTests(unittest.TestCase):
                 "history": [],
                 "reminder_time": "08:00",
                 "overdue_wait_minutes": 30,
-sed: --: No such file or directory
                 "active_overdue_event": {
                     "event_id": "overdue-group",
                     "started_at": (now - timedelta(minutes=30)).isoformat(timespec="seconds"),
