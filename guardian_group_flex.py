@@ -1,4 +1,3 @@
-sed: --: No such file or directory
 """守護群 / 歡迎 Flex Message 構建器。
 
 主要 Flex:
@@ -249,7 +248,6 @@ def _body_line(text: str, *, weight: str = "regular", color: str = GRAY, size: s
 
 
 def _ceremonial_oath_block():
-sed: --: No such file or directory
     """可選溫暖區塊：今日守護宣言。"""
     return {
         "type": "box",
@@ -500,7 +498,6 @@ def guardian_group_status_flex(profile: dict, state: dict):
                     {
                         "type": "text",
                         "text": f"{idx}.",
-sed: --: No such file or directory
                         "size": "lg",
                         "weight": "bold",
                         "color": GREEN_DARK,
@@ -751,7 +748,6 @@ def guardian_group_member_joined_flex(inviter_display_name: str | None = None):
                 _body_line("未來若對方：", color=GRAY, size="lg", margin="md"),
                 _body_line("⚠️ 未報平安（本人未回應 15／30／60 分鐘後，依順位私訊核心守護人）", color=GRAY, size="lg"),
                 _body_line("🚨 發出 SOS 緊急求助", color=GRAY, size="lg"),
-sed: --: No such file or directory
                 _body_line("群組通知為選用；生日／生活提醒不會發到群組。", color=GRAY, size="lg", margin="md"),
                 _body_line(
                     "若要成為個人「已綁定守護人」（可收私訊通知），請請對方用「一鍵邀請」再綁一次。",
@@ -1002,7 +998,6 @@ def _admin_step(num: str, title: str, desc: str):
                 "type": "box",
                 "layout": "vertical",
                 "backgroundColor": ORANGE,
-sed: --: No such file or directory
                 "cornerRadius": "xxl",
                 "paddingAll": "md",
                 "width": "48px",
@@ -1253,7 +1248,6 @@ def welcome_flex(display_name: str | None = None):
                     "type": "text",
                     "text": "📋 開始使用前，只要完成三個步驟：",
                     "weight": "bold",
-sed: --: No such file or directory
                     "size": "xl",
                     "color": text_dark,
                     "wrap": True,
