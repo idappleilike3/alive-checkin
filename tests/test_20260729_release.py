@@ -324,6 +324,28 @@ class Release20260729Tests(unittest.TestCase):
         self.assertIn("almanac.getDayJi()", page)
         self.assertIn('["paid_799", "paid_799_year"]', page)
         self.assertIn("民俗生活參考", page)
+        self.assertIn("const enabled = is799;", page)
+        self.assertIn("DAILY_BLESSINGS[now.getDay() % DAILY_BLESSINGS.length]", page)
+        self.assertIn("FESTIVAL_BLESSINGS[festival]", page)
+        self.assertIn('"启钻", "啟鑽"', page)
+        self.assertIn('"诸事不宜", "諸事不宜"', page)
+        self.assertIn('"开": "開"', page)
+
+    def test_member_guardian_relationship_is_one_clear_collapsible_section(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        admin = (ROOT / "admin.html").read_text(encoding="utf-8")
+        self.assertIn('id="memberContactsToggleBtn"', page)
+        self.assertIn('id="memberContactsCombinedPanel"', page)
+        self.assertIn("守護你的人 0 位・緊急聯絡人 0 位・你守護 0 位", page)
+        self.assertIn('class="member-contact-group guardian-group"', page)
+        self.assertIn('class="member-contact-group emergency-group"', page)
+        self.assertIn('class="member-contact-group direction-group"', page)
+        self.assertIn('renderContactManageRows(emergencies, "尚未新增緊急聯絡人", "emergency")', page)
+        self.assertNotIn('id="memberTabCoreBtn"', page)
+        self.assertNotIn('id="memberTabEmergencyBtn"', page)
+        self.assertIn("守護關係（守護你的人／你守護的人）", admin)
+        self.assertIn("緊急聯絡人／名額", admin)
+        self.assertNotIn("核心／一般／名額", admin)
 
     def test_line_id_token_is_never_added_to_url(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
