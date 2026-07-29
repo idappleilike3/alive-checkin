@@ -1,3 +1,4 @@
+sed: --: No such file or directory
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,6 +23,7 @@ class SosResponseWorkflowTests(unittest.TestCase):
                 "U-owner": {"line_user_id": "U-owner", "display_name": "小美"},
                 "U-mom": {"line_user_id": "U-mom", "display_name": "媽媽"},
                 "U-sister": {"line_user_id": "U-sister", "display_name": "姊姊"},
+                "U-third": {"line_user_id": "U-third", "display_name": "哥哥"},
                 "U-outsider": {"line_user_id": "U-outsider", "display_name": "陌生人"},
             },
             "sos_events": {
@@ -35,6 +37,9 @@ class SosResponseWorkflowTests(unittest.TestCase):
                     "deliveries": [
                         {"kind": "guardian", "target": "U-mom", "display_name": "媽媽", "status": "sent"},
                         {"kind": "guardian", "target": "U-sister", "display_name": "姊姊", "status": "sent"},
+                    ],
+                    "escalation_guardians": [
+                        {"target": "U-third", "display_name": "哥哥"},
                     ],
                     "timeline": [],
                 }
@@ -103,8 +108,8 @@ class SosResponseWorkflowTests(unittest.TestCase):
             },
             now=__import__("datetime").datetime.fromisoformat("2026-07-27T22:03:30"),
         )
-        self.assertEqual(result["sent"], 2)
-        self.assertEqual({target for target, _ in pushes}, {"U-mom", "U-sister"})
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual({target for target, _ in pushes}, {"U-third"})
         self.assertEqual(load_state(self.data_file)["sos_events"]["sos-1"]["escalation_round"], 1)
 
         respond_to_sos_event(self.data_file, {
@@ -119,6 +124,43 @@ class SosResponseWorkflowTests(unittest.TestCase):
             now=__import__("datetime").datetime.fromisoformat("2026-07-27T22:10:30"),
         )
         self.assertEqual(again["sent"], 0)
+
+    def test_escalation_notifies_new_guardians_in_1_2_rest_batches(self):
+        state = load_state(self.data_file)
+        event = state["sos_events"]["sos-1"]
+        event["escalation_guardians"] = [
+            {"target": f"U-backup-{idx}", "display_name": f"備援 {idx}"}
+            for idx in range(3, 8)
+        ]
+        save_state(self.data_file, state)
+        pushes = []
+        config = {
+            "LINE_CHANNEL_ACCESS_TOKEN": "token",
+            "LINE_PUSH_SENDER": (
+                lambda _token, target, message:
+                pushes.append((target, message)) or {"ok": True}
+            ),
+        }
+
+        process_sos_escalations(
+            self.data_file, config,
+            now=__import__("datetime").datetime.fromisoformat("2026-07-27T22:03:30"),
+        )
+        process_sos_escalations(
+            self.data_file, config,
+            now=__import__("datetime").datetime.fromisoformat("2026-07-27T22:05:30"),
+        )
+        process_sos_escalations(
+            self.data_file, config,
+            now=__import__("datetime").datetime.fromisoformat("2026-07-27T22:10:30"),
+        )
+
+        self.assertEqual(
+            [target for target, _message in pushes],
+            ["U-backup-3", "U-backup-4", "U-backup-5", "U-backup-6", "U-backup-7"],
+        )
+        event = load_state(self.data_file)["sos_events"]["sos-1"]
+        self.assertEqual(event["escalation_round"], 3)
 
     def test_front_admin_and_rich_menu_expose_shared_sos_workflow(self):
         root = Path(__file__).resolve().parents[1]
