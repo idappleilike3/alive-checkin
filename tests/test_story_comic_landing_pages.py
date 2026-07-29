@@ -108,11 +108,14 @@ def test_member_shares_the_story_landing_not_a_bare_liff_bind_url():
     assert "const bindUrl = landingUrl;" in html
 
 
-def test_guardian_acceptance_cannot_activate_a_trial():
+def test_guardian_acceptance_auto_activates_only_the_invitees_own_trial():
     html = (ROOT / "index.html").read_text(encoding="utf-8")
     assert "mutual_core: false" in html
     assert "activate_trial: false" in html
     assert 'const trialAfterGuardian = getAppParam("trial_after_guardian") === "1";' not in html
     assert "activate_trial: trialAfterGuardian" not in html
     assert "activate_own_trial: true" in html
+    assert "activateOwnTrialAfterGuardianBind" in html
+    assert "方案沒有被改成 14 天體驗" in html
+    assert "不需要再點一次邀請連結" in html
     assert "同時互相設為核心守護人" not in html
