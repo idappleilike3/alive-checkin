@@ -3769,6 +3769,73 @@
       color: #fff;
     }
     .member-contact-panel[hidden] { display: none !important; }
+    .member-contacts-toggle {
+      width: 100%;
+      min-height: 58px;
+      border: 1.5px solid #86efac;
+      border-radius: 16px;
+      background: linear-gradient(145deg, #f0fdf4, #ffffff);
+      color: #14532d;
+      padding: 13px 15px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .member-contacts-toggle-copy { display: grid; gap: 3px; }
+    .member-contacts-toggle-copy strong { font-size: 1.08rem; font-weight: 900; }
+    .member-contacts-toggle-copy small {
+      color: #3f6212;
+      font-size: .84rem;
+      line-height: 1.4;
+    }
+    .member-contacts-toggle-arrow {
+      flex: 0 0 auto;
+      font-size: 1.35rem;
+      transition: transform .18s ease;
+    }
+    .member-contacts-toggle[aria-expanded="true"] .member-contacts-toggle-arrow {
+      transform: rotate(180deg);
+    }
+    .member-contacts-combined {
+      display: grid;
+      gap: 14px;
+      margin-top: 14px;
+    }
+    .member-contacts-combined[hidden] { display: none !important; }
+    .member-contact-group {
+      padding: 15px;
+      border: 1.5px solid var(--line);
+      border-radius: 16px;
+      background: var(--input);
+    }
+    .member-contact-group h3,
+    .member-contact-group h4 { margin: 0 0 7px; }
+    .member-contact-group.guardian-group {
+      border-color: #86efac;
+      background: linear-gradient(145deg, #f0fdf4, #ffffff);
+    }
+    .member-contact-group.emergency-group {
+      border-color: #fed7aa;
+      background: linear-gradient(145deg, #fff7ed, #ffffff);
+    }
+    .member-contact-group.direction-group {
+      border-color: #bfdbfe;
+      background: linear-gradient(145deg, #eff6ff, #ffffff);
+    }
+    .member-relation-label {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 4px 9px;
+      margin-bottom: 8px;
+      background: #dcfce7;
+      color: #166534;
+      font-size: .8rem;
+      font-weight: 900;
+    }
     .guarding-empty-state {
       padding: 18px;
       border: 1.5px dashed #86efac;
@@ -4484,16 +4551,20 @@
           </article>
         </div>
 
-        <div class="member-data-section" id="memberContactsManageSection">
-          <div class="member-contact-tabs" role="tablist" aria-label="聯絡人類型">
-            <button class="member-contact-tab" id="memberTabCoreBtn" type="button" role="tab" aria-selected="false" aria-expanded="false" aria-controls="memberGuardianSection" data-contact-tab="core"><span>核心守護人</span><span class="member-contact-tab-arrow" aria-hidden="true">⌄</span></button>
-            <button class="member-contact-tab" id="memberTabEmergencyBtn" type="button" role="tab" aria-selected="false" aria-expanded="false" aria-controls="memberEmergencySection" data-contact-tab="emergency"><span>緊急聯絡人</span><span class="member-contact-tab-arrow" aria-hidden="true">⌄</span></button>
-          </div>
-
-          <div class="member-contact-panel" id="memberGuardianSection" role="tabpanel" data-contact-panel="core" hidden>
+        <div class="member-data-section" id="memberGuardianDirectionSection">
+          <button class="member-contacts-toggle" id="memberContactsToggleBtn" type="button" aria-expanded="false" aria-controls="memberContactsCombinedPanel">
+            <span class="member-contacts-toggle-copy">
+              <strong>守護關係</strong>
+              <small id="memberContactsSummary">守護你的人 0 位・緊急聯絡人 0 位・你守護 0 位</small>
+            </span>
+            <span class="member-contacts-toggle-arrow" aria-hidden="true">⌄</span>
+          </button>
+          <div class="member-contacts-combined" id="memberContactsCombinedPanel" hidden>
+          <section class="member-contact-group guardian-group" id="memberGuardianSection" aria-labelledby="memberGuardianSectionTitle">
+            <span class="member-relation-label">守護你的人</span>
             <h3 id="memberGuardianSectionTitle">核心守護人</h3>
             <div class="member-role-bind-intro" id="memberGuardianBindIntro" aria-label="核心守護人說明">
-              <p><strong>用途</strong>：平常每天守護你的人，需完成 LINE 綁定。</p>
+              <p><strong>用途</strong>：這些人會守護你，需完成 LINE 綁定。</p>
               <p><strong>會收到</strong>：未報平安通知、SOS、安全守護、可查看平安狀態（若有授權）。</p>
               <p id="memberGuardianPlanTip"><strong>體驗期建議</strong>：1 位（配偶／父母／子女）。請用「一鍵邀請」完成 LINE 綁定。</p>
             </div>
@@ -4520,9 +4591,10 @@
               <div class="helper" style="margin-top:14px;">從已綁定守護人指定核心（緊急時優先通知）。姓名／關係／電話請用上方列表的「編輯」補齊。</div>
               <div class="core-guardian-pick" id="memberCoreGuardianPick"></div>
             </div>
-          </div>
+          </section>
 
-          <div class="member-contact-panel" id="memberEmergencySection" role="tabpanel" data-contact-panel="emergency" hidden>
+          <section class="member-contact-group emergency-group" id="memberEmergencySection">
+            <span class="member-relation-label">電話備援</span>
             <h3>緊急聯絡人</h3>
             <div class="member-role-bind-intro" id="memberEmergencyBindIntro" aria-label="緊急聯絡人說明">
               <p><strong>用途</strong>：電話備援，緊急時可手動撥打（不會自動群發簡訊／推播）。</p>
@@ -4535,19 +4607,19 @@
             <div class="member-data-actions">
               <button class="action-btn primary" id="memberAddEmergencyBtn" type="button">➕ 新增緊急聯絡人</button>
             </div>
-          </div>
-        </div>
+          </section>
 
-        <div class="member-data-section" id="memberGuardianDirectionSection">
-          <h3>守護關係</h3>
-          <p class="helper"><strong>守護我的人</strong>會收到我的報平安與重要通知；名單請在上方「核心守護人」查看。</p>
-          <h4 style="margin:14px 0 8px;">我正在守護的人</h4>
-          <p class="helper">成為守護人免費，可免費接收對方的報平安、逾時與 SOS 通知；不會自動取得自己的報平安方案。</p>
-          <div class="member-data-list" id="memberGuardingForList">
-            <div class="guarding-empty-state">
-              <strong>目前尚未守護其他人</strong>
-              <p>想守護家人時，請對方從會員中心點「一鍵邀請守護人」傳給你；你登入並同意後，對方的報平安與重要通知就會顯示在這裡。</p>
+          <section class="member-contact-group direction-group">
+            <span class="member-relation-label">你守護的對象</span>
+            <h3>我正在守護的人</h3>
+            <p class="helper">成為守護人免費，可接收對方的報平安、逾時與 SOS 通知；不會自動取得自己的報平安方案。</p>
+            <div class="member-data-list" id="memberGuardingForList">
+              <div class="guarding-empty-state">
+                <strong>目前尚未守護其他人</strong>
+                <p>想守護家人時，請對方從會員中心點「一鍵邀請守護人」傳給你；你登入並同意後，對方的報平安與重要通知就會顯示在這裡。</p>
+              </div>
             </div>
+          </section>
           </div>
         </div>
 
@@ -6928,7 +7000,7 @@
       return true;
     }
 
-    function renderContactManageRows(list, emptyText) {
+    function renderContactManageRows(list, emptyText, role = "guardian") {
       if (!list.length) {
         return `<div class="member-data-row"><span>目前狀態</span><strong>${escapeHtml(emptyText)}</strong></div>`;
       }
@@ -6936,11 +7008,14 @@
         const cid = escapeHtml(contact.id || "");
         const cardKey = String(contact.id || index).replace(/[^a-zA-Z0-9_-]/g, "") || String(index);
         const bodyId = `member-contact-body-${cardKey}-${index}`;
-        const bound = isContactBound(contact);
-        const tier = "核心守護人";
+        const isEmergency = role === "emergency";
+        const bound = !isEmergency && isContactBound(contact);
+        const tier = isEmergency ? "緊急聯絡人" : "核心守護人";
         const added = formatGuardianAddedAt(contact);
         const nick = contactPeerDisplayName(contact);
-        const statusHtml = bound
+        const statusHtml = isEmergency
+          ? `<strong>電話備援資料</strong>`
+          : bound
           ? `<strong class="guardian-bind-ok">✓ 已綁定</strong>`
           : `<div class="guardian-bind-row">
               <strong class="guardian-bind-pending">等待 LINE 綁定</strong>
@@ -7007,30 +7082,16 @@
       return 1;
     }
 
-    function setMemberContactTab(tabName) {
-      const tab = tabName === "emergency" ? "emergency" : "core";
-      document.querySelectorAll(".member-contact-tab").forEach((btn) => {
-        const selected = btn.getAttribute("data-contact-tab") === tab;
-        btn.setAttribute("aria-selected", selected ? "true" : "false");
-        btn.setAttribute("aria-expanded", selected ? "true" : "false");
-      });
-      document.querySelectorAll(".member-contact-panel").forEach((panel) => {
-        panel.hidden = panel.getAttribute("data-contact-panel") !== tab;
-      });
+    function setMemberContactsExpanded(expanded) {
+      const button = $("memberContactsToggleBtn");
+      const panel = $("memberContactsCombinedPanel");
+      if (!button || !panel) return;
+      button.setAttribute("aria-expanded", expanded ? "true" : "false");
+      panel.hidden = !expanded;
     }
 
-    function toggleMemberContactTab(tabName) {
-      const tab = tabName === "emergency" ? "emergency" : "core";
-      const panel = document.querySelector(`.member-contact-panel[data-contact-panel="${tab}"]`);
-      const wasOpen = panel && !panel.hidden;
-      document.querySelectorAll(".member-contact-tab").forEach((btn) => {
-        btn.setAttribute("aria-selected", "false");
-        btn.setAttribute("aria-expanded", "false");
-      });
-      document.querySelectorAll(".member-contact-panel").forEach((item) => {
-        item.hidden = true;
-      });
-      if (!wasOpen) setMemberContactTab(tab);
+    function setMemberContactTab() {
+      setMemberContactsExpanded(true);
     }
 
     function renderGuardingForRows(details) {
@@ -7176,14 +7237,19 @@
         }
       }
       renderMemberDailyReminderUi();
-      $("memberGuardianList").innerHTML = renderContactManageRows(guardians, "尚未綁定守護人");
+      $("memberGuardianList").innerHTML = renderContactManageRows(guardians, "尚未綁定守護人", "guardian");
       const emergencyList = $("memberEmergencyList");
       if (emergencyList) {
-        emergencyList.innerHTML = renderContactManageRows(emergencies, "尚未新增緊急聯絡人");
+        emergencyList.innerHTML = renderContactManageRows(emergencies, "尚未新增緊急聯絡人", "emergency");
       }
       const guardingForList = $("memberGuardingForList");
       if (guardingForList) {
         guardingForList.innerHTML = renderGuardingForRows(status.guarding_details || []);
+      }
+      const contactsSummary = $("memberContactsSummary");
+      if (contactsSummary) {
+        const guardingCount = Array.isArray(status.guarding_details) ? status.guarding_details.length : 0;
+        contactsSummary.textContent = `守護你的人 ${boundCount} 位・緊急聯絡人 ${emergencies.length} 位・你守護 ${guardingCount} 位`;
       }
       const bindManageList = (listEl) => {
         if (!listEl || listEl.dataset.bound === "true") return;
@@ -9135,19 +9201,34 @@
         ["移柩", "移柩"], ["破土", "破土"], ["入宅", "入宅"], ["移徙", "移徙"],
         ["栽种", "栽種"], ["纳畜", "納畜"], ["会亲友", "會親友"], ["出行", "出行"],
         ["交易", "交易"], ["立券", "立券"], ["祭祀", "祭祀"], ["求医", "求醫"],
-        ["无", "無"]
+        ["启钻", "啟鑽"], ["修坟", "修墳"], ["立碑", "立碑"], ["纳财", "納財"],
+        ["挂匾", "掛匾"], ["进人口", "進人口"], ["竖柱", "豎柱"], ["斋醮", "齋醮"],
+        ["塑绘", "塑繪"], ["扫舍", "掃舍"], ["安门", "安門"], ["造仓", "造倉"],
+        ["盖屋", "蓋屋"], ["开厕", "開廁"], ["补垣", "補垣"], ["塞穴", "塞穴"],
+        ["馀事勿取", "餘事勿取"], ["诸事不宜", "諸事不宜"], ["无", "無"]
       ];
-      return replacements.reduce(
+      const phraseConverted = replacements.reduce(
         (text, pair) => text.split(pair[0]).join(pair[1]),
         String(value || "").trim()
       );
+      const charMap = {
+        "开": "開", "动": "動", "纳": "納", "订": "訂", "启": "啟",
+        "钻": "鑽", "坟": "墳", "财": "財", "挂": "掛", "会": "會",
+        "亲": "親", "进": "進", "竖": "豎", "斋": "齋", "绘": "繪",
+        "扫": "掃", "门": "門", "仓": "倉", "盖": "蓋", "厕": "廁",
+        "补": "補", "馀": "餘", "诸": "諸", "种": "種", "医": "醫",
+        "殓": "殮", "迁": "遷", "签": "簽", "约": "約", "发": "發",
+        "祷": "禱", "寿": "壽", "满": "滿", "归": "歸", "断": "斷",
+        "买": "買", "卖": "賣", "养": "養", "鱼": "魚", "蚕": "蠶"
+      };
+      return [...phraseConverted].map((char) => charMap[char] || char).join("");
     }
 
     function renderDailyAlmanac(status = currentStatusData || {}) {
       const card = $("dailyAlmanacCard");
       if (!card) return;
       const is799 = ["paid_799", "paid_799_year"].includes(String(status.plan || ""));
-      const enabled = is799 && status.calendar_notes_enabled === true;
+      const enabled = is799;
       card.hidden = !enabled;
       if (!enabled) return;
       const now = new Date();
@@ -9232,7 +9313,11 @@
         const who = birthday.birthday_relationship || birthday.birthday_name;
         text.textContent = `今天是${who}生日，記得傳訊息關心一下`;
       } else if (festival) {
-        text.textContent = `今天是${festival}，記得報個平安，也可以跟家人問聲好`;
+        text.textContent = FESTIVAL_BLESSINGS[festival]
+          ? `今天是${festival}，${FESTIVAL_BLESSINGS[festival]}`
+          : `今天是${festival}，記得報個平安，也可以跟家人問聲好`;
+      } else if (["paid_799", "paid_799_year"].includes(String((currentStatusData || {}).plan || ""))) {
+        text.textContent = DAILY_BLESSINGS[now.getDay() % DAILY_BLESSINGS.length];
       } else {
         text.textContent = "今天沒有特別節日，記得報個平安";
       }
@@ -11693,11 +11778,12 @@
     if ($("exportMyDataBtn")) $("exportMyDataBtn").addEventListener("click", exportMyData);
     if ($("deleteCheckinHistoryBtn")) $("deleteCheckinHistoryBtn").addEventListener("click", deleteCheckinHistory);
     if ($("deleteAccountBtn")) $("deleteAccountBtn").addEventListener("click", deleteAccountAndData);
-      document.querySelectorAll(".member-contact-tab").forEach((btn) => {
-        btn.addEventListener("click", () => {
-        toggleMemberContactTab(btn.getAttribute("data-contact-tab") || "core");
-        });
+    const memberContactsToggleBtn = $("memberContactsToggleBtn");
+    if (memberContactsToggleBtn) {
+      memberContactsToggleBtn.addEventListener("click", () => {
+        setMemberContactsExpanded(memberContactsToggleBtn.getAttribute("aria-expanded") !== "true");
       });
+    }
     const memberAddGuardianBtn = $("memberAddGuardianBtn");
     if (memberAddGuardianBtn) {
       memberAddGuardianBtn.addEventListener("click", () => {
