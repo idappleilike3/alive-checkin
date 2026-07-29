@@ -1,3 +1,4 @@
+sed: --: No such file or directory
 import copy
 import base64
 import calendar
@@ -151,6 +152,10 @@ ALLOWED_GRACE_HOURS = (24, 48, 72)
 DEFAULT_GRACE_HOURS = 48
 # 滿 N 小時後另有短暫可取消預警緩衝（分鐘）；通知實際在 deadline + 此值之後
 DEFAULT_WARNING_CANCEL_MINUTES = 15
+# 每日提醒發出後，等待本人回應的時間。新流程以此值通知第一順位守護人，
+# 第二、第三順位分別為 2 倍、3 倍；舊 grace_hours 僅保留資料相容。
+ALLOWED_OVERDUE_WAIT_MINUTES = (15, 30, 60)
+DEFAULT_OVERDUE_WAIT_MINUTES = 30
 
 
 def normalize_grace_hours(value, default=DEFAULT_GRACE_HOURS):
@@ -165,12 +170,27 @@ def normalize_grace_hours(value, default=DEFAULT_GRACE_HOURS):
     return min(ALLOWED_GRACE_HOURS, key=lambda h: (abs(h - hours), abs(h - int(default))))
 
 
+def normalize_overdue_wait_minutes(value, default=DEFAULT_OVERDUE_WAIT_MINUTES):
+    """對齊到 15／30／60 分鐘；無效值使用 30 分鐘預設。"""
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        return int(default)
+    if minutes in ALLOWED_OVERDUE_WAIT_MINUTES:
+        return minutes
+    return min(
+        ALLOWED_OVERDUE_WAIT_MINUTES,
+        key=lambda item: (abs(item - minutes), abs(item - int(default))),
+    )
+
+
 DEFAULT_PROFILE = {
     "last_check_in": None,
     "history": [],
     "checkin_records": [],
     "contact_email": "",
     "grace_hours": DEFAULT_GRACE_HOURS,
+    "overdue_wait_minutes": DEFAULT_OVERDUE_WAIT_MINUTES,
     "reminder_time": "12:00",
     "reminder_times": ["12:00", "18:00"],
     "checkin_mode": "manual",
@@ -183,6 +203,7 @@ DEFAULT_PROFILE = {
     "contact_reminder_sent_dates": [],
     "checkin_reminder_sent_dates": [],
     "checkin_reminder_sent_slots": {},
+    "active_overdue_event": None,
     "daily_checkin_reminder_enabled": True,
     "guardian_details_reminder_enabled": True,
     "guardian_details_reminder_sent_at": "",
@@ -198,6 +219,7 @@ DEFAULT_PROFILE = {
     "trial_bonus_days": 0,
     "payment_status": "trial",
     "paid_until": "",
+sed: --: No such file or directory
     "billing_cycle": "trial",
     "payment_provider": "",
     "payment_method_last4": "",
@@ -418,6 +440,7 @@ PLAN_LIMITS = {
         "guardian_group_member_limit": 50,
         "safety_guard_hours": [1, 3, 6, 8],
         "safety_guard_daily_limit": 5,
+sed: --: No such file or directory
     },
 }
 
@@ -628,7 +651,7 @@ def line_auto_reply_text(text, status=None):
             "常見問題：\n"
             "「每日平安」幫你每日報平安；逾時未報或 SOS 時，用 LINE 私訊通知已綁定的核心守護人。\n\n"
             "Q：未報平安多久會通知？\n"
-            "A：可在會員中心選 24／48／72 小時（預設 48）。滿設定時數後通知；另有約 15 分鐘可取消預警緩衝。\n\n"
+            "A：可在會員中心選 15／30／60 分鐘（預設 30）。系統先再提醒本人一次，之後依第一、第二、第三順位逐步通知守護人。\n\n"
             "Q：核心守護人跟緊急聯絡人差在哪？\n"
             "A：核心＝可收 LINE 通知；緊急聯絡人＝電話備援，不會自動推播／簡訊。\n\n"
             "Q：守護人一定要註冊嗎？\n"
@@ -638,6 +661,7 @@ def line_auto_reply_text(text, status=None):
         )
     if any(keyword in text for keyword in SUPPORT_KEYWORDS):
         faq_url = line_liff_url("faq")
+sed: --: No such file or directory
         return (
             "客服在這裡。請直接在此 LINE 留言你的問題，我們會協助你設定簽到、守護人與方案。\n\n"
             "📩 已收到的問題會在 1–3 個工作天內回覆。\n\n"
@@ -858,6 +882,7 @@ def _migrate_legacy_json(data_file, db_path):
     finally:
         conn.close()
     try:
+sed: --: No such file or directory
         json_path.rename(str(json_path) + ".bak")
     except OSError:
         pass
@@ -1078,6 +1103,7 @@ def load_state(data_file):
             ):
                 try:
                     _save_state_postgres(local)
+sed: --: No such file or directory
                 except Exception:
                     pass
                 return local
@@ -1298,6 +1324,7 @@ def date_string_in_taipei(value):
             candidates.append(dt.astimezone(tz))
         return candidates[0].strftime("%Y-%m-%d")
     except Exception:
+sed: --: No such file or directory
         return dt.strftime("%Y-%m-%d")
 
 
@@ -1518,6 +1545,7 @@ def build_expiry_remind_flex(profile, now=None):
     else:
         title = f"你的{label}即將到期"
         body = (
+sed: --: No such file or directory
             f"還剩約 {days} 天。續用後可繼續每日問候，守護不中斷。"
             "升級補差額即可；另有 7 天考慮期，方便家人一起決定。"
         )
@@ -1738,6 +1766,7 @@ def get_profile(state, line_user_id=None, *, start_public_trial=True):
         if start_public_trial and (is_new or not user.get("trial_started_at")):
             # First sight of this user: start trial clock once.
             if not user.get("trial_started_at"):
+sed: --: No such file or directory
                 user["trial_started_at"] = datetime.now().isoformat(timespec="seconds")
         if is_new and start_public_trial:
             ensure_membership_trial(user, source="public_trial")
@@ -1958,6 +1987,7 @@ def normalize_reminder_times(raw_times, max_count=1):
 def reminder_times_for_profile(profile):
     """取得使用者提醒時段:自訂 reminder_times > 單一 reminder_time > 方案預設。"""
     max_count = int(plan_rules(profile).get("daily_reminders") or 1)
+sed: --: No such file or directory
     raw = profile.get("reminder_times")
     if isinstance(raw, (list, tuple)) and raw:
         normalized = normalize_reminder_times(raw, max_count)
@@ -1983,6 +2013,56 @@ def apply_reminder_times_to_profile(profile, times=None, single=None):
     profile["reminder_times"] = normalized
     profile["reminder_time"] = normalized[0]
     return normalized
+
+
+def ensure_active_overdue_event(profile, reminder_time, now):
+    """Start one missed-check-in workflow; later reminder slots never duplicate it."""
+    today = now.strftime("%Y-%m-%d")
+    current = profile.get("active_overdue_event")
+    if (
+        isinstance(current, dict)
+        and current.get("date") == today
+        and not current.get("resolved_at")
+    ):
+        return current
+    event = {
+        "event_id": f"overdue-{profile.get('line_user_id') or 'member'}-{today}",
+        "date": today,
+        "reminder_time": str(reminder_time or ""),
+        "started_at": now.isoformat(timespec="seconds"),
+        "self_followup_sent_at": "",
+        "guardian_stage": 0,
+        "notified_guardian_ids": [],
+        "resolved_at": "",
+    }
+    profile["active_overdue_event"] = event
+    return event
+
+
+def ranked_overdue_guardians(profile):
+    """Return up to the plan limit in notification priority order."""
+    owner_id = str(profile.get("line_user_id") or "")
+    limit = max(1, int(plan_rules(profile).get("core_guardian_alert_limit") or 1))
+    contacts = sorted(
+        profile.get("contacts") or [],
+        key=lambda item: (
+            0 if bool((item or {}).get("is_primary")) else 1,
+            int((item or {}).get("priority") or 9999),
+        ),
+    )
+    rows = []
+    seen = set()
+    for contact in contacts:
+        if not contact_is_notifiable_line_guardian(contact, owner_id):
+            continue
+        target = get_contact_line_id(contact)
+        if not target or target in seen:
+            continue
+        seen.add(target)
+        rows.append(contact)
+        if len(rows) >= limit:
+            break
+    return rows
 
 
 # === D01: 互動狀態(防每日重複相同內容) ===
@@ -2128,6 +2208,7 @@ def deduplicate_contact_line_bindings(profile):
     if changed:
         profile["contacts"] = unique
     return changed
+sed: --: No such file or directory
 
 
 def profile_has_guardian(profile):
@@ -2221,6 +2302,9 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
         # 首次綁定不強迫 799 填滿 3 次；399／799 未選時皆預設 12:00、18:00。
         "default_reminder_times": default_reminder_times_for_count(min(daily_reminders, 2)),
         "grace_hours": normalize_grace_hours(profile.get("grace_hours")),
+        "overdue_wait_minutes": normalize_overdue_wait_minutes(
+            profile.get("overdue_wait_minutes")
+        ),
         "warning_cancel_minutes": int(
             profile.get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
         ),
@@ -2345,6 +2429,7 @@ def free_eligibility_source(profile):
         or str(profile.get("membership_source") or "") == "beta"
     ):
         return f"beta_{cohort}"
+sed: --: No such file or directory
     return ""
 
 
@@ -2565,6 +2650,7 @@ def authorize_labeled_test_action(data_file, line_user_id, action, now=None):
 
 def assign_beta_cohort(
     state,
+sed: --: No such file or directory
     line_user_id,
     cohort,
     *,
@@ -2785,6 +2871,7 @@ def build_beta_feedback_flex(profile, day):
                     {"type": "text", "text": _beta_feedback_task(cohort, day),
                      "wrap": True, "margin": "sm", "color": "#33443F"},
                     {"type": "text", "text": "點選下方最符合的狀況即可回報",
+sed: --: No such file or directory
                      "wrap": True, "margin": "lg", "size": "sm", "color": "#6B7773"},
                 ],
             },
@@ -3005,6 +3092,7 @@ def review_line_acceptance_case(state, case_id, payload, now=None):
     public.pop("line_user_id", None)
     return {"reviewed": True, "case": public}
 
+sed: --: No such file or directory
 
 def admin_assign_beta_member(data_file, payload, now=None):
     try:
@@ -3225,6 +3313,7 @@ def record_launch_validation_step(
     if not scenario_id or kind not in LAUNCH_SCENARIO_STEPS:
         raise ValueError("invalid_launch_scenario")
     if step not in LAUNCH_SCENARIO_STEPS[kind]:
+sed: --: No such file or directory
         raise ValueError("invalid_launch_step")
     scenarios = state.setdefault("launch_validation_scenarios", {})
     row = scenarios.setdefault(scenario_id, {
@@ -3445,6 +3534,7 @@ def process_verified_privacy_request(
     """Process a verified unlink/delete request and retain minimal legal audit."""
     now = now or current_app_time({})
     line_user_id = str(line_user_id or "").strip()
+sed: --: No such file or directory
     request_type = str(request_type or "").strip()
     peer_line_user_id = str(peer_line_user_id or "").strip()
     request_key = hashlib.sha256(
@@ -3665,6 +3755,7 @@ def compute_streak_days(history, today):
     while cur.strftime("%Y-%m-%d") in history_set:
         streak += 1
         cur -= _td(days=1)
+sed: --: No such file or directory
     return streak
 
 
@@ -3695,14 +3786,32 @@ def build_status(profile, state=None, now=None):
     now = now or current_app_time({})
     last = parse_last_checkin(profile.get("last_check_in"))
     grace_hours = normalize_grace_hours(profile.get("grace_hours"))
+    overdue_wait_minutes = normalize_overdue_wait_minutes(
+        profile.get("overdue_wait_minutes")
+    )
     warning_cancel_minutes = int(
         profile.get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
     )
-    deadline = last + timedelta(hours=grace_hours) if last else None
-    alert_at = deadline + timedelta(minutes=warning_cancel_minutes) if deadline else None
+    active_overdue = profile.get("active_overdue_event")
+    overdue_started_at = (
+        parse_datetime(active_overdue.get("started_at"))
+        if isinstance(active_overdue, dict) and not active_overdue.get("resolved_at")
+        else None
+    )
+    if overdue_started_at and now.tzinfo is None and overdue_started_at.tzinfo is not None:
+        overdue_started_at = overdue_started_at.replace(tzinfo=None)
+    elif overdue_started_at and now.tzinfo is not None and overdue_started_at.tzinfo is None:
+        overdue_started_at = overdue_started_at.replace(tzinfo=now.tzinfo)
+    deadline = (
+        overdue_started_at + timedelta(minutes=overdue_wait_minutes)
+        if overdue_started_at else None
+    )
+    alert_at = deadline
     remaining_ms = max(0, int((deadline - now).total_seconds() * 1000)) if deadline else 0
-    cancel_remaining_ms = max(0, int((alert_at - now).total_seconds() * 1000)) if alert_at and now > deadline else 0
-    prealert = bool(deadline and alert_at and deadline < now < alert_at)
+    cancel_remaining_ms = 0
+    prealert = bool(
+        overdue_started_at and deadline and overdue_started_at < now < deadline
+    )
     overdue = bool(alert_at and now >= alert_at)
     today = now.strftime("%Y-%m-%d")
     is_today_checked = profile_is_today_checked(profile, now=now)
@@ -3712,16 +3821,16 @@ def build_status(profile, state=None, now=None):
         history.add(today)
         profile["history"] = sorted(history)
 
-    if not last:
-        status_text = "還沒有簽到紀錄"
-        status_class = "gray"
-    elif prealert:
-        status_text = "預警取消期，可一鍵取消"
+    if prealert:
+        status_text = "已提醒本人，等待平安回報"
         status_class = "warning"
     elif overdue:
-        status_text = "已超過寬限時間"
+        status_text = "已進入守護人順位通知"
         status_class = "danger"
-    elif remaining_ms <= 6 * 60 * 60 * 1000:
+    elif not last:
+        status_text = "還沒有簽到紀錄"
+        status_class = "gray"
+    elif deadline and remaining_ms <= 6 * 60 * 60 * 1000:
         status_text = "快到提醒時間了"
         status_class = "warning"
     else:
@@ -3813,6 +3922,11 @@ def build_status(profile, state=None, now=None):
         "contact_email": profile.get("contact_email", ""),
         "grace_hours": grace_hours,
         "allowed_grace_hours": list(ALLOWED_GRACE_HOURS),
+        "overdue_wait_minutes": overdue_wait_minutes,
+        "allowed_overdue_wait_minutes": list(ALLOWED_OVERDUE_WAIT_MINUTES),
+        "overdue_guardian_stage": int(
+            (active_overdue or {}).get("guardian_stage") or 0
+        ) if isinstance(active_overdue, dict) else 0,
         "reminder_time": _reminder_times[0],
         "reminder_times": _reminder_times,
         "daily_checkin_reminder_enabled": bool(profile.get("daily_checkin_reminder_enabled", True)),
@@ -3862,6 +3976,7 @@ def build_status(profile, state=None, now=None):
                 "contact_role": resolve_contact_role(c),
             }
             for c in (profile.get("contacts") or [])
+sed: --: No such file or directory
             if contact_is_notifiable_line_guardian(c, owner_id)
         ],
         "profile_contact_count": sum(
@@ -4082,6 +4197,7 @@ def ensure_user_display_name(profile, *, token="", hint="", force_fetch=False) -
 
 def register_line_user(data_file, payload):
     """Upsert LINE user: merge into existing record, never reset trial/bindings."""
+sed: --: No such file or directory
     line_user_id = str(payload.get("line_user_id") or "").strip()
     if not line_user_id:
         return {"error": "missing line_user_id"}, 400
@@ -4302,6 +4418,7 @@ def notify_guardians_of_checkin(data_file, line_user_id, config=None, now=None):
     if not isinstance(profile, dict):
         return {"sent": 0, "failed": 0, "skipped": True, "reason": "member_not_found"}
 
+sed: --: No such file or directory
     owner_id = str(profile.get("line_user_id") or line_user_id or "").strip()
     limit = max(1, int(plan_rules(profile).get("core_guardian_alert_limit") or 1))
     contacts = sorted(
@@ -4315,8 +4432,6 @@ def notify_guardians_of_checkin(data_file, line_user_id, config=None, now=None):
     seen = set()
     for contact in contacts:
         if not contact_is_notifiable_line_guardian(contact, owner_id):
-            continue
-        if not bool(contact.get("is_primary")):
             continue
         target = get_contact_line_id(contact)
         if not target or target in seen:
@@ -4396,6 +4511,12 @@ def record_checkin(data_file, payload=None, config=None):
         records, key=lambda row: str(row.get("checked_at") or row.get("date") or "")
     )[-365:]
     profile["last_warning_cancelled_at"] = None
+    active_overdue = profile.get("active_overdue_event")
+    if isinstance(active_overdue, dict) and not active_overdue.get("resolved_at"):
+        active_overdue["resolved_at"] = checked_at
+        active_overdue["status"] = "checked_in"
+        profile["last_overdue_event"] = copy.deepcopy(active_overdue)
+    profile["active_overdue_event"] = None
     # Product rule: 今日已報平安 → 略過同日剩餘排程提醒（標記所有 slots）
     times = reminder_times_for_profile(profile) or ["12:00"]
     _mark_checkin_reminder_slots(profile, today, times, times)
@@ -4466,6 +4587,14 @@ def save_settings_for_profile(data_file, payload):
         profile["grace_hours"] = normalize_grace_hours(payload.get("grace_hours"))
     else:
         profile["grace_hours"] = normalize_grace_hours(profile.get("grace_hours"))
+    if "overdue_wait_minutes" in payload:
+        profile["overdue_wait_minutes"] = normalize_overdue_wait_minutes(
+            payload.get("overdue_wait_minutes")
+        )
+    else:
+        profile["overdue_wait_minutes"] = normalize_overdue_wait_minutes(
+            profile.get("overdue_wait_minutes")
+        )
     if "reminder_times" in payload:
         apply_reminder_times_to_profile(profile, times=payload.get("reminder_times"))
     elif "reminder_time" in payload:
@@ -4510,6 +4639,7 @@ def save_billing_preferences(data_file, payload):
 def create_payment_order(data_file, payload, config=None):
     line_user_id = str(payload.get("line_user_id") or "").strip()
     plan = str(payload.get("plan") or "").strip()
+sed: --: No such file or directory
     product = PAYMENT_PRODUCTS.get(plan)
     if not line_user_id:
         return {"error": "missing line_user_id"}, 400
@@ -4730,6 +4860,7 @@ def process_period_notification(data_file, parsed, config=None):
 
 def _newebpay_post(url, form):
     from urllib.parse import urlencode
+sed: --: No such file or directory
     from urllib.request import Request, urlopen
 
     request_obj = Request(
@@ -4950,6 +5081,7 @@ def refund_payment_order(data_file, payload, config=None):
     if profile is not None and order["status"] == "refunded":
         profile["payment_status"] = "refunded"
         profile["last_refunded_order_id"] = order_id
+sed: --: No such file or directory
     append_notification_log(
         state,
         "payment_refund",
@@ -5170,6 +5302,7 @@ def _claim_trial_milestone_notices(state, clock):
             claims.append({
                 "line_user_id": target,
                 "day": day,
+sed: --: No such file or directory
                 "trial_started_at": started.isoformat(timespec="seconds"),
                 "claim_token": claim_token,
             })
@@ -5390,6 +5523,7 @@ def resolve_contact_role(contact):
     **不可**讀 ``role``：該欄在 bound_guardians 表示「核心／一般」層級，
     若誤當成 contact_role 會把守護人列濾空，出現 count≥1 但列表空白。
     """
+sed: --: No such file or directory
     if not isinstance(contact, dict):
         return "guardian"
     raw = str(
@@ -5610,6 +5744,7 @@ def get_contacts(data_file, line_user_id=None):
     profile = get_profile(state, line_user_id)
     if scrub_self_line_ids_on_contacts(profile):
         save_state(data_file, state)
+sed: --: No such file or directory
     raw_contacts = list(profile.get("contacts") or [])
     contacts = []
     changed = False
@@ -5830,6 +5965,7 @@ def delete_single_contact(data_file, line_user_id, contact_id):
             for contact in profile["contacts"]
             if resolve_contact_role(contact) == "guardian"
         ):
+sed: --: No such file or directory
             next_guardian = next(
                 (
                     contact
@@ -6050,6 +6186,7 @@ def detect_reverse_invite(state, inviter_id, invitee_id):
     return invitee_id in guarding
 
 
+sed: --: No such file or directory
 def apply_is_primary_to_contact_line(profile, contact_line_user_id, *, make_core=True):
     """Set/unset is_primary for a contact by LINE id; enforce core_guardian_alert_limit.
 
@@ -6270,6 +6407,7 @@ def build_bind_success_notices(inviter, contacts, inviter_id, guardian_name, *, 
     inviter_notice = (
         "✅ 綁定成功\n\n"
         f"對方：{guardian_name}（已成為你的守護人）\n"
+sed: --: No such file or directory
         f"目前：核心守護人 {len(bound_rows)} 位。\n\n"
         "之後若你逾時未報平安或發出 SOS，系統會透過 LINE 私訊通知對方。\n"
         "請點「完成資料」補齊自己的聯絡資料；LINE 通知已立即啟用。"
@@ -6279,7 +6417,7 @@ def build_bind_success_notices(inviter, contacts, inviter_id, guardian_name, *, 
         f"對方：{inviter_name}\n"
         f"你已成為對方的守護人。\n\n"
         f"之後會在以下情況透過 LINE 私訊通知你：\n"
-        f"⚠️ 對方逾時未報平安（依對方設定的 24／48／72 小時）\n"
+        f"⚠️ 對方在提醒後仍未報平安（依第一、第二、第三順位逐步通知）\n"
         f"🚨 對方發出 SOS 緊急求助\n\n"
         f"謝謝你願意成為對方最安心的依靠。"
     )
@@ -6490,6 +6628,7 @@ def backfill_bind_notify(config, *, dry_run=False, limit=0):
 
 def retry_pending_bind_notifications(config):
     """Retry only the failed side of a recent guardian bind, up to 3 attempts."""
+sed: --: No such file or directory
     token = (
         config.get("LINE_CHANNEL_ACCESS_TOKEN")
         or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -6710,6 +6849,7 @@ def bind_emergency_contact(
         return {
             "ok": False,
             "error": "請填寫姓名、與邀請人的關係及電話後再完成綁定",
+sed: --: No such file or directory
             "code": "guardian_profile_required",
             "required_fields": ["name", "relationship", "phone"],
         }, 400
@@ -6930,6 +7070,7 @@ def bind_emergency_contact(
                     "ok": False,
                     "error": "你已使用過免費體驗或封測資格",
                     "code": "free_eligibility_already_used",
+sed: --: No such file or directory
                 }, 409
             if not used_source:
                 ensure_membership_trial(
@@ -7150,6 +7291,7 @@ def bind_emergency_contact(
         }
         bind_notify_status = {
             "inviter": {
+sed: --: No such file or directory
                 "status": "sent" if inviter_notified else "failed",
                 "attempts": 1,
                 "retryable": (
@@ -7370,6 +7512,7 @@ def refresh_all_guardian_groups_count(data_file, token=None):
         except Exception:
             pass
 
+sed: --: No such file or directory
 
 def kick_group_member(token, group_id, user_id):
     """踢 userId 出 group(bot 必須是 admin)。失敗:回 None / HTTPError code。"""
@@ -7590,6 +7733,7 @@ def grant_guardian_group_admin(group, line_user_id) -> bool:
     if not uid or not isinstance(group, dict):
         return False
     changed = False
+sed: --: No such file or directory
     owner = str(group.get("owner_line_user_id") or "").strip()
     if not owner:
         group["owner_line_user_id"] = uid
@@ -7810,6 +7954,7 @@ def update_guardian_group_preferences(data_file, payload):
     if "daily_summary_time" in payload:
         summary_time = str(payload.get("daily_summary_time") or "").strip()
         if not REMINDER_TIME_PATTERN.match(summary_time):
+sed: --: No such file or directory
             return {"error": "invalid daily_summary_time format, use HH:MM"}, 400
         preferences["daily_summary_time"] = summary_time
     group["preferences"] = preferences
@@ -8030,6 +8175,7 @@ def guardian_group_join_outcome(data_file, line_user_id, group_id):
     outcome = dict(result)
     if status == 200:
         outcome["reply_text"] = (
+sed: --: No such file or directory
             "我已完成守護群設定\n"
             f"目前已綁定 {result.get('guardian_group_count', 1)}/"
             f"{result.get('guardian_group_limit', 1)} 個守護群。"
@@ -8250,6 +8396,7 @@ def notify_safety_guard_started(
     duration_label = "15 分鐘" if hours == 0.25 else f"{int(hours)} 小時"
     place = f"（{city}）" if city else ""
     map_url = ""
+sed: --: No such file or directory
     try:
         lat = location.get("latitude")
         lng = location.get("longitude")
@@ -8470,6 +8617,7 @@ def update_location(data_file, payload, config=None):
             "ok": False,
             "error": "safety guard daily limit reached",
             "error_code": (
+sed: --: No such file or directory
                 "trial_daily_limit_reached"
                 if is_trial
                 else "safety_guard_daily_limit_reached"
@@ -8639,6 +8787,40 @@ def collect_phone_only_contacts(contacts):
     return out
 
 
+def ranked_sos_guardians(profile, owner_id, *, selected_ids=None, limit=None):
+    """Eligible SOS guardians in priority order, without applying initial fan-out size."""
+    selected_set = set(selected_ids) if selected_ids is not None else None
+    contacts = sorted(
+        profile.get("contacts") or [],
+        key=lambda item: (
+            0 if bool((item or {}).get("is_primary")) else 1,
+            int((item or {}).get("priority") or 9999),
+        ),
+    )
+    rows = []
+    seen = set()
+    for contact in contacts:
+        if not contact_is_notifiable_line_guardian(contact, owner_id):
+            continue
+        target = get_contact_line_id(contact)
+        if not target or target == owner_id or target in seen:
+            continue
+        if selected_set is not None and target not in selected_set:
+            continue
+        methods = contact.get("notify_methods")
+        if methods is not None and len(methods) == 0:
+            methods = ["line"]
+        if "line" not in (methods or ["line"]):
+            continue
+        row = dict(contact)
+        row["line_id"] = target
+        rows.append(row)
+        seen.add(target)
+        if limit and len(rows) >= int(limit):
+            break
+    return rows
+
+
 def _sos_false_alarm_times(profile, now):
     times = []
     for raw in profile.get("sos_false_alarm_at") or []:
@@ -8656,6 +8838,7 @@ def sos_abuse_state(profile: dict, now: datetime) -> dict:
     false_alarms = _sos_false_alarm_times(profile or {}, now)
     in_24h = [item for item in false_alarms if item >= now - timedelta(hours=24)]
     if len(false_alarms) >= 3:
+sed: --: No such file or directory
         expires_at = false_alarms[-1] + timedelta(days=7)
         if expires_at > now:
             return {
@@ -8876,6 +9059,7 @@ def respond_to_sos_event(data_file, payload, config=None):
             "display_name": actor_name,
             "responded_at": responded_at,
         }
+sed: --: No such file or directory
         event.setdefault("timeline", []).append({
             "action": effective_action,
             "actor_id": actor_id,
@@ -9048,37 +9232,82 @@ def process_sos_escalations(data_file, config=None, now=None):
             continue
         round_no, minute = due
         label = (
-            "再次提醒：尚無守護人接手"
+            "第三順位通知：前兩位尚未接手"
             if round_no == 1 else
-            "備援提醒：SOS 仍無人接手"
+            "第 4、5 位通知：SOS 仍無人接手"
             if round_no == 2 else
-            "最後提醒：請立即確認本人安全"
+            "其餘守護人通知：請立即確認本人安全"
         )
         message = (
             f"⚠️【{label}】{event.get('owner_display_name') or '你的親友'} "
             f"在 {minute} 分鐘前發出 SOS\n"
-            "若能處理請開啟原通知按「我來聯繫」；若有立即危險請撥打 119／110"
+            "你是本次新增通知的備援守護人。若能處理請按「我來聯繫」；"
+            "若有立即危險請撥打 119／110"
         )
         round_units = 0
-        for delivery in event.get("deliveries") or []:
-            if delivery.get("kind") not in {"guardian", "group"}:
-                continue
-            if delivery.get("status") != "sent" or not delivery.get("target"):
+        already_attempted = {
+            str(delivery.get("target") or "")
+            for delivery in (event.get("deliveries") or [])
+            if delivery.get("kind") == "guardian"
+        }
+        candidates = [
+            row
+            for row in (event.get("escalation_guardians") or [])
+            if str(row.get("target") or "") not in already_attempted
+        ]
+        if round_no == 1:
+            batch = candidates[:1]
+        elif round_no == 2:
+            batch = candidates[:2]
+        else:
+            batch = candidates
+        for guardian in batch:
+            target = str(guardian.get("target") or "")
+            if not target:
                 continue
             try:
+                outgoing = (
+                    build_sos_guardian_flex(message, event.get("event_id"))
+                    if sender is line_push_message else message
+                )
                 _send_line_with_retry_key(
                     sender,
                     token,
-                    delivery["target"],
-                    message,
+                    target,
+                    outgoing,
                     _line_retry_key(
-                        f"{event.get('event_id')}:escalation:{round_no}:{delivery['target']}"
+                        f"{event.get('event_id')}:escalation:{round_no}:{target}"
                     ),
                 )
                 sent += 1
-                round_units += max(1, int(delivery.get("recipient_count") or 1))
-            except Exception:
+sed: --: No such file or directory
+                round_units += 1
+                event.setdefault("deliveries", []).append({
+                    "kind": "guardian",
+                    "target": target,
+                    "display_name": str(guardian.get("display_name") or "備援守護人"),
+                    "recipient_count": 1,
+                    "status": "sent",
+                    "escalation_round": round_no,
+                })
+                append_notification_log(
+                    state, "sos_escalation", target, "sent",
+                    message, json.dumps({"round": round_no}, ensure_ascii=False),
+                )
+            except Exception as exc:
                 failed += 1
+                event.setdefault("deliveries", []).append({
+                    "kind": "guardian",
+                    "target": target,
+                    "display_name": str(guardian.get("display_name") or "備援守護人"),
+                    "recipient_count": 1,
+                    "status": "failed",
+                    "escalation_round": round_no,
+                })
+                append_notification_log(
+                    state, "sos_escalation", target, "failed",
+                    message, str(exc),
+                )
         event["escalation_round"] = round_no
         event["last_escalated_at"] = current.isoformat(timespec="seconds")
         event.setdefault("timeline", []).append({
@@ -9272,6 +9501,7 @@ def cancel_sos_event(data_file, payload, config=None):
         sent_at=now,
     )
     event_snapshot = copy.deepcopy(event)
+sed: --: No such file or directory
     false_alarm_at = now.isoformat(timespec="seconds") if not previous_cancel else None
     pending_snapshot = copy.deepcopy(pending) if pending else None
     new_logs = copy.deepcopy((state.get("notification_logs") or [])[notification_log_start:])
@@ -9492,6 +9722,7 @@ def retry_sos_event(data_file, payload, config=None):
 
 def _claim_sos_delivery(
     state,
+sed: --: No such file or directory
     line_user_id,
     now_dt,
     daily_limit=3,
@@ -9690,29 +9921,17 @@ def trigger_sos(data_file, payload, config=None):
         key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
     )
     phone_contacts = collect_phone_only_contacts(contacts)
-    line_contacts = []
-    for contact in contacts:
-        if not contact_is_notifiable_line_guardian(contact, line_user_id):
-            continue
-        if not bool(contact.get("is_primary")):
-            continue
-        target = get_contact_line_id(contact)
-        if not target or target == line_user_id:
-            continue
-        if selected_guardian_set is not None and target not in selected_guardian_set:
-            continue
-        methods = contact.get("notify_methods")
-        if methods is not None and len(methods) == 0:
-            methods = ["line"]
-        if "line" not in (methods or ["line"]):
-            continue
-        if abuse["mode"] == "restricted" and not contact.get("is_primary"):
-            continue
-        row = dict(contact)
-        row["line_id"] = target
-        line_contacts.append(row)
-        if len(line_contacts) >= guardian_delivery_limit:
-            break
+    eligible_line_contacts = ranked_sos_guardians(
+        profile,
+        line_user_id,
+        selected_ids=selected_guardian_set,
+        limit=limit,
+    )
+    line_contacts = eligible_line_contacts[:guardian_delivery_limit]
+    escalation_contacts = (
+        [] if selected_guardian_set is not None
+        else eligible_line_contacts[guardian_delivery_limit:]
+    )
 
     active_group_ids = []
     if (
@@ -9724,6 +9943,7 @@ def trigger_sos(data_file, payload, config=None):
         active_group_ids = [
             group_id for group_id in (profile.get("guardian_group_ids") or [])
             if groups.get(group_id, {}).get("owner_line_user_id") == line_user_id
+sed: --: No such file or directory
             and groups.get(group_id, {}).get("status") == "active"
         ][: int(rules.get("guardian_group_limit") or 0)]
 
@@ -9859,27 +10079,17 @@ def trigger_sos(data_file, payload, config=None):
         key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
     )
     phone_contacts = collect_phone_only_contacts(contacts)
-    line_contacts = []
-    for contact in contacts:
-        if not contact_is_notifiable_line_guardian(contact, line_user_id):
-            continue
-        if not bool(contact.get("is_primary")):
-            continue
-        target = get_contact_line_id(contact)
-        if not target or target == line_user_id:
-            continue
-        if selected_guardian_set is not None and target not in selected_guardian_set:
-            continue
-        methods = contact.get("notify_methods")
-        if methods is not None and len(methods) == 0:
-            methods = ["line"]
-        if "line" not in (methods or ["line"]):
-            continue
-        row = dict(contact)
-        row["line_id"] = target
-        line_contacts.append(row)
-        if len(line_contacts) >= guardian_delivery_limit:
-            break
+    eligible_line_contacts = ranked_sos_guardians(
+        profile,
+        line_user_id,
+        selected_ids=selected_guardian_set,
+        limit=limit,
+    )
+    line_contacts = eligible_line_contacts[:guardian_delivery_limit]
+    escalation_contacts = (
+        [] if selected_guardian_set is not None
+        else eligible_line_contacts[guardian_delivery_limit:]
+    )
     active_group_ids = []
     if (
         selected_guardian_set is None
@@ -9954,6 +10164,7 @@ def trigger_sos(data_file, payload, config=None):
     requested_units = len(line_contacts) + sum(
         max(1, len(group_delivery_members.get(group_id) or []))
         for group_id in active_group_ids
+sed: --: No such file or directory
     )
     budget = line_push_budget_decision(
         state,
@@ -10000,6 +10211,16 @@ def trigger_sos(data_file, payload, config=None):
         "請留意下方通知明細；若是誤觸或目前已安全，"
         "請在 10 分鐘內回到 SOS 畫面取消通知"
     )
+    prepared_escalation_guardians = [
+        {
+            "target": contact["line_id"],
+            "display_name": str(
+                contact.get("name") or contact.get("relationship") or "備援守護人"
+            ),
+            "priority": int(contact.get("priority") or 9999),
+        }
+        for contact in escalation_contacts
+    ]
     prepared_deliveries = [
         {
             "kind": "guardian",
@@ -10054,6 +10275,7 @@ def trigger_sos(data_file, payload, config=None):
             "created_at": now_dt.isoformat(timespec="seconds"),
             "sent_at": None,
             "deliveries": copy.deepcopy(prepared_deliveries),
+            "escalation_guardians": copy.deepcopy(prepared_escalation_guardians),
             "message": message,
             "location_attached": bool(location_text),
             "abuse_mode": abuse["mode"],
@@ -10163,6 +10385,7 @@ def trigger_sos(data_file, payload, config=None):
             sent += 1
             if sent_at is None:
                 sent_at = current_app_time(config or {}).isoformat(timespec="seconds")
+sed: --: No such file or directory
             group_sent += 1
             results.append({
                 "group_id": group_id,
@@ -10249,6 +10472,7 @@ def trigger_sos(data_file, payload, config=None):
         "created_at": now_dt.isoformat(timespec="seconds"),
         "sent_at": sent_at,
         "deliveries": deliveries,
+        "escalation_guardians": copy.deepcopy(prepared_escalation_guardians),
         "message": message,
         "location_attached": bool(location_text),
         "abuse_mode": abuse["mode"],
@@ -10382,6 +10606,7 @@ def friend_locations(data_file, line_user_id):
             }
         )
     return {"friends": friends}
+sed: --: No such file or directory
 
 
 def admin_update_user_plan(data_file, payload):
@@ -10602,6 +10827,7 @@ def send_support_email(to_email, subject, message, config=None):
     ).strip()
     password = str(
         config.get("SMTP_PASSWORD") or os.environ.get("SMTP_PASSWORD") or ""
+sed: --: No such file or directory
     )
     from_email = str(
         config.get("SUPPORT_FROM_EMAIL")
@@ -10822,6 +11048,7 @@ def admin_allowed(config, password):
 
 
 def admin_auth_error_payload(config, password):
+sed: --: No such file or directory
     """Return (payload, http_status) when auth fails; None when allowed."""
     if not admin_security_ready(config):
         return {"error": "admin_not_configured"}, 503
@@ -11042,6 +11269,7 @@ def create_account_migration_ticket(
                 ticket["status"] = "expired"
                 ticket["expires_at"] = current_iso
         tickets[ticket_id] = {
+sed: --: No such file or directory
             "ticket_id": ticket_id,
             "code_digest": account_migration_code_digest(
                 raw_code,
@@ -11262,6 +11490,7 @@ def _merge_migration_history(legacy_rows, current_rows):
         if normalized:
             by_date[normalized] = normalized
         else:
+sed: --: No such file or directory
             undated.append(copy.deepcopy(row))
     return [*sorted(by_date), *undated]
 
@@ -11482,6 +11711,7 @@ _MIGRATION_REFERENCE_SCALAR_FIELDS = {
     "requester_line_user_id",
     "payer_line_user_id",
     "recipient_line_user_id",
+sed: --: No such file or directory
     "inviter_line_user_id",
     "contact_line_user_id",
     "guardian_line_user_id",
@@ -11702,6 +11932,7 @@ def reindex_account_references(
         index = state.get(index_key) or {}
         if not isinstance(index, dict):
             continue
+sed: --: No such file or directory
         was_rekeyed = source_id in index
         if source_id in index:
             source_record = index.pop(source_id)
@@ -11922,6 +12153,7 @@ def redeem_account_migration_ticket(
         if not isinstance(old_profile, dict):
             _append_account_migration_failure_audit(
                 state,
+sed: --: No such file or directory
                 "source_missing",
                 current,
             )
@@ -12142,6 +12374,7 @@ def _sanitize_admin_audit_metadata(value):
             if (
                 compact_key in {"name", "username"}
                 or any(
+sed: --: No such file or directory
                     part in compact_key
                     for part in _ADMIN_AUDIT_SENSITIVE_KEY_PARTS
                 )
@@ -12362,6 +12595,7 @@ def resolve_admin_incident(data_file, payload, actor_role):
                 if str(item.get("incident_id") or f"delivery-{index}") == incident_id
                 and item.get("status") in {"failed", "error"}
             ),
+sed: --: No such file or directory
             None,
         )
     if target is None:
@@ -12582,6 +12816,7 @@ def cron_allowed(config, secret):
     return secrets.compare_digest(expected, provided)
 
 
+sed: --: No such file or directory
 def _positive_percentage(config, name, default):
     raw = config.get(name) if hasattr(config, "get") else None
     if raw in (None, ""):
@@ -12802,6 +13037,7 @@ def create_privacy_request(data_file, payload, now=None):
     privacy_request = {
         "id": f"privacy-{secrets.token_hex(8)}",
         "line_user_id": line_user_id,
+sed: --: No such file or directory
         "request_type": request_type,
         "summary": str((payload or {}).get("summary") or "").strip()[:500],
         "status": "pending",
@@ -13022,6 +13258,7 @@ def admin_summary(data_file, config=None, now=None):
         token = str(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN") or "").strip()
 
     # 後台載入時補齊「LINE 使用者」佔位名稱（最多打 40 次 LINE profile，避免逾時）
+sed: --: No such file or directory
     hydrated = 0
     dirty = False
     for user in (state.get("users") or {}).values():
@@ -13242,6 +13479,7 @@ _MIGRATION_ADMIN_FAILURE_CATEGORIES = {
     "unsafe_conflict",
     "migration_failed",
 }
+sed: --: No such file or directory
 
 
 def admin_account_migrations(data_file, config, now=None):
@@ -13462,6 +13700,7 @@ def read_admin_backup(data_file, backup_id):
         return {"error": "backup file missing"}, 404
     try:
         return json.loads(path.read_text(encoding="utf-8")), 200
+sed: --: No such file or directory
     except (json.JSONDecodeError, OSError):
         return {"error": "backup file unreadable"}, 500
 
@@ -13682,6 +13921,7 @@ def record_line_message_usage(
     *,
     category: str,
     owner_line_user_id: str,
+sed: --: No such file or directory
     recipient_count: int,
     event_id: str,
     sent_at: datetime,
@@ -13882,194 +14122,200 @@ def send_due_reminders(config):
         return {"sent": 0, "skipped": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
 
     now = current_app_time(config)
-    summary = admin_summary(config["DATA_FILE"], config, now=now)
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
     state = load_state(config["DATA_FILE"])
-    today = now.strftime("%Y-%m-%d")
     sent = 0
     skipped = 0
     results = []
     system_error = False
-    for user in summary["users"]:
-        if not user["is_overdue"]:
-            continue
-        profile = state.get("users", {}).get(user["line_user_id"])
-        if not profile:
+    for profile in (state.get("users") or {}).values():
+        owner_id = str(profile.get("line_user_id") or "").strip()
+        event = profile.get("active_overdue_event")
+        if not owner_id or not isinstance(event, dict) or event.get("resolved_at"):
+            skipped += 1
             continue
         if profile.get("membership_paused") or not membership_access_active(profile, now):
             skipped += 1
             continue
-        if profile.get("last_overdue_alert_date") == today:
+        if profile_is_today_checked(profile, config=config, now=now):
+            event["resolved_at"] = now.isoformat(timespec="seconds")
+            event["status"] = "checked_in"
+            profile["last_overdue_event"] = copy.deepcopy(event)
+            profile["active_overdue_event"] = None
+sed: --: No such file or directory
             skipped += 1
             continue
-        retry_pending = False
+        started_at = parse_datetime(event.get("started_at"))
+        if not started_at:
+            skipped += 1
+            continue
+        if now.tzinfo is None and started_at.tzinfo is not None:
+            started_at = started_at.replace(tzinfo=None)
+        elif now.tzinfo is not None and started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=now.tzinfo)
+        elapsed_minutes = max(0, (now - started_at).total_seconds() / 60)
+        wait_minutes = normalize_overdue_wait_minutes(
+            profile.get("overdue_wait_minutes")
+        )
         location = profile.get("location") or {}
         location_link = ""
         if profile.get("attach_location_on_alert") and location.get("latitude") and location.get("longitude"):
             location_link = f"\n最後位置：https://www.google.com/maps?q={location['latitude']},{location['longitude']}"
-        message = f"❤️ 今天一切都好嗎？\n點一下「我平安」，讓家人放心。{location_link}"
-        delivery_key = f"overdue:{today}"
-        _record_launch_delivery(
-            state, delivery_key, "overdue", user["line_user_id"], "expected"
-        )
-        if profile.get("last_overdue_member_alert_date") == today:
-            skipped += 1
-        elif not push_attempt_allowed(profile, delivery_key):
-            skipped += 1
-        else:
-            try:
-                result = sender(token, user["line_user_id"], message)
-                _clear_push_delivery_failure(profile, delivery_key)
-                _record_launch_delivery(
-                    state, delivery_key, "overdue", user["line_user_id"], "sent"
-                )
-                profile["last_overdue_member_alert_date"] = today
-                append_notification_log(state, "overdue", user["line_user_id"], "sent", message, json.dumps(result, ensure_ascii=False))
-                sent += 1
-                results.append({"line_user_id": user["line_user_id"], "result": result})
-            except Exception as exc:
-                failure = _record_scheduled_push_failure(
-                    state,
-                    profile,
-                    delivery_key,
-                    "overdue",
-                    user["line_user_id"],
-                    message,
-                    exc,
-                    now,
-                )
-                retry_pending = retry_pending or failure["retry"]
-                skipped += 1
-                results.append({"line_user_id": user["line_user_id"], "error": str(exc)})
-                if failure["kind"] == "system":
-                    system_error = True
-        if system_error:
-            break
 
-        contact_message = (
-            f"【需要幫忙】{profile.get('display_name') or '家人'} 超過時間尚未回報平安，請協助確認是否一切都好。"
-            f"{location_link}"
-        )
-        rules = plan_rules(profile, now)
-        notify_private = should_notify_private_guardians(state, profile)
-        if notify_private:
-            alert_limit = int(rules.get("core_guardian_alert_limit") or 1)
-            contacts = sorted(
-                profile.get("contacts") or [],
-                key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
+        # 本人於提醒後最多再收到一次短提醒；不因多個每日時段建立重複事件。
+        self_due = min(15, wait_minutes)
+        if elapsed_minutes >= self_due and not event.get("self_followup_sent_at"):
+            self_message = (
+                f"❤️ 還沒收到你的平安回報\n"
+                f"請點一下「我平安」；若提醒後 {wait_minutes} 分鐘仍未回應，"
+                "系統會通知第一順位守護人。"
             )
-            line_contacts = [
-                contact for contact in contacts
-                if (contact.get("line_id") or contact.get("line_user_id"))
-                and "line" in (contact.get("notify_methods") or ["line"])
-            ][:alert_limit]
-            for contact in line_contacts:
-                target = contact.get("line_id") or contact.get("line_user_id")
-                contact_delivery_key = f"contact_alert:{today}:{target}"
-                if contact.get("last_overdue_contact_alert_date") == today:
-                    skipped += 1
-                    continue
-                if not push_attempt_allowed(contact, contact_delivery_key):
-                    skipped += 1
-                    continue
-                try:
-                    result = sender(token, target, contact_message)
-                    _clear_push_delivery_failure(contact, contact_delivery_key)
-                    contact["last_overdue_contact_alert_date"] = today
-                    append_notification_log(state, "contact_alert", target, "sent", contact_message, json.dumps(result, ensure_ascii=False))
-                    sent += 1
-                    results.append({"line_user_id": target, "result": result})
-                except Exception as exc:
-                    failure = _record_scheduled_push_failure(
-                        state,
-                        contact,
-                        contact_delivery_key,
-                        "contact_alert",
-                        target,
-                        contact_message,
-                        exc,
-                        now,
-                    )
-                    retry_pending = retry_pending or failure["retry"]
-                    skipped += 1
-                    results.append({"line_user_id": target, "error": str(exc)})
-                    if failure["kind"] == "system":
-                        system_error = True
-                        break
-                for method in (contact.get("notify_methods") or ["line"]):
-                    if method in {"sms", "phone"}:
-                        detail = contact.get("phone") or "missing phone"
-                        append_notification_log(
-                            state,
-                            f"{method}_contact_alert",
-                            user["line_user_id"],
-                            "skipped_not_live",
-                            contact_message,
-                            detail,
-                        )
-            if system_error:
-                break
-        if system_error:
-            break
+            self_key = f"{event.get('event_id')}:self-followup"
+            try:
+                result = sender(token, owner_id, self_message)
+                event["self_followup_sent_at"] = now.isoformat(timespec="seconds")
+                append_notification_log(
+                    state, "overdue_self_followup", owner_id, "sent",
+                    self_message, json.dumps(result, ensure_ascii=False),
+                )
+                record_line_message_usage(
+                    state,
+                    category="overdue",
+                    owner_line_user_id=owner_id,
+                    recipient_count=1,
+                    event_id=self_key,
+                    sent_at=now,
+                )
+                sent += 1
+                results.append({"line_user_id": owner_id, "stage": "self_followup", "result": result})
+            except Exception as exc:
+                append_notification_log(
+                    state, "overdue_self_followup", owner_id, "failed",
+                    self_message, str(exc),
+                )
+                skipped += 1
+                results.append({"line_user_id": owner_id, "stage": "self_followup", "error": str(exc)})
 
-        group_limit = int(rules.get("guardian_group_limit") or 0)
-        if group_limit > 0:
-            groups = state.get("guardian_groups", {})
+        # 799 守護群仍是選用通道；在第一順位到期時通知一次，不取代私人順位通知。
+        if elapsed_minutes >= wait_minutes:
+            rules = plan_rules(profile, now)
+            group_limit = int(rules.get("guardian_group_limit") or 0)
+            groups = state.get("guardian_groups") or {}
+            notified_group_ids = event.setdefault("notified_group_ids", [])
             active_group_ids = [
-                group_id for group_id in (profile.get("guardian_group_ids") or [])
-                if groups.get(group_id, {}).get("owner_line_user_id") == user["line_user_id"]
+                group_id
+                for group_id in (profile.get("guardian_group_ids") or [])
+                if group_id not in notified_group_ids
+                and groups.get(group_id, {}).get("owner_line_user_id") == owner_id
                 and groups.get(group_id, {}).get("status") == "active"
-                and guardian_group_preference(groups.get(group_id), "notify_group_on_overdue")
+                and guardian_group_preference(
+                    groups.get(group_id), "notify_group_on_overdue"
+                )
             ][:group_limit]
             group_message = (
-                f"【失聯預警】{profile.get('display_name') or '成員'} 已超過平安簽到時間，"
-                f"請群內協助確認。{location_link}"
+                f"⚠️【失聯預警】{profile.get('display_name') or '成員'} 在提醒後 "
+                f"{wait_minutes} 分鐘仍未回報平安，請群內協助確認。{location_link}"
             )
             for group_id in active_group_ids:
-                group = groups.get(group_id) or {}
-                group_delivery_key = f"overdue_guardian_group:{today}:{group_id}"
-                if group.get("last_overdue_alert_date") == today:
-                    skipped += 1
-                    continue
-                if not push_attempt_allowed(group, group_delivery_key):
-                    skipped += 1
-                    continue
+                delivery_key = f"{event.get('event_id')}:group:{group_id}"
                 try:
                     result = sender(token, group_id, group_message)
-                    _clear_push_delivery_failure(group, group_delivery_key)
-                    group["last_overdue_alert_date"] = today
+                    notified_group_ids.append(group_id)
                     append_notification_log(
+                        state, "overdue_guardian_group", group_id, "sent",
+                        group_message, json.dumps(result, ensure_ascii=False),
+                    )
+                    record_line_message_usage(
                         state,
-                        "overdue_guardian_group",
-                        group_id,
-                        "sent",
-                        group_message,
-                        json.dumps(result, ensure_ascii=False),
+                        category="overdue",
+                        owner_line_user_id=owner_id,
+                        recipient_count=1,
+                        event_id=delivery_key,
+                        sent_at=now,
                     )
                     sent += 1
-                    results.append({"group_id": group_id, "result": result})
+                    results.append({
+                        "group_id": group_id,
+                        "stage": "guardian_group",
+                        "result": result,
+                    })
                 except Exception as exc:
-                    failure = _record_scheduled_push_failure(
-                        state,
-                        group,
-                        group_delivery_key,
-                        "overdue_guardian_group",
-                        group_id,
-                        group_message,
-                        exc,
-                        now,
+                    append_notification_log(
+                        state, "overdue_guardian_group", group_id, "failed",
+                        group_message, str(exc),
                     )
-                    retry_pending = retry_pending or failure["retry"]
                     skipped += 1
-                    results.append({"group_id": group_id, "error": str(exc)})
-                    if failure["kind"] == "system":
-                        system_error = True
-                        break
-            if system_error:
-                break
+                    results.append({
+                        "group_id": group_id,
+                        "stage": "guardian_group",
+                        "error": str(exc),
+                    })
 
-        if not retry_pending:
-            profile["last_overdue_alert_date"] = today
+        current_stage = int(event.get("guardian_stage") or 0)
+        due_stage = next(
+            (
+                stage
+                for stage in (1, 2, 3)
+                if stage > current_stage and elapsed_minutes >= wait_minutes * stage
+            ),
+            None,
+        )
+        if due_stage is None:
+            continue
+        if not should_notify_private_guardians(state, profile):
+            event["guardian_stage"] = due_stage
+            skipped += 1
+            continue
+        guardians = ranked_overdue_guardians(profile)
+        if due_stage > len(guardians):
+            event["guardian_stage"] = due_stage
+            skipped += 1
+            continue
+        contact = guardians[due_stage - 1]
+        target = get_contact_line_id(contact)
+        contact_name = str(contact.get("name") or contact.get("relationship") or f"第 {due_stage} 順位守護人")
+        contact_message = (
+            f"⚠️【第 {due_stage} 順位未報平安通知】"
+            f"{profile.get('display_name') or '你的親友'} 在提醒後 "
+            f"{wait_minutes * due_stage} 分鐘仍未回報平安，請協助確認。"
+            f"{location_link}"
+        )
+        delivery_key = f"{event.get('event_id')}:guardian:{due_stage}:{target}"
+        try:
+            result = sender(token, target, contact_message)
+            event["guardian_stage"] = due_stage
+            event.setdefault("notified_guardian_ids", []).append(target)
+            append_notification_log(
+                state, "contact_alert", target, "sent",
+                contact_message, json.dumps(result, ensure_ascii=False),
+            )
+            record_line_message_usage(
+                state,
+                category="overdue",
+                owner_line_user_id=owner_id,
+                recipient_count=1,
+                event_id=delivery_key,
+                sent_at=now,
+            )
+            sent += 1
+            results.append({
+                "line_user_id": target,
+                "display_name": contact_name,
+                "stage": due_stage,
+                "result": result,
+            })
+        except Exception as exc:
+            append_notification_log(
+                state, "contact_alert", target, "failed",
+                contact_message, str(exc),
+            )
+            skipped += 1
+            results.append({
+                "line_user_id": target,
+                "display_name": contact_name,
+                "stage": due_stage,
+                "error": str(exc),
+            })
 
     save_state(config["DATA_FILE"], state)
     return {
@@ -14117,6 +14363,7 @@ def send_guardian_group_daily_summaries(config):
         current_hm = now.strftime("%H:%M")
         if current_hm < summary_time:
             deferred += 1
+sed: --: No such file or directory
             continue
         if group.get("last_daily_summary_date") == today:
             skipped += 1
@@ -14337,6 +14584,7 @@ def _prepare_guardian_group_summary(
     state, group_id, today, now, claim_token, member_ids
 ):
     group = (state.get("guardian_groups") or {}).get(group_id)
+sed: --: No such file or directory
     claim = ((group or {}).get("daily_summary_claims") or {}).get(today) or {}
     if not isinstance(group, dict) or claim.get("claim_token") != claim_token:
         return {"ready": False, "reason": "claim_lost"}
@@ -14557,6 +14805,7 @@ def send_missing_contact_reminders(config):
             if failure["kind"] == "system":
                 system_error = True
                 break
+sed: --: No such file or directory
     save_state(config["DATA_FILE"], state)
     return {
         "sent": sent,
@@ -14777,6 +15026,7 @@ def build_daily_checkin_flex(now, target_time=""):
             "header": {
                 "type": "box",
                 "layout": "vertical",
+sed: --: No such file or directory
                 "spacing": "xs",
                 "backgroundColor": "#00B900",
                 "paddingTop": "lg",
@@ -14952,6 +15202,7 @@ def send_checkin_reminders(config):
                 state, delivery_key, "checkin", line_user_id, "sent"
             )
             _mark_checkin_reminder_slots(user, today, times, due_unsent)
+            ensure_active_overdue_event(user, target_time, now)
             append_notification_log(state, "checkin", line_user_id, "sent", message, json.dumps(result, ensure_ascii=False))
             record_line_message_usage(
                 state,
@@ -14996,6 +15247,7 @@ def send_checkin_reminders(config):
                         system_error = True
                         break
         except Exception as exc:
+sed: --: No such file or directory
             failure = _record_scheduled_push_failure(
                 state,
                 user,
@@ -15216,6 +15468,7 @@ def plan_has_smart_reminders(profile, now=None):
     return plan in {"paid_799", "paid_799_year"} and paid_membership_is_active(
         profile or {}, now=now
     )
+sed: --: No such file or directory
 
 
 def normalize_smart_reminder(raw, index=0):
@@ -15436,6 +15689,7 @@ def build_smart_reminder_digest(reminders, *, mode="day"):
                 "layout": "vertical",
                 "spacing": "md",
                 "contents": [
+sed: --: No such file or directory
                     {"type": "text", "text": f"🗓️ {when}有 {len(reminders)} 個提醒", "weight": "bold", "size": "xl", "wrap": True},
                     {"type": "text", "text": "\n".join(lines), "size": "md", "wrap": True},
                     {"type": "text", "text": "同一時段已合併成一則，避免重複打擾", "size": "xs", "color": "#888888", "wrap": True},
@@ -15656,6 +15910,7 @@ def send_smart_reminders(config):
             or not membership_access_active(user, now)
             or not plan_has_smart_reminders(user)
         ):
+sed: --: No such file or directory
             skipped += 1
             continue
         sent_keys = set(user.get("smart_reminder_sent_keys") or [])
@@ -15876,6 +16131,7 @@ def run_cron_tick(config):
                 "ok": False,
                 "system_error": True,
                 "ran_at": now.isoformat(timespec="seconds"),
+sed: --: No such file or directory
                 "timezone": "Asia/Taipei",
                 "tasks": results,
             }, 200
@@ -16002,6 +16258,14 @@ def update_onboarding_reminder(data_file, line_user_id, payload):
         profile["grace_hours"] = normalize_grace_hours(payload.get("grace_hours"))
     else:
         profile["grace_hours"] = normalize_grace_hours(profile.get("grace_hours"))
+    if "overdue_wait_minutes" in payload:
+        profile["overdue_wait_minutes"] = normalize_overdue_wait_minutes(
+            payload.get("overdue_wait_minutes")
+        )
+    else:
+        profile["overdue_wait_minutes"] = normalize_overdue_wait_minutes(
+            profile.get("overdue_wait_minutes")
+        )
     save_state(data_file, state)
     return {
         "ok": True,
@@ -16012,6 +16276,10 @@ def update_onboarding_reminder(data_file, line_user_id, payload):
             profile.get("daily_checkin_reminder_enabled", True)
         ),
         "grace_hours": normalize_grace_hours(profile.get("grace_hours")),
+        "overdue_wait_minutes": normalize_overdue_wait_minutes(
+            profile.get("overdue_wait_minutes")
+        ),
+        "allowed_overdue_wait_minutes": list(ALLOWED_OVERDUE_WAIT_MINUTES),
         "warning_cancel_minutes": int(
             profile.get("warning_cancel_minutes") or DEFAULT_WARNING_CANCEL_MINUTES
         ),
@@ -16084,6 +16352,7 @@ def checkin_for_user(data_file, line_user_id, payload, config=None):
         }),
     )
     state = load_state(data_file)
+sed: --: No such file or directory
     if line_user_id not in state.get("users", {}):
         register_line_user(
             data_file,
@@ -16304,6 +16573,7 @@ def create_app(config=None):
         if request.is_secure:
             return True
         if str(request.remote_addr or "") in {"127.0.0.1", "::1"}:
+sed: --: No such file or directory
             return True
         trusted_proxy = (
             _env_flag_on("RENDER", app.config)
@@ -16524,6 +16794,7 @@ def create_app(config=None):
     @app.get("/liff/guardian")
     def liff_guardian():
         # 永久入口應是 liff.line.me；此路徑保留相容，導向內嵌 onboarding（守護人→提醒）
+sed: --: No such file or directory
         return _liff_embed_redirect(open_action="onboarding")
 
     @app.get("/liff/member")
@@ -16744,6 +17015,7 @@ def create_app(config=None):
                 "需要幫忙確認",
                 "SOS 確認 2",
                 "SOS 確認 3",
+sed: --: No such file or directory
             )
             cancel_commands = ("SOS 取消", "取消需要幫忙")
 
@@ -16964,6 +17236,7 @@ def create_app(config=None):
                     int(rules.get("emergency_contact_limit") or 2),
                 )
                 enriched.setdefault("reminder_time", str(times[0] if times else "09:00"))
+sed: --: No such file or directory
                 enriched.setdefault("reminder_times", list(times))
                 group_id = enriched.get("group_id")
                 if group_id:
@@ -17184,6 +17457,7 @@ def create_app(config=None):
                 result, code = enforce_group_member_limit(group_id, dict(app.config))
                 if code != 200 or not result.get("enforced"):
                     return
+sed: --: No such file or directory
                 msg_lines = [
                     f"⚠️ 守護群超過 {GROUP_MEMBER_LIMIT} 人上限。",
                     f"目前成員數:{result.get('current_count')}/{GROUP_MEMBER_LIMIT}",
@@ -17404,6 +17678,7 @@ def create_app(config=None):
                     group_id=group_id,
                 )
                 return
+sed: --: No such file or directory
 
             # 2026-07-21 patch 17: BOT 狀態查詢(DM + 群組都可用)
             if stripped in ("BOT 狀態", "bot 狀態", "機器人狀態", "機器人狀況"):
@@ -17624,6 +17899,7 @@ def create_app(config=None):
                     create_support_ticket(
                         app.config["DATA_FILE"],
                         {
+sed: --: No such file or directory
                             "line_user_id": line_user_id,
                             "message": text,
                         },
@@ -17844,6 +18120,7 @@ def create_app(config=None):
         return Response("SUCCESS", mimetype="text/plain"), 200
 
     @app.route("/payment-success", methods=["GET", "POST"])
+sed: --: No such file or directory
     def payment_success_page():
         # 藍新 ReturnURL 常以 POST 帶回付款結果；與 GET 同樣回傳 SPA。
         return send_from_directory(app.static_folder, "index.html")
@@ -18064,6 +18341,7 @@ def create_app(config=None):
             app.config["DATA_FILE"], line_user_id, payload
         )
         return jsonify(result), code
+sed: --: No such file or directory
 
     @app.get("/api/emergency-contact/invite-preview")
     def emergency_contact_invite_preview_api():
@@ -18284,6 +18562,7 @@ def create_app(config=None):
             return jsonify({"error": "group inactive"}), 409
         if simulated_count is None:
             return jsonify({"error": "simulated_count required"}), 400
+sed: --: No such file or directory
         current_count = int(simulated_count)
         if current_count <= GROUP_MEMBER_LIMIT:
             return jsonify({
@@ -18504,6 +18783,7 @@ def create_app(config=None):
                 "cancelled_at": p.get("cancelled_at"),
             })
         # active 在前(警告/warning),sent,cancelled 在後
+sed: --: No such file or directory
         out.sort(key=lambda x: (x.get("stage", "") not in ("warning_1", "warning_2", "warning_3"), x.get("last_tap_at") or ""))
         events = []
         for event in (state.get("sos_events") or {}).values():
@@ -18724,6 +19004,7 @@ def create_app(config=None):
             admin_account_migrations(
                 app.config["DATA_FILE"],
                 app.config,
+sed: --: No such file or directory
             )
         )
 
@@ -18944,6 +19225,7 @@ def create_app(config=None):
         return _admin_mutation_response("backup.create", data, code)
 
     @app.post("/api/admin/backups/r2")
+sed: --: No such file or directory
     def admin_r2_backup_create_api():
         denied = _admin_guard(write=True)
         if denied:
@@ -19164,6 +19446,7 @@ def create_app(config=None):
         denied = _admin_guard()
         if denied:
             return denied
+sed: --: No such file or directory
         data, code = inspect_default_rich_menu(app.config)
         return jsonify(data), code
 
@@ -19384,6 +19667,7 @@ class MiniClient:
                 line_user_id,
                 params.get("display_name"),
             )
+sed: --: No such file or directory
             return MiniResponse(body, code)
         if route == "/api/onboarding":
             line_user_id, err = authenticated_line_user(
@@ -19604,6 +19888,7 @@ class MiniClient:
             payload["line_user_id"] = line_user_id
             body, code = save_smart_reminder(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
+sed: --: No such file or directory
         if route in {"/api/cron/smart-reminders", "/api/cron/birthday-reminders"}:
             if not cron_allowed(self.app.config, cron_secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
@@ -19824,6 +20109,7 @@ class MiniApp:
             "LIFF_ID": os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID,
             "LINE_LOGIN_CHANNEL_ID": (
                 os.environ.get("LINE_LOGIN_CHANNEL_ID")
+sed: --: No such file or directory
                 or (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).split("-", 1)[0]
                 or DEFAULT_LINE_LOGIN_CHANNEL_ID
             ),
@@ -20044,6 +20330,7 @@ class MiniApp:
                     line_user_id, err = handler.authenticated_user(payload, params)
                     if err:
                         return handler.send_json(err[0], err[1])
+sed: --: No such file or directory
                     data, code = checkin_for_user(
                         data_file, line_user_id, payload, config
                     )
