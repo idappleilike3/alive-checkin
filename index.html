@@ -7911,7 +7911,7 @@
           clearPendingGuardianInvite();
           closeInviteAcceptPrompt();
           if (bindResult?.already_bound && bindResult?.binding_complete === false) {
-            alert(bindResult?.message || "你已經是守護人了，請把邀請轉傳給其他好友");
+            alert(bindResult?.message || "這位好友已經綁定，不能重複綁定；請返回並改選其他好友");
           } else {
             let bindMsg = bindResult?.message || "綁定完成！你已成為對方的守護人。";
             if (bindResult?.binding_complete !== false) {
@@ -7943,7 +7943,7 @@
           bindDone = true;
           clearInviteFromUrl();
           closeInviteAcceptPrompt();
-          alert(msg.includes("名額已滿") ? msg : "你已經是守護人了，請把邀請轉傳給其他好友");
+          alert(msg.includes("名額已滿") ? msg : "這位好友已經綁定，不能重複綁定；請返回並改選其他好友");
           return { bound: true, already_bound: true, ok: true, message: msg };
         }
         throw error;
@@ -8219,16 +8219,14 @@
 
     function selectedSosGuardianIds() {
       const host = document.getElementById("sosGuardianTargets");
-      const eligible = new Set(safetyGuardTargetCandidates().map(contactPeerLineId));
-      const mode = (host || document).querySelector(
-        'input[name="sosTargetMode"]:checked'
-      )?.value || "all";
-      if (mode === "all") return Array.from(eligible);
+      const eligibleIds = safetyGuardTargetCandidates().map(contactPeerLineId);
+      const eligible = new Set(eligibleIds);
       const checked = Array.from(
         (host || document).querySelectorAll('input[name="sosGuardian"]:checked'),
         (input) => String(input.value || "").trim(),
       ).filter((value) => eligible.has(value));
-      return mode === "one" ? checked.slice(0, 1) : checked;
+      // 長輩若沒有勾選，不阻擋求助；預設通知排序最前面的兩位核心守護人。
+      return checked.length ? checked : eligibleIds.slice(0, 2);
     }
 
     function renderSosGuardianTargetPicker() {
@@ -8238,15 +8236,11 @@
       const choices = contacts.map((contact, index) => {
         const lineId = contactPeerLineId(contact);
         const name = contactPeerDisplayName(contact);
-        return `<label class="guardian-target-choice"><input type="checkbox" name="sosGuardian" value="${escapeHtml(lineId)}" ${index === 0 ? "checked" : ""}> ${escapeHtml(name)}</label>`;
+        return `<label class="guardian-target-choice"><input type="checkbox" name="sosGuardian" value="${escapeHtml(lineId)}" ${index < 2 ? "checked" : ""}> ${escapeHtml(name)}</label>`;
       }).join("");
       host.innerHTML = `
         <div class="settings-title">這次要通知誰</div>
-        <div role="radiogroup" aria-label="SOS 核心守護人選擇方式">
-          <label><input type="radio" name="sosTargetMode" value="one"> 指定 1 位核心守護人</label>
-          <label><input type="radio" name="sosTargetMode" value="many"> 勾選多位核心守護人</label>
-          <label><input type="radio" name="sosTargetMode" value="all" checked> 全部核心守護人</label>
-        </div>
+        <p class="helper">請勾選要通知的核心守護人；若全部取消勾選，系統仍會預設通知前兩位。</p>
         <div class="guardian-target-list">${choices || '<span class="helper">尚未綁定核心守護人</span>'}</div>`;
     }
 
@@ -9550,8 +9544,8 @@
       }
       try {
         const position = await getCurrentPositionPromise(
-          { timeout: 7000, maximumAge: 60000 },
-          8000
+          { timeout: 1200, maximumAge: 60000 },
+          1500
         );
         const latitude = position.coords.latitude;
         const longitude = position.coords.longitude;
@@ -9574,7 +9568,7 @@
         sosLocationPromise = refreshLocationForSos();
         sosLocationDeadlinePromise = new Promise((resolve) => setTimeout(
           () => resolve({ ok: false, reason: "hard_timeout" }),
-          8000
+          1500
         ));
       }
       return Promise.race([sosLocationPromise, sosLocationDeadlinePromise]);
@@ -9746,9 +9740,6 @@
         label.textContent = "正在通知守護人";
         const sosPayload = {};
         sosPayload.guardian_line_user_ids = selectedSosGuardianIds();
-        if (!sosPayload.guardian_line_user_ids.length) {
-          throw new Error("請至少選擇 1 位核心守護人");
-        }
         if (locationMeta.ok) {
           sosPayload.latitude = locationMeta.latitude;
           sosPayload.longitude = locationMeta.longitude;
