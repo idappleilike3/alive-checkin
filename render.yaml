@@ -1,3 +1,4 @@
+sed: --: No such file or directory
 services:
   - type: web
     name: alive-checkin
@@ -68,7 +69,7 @@ services:
   - type: cron
     name: alive-checkin-scheduler
     env: python
-    schedule: "*/5 * * * *"
+    schedule: "* * * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python cron_ping.py /api/cron/tick
     envVars:
