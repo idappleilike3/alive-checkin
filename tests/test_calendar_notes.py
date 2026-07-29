@@ -123,6 +123,26 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertTrue(formal_799["calendar_notes_enabled"])
         self.assertTrue(formal_799["smart_reminders_enabled"])
 
+        formal_799_year = build_status({
+            **base,
+            "plan": "paid_799_year",
+            "payment_status": "active",
+        })
+        self.assertTrue(formal_799_year["calendar_notes_enabled"])
+        self.assertTrue(formal_799_year["smart_reminders_enabled"])
+
+    def test_member_center_restores_799_year_memo_entry_without_typo(self):
+        member = (ROOT / "liff" / "member.html").read_text(encoding="utf-8")
+        index = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("我的平安紀錄", member)
+        self.assertIn("＋ 新增備忘錄", member)
+        self.assertIn('/?open=history#history', member)
+        self.assertIn("799 年費", member)
+        self.assertNotIn("樂年", member)
+        self.assertNotIn("樂年", index)
+        self.assertIn("備忘錄只開放 799 月費／年費方案使用", index)
+
     def test_liff_pricing_shows_memo_only_for_799(self):
         page = (ROOT / "liff" / "pricing.html").read_text(encoding="utf-8")
         self.assertIn(
