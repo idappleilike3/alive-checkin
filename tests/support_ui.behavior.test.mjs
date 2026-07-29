@@ -46,15 +46,17 @@ this.apiCreateSupportTicket = apiCreateSupportTicket;`,
   );
 
   await context.apiCreateSupportTicket({
-    category: "付款退款",
-    subject: "退款進度",
+    category: "一般詢問",
+    subject: "我要怎麼修改提醒時間？",
     message: "請協助",
-    email: "member@example.com",
-    reply_channel: "email",
+    reply_channel: "line",
   });
 
   assert.equal(requests[0].url, "/api/support/tickets");
-  assert.equal(JSON.parse(requests[0].options.body).line_user_id, "U-member");
+  const body = JSON.parse(requests[0].options.body);
+  assert.equal(body.line_user_id, "U-member");
+  assert.equal(body.reply_channel, "line");
+  assert.equal(body.email, undefined);
   assert.equal(refreshed, 1);
 });
 
@@ -92,37 +94,13 @@ this.renderMemberSupportTickets = renderMemberSupportTickets;`,
   assert.equal(context.compromised, undefined);
 });
 
-test("admin reply sends selected channel and status", async () => {
-  const values = new Map([
-    ['[data-support-reply="T-1"]', {value: "退款已完成"}],
-    ['[data-support-channel="T-1"]', {value: "email"}],
-    ['[data-support-status="T-1"]', {value: "resolved"}],
-  ]);
-  let request;
-  const context = {
-    document: {querySelector: (selector) => values.get(selector)},
-    adminFetch: async (url, options) => {
-      request = {url, options};
-      return {ok: true, json: async () => ({})};
-    },
-    refresh: async () => {},
-    alert() {},
-    $: () => ({textContent: ""}),
-  };
-  vm.runInNewContext(
-    `${functionSource(
-      adminScript,
-      "    async function replySupportTicket",
-      "    async function updatePlan",
-    )}
-this.replySupportTicket = replySupportTicket;`,
-    context,
-  );
-
-  await context.replySupportTicket("T-1");
-
-  const body = JSON.parse(request.options.body);
-  assert.equal(request.url, "/api/admin/support-reply");
-  assert.equal(body.reply_channel, "email");
-  assert.equal(body.status, "resolved");
+test("support UI keeps free-form LINE workflow without email or push reply controls", () => {
+  assert.doesNotMatch(memberHtml, /id="memberSupportCategory"/);
+  assert.doesNotMatch(memberHtml, /id="memberSupportEmail"/);
+  assert.doesNotMatch(memberHtml, /id="memberSupportReplyChannel"/);
+  assert.match(memberHtml, /1–3 個工作天內/);
+  assert.match(memberHtml, /常見問題與解答/);
+  assert.doesNotMatch(adminHtml, /data-support-channel/);
+  assert.doesNotMatch(adminHtml, /LINE 私訊（主動推播，計入訊息量）/);
+  assert.match(adminHtml, /LINE Official Account Manager/);
 });
