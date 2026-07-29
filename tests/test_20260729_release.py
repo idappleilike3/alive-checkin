@@ -314,6 +314,17 @@ class Release20260729Tests(unittest.TestCase):
         self.assertIn("open=checkin", page)
         self.assertIn("一鍵邀請守護人", page)
 
+    def test_799_calendar_has_daily_blessing_and_real_almanac_yi_ji(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn("lunar-javascript/1.7.7/lunar.min.js", page)
+        self.assertIn('id="dailyBlessingText"', page)
+        self.assertIn('id="dailyAlmanacYi"', page)
+        self.assertIn('id="dailyAlmanacJi"', page)
+        self.assertIn("almanac.getDayYi()", page)
+        self.assertIn("almanac.getDayJi()", page)
+        self.assertIn('["paid_799", "paid_799_year"]', page)
+        self.assertIn("民俗生活參考", page)
+
     def test_line_id_token_is_never_added_to_url(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         auth_query = page.split("async function withAuthQuery(url)", 1)[1].split(
