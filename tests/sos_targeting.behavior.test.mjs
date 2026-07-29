@@ -4,12 +4,12 @@ import test from "node:test";
 
 const page = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
-test("SOS page offers one, multiple, or all core guardian targets", () => {
+test("SOS page shows guardian checkboxes and defaults empty selection to two", () => {
   assert.match(page, /id="sosGuardianTargets"/);
-  assert.match(page, /name="sosTargetMode" value="one"/);
-  assert.match(page, /name="sosTargetMode" value="many"/);
-  assert.match(page, /name="sosTargetMode" value="all"/);
+  assert.match(page, /name="sosGuardian"/);
+  assert.match(page, /系統仍會預設通知前兩位/);
   assert.match(page, /function selectedSosGuardianIds\(\)/);
+  assert.match(page, /checked\.length \? checked : eligibleIds\.slice\(0, 2\)/);
 });
 test("SOS request sends only the selected guardian ids", () => {
   assert.match(
