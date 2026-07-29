@@ -4422,7 +4422,7 @@
 
     <section class="status-box" aria-label="簽到狀態">
       <div class="status-header">
-        <span class="status-toggle-label"><strong>今日狀態</strong><small>簽到紀錄、守護圈與下次提醒</small></span>
+        <span class="status-toggle-label"><strong>今日狀態</strong><small>簽到紀錄、核心守護人與下次提醒</small></span>
         <span class="alive-pill" id="alivePill">待簽到</span>
       </div>
       <div class="status-details" id="statusDetails">
@@ -4436,7 +4436,7 @@
         </div>
         <div class="guardian-status-grid">
           <div class="guardian-status-card"><strong>連續平安</strong><span id="streakText">0 天</span></div>
-          <div class="guardian-status-card"><strong>守護圈狀態</strong><span id="guardianCircleText">尚未綁定</span></div>
+          <div class="guardian-status-card"><strong>核心守護人</strong><span id="guardianCircleText">尚未有人接受邀請</span><small>已接受邀請的人會收到你的平安通知</small></div>
         </div>
       </div>
     </section>
@@ -4625,7 +4625,7 @@
         </div>
 
         <div class="member-data-section" id="memberDailyReminderSection">
-          <h3>每日提醒與逾時設定</h3>
+          <h3>我的設定 → 每日提醒設定</h3>
           <p class="helper" id="dailyReminderPlanHint">依方案設定每日提醒次數與時段。</p>
           <label class="daily-remind-toggle-row" for="dailyCheckinReminderEnabled">
             <input type="checkbox" id="dailyCheckinReminderEnabled" checked>
@@ -4656,13 +4656,13 @@
 
         <div class="member-data-section" id="memberSmartRemindersSection">
           <button class="member-subpanel-toggle" id="smartRemindersToggleBtn" type="button" aria-expanded="false" aria-controls="smartRemindersPanel">
-            智能提醒
+            日期提醒（799 月費／年費）
             <span aria-hidden="true">›</span>
           </button>
           <div class="member-subpanel-body" id="smartRemindersPanel" hidden>
-            <p class="helper" id="smartReminderHint">799 守護版：生日／紀念日／回診等生活提醒，只傳到 LINE 私訊。</p>
+            <p class="helper" id="smartReminderHint">799 月費／年費：生日、紀念日、回診等日期提醒，只傳到 LINE 私訊。</p>
             <div id="smartReminderUpgrade" class="member-limit-banner" hidden>
-              <strong>智能提醒為 799 功能</strong>
+              <strong>日期提醒為 799 月費／年費功能</strong>
               <p>免費／399 僅可看說明。升級 799 後可新增提醒，系統會在到期日早上私訊你。</p>
               <button class="action-btn primary" id="smartReminderUpgradeBtn" type="button">查看 799 方案</button>
             </div>
@@ -4773,7 +4773,7 @@
             <li>核心守護人 2 位、緊急聯絡人 4 位</li>
             <li>LINE 私聊預警 1 次／日</li>
             <li>安全守護 15 分鐘／每日 2 次</li>
-            <li>SOS（不含備忘錄與智慧提醒）</li>
+            <li>SOS（不含備忘錄與日期提醒）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="199-month">選擇 199 月費</button>
         </article>
@@ -4786,7 +4786,7 @@
             <li>核心守護人 3 位、緊急聯絡人 10 位</li>
             <li>LINE 私聊預警 2 次／日</li>
             <li>安全守護 15 分鐘／每日 2 次</li>
-            <li>SOS（不含備忘錄與智慧提醒）</li>
+            <li>SOS（不含備忘錄與日期提醒）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="199-year">選擇 199 年費</button>
         </article>
@@ -4798,7 +4798,7 @@
             <li>核心守護人 5 位、緊急聯絡人 15 位</li>
             <li>LINE 私聊預警 2 次／日</li>
             <li>安全守護 1／3 小時／每日 3 次</li>
-            <li>SOS（不含備忘錄與智慧提醒）</li>
+            <li>SOS（不含備忘錄與日期提醒）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="399-month">選擇 399 月費</button>
         </article>
@@ -4811,7 +4811,7 @@
             <li>核心守護人 7 位、緊急聯絡人 25 位</li>
             <li>LINE 私聊預警 3 次／日</li>
             <li>安全守護 1／3 小時／每日 3 次</li>
-            <li>SOS（不含備忘錄與智慧提醒）</li>
+            <li>SOS（不含備忘錄與日期提醒）</li>
           </ul>
           <button class="price-btn" type="button" data-plan="399-year">選擇 399 年費</button>
         </article>
@@ -4821,7 +4821,7 @@
           <div class="plan-card-note">解鎖更完整守護（基礎 SOS 在到期後仍保留）。</div>
           <ul>
             <li>核心守護人 10 位、緊急聯絡人 35 位</li>
-            <li>早中晚、多階段、備忘錄、智慧提醒</li>
+            <li>早中晚、多階段、備忘錄、日期提醒</li>
             <li>安全守護 1／3／6／8 小時／每日 5 次</li>
             <li>守護群最多 1 群／50 人（僅安全事件）</li>
           </ul>
@@ -4834,7 +4834,7 @@
           <div class="plan-card-note"><s>月付一年 NT$9,588</s>，平均每月約 NT$666。</div>
           <ul>
             <li>核心守護人 15 位、緊急聯絡人 50 位</li>
-            <li>早中晚、多階段、備忘錄、智慧提醒</li>
+            <li>早中晚、多階段、備忘錄、日期提醒</li>
             <li>安全守護 1／3／6／8 小時／每日 5 次</li>
             <li>守護群最多 3 群／50 人（僅安全事件）</li>
           </ul>
@@ -5061,9 +5061,9 @@
 
   <div class="modal-backdrop" id="smartReminderEditorModal" hidden>
     <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="smartReminderEditorTitle">
-      <h2 id="smartReminderEditorTitle">新增智能提醒</h2>
+      <h2 id="smartReminderEditorTitle">新增日期提醒</h2>
       <p class="helper">選擇類型、日期與提醒時間。預設只通知自己，也可指定一位已綁定核心守護人；不會送到守護群。</p>
-      <p class="helper" id="smartReminderDailyUsage">今日智慧提醒已使用 0／2 則</p>
+      <p class="helper" id="smartReminderDailyUsage">今日日期提醒已使用 0／2 則</p>
       <div class="smart-editor-fields">
         <label for="smartReminderName">對象名稱
           <input id="smartReminderName" type="text" maxlength="40" placeholder="例如：媽媽" autocomplete="name">
@@ -5385,7 +5385,7 @@
             `<li>平安紀錄 ${safeMigrationCount(counts.checkins)} 筆</li>`,
             `<li>守護聯絡人 ${safeMigrationCount(counts.contacts)} 位</li>`,
             `<li>守護群組 ${safeMigrationCount(counts.groups)} 個</li>`,
-            `<li>智能提醒 ${safeMigrationCount(counts.reminders)} 項</li>`
+            `<li>日期提醒 ${safeMigrationCount(counts.reminders)} 項</li>`
           ].join("");
           showAccountMigrationState("success", {
             title: "帳號搬家完成",
@@ -6632,8 +6632,8 @@
         paid_199_year: { cycle: "199 平安版｜年費方案", contacts: 3, emergencies: 10, detail: "核心 3／緊急 10、LINE 預警 2 次／日、安全守護 15 分鐘（每日 2 次）、SOS、月曆。" },
         paid_399: { cycle: "399 安心版｜月費方案", contacts: 5, emergencies: 15, detail: "核心 5／緊急 15、LINE 預警 2 次／日、安全守護 1／3 小時（每日 3 次）、SOS、月曆。" },
         paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 7, emergencies: 25, detail: "核心 7／緊急 25、LINE 預警 2 次／日、安全守護 1／3 小時（每日 3 次）、SOS、月曆。" },
-        paid_799: { cycle: "799 守護版｜月費進階", contacts: 10, emergencies: 35, detail: "核心 10／緊急 35、早中晚與多階段、安全守護 1／3／6／8（每日 5 次）、智慧提醒、1 個守護群。" },
-        paid_799_year: { cycle: "799 守護版｜年費進階", contacts: 15, emergencies: 50, detail: "核心 15／緊急 50、付 10 個月送 2 個月、安全守護每日 5 次、早中晚與多階段、3 個守護群、智慧提醒。" },
+        paid_799: { cycle: "799 守護版｜月費進階", contacts: 10, emergencies: 35, detail: "核心 10／緊急 35、早中晚與多階段、安全守護 1／3／6／8（每日 5 次）、日期提醒、1 個守護群。" },
+        paid_799_year: { cycle: "799 守護版｜年費進階", contacts: 15, emergencies: 50, detail: "核心 15／緊急 50、付 10 個月送 2 個月、安全守護每日 5 次、早中晚與多階段、3 個守護群、日期提醒。" },
         free: { cycle: "未訂閱", contacts: 1, emergencies: 2, detail: "一般提醒已暫停；仍可查看資料、求助電話與基礎 SOS。" },
         trial: { cycle: "14 天免費體驗｜199 活著版", contacts: 2, emergencies: 4, detail: "完整體驗 199 活著版月方案：核心守護人 2 位、緊急聯絡人 4 位、每日 1 次提醒與 15 分鐘安全守護。" }
       }[plan] || { cycle: "尚未選擇方案", contacts: 1, emergencies: 2, detail: "請先選擇適合你的守護方案。" };
@@ -6796,10 +6796,10 @@
         const entitled = Boolean(data.entitled);
         if (hint) {
           hint.textContent = data.state === "recovering"
-            ? "帳號資料正在安全恢復，完成後會自動取回既有智慧提醒，不需要重新購買。"
+            ? "帳號資料正在安全恢復，完成後會自動取回既有日期提醒，不需要重新購買。"
             : (entitled
               ? "生活提醒預設只通知自己，也可選一位已綁核心守護人。守護群不會收到生日等生活提醒。"
-              : "智能提醒為 799 守護版功能。免費／399 僅顯示升級說明。");
+              : "日期提醒為 799 月費／年費功能。免費／399 僅顯示升級說明。");
         }
         if (upgrade) upgrade.hidden = entitled;
         if (controls) controls.hidden = !entitled;
@@ -6869,7 +6869,7 @@
       smartReminderEditingId = existing ? existing.id : null;
       const modal = $("smartReminderEditorModal");
       const title = $("smartReminderEditorTitle");
-      if (title) title.textContent = existing ? "編輯智能提醒" : "新增智能提醒";
+      if (title) title.textContent = existing ? "編輯日期提醒" : "新增日期提醒";
       fillSmartReminderCategoryOptions(existing ? existing.category : "birthday");
       if ($("smartReminderName")) $("smartReminderName").value = existing ? (existing.target_name || "") : "";
       if ($("smartReminderCustomTitle")) $("smartReminderCustomTitle").value = existing ? (existing.custom_title || "") : "";
@@ -6889,7 +6889,7 @@
       if (usageEl) {
         const usage = smartReminderCache.daily_usage || {};
         const limits = smartReminderCache.daily_limits || { private: 2, guardian: 1 };
-        usageEl.textContent = `今日智慧提醒：自己已使用 ${Number(usage.private) || 0}／${Number(limits.private) || 2} 則；核心守護人 ${Number(usage.guardian) || 0}／${Number(limits.guardian) || 1} 則`;
+        usageEl.textContent = `今日日期提醒：自己已使用 ${Number(usage.private) || 0}／${Number(limits.private) || 2} 則；核心守護人 ${Number(usage.guardian) || 0}／${Number(limits.guardian) || 1} 則`;
       }
       const yearly = $("smartReminderYearly");
       if (yearly) {
@@ -6973,7 +6973,7 @@
           return;
         }
         await refreshSmartRemindersUi();
-        showInlineSuccess("智能提醒已儲存（到期日會私訊提醒）");
+        showInlineSuccess("日期提醒已儲存（到期日會私訊提醒）");
       } catch (err) {
         alert("儲存失敗：" + (err.message || ""));
       }
@@ -6981,7 +6981,7 @@
 
     async function deleteSmartReminder(id) {
       if (!requireMemberActionReady("data")) return false;
-      if (!id || !confirm("確定刪除此智能提醒？")) return;
+      if (!id || !confirm("確定刪除此日期提醒？")) return;
       try {
         const res = await fetch(`/api/smart-reminders/${encodeURIComponent(id)}?line_user_id=${encodeURIComponent(lineUserId)}`, {
           method: "DELETE",
@@ -7355,12 +7355,13 @@
           <div class="member-data-row guardian-group-card">
             <span><strong>守護群 ${index + 1}</strong><small>群組成員 ${escapeHtml(group.member_count_at_bind != null ? group.member_count_at_bind : "—")} 人（進群≠已綁定守護人）</small></span>
             <div class="guardian-group-preferences">
-              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_private_guardians" ${prefs.notify_private_guardians !== false ? "checked" : ""}> 私訊提醒（預設，建議）</label>
-              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_group_on_overdue" ${prefs.notify_group_on_overdue === true ? "checked" : ""}> 群組提醒（選用）</label>
-              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="daily_admin_summary" ${prefs.daily_admin_summary === true ? "checked" : ""}> 群組每日已報／未報摘要（選用）</label>
-              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_admin_only" ${prefs.notify_admin_only !== false ? "checked" : ""}> 詳細名單僅管理員可看</label>
-              <small style="display:block;margin-top:6px;color:#64748b;line-height:1.45;">生日／生活提醒只會私訊，不會發到群組。</small>
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_private_guardians" ${prefs.notify_private_guardians !== false ? "checked" : ""}> 未報平安時，先私訊核心守護人</label>
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_group_on_overdue" ${prefs.notify_group_on_overdue === true ? "checked" : ""}> 未報平安時，也通知這個 LINE 群</label>
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="daily_admin_summary" ${prefs.daily_admin_summary === true ? "checked" : ""}> 每天傳送一次群內平安摘要</label>
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_admin_only" ${prefs.notify_admin_only !== false ? "checked" : ""}> 摘要中的詳細姓名只讓管理員查看</label>
+              <small style="display:block;margin-top:6px;color:#64748b;line-height:1.45;">生日、回診與生活備忘只會私訊本人，不會發到守護群。</small>
             </div>
+            <button class="action-btn primary guardian-group-save" type="button" data-group-id="${escapeHtml(groupId)}">儲存守護群設定</button>
             <button class="action-btn guardian-group-unbind" type="button" data-group-id="${escapeHtml(groupId)}">解除綁定</button>
           </div>
         `; }).join("")
@@ -9431,7 +9432,7 @@
 
     function openCalendarNote(dateText) {
       if (!(currentStatusData && currentStatusData.calendar_notes_enabled === true)) {
-        alert("備忘錄只開放 799 樂年方案使用");
+        alert("備忘錄只開放 799 月費／年費方案使用");
         return;
       }
       selectedCalendarDate = dateText;
@@ -11935,26 +11936,32 @@
       });
     }
     $("guardianGroupsList").addEventListener("click", (event) => {
-      const button = event.target.closest(".guardian-group-unbind");
-      if (button) unbindGuardianGroup(button.dataset.groupId);
-    });
-    $("guardianGroupsList").addEventListener("change", async (event) => {
-      const checkbox = event.target.closest(".guardian-group-pref");
-      if (!checkbox) return;
-      if (!requireMemberActionReady("data")) {
-        checkbox.checked = !checkbox.checked;
+      const unbindButton = event.target.closest(".guardian-group-unbind");
+      if (unbindButton) {
+        unbindGuardianGroup(unbindButton.dataset.groupId);
         return;
       }
-      try {
-        await apiSaveGuardianGroupPreferences(checkbox.dataset.groupId, {
-          [checkbox.dataset.prefKey]: checkbox.checked
+      const saveButton = event.target.closest(".guardian-group-save");
+      if (!saveButton) return;
+      const groupId = saveButton.dataset.groupId;
+      const checkboxes = Array.from(
+        $("guardianGroupsList").querySelectorAll(`.guardian-group-pref[data-group-id="${CSS.escape(groupId)}"]`)
+      );
+      const preferences = Object.fromEntries(
+        checkboxes.map((checkbox) => [checkbox.dataset.prefKey, checkbox.checked])
+      );
+      saveButton.disabled = true;
+      saveButton.textContent = "儲存中…";
+      apiSaveGuardianGroupPreferences(groupId, preferences)
+        .then(async () => {
+          showInlineSuccess("守護群設定已儲存");
+          await refreshStatus();
+        })
+        .catch(() => alert("守護群設定暫時無法儲存，請稍後再試。"))
+        .finally(() => {
+          saveButton.disabled = false;
+          saveButton.textContent = "儲存守護群設定";
         });
-        showInlineSuccess("守護群設定已更新");
-        await refreshStatus();
-      } catch (error) {
-        checkbox.checked = !checkbox.checked;
-        alert("守護群設定暫時無法儲存，請稍後再試。");
-      }
     });
     $("calendarGrid").addEventListener("click", (event) => {
       const dayButton = event.target.closest(".day-cell[data-date]");
