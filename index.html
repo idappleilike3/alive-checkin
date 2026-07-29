@@ -4655,31 +4655,15 @@
             <span class="member-subsection-chevron" aria-hidden="true">⌄</span>
           </button>
           <div class="member-collapsible-panel" id="memberSupportPanel" hidden>
-            <p class="helper">客服內容只會回覆到你的 Email 或 LINE 私訊，不會傳到守護群。</p>
+            <p class="helper">請直接寫下想詢問的內容。送出後，客服會在 1–3 個工作天內透過「每日平安」LINE 官方帳號回覆，不會傳到守護群。</p>
             <form id="memberSupportForm" style="display:grid;gap:10px;margin-top:12px;">
-              <label>問題分類
-                <select id="memberSupportCategory" required>
-                  <option>帳號</option><option>付款退款</option><option>方案續費</option>
-                  <option>簽到提醒</option><option>守護人</option><option>SOS</option>
-                  <option>技術問題</option><option>隱私權</option><option>其他</option>
-                </select>
+              <label>我想詢問
+                <textarea id="memberSupportMessage" maxlength="1000" required rows="6" placeholder="請直接輸入你的問題，例如：我要怎麼修改提醒時間？"></textarea>
               </label>
-              <label>主旨
-                <input id="memberSupportSubject" maxlength="120" required placeholder="請簡短說明問題">
-              </label>
-              <label>留言內容
-                <textarea id="memberSupportMessage" maxlength="1000" required rows="5" placeholder="請寫下問題與希望我們協助的內容"></textarea>
-              </label>
-              <label>Email
-                <input id="memberSupportEmail" type="email" placeholder="使用 Email 回覆時必填">
-              </label>
-              <label>希望回覆方式
-                <select id="memberSupportReplyChannel">
-                  <option value="email">Email</option>
-                  <option value="line">LINE 私訊</option>
-                </select>
-              </label>
-              <button class="action-btn primary" id="memberSupportSubmitBtn" type="submit">送出客服工單</button>
+              <div class="member-advanced-note">
+                💡 也可以先查看 <a href="/faq">常見問題與解答</a>，可能馬上就能找到答案。
+              </div>
+              <button class="action-btn primary" id="memberSupportSubmitBtn" type="submit">送出問題</button>
               <div class="helper" id="memberSupportFeedback" role="status"></div>
             </form>
             <h3 style="margin-top:20px;">我的客服紀錄</h3>
@@ -5938,23 +5922,21 @@
       event.preventDefault();
       const feedback = $("memberSupportFeedback");
       const button = $("memberSupportSubmitBtn");
-      const replyChannel = $("memberSupportReplyChannel").value;
-      const email = $("memberSupportEmail").value.trim();
-      if (replyChannel === "email" && !email) {
-        feedback.textContent = "選擇 Email 回覆時，請填寫 Email";
+      const message = $("memberSupportMessage").value.trim();
+      if (!message) {
+        feedback.textContent = "請先輸入想詢問的問題";
         return;
       }
       button.disabled = true;
       feedback.textContent = "正在送出";
       try {
         const data = await apiCreateSupportTicket({
-          category: $("memberSupportCategory").value,
-          subject: $("memberSupportSubject").value.trim(),
-          message: $("memberSupportMessage").value.trim(),
-          email,
-          reply_channel: replyChannel
+          category: "一般詢問",
+          subject: message.slice(0, 60),
+          message,
+          reply_channel: "line"
         });
-        feedback.textContent = `已送出，工單編號：${data.ticket.id}`;
+        feedback.textContent = `已收到你的問題（編號：${data.ticket.id}），客服會在 1–3 個工作天內透過 LINE 官方帳號回覆。`;
         $("memberSupportMessage").value = "";
       } catch (_error) {
         feedback.textContent = "送出失敗，請稍後再試";
@@ -7095,9 +7077,6 @@
           : "尚未設定到期日";
       if ($("memberLineAccount")) $("memberLineAccount").textContent = lineUserId || status.line_user_id ? "LINE 已綁定" : "尚未綁定 LINE";
       if ($("memberContactEmail")) $("memberContactEmail").textContent = status.contact_email || "尚未填寫";
-      if ($("memberSupportEmail") && !$("memberSupportEmail").value) {
-        $("memberSupportEmail").value = status.contact_email || "";
-      }
       if ($("memberGuardianQuota")) $("memberGuardianQuota").textContent = `核心守護人 ${shownCore}/${coreLimit}`;
       const quotaLine = $("memberGuardianQuotaLine");
       if (quotaLine) quotaLine.textContent = `核心守護人 ${shownCore}/${coreLimit}`;
