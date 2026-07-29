@@ -25,7 +25,7 @@ class ProductRulesTests(unittest.TestCase):
         invite_page = (ROOT / "invite.html").read_text(encoding="utf-8")
         self.assertIn('fetch("/api/emergency-contact/invite"', share_page)
         self.assertIn("data.invite_token", share_page)
-        self.assertIn("&invite_token=", share_page)
+        self.assertIn('inviteUrl.searchParams.set("invite_token", inviteToken)', share_page)
         self.assertIn("body.invite_token = inviteToken", member_page)
         self.assertIn('qs.set("invite_token", inviteToken)', member_page)
         self.assertIn('"invite_from", "from", "invite_token"', member_page)
@@ -544,9 +544,9 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("https://alive-checkin.onrender.com/liff/pricing.html", rich_menu)
         base = "https://liff.line.me/2010848330-UAiqPPYD"
         self.assertIn(f"{base}?open=checkin", rich_menu)
-        # 一鍵邀請：直連空白 share-invite（自動 R/share），無教學大按鈕文案頁
-        self.assertIn(f"{base}/liff/share-invite.html", rich_menu)
-        self.assertNotIn(f"{base}/?open=share-invite", rich_menu)
+        # 一鍵邀請：由永久 LIFF 入口辨識會員、建立專屬連結並自動開啟好友選擇器
+        self.assertIn(f"{base}?open=share-invite", rich_menu)
+        self.assertNotIn(f"{base}/liff/share-invite.html", rich_menu)
         # 「需要幫忙」統一進永久 LIFF SOS 入口，不再在聊天室分三次確認
         self.assertIn(f"{base}?open=sos", rich_menu)
         self.assertNotIn(f"{base}/?open=sos", rich_menu)
