@@ -1110,7 +1110,7 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertIn("inviteEdgeList", page)
         self.assertIn("formatBoundGuardiansCell", page)
         self.assertIn("membershipCell", page)
-        self.assertIn("已綁定守護人", page)
+        self.assertIn("守護關係（守護你的人／你守護的人）", page)
         self.assertIn("autoRefreshAdmin", page)
 
     def test_per_user_invite_link_format(self):
@@ -1481,7 +1481,8 @@ class BindAndHomeGateTests(unittest.TestCase):
         admin = (ROOT / "admin.html").read_text(encoding="utf-8")
         self.assertIn("membershipCell", admin)
         self.assertIn("體驗剩幾天", admin)
-        self.assertIn("核心／一般", admin)
+        self.assertIn("緊急聯絡人／名額", admin)
+        self.assertNotIn("核心／一般／名額", admin)
         self.assertIn("資料可能因重啟遺失請掛磁碟", admin)
 
     def test_contact_role_ignores_core_general_role_field(self):
