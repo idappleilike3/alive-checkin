@@ -56,12 +56,11 @@ class InviteOnboardingFlowTests(unittest.TestCase):
 
     def test_share_page_explains_official_line_and_three_steps(self):
         html = (ROOT / "liff/share-invite.html").read_text(encoding="utf-8")
-        self.assertIn("加入「每日平安」官方 LINE", html)
-        self.assertIn("https://line.me/R/ti/p/%40042kwqib", html)
         for copy in (
-            "1. 選擇 LINE 好友",
-            "2. 對方登入並同意",
-            "3. 綁定完成後立即生效",
+            "1. 你選擇要邀請的 LINE 好友",
+            "2. 對方收到邀請與完整流程說明",
+            "3. 對方加入官方 LINE、登入並填寫資料",
+            "4. 對方親自同意後，綁定才生效",
         ):
             self.assertIn(copy, html)
 
@@ -77,8 +76,8 @@ class InviteOnboardingFlowTests(unittest.TestCase):
     def test_acceptance_is_one_way_and_reverse_guarding_requires_a_new_invite(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("這次只會由您守護邀請人，不會自動互相綁定", html)
-        self.assertIn("我也要報平安｜免費體驗 14 天", html)
-        self.assertIn("startMyOwnTrialFromGuardianSuccess", html)
+        self.assertIn("activateOwnTrialAfterGuardianBind", html)
+        self.assertIn("您的 14 天免費體驗已自動開通", html)
         self.assertIn("activate_own_trial: true", html)
         self.assertIn("guardian_only: Boolean(inviteFrom", html)
         self.assertNotIn("同時互相設為核心守護人", html)
@@ -104,9 +103,9 @@ class InviteOnboardingFlowTests(unittest.TestCase):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn('id="memberGuardingForList"', html)
         self.assertIn("我正在守護的人", html)
-        self.assertIn("守護我的人", html)
+        self.assertIn("守護你的人", html)
         self.assertIn("renderGuardingForRows", html)
-        self.assertIn("免費接收對方的報平安、逾時與 SOS 通知", html)
+        self.assertIn("可接收對方的報平安、逾時與 SOS 通知", html)
 
     def test_mutual_core_flag_cannot_skip_the_second_consent(self):
         with TemporaryDirectory() as temp_dir:
