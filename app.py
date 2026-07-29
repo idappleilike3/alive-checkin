@@ -12400,13 +12400,24 @@ def inspect_default_rich_menu(config=None):
             invite_text = action.get("text")
             invite_type = action.get("type")
 
-    # W250724a：圖文選單一鍵邀請 → 空白 LIFF；首次自動 R/share，返回只顯示再試（防迴圈）
-    # 仍相容舊版 message「一鍵邀請」→ Bot Flex
-    invite_ok = (
-        bool(invite_uri)
-        and "share-invite.html" in str(invite_uri)
-        and "open=share" not in str(invite_uri)
-    ) or (
+    # 圖文選單必須進入永久 LIFF 入口。LIFF 會辨識登入會員、建立專屬邀請，
+    # 隨即開啟 shareTargetPicker；不可把網站路徑附加在 LIFF ID 後方。
+    invite_uri_ok = False
+    if invite_uri:
+        try:
+            parsed_invite_uri = urllib.parse.urlparse(str(invite_uri).strip())
+            invite_query = urllib.parse.parse_qs(parsed_invite_uri.query)
+            invite_uri_ok = (
+                parsed_invite_uri.scheme == "https"
+                and parsed_invite_uri.netloc == "liff.line.me"
+                and parsed_invite_uri.path.rstrip("/") == f"/{DEFAULT_LIFF_ID}"
+                and invite_query.get("open") == ["share-invite"]
+            )
+        except (TypeError, ValueError):
+            invite_uri_ok = False
+
+    # 仍相容舊版 message「一鍵邀請」→ Bot Flex。
+    invite_ok = invite_uri_ok or (
         invite_type == "message"
         and str(invite_text or "").strip() in {"一鍵邀請", "一鍵邀請守護人"}
     )
