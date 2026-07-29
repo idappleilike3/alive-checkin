@@ -1,4 +1,3 @@
-sed: --: No such file or directory
 """Product rules: one check-in; private default; optional group alerts."""
 import tempfile
 import unittest
