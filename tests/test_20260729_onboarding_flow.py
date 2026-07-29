@@ -27,9 +27,18 @@ class OnboardingFlowTest(unittest.TestCase):
 
     def test_share_page_explains_acceptance_is_required(self):
         text = (ROOT / "liff/share-invite.html").read_text(encoding="utf-8")
+        self.assertIn("Step 1 加入每日平安官方 LINE", text)
+        self.assertIn("Step 2 設定我的資料與提醒時間", text)
+        self.assertIn("Step 3 一鍵分享核心守護人", text)
+        self.assertIn("Step 4 完成綁定", text)
+        self.assertLess(
+            text.index("Step 2 設定我的資料與提醒時間"),
+            text.index("Step 3 一鍵分享核心守護人"),
+        )
+        self.assertIn("等待對方登入", text)
         self.assertIn("等待對方接受", text)
         self.assertIn("對方完成 LINE 登入並同意後", text)
-        self.assertIn("綁定完成後立即生效", text)
+        self.assertIn("對方接受後才顯示", text)
 
     def test_public_trial_page_uses_the_same_four_step_order(self):
         text = (ROOT / "trial-14.html").read_text(encoding="utf-8")
