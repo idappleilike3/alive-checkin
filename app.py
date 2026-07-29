@@ -2092,6 +2092,44 @@ def scrub_self_line_ids_on_contacts(profile):
     return changed
 
 
+def deduplicate_contact_line_bindings(profile):
+    """同一個 LINE 帳號在單一會員名下只能保留一筆聯絡關係。"""
+    if not isinstance(profile, dict):
+        return False
+    contacts = list(profile.get("contacts") or [])
+    unique = []
+    by_line_id = {}
+    changed = False
+    for contact in contacts:
+        if not isinstance(contact, dict):
+            unique.append(contact)
+            continue
+        line_id = get_contact_line_id(contact)
+        if not line_id:
+            unique.append(contact)
+            continue
+        existing = by_line_id.get(line_id)
+        if existing is None:
+            by_line_id[line_id] = contact
+            unique.append(contact)
+            continue
+        changed = True
+        for key, value in contact.items():
+            if key not in existing or existing.get(key) in (None, "", [], {}):
+                existing[key] = copy.deepcopy(value)
+        if contact.get("binding_status") == "accepted":
+            existing["binding_status"] = "accepted"
+        if contact.get("consent_status") == "accepted":
+            existing["consent_status"] = "accepted"
+        if bool(contact.get("is_primary")):
+            existing["is_primary"] = True
+        if resolve_contact_role(contact) == "guardian":
+            existing["contact_role"] = "guardian"
+    if changed:
+        profile["contacts"] = unique
+    return changed
+
+
 def profile_has_guardian(profile):
     """使用者是否已有至少 1 位守護人（資料或 LINE 綁定）。"""
     contacts = (profile or {}).get("contacts") or []
@@ -4250,6 +4288,86 @@ def resolve_welcome_display_name(
     return None
 
 
+def notify_guardians_of_checkin(data_file, line_user_id, config=None, now=None):
+    """報平安成功後，私訊已完成 LINE 綁定的核心守護人。"""
+    cfg = config or {}
+    token = (
+        cfg.get("LINE_CHANNEL_ACCESS_TOKEN")
+        or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    )
+    if not token:
+        return {"sent": 0, "failed": 0, "skipped": True, "reason": "missing_token"}
+    state = load_state(data_file)
+    profile = (state.get("users") or {}).get(str(line_user_id or "").strip())
+    if not isinstance(profile, dict):
+        return {"sent": 0, "failed": 0, "skipped": True, "reason": "member_not_found"}
+
+    owner_id = str(profile.get("line_user_id") or line_user_id or "").strip()
+    limit = max(1, int(plan_rules(profile).get("core_guardian_alert_limit") or 1))
+    contacts = sorted(
+        profile.get("contacts") or [],
+        key=lambda item: (
+            0 if bool((item or {}).get("is_primary")) else 1,
+            int((item or {}).get("priority") or 9999),
+        ),
+    )
+    recipients = []
+    seen = set()
+    for contact in contacts:
+        if not contact_is_notifiable_line_guardian(contact, owner_id):
+            continue
+        if not bool(contact.get("is_primary")):
+            continue
+        target = get_contact_line_id(contact)
+        if not target or target in seen:
+            continue
+        seen.add(target)
+        recipients.append((target, contact))
+        if len(recipients) >= limit:
+            break
+    if not recipients:
+        return {"sent": 0, "failed": 0, "skipped": True, "reason": "no_guardians"}
+
+    sent = 0
+    failed = 0
+    checked_at = now or current_app_time(cfg)
+    owner_name = str(profile.get("display_name") or "您的親友").strip()
+    message = (
+        f"✅ {owner_name} 已報平安\n"
+        f"時間：{checked_at.strftime('%Y/%m/%d %H:%M')}\n"
+        "今日平安回報已完成，請放心。"
+    )
+    sender = cfg.get("LINE_PUSH_SENDER") or line_push_message
+    for target, _contact in recipients:
+        try:
+            result = sender(token, target, message)
+            append_notification_log(
+                state, "checkin_guardian", target, "sent", message,
+                json.dumps(result, ensure_ascii=False),
+            )
+            sent += 1
+        except Exception as exc:
+            append_notification_log(
+                state, "checkin_guardian", target, "failed", message, str(exc)
+            )
+            failed += 1
+    record_line_message_usage(
+        state,
+        category="checkin",
+        owner_line_user_id=owner_id,
+        recipient_count=sent,
+        event_id=f"checkin_guardian:{owner_id}:{checked_at.strftime('%Y%m%d')}",
+        sent_at=checked_at,
+    )
+    save_state(data_file, state)
+    return {
+        "sent": sent,
+        "failed": failed,
+        "skipped": False,
+        "reason": "",
+    }
+
+
 def record_checkin(data_file, payload=None, config=None):
     payload = payload or {}
     state = load_state(data_file)
@@ -4282,9 +4400,23 @@ def record_checkin(data_file, payload=None, config=None):
     times = reminder_times_for_profile(profile) or ["12:00"]
     _mark_checkin_reminder_slots(profile, today, times, times)
     save_state(data_file, state)
+    guardian_notify = {
+        "sent": 0,
+        "failed": 0,
+        "skipped": True,
+        "reason": "already_checked_today" if already_checked else "not_configured",
+    }
+    if not already_checked:
+        guardian_notify = notify_guardians_of_checkin(
+            data_file,
+            str(profile.get("line_user_id") or payload.get("line_user_id") or ""),
+            config=config,
+            now=now,
+        )
     status = build_status(profile, state)
     status["already_checked_today"] = already_checked
     status["is_duplicate"] = already_checked
+    status["guardian_notify"] = guardian_notify
     return status
 
 
@@ -5885,7 +6017,7 @@ def save_contacts(data_file, payload):
     return get_contacts(data_file, payload.get("line_user_id")), 200
 
 
-ALREADY_BOUND_MESSAGE = "你已經是守護人了，請把邀請轉傳給其他好友"
+ALREADY_BOUND_MESSAGE = "這位好友已經綁定，不能重複綁定；請返回並改選其他好友"
 CONTACT_LIMIT_MESSAGE = "對方的守護人名額已滿，請請對方升級方案後再邀請你"
 
 
@@ -6584,6 +6716,7 @@ def bind_emergency_contact(
     # 綁定前偵測反向：綁定後 guarding_for 一定會寫入，不可事後判斷
     is_reverse_invite = detect_reverse_invite(state, inviter_id, contact_line_user_id)
     inviter = get_profile(state, inviter_id)
+    deduplicate_contact_line_bindings(inviter)
     # A person may remain a free guardian without consuming their one lifetime
     # trial/beta eligibility. Only explicit trial opt-in may claim it.
     contact_user = get_profile(
@@ -9536,15 +9669,20 @@ def trigger_sos(data_file, payload, config=None):
     selected_guardian_ids = payload.get("guardian_line_user_ids")
     if selected_guardian_ids is not None and not isinstance(selected_guardian_ids, list):
         return {"error": "guardian_line_user_ids must be a list"}, 400
+    has_explicit_guardian_selection = bool(
+        isinstance(selected_guardian_ids, list)
+        and any(str(target or "").strip() for target in selected_guardian_ids)
+    )
     selected_guardian_set = (
         {
             str(target).strip()
             for target in selected_guardian_ids
             if str(target).strip()
         }
-        if selected_guardian_ids is not None
+        if has_explicit_guardian_selection
         else None
     )
+    guardian_delivery_limit = limit if has_explicit_guardian_selection else min(limit, 2)
     # SOS directly consumes the accepted core-guardian relationship. A second,
     # reciprocal invitation is not required for the guardian to receive help.
     contacts = sorted(
@@ -9573,7 +9711,7 @@ def trigger_sos(data_file, payload, config=None):
         row = dict(contact)
         row["line_id"] = target
         line_contacts.append(row)
-        if len(line_contacts) >= limit:
+        if len(line_contacts) >= guardian_delivery_limit:
             break
 
     active_group_ids = []
@@ -9740,7 +9878,7 @@ def trigger_sos(data_file, payload, config=None):
         row = dict(contact)
         row["line_id"] = target
         line_contacts.append(row)
-        if len(line_contacts) >= limit:
+        if len(line_contacts) >= guardian_delivery_limit:
             break
     active_group_ids = []
     if (
@@ -15963,7 +16101,7 @@ def checkin_for_user(data_file, line_user_id, payload, config=None):
             "message": "必須先完成至少 1 位可接收 LINE 通知的核心守護人綁定",
             **access,
         }, 400
-    status = record_checkin(data_file, payload)
+    status = record_checkin(data_file, payload, config=config)
     mutate_state_atomically(
         data_file,
         lambda current_state: next(
@@ -15996,6 +16134,7 @@ def status_for_user(data_file, line_user_id, display_name=""):
             data["auto_registered"] = True
         return data, 200
     dirty = scrub_self_line_ids_on_contacts(profile)
+    dirty = deduplicate_contact_line_bindings(profile) or dirty
     dirty = ensure_onboarding_completed_flag(profile) or dirty
     today = today_string()
     if profile_is_today_checked(profile) and today not in set(profile.get("history") or []):
