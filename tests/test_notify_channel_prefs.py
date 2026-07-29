@@ -1,3 +1,4 @@
+sed: --: No such file or directory
 """Product rules: one check-in; private default; optional group alerts."""
 import tempfile
 import unittest
@@ -59,6 +60,12 @@ class NotifyChannelPrefsTests(unittest.TestCase):
                 "last_check_in": (now - timedelta(days=3)).isoformat(timespec="seconds"),
                 "history": [],
                 "reminder_time": "08:00",
+                "overdue_wait_minutes": 30,
+                "active_overdue_event": {
+                    "event_id": "overdue-private-off",
+                    "started_at": (now - timedelta(minutes=30)).isoformat(timespec="seconds"),
+                    "guardian_stage": 0,
+                },
                 "contacts": [
                     {
                         "id": "c1",
