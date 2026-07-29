@@ -375,14 +375,24 @@
   <p class="hint" id="shareHint" style="display:none;color:#006400;"></p>
 </details>
 
+<div class="card" id="checkinHistoryCard">
+  <h2>📅 我的平安紀錄</h2>
+  <p class="hint">查看簽到月曆與過往平安紀錄。799 月費／年費可在日期上新增備忘錄與提醒。</p>
+  <div class="contact-actions">
+    <a class="btn" href="/?open=history#history">查看平安紀錄</a>
+    <a class="btn btn-primary" href="/?open=history#history">＋ 新增備忘錄</a>
+  </div>
+  <p class="hint">你的 799 年費方案可使用備忘錄；進入後選擇日期即可新增或修改。</p>
+</div>
+
 <div class="card" id="smartReminderCard">
   <button class="btn" type="button" id="smartRemindersToggleBtn" aria-expanded="false" aria-controls="smartRemindersPanel" style="width:100%;display:flex;justify-content:space-between;align-items:center;font-weight:800;">
-    <span>智能提醒</span><span aria-hidden="true">›</span>
+    <span>日期提醒（799 年費）</span><span aria-hidden="true">›</span>
   </button>
   <div id="smartRemindersPanel" hidden style="margin-top:12px;">
-    <p class="hint" id="smartReminderHint">799 守護版：生日／紀念日／回診等生活提醒，只傳到 LINE 私訊。</p>
+    <p class="hint" id="smartReminderHint">799 月費／年費：生日、紀念日、回診等日期提醒，只傳到 LINE 私訊。</p>
     <div id="smartReminderUpgrade" class="lock-box" hidden>
-      <strong>智能提醒為 799 功能</strong>
+      <strong>日期提醒為 799 月費／年費功能</strong>
       <p>免費／399 可看說明；升級後可新增提醒。</p>
       <a class="btn btn-primary" href="./pricing.html">查看 799 方案</a>
     </div>
@@ -407,15 +417,16 @@
   </div>
 </details>
 
-<!-- 每日提醒時間設定 -->
+<!-- 我的設定：每日提醒時間 -->
 <div class="card">
-  <h2>⏰ 每日提醒與逾時設定</h2>
+  <h2>⚙️ 我的設定</h2>
+  <h3>⏰ 每日提醒設定</h3>
   <p class="hint" id="reminderHint">依方案設定每日提醒次數與時段。</p>
   <label class="check-row"><input type="checkbox" id="dailyCheckinReminderEnabled" checked> 開啟每日提醒</label>
   <div class="btn-row" id="reminderCountRow" style="margin:8px 0 12px;gap:8px;">
-    <button class="btn" type="button" data-count="1" id="reminderCount1">一次</button>
-    <button class="btn" type="button" data-count="2" id="reminderCount2">兩次</button>
-    <button class="btn" type="button" data-count="3" id="reminderCount3">三次</button>
+    <label class="btn" data-count="1"><input type="radio" name="reminderCount" value="1" id="reminderCount1"> 一次</label>
+    <label class="btn" data-count="2"><input type="radio" name="reminderCount" value="2" id="reminderCount2"> 兩次</label>
+    <label class="btn" data-count="3"><input type="radio" name="reminderCount" value="3" id="reminderCount3"> 三次</label>
   </div>
   <div id="reminderSlots"></div>
   <p class="hint" id="graceHoursHint">逾時未報平安多久通知？（預設 48 小時；滿設定時數後通知）</p>
@@ -425,7 +436,7 @@
     <button class="btn grace-hours-btn" type="button" data-hours="72" aria-pressed="false">72 小時</button>
   </div>
   <button class="btn" type="button" id="useDefaultsBtn">使用方案預設時間</button>
-  <div class="status-saved" id="statusSaved">✅ 已儲存!</div>
+  <div class="status-saved" id="statusSaved" role="status" aria-live="polite">✅ 已儲存!</div>
   <button class="btn btn-primary" type="button" id="saveBtn">儲存設定</button>
 </div>
 
@@ -484,7 +495,7 @@
 
 <div class="modal-backdrop" id="smartEditorModal" hidden>
   <div class="modal-card">
-    <h2 id="smartEditorTitle">新增智能提醒</h2>
+    <h2 id="smartEditorTitle">新增日期提醒</h2>
     <label class="form-field"><span>對象名稱</span>
       <input id="srName" type="text" placeholder="例如：媽媽">
     </label>
@@ -587,13 +598,15 @@ function renderReminderCountButtons() {
   const maxCount = Math.max(1, Math.min(3, Number(state.dailyReminders) || 1));
   const chosen = chosenReminderCount();
   [1, 2, 3].forEach((n) => {
-    const btn = document.getElementById(`reminderCount${n}`);
-    if (!btn) return;
+    const input = document.getElementById(`reminderCount${n}`);
+    const label = input?.closest("[data-count]");
+    if (!input || !label) return;
     const allowed = n <= maxCount;
-    btn.hidden = !allowed;
-    btn.disabled = !allowed;
-    btn.style.outline = n === chosen ? "2px solid #16a34a" : "";
-    btn.style.fontWeight = n === chosen ? "800" : "600";
+    label.hidden = !allowed;
+    input.disabled = !allowed;
+    input.checked = n === chosen;
+    label.style.outline = n === chosen ? "2px solid #16a34a" : "";
+    label.style.fontWeight = n === chosen ? "800" : "600";
   });
 }
 
@@ -737,7 +750,7 @@ async function editSmartReminder(id) {
   state.smartEditingId = existing ? existing.id : null;
   const modal = document.getElementById("smartEditorModal");
   const title = document.getElementById("smartEditorTitle");
-  if (title) title.textContent = existing ? "編輯智能提醒" : "新增智能提醒";
+  if (title) title.textContent = existing ? "編輯日期提醒" : "新增日期提醒";
   const cats = state.smartCategories || [
     { id: "birthday", emoji: "🎂", label: "生日" },
     { id: "checkup", emoji: "💊", label: "回診" },
@@ -1133,7 +1146,8 @@ document.getElementById("useDefaultsBtn").addEventListener("click", () => {
 });
 document.getElementById("reminderCountRow")?.addEventListener("click", (event) => {
   const btn = event.target.closest("[data-count]");
-  if (!btn || btn.disabled || btn.hidden) return;
+  const input = btn?.querySelector('input[name="reminderCount"]');
+  if (!btn || !input || input.disabled || btn.hidden) return;
   const maxCount = Math.max(1, Math.min(3, Number(state.dailyReminders) || 1));
   const next = Math.max(1, Math.min(maxCount, Number(btn.dataset.count) || 1));
   state.chosenReminderCount = next;
@@ -1206,7 +1220,7 @@ async function saveReminder() {
   try {
     const res = await fetch(`${API_BASE}/api/onboarding/reminder`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: lineAuthHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         line_user_id: state.lineUserId,
         reminder_times: times,
@@ -1226,10 +1240,14 @@ async function saveReminder() {
       status.style.display = "block";
       setTimeout(() => status.style.display = "none", 5000);
     } else {
-      alert(data.message || data.error || "儲存失敗，請稍後再試");
+      const status = document.getElementById("statusSaved");
+      status.textContent = `❌ 儲存失敗：${data.message || data.error || "請稍後再試"}`;
+      status.style.display = "block";
     }
   } catch (err) {
-    alert("網路錯誤:" + err.message);
+    const status = document.getElementById("statusSaved");
+    status.textContent = `❌ 儲存失敗：${err.message || "網路錯誤"}`;
+    status.style.display = "block";
   }
   btn.disabled = false;
   btn.textContent = "儲存設定";
