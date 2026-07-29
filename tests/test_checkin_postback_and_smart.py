@@ -480,7 +480,8 @@ class InviteButtonCleanupTests(unittest.TestCase):
         self.assertIn("再邀請一位守護人", page)
         self.assertNotIn("免費延長 7 天", page)
         self.assertNotIn("shareInviteBtn", page)
-        self.assertIn("智能提醒", page)
+        self.assertIn("日期提醒（799 年費）", page)
+        self.assertNotIn("智能提醒", page)
         self.assertIn("smartRemindersPanel", page)
         self.assertIn("dailyCheckinReminderEnabled", page)
         self.assertNotIn("smartNotifyGroup", page)
@@ -492,11 +493,11 @@ class InviteButtonCleanupTests(unittest.TestCase):
         self.assertIn('id="smartRemindersToggleBtn"', page)
         self.assertIn("dailyCheckinReminderEnabled", page)
         self.assertNotIn("smartReminderNotifyGroup", page)
-        # 智能提醒不再提供群組推播勾選；守護群偏好仍可有「群組提醒（選用）」
+        # 日期提醒不提供群組推播勾選；守護群仍可獨立設定群組通知。
         self.assertIn('id="smartReminderDeliveryTarget"', page)
         self.assertIn("只通知自己（預設）", page)
         self.assertIn("通知核心守護人", page)
-        self.assertIn("今日智慧提醒", page)
+        self.assertIn("今日日期提醒", page)
         self.assertIn("核心守護人", page)
         self.assertIn("148px + env(safe-area-inset-bottom", page)
         self.assertIn("72px + env(safe-area-inset-bottom", page)
