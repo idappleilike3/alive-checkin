@@ -769,8 +769,8 @@
               <th>付款</th>
               <th>方案到期（試用／訂閱）</th>
               <th>體驗剩幾天</th>
-              <th>已綁定守護人（含 LINE ID）</th>
-              <th>核心／一般／名額</th>
+              <th>守護關係（守護你的人／你守護的人）</th>
+              <th>緊急聯絡人／名額</th>
               <th>守護群</th>
               <th>寬限</th>
               <th>提醒</th>
@@ -1388,7 +1388,7 @@
       });
       const data = await res.json().catch(() => ({}));
       $("message").textContent = res.ok
-        ? `已${makeCore ? "設為核心" : "改為一般"}守護人：${(data.updated_contact && data.updated_contact.name) || contactLineId || contactId}`
+        ? `已${makeCore ? "設為核心守護人" : "取消核心優先"}：${(data.updated_contact && data.updated_contact.name) || contactLineId || contactId}`
         : (data.error || data.message || "核心守護人更新失敗。");
       await refresh();
     }
@@ -1403,15 +1403,12 @@
       const core = user.core_guardian_count != null
         ? user.core_guardian_count
         : bound.filter((c) => c.is_primary).length;
-      const general = user.general_guardian_count != null
-        ? user.general_guardian_count
-        : Math.max(0, count - core);
       const guarding = Array.isArray(user.guarding_details) && user.guarding_details.length
         ? user.guarding_details
         : (user.guarding_for || []).map((id) => ({ line_user_id: id, display_name: "" }));
       const parts = [];
       if (!bound.length) {
-        parts.push(`<div><span class="badge warn">已綁定 0 位</span><br><small>尚未 LINE 綁定</small></div>`);
+        parts.push(`<div><strong>守護你的人</strong><br><span class="badge warn">已綁定 0 位</span><br><small>尚未 LINE 綁定</small></div>`);
       } else {
         const ownerId = user.line_user_id || "";
         const lines = bound.map((c, i) => {
@@ -1419,18 +1416,17 @@
           const rel = c.relationship ? `／${c.relationship}` : "";
           const gid = c.line_user_id || c.line_id || "-";
           const cid = c.id || "";
-          const role = c.role || (c.is_primary ? "核心" : "一般");
           const st = c.binding_status || "accepted";
           const isCore = Boolean(c.is_primary);
           const pic = c.picture_url || "";
           const avatar = pic
             ? `<img src="${pic}" alt="" width="28" height="28" style="border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px;" loading="lazy" referrerpolicy="no-referrer">`
             : "";
-          const btnLabel = isCore ? "改一般" : "設核心";
+          const btnLabel = isCore ? "取消核心優先" : "設為核心";
           const btn = `<button type="button" class="plan-select" style="margin-top:4px;padding:2px 8px;font-size:12px;" onclick="setCoreGuardian('${ownerId}', '${cid}', '${gid}', ${isCore ? "false" : "true"})">${btnLabel}</button>`;
-          return `<div>${avatar}<strong>${i + 1}. ${name}${rel}（${role}）</strong><br><small>LINE ID：${gid}</small> <span class="badge ${st === "accepted" ? "ok" : "warn"}">${st === "accepted" ? "已綁定" : st}</span><br>${btn}</div>`;
+          return `<div>${avatar}<strong>${i + 1}. ${name}${rel}${isCore ? "（核心）" : ""}</strong><br><small>LINE ID：${gid}</small> <span class="badge ${st === "accepted" ? "ok" : "warn"}">${st === "accepted" ? "已綁定" : st}</span><br>${btn}</div>`;
         });
-        parts.push(`<div style="display:grid;gap:6px;min-width:180px;"><span class="badge ok">已綁定 ${count} 位</span><small>核心 ${core}／一般 ${general}（可點按鈕變更）</small>${lines.join("")}</div>`);
+        parts.push(`<div style="display:grid;gap:6px;min-width:180px;"><strong>守護你的人</strong><span class="badge ok">已綁定 ${count} 位</span><small>核心優先 ${core} 位</small>${lines.join("")}</div>`);
       }
       if (guarding.length) {
         const gLines = guarding.map((g, i) => {
@@ -1438,9 +1434,27 @@
           const gid = g.line_user_id || "-";
           return `<div><strong>守護對象 ${i + 1}. ${name}</strong><br><small>LINE ID：${gid}</small></div>`;
         }).join("");
-        parts.push(`<div style="display:grid;gap:4px;margin-top:6px;"><span class="badge ok">作為守護人：${guarding.length}</span>${gLines}</div>`);
+        parts.push(`<div style="display:grid;gap:4px;margin-top:10px;"><strong>你正在守護的人</strong><span class="badge ok">${guarding.length} 位</span>${gLines}</div>`);
       }
       return parts.join("") || `<div><span class="badge warn">已綁定 0 位</span></div>`;
+    }
+
+    function formatEmergencyContactsCell(user) {
+      const contacts = (Array.isArray(user.contacts) ? user.contacts : []).filter((contact) => {
+        const role = String(contact?.contact_role || contact?.type || contact?.kind || "guardian").toLowerCase();
+        return ["emergency", "emergency_contact", "聯絡人", "緊急聯絡人"].includes(role);
+      });
+      const limit = Number(user.emergency_contact_limit || 0);
+      if (!contacts.length) {
+        return `<strong>電話備援 0/${limit || "-"}</strong><br><small>尚未新增緊急聯絡人</small>`;
+      }
+      const rows = contacts.map((contact, index) => {
+        const name = escapeHtml(contact.name || contact.display_name || "未命名");
+        const relationship = escapeHtml(contact.relationship || "關係未填");
+        const phone = escapeHtml(contact.phone || contact.mobile || "電話未填");
+        return `<div><strong>${index + 1}. ${name}</strong><br><small>${relationship}／${phone}</small></div>`;
+      }).join("");
+      return `<div style="display:grid;gap:6px;min-width:160px;"><span class="badge warn">電話備援 ${contacts.length}/${limit || contacts.length}</span>${rows}</div>`;
     }
 
     async function loadBusinessDashboard() {
@@ -1728,7 +1742,7 @@
             <td><strong>${expiryText(user)}</strong></td>
             <td><strong>${trialText(user)}</strong></td>
             <td>${formatBoundGuardiansCell(user)}</td>
-            <td>核心 ${user.core_guardian_count || 0}／一般 ${user.general_guardian_count || 0}<br>已綁 ${user.bound_guardian_count || 0}／名額 ${(user.contacts || []).length}/${user.contact_limit || 1}</td>
+            <td>${formatEmergencyContactsCell(user)}</td>
             <td>${(user.guardian_group_ids || []).length}/${user.guardian_group_limit || 0}</td>
             <td>${user.grace_hours} 小時</td>
             <td>${user.reminder_time}</td>
