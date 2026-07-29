@@ -12,6 +12,32 @@ import app as alive_app
 
 
 class ReminderTimesTests(unittest.TestCase):
+    def test_onboarding_reminder_save_records_explicit_completion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_file = str(Path(tmp) / "state.json")
+            alive_app.save_state(data_file, {
+                "users": {
+                    "U1": {
+                        "line_user_id": "U1",
+                        "plan": "trial",
+                        "contacts": [],
+                    }
+                }
+            })
+
+            result, code = alive_app.update_onboarding_reminder(
+                data_file,
+                "U1",
+                {"reminder_times": ["12:00"], "grace_hours": 48},
+            )
+
+            self.assertEqual(code, 200)
+            self.assertTrue(result["onboarding_reminder_configured"])
+            status, status_code = alive_app.onboarding_status_payload(data_file, "U1")
+            self.assertEqual(status_code, 200)
+            self.assertTrue(status["onboarding_reminder_configured"])
+            self.assertEqual(status["grace_hours"], 48)
+
     def test_default_times_by_count(self):
         self.assertEqual(alive_app.default_reminder_times_for_count(1), ["12:00"])
         self.assertEqual(alive_app.default_reminder_times_for_count(2), ["12:00", "18:00"])

@@ -13,6 +13,10 @@ class OnboardingFlowTest(unittest.TestCase):
         self.assertIn("4 完成綁定", text)
         self.assertLess(text.index("設定提醒"), text.index("分享邀請"))
         self.assertIn("等待對方登入並接受", text)
+        self.assertIn("onboarding_reminder_configured", text)
+        self.assertIn("state.currentStep = 2", text)
+        self.assertIn("state.currentStep = 3", text)
+        self.assertIn("等待接受中", text)
 
     def test_beta_pages_name_yearly_plans(self):
         text = (ROOT / "beta-register.html").read_text(encoding="utf-8")
@@ -26,6 +30,19 @@ class OnboardingFlowTest(unittest.TestCase):
         self.assertIn("等待對方接受", text)
         self.assertIn("對方完成 LINE 登入並同意後", text)
         self.assertIn("綁定完成後立即生效", text)
+
+    def test_public_trial_page_uses_the_same_four_step_order(self):
+        text = (ROOT / "trial-14.html").read_text(encoding="utf-8")
+        labels = [
+            "Step 1 加入每日平安官方 LINE",
+            "Step 2 設定我的資料",
+            "Step 3 一鍵分享核心守護人",
+            "Step 4 完成綁定",
+        ]
+        positions = [text.index(label) for label in labels]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("等待對方登入", text)
+        self.assertIn("等待對方接受", text)
 
 
 if __name__ == "__main__":

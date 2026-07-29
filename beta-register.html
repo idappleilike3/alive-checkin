@@ -116,10 +116,10 @@
         系統每天 19:00 會透過官方 LINE 詢問一次使用狀況；第 7、14、21 天也會邀請你提供階段心得。若發現問題，請附截圖、發生時間、操作步驟、手機型號與 LINE 版本。
       </div>
       <div class="registration-flow" aria-label="加入封測流程">
-        <div class="flow-step">第一步：先加入「每日平安」官方 LINE</div>
-        <div class="flow-step">第二步：回到這裡，用 LINE 登入並開始設定</div>
-        <div class="flow-step">第三步：一鍵邀請至少 1 位核心守護人，請對方接受並完成綁定</div>
-        <div class="flow-step">第四步：填寫守護人資料並設定每日提醒</div>
+        <div class="flow-step">Step 1 加入每日平安官方 LINE</div>
+        <div class="flow-step">Step 2 設定我的資料與每日提醒</div>
+        <div class="flow-step">Step 3 一鍵分享核心守護人；分享後等待對方登入與接受</div>
+        <div class="flow-step">Step 4 對方加入官方 LINE、LINE 登入並接受後，才顯示完成綁定</div>
       </div>
       <p class="spots" id="spots"></p>
       <a class="cta" id="addOfficialLine" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener">第一步：加入每日平安官方 LINE</a>
@@ -133,15 +133,17 @@
   <script>
     const is799 = location.pathname.endsWith("/799");
     const cohort = is799 ? "B799" : "B399";
+    const yearlyPlanCode = is799 ? "paid_799_year" : "paid_399_year";
     const continueRegistration = document.getElementById("continueRegistration");
     const join = continueRegistration;
     const consent = document.getElementById("consent");
     document.querySelector(".plan-399").hidden = is799;
     document.querySelector(".plan-799").hidden = !is799;
     document.getElementById("title").textContent =
-      is799 ? "799 年費守護版｜21 天封測" : "399 年費安心版｜21 天封測";
+      is799 ? "21 天封測｜799 守護版年費" : "21 天封測｜399 安心版年費";
     document.getElementById("title").dataset.fullTitle =
-      is799 ? "799 年費守護版｜21 天封測" : "399 年費安心版｜21 天封測";
+      is799 ? "21 天封測｜799 守護版年費" : "21 天封測｜399 安心版年費";
+    document.getElementById("title").dataset.planCode = yearlyPlanCode;
     document.getElementById("spots").textContent =
       is799 ? "本組限額 10 人" : "本組限額 20 人";
     document.getElementById("entitlementSummary").textContent = is799
