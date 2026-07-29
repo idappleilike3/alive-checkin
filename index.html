@@ -451,6 +451,24 @@
     }
     .today-reminder-card strong { color: #9a3412; font-size: 18px; }
     .today-reminder-card span { color: #7c2d12; font-size: 16px; }
+    .daily-almanac-card {
+      display: grid;
+      gap: 10px;
+      margin: 0 0 12px;
+      padding: 14px;
+      border: 2px solid #86efac;
+      border-radius: 16px;
+      background: #f0fdf4;
+      color: #14532d;
+      text-align: left;
+    }
+    .daily-almanac-card[hidden] { display: none !important; }
+    .daily-almanac-card h3 { margin: 0; font-size: 19px; }
+    .almanac-row { display: grid; grid-template-columns: 36px 1fr; gap: 8px; line-height: 1.6; }
+    .almanac-tag { font-weight: 950; }
+    .almanac-tag.yi { color: #15803d; }
+    .almanac-tag.ji { color: #b91c1c; }
+    .almanac-source { color: #5b6b62; font-size: 13px; line-height: 1.5; }
     .birthday-fields {
       display: grid;
       gap: 10px;
@@ -4376,6 +4394,12 @@
           <strong id="todayReminderTitle">今天：農曆載入中</strong>
           <span id="todayReminderText">正在整理今天的平安提醒</span>
         </div>
+        <section class="daily-almanac-card" id="dailyAlmanacCard" aria-label="799 每日農民曆宜忌" hidden>
+          <h3 id="dailyBlessingText">日日平安，事事順心</h3>
+          <div class="almanac-row"><span class="almanac-tag yi">宜</span><span id="dailyAlmanacYi">載入中</span></div>
+          <div class="almanac-row"><span class="almanac-tag ji">忌</span><span id="dailyAlmanacJi">載入中</span></div>
+          <small class="almanac-source">民俗生活參考；婚嫁、開工、安葬等重要決定仍請依家庭信仰與專業擇日意見。</small>
+        </section>
         <div class="calendar-nav">
           <button id="prevMonth" type="button" aria-label="上一個月">&#8249;</button>
           <span id="monthTitle">--</span>
@@ -5015,6 +5039,7 @@
     </div>
   </div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lunar-javascript/1.7.7/lunar.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script>
     const STORAGE_KEY = "alive_checkin_state_v2";
@@ -9101,6 +9126,75 @@
       return lunar.festival;
     }
 
+    const DAILY_BLESSINGS = [
+      "日日平安，事事順心",
+      "心情安穩，家人放心",
+      "今天也要好好照顧自己",
+      "平安就是最好的消息",
+      "願今天有好心情、好精神",
+      "慢慢來，也能把日子過好",
+      "一家平安，就是最大的福氣"
+    ];
+    const FESTIVAL_BLESSINGS = {
+      "元旦": "新年平安，日日都有好心情",
+      "春節": "新春平安，闔家健康順心",
+      "元宵節": "元宵團圓，家家平安",
+      "母親節": "母親節平安，記得向媽媽說聲謝謝",
+      "父親節": "父親節平安，記得關心爸爸",
+      "端午節": "端午安康，出入平安",
+      "中秋節": "中秋團圓，家人平安",
+      "重陽節": "重陽敬老，長輩健康平安",
+      "國慶日": "假日出入平安，記得向家人報平安",
+      "聖誕節": "聖誕平安，心裡溫暖"
+    };
+
+    function toTraditionalAlmanacTerm(value) {
+      const replacements = [
+        ["开工", "開工"], ["开市", "開市"], ["开业", "開業"], ["开光", "開光"],
+        ["动土", "動土"], ["修造", "修造"], ["嫁娶", "嫁娶"], ["纳采", "納采"],
+        ["订盟", "訂盟"], ["祈福", "祈福"], ["安葬", "安葬"], ["入殓", "入殮"],
+        ["移柩", "移柩"], ["破土", "破土"], ["入宅", "入宅"], ["移徙", "移徙"],
+        ["栽种", "栽種"], ["纳畜", "納畜"], ["会亲友", "會親友"], ["出行", "出行"],
+        ["交易", "交易"], ["立券", "立券"], ["祭祀", "祭祀"], ["求医", "求醫"],
+        ["无", "無"]
+      ];
+      return replacements.reduce(
+        (text, pair) => text.split(pair[0]).join(pair[1]),
+        String(value || "").trim()
+      );
+    }
+
+    function renderDailyAlmanac(status = currentStatusData || {}) {
+      const card = $("dailyAlmanacCard");
+      if (!card) return;
+      const is799 = ["paid_799", "paid_799_year"].includes(String(status.plan || ""));
+      const enabled = is799 && status.calendar_notes_enabled === true;
+      card.hidden = !enabled;
+      if (!enabled) return;
+      const now = new Date();
+      const lunar = lunarInfo(now);
+      const festival = festivalForDate(now, lunar);
+      $("dailyBlessingText").textContent =
+        FESTIVAL_BLESSINGS[festival]
+        || DAILY_BLESSINGS[now.getDay() % DAILY_BLESSINGS.length];
+      try {
+        const SolarClass = window.Solar;
+        if (!SolarClass || typeof SolarClass.fromYmd !== "function") {
+          throw new Error("almanac_library_unavailable");
+        }
+        const almanac = SolarClass.fromYmd(
+          now.getFullYear(), now.getMonth() + 1, now.getDate()
+        ).getLunar();
+        const yi = (almanac.getDayYi() || []).map(toTraditionalAlmanacTerm).filter(Boolean).slice(0, 6);
+        const ji = (almanac.getDayJi() || []).map(toTraditionalAlmanacTerm).filter(Boolean).slice(0, 6);
+        $("dailyAlmanacYi").textContent = yi.join("、") || "諸事皆宜";
+        $("dailyAlmanacJi").textContent = ji.join("、") || "無特別禁忌";
+      } catch (_) {
+        $("dailyAlmanacYi").textContent = "農民曆資料暫時無法載入";
+        $("dailyAlmanacJi").textContent = "請稍後重新開啟頁面";
+      }
+    }
+
     function noteContent(note) {
       if (!note) return "";
       if (typeof note === "string") return note;
@@ -9966,6 +10060,7 @@
         : lineUserId
           ? `目前已綁定 LINE：${lineDisplayName || "LINE 使用者"}。`
           : "目前已連上後端，資料會存到本機 JSON 檔。";
+      renderDailyAlmanac(data);
       renderCalendar(currentYear, currentMonth, historyData);
       renderMemberCenter();
     }
