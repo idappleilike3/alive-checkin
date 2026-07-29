@@ -1,4 +1,3 @@
-sed: --: No such file or directory
 import copy
 import base64
 import calendar
@@ -219,7 +218,6 @@ DEFAULT_PROFILE = {
     "trial_bonus_days": 0,
     "payment_status": "trial",
     "paid_until": "",
-sed: --: No such file or directory
     "billing_cycle": "trial",
     "payment_provider": "",
     "payment_method_last4": "",
@@ -440,7 +438,6 @@ PLAN_LIMITS = {
         "guardian_group_member_limit": 50,
         "safety_guard_hours": [1, 3, 6, 8],
         "safety_guard_daily_limit": 5,
-sed: --: No such file or directory
     },
 }
 
@@ -661,7 +658,6 @@ def line_auto_reply_text(text, status=None):
         )
     if any(keyword in text for keyword in SUPPORT_KEYWORDS):
         faq_url = line_liff_url("faq")
-sed: --: No such file or directory
         return (
             "客服在這裡。請直接在此 LINE 留言你的問題，我們會協助你設定簽到、守護人與方案。\n\n"
             "📩 已收到的問題會在 1–3 個工作天內回覆。\n\n"
@@ -882,7 +878,6 @@ def _migrate_legacy_json(data_file, db_path):
     finally:
         conn.close()
     try:
-sed: --: No such file or directory
         json_path.rename(str(json_path) + ".bak")
     except OSError:
         pass
@@ -1103,7 +1098,6 @@ def load_state(data_file):
             ):
                 try:
                     _save_state_postgres(local)
-sed: --: No such file or directory
                 except Exception:
                     pass
                 return local
@@ -1324,7 +1318,6 @@ def date_string_in_taipei(value):
             candidates.append(dt.astimezone(tz))
         return candidates[0].strftime("%Y-%m-%d")
     except Exception:
-sed: --: No such file or directory
         return dt.strftime("%Y-%m-%d")
 
 
@@ -1545,7 +1538,6 @@ def build_expiry_remind_flex(profile, now=None):
     else:
         title = f"你的{label}即將到期"
         body = (
-sed: --: No such file or directory
             f"還剩約 {days} 天。續用後可繼續每日問候，守護不中斷。"
             "升級補差額即可；另有 7 天考慮期，方便家人一起決定。"
         )
@@ -1766,7 +1758,6 @@ def get_profile(state, line_user_id=None, *, start_public_trial=True):
         if start_public_trial and (is_new or not user.get("trial_started_at")):
             # First sight of this user: start trial clock once.
             if not user.get("trial_started_at"):
-sed: --: No such file or directory
                 user["trial_started_at"] = datetime.now().isoformat(timespec="seconds")
         if is_new and start_public_trial:
             ensure_membership_trial(user, source="public_trial")
@@ -1987,7 +1978,6 @@ def normalize_reminder_times(raw_times, max_count=1):
 def reminder_times_for_profile(profile):
     """取得使用者提醒時段:自訂 reminder_times > 單一 reminder_time > 方案預設。"""
     max_count = int(plan_rules(profile).get("daily_reminders") or 1)
-sed: --: No such file or directory
     raw = profile.get("reminder_times")
     if isinstance(raw, (list, tuple)) and raw:
         normalized = normalize_reminder_times(raw, max_count)
@@ -2208,7 +2198,6 @@ def deduplicate_contact_line_bindings(profile):
     if changed:
         profile["contacts"] = unique
     return changed
-sed: --: No such file or directory
 
 
 def profile_has_guardian(profile):
@@ -2429,7 +2418,6 @@ def free_eligibility_source(profile):
         or str(profile.get("membership_source") or "") == "beta"
     ):
         return f"beta_{cohort}"
-sed: --: No such file or directory
     return ""
 
 
@@ -2650,7 +2638,6 @@ def authorize_labeled_test_action(data_file, line_user_id, action, now=None):
 
 def assign_beta_cohort(
     state,
-sed: --: No such file or directory
     line_user_id,
     cohort,
     *,
@@ -2871,7 +2858,6 @@ def build_beta_feedback_flex(profile, day):
                     {"type": "text", "text": _beta_feedback_task(cohort, day),
                      "wrap": True, "margin": "sm", "color": "#33443F"},
                     {"type": "text", "text": "點選下方最符合的狀況即可回報",
-sed: --: No such file or directory
                      "wrap": True, "margin": "lg", "size": "sm", "color": "#6B7773"},
                 ],
             },
@@ -3092,7 +3078,6 @@ def review_line_acceptance_case(state, case_id, payload, now=None):
     public.pop("line_user_id", None)
     return {"reviewed": True, "case": public}
 
-sed: --: No such file or directory
 
 def admin_assign_beta_member(data_file, payload, now=None):
     try:
@@ -3313,7 +3298,6 @@ def record_launch_validation_step(
     if not scenario_id or kind not in LAUNCH_SCENARIO_STEPS:
         raise ValueError("invalid_launch_scenario")
     if step not in LAUNCH_SCENARIO_STEPS[kind]:
-sed: --: No such file or directory
         raise ValueError("invalid_launch_step")
     scenarios = state.setdefault("launch_validation_scenarios", {})
     row = scenarios.setdefault(scenario_id, {
@@ -3534,7 +3518,6 @@ def process_verified_privacy_request(
     """Process a verified unlink/delete request and retain minimal legal audit."""
     now = now or current_app_time({})
     line_user_id = str(line_user_id or "").strip()
-sed: --: No such file or directory
     request_type = str(request_type or "").strip()
     peer_line_user_id = str(peer_line_user_id or "").strip()
     request_key = hashlib.sha256(
@@ -3755,7 +3738,6 @@ def compute_streak_days(history, today):
     while cur.strftime("%Y-%m-%d") in history_set:
         streak += 1
         cur -= _td(days=1)
-sed: --: No such file or directory
     return streak
 
 
@@ -3976,7 +3958,6 @@ def build_status(profile, state=None, now=None):
                 "contact_role": resolve_contact_role(c),
             }
             for c in (profile.get("contacts") or [])
-sed: --: No such file or directory
             if contact_is_notifiable_line_guardian(c, owner_id)
         ],
         "profile_contact_count": sum(
@@ -4197,7 +4178,6 @@ def ensure_user_display_name(profile, *, token="", hint="", force_fetch=False) -
 
 def register_line_user(data_file, payload):
     """Upsert LINE user: merge into existing record, never reset trial/bindings."""
-sed: --: No such file or directory
     line_user_id = str(payload.get("line_user_id") or "").strip()
     if not line_user_id:
         return {"error": "missing line_user_id"}, 400
@@ -4418,7 +4398,6 @@ def notify_guardians_of_checkin(data_file, line_user_id, config=None, now=None):
     if not isinstance(profile, dict):
         return {"sent": 0, "failed": 0, "skipped": True, "reason": "member_not_found"}
 
-sed: --: No such file or directory
     owner_id = str(profile.get("line_user_id") or line_user_id or "").strip()
     limit = max(1, int(plan_rules(profile).get("core_guardian_alert_limit") or 1))
     contacts = sorted(
@@ -4639,7 +4618,6 @@ def save_billing_preferences(data_file, payload):
 def create_payment_order(data_file, payload, config=None):
     line_user_id = str(payload.get("line_user_id") or "").strip()
     plan = str(payload.get("plan") or "").strip()
-sed: --: No such file or directory
     product = PAYMENT_PRODUCTS.get(plan)
     if not line_user_id:
         return {"error": "missing line_user_id"}, 400
@@ -4860,7 +4838,6 @@ def process_period_notification(data_file, parsed, config=None):
 
 def _newebpay_post(url, form):
     from urllib.parse import urlencode
-sed: --: No such file or directory
     from urllib.request import Request, urlopen
 
     request_obj = Request(
@@ -5081,7 +5058,6 @@ def refund_payment_order(data_file, payload, config=None):
     if profile is not None and order["status"] == "refunded":
         profile["payment_status"] = "refunded"
         profile["last_refunded_order_id"] = order_id
-sed: --: No such file or directory
     append_notification_log(
         state,
         "payment_refund",
@@ -5302,7 +5278,6 @@ def _claim_trial_milestone_notices(state, clock):
             claims.append({
                 "line_user_id": target,
                 "day": day,
-sed: --: No such file or directory
                 "trial_started_at": started.isoformat(timespec="seconds"),
                 "claim_token": claim_token,
             })
@@ -5523,7 +5498,6 @@ def resolve_contact_role(contact):
     **不可**讀 ``role``：該欄在 bound_guardians 表示「核心／一般」層級，
     若誤當成 contact_role 會把守護人列濾空，出現 count≥1 但列表空白。
     """
-sed: --: No such file or directory
     if not isinstance(contact, dict):
         return "guardian"
     raw = str(
@@ -5744,7 +5718,6 @@ def get_contacts(data_file, line_user_id=None):
     profile = get_profile(state, line_user_id)
     if scrub_self_line_ids_on_contacts(profile):
         save_state(data_file, state)
-sed: --: No such file or directory
     raw_contacts = list(profile.get("contacts") or [])
     contacts = []
     changed = False
@@ -5965,7 +5938,6 @@ def delete_single_contact(data_file, line_user_id, contact_id):
             for contact in profile["contacts"]
             if resolve_contact_role(contact) == "guardian"
         ):
-sed: --: No such file or directory
             next_guardian = next(
                 (
                     contact
@@ -6186,7 +6158,6 @@ def detect_reverse_invite(state, inviter_id, invitee_id):
     return invitee_id in guarding
 
 
-sed: --: No such file or directory
 def apply_is_primary_to_contact_line(profile, contact_line_user_id, *, make_core=True):
     """Set/unset is_primary for a contact by LINE id; enforce core_guardian_alert_limit.
 
@@ -6407,7 +6378,6 @@ def build_bind_success_notices(inviter, contacts, inviter_id, guardian_name, *, 
     inviter_notice = (
         "✅ 綁定成功\n\n"
         f"對方：{guardian_name}（已成為你的守護人）\n"
-sed: --: No such file or directory
         f"目前：核心守護人 {len(bound_rows)} 位。\n\n"
         "之後若你逾時未報平安或發出 SOS，系統會透過 LINE 私訊通知對方。\n"
         "請點「完成資料」補齊自己的聯絡資料；LINE 通知已立即啟用。"
@@ -6628,7 +6598,6 @@ def backfill_bind_notify(config, *, dry_run=False, limit=0):
 
 def retry_pending_bind_notifications(config):
     """Retry only the failed side of a recent guardian bind, up to 3 attempts."""
-sed: --: No such file or directory
     token = (
         config.get("LINE_CHANNEL_ACCESS_TOKEN")
         or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -6849,7 +6818,6 @@ def bind_emergency_contact(
         return {
             "ok": False,
             "error": "請填寫姓名、與邀請人的關係及電話後再完成綁定",
-sed: --: No such file or directory
             "code": "guardian_profile_required",
             "required_fields": ["name", "relationship", "phone"],
         }, 400
@@ -7070,7 +7038,6 @@ sed: --: No such file or directory
                     "ok": False,
                     "error": "你已使用過免費體驗或封測資格",
                     "code": "free_eligibility_already_used",
-sed: --: No such file or directory
                 }, 409
             if not used_source:
                 ensure_membership_trial(
@@ -7291,7 +7258,6 @@ sed: --: No such file or directory
         }
         bind_notify_status = {
             "inviter": {
-sed: --: No such file or directory
                 "status": "sent" if inviter_notified else "failed",
                 "attempts": 1,
                 "retryable": (
@@ -7512,7 +7478,6 @@ def refresh_all_guardian_groups_count(data_file, token=None):
         except Exception:
             pass
 
-sed: --: No such file or directory
 
 def kick_group_member(token, group_id, user_id):
     """踢 userId 出 group(bot 必須是 admin)。失敗:回 None / HTTPError code。"""
@@ -7733,7 +7698,6 @@ def grant_guardian_group_admin(group, line_user_id) -> bool:
     if not uid or not isinstance(group, dict):
         return False
     changed = False
-sed: --: No such file or directory
     owner = str(group.get("owner_line_user_id") or "").strip()
     if not owner:
         group["owner_line_user_id"] = uid
@@ -7954,7 +7918,6 @@ def update_guardian_group_preferences(data_file, payload):
     if "daily_summary_time" in payload:
         summary_time = str(payload.get("daily_summary_time") or "").strip()
         if not REMINDER_TIME_PATTERN.match(summary_time):
-sed: --: No such file or directory
             return {"error": "invalid daily_summary_time format, use HH:MM"}, 400
         preferences["daily_summary_time"] = summary_time
     group["preferences"] = preferences
@@ -8175,7 +8138,6 @@ def guardian_group_join_outcome(data_file, line_user_id, group_id):
     outcome = dict(result)
     if status == 200:
         outcome["reply_text"] = (
-sed: --: No such file or directory
             "我已完成守護群設定\n"
             f"目前已綁定 {result.get('guardian_group_count', 1)}/"
             f"{result.get('guardian_group_limit', 1)} 個守護群。"
@@ -8396,7 +8358,6 @@ def notify_safety_guard_started(
     duration_label = "15 分鐘" if hours == 0.25 else f"{int(hours)} 小時"
     place = f"（{city}）" if city else ""
     map_url = ""
-sed: --: No such file or directory
     try:
         lat = location.get("latitude")
         lng = location.get("longitude")
@@ -8617,7 +8578,6 @@ def update_location(data_file, payload, config=None):
             "ok": False,
             "error": "safety guard daily limit reached",
             "error_code": (
-sed: --: No such file or directory
                 "trial_daily_limit_reached"
                 if is_trial
                 else "safety_guard_daily_limit_reached"
@@ -8838,7 +8798,6 @@ def sos_abuse_state(profile: dict, now: datetime) -> dict:
     false_alarms = _sos_false_alarm_times(profile or {}, now)
     in_24h = [item for item in false_alarms if item >= now - timedelta(hours=24)]
     if len(false_alarms) >= 3:
-sed: --: No such file or directory
         expires_at = false_alarms[-1] + timedelta(days=7)
         if expires_at > now:
             return {
@@ -9059,7 +9018,6 @@ def respond_to_sos_event(data_file, payload, config=None):
             "display_name": actor_name,
             "responded_at": responded_at,
         }
-sed: --: No such file or directory
         event.setdefault("timeline", []).append({
             "action": effective_action,
             "actor_id": actor_id,
@@ -9280,7 +9238,6 @@ def process_sos_escalations(data_file, config=None, now=None):
                     ),
                 )
                 sent += 1
-sed: --: No such file or directory
                 round_units += 1
                 event.setdefault("deliveries", []).append({
                     "kind": "guardian",
@@ -9501,7 +9458,6 @@ def cancel_sos_event(data_file, payload, config=None):
         sent_at=now,
     )
     event_snapshot = copy.deepcopy(event)
-sed: --: No such file or directory
     false_alarm_at = now.isoformat(timespec="seconds") if not previous_cancel else None
     pending_snapshot = copy.deepcopy(pending) if pending else None
     new_logs = copy.deepcopy((state.get("notification_logs") or [])[notification_log_start:])
@@ -9722,7 +9678,6 @@ def retry_sos_event(data_file, payload, config=None):
 
 def _claim_sos_delivery(
     state,
-sed: --: No such file or directory
     line_user_id,
     now_dt,
     daily_limit=3,
@@ -9943,7 +9898,6 @@ def trigger_sos(data_file, payload, config=None):
         active_group_ids = [
             group_id for group_id in (profile.get("guardian_group_ids") or [])
             if groups.get(group_id, {}).get("owner_line_user_id") == line_user_id
-sed: --: No such file or directory
             and groups.get(group_id, {}).get("status") == "active"
         ][: int(rules.get("guardian_group_limit") or 0)]
 
@@ -10164,7 +10118,6 @@ sed: --: No such file or directory
     requested_units = len(line_contacts) + sum(
         max(1, len(group_delivery_members.get(group_id) or []))
         for group_id in active_group_ids
-sed: --: No such file or directory
     )
     budget = line_push_budget_decision(
         state,
@@ -10385,7 +10338,6 @@ sed: --: No such file or directory
             sent += 1
             if sent_at is None:
                 sent_at = current_app_time(config or {}).isoformat(timespec="seconds")
-sed: --: No such file or directory
             group_sent += 1
             results.append({
                 "group_id": group_id,
@@ -10606,7 +10558,6 @@ def friend_locations(data_file, line_user_id):
             }
         )
     return {"friends": friends}
-sed: --: No such file or directory
 
 
 def admin_update_user_plan(data_file, payload):
@@ -10827,7 +10778,6 @@ def send_support_email(to_email, subject, message, config=None):
     ).strip()
     password = str(
         config.get("SMTP_PASSWORD") or os.environ.get("SMTP_PASSWORD") or ""
-sed: --: No such file or directory
     )
     from_email = str(
         config.get("SUPPORT_FROM_EMAIL")
@@ -11048,7 +10998,6 @@ def admin_allowed(config, password):
 
 
 def admin_auth_error_payload(config, password):
-sed: --: No such file or directory
     """Return (payload, http_status) when auth fails; None when allowed."""
     if not admin_security_ready(config):
         return {"error": "admin_not_configured"}, 503
@@ -11269,7 +11218,6 @@ def create_account_migration_ticket(
                 ticket["status"] = "expired"
                 ticket["expires_at"] = current_iso
         tickets[ticket_id] = {
-sed: --: No such file or directory
             "ticket_id": ticket_id,
             "code_digest": account_migration_code_digest(
                 raw_code,
@@ -11490,7 +11438,6 @@ def _merge_migration_history(legacy_rows, current_rows):
         if normalized:
             by_date[normalized] = normalized
         else:
-sed: --: No such file or directory
             undated.append(copy.deepcopy(row))
     return [*sorted(by_date), *undated]
 
@@ -11711,7 +11658,6 @@ _MIGRATION_REFERENCE_SCALAR_FIELDS = {
     "requester_line_user_id",
     "payer_line_user_id",
     "recipient_line_user_id",
-sed: --: No such file or directory
     "inviter_line_user_id",
     "contact_line_user_id",
     "guardian_line_user_id",
@@ -11932,7 +11878,6 @@ def reindex_account_references(
         index = state.get(index_key) or {}
         if not isinstance(index, dict):
             continue
-sed: --: No such file or directory
         was_rekeyed = source_id in index
         if source_id in index:
             source_record = index.pop(source_id)
@@ -12153,7 +12098,6 @@ def redeem_account_migration_ticket(
         if not isinstance(old_profile, dict):
             _append_account_migration_failure_audit(
                 state,
-sed: --: No such file or directory
                 "source_missing",
                 current,
             )
@@ -12374,7 +12318,6 @@ def _sanitize_admin_audit_metadata(value):
             if (
                 compact_key in {"name", "username"}
                 or any(
-sed: --: No such file or directory
                     part in compact_key
                     for part in _ADMIN_AUDIT_SENSITIVE_KEY_PARTS
                 )
@@ -12595,7 +12538,6 @@ def resolve_admin_incident(data_file, payload, actor_role):
                 if str(item.get("incident_id") or f"delivery-{index}") == incident_id
                 and item.get("status") in {"failed", "error"}
             ),
-sed: --: No such file or directory
             None,
         )
     if target is None:
@@ -12816,7 +12758,6 @@ def cron_allowed(config, secret):
     return secrets.compare_digest(expected, provided)
 
 
-sed: --: No such file or directory
 def _positive_percentage(config, name, default):
     raw = config.get(name) if hasattr(config, "get") else None
     if raw in (None, ""):
@@ -13037,7 +12978,6 @@ def create_privacy_request(data_file, payload, now=None):
     privacy_request = {
         "id": f"privacy-{secrets.token_hex(8)}",
         "line_user_id": line_user_id,
-sed: --: No such file or directory
         "request_type": request_type,
         "summary": str((payload or {}).get("summary") or "").strip()[:500],
         "status": "pending",
@@ -13258,7 +13198,6 @@ def admin_summary(data_file, config=None, now=None):
         token = str(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN") or "").strip()
 
     # 後台載入時補齊「LINE 使用者」佔位名稱（最多打 40 次 LINE profile，避免逾時）
-sed: --: No such file or directory
     hydrated = 0
     dirty = False
     for user in (state.get("users") or {}).values():
@@ -13479,7 +13418,6 @@ _MIGRATION_ADMIN_FAILURE_CATEGORIES = {
     "unsafe_conflict",
     "migration_failed",
 }
-sed: --: No such file or directory
 
 
 def admin_account_migrations(data_file, config, now=None):
@@ -13700,7 +13638,6 @@ def read_admin_backup(data_file, backup_id):
         return {"error": "backup file missing"}, 404
     try:
         return json.loads(path.read_text(encoding="utf-8")), 200
-sed: --: No such file or directory
     except (json.JSONDecodeError, OSError):
         return {"error": "backup file unreadable"}, 500
 
@@ -13921,7 +13858,6 @@ def record_line_message_usage(
     *,
     category: str,
     owner_line_user_id: str,
-sed: --: No such file or directory
     recipient_count: int,
     event_id: str,
     sent_at: datetime,
@@ -14142,7 +14078,6 @@ def send_due_reminders(config):
             event["status"] = "checked_in"
             profile["last_overdue_event"] = copy.deepcopy(event)
             profile["active_overdue_event"] = None
-sed: --: No such file or directory
             skipped += 1
             continue
         started_at = parse_datetime(event.get("started_at"))
@@ -14363,7 +14298,6 @@ def send_guardian_group_daily_summaries(config):
         current_hm = now.strftime("%H:%M")
         if current_hm < summary_time:
             deferred += 1
-sed: --: No such file or directory
             continue
         if group.get("last_daily_summary_date") == today:
             skipped += 1
@@ -14584,7 +14518,6 @@ def _prepare_guardian_group_summary(
     state, group_id, today, now, claim_token, member_ids
 ):
     group = (state.get("guardian_groups") or {}).get(group_id)
-sed: --: No such file or directory
     claim = ((group or {}).get("daily_summary_claims") or {}).get(today) or {}
     if not isinstance(group, dict) or claim.get("claim_token") != claim_token:
         return {"ready": False, "reason": "claim_lost"}
@@ -14805,7 +14738,6 @@ def send_missing_contact_reminders(config):
             if failure["kind"] == "system":
                 system_error = True
                 break
-sed: --: No such file or directory
     save_state(config["DATA_FILE"], state)
     return {
         "sent": sent,
@@ -15026,7 +14958,6 @@ def build_daily_checkin_flex(now, target_time=""):
             "header": {
                 "type": "box",
                 "layout": "vertical",
-sed: --: No such file or directory
                 "spacing": "xs",
                 "backgroundColor": "#00B900",
                 "paddingTop": "lg",
@@ -15247,7 +15178,6 @@ def send_checkin_reminders(config):
                         system_error = True
                         break
         except Exception as exc:
-sed: --: No such file or directory
             failure = _record_scheduled_push_failure(
                 state,
                 user,
@@ -15468,7 +15398,6 @@ def plan_has_smart_reminders(profile, now=None):
     return plan in {"paid_799", "paid_799_year"} and paid_membership_is_active(
         profile or {}, now=now
     )
-sed: --: No such file or directory
 
 
 def normalize_smart_reminder(raw, index=0):
@@ -15689,7 +15618,6 @@ def build_smart_reminder_digest(reminders, *, mode="day"):
                 "layout": "vertical",
                 "spacing": "md",
                 "contents": [
-sed: --: No such file or directory
                     {"type": "text", "text": f"🗓️ {when}有 {len(reminders)} 個提醒", "weight": "bold", "size": "xl", "wrap": True},
                     {"type": "text", "text": "\n".join(lines), "size": "md", "wrap": True},
                     {"type": "text", "text": "同一時段已合併成一則，避免重複打擾", "size": "xs", "color": "#888888", "wrap": True},
@@ -15910,7 +15838,6 @@ def send_smart_reminders(config):
             or not membership_access_active(user, now)
             or not plan_has_smart_reminders(user)
         ):
-sed: --: No such file or directory
             skipped += 1
             continue
         sent_keys = set(user.get("smart_reminder_sent_keys") or [])
@@ -16131,7 +16058,6 @@ def run_cron_tick(config):
                 "ok": False,
                 "system_error": True,
                 "ran_at": now.isoformat(timespec="seconds"),
-sed: --: No such file or directory
                 "timezone": "Asia/Taipei",
                 "tasks": results,
             }, 200
@@ -16352,7 +16278,6 @@ def checkin_for_user(data_file, line_user_id, payload, config=None):
         }),
     )
     state = load_state(data_file)
-sed: --: No such file or directory
     if line_user_id not in state.get("users", {}):
         register_line_user(
             data_file,
@@ -16573,7 +16498,6 @@ def create_app(config=None):
         if request.is_secure:
             return True
         if str(request.remote_addr or "") in {"127.0.0.1", "::1"}:
-sed: --: No such file or directory
             return True
         trusted_proxy = (
             _env_flag_on("RENDER", app.config)
@@ -16794,7 +16718,6 @@ sed: --: No such file or directory
     @app.get("/liff/guardian")
     def liff_guardian():
         # 永久入口應是 liff.line.me；此路徑保留相容，導向內嵌 onboarding（守護人→提醒）
-sed: --: No such file or directory
         return _liff_embed_redirect(open_action="onboarding")
 
     @app.get("/liff/member")
@@ -17015,7 +16938,6 @@ sed: --: No such file or directory
                 "需要幫忙確認",
                 "SOS 確認 2",
                 "SOS 確認 3",
-sed: --: No such file or directory
             )
             cancel_commands = ("SOS 取消", "取消需要幫忙")
 
@@ -17236,7 +17158,6 @@ sed: --: No such file or directory
                     int(rules.get("emergency_contact_limit") or 2),
                 )
                 enriched.setdefault("reminder_time", str(times[0] if times else "09:00"))
-sed: --: No such file or directory
                 enriched.setdefault("reminder_times", list(times))
                 group_id = enriched.get("group_id")
                 if group_id:
@@ -17457,7 +17378,6 @@ sed: --: No such file or directory
                 result, code = enforce_group_member_limit(group_id, dict(app.config))
                 if code != 200 or not result.get("enforced"):
                     return
-sed: --: No such file or directory
                 msg_lines = [
                     f"⚠️ 守護群超過 {GROUP_MEMBER_LIMIT} 人上限。",
                     f"目前成員數:{result.get('current_count')}/{GROUP_MEMBER_LIMIT}",
@@ -17678,7 +17598,6 @@ sed: --: No such file or directory
                     group_id=group_id,
                 )
                 return
-sed: --: No such file or directory
 
             # 2026-07-21 patch 17: BOT 狀態查詢(DM + 群組都可用)
             if stripped in ("BOT 狀態", "bot 狀態", "機器人狀態", "機器人狀況"):
@@ -17899,7 +17818,6 @@ sed: --: No such file or directory
                     create_support_ticket(
                         app.config["DATA_FILE"],
                         {
-sed: --: No such file or directory
                             "line_user_id": line_user_id,
                             "message": text,
                         },
@@ -18120,7 +18038,6 @@ sed: --: No such file or directory
         return Response("SUCCESS", mimetype="text/plain"), 200
 
     @app.route("/payment-success", methods=["GET", "POST"])
-sed: --: No such file or directory
     def payment_success_page():
         # 藍新 ReturnURL 常以 POST 帶回付款結果；與 GET 同樣回傳 SPA。
         return send_from_directory(app.static_folder, "index.html")
@@ -18341,7 +18258,6 @@ sed: --: No such file or directory
             app.config["DATA_FILE"], line_user_id, payload
         )
         return jsonify(result), code
-sed: --: No such file or directory
 
     @app.get("/api/emergency-contact/invite-preview")
     def emergency_contact_invite_preview_api():
@@ -18562,7 +18478,6 @@ sed: --: No such file or directory
             return jsonify({"error": "group inactive"}), 409
         if simulated_count is None:
             return jsonify({"error": "simulated_count required"}), 400
-sed: --: No such file or directory
         current_count = int(simulated_count)
         if current_count <= GROUP_MEMBER_LIMIT:
             return jsonify({
@@ -18783,7 +18698,6 @@ sed: --: No such file or directory
                 "cancelled_at": p.get("cancelled_at"),
             })
         # active 在前(警告/warning),sent,cancelled 在後
-sed: --: No such file or directory
         out.sort(key=lambda x: (x.get("stage", "") not in ("warning_1", "warning_2", "warning_3"), x.get("last_tap_at") or ""))
         events = []
         for event in (state.get("sos_events") or {}).values():
@@ -19004,7 +18918,6 @@ sed: --: No such file or directory
             admin_account_migrations(
                 app.config["DATA_FILE"],
                 app.config,
-sed: --: No such file or directory
             )
         )
 
@@ -19225,7 +19138,6 @@ sed: --: No such file or directory
         return _admin_mutation_response("backup.create", data, code)
 
     @app.post("/api/admin/backups/r2")
-sed: --: No such file or directory
     def admin_r2_backup_create_api():
         denied = _admin_guard(write=True)
         if denied:
@@ -19446,7 +19358,6 @@ sed: --: No such file or directory
         denied = _admin_guard()
         if denied:
             return denied
-sed: --: No such file or directory
         data, code = inspect_default_rich_menu(app.config)
         return jsonify(data), code
 
@@ -19667,7 +19578,6 @@ class MiniClient:
                 line_user_id,
                 params.get("display_name"),
             )
-sed: --: No such file or directory
             return MiniResponse(body, code)
         if route == "/api/onboarding":
             line_user_id, err = authenticated_line_user(
@@ -19888,7 +19798,6 @@ sed: --: No such file or directory
             payload["line_user_id"] = line_user_id
             body, code = save_smart_reminder(self.app.config["DATA_FILE"], payload)
             return MiniResponse(body, code)
-sed: --: No such file or directory
         if route in {"/api/cron/smart-reminders", "/api/cron/birthday-reminders"}:
             if not cron_allowed(self.app.config, cron_secret):
                 return MiniResponse({"error": "unauthorized"}, 401)
@@ -20109,7 +20018,6 @@ class MiniApp:
             "LIFF_ID": os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID,
             "LINE_LOGIN_CHANNEL_ID": (
                 os.environ.get("LINE_LOGIN_CHANNEL_ID")
-sed: --: No such file or directory
                 or (os.environ.get("LIFF_ID") or DEFAULT_LIFF_ID).split("-", 1)[0]
                 or DEFAULT_LINE_LOGIN_CHANNEL_ID
             ),
@@ -20330,7 +20238,6 @@ sed: --: No such file or directory
                     line_user_id, err = handler.authenticated_user(payload, params)
                     if err:
                         return handler.send_json(err[0], err[1])
-sed: --: No such file or directory
                     data, code = checkin_for_user(
                         data_file, line_user_id, payload, config
                     )
