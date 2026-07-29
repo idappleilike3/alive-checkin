@@ -176,6 +176,13 @@ class SupportCenterTests(unittest.TestCase):
         )
         self.assertTrue(result["sent"])
 
+    def test_line_support_auto_reply_sets_business_day_expectation(self):
+        reply = alive_app.line_auto_reply_text("我要聯絡客服")
+
+        self.assertIn("1–3 個工作天內回覆", reply)
+        self.assertIn("問與答", reply)
+        self.assertNotIn("24 小時內", reply)
+
 
 if __name__ == "__main__":
     unittest.main()
