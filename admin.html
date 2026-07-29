@@ -874,7 +874,7 @@
 
     <section class="panel section-heading" id="support" style="margin-top: 16px;">
       <h2 style="margin: 0 0 8px;">客服訊息</h2>
-      <p class="note">使用者在 LINE 留下問題後，會出現在這裡。輸入回覆後可直接推送到對方 LINE。</p>
+      <p class="note">使用者的自由提問會出現在這裡。請到 LINE Official Account Manager 的聊天室人工回覆；網站後台不再提供 LINE 私訊推播，避免占用主動推播額度。</p>
       <div class="support-list" id="supportList">
         <div class="support-item">尚未載入客服訊息</div>
       </div>
@@ -1329,32 +1329,6 @@
         birthday: "生日提醒",
         support_reply: "客服回覆"
       }[kind] || "推播";
-    }
-
-    async function replySupportTicket(ticketId) {
-      const input = document.querySelector(`[data-support-reply="${ticketId}"]`);
-      const channel = document.querySelector(`[data-support-channel="${ticketId}"]`);
-      const status = document.querySelector(`[data-support-status="${ticketId}"]`);
-      const message = input?.value.trim();
-      if (!message) {
-        alert("請先輸入回覆內容。");
-        return;
-      }
-      const res = await adminFetch("/api/admin/support-reply", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ticket_id: ticketId,
-          message,
-          reply_channel: channel?.value || "line",
-          status: status?.value || "waiting_user"
-        })
-      });
-      const data = await res.json();
-      $("message").textContent = res.ok
-        ? "客服回覆已送出。"
-        : data.error || "客服回覆失敗，請檢查 Email／LINE 設定。";
-      await refresh();
     }
 
     async function updatePlan(lineUserId, plan) {
@@ -1862,18 +1836,10 @@
             <div>${ticket.category || "其他"}｜${ticket.subject || "客服工單"}</div>
             <div>${ticket.message || ""}</div>
             ${ticket.reply ? `<small>已回覆：${ticket.reply}</small>` : ""}
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-              <select data-support-channel="${ticket.id}">
-                <option value="email" ${ticket.reply_channel === "email" ? "selected" : ""}>Email（不使用 LINE 額度）</option>
-                <option value="line" ${ticket.reply_channel !== "email" ? "selected" : ""}>LINE 私訊（主動推播，計入訊息量）</option>
-              </select>
-              <select data-support-status="${ticket.id}">
-                <option value="waiting_user">等待使用者回覆</option>
-                <option value="resolved">已結案</option>
-              </select>
+            <div class="support-meta" style="margin-top:8px;">
+              <span>請至 LINE Official Account Manager 聊天室回覆</span>
+              <span>預計 1–3 個工作天內處理</span>
             </div>
-            <textarea data-support-reply="${ticket.id}" placeholder="輸入客服回覆內容"></textarea>
-            <button type="button" onclick="replySupportTicket('${ticket.id}')">送出回覆</button>
           </div>
         `).join("")
         : `<div class="support-item">目前沒有客服訊息</div>`;
