@@ -489,6 +489,8 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertIn("生日／紀念日可選每年重複；吃藥、回診等預設單次提醒", page)
         self.assertIn('class="action-btn smart-edit-btn"', page)
         self.assertIn(">修改<", page)
+        self.assertIn("findSmartReminderForCalendarDate", page)
+        self.assertIn("openSmartReminderEditor(existing ? existing.id : null, presetDate)", page)
 
     def test_calendar_note_web_reminder_metadata_uses_existing_note_storage(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

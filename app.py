@@ -15717,9 +15717,34 @@ def normalize_smart_reminder(raw, index=0):
     }
 
 
+def smart_reminder_identity(reminder):
+    """Fields that make two reminder rows the same user intent."""
+    reminder = reminder or {}
+    return (
+        str(reminder.get("target_name") or "").strip(),
+        str(reminder.get("category") or "").strip(),
+        str(reminder.get("custom_title") or "").strip(),
+        int(reminder.get("month") or 0),
+        int(reminder.get("day") or 0),
+        int(reminder.get("year") or 0),
+        str(reminder.get("remind_time") or "").strip(),
+        str(reminder.get("note") or "").strip(),
+        str(reminder.get("delivery_target") or "private").strip(),
+    )
+
+
 def list_smart_reminders(profile):
     rows = profile.get("smart_reminders") if isinstance(profile.get("smart_reminders"), list) else []
-    return [normalize_smart_reminder(row, i) for i, row in enumerate(rows)]
+    unique = []
+    seen = set()
+    for i, row in enumerate(rows):
+        reminder = normalize_smart_reminder(row, i)
+        identity = smart_reminder_identity(reminder)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        unique.append(reminder)
+    return unique
 
 
 def smart_reminder_occurs_on(reminder, target_date):
@@ -16037,12 +16062,23 @@ def save_smart_reminder(data_file, payload):
         }
         if target_id not in allowed:
             return {"ok": False, "error": "guardian_target_not_bound"}, 400
+    requested_id = str(payload.get("id") or "").strip()
     reminder = normalize_smart_reminder(payload, 0)
     reminder["updated_at"] = current_app_time({}).isoformat(timespec="seconds")
     rows = list_smart_reminders(profile)
     replaced = False
     for i, row in enumerate(rows):
         if row.get("id") == reminder["id"]:
+            reminder["created_at"] = row.get("created_at") or reminder["created_at"]
+            rows[i] = reminder
+            replaced = True
+            break
+    if not replaced and not requested_id:
+        identity = smart_reminder_identity(reminder)
+        for i, row in enumerate(rows):
+            if smart_reminder_identity(row) != identity:
+                continue
+            reminder["id"] = row["id"]
             reminder["created_at"] = row.get("created_at") or reminder["created_at"]
             rows[i] = reminder
             replaced = True

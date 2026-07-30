@@ -263,6 +263,60 @@ class SmartReminderTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["reminder"]["target_name"], "媽媽")
 
+    def test_saving_the_same_reminder_without_an_id_updates_instead_of_duplicating(self):
+        state = app.load_state(self.data_file)
+        profile = app.get_profile(state, "U799-dedupe")
+        profile.update({
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": "2099-01-01",
+        })
+        app.save_state(self.data_file, state)
+        payload = {
+            "line_user_id": "U799-dedupe",
+            "target_name": "媽媽",
+            "category": "birthday",
+            "month": 7,
+            "day": 30,
+            "yearly": True,
+            "remind_time": "09:00",
+        }
+
+        first, first_code = app.save_smart_reminder(self.data_file, payload)
+        second, second_code = app.save_smart_reminder(self.data_file, payload)
+
+        self.assertEqual(first_code, 200)
+        self.assertEqual(second_code, 200)
+        self.assertEqual(len(second["reminders"]), 1)
+        self.assertEqual(second["reminder"]["id"], first["reminder"]["id"])
+
+    def test_legacy_exact_duplicate_reminders_are_collapsed_before_sending(self):
+        profile = {
+            "smart_reminders": [
+                {
+                    "id": "old-1",
+                    "target_name": "媽媽",
+                    "category": "birthday",
+                    "month": 7,
+                    "day": 30,
+                    "remind_time": "09:00",
+                },
+                {
+                    "id": "old-2",
+                    "target_name": "媽媽",
+                    "category": "birthday",
+                    "month": 7,
+                    "day": 30,
+                    "remind_time": "09:00",
+                },
+            ]
+        }
+
+        reminders = app.list_smart_reminders(profile)
+
+        self.assertEqual(len(reminders), 1)
+        self.assertEqual(reminders[0]["target_name"], "媽媽")
+
     def test_expired_799_cannot_use_smart_reminders(self):
         state = app.load_state(self.data_file)
         profile = app.get_profile(state, "U-expired-799")
@@ -505,7 +559,8 @@ class InviteButtonCleanupTests(unittest.TestCase):
         self.assertIn("88px + env(safe-area-inset-bottom", page)
         self.assertIn('id="smartReminderEditorModal"', page)
         self.assertIn('id="smartReminderCategory"', page)
-        self.assertIn('type="date"', page)
+        self.assertIn('id="smartReminderDate" type="hidden"', page)
+        self.assertIn('id="smartReminderSelectedDate"', page)
         self.assertIn('id="memberDailyReminderCountRow"', page)
         self.assertIn("一次", page)
         self.assertIn("guardianGroupBindStatusCard", page)
