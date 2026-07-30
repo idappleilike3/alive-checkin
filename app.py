@@ -9049,8 +9049,12 @@ def eligible_sos_retry_recipients(event: dict) -> list[dict]:
     ]
 
 
-SOS_RESPONSE_ACTIONS = {"take_over", "assist", "contacted", "unable"}
-SOS_CLOSED_STATUSES = {"safe_closed", "cancelled", "resolved", "closed"}
+SOS_RESPONSE_ACTIONS = {
+    "take_over", "assist", "contacted", "defer", "unable", "found"
+}
+SOS_CLOSED_STATUSES = {
+    "safe_closed", "found_closed", "cancelled", "resolved", "closed"
+}
 SOS_MAX_GUARDIAN_RECIPIENTS = 5
 
 
@@ -9100,9 +9104,9 @@ def build_sos_guardian_flex(message, event_id):
                     {
                         "type": "button", "style": "secondary",
                         "action": {
-                            "type": "postback", "label": "已聯繫本人",
-                            "data": f"sos:contacted:{event_id}",
-                            "displayText": "已聯繫本人",
+                            "type": "postback", "label": "請其他人聯繫",
+                            "data": f"sos:defer:{event_id}",
+                            "displayText": "請其他人聯繫",
                         },
                     },
                     {
@@ -9111,6 +9115,14 @@ def build_sos_guardian_flex(message, event_id):
                             "type": "postback", "label": "無法處理",
                             "data": f"sos:unable:{event_id}",
                             "displayText": "目前無法處理",
+                        },
+                    },
+                    {
+                        "type": "button", "style": "primary", "color": "#1677FF",
+                        "action": {
+                            "type": "postback", "label": "已找到本人",
+                            "data": f"sos:found:{event_id}",
+                            "displayText": "已找到本人",
                         },
                     },
                 ],
@@ -9208,9 +9220,30 @@ def respond_to_sos_event(data_file, payload, config=None):
         )
         responses = event.setdefault("guardian_responses", {})
         previous = responses.get(actor_id) or {}
+        if previous.get("action") == action:
+            return {
+                "ok": True,
+                "code": 200,
+                "event_id": event_id,
+                "action": action,
+                "role": previous.get("role"),
+                "actor_name": actor_name,
+                "status": event.get("status"),
+                "no_responder": bool(event.get("no_responder")),
+                "idempotent": True,
+                "snapshot": _sos_public_snapshot(event),
+            }
         role = previous.get("role")
         effective_action = action
-        if action in {"take_over", "assist", "contacted"}:
+        if action == "found":
+            role = role or "resolver"
+            event["status"] = "found_closed"
+            event["closed_at"] = now.isoformat(timespec="seconds")
+            event["resolved_by_id"] = actor_id
+            event["resolved_by_name"] = actor_name
+            event["escalation_stopped"] = True
+            event["no_responder"] = False
+        elif action in {"take_over", "assist", "contacted"}:
             if not event.get("primary_responder_id"):
                 event["primary_responder_id"] = actor_id
                 role = "primary"
@@ -9224,8 +9257,9 @@ def respond_to_sos_event(data_file, payload, config=None):
                 event["assistant_responder_ids"] = assistants
             event["escalation_stopped"] = True
             event["status"] = "contacted" if action == "contacted" else "responding"
+            event["no_responder"] = False
         else:
-            role = role or "unable"
+            role = role or ("deferred" if action == "defer" else "unable")
         responded_at = now.isoformat(timespec="seconds")
         responses[actor_id] = {
             "action": effective_action,
@@ -9239,6 +9273,32 @@ def respond_to_sos_event(data_file, payload, config=None):
             "actor_name": actor_name,
             "at": responded_at,
         })
+        sent_guardians = {
+            str(row.get("target") or "")
+            for row in (event.get("deliveries") or [])
+            if row.get("kind") == "guardian"
+            and row.get("status") == "sent"
+            and row.get("target")
+        }
+        answered_without_owner = {
+            target for target in sent_guardians
+            if (responses.get(target) or {}).get("action") in {"defer", "unable"}
+        }
+        if (
+            sent_guardians
+            and answered_without_owner == sent_guardians
+            and not event.get("primary_responder_id")
+            and event.get("status") != "found_closed"
+        ):
+            event["status"] = "unassigned"
+            event["no_responder"] = True
+            event["escalation_stopped"] = False
+            event.setdefault("timeline", []).append({
+                "action": "no_responder",
+                "actor_id": "",
+                "actor_name": "系統",
+                "at": responded_at,
+            })
         return {
             "ok": True,
             "code": 200,
@@ -9247,6 +9307,7 @@ def respond_to_sos_event(data_file, payload, config=None):
             "role": role,
             "actor_name": actor_name,
             "status": event.get("status"),
+            "no_responder": bool(event.get("no_responder")),
             "snapshot": _sos_public_snapshot(event),
         }
 
@@ -9265,12 +9326,20 @@ def respond_to_sos_event(data_file, payload, config=None):
                 "take_over": "已接手，正在聯繫本人",
                 "assist": "已加入協助處理",
                 "contacted": "已確認聯繫到本人",
+                "defer": "請其他人聯繫",
                 "unable": "目前無法處理",
+                "found": "已找到本人，本次 SOS 已結束",
             }[action]
-            notice = f"🆘 SOS 狀態更新：{actor}{action_text}\n事件尚未自動結案"
+            if result.get("no_responder"):
+                notice = "⚠️ SOS 狀態更新：目前尚無守護人接手，請立即協助確認本人安全"
+            elif action == "found":
+                notice = f"✅ SOS 已結束：{actor}{action_text}"
+            else:
+                notice = f"🆘 SOS 狀態更新：{actor}{action_text}\n事件尚未自動結案"
             targets = [event.get("owner_line_user_id")] + [
                 row.get("target") for row in (event.get("deliveries") or [])
-                if row.get("kind") == "guardian" and row.get("status") == "sent"
+                if row.get("kind") in {"guardian", "group"}
+                and row.get("status") == "sent"
                 and row.get("target") != actor_id
             ]
             sender = cfg.get("LINE_PUSH_SENDER") or line_push_message
@@ -10057,7 +10126,7 @@ def trigger_sos(data_file, payload, config=None):
     if not token:
         return {"error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
 
-    limit = int(rules.get("core_guardian_alert_limit") or 1)
+    limit = min(5, int(rules.get("core_guardian_alert_limit") or 1))
     if abuse["mode"] == "restricted":
         limit = 1
     selected_guardian_ids = payload.get("guardian_line_user_ids")
@@ -10239,8 +10308,8 @@ def trigger_sos(data_file, payload, config=None):
     # A guardian may have been unbound, or a group disabled, between the first
     # request read and the atomic claim.
     rules = plan_rules(profile)
-    limit = 1 if abuse["mode"] == "restricted" else int(
-        rules.get("core_guardian_alert_limit") or 1
+    limit = 1 if abuse["mode"] == "restricted" else min(
+        5, int(rules.get("core_guardian_alert_limit") or 1)
     )
     contacts = sorted(
         profile.get("contacts") or [],
@@ -17953,13 +18022,22 @@ def create_app(config=None):
                         )
                         if status_code == 200:
                             role_text = (
+                                "已找到本人，本次 SOS 已結束"
+                                if result.get("status") == "found_closed"
+                                else "目前尚無守護人接手，已再次提醒所有人"
+                                if result.get("no_responder")
+                                else "已記錄「請其他人聯繫」，你仍可查看後續狀態"
+                                if parts[1] == "defer"
+                                else "已記錄你目前無法處理，不再提醒你"
+                                if parts[1] == "unable"
+                                else
                                 "你是主要接手人"
                                 if result.get("role") == "primary"
                                 else "已有守護人先接手，你已加入協助"
                                 if result.get("role") == "assistant"
                                 else "已記錄你的回應"
                             )
-                            reply = f"✅ {role_text}\n系統已停止重複催促；請繼續聯絡本人"
+                            reply = f"✅ {role_text}"
                         else:
                             reply = "這筆 SOS 無法更新，可能已結案或你不是本次收件人"
                 elif data.startswith("smart:"):
