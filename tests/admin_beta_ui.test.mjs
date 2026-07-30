@@ -58,3 +58,12 @@ ${functionSource("renderBetaMembers", "async function loadBetaMembers")}`,
   assert.match(elements.get("betaMembersBody").innerHTML, /剩 7 天/);
   assert.equal(context.compromised, undefined);
 });
+
+test("there is only one canonical 21-day beta roster and each row can change cohort", () => {
+  assert.equal((html.match(/<h2>21 天封閉測試名單<\/h2>/g) || []).length, 1);
+  assert.equal((html.match(/id="betaAssignForm"/g) || []).length, 1);
+  assert.match(html, /class="beta-cohort-select plan-select"/);
+  assert.match(html, /儲存封測組別/);
+  assert.match(html, /saveBetaCohortForMember/);
+  assert.match(html, /封測組別已更新成功/);
+});
