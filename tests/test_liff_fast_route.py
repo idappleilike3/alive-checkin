@@ -53,12 +53,34 @@ class LiffFastRouteTests(unittest.TestCase):
             self.page.index("async function initLine()")
         ]
         self.assertIn('const FIXED_LIFF_ID = "2010848330-UAiqPPYD"', initializer)
-        self.assertIn("await liff.init({ liffId: FIXED_LIFF_ID })", initializer)
+        self.assertIn("liff.init({ liffId: FIXED_LIFF_ID })", initializer)
         self.assertIn("appConfigPromise", initializer)
         self.assertLess(
-            initializer.index("await liff.init({ liffId: FIXED_LIFF_ID })"),
+            initializer.index("liff.init({ liffId: FIXED_LIFF_ID })"),
             initializer.index('fetch("/api/config")'),
         )
+
+    def test_liff_entry_starts_login_even_when_line_opens_external_browser(self):
+        initializer = self.page[
+            self.page.index("async function initializeLiff()"):
+            self.page.index("async function initLine()")
+        ]
+        login_gate = initializer[
+            initializer.index("if (!liff.isLoggedIn())"):
+            initializer.index("// 2) 未登入無權呼叫 getFriendship")
+        ]
+        self.assertIn("startLineLogin(readSafeDeepLinkParams())", login_gate)
+        self.assertNotIn("liff.isInClient()", login_gate)
+
+    def test_rejected_id_token_is_refreshed_once_instead_of_showing_expired_loop(self):
+        self.assertIn("function refreshRejectedLineLogin(", self.page)
+        self.assertIn('sessionStorage.getItem("alive_line_auth_refresh_v1")', self.page)
+        self.assertIn("liff.logout()", self.page)
+        initializer = self.page[
+            self.page.index("async function initializeLiff()"):
+            self.page.index("async function initLine()")
+        ]
+        self.assertIn("refreshRejectedLineLogin(registrationResponse, registrationResult)", initializer)
 
     def test_line_registration_occurs_once_per_bootstrap(self):
         self.assertEqual(self.page.count('fetch("/api/line/register"'), 1)

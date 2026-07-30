@@ -5635,6 +5635,25 @@
       return true;
     }
 
+    function refreshRejectedLineLogin(response, payload = {}) {
+      const error = String(payload.error || payload.message || "").trim();
+      const rejected = (
+        response
+        && (response.status === 401 || response.status === 403)
+        && ["invalid_token", "invalid id_token", "missing id_token"].includes(error)
+      );
+      if (!rejected || !window.liff || typeof liff.login !== "function") return false;
+      try {
+        if (sessionStorage.getItem("alive_line_auth_refresh_v1") === "1") return false;
+        sessionStorage.setItem("alive_line_auth_refresh_v1", "1");
+        if (typeof liff.logout === "function") liff.logout();
+        startLineLogin(readSafeDeepLinkParams());
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
     function setTheme(theme) {
       document.body.className = theme;
       document.querySelectorAll(".theme-btn").forEach((button) => {
@@ -9217,14 +9236,10 @@
           })
           .catch(() => ({}));
 
-        // In the LINE app, continue directly into the secure LINE login flow.
-        // External browsers keep the explicit fallback button so users are not
-        // unexpectedly redirected and can reopen the page in LINE.
-        if (
-          !liff.isLoggedIn()
-          && typeof liff.isInClient === "function"
-          && liff.isInClient()
-        ) {
+        // LIFF links may be configured to open in LINE's external browser.
+        // In either browser mode, continue into LINE Login instead of leaving
+        // the user stranded on the Render endpoint without credentials.
+        if (!liff.isLoggedIn()) {
           startLineLogin(readSafeDeepLinkParams());
           return false;
         }
@@ -9258,9 +9273,15 @@
         });
         const registrationResult = await registrationResponse.json().catch(() => ({}));
         if (!registrationResponse.ok) {
+          if (refreshRejectedLineLogin(registrationResponse, registrationResult)) {
+            return false;
+          }
           window.alert(registrationFailureMessage(registrationResponse.status, registrationResult));
           return false;
         }
+        try {
+          sessionStorage.removeItem("alive_line_auth_refresh_v1");
+        } catch (_) {}
         hideLineEntryGate();
 
         if (inviteFrom && inviteFrom !== lineUserId) {
