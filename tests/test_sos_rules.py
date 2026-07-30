@@ -252,6 +252,42 @@ class SosRulesTests(unittest.TestCase):
         self.assertEqual(result["group_sent"], 1)
         self.assertEqual(messages[0][0], "C-group")
 
+    def test_selected_first_two_guardians_still_notifies_active_guardian_group(self):
+        messages = []
+        profile = {
+            "line_user_id": "U-owner",
+            "display_name": "有家人與守護群",
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": (datetime.now() + timedelta(days=30)).isoformat(timespec="seconds"),
+            "contacts": [
+                {"line_id": "U-first", "binding_status": "accepted", "contact_role": "guardian", "priority": 1},
+                {"line_id": "U-second", "binding_status": "accepted", "contact_role": "guardian", "priority": 2},
+            ],
+            "guardian_group_ids": ["C-family"],
+        }
+        data_file = self.make_data_file(profile, {
+            "guardian_groups": {
+                "C-family": {
+                    "owner_line_user_id": "U-owner",
+                    "status": "active",
+                    "group_name": "家人守護群",
+                }
+            }
+        })
+
+        result, status = trigger_sos(data_file, {
+            "line_user_id": "U-owner",
+            "guardian_line_user_ids": ["U-first", "U-second"],
+        }, {
+            "LINE_CHANNEL_ACCESS_TOKEN": "test-token",
+            "LINE_PUSH_SENDER": lambda _token, target, message: messages.append((target, message)) or {"ok": True},
+        })
+
+        self.assertEqual(status, 200)
+        self.assertEqual(result["group_sent"], 1)
+        self.assertIn("C-family", [target for target, _message in messages])
+
     def test_cancel_notifies_only_successful_original_recipients(self):
         sent = []
         profile = {

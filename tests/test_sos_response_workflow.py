@@ -124,7 +124,7 @@ class SosResponseWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(again["sent"], 0)
 
-    def test_escalation_notifies_new_guardians_in_1_2_rest_batches(self):
+    def test_three_minute_escalation_notifies_all_remaining_guardians_once(self):
         state = load_state(self.data_file)
         event = state["sos_events"]["sos-1"]
         event["escalation_guardians"] = [
@@ -141,25 +141,18 @@ class SosResponseWorkflowTests(unittest.TestCase):
             ),
         }
 
-        process_sos_escalations(
+        first = process_sos_escalations(
             self.data_file, config,
             now=__import__("datetime").datetime.fromisoformat("2026-07-27T22:03:30"),
         )
-        process_sos_escalations(
-            self.data_file, config,
-            now=__import__("datetime").datetime.fromisoformat("2026-07-27T22:05:30"),
-        )
-        process_sos_escalations(
-            self.data_file, config,
-            now=__import__("datetime").datetime.fromisoformat("2026-07-27T22:10:30"),
-        )
 
+        self.assertEqual(first["sent"], 5)
         self.assertEqual(
             [target for target, _message in pushes],
             ["U-backup-3", "U-backup-4", "U-backup-5", "U-backup-6", "U-backup-7"],
         )
         event = load_state(self.data_file)["sos_events"]["sos-1"]
-        self.assertEqual(event["escalation_round"], 3)
+        self.assertEqual(event["escalation_round"], 1)
 
     def test_front_admin_and_rich_menu_expose_shared_sos_workflow(self):
         root = Path(__file__).resolve().parents[1]
@@ -171,7 +164,7 @@ class SosResponseWorkflowTests(unittest.TestCase):
         self.assertIn("/api/sos/safe", front)
         self.assertIn("接手：", admin)
         self.assertIn(
-            "https://alive-checkin.onrender.com/liff/sos.html",
+            "https://liff.line.me/2010848330-UAiqPPYD?open=sos",
             menu,
         )
 

@@ -571,9 +571,9 @@ class ProductRulesTests(unittest.TestCase):
         # 一鍵邀請：由永久 LIFF 入口辨識會員、建立專屬連結並自動開啟好友選擇器
         self.assertIn(f"{base}?open=share-invite", rich_menu)
         self.assertNotIn(f"{base}/liff/share-invite.html", rich_menu)
-        # 「需要幫忙」直進輕量 SOS 畫面，會員資料在背景載入
-        self.assertIn("https://alive-checkin.onrender.com/liff/sos.html", rich_menu)
-        self.assertNotIn(f"{base}?open=sos", rich_menu)
+        # 「需要幫忙」保留在原首頁的 SOS 小視窗，不切換成另一套全頁畫面
+        self.assertIn(f"{base}?open=sos", rich_menu)
+        self.assertNotIn("https://alive-checkin.onrender.com/liff/sos.html", rich_menu)
         self.assertNotIn(f"{base}/?open=sos", rich_menu)
         self.assertNotIn('"type": "message", "label": "需要幫忙"', rich_menu)
         self.assertIn('"label": "需要幫忙"', rich_menu)
@@ -678,12 +678,7 @@ class ProductRulesTests(unittest.TestCase):
         faq_page = (ROOT / "faq.html").read_text(encoding="utf-8")
 
         self.assertIn("const publicOpenPages = {", page)
-        self.assertIn('params.get("open") === "sos"', page)
-        self.assertIn('location.replace("/liff/sos.html")', page)
-        self.assertLess(
-            page.index('params.get("open") === "sos"'),
-            page.index("https://www.googletagmanager.com"),
-        )
+        self.assertNotIn('location.replace("/liff/sos.html")', page)
         self.assertIn('help: "help.html"', page)
         self.assertIn('pricing: "liff/pricing.html"', page)
         self.assertIn('faq: "faq.html"', page)
@@ -835,7 +830,7 @@ class ProductRulesTests(unittest.TestCase):
         group_flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
         sos_flow = (ROOT / "sos_flow.py").read_text(encoding="utf-8")
         page = (ROOT / "index.html").read_text(encoding="utf-8")
-        uri = "https://alive-checkin.onrender.com/liff/sos.html"
+        uri = "https://liff.line.me/2010848330-UAiqPPYD?open=sos"
 
         self.assertIn(f'"uri": "{uri}"', rich_menu)
         self.assertIn('_uri_button("需要幫忙", liff_entry_url(open_action="sos")', group_flex)
@@ -875,34 +870,18 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("發送時間", page)
         self.assertNotIn('"type": "message", "label": "需要幫忙"', rich_menu)
 
-    def test_rich_menu_sos_uses_lightweight_immediate_page(self):
+    def test_rich_menu_sos_keeps_the_original_home_modal(self):
         rich_menu = (ROOT / "line-rich-menu-config.json").read_text(encoding="utf-8")
-        sos_page_path = ROOT / "liff" / "sos.html"
-        sos_page = sos_page_path.read_text(encoding="utf-8")
-        backend = (ROOT / "app.py").read_text(encoding="utf-8")
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
 
         self.assertIn(
-            '"uri": "https://alive-checkin.onrender.com/liff/sos.html"',
+            '"uri": "https://liff.line.me/2010848330-UAiqPPYD?open=sos"',
             rich_menu,
         )
-        self.assertLess(sos_page_path.stat().st_size, 40_000)
-        self.assertNotIn('http-equiv="refresh"', sos_page)
-        self.assertNotIn('location.replace("../?page=sos")', sos_page)
-        self.assertIn('id="sosModal"', sos_page)
-        self.assertIn('class="modal open"', sos_page)
-        self.assertIn("initializeLiff().catch", sos_page)
-        self.assertLess(
-            sos_page.index('class="modal open"'),
-            sos_page.index("initializeLiff().catch"),
-        )
-        self.assertIn("tapCount === 3", sos_page)
-        self.assertIn('fetch("/api/status?', sos_page)
-        self.assertIn('fetch("/api/sos"', sos_page)
-        self.assertIn('@app.get("/liff/sos.html")', backend)
-        self.assertIn(
-            'send_from_directory(app.static_folder, "liff/sos.html")',
-            backend,
-        )
+        self.assertNotIn('location.replace("/liff/sos.html")', page)
+        self.assertIn('id="sosConfirmModal"', page)
+        self.assertIn('id="sosLocationStatus"', page)
+        self.assertIn("function openSosFlow()", page)
 
     def test_friend_location_invite_uses_single_share_url(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
