@@ -5021,7 +5021,16 @@
       <div class="calendar-note-date" id="calendarNoteDateText"></div>
       <label for="calendarNoteInput">今天想記下什麼？</label>
       <textarea id="calendarNoteInput" maxlength="500" placeholder="例如：回診、領藥、和家人吃飯"></textarea>
-      <div class="helper" style="margin-top:6px;"><strong>純文字備忘只儲存，不會推播 LINE。</strong>記事會保存在你的會員資料中，最多 500 字。</div>
+      <div class="smart-editor-fields" style="margin-top:12px;">
+        <label for="calendarNoteWebReminderTime">網頁提醒時間（時／分）
+          <input id="calendarNoteWebReminderTime" type="time">
+        </label>
+        <label class="checkbox-line" for="calendarNoteWebReminderYearly" style="display:flex;align-items:center;gap:8px;font-weight:750;">
+          <input id="calendarNoteWebReminderYearly" type="checkbox">
+          <span>每年重複</span>
+        </label>
+      </div>
+      <div class="helper" style="margin-top:6px;"><strong>純文字備忘只儲存，不會推播 LINE。</strong>到設定日期與時間後，進入「每日平安」網頁時提醒一次；未設定時間就只儲存文字。</div>
       <div class="member-limit-banner" style="margin-top:12px;text-align:left;">
         <strong>需要 LINE 通知嗎？</strong>
         <p>生日、吃藥、回診等提醒才會推播；請設定完整年月日與時間。通知自己每天最多 2 則。</p>
@@ -5039,7 +5048,7 @@
   <div class="modal-backdrop" id="smartReminderEditorModal" hidden>
     <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="smartReminderEditorTitle" style="max-height:88vh;overflow-y:auto;overscroll-behavior:contain;">
       <h2 id="smartReminderEditorTitle">新增日期提醒</h2>
-      <p class="helper">一般備忘、生日、吃藥、回診等可設定 LINE 推播。請選擇完整日期與提醒時間；預設只通知自己，不會送到守護群。</p>
+      <p class="helper">一般備忘、生日、吃藥、回診等可設定 LINE 推播。日期沿用你剛才在月曆選擇的日期；預設只通知自己，不會送到守護群。</p>
       <p class="helper">生日／紀念日可選每年重複；吃藥、回診等預設單次提醒。通知自己每天最多 2 則。</p>
       <p class="helper" id="smartReminderDailyUsage">今日日期提醒已使用 0／2 則</p>
       <div class="smart-editor-fields">
@@ -5052,9 +5061,8 @@
         <label for="smartReminderCustomTitle" id="smartReminderCustomTitleWrap" hidden>自訂標題
           <input id="smartReminderCustomTitle" type="text" maxlength="40" placeholder="例如：結婚週年">
         </label>
-        <label for="smartReminderDate">完整日期（西元年／月／日）
-          <input id="smartReminderDate" type="date" required>
-        </label>
+        <div class="helper">提醒日期：<strong id="smartReminderSelectedDate"></strong></div>
+        <input id="smartReminderDate" type="hidden">
         <label class="checkbox-line" for="smartReminderYearly" style="display:flex;align-items:center;gap:8px;font-weight:750;">
           <input id="smartReminderYearly" type="checkbox" checked>
           <span>每年重複（生日／紀念日）</span>
@@ -5860,16 +5868,20 @@
       return data;
     }
 
-    async function apiSaveCalendarNote(date, content, birthday = {}) {
+    async function apiSaveCalendarNote(date, content, noteMeta = {}) {
       if (useLocalMode) {
         const state = loadLocalState();
         const notes = { ...(state.calendar_notes || {}) };
         const cleanContent = String(content || "").trim();
-        const birthdayPayload = normalizeBirthdayPayload(birthday);
-        if (cleanContent || birthdayPayload.birthday_name) {
+        const birthdayPayload = normalizeBirthdayPayload(noteMeta);
+        const webRemindTime = String(noteMeta.web_remind_time || "").trim();
+        const webRemindYearly = Boolean(noteMeta.web_remind_yearly);
+        if (cleanContent || birthdayPayload.birthday_name || webRemindTime) {
           notes[date] = {
             content: cleanContent,
-            ...birthdayPayload
+            ...birthdayPayload,
+            web_remind_time: webRemindTime,
+            web_remind_yearly: webRemindYearly
           };
         }
         else delete notes[date];
@@ -5880,7 +5892,14 @@
       const res = await fetch("/api/calendar-notes", {
         method: "POST",
         headers: await authHeaders(),
-        body: JSON.stringify({ line_user_id: lineUserId, date, content, ...normalizeBirthdayPayload(birthday) })
+        body: JSON.stringify({
+          line_user_id: lineUserId,
+          date,
+          content,
+          ...normalizeBirthdayPayload(noteMeta),
+          web_remind_time: String(noteMeta.web_remind_time || "").trim(),
+          web_remind_yearly: Boolean(noteMeta.web_remind_yearly)
+        })
       });
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error || "calendar note save failed");
@@ -6977,6 +6996,11 @@
           const m = existing ? Number(existing.month || 1) : (now.getMonth() + 1);
           const d = existing ? Number(existing.day || 1) : now.getDate();
           dateEl.value = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        }
+        const selectedDate = $("smartReminderSelectedDate");
+        if (selectedDate) {
+          const [displayYear, displayMonth, displayDay] = dateEl.value.split("-");
+          selectedDate.textContent = `${displayYear} 年 ${Number(displayMonth)} 月 ${Number(displayDay)} 日`;
         }
       }
       if (modal) modal.hidden = false;
@@ -9601,8 +9625,14 @@
       const note = calendarNotes[dateText] || "";
       const content = noteContent(note);
       $("calendarNoteTitle").textContent = `${date.getMonth() + 1}月${date.getDate()}日記事`;
-      $("calendarNoteDateText").textContent = `農曆 ${lunar.fullLabel}${festival ? `｜${festival}` : ""}`;
+      $("calendarNoteDateText").textContent = `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日｜農曆 ${lunar.fullLabel}${festival ? `｜${festival}` : ""}`;
       $("calendarNoteInput").value = content;
+      $("calendarNoteWebReminderTime").value = note && typeof note === "object"
+        ? String(note.web_remind_time || "")
+        : "";
+      $("calendarNoteWebReminderYearly").checked = Boolean(
+        note && typeof note === "object" && note.web_remind_yearly
+      );
       $("deleteCalendarNoteBtn").disabled = !content;
       $("googleCalendarLink").href = googleCalendarUrl(dateText, content);
       $("calendarNoteModal").hidden = false;
@@ -9619,11 +9649,22 @@
       if (!selectedCalendarDate) return;
       const saveButton = $("saveCalendarNoteBtn");
       const content = contentOverride === undefined ? $("calendarNoteInput").value : contentOverride;
-      const birthday = noteBirthday(calendarNotes[selectedCalendarDate]) || {};
+      const existingNote = calendarNotes[selectedCalendarDate];
+      const birthday = noteBirthday(existingNote) || {};
+      const noteMeta = {
+        ...birthday,
+        web_remind_time: String($("calendarNoteWebReminderTime").value || "").trim(),
+        web_remind_yearly: Boolean($("calendarNoteWebReminderYearly").checked)
+      };
+      if (contentOverride === "") {
+        noteMeta.birthday_name = "";
+        noteMeta.web_remind_time = "";
+        noteMeta.web_remind_yearly = false;
+      }
       saveButton.disabled = true;
       saveButton.textContent = "儲存中";
       try {
-        const result = await apiSaveCalendarNote(selectedCalendarDate, content, birthday);
+        const result = await apiSaveCalendarNote(selectedCalendarDate, content, noteMeta);
         calendarNotes = result.notes || {};
         renderCalendar(currentYear, currentMonth, historyData);
         closeCalendarNote();
@@ -9641,10 +9682,30 @@
         const result = await apiGetCalendarNotes();
         calendarNotes = result.notes || {};
         renderCalendar(currentYear, currentMonth, historyData);
+        checkDueWebCalendarNotes();
       } catch (error) {
         calendarNotes = {};
       }
       syncCalendarNoteQuickCard();
+    }
+
+    function checkDueWebCalendarNotes(now = new Date()) {
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      for (const [noteDate, note] of Object.entries(calendarNotes || {})) {
+        if (!note || typeof note !== "object") continue;
+        const remindTime = String(note.web_remind_time || "");
+        if (!/^\d{2}:\d{2}$/.test(remindTime) || currentTime < remindTime) continue;
+        const yearly = Boolean(note.web_remind_yearly);
+        const dueToday = yearly ? noteDate.slice(5) === today.slice(5) : noteDate === today;
+        if (!dueToday) continue;
+        const occurrence = yearly ? `${now.getFullYear()}-${noteDate.slice(5)}` : noteDate;
+        const marker = `alive_web_note_reminded:${lineUserId || "local"}:${occurrence}:${remindTime}`;
+        if (localStorage.getItem(marker) === "1") continue;
+        localStorage.setItem(marker, "1");
+        alert(`記事提醒｜${noteContent(note) || "你設定的備忘"}\n${now.getMonth() + 1}月${now.getDate()}日 ${remindTime}`);
+        break;
+      }
     }
 
     function syncCalendarNoteQuickCard(status = currentStatusData || {}) {

@@ -460,17 +460,55 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertIn('if (returnDate) openCalendarNote(returnDate);', page)
         self.assertIn('overscroll-behavior:contain', page)
 
-    def test_smart_reminder_editor_requires_full_date_time_and_supports_editing(self):
+    def test_calendar_note_has_web_only_time_and_yearly_repeat(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="calendarNoteWebReminderTime" type="time"', page)
+        self.assertIn('id="calendarNoteWebReminderYearly" type="checkbox"', page)
+        self.assertIn("進入「每日平安」網頁時提醒一次", page)
+        self.assertIn("checkDueWebCalendarNotes", page)
+
+    def test_line_reminder_uses_selected_calendar_date_without_duplicate_date_picker(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
 
         self.assertIn('{ id: "memo", emoji: "📝", label: "一般備忘" }', page)
         self.assertIn('fillSmartReminderCategoryOptions(existing ? existing.category : "memo")', page)
-        self.assertIn("完整日期（西元年／月／日）", page)
-        self.assertIn('id="smartReminderDate" type="date" required', page)
+        self.assertNotIn("完整日期（西元年／月／日）", page)
+        self.assertIn('id="smartReminderDate" type="hidden"', page)
+        self.assertIn('id="smartReminderSelectedDate"', page)
         self.assertIn('id="smartReminderTime" type="time" value="09:00" required', page)
         self.assertIn("生日／紀念日可選每年重複；吃藥、回診等預設單次提醒", page)
         self.assertIn('class="action-btn smart-edit-btn"', page)
         self.assertIn(">修改<", page)
+
+    def test_calendar_note_web_reminder_metadata_is_saved(self):
+        created, code = save_calendar_note(
+            self.data_file,
+            {
+                "line_user_id": "U-calendar",
+                "date": "2026-08-15",
+                "content": "回診",
+                "web_remind_time": "09:30",
+                "web_remind_yearly": True,
+            },
+        )
+
+        self.assertEqual(code, 200)
+        note = created["notes"]["2026-08-15"]
+        self.assertEqual(note["web_remind_time"], "09:30")
+        self.assertTrue(note["web_remind_yearly"])
+
+        invalid, invalid_code = save_calendar_note(
+            self.data_file,
+            {
+                "line_user_id": "U-calendar",
+                "date": "2026-08-15",
+                "content": "回診",
+                "web_remind_time": "25:99",
+            },
+        )
+        self.assertEqual(invalid_code, 400)
+        self.assertEqual(invalid["error"], "invalid web reminder time")
 
     def test_general_memo_is_single_timed_line_reminder_without_eve_push(self):
         source = (ROOT / "app.py").read_text(encoding="utf-8")
