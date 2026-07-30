@@ -56,6 +56,22 @@ test("every member plan selector has an explicit save button and row-level statu
   assert.match(html, /id="plan-status-[^"]*"/);
 });
 
+test("member management keeps fifteen columns readable with horizontal scrolling", () => {
+  assert.match(html, /class="table-wrap member-table-wrap"/);
+  assert.match(html, /class="member-table"/);
+  assert.match(html, /\.member-table\s*{\s*min-width:\s*2400px/s);
+  assert.match(html, /\.member-plan-cell\s*{\s*min-width:\s*300px/s);
+});
+
+test("plan saving shows a fixed global result and records the saved selection", () => {
+  const update = functionBody("updatePlan");
+
+  assert.match(html, /id="planSaveToast"/);
+  assert.match(update, /selectElement\.dataset\.savedPlan = plan/);
+  assert.match(update, /showPlanSaveToast\([^)]*"success"/s);
+  assert.match(update, /showPlanSaveToast\([^)]*"error"/s);
+});
+
 test("member plan selector can explicitly choose every 21-day beta cohort", () => {
   assert.match(html, /"beta_A"/);
   assert.match(html, /"beta_B399"/);

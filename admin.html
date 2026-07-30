@@ -204,6 +204,49 @@
     .release-row strong { font-size: 14px; }
     .release-row span:not(.badge) { color: #667085; font-size: 13px; line-height: 1.5; }
     .table-wrap { overflow-x: auto; }
+    .member-table-wrap {
+      border: 1px solid #dbe5ec;
+      border-radius: 14px;
+      background: #fff;
+      scrollbar-gutter: stable;
+    }
+    .member-table {
+      min-width: 2400px;
+    }
+    .member-table th,
+    .member-table td {
+      vertical-align: top;
+      white-space: normal;
+    }
+    .member-plan-cell {
+      min-width: 300px;
+    }
+    .member-plan-cell .plan-select,
+    .member-plan-cell .plan-save-button {
+      display: block;
+      width: 100%;
+    }
+    .plan-save-toast {
+      position: fixed;
+      z-index: 100;
+      top: 18px;
+      left: 50%;
+      width: min(680px, calc(100vw - 24px));
+      transform: translateX(-50%);
+      border: 2px solid #86efac;
+      border-radius: 14px;
+      padding: 14px 18px;
+      background: #f0fdf4;
+      color: #166534;
+      box-shadow: 0 18px 42px rgba(15, 23, 42, 0.28);
+      font-weight: 900;
+      line-height: 1.5;
+    }
+    .plan-save-toast[data-kind="error"] {
+      border-color: #fda4af;
+      background: #fff1f2;
+      color: #991b1b;
+    }
     .plan-reference {
       margin-bottom: 16px;
       border-radius: 16px;
@@ -389,6 +432,7 @@
   </section>
 
   <main class="shell" id="adminShell" hidden>
+    <div id="planSaveToast" class="plan-save-toast" role="status" aria-live="assertive" hidden></div>
     <div class="topbar">
       <div>
         <h1>後台總覽 ♡</h1>
@@ -738,8 +782,8 @@
       </div>
 
       <h2 class="section-heading" id="members" style="margin:20px 0 8px;">會員管理</h2>
-      <div class="table-wrap">
-        <table>
+      <div class="table-wrap member-table-wrap">
+        <table class="member-table">
           <thead>
             <tr>
               <th>名稱（LINE 暱稱）</th>
@@ -1363,6 +1407,13 @@
       </div>`;
     }
 
+    function showPlanSaveToast(text, kind) {
+      const toast = $("planSaveToast");
+      toast.textContent = text;
+      toast.dataset.kind = kind;
+      toast.hidden = false;
+    }
+
     function logKindLabel(kind) {
       return {
         overdue: "逾期提醒",
@@ -1392,6 +1443,7 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "方案更新失敗");
+        selectElement.dataset.savedPlan = plan;
         delete selectElement.dataset.dirty;
         await refresh();
         const refreshedMessage = $(`plan-status-${lineUserId}`) || $("message");
@@ -1401,12 +1453,14 @@
           `✓ 方案已更新成功：${data.display_name || lineUserId} → ${membershipModeLabels[plan] || planLabel(plan)}。` +
           `守護人 ${data.preserved_contacts ?? (data.contacts || []).length} 位、` +
           `好友 ${data.preserved_friends ?? (data.friends || []).length} 位已保留。`;
+        showPlanSaveToast(refreshedMessage.textContent, "success");
       } catch (error) {
         selectElement.value = previousPlan;
         delete selectElement.dataset.dirty;
         message.style.color = "#991b1b";
         message.style.fontWeight = "900";
         message.textContent = `✗ 方案更新失敗：${error.message || "請稍後再試"}`;
+        showPlanSaveToast(message.textContent, "error");
       } finally {
         selectElement.disabled = false;
       }
@@ -1737,7 +1791,7 @@
             <td>${user.is_today_checked ? "已簽到 ♡" : "還沒"}</td>
             <td>${formatDate(user.last_check_in)}</td>
             <td><strong>${escapeHtml(user.last_checkin_area || "未提供")}</strong></td>
-            <td>
+            <td class="member-plan-cell">
               ${membershipCell(user)}
               <select id="plan-select-${user.line_user_id}" class="plan-select" data-line-user-id="${escapeHtml(user.line_user_id)}" data-saved-plan="${membershipMode(user)}" style="margin-top:6px;">
                 ${["trial", "free", "beta_A", "beta_B399", "beta_B799", "paid_199", "paid_199_year", "paid_399", "paid_399_year", "paid_799", "paid_799_year"].map((plan) =>
