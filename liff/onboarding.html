@@ -90,6 +90,27 @@
   }
   .btn-primary { background: #00B900; color: #fff; }
   .btn-secondary { background: #fff; color: #00B900; border: 2px solid #00B900; }
+  .onboarding-action-group {
+    display: grid;
+    gap: 14px;
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid #e4eee7;
+  }
+  .onboarding-action-group .btn { margin-top: 0; }
+  .onboarding-action-note {
+    color: #66736c;
+    font-size: 13px;
+    line-height: 1.65;
+    text-align: center;
+  }
+  .onboarding-action-group.status-actions {
+    margin-top: 18px;
+    padding: 16px;
+    border: 1px solid #dce9df;
+    border-radius: 12px;
+    background: #f7fbf8;
+  }
   .status-box {
     background: #F0F9F4;
     border: 2px solid #00B900;
@@ -453,8 +474,10 @@ function renderStep() {
         <select id="graceHours">
           ${[24, 36, 48, 72].map(hours => `<option value="${hours}" ${state.graceHours === hours ? "selected" : ""}>${hours} 小時</option>`).join("")}
         </select>
-        <button class="btn btn-secondary" type="button" id="useDefaultsBtn">使用方案預設時間</button>
-        <button class="btn btn-primary" id="saveReminderBtn" onclick="saveReminder()">下一步</button>
+        <div class="onboarding-action-group" id="trialSettingsActions">
+          <button class="btn btn-secondary" type="button" id="useDefaultsBtn">恢復方案預設時間</button>
+          <button class="btn btn-primary" id="saveReminderBtn" onclick="saveReminder()">儲存體驗設定，前往邀請守護人</button>
+        </div>
       </div>
     `;
     document.getElementById("useDefaultsBtn").addEventListener("click", () => {
@@ -471,9 +494,15 @@ function renderStep() {
         <h2 style="text-align:center;">一鍵分享核心守護人</h2>
         <p style="color:#666;line-height:1.7;">✅ 提醒設定完成</p>
         <p style="color:#888;line-height:1.7;">分享後會等待對方登入並接受，狀態分別顯示：<br>等待對方登入<br>等待對方接受</p>
-        <button class="btn btn-primary" type="button" id="shareGuardianBtn">一鍵分享</button>
-        <button class="btn btn-secondary" type="button" id="refreshGuardianBtn">我已分享，檢查接受狀態</button>
-        <p class="hint" id="guardianPendingStatus">等待接受中；對方完成 LINE 登入並接受前，不會顯示已綁定。</p>
+        <div class="onboarding-action-group" id="guardianShareActions">
+          <p class="onboarding-action-note">這裡只負責傳送邀請，不會再次修改你的體驗設定。</p>
+          <button class="btn btn-primary" type="button" id="shareGuardianBtn">選擇 LINE 好友，分享守護邀請</button>
+        </div>
+        <div class="onboarding-action-group status-actions" id="guardianStatusActions">
+          <p class="onboarding-action-note">分享完成後，再回來檢查對方是否接受。</p>
+          <button class="btn btn-secondary" type="button" id="refreshGuardianBtn">檢查守護人接受狀態</button>
+          <p class="hint" id="guardianPendingStatus">等待接受中；對方完成 LINE 登入並接受前，不會顯示已綁定。</p>
+        </div>
         <p class="step-help">${STEP_WAITING_COPY}</p>
       </div>
     `;
