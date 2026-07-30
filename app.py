@@ -9362,7 +9362,7 @@ def close_sos_as_safe(data_file, payload, config=None):
 
 
 def process_sos_escalations(data_file, config=None, now=None):
-    """Send at most one due 3/5/10 minute SOS escalation round per cron tick."""
+    """At three minutes, notify all remaining core guardians once."""
     cfg = config or {}
     current = now or current_app_time(cfg)
     token = cfg.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
@@ -9372,7 +9372,7 @@ def process_sos_escalations(data_file, config=None, now=None):
     state = load_state(data_file)
     sent = failed = 0
     events_updated = 0
-    thresholds = ((1, 3), (2, 5), (3, 10))
+    thresholds = ((1, 3),)
     for event in (state.get("sos_events") or {}).values():
         if event.get("escalation_stopped"):
             continue
@@ -9398,13 +9398,7 @@ def process_sos_escalations(data_file, config=None, now=None):
         if not due:
             continue
         round_no, minute = due
-        label = (
-            "第三順位通知：前兩位尚未接手"
-            if round_no == 1 else
-            "第 4、5 位通知：SOS 仍無人接手"
-            if round_no == 2 else
-            "其餘守護人通知：請立即確認本人安全"
-        )
+        label = "備援通知：前兩位尚未接手"
         message = (
             f"⚠️【{label}】{event.get('owner_display_name') or '你的親友'} "
             f"在 {minute} 分鐘前發出 SOS\n"
@@ -9422,12 +9416,7 @@ def process_sos_escalations(data_file, config=None, now=None):
             for row in (event.get("escalation_guardians") or [])
             if str(row.get("target") or "") not in already_attempted
         ]
-        if round_no == 1:
-            batch = candidates[:1]
-        elif round_no == 2:
-            batch = candidates[:2]
-        else:
-            batch = candidates
+        batch = candidates
         for guardian in batch:
             target = str(guardian.get("target") or "")
             if not target:
@@ -10085,6 +10074,11 @@ def trigger_sos(data_file, payload, config=None):
         key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
     )
     phone_contacts = collect_phone_only_contacts(contacts)
+    all_ranked_line_contacts = ranked_sos_guardians(
+        profile,
+        line_user_id,
+        limit=limit,
+    )
     eligible_line_contacts = ranked_sos_guardians(
         profile,
         line_user_id,
@@ -10092,15 +10086,16 @@ def trigger_sos(data_file, payload, config=None):
         limit=limit,
     )
     line_contacts = eligible_line_contacts[:guardian_delivery_limit]
-    escalation_contacts = (
-        [] if selected_guardian_set is not None
-        else eligible_line_contacts[guardian_delivery_limit:]
-    )
+    initially_selected_ids = {contact["line_id"] for contact in line_contacts}
+    escalation_contacts = [
+        contact
+        for contact in all_ranked_line_contacts
+        if contact["line_id"] not in initially_selected_ids
+    ]
 
     active_group_ids = []
     if (
-        selected_guardian_set is None
-        and rules.get("guardian_group_limit")
+        rules.get("guardian_group_limit")
         and abuse["mode"] != "restricted"
     ):
         groups = state.get("guardian_groups", {})
@@ -10242,6 +10237,11 @@ def trigger_sos(data_file, payload, config=None):
         key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
     )
     phone_contacts = collect_phone_only_contacts(contacts)
+    all_ranked_line_contacts = ranked_sos_guardians(
+        profile,
+        line_user_id,
+        limit=limit,
+    )
     eligible_line_contacts = ranked_sos_guardians(
         profile,
         line_user_id,
@@ -10249,14 +10249,15 @@ def trigger_sos(data_file, payload, config=None):
         limit=limit,
     )
     line_contacts = eligible_line_contacts[:guardian_delivery_limit]
-    escalation_contacts = (
-        [] if selected_guardian_set is not None
-        else eligible_line_contacts[guardian_delivery_limit:]
-    )
+    initially_selected_ids = {contact["line_id"] for contact in line_contacts}
+    escalation_contacts = [
+        contact
+        for contact in all_ranked_line_contacts
+        if contact["line_id"] not in initially_selected_ids
+    ]
     active_group_ids = []
     if (
-        selected_guardian_set is None
-        and rules.get("guardian_group_limit")
+        rules.get("guardian_group_limit")
         and abuse["mode"] != "restricted"
     ):
         groups = state.get("guardian_groups") or {}
