@@ -6347,11 +6347,13 @@
       const panel = $("sosLiveStatus");
       if (!panel || !snapshot) return;
       panel.hidden = false;
-      const closed = ["safe_closed", "cancelled", "resolved", "closed"].includes(snapshot.status);
+      const closed = ["safe_closed", "found_closed", "cancelled", "resolved", "closed"].includes(snapshot.status);
       $("sosLiveTitle").textContent = closed
         ? "✅ SOS 已結束"
-        : snapshot.status === "contacted"
+        : snapshot.status === "contacted" || snapshot.status === "found_closed"
           ? "✅ 守護人已聯繫到本人"
+          : snapshot.status === "unassigned"
+            ? "⚠️ 目前尚無守護人接手"
           : snapshot.primary_responder
             ? `✅ ${snapshot.primary_responder} 已接手`
             : "🆘 等待守護人回應";
@@ -6359,6 +6361,8 @@
         const response = row.response_status === "contacted" ? "已聯繫本人"
           : row.role === "primary" ? "主要接手"
           : row.role === "assistant" ? "協助處理"
+          : row.response_status === "defer" ? "請其他人聯繫"
+          : row.response_status === "found" ? "已找到本人"
           : row.response_status === "unable" ? "無法處理"
           : row.delivery_status === "sent" ? "已送達，等待回應" : "傳送失敗";
         return `<div><strong>${escapeHtml(row.name || "守護人")}</strong>：${escapeHtml(response)}</div>`;
@@ -8803,28 +8807,37 @@
 
     function selectedSosGuardianIds() {
       const host = document.getElementById("sosGuardianTargets");
-      const eligibleIds = safetyGuardTargetCandidates().map(contactPeerLineId);
+      const eligibleIds = safetyGuardTargetCandidates().map(contactPeerLineId).slice(0, 5);
       const eligible = new Set(eligibleIds);
       const checked = Array.from(
         (host || document).querySelectorAll('input[name="sosGuardian"]:checked'),
         (input) => String(input.value || "").trim(),
       ).filter((value) => eligible.has(value));
-      // 長輩若沒有勾選，不阻擋求助；預設通知排序最前面的兩位核心守護人。
-      return checked.length ? checked : eligibleIds.slice(0, 2);
+      // 只有一位時直接通知；多位時依順位讓會員勾選，最多五位。
+      return checked.length ? checked.slice(0, 5) : eligibleIds.slice(0, 1);
     }
 
     function renderSosGuardianTargetPicker() {
       const host = document.getElementById("sosGuardianTargets");
       if (!host) return;
-      const contacts = safetyGuardTargetCandidates();
+      const contacts = safetyGuardTargetCandidates().slice(0, 5);
+      if (contacts.length === 1) {
+        const lineId = contactPeerLineId(contacts[0]);
+        const name = contactPeerDisplayName(contacts[0]);
+        host.innerHTML = `
+          <div class="settings-title">這次通知對象</div>
+          <p class="helper">只有 1 位核心守護人，第三次確認後會直接通知 ${escapeHtml(name)}。</p>
+          <input type="checkbox" name="sosGuardian" value="${escapeHtml(lineId)}" checked hidden>`;
+        return;
+      }
       const choices = contacts.map((contact, index) => {
         const lineId = contactPeerLineId(contact);
         const name = contactPeerDisplayName(contact);
-        return `<label class="guardian-target-choice"><input type="checkbox" name="sosGuardian" value="${escapeHtml(lineId)}" ${index < 2 ? "checked" : ""}> ${escapeHtml(name)}</label>`;
+        return `<label class="guardian-target-choice"><input type="checkbox" name="sosGuardian" value="${escapeHtml(lineId)}" ${index === 0 ? "checked" : ""}> 第 ${index + 1} 順位｜${escapeHtml(name)}</label>`;
       }).join("");
       host.innerHTML = `
         <div class="settings-title">這次要通知誰</div>
-        <p class="helper">請勾選要通知的核心守護人；若全部取消勾選，系統仍會預設通知前兩位。</p>
+        <p class="helper">依優先順位勾選這次要通知的人，一次最多 5 位；守護群會另外同步收到，不占名額。</p>
         <div class="guardian-target-list">${choices || '<span class="helper">尚未綁定核心守護人</span>'}</div>`;
     }
 
