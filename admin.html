@@ -801,7 +801,7 @@
         </table>
       </div>
 
-      <p class="note" id="message">小提醒：推播需要設定 LINE_CHANNEL_ACCESS_TOKEN，使用者也要先加官方帳號好友。</p>
+      <p class="note" id="message" role="status" aria-live="polite">小提醒：推播需要設定 LINE_CHANNEL_ACCESS_TOKEN，使用者也要先加官方帳號好友。</p>
     </section>
 
     <section class="panel section-heading" id="test-center" style="margin-top:16px;">
@@ -1311,21 +1311,34 @@
       }[kind] || "推播";
     }
 
-    async function updatePlan(lineUserId, plan) {
-      const res = await adminFetch("/api/admin/user-plan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          line_user_id: lineUserId,
-          plan,
-          payment_status: plan.startsWith("paid") ? "active" : plan
-        })
-      });
-      const data = await res.json();
-      $("message").textContent = res.ok
-        ? `已更新 ${data.display_name || lineUserId} 的方案（守護人 ${data.preserved_contacts ?? (data.contacts || []).length} 位、好友 ${data.preserved_friends ?? (data.friends || []).length} 位已保留）。`
-        : data.error || "方案更新失敗。";
-      await refresh();
+    async function updatePlan(lineUserId, plan, selectElement, previousPlan) {
+      const message = $("message");
+      message.setAttribute("role", "status");
+      selectElement.disabled = true;
+      message.textContent = "方案更新中，請稍候…";
+      try {
+        const res = await adminFetch("/api/admin/user-plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            line_user_id: lineUserId,
+            plan,
+            payment_status: plan.startsWith("paid") ? "active" : plan
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "方案更新失敗");
+        await refresh();
+        message.textContent =
+          `✓ 方案已更新成功：${data.display_name || lineUserId} → ${planLabel(plan)}。` +
+          `守護人 ${data.preserved_contacts ?? (data.contacts || []).length} 位、` +
+          `好友 ${data.preserved_friends ?? (data.friends || []).length} 位已保留。`;
+      } catch (error) {
+        selectElement.value = previousPlan;
+        message.textContent = `✗ 方案更新失敗：${error.message || "請稍後再試"}`;
+      } finally {
+        selectElement.disabled = false;
+      }
     }
 
     async function refundPaymentOrder(orderId, paidAmount, alreadyRefunded) {
@@ -1648,7 +1661,7 @@
             <td><strong>${escapeHtml(user.last_checkin_area || "未提供")}</strong></td>
             <td>
               ${membershipCell(user)}
-              <select class="plan-select" style="margin-top:6px;" onchange="updatePlan('${user.line_user_id}', this.value)">
+              <select class="plan-select" style="margin-top:6px;" onchange="updatePlan('${user.line_user_id}', this.value, this, '${user.plan}')">
                 ${["trial", "free", "paid_199", "paid_199_year", "paid_399", "paid_399_year", "paid_799", "paid_799_year"].map((plan) =>
                   `<option value="${plan}" ${user.plan === plan ? "selected" : ""}>${planLabel(plan)}</option>`
                 ).join("")}

@@ -159,6 +159,30 @@ class PlanUpgradePreserveBindingsTests(unittest.TestCase):
         self.assertEqual(len(saved["contacts"]), 1)
         self.assertEqual(saved["friends"], ["U-f"])
 
+    def test_admin_plan_change_replaces_an_expired_paid_until(self):
+        profile = {
+            "line_user_id": "U-jennie",
+            "display_name": "jennie",
+            "plan": "trial",
+            "payment_status": "expired",
+            "paid_until": "2026-01-01T00:00:00",
+        }
+        data_file = self.make_data_file(profile)
+
+        result, code = admin_update_user_plan(data_file, {
+            "line_user_id": "U-jennie",
+            "plan": "paid_799_year",
+            "payment_status": "active",
+        })
+
+        self.assertEqual(code, 200)
+        self.assertEqual(result["plan"], "paid_799_year")
+        self.assertTrue(result["calendar_notes_enabled"])
+        self.assertGreater(
+            datetime.fromisoformat(result["paid_until"]),
+            datetime.now() + timedelta(days=360),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
