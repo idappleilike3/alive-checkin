@@ -43,6 +43,21 @@ class BetaPageCopyTests(unittest.TestCase):
             self.page,
         )
 
+    def test_each_beta_page_has_its_own_practice_title(self):
+        self.assertIn(
+            'is799 ? "家庭守護練習｜21天體驗" : "個人安心練習｜21天體驗"',
+            self.page,
+        )
+        self.assertNotIn(
+            'document.getElementById("title").textContent = "21天安心守護體驗"',
+            self.page,
+        )
+
+    def test_faq_compares_all_three_formal_plans(self):
+        self.assertIn("<summary>三個方案有什麼不同？</summary>", self.page)
+        self.assertIn("199、399、799", self.page)
+        self.assertNotIn("兩個體驗頁有什麼不同？", self.page)
+
 
 if __name__ == "__main__":
     unittest.main()
