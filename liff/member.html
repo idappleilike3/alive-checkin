@@ -432,6 +432,7 @@
   <p class="hint" id="graceHoursHint">逾時未報平安多久通知？（預設 48 小時；滿設定時數後通知）</p>
   <div class="btn-row" id="graceHoursRow" style="margin:8px 0 12px;gap:8px;" role="radiogroup" aria-label="逾時未報平安時數">
     <button class="btn grace-hours-btn" type="button" data-hours="24" aria-pressed="false">24 小時</button>
+    <button class="btn grace-hours-btn" type="button" data-hours="36" aria-pressed="false">36 小時</button>
     <button class="btn grace-hours-btn" type="button" data-hours="48" aria-pressed="true">48 小時</button>
     <button class="btn grace-hours-btn" type="button" data-hours="72" aria-pressed="false">72 小時</button>
   </div>
@@ -662,7 +663,7 @@ async function init() {
       const d = await r1.json();
       state.dailyReminders = Number(d.daily_reminders) || 1;
       state.dailyCheckinReminderEnabled = d.daily_checkin_reminder_enabled !== false;
-      state.graceHours = [24, 48, 72].includes(Number(d.grace_hours)) ? Number(d.grace_hours) : 48;
+      state.graceHours = [24, 36, 48, 72].includes(Number(d.grace_hours)) ? Number(d.grace_hours) : 48;
       const dailyToggle = document.getElementById("dailyCheckinReminderEnabled");
       if (dailyToggle) dailyToggle.checked = state.dailyCheckinReminderEnabled;
       state.reminderTimes = (d.reminder_times && d.reminder_times.length)
@@ -691,7 +692,7 @@ async function init() {
 }
 
 function renderGraceHoursButtons() {
-  const chosen = [24, 48, 72].includes(Number(state.graceHours)) ? Number(state.graceHours) : 48;
+  const chosen = [24, 36, 48, 72].includes(Number(state.graceHours)) ? Number(state.graceHours) : 48;
   state.graceHours = chosen;
   document.querySelectorAll("#graceHoursRow .grace-hours-btn").forEach((btn) => {
     const h = Number(btn.dataset.hours) || 48;
@@ -1160,7 +1161,7 @@ document.getElementById("graceHoursRow")?.addEventListener("click", (event) => {
   const btn = event.target.closest(".grace-hours-btn");
   if (!btn) return;
   const h = Number(btn.dataset.hours) || 48;
-  state.graceHours = [24, 48, 72].includes(h) ? h : 48;
+  state.graceHours = [24, 36, 48, 72].includes(h) ? h : 48;
   renderGraceHoursButtons();
 });
 const srCancelBtn = document.getElementById("srCancelBtn");
@@ -1226,7 +1227,7 @@ async function saveReminder() {
         reminder_times: times,
         reminder_time: times[0],
         daily_checkin_reminder_enabled: Boolean(document.getElementById("dailyCheckinReminderEnabled")?.checked),
-        grace_hours: [24, 48, 72].includes(Number(state.graceHours)) ? Number(state.graceHours) : 48
+        grace_hours: [24, 36, 48, 72].includes(Number(state.graceHours)) ? Number(state.graceHours) : 48
       })
     });
     const data = await res.json().catch(() => ({}));

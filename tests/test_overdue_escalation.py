@@ -64,11 +64,11 @@ class OverdueEscalationTests(unittest.TestCase):
         })
 
     def test_self_then_first_second_third_guardian_without_duplicates(self):
-        self.run_due(datetime(2026, 7, 29, 9, 15))
-        self.run_due(datetime(2026, 7, 29, 9, 30))
-        self.run_due(datetime(2026, 7, 29, 10, 0))
-        self.run_due(datetime(2026, 7, 29, 10, 30))
-        self.run_due(datetime(2026, 7, 29, 11, 0))
+        self.run_due(datetime(2026, 7, 31, 9, 0))
+        self.run_due(datetime(2026, 7, 31, 9, 30))
+        self.run_due(datetime(2026, 7, 31, 10, 0))
+        self.run_due(datetime(2026, 7, 31, 10, 30))
+        self.run_due(datetime(2026, 7, 31, 11, 0))
 
         self.assertEqual(
             [target for target, _message in self.pushes],
@@ -77,6 +77,23 @@ class OverdueEscalationTests(unittest.TestCase):
         event = app.load_state(self.data_file)["users"]["U-owner"]["active_overdue_event"]
         self.assertEqual(event["guardian_stage"], 3)
         self.assertEqual(event["notified_guardian_ids"], ["U-g1", "U-g2", "U-g3"])
+
+    def test_sends_nothing_at_15_minutes_and_alerts_after_48_hours_plus_15(self):
+        state = app.load_state(self.data_file)
+        state["users"]["U-owner"]["overdue_wait_minutes"] = 15
+        app.save_state(self.data_file, state)
+
+        self.run_due(datetime(2026, 7, 29, 9, 15))
+        self.assertEqual(self.pushes, [])
+
+        self.run_due(datetime(2026, 7, 31, 9, 0))
+        self.assertEqual([target for target, _ in self.pushes], ["U-owner"])
+
+        self.run_due(datetime(2026, 7, 31, 9, 15))
+        self.assertEqual(
+            [target for target, _ in self.pushes],
+            ["U-owner", "U-g1"],
+        )
 
     def test_second_daily_slot_does_not_restart_active_event(self):
         state = app.load_state(self.data_file)
@@ -89,6 +106,20 @@ class OverdueEscalationTests(unittest.TestCase):
         )
         self.assertIs(original, again)
         self.assertEqual(again["reminder_time"], "09:00")
+
+    def test_next_day_reminder_does_not_restart_48_hour_clock(self):
+        state = app.load_state(self.data_file)
+        profile = state["users"]["U-owner"]
+        original = app.ensure_active_overdue_event(
+            profile, "09:00", datetime(2026, 7, 29, 9, 0)
+        )
+        next_day = app.ensure_active_overdue_event(
+            profile, "12:00", datetime(2026, 7, 30, 12, 0)
+        )
+
+        self.assertIs(original, next_day)
+        self.assertEqual(next_day["started_at"], "2026-07-29T09:00:00")
+        self.assertEqual(next_day["reminder_time"], "09:00")
 
     def test_checkin_closes_active_overdue_flow(self):
         app.record_checkin(

@@ -4637,15 +4637,22 @@
             <button class="daily-remind-count-btn" type="button" data-count="3" aria-pressed="false">三次</button>
           </div>
           <div id="memberDailyReminderSlots"></div>
-          <p class="helper" id="graceHoursHint" style="margin-top:14px;"><strong>本人多久沒回應，開始通知守護人？</strong>（預設 30 分鐘）</p>
+          <p class="helper" id="missedHoursHint" style="margin-top:14px;"><strong>多久沒報平安，才再次提醒本人？</strong>（預設 48 小時）</p>
+          <div class="daily-remind-count-row" id="memberMissedHoursRow" role="radiogroup" aria-label="未報平安時數">
+            <button class="daily-remind-count-btn missed-hours-btn" type="button" data-hours="24" aria-pressed="false">24 小時</button>
+            <button class="daily-remind-count-btn missed-hours-btn" type="button" data-hours="36" aria-pressed="false">36 小時</button>
+            <button class="daily-remind-count-btn missed-hours-btn" type="button" data-hours="48" aria-pressed="true">48 小時</button>
+            <button class="daily-remind-count-btn missed-hours-btn" type="button" data-hours="72" aria-pressed="false">72 小時</button>
+          </div>
+          <p class="helper" id="graceHoursHint" style="margin-top:14px;"><strong>再次提醒本人後，多久通知第一順位守護人？</strong>（預設 15 分鐘）</p>
           <div class="daily-remind-count-row" id="memberGraceHoursRow" role="radiogroup" aria-label="未報平安等待時間">
-            <button class="daily-remind-count-btn grace-hours-btn" type="button" data-minutes="15" aria-pressed="false">15 分鐘</button>
-            <button class="daily-remind-count-btn grace-hours-btn" type="button" data-minutes="30" aria-pressed="true">30 分鐘</button>
+            <button class="daily-remind-count-btn grace-hours-btn" type="button" data-minutes="15" aria-pressed="true">15 分鐘</button>
+            <button class="daily-remind-count-btn grace-hours-btn" type="button" data-minutes="30" aria-pressed="false">30 分鐘</button>
             <button class="daily-remind-count-btn grace-hours-btn" type="button" data-minutes="60" aria-pressed="false">60 分鐘</button>
           </div>
           <div class="member-role-bind-intro" id="overdueTimelineHelp" aria-label="未報平安通知順序">
-            <p><strong>系統預設流程</strong>：提醒後 15 分鐘再提醒本人一次。</p>
-            <p id="overdueTimelineText">30 分鐘通知第一順位、60 分鐘通知第二順位、90 分鐘通知第三順位。</p>
+            <p><strong>系統預設流程</strong>：12:00 收到每日提醒後，不會在 12:15 再推播；連續 48 小時未報平安才再次提醒本人。</p>
+            <p id="overdueTimelineText">再過 15 分鐘仍未回報，才通知第一順位守護人；後續依順位通知。</p>
             <p>當天若有多個提醒時間，只保留一個逾時流程；完成報平安後立即停止後續通知。</p>
           </div>
           <div class="member-data-actions" style="margin-top:10px;">
@@ -5113,7 +5120,7 @@
       history: [],
       contact_email: "",
       grace_hours: 48,
-      overdue_wait_minutes: 30,
+      overdue_wait_minutes: 15,
       reminder_time: "12:00",
       reminder_times: ["12:00"],
       contact_capacity_reminder_enabled: false,
@@ -6757,6 +6764,7 @@
     let smartReminderEditingId = null;
     let selectedDailyReminderCount = null;
     let selectedGraceHours = null;
+    let selectedMissedHours = null;
 
     function planIs799(plan) {
       return plan === "paid_799" || plan === "paid_799_year";
@@ -7521,11 +7529,27 @@
       }, 30);
     }
 
+    function normalizeMissedHoursClient(value) {
+      const allowed = [24, 36, 48, 72];
+      const n = Number(value);
+      return allowed.includes(n) ? n : 48;
+    }
+
     function renderGraceHoursButtons(status) {
       const chosen = selectedGraceHours != null
         ? normalizeGraceHoursClient(selectedGraceHours)
-        : normalizeGraceHoursClient((status || {}).overdue_wait_minutes || 30);
+        : normalizeGraceHoursClient((status || {}).overdue_wait_minutes || 15);
       selectedGraceHours = chosen;
+      const missedHours = selectedMissedHours != null
+        ? normalizeMissedHoursClient(selectedMissedHours)
+        : normalizeMissedHoursClient((status || {}).grace_hours || 48);
+      selectedMissedHours = missedHours;
+      const missedRow = $("memberMissedHoursRow");
+      if (missedRow) {
+        missedRow.querySelectorAll(".missed-hours-btn").forEach((btn) => {
+          btn.setAttribute("aria-pressed", Number(btn.dataset.hours) === missedHours ? "true" : "false");
+        });
+      }
       const row = $("memberGraceHoursRow");
       if (!row) return;
       row.querySelectorAll(".grace-hours-btn").forEach((btn) => {
@@ -7534,7 +7558,7 @@
       });
       const timeline = $("overdueTimelineText");
       if (timeline) {
-        timeline.textContent = `${chosen} 分鐘通知第一順位、${chosen * 2} 分鐘通知第二順位、${chosen * 3} 分鐘通知第三順位。`;
+        timeline.textContent = `連續 ${missedHours} 小時未報平安時先提醒本人；再過 ${chosen} 分鐘仍未回報才通知第一順位，後續依順位通知。`;
       }
     }
 
@@ -7583,12 +7607,16 @@
       }
       const reminderTimes = times.length ? times.slice(0, count) : defaultTimesForDailyCount(count);
       const waitMinutes = normalizeGraceHoursClient(
-        selectedGraceHours != null ? selectedGraceHours : (status.overdue_wait_minutes || 30)
+        selectedGraceHours != null ? selectedGraceHours : (status.overdue_wait_minutes || 15)
+      );
+      const missedHours = normalizeMissedHoursClient(
+        selectedMissedHours != null ? selectedMissedHours : (status.grace_hours || 48)
       );
       try {
         const saved = await apiSaveSettings({
           contact_email: status.contact_email || "",
           overdue_wait_minutes: waitMinutes,
+          grace_hours: missedHours,
           warning_cancel_minutes: status.warning_cancel_minutes || 15,
           reminder_time: reminderTimes[0],
           reminder_times: reminderTimes,
@@ -7598,11 +7626,12 @@
         });
         selectedDailyReminderCount = reminderTimes.length;
         selectedGraceHours = normalizeGraceHoursClient(saved.overdue_wait_minutes || waitMinutes);
+        selectedMissedHours = normalizeMissedHoursClient(saved.grace_hours || missedHours);
         renderStatus(saved);
         showInlineSuccess(
           enabled
-            ? `已儲存：每日提醒 ${reminderTimes.length} 次／${selectedGraceHours} 分鐘後通知第一順位`
-            : `已關閉每日提醒；未報平安等待時間仍為 ${selectedGraceHours} 分鐘`
+            ? `已儲存：每日提醒 ${reminderTimes.length} 次／未報平安 ${selectedMissedHours} 小時後再提醒本人／再過 ${selectedGraceHours} 分鐘通知第一順位`
+            : `已關閉每日提醒；未報平安門檻仍為 ${selectedMissedHours} 小時`
         );
       } catch (err) {
         alert(err.message || "提醒與逾時設定儲存失敗");
@@ -10716,7 +10745,7 @@
               const savedStatus = await apiSaveSettings({
                 contact_email: status.contact_email || "",
                 grace_hours: status.grace_hours || 48,
-                overdue_wait_minutes: status.overdue_wait_minutes || 30,
+                overdue_wait_minutes: status.overdue_wait_minutes || 15,
                 reminder_time: status.reminder_time || "12:00",
                 reminder_times: status.reminder_times || [status.reminder_time || "12:00"],
                 contact_capacity_reminder_enabled: Boolean(status.contact_capacity_reminder_enabled),
@@ -11907,8 +11936,18 @@
       graceHoursRow.addEventListener("click", (event) => {
         const btn = event.target.closest(".grace-hours-btn");
         if (!btn) return;
-        selectedGraceHours = normalizeGraceHoursClient(btn.dataset.minutes || 30);
+        selectedGraceHours = normalizeGraceHoursClient(btn.dataset.minutes || 15);
         if (currentStatusData) currentStatusData.overdue_wait_minutes = selectedGraceHours;
+        renderGraceHoursButtons(currentStatusData || {});
+      });
+    }
+    const missedHoursRow = $("memberMissedHoursRow");
+    if (missedHoursRow) {
+      missedHoursRow.addEventListener("click", (event) => {
+        const btn = event.target.closest(".missed-hours-btn");
+        if (!btn) return;
+        selectedMissedHours = normalizeMissedHoursClient(btn.dataset.hours || 48);
+        if (currentStatusData) currentStatusData.grace_hours = selectedMissedHours;
         renderGraceHoursButtons(currentStatusData || {});
       });
     }

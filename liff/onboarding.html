@@ -251,7 +251,7 @@ let state = {
   reminderTimes: null,
   dailyReminders: 1,
   defaultReminderTimes: ["12:00"],
-  graceHours: 24,
+  graceHours: 48,
   currentStep: 1,
 };
 
@@ -326,7 +326,7 @@ async function init() {
         state.reminderConfigured = data.onboarding_reminder_configured === true;
         state.dailyReminders = Number(data.daily_reminders) || 1;
         state.defaultReminderTimes = data.default_reminder_times || defaultTimesForCount(state.dailyReminders);
-        state.graceHours = Number(data.grace_hours) || 24;
+        state.graceHours = Number(data.grace_hours) || 48;
         const stored = Array.isArray(data.reminder_times) ? data.reminder_times : null;
         state.reminderTimes = state.reminderConfigured
           ? (stored || (data.reminder_time ? [data.reminder_time] : null))
@@ -404,7 +404,7 @@ function renderStep() {
         ${renderReminderSlots(defaults)}
         <label for="graceHours">忘記多久通知守護人</label>
         <select id="graceHours">
-          ${[24, 48, 72].map(hours => `<option value="${hours}" ${state.graceHours === hours ? "selected" : ""}>${hours} 小時</option>`).join("")}
+          ${[24, 36, 48, 72].map(hours => `<option value="${hours}" ${state.graceHours === hours ? "selected" : ""}>${hours} 小時</option>`).join("")}
         </select>
         <button class="btn btn-secondary" type="button" id="useDefaultsBtn">使用方案預設時間</button>
         <button class="btn btn-primary" id="saveReminderBtn" onclick="saveReminder()">下一步</button>
@@ -489,7 +489,7 @@ async function saveReminder() {
         line_user_id: state.lineUserId,
         reminder_times: times,
         reminder_time: times[0],
-        grace_hours: Number(document.getElementById("graceHours")?.value || 24)
+        grace_hours: Number(document.getElementById("graceHours")?.value || 48)
       })
     });
     if (res.ok) {

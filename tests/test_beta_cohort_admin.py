@@ -37,7 +37,38 @@ class BetaCohortPolicyTests(unittest.TestCase):
             timedelta(days=21),
         )
         self.assertEqual(profile["beta_recruitment_source"], "friend")
+        self.assertEqual(profile["reminder_times"], ["12:00", "18:00"])
         self.assertEqual(self.state["orders"], [])
+
+    def test_legacy_admin_assignment_grants_real_21_day_799_entitlement(self):
+        with TemporaryDirectory() as temp_dir:
+            data_file = Path(temp_dir) / "data.json"
+            app_module.save_state(data_file, self.state)
+
+            result, code = app_module.assign_beta_member(
+                data_file,
+                {"line_user_id": "U-1", "cohort": "family_group_10"},
+                now=self.now,
+            )
+
+            self.assertEqual(code, 200)
+            saved = app_module.load_state(data_file)["users"]["U-1"]
+            self.assertEqual(saved["membership_source"], "beta")
+            self.assertEqual(saved["beta_cohort"], "B799")
+            self.assertEqual(saved["plan"], "paid_799_year")
+            self.assertEqual(saved["beta_ends_at"], "2026-08-17T12:00:00")
+            self.assertEqual(saved["reminder_times"], ["12:00", "18:00"])
+            self.assertEqual(
+                app_module.compute_plan_expires_at(saved),
+                "2026-08-17T12:00:00",
+            )
+            with patch.object(
+                app_module, "current_app_time", return_value=self.now
+            ):
+                self.assertEqual(
+                    app_module._trial_days_text(saved),
+                    "21 天封測剩 21 天",
+                )
 
     def test_duplicate_assignment_is_idempotent(self):
         first = app_module.assign_beta_cohort(
