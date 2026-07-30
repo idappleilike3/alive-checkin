@@ -85,6 +85,12 @@ class GuardianGroupSettingsTests(unittest.TestCase):
         self.assertEqual(result["guardian_group_count"], 0)
         self.assertEqual(result["groups"], [])
 
+    def test_new_group_preferences_default_to_twenty_hundred(self):
+        self.assertEqual(
+            app.normalize_guardian_group_preferences({})["daily_summary_time"],
+            "20:00",
+        )
+
     def test_group_status_shows_counts_and_only_that_groups_missing_names(self):
         state = app.load_state(self.data_file)
         today = datetime.now().strftime("%Y-%m-%d")
@@ -121,6 +127,77 @@ class GuardianGroupSettingsTests(unittest.TestCase):
         self.assertIn("2 位未報平安", text)
         self.assertIn("未報平安：爸爸、阿嬤", text)
         self.assertNotIn("別群成員", text)
+
+    def test_group_status_includes_owner_and_unregistered_line_members(self):
+        state = app.load_state(self.data_file)
+        today = datetime.now().strftime("%Y-%m-%d")
+        state["users"]["U-owner"]["display_name"] = "媽媽"
+        state["users"]["U-owner"]["history"] = [today]
+        state["users"]["U-a"] = {
+            "line_user_id": "U-a",
+            "display_name": "小美",
+        }
+        state["guardian_groups"]["C-family"]["member_ids_at_bind"] = [
+            "U-owner",
+            "U-a",
+            "U-not-registered",
+        ]
+        app.save_state(self.data_file, state)
+
+        result, code = app.guardian_group_daily_status(
+            self.data_file,
+            "U-owner",
+            "C-family",
+            now=datetime.now().replace(hour=10, minute=0, second=0, microsecond=0),
+        )
+
+        self.assertEqual(code, 200)
+        self.assertEqual(result["counts"]["checked"], 1)
+        self.assertEqual(result["counts"]["unbound"], 1)
+        self.assertEqual(result["counts"]["total"], 3)
+        self.assertEqual(
+            [row["status"] for row in result["members"]],
+            ["checked", "pending", "unbound"],
+        )
+        self.assertEqual(result["members"][0]["name"], "媽媽（管理員）")
+        self.assertEqual(result["members"][2]["name"], "LINE 群組成員")
+
+    def test_group_status_is_available_through_authenticated_http_api(self):
+        client = app.create_app({
+            "TESTING": True,
+            "DATA_FILE": self.data_file,
+            "ALLOW_LEGACY_LINE_USER_ID": True,
+        }).test_client()
+
+        response = client.get(
+            "/api/guardian-groups/status"
+            "?line_user_id=U-owner&group_id=C-family"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["group_id"], "C-family")
+
+    def test_unchecked_registered_member_is_overdue_after_reminder_time(self):
+        state = app.load_state(self.data_file)
+        state["users"]["U-a"] = {
+            "line_user_id": "U-a",
+            "display_name": "爸爸",
+            "reminder_time": "12:00",
+        }
+        state["guardian_groups"]["C-family"]["member_ids_at_bind"] = ["U-a"]
+        app.save_state(self.data_file, state)
+
+        result, code = app.guardian_group_daily_status(
+            self.data_file,
+            "U-owner",
+            "C-family",
+            now=datetime(2026, 7, 30, 20, 0),
+        )
+
+        self.assertEqual(code, 200)
+        member = next(row for row in result["members"] if row["line_user_id"] == "U-a")
+        self.assertEqual(member["status"], "overdue")
+        self.assertEqual(member["status_label"], "已超過設定時間")
 
     def test_unknown_member_is_rejected(self):
         result, code = app.guardian_group_settings_for_user(
