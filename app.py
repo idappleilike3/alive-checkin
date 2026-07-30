@@ -10,6 +10,7 @@ import re
 import secrets
 import smtplib
 import sqlite3
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -12997,6 +12998,86 @@ def inspect_default_rich_menu(config=None):
     }, 200
 
 
+def _rich_menu_signature(payload):
+    """Return the deploy-relevant menu fields without secrets or LINE IDs."""
+    return {
+        "name": payload.get("name"),
+        "chatBarText": payload.get("chatBarText"),
+        "areas": [
+            {
+                "label": (area.get("action") or area).get("label"),
+                "type": (area.get("action") or area).get("type"),
+                "uri": (area.get("action") or area).get("uri"),
+                "text": (area.get("action") or area).get("text"),
+            }
+            for area in (payload.get("areas") or [])
+        ],
+    }
+
+
+def sync_default_rich_menu_if_needed(config=None, root_dir=None):
+    """Inspect first and deploy only when the checked-in menu differs."""
+    cfg = config or {}
+    if not _env_flag_on("AUTO_SYNC_RICH_MENU", cfg):
+        return {"ok": True, "status": "disabled"}
+
+    root = Path(root_dir) if root_dir else Path(__file__).resolve().parent
+    config_path = root / "line-rich-menu-config.json"
+    if not config_path.exists():
+        return {"ok": False, "status": "config_missing"}
+
+    current, inspect_code = inspect_default_rich_menu(cfg)
+    if inspect_code != 200 or not current.get("ok"):
+        return {
+            "ok": False,
+            "status": "inspect_failed",
+            "step": current.get("step"),
+            "http": current.get("http") or inspect_code,
+        }
+
+    expected = json.loads(config_path.read_text(encoding="utf-8"))
+    if _rich_menu_signature(current) == _rich_menu_signature(expected):
+        return {"ok": True, "status": "already_current"}
+
+    deployed, deploy_code = deploy_default_rich_menu(cfg, root_dir=root)
+    if deploy_code != 200 or not deployed.get("ok"):
+        return {
+            "ok": False,
+            "status": "deploy_failed",
+            "step": deployed.get("step"),
+            "http": deployed.get("http") or deploy_code,
+        }
+    return {
+        "ok": True,
+        "status": "deployed",
+        "richMenuId": deployed.get("richMenuId"),
+    }
+
+
+def start_rich_menu_auto_sync(flask_app):
+    """Run the idempotent LINE check after startup without delaying health checks."""
+    if not _env_flag_on("AUTO_SYNC_RICH_MENU", flask_app.config):
+        return None
+
+    def _run():
+        result = sync_default_rich_menu_if_needed(flask_app.config)
+        log = flask_app.logger.info if result.get("ok") else flask_app.logger.warning
+        log(
+            "rich menu auto sync status=%s step=%s http=%s",
+            result.get("status"),
+            result.get("step"),
+            result.get("http"),
+        )
+
+    worker = threading.Thread(
+        target=_run,
+        name="rich-menu-auto-sync",
+        daemon=True,
+    )
+    worker.start()
+    return worker
+
+
 def cron_allowed(config, secret):
     expected = (config.get("CRON_SECRET") or os.environ.get("CRON_SECRET", "") or "").strip()
     provided = str(secret or "").strip()
@@ -20903,6 +20984,8 @@ class MiniApp:
 
 
 app = create_app()
+if Flask is not None:
+    start_rich_menu_auto_sync(app)
 
 
 if __name__ == "__main__":
