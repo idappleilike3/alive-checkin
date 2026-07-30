@@ -3,15 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <script>
-    // Keep previously published LINE rich menus fast while they still use ?open=sos.
-    (() => {
-      const params = new URLSearchParams(location.search);
-      if (params.get("open") === "sos" || params.get("page") === "sos") {
-        location.replace("/liff/sos.html");
-      }
-    })();
-  </script>
   <title>每日平安｜LINE 平安簽到與家人守護</title>
   <meta name="description" content="每日平安提供 LINE 平安簽到、守護人提醒、SOS 求助與安全守護，讓獨居、長輩與在外家人每天多一份安心。">
   <meta name="robots" content="index,follow,max-image-preview:large">
@@ -4453,7 +4444,6 @@
       <div class="today-reminder-card">
         <strong>日期備忘與提醒</strong>
         <span id="calendarNoteQuickText">點選日期新增備忘，系統會在指定時間提醒。</span>
-        <div id="calendarNoteReminderList"></div>
         <button class="action-btn primary" id="calendarNoteQuickAddBtn" type="button">＋ 新增日期與備忘</button>
       </div>
     </section>
@@ -5031,16 +5021,7 @@
       <div class="calendar-note-date" id="calendarNoteDateText"></div>
       <label for="calendarNoteInput">今天想記下什麼？</label>
       <textarea id="calendarNoteInput" maxlength="500" placeholder="例如：回診、領藥、和家人吃飯"></textarea>
-      <div class="smart-editor-fields" style="margin-top:12px;">
-        <label for="calendarNoteWebReminderTime">網頁提醒時間（時／分）
-          <input id="calendarNoteWebReminderTime" type="time">
-        </label>
-        <label class="checkbox-line" for="calendarNoteWebReminderYearly" style="display:flex;align-items:center;gap:8px;font-weight:750;">
-          <input id="calendarNoteWebReminderYearly" type="checkbox">
-          <span>每年重複</span>
-        </label>
-      </div>
-      <div class="helper" style="margin-top:6px;"><strong>純文字備忘只儲存，不會推播 LINE。</strong>到設定日期與時間後，進入「每日平安」網頁時提醒一次；未設定時間就只儲存文字。</div>
+      <div class="helper" style="margin-top:6px;"><strong>純文字備忘只儲存，不會推播 LINE。</strong>記事會保存在你的會員資料中，最多 500 字。</div>
       <div class="member-limit-banner" style="margin-top:12px;text-align:left;">
         <strong>需要 LINE 通知嗎？</strong>
         <p>生日、吃藥、回診等提醒才會推播；請設定完整年月日與時間。通知自己每天最多 2 則。</p>
@@ -5058,7 +5039,7 @@
   <div class="modal-backdrop" id="smartReminderEditorModal" hidden>
     <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="smartReminderEditorTitle" style="max-height:88vh;overflow-y:auto;overscroll-behavior:contain;">
       <h2 id="smartReminderEditorTitle">新增日期提醒</h2>
-      <p class="helper">一般備忘、生日、吃藥、回診等可設定 LINE 推播。日期沿用你剛才在月曆選擇的日期；預設只通知自己，不會送到守護群。</p>
+      <p class="helper">一般備忘、生日、吃藥、回診等可設定 LINE 推播。請選擇完整日期與提醒時間；預設只通知自己，不會送到守護群。</p>
       <p class="helper">生日／紀念日可選每年重複；吃藥、回診等預設單次提醒。通知自己每天最多 2 則。</p>
       <p class="helper" id="smartReminderDailyUsage">今日日期提醒已使用 0／2 則</p>
       <div class="smart-editor-fields">
@@ -5071,8 +5052,9 @@
         <label for="smartReminderCustomTitle" id="smartReminderCustomTitleWrap" hidden>自訂標題
           <input id="smartReminderCustomTitle" type="text" maxlength="40" placeholder="例如：結婚週年">
         </label>
-        <div class="helper">提醒日期：<strong id="smartReminderSelectedDate"></strong></div>
-        <input id="smartReminderDate" type="hidden">
+        <label for="smartReminderDate">完整日期（西元年／月／日）
+          <input id="smartReminderDate" type="date" required>
+        </label>
         <label class="checkbox-line" for="smartReminderYearly" style="display:flex;align-items:center;gap:8px;font-weight:750;">
           <input id="smartReminderYearly" type="checkbox" checked>
           <span>每年重複（生日／紀念日）</span>
@@ -5100,8 +5082,6 @@
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script>
     const STORAGE_KEY = "alive_checkin_state_v2";
-    const MEMBER_STATUS_CACHE_PREFIX = "alive_member_status_v1:";
-    const MEMBER_STATUS_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
     const defaultState = {
       last_check_in: null,
       history: [],
@@ -5149,7 +5129,6 @@
     /** Once-guard: Android LIFF 上成功後勿重複 alert／重複 bind（自動綁定 + 同意按鈕／雙擊／URL 殘留）。 */
     let bindDone = false;
     let bindInFlight = false;
-    let pendingInitialStatusPromise = null;
     let contactData = [];
     let currentContactLimit = 1;
     let currentStatusData = null;
@@ -5405,13 +5384,7 @@
     }
 
     function requestedAppAction() {
-      const hashAction = typeof location === "undefined"
-        ? ""
-        : String(location.hash || "").replace(/^#/, "").trim().toLowerCase();
-      const safeHashAction = ["home", "member", "guardians", "history"].includes(hashAction)
-        ? hashAction
-        : "";
-      const action = String(getAppParam("open") || getAppParam("page") || safeHashAction).trim().toLowerCase();
+      const action = String(getAppParam("open") || getAppParam("page") || "").trim().toLowerCase();
       return {
         profile: "member",
         guardian: "guardians",
@@ -5820,89 +5793,7 @@
         const text = await res.text().catch(() => "");
         throw new Error(friendlyApiFailure(res.status, text));
       }
-      const status = await res.json();
-      writeCachedMemberStatus(lineUserId, status);
-      return status;
-    }
-
-    function memberStatusCacheKey(userId) {
-      return MEMBER_STATUS_CACHE_PREFIX + String(userId || "").trim();
-    }
-
-    function writeCachedMemberStatus(userId, status) {
-      if (!userId || !status || typeof status !== "object") return;
-      const snapshot = {
-        plan: status.plan || "trial",
-        trial_days_left: status.trial_days_left,
-        plan_expires_text: status.plan_expires_text || "",
-        billing_cycle: status.billing_cycle || "",
-        payment_status: status.payment_status || "",
-        paid_until: status.paid_until || "",
-        is_today_checked: status.is_today_checked === true,
-        checkin_date: status.is_today_checked === true ? getToday() : ""
-      };
-      try {
-        localStorage.setItem(
-          memberStatusCacheKey(userId),
-          JSON.stringify({ saved_at: Date.now(), status: snapshot })
-        );
-      } catch (_) {}
-    }
-
-    function readCachedMemberStatus(userId) {
-      if (!userId) return null;
-      try {
-        const cached = JSON.parse(localStorage.getItem(memberStatusCacheKey(userId)) || "null");
-        if (!cached || !cached.status || !cached.saved_at) return null;
-        if (Date.now() - Number(cached.saved_at) > MEMBER_STATUS_CACHE_MAX_AGE_MS) return null;
-        return cached.status;
-      } catch (_) {
-        return null;
-      }
-    }
-
-    function renderCachedMemberStatus(userId) {
-      const status = readCachedMemberStatus(userId);
-      if (!status) return false;
-      const plan = status.plan || "trial";
-      const planView = planPresentation(plan, status.trial_days_left);
-      if ($("planStateLabel")) {
-        $("planStateLabel").textContent = plan === "trial" ? "14 天安心體驗" : planLabel(plan);
-      }
-      if ($("planDetailText")) $("planDetailText").textContent = planView.detail;
-      if ($("planStrip")) $("planStrip").dataset.planTone = planView.tone;
-      if ($("memberBillingPlan")) $("memberBillingPlan").textContent = planLabel(plan);
-      if ($("memberBillingCycle")) {
-        $("memberBillingCycle").textContent = {
-          monthly: "月繳",
-          yearly: "年繳",
-          trial: "安心體驗"
-        }[status.billing_cycle] || "尚未設定";
-      }
-      if ($("memberBillingExpiry")) {
-        $("memberBillingExpiry").textContent = status.plan_expires_text
-          || status.paid_until
-          || (plan === "trial" ? "試用中" : "尚未設定");
-      }
-      return true;
-    }
-
-    function renderCachedCheckinStatus(userId) {
-      const status = readCachedMemberStatus(userId);
-      if (!status || status.is_today_checked !== true || status.checkin_date !== getToday()) {
-        return false;
-      }
-      syncCheckBtn({ is_today_checked: true });
-      if ($("dailyStatus")) $("dailyStatus").textContent = "今日已簽到";
-      return true;
-    }
-
-    function startMemberStatusPrefetch() {
-      if (useLocalMode || !lineUserId) return null;
-      if (!pendingInitialStatusPromise) {
-        pendingInitialStatusPromise = apiGetStatus().catch(() => null);
-      }
-      return pendingInitialStatusPromise;
+      return await res.json();
     }
 
     function friendlyApiFailure(httpStatus, rawText) {
@@ -5969,13 +5860,12 @@
       return data;
     }
 
-    async function apiSaveCalendarNote(date, content, noteMeta = {}) {
-      const storedContent = encodeCalendarNoteContent(content, noteMeta);
+    async function apiSaveCalendarNote(date, content, birthday = {}) {
       if (useLocalMode) {
         const state = loadLocalState();
         const notes = { ...(state.calendar_notes || {}) };
-        const cleanContent = String(storedContent || "").trim();
-        const birthdayPayload = normalizeBirthdayPayload(noteMeta);
+        const cleanContent = String(content || "").trim();
+        const birthdayPayload = normalizeBirthdayPayload(birthday);
         if (cleanContent || birthdayPayload.birthday_name) {
           notes[date] = {
             content: cleanContent,
@@ -5990,12 +5880,7 @@
       const res = await fetch("/api/calendar-notes", {
         method: "POST",
         headers: await authHeaders(),
-        body: JSON.stringify({
-          line_user_id: lineUserId,
-          date,
-          content: storedContent,
-          ...normalizeBirthdayPayload(noteMeta)
-        })
+        body: JSON.stringify({ line_user_id: lineUserId, date, content, ...normalizeBirthdayPayload(birthday) })
       });
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error || "calendar note save failed");
@@ -7093,11 +6978,6 @@
           const d = existing ? Number(existing.day || 1) : now.getDate();
           dateEl.value = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
         }
-        const selectedDate = $("smartReminderSelectedDate");
-        if (selectedDate) {
-          const [displayYear, displayMonth, displayDay] = dateEl.value.split("-");
-          selectedDate.textContent = `${displayYear} 年 ${Number(displayMonth)} 月 ${Number(displayDay)} 日`;
-        }
       }
       if (modal) modal.hidden = false;
     }
@@ -7106,22 +6986,7 @@
       const presetDate = selectedCalendarDate || getToday();
       smartReminderReturnDate = presetDate;
       $("calendarNoteModal").hidden = true;
-      const existing = findSmartReminderForCalendarDate(presetDate);
-      openSmartReminderEditor(existing ? existing.id : null, presetDate);
-    }
-
-    function findSmartReminderForCalendarDate(dateText) {
-      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateText || ""));
-      if (!match) return null;
-      const year = Number(match[1]);
-      const month = Number(match[2]);
-      const day = Number(match[3]);
-      const matches = (smartReminderCache.reminders || []).filter((reminder) =>
-        Number(reminder.month) === month
-        && Number(reminder.day) === day
-        && (!reminder.year || Number(reminder.year) === year)
-      );
-      return matches.length === 1 ? matches[0] : null;
+      openSmartReminderEditor(null, presetDate);
     }
 
     function closeSmartReminderEditor() {
@@ -7156,7 +7021,7 @@
         return;
       }
       const [y, m, d] = dateVal.split("-").map((x) => parseInt(x, 10));
-      const saved = await saveSmartReminder({
+      await saveSmartReminder({
         id: smartReminderEditingId || undefined,
         target_name: name,
         category,
@@ -7177,7 +7042,7 @@
           : true,
         defaults: { notify_private: true, notify_group: false }
       });
-      if (saved) closeSmartReminderEditor();
+      closeSmartReminderEditor();
     }
 
     async function saveSmartReminder(payload) {
@@ -7194,11 +7059,9 @@
         }
         await refreshSmartRemindersUi();
         showInlineSuccess("日期提醒已儲存（到期日會私訊提醒）");
-        return true;
       } catch (err) {
         alert("儲存失敗：" + (err.message || ""));
       }
-      return false;
     }
 
     async function deleteSmartReminder(id) {
@@ -7556,6 +7419,13 @@
       loadMemberSupportTickets().catch(() => {});
       const guardianGroupIds = status.guardian_group_ids || [];
       const guardianGroups = status.guardian_groups || [];
+      const defaultGroupPrefs = status.guardian_group_default_preferences || {
+        notify_private_guardians: true,
+        notify_group_on_overdue: false,
+        daily_admin_summary: false,
+        notify_admin_only: true,
+        daily_summary_time: "20:00"
+      };
       const groupById = Object.fromEntries(guardianGroups.map((group) => [group.group_id, group]));
       $("guardianGroupsSection").hidden = !(status.guardian_group_limit > 0);
       const roster = status.today_safety_roster || null;
@@ -7590,7 +7460,19 @@
             <button class="action-btn guardian-group-unbind" type="button" data-group-id="${escapeHtml(groupId)}">解除綁定</button>
           </div>
         `; }).join("")
-        : `<div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護群</strong></div>`);
+        : `<div class="member-data-row guardian-group-card">
+            <span><strong>守護群通知設定</strong><small>799 月費、799 年費與 799 年費 21 天封測皆可使用；綁定守護群後會套用。</small></span>
+            <div class="guardian-group-preferences">
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="__default__" data-pref-key="notify_private_guardians" ${defaultGroupPrefs.notify_private_guardians !== false ? "checked" : ""}> 未報平安時，先私訊核心守護人</label>
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="__default__" data-pref-key="notify_group_on_overdue" ${defaultGroupPrefs.notify_group_on_overdue === true ? "checked" : ""}> 未報平安時，也通知這個 LINE 群</label>
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="__default__" data-pref-key="daily_admin_summary" ${defaultGroupPrefs.daily_admin_summary === true ? "checked" : ""}> 每天傳送一次群內平安摘要</label>
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="__default__" data-pref-key="notify_admin_only" ${defaultGroupPrefs.notify_admin_only !== false ? "checked" : ""}> 摘要中的詳細姓名只讓管理員查看</label>
+              <label>摘要時間（每天最多一次）<input type="time" class="guardian-group-summary-time" data-group-id="__default__" value="${escapeHtml(defaultGroupPrefs.daily_summary_time || "20:00")}"></label>
+              <small style="display:block;margin-top:6px;color:#a16207;line-height:1.45;">開啟群組通知或每日摘要會增加 LINE 推播用量；預設關閉。</small>
+            </div>
+            <button class="action-btn primary guardian-group-save" type="button" data-group-id="__default__">儲存守護群設定</button>
+            <button class="action-btn" type="button" onclick="showTab('guardians')">前往守護群綁定教學</button>
+          </div>`);
       updateGuardianGroupBindStatusCard(status);
       renderGuardianDetailsEditor();
       renderMemberRoleIntro({ autoExpand: false });
@@ -9410,12 +9292,6 @@
         lineDisplayName = profile.displayName || "";
         linePictureUrl = profile.pictureUrl || "";
         if (!lineUserId) return false;
-        // 先顯示上次已驗證的方案摘要；正式資料在背景載入後立即覆蓋。
-        renderCachedMemberStatus(lineUserId);
-        // 同一天已由後端確認報平安時，先立即顯示完成狀態；跨日快取不採用。
-        renderCachedCheckinStatus(lineUserId);
-        // 第一次登入沒有快取時，也立刻預讀狀態；與註冊請求並行，縮短首頁等待。
-        startMemberStatusPrefetch();
 
         const betaCohort = String(getAppParam("beta_cohort") || "").trim().toUpperCase();
         const inviteFrom = String(getAppParam("invite_from") || "").trim();
@@ -9616,34 +9492,10 @@
       }
     }
 
-    const WEB_NOTE_META_MARKER = "\n\u2063wr:";
-
-    function rawNoteContent(note) {
+    function noteContent(note) {
       if (!note) return "";
       if (typeof note === "string") return note;
       return String(note.content || "");
-    }
-
-    function noteWebReminder(note) {
-      const raw = rawNoteContent(note);
-      const markerIndex = raw.lastIndexOf(WEB_NOTE_META_MARKER);
-      if (markerIndex < 0) return { time: "", yearly: false };
-      const encoded = raw.slice(markerIndex + WEB_NOTE_META_MARKER.length);
-      const match = encoded.match(/^(\d{2}:\d{2}):(0|1)$/);
-      return match ? { time: match[1], yearly: match[2] === "1" } : { time: "", yearly: false };
-    }
-
-    function noteContent(note) {
-      const raw = rawNoteContent(note);
-      const markerIndex = raw.lastIndexOf(WEB_NOTE_META_MARKER);
-      return (markerIndex < 0 ? raw : raw.slice(0, markerIndex)).trim();
-    }
-
-    function encodeCalendarNoteContent(content, noteMeta = {}) {
-      const clean = String(content || "").replace(/\n\u2063wr:[^\n]*$/, "").trim();
-      const time = String(noteMeta.web_remind_time || "").trim();
-      if (!time) return clean;
-      return `${clean}${WEB_NOTE_META_MARKER}${time}:${noteMeta.web_remind_yearly ? "1" : "0"}`;
     }
 
     function normalizeBirthdayPayload(raw = {}) {
@@ -9771,17 +9623,9 @@
       const note = calendarNotes[dateText] || "";
       const content = noteContent(note);
       $("calendarNoteTitle").textContent = `${date.getMonth() + 1}月${date.getDate()}日記事`;
-      $("calendarNoteDateText").textContent = `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日｜農曆 ${lunar.fullLabel}${festival ? `｜${festival}` : ""}`;
+      $("calendarNoteDateText").textContent = `農曆 ${lunar.fullLabel}${festival ? `｜${festival}` : ""}`;
       $("calendarNoteInput").value = content;
-      const webReminder = noteWebReminder(note);
-      $("calendarNoteWebReminderTime").value = webReminder.time;
-      $("calendarNoteWebReminderYearly").checked = webReminder.yearly;
-      const hasSavedNote = Boolean(content || webReminder.time);
-      $("calendarNoteTitle").textContent = hasSavedNote
-        ? `${date.getMonth() + 1}月${date.getDate()}日｜修改記事與提醒`
-        : `${date.getMonth() + 1}月${date.getDate()}日記事`;
-      $("saveCalendarNoteBtn").textContent = hasSavedNote ? "儲存修改" : "儲存記事";
-      $("deleteCalendarNoteBtn").disabled = !hasSavedNote;
+      $("deleteCalendarNoteBtn").disabled = !content;
       $("googleCalendarLink").href = googleCalendarUrl(dateText, content);
       $("calendarNoteModal").hidden = false;
       window.setTimeout(() => $("calendarNoteInput").focus(), 100);
@@ -9797,26 +9641,11 @@
       if (!selectedCalendarDate) return;
       const saveButton = $("saveCalendarNoteBtn");
       const content = contentOverride === undefined ? $("calendarNoteInput").value : contentOverride;
-      const existingNote = calendarNotes[selectedCalendarDate];
-      const birthday = noteBirthday(existingNote) || {};
-      const noteMeta = {
-        ...birthday,
-        web_remind_time: String($("calendarNoteWebReminderTime").value || "").trim(),
-        web_remind_yearly: Boolean($("calendarNoteWebReminderYearly").checked)
-      };
-      if (contentOverride === undefined && encodeCalendarNoteContent(content, noteMeta).length > 500) {
-        alert("備忘文字加上提醒設定後最多 500 字，請稍微縮短內容");
-        return false;
-      }
-      if (contentOverride === "") {
-        noteMeta.birthday_name = "";
-        noteMeta.web_remind_time = "";
-        noteMeta.web_remind_yearly = false;
-      }
+      const birthday = noteBirthday(calendarNotes[selectedCalendarDate]) || {};
       saveButton.disabled = true;
       saveButton.textContent = "儲存中";
       try {
-        const result = await apiSaveCalendarNote(selectedCalendarDate, content, noteMeta);
+        const result = await apiSaveCalendarNote(selectedCalendarDate, content, birthday);
         calendarNotes = result.notes || {};
         renderCalendar(currentYear, currentMonth, historyData);
         closeCalendarNote();
@@ -9834,31 +9663,10 @@
         const result = await apiGetCalendarNotes();
         calendarNotes = result.notes || {};
         renderCalendar(currentYear, currentMonth, historyData);
-        checkDueWebCalendarNotes();
       } catch (error) {
         calendarNotes = {};
       }
       syncCalendarNoteQuickCard();
-    }
-
-    function checkDueWebCalendarNotes(now = new Date()) {
-      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-      const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-      for (const [noteDate, note] of Object.entries(calendarNotes || {})) {
-        if (!note || typeof note !== "object") continue;
-        const webReminder = noteWebReminder(note);
-        const remindTime = webReminder.time;
-        if (!/^\d{2}:\d{2}$/.test(remindTime) || currentTime < remindTime) continue;
-        const yearly = webReminder.yearly;
-        const dueToday = yearly ? noteDate.slice(5) === today.slice(5) : noteDate === today;
-        if (!dueToday) continue;
-        const occurrence = yearly ? `${now.getFullYear()}-${noteDate.slice(5)}` : noteDate;
-        const marker = `alive_web_note_reminded:${lineUserId || "local"}:${occurrence}:${remindTime}`;
-        if (localStorage.getItem(marker) === "1") continue;
-        localStorage.setItem(marker, "1");
-        alert(`記事提醒｜${noteContent(note) || "你設定的備忘"}\n${now.getMonth() + 1}月${now.getDate()}日 ${remindTime}`);
-        break;
-      }
     }
 
     function syncCalendarNoteQuickCard(status = currentStatusData || {}) {
@@ -9868,25 +9676,10 @@
       const enabled = status.calendar_notes_enabled === true;
       card.hidden = !enabled || location.hash !== "#history";
       if (!enabled || !text) return;
-      const entries = Object.entries(calendarNotes || {})
-        .filter(([, note]) => noteContent(note) || noteWebReminder(note).time)
-        .sort(([a], [b]) => a.localeCompare(b));
-      const count = entries.length;
+      const count = Object.keys(calendarNotes || {}).length;
       text.textContent = count
         ? `目前已有 ${count} 個日期備忘；點日期可新增或編輯提醒。`
         : "先新增日期與備忘，系統才會在指定時間提醒。";
-      const list = $("calendarNoteReminderList");
-      if (!list) return;
-      list.innerHTML = entries.map(([dateText, note]) => {
-        const reminder = noteWebReminder(note);
-        const reminderLabel = reminder.time
-          ? `${reminder.time}${reminder.yearly ? "｜每年重複" : "｜提醒一次"}`
-          : "沒有設定網頁提醒";
-        return `<div class="calendar-note-preview">
-          <span><strong>${escapeHtml(dateText)}</strong><small>${escapeHtml(noteContent(note) || "備忘")}｜${escapeHtml(reminderLabel)}</small></span>
-          <button class="action-btn calendar-note-edit-btn" type="button" data-date="${escapeHtml(dateText)}">修改記事與提醒</button>
-        </div>`;
-      }).join("");
     }
 
     function setCalendarExpanded(expanded) {
@@ -10722,7 +10515,6 @@
           result.is_today_checked = true;
           const today = getToday();
           result.history = Array.from(new Set([...(result.history || []), today]));
-          writeCachedMemberStatus(lineUserId, result);
         }
         renderStatus(result);
         showCheckinSuccessMessage(result || currentStatusData);
@@ -11537,11 +11329,7 @@
     }
 
     async function loadInitialMemberData() {
-      const prefetchedStatus = pendingInitialStatusPromise;
-      pendingInitialStatusPromise = null;
-      const statusPromise = prefetchedStatus
-        ? prefetchedStatus.then((status) => status || apiGetStatus())
-        : Promise.resolve().then(() => apiGetStatus());
+      const statusPromise = Promise.resolve().then(() => apiGetStatus());
       const contactsPromise = Promise.resolve()
         .then(() => apiGetContacts(lineUserId))
         .catch(() => ({ status: 0, data: {} }));
@@ -12216,10 +12004,6 @@
     $("calendarNoteQuickAddBtn")?.addEventListener("click", () => {
       setCalendarExpanded(true);
       openCalendarNote(getToday());
-    });
-    $("calendarNoteReminderList")?.addEventListener("click", (event) => {
-      const button = event.target.closest(".calendar-note-edit-btn[data-date]");
-      if (button) openCalendarNote(button.dataset.date);
     });
     $("memberCenterToggleBtn").addEventListener("click", () => {
       setMemberCenterExpanded($("memberCenterToggleBtn").getAttribute("aria-expanded") !== "true");
