@@ -4659,6 +4659,7 @@
             <button class="action-btn" id="memberDailyReminderDefaultsBtn" type="button">使用方案預設時間</button>
             <button class="action-btn primary" id="saveDailyReminderBtn" type="button">儲存提醒與逾時設定</button>
           </div>
+          <p class="helper" id="memberDailyReminderSaveFeedback" aria-live="polite" hidden style="margin-top:8px;"></p>
         </div>
 
         <div class="member-data-section" id="memberSmartRemindersSection">
@@ -7595,8 +7596,28 @@
       });
     }
 
+    function setMemberReminderSaveFeedback(state, message) {
+      const feedback = $("memberDailyReminderSaveFeedback");
+      if (!feedback) return;
+      feedback.dataset.state = state || "";
+      feedback.textContent = message || "";
+      feedback.hidden = !message;
+      feedback.style.color = state === "error" ? "#b91c1c" : (state === "success" ? "#087f5b" : "");
+      feedback.style.fontWeight = message ? "800" : "";
+    }
+
     async function saveMemberDailyReminder() {
-      if (!requireMemberActionReady("data")) return false;
+      if (!requireMemberActionReady("data")) {
+        setMemberReminderSaveFeedback("error", "目前無法儲存，請先完成 LINE 登入與核心守護人綁定。");
+        return false;
+      }
+      const saveButton = $("saveDailyReminderBtn");
+      const originalLabel = saveButton ? saveButton.textContent : "儲存提醒與逾時設定";
+      if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.textContent = "儲存中…";
+      }
+      setMemberReminderSaveFeedback("saving", "正在儲存設定，請稍候…");
       const status = currentStatusData || {};
       const count = currentChosenDailyReminderCount(status);
       const enabled = Boolean($("dailyCheckinReminderEnabled") && $("dailyCheckinReminderEnabled").checked);
@@ -7628,13 +7649,19 @@
         selectedGraceHours = normalizeGraceHoursClient(saved.overdue_wait_minutes || waitMinutes);
         selectedMissedHours = normalizeMissedHoursClient(saved.grace_hours || missedHours);
         renderStatus(saved);
-        showInlineSuccess(
-          enabled
-            ? `已儲存：每日提醒 ${reminderTimes.length} 次／未報平安 ${selectedMissedHours} 小時後再提醒本人／再過 ${selectedGraceHours} 分鐘通知第一順位`
-            : `已關閉每日提醒；未報平安門檻仍為 ${selectedMissedHours} 小時`
-        );
+        const successMessage = enabled
+          ? `已儲存：每日提醒 ${reminderTimes.length} 次／未報平安 ${selectedMissedHours} 小時後提醒本人／再過 ${selectedGraceHours} 分鐘通知第一順位`
+          : `已關閉每日提醒；未報平安門檻仍為 ${selectedMissedHours} 小時`;
+        setMemberReminderSaveFeedback("success", `✅ ${successMessage}`);
+        showInlineSuccess(successMessage);
       } catch (err) {
-        alert(err.message || "提醒與逾時設定儲存失敗");
+        const errorMessage = err.message || "提醒與逾時設定儲存失敗";
+        setMemberReminderSaveFeedback("error", `❌ 儲存失敗：${errorMessage}`);
+      } finally {
+        if (saveButton) {
+          saveButton.disabled = false;
+          saveButton.textContent = originalLabel;
+        }
       }
     }
 
