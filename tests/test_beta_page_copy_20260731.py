@@ -58,6 +58,35 @@ class BetaPageCopyTests(unittest.TestCase):
         self.assertIn("199、399、799", self.page)
         self.assertNotIn("兩個體驗頁有什麼不同？", self.page)
 
+    def test_page_leads_with_one_short_intro_before_benefits_and_steps(self):
+        lead_at = self.page.index('class="lead"')
+        benefits_at = self.page.index('aria-label="核心功能介紹"')
+        steps_at = self.page.index('aria-label="加入封測流程"')
+        scenario_at = self.page.index('aria-label="使用情境展示"')
+        preview_at = self.page.index('aria-label="完成設定後的操作畫面"')
+
+        self.assertEqual(
+            self.page.count("每天10秒，讓家人知道你平安。先加入官方LINE，再依照四個步驟完成設定"),
+            1,
+        )
+        self.assertLess(lead_at, benefits_at)
+        self.assertLess(benefits_at, steps_at)
+        self.assertLess(steps_at, scenario_at)
+        self.assertLess(scenario_at, preview_at)
+
+    def test_four_setup_steps_use_the_approved_one_line_copy(self):
+        expected_steps = (
+            "① 填寫資料 — 姓名、關係、緊急聯絡電話（選填）",
+            "② 設定提醒 — 選擇每天想收到報平安提醒的時間",
+            "③ 邀請守護人 — 分享專屬連結給在乎的人",
+            "④ 完成綁定 — 對方接受後，安心連結就建立了",
+        )
+
+        for step in expected_steps:
+            self.assertEqual(self.page.count(step), 1)
+
+        self.assertNotIn("填寫邀請人資料", self.page)
+
 
 if __name__ == "__main__":
     unittest.main()
