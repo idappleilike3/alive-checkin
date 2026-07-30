@@ -30,3 +30,19 @@ test("member reminder save gives feedback beside the button for the full request
   assert.match(save, /saveButton\.disabled = false/);
   assert.match(save, /saveButton\.textContent = originalLabel/);
 });
+
+test("using plan default reminder times persists them and confirms success", () => {
+  const applyDefaults = functionBody("applyAndSaveMemberReminderDefaults");
+
+  assert.match(applyDefaults, /defaultTimesForDailyCount\(count\)/);
+  assert.match(applyDefaults, /await saveMemberDailyReminder/);
+  assert.match(
+    applyDefaults,
+    /已套用方案預設時間並儲存成功/,
+    "the user must see an explicit confirmation only after the save succeeds",
+  );
+  assert.match(
+    html,
+    /dailyDefaultsBtn\.addEventListener\("click", applyAndSaveMemberReminderDefaults\)/,
+  );
+});
