@@ -13395,6 +13395,19 @@ def admin_summary(data_file, config=None, now=None):
     hydrated = 0
     dirty = False
     for user in (state.get("users") or {}).values():
+        if (
+            str(user.get("membership_source") or "") == "beta"
+            and not str(user.get("beta_ends_at") or "").strip()
+        ):
+            started = parse_datetime(user.get("beta_started_at"))
+            if not started:
+                started = status_now
+                user["beta_started_at"] = started.isoformat(timespec="seconds")
+            user["beta_ends_at"] = (
+                started + timedelta(days=BETA_TRIAL_DAYS)
+            ).isoformat(timespec="seconds")
+            dirty = True
+    for user in (state.get("users") or {}).values():
         if hydrated >= 40:
             break
         if not is_placeholder_display_name(user.get("display_name")):

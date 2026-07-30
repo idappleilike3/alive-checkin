@@ -5140,6 +5140,7 @@
     /** Once-guard: Android LIFF 上成功後勿重複 alert／重複 bind（自動綁定 + 同意按鈕／雙擊／URL 殘留）。 */
     let bindDone = false;
     let bindInFlight = false;
+    let pendingInitialStatusPromise = null;
     let contactData = [];
     let currentContactLimit = 1;
     let currentStatusData = null;
@@ -5885,6 +5886,14 @@
       syncCheckBtn({ is_today_checked: true });
       if ($("dailyStatus")) $("dailyStatus").textContent = "今日已簽到";
       return true;
+    }
+
+    function startMemberStatusPrefetch() {
+      if (useLocalMode || !lineUserId) return null;
+      if (!pendingInitialStatusPromise) {
+        pendingInitialStatusPromise = apiGetStatus().catch(() => null);
+      }
+      return pendingInitialStatusPromise;
     }
 
     function friendlyApiFailure(httpStatus, rawText) {
@@ -9393,6 +9402,8 @@
         renderCachedMemberStatus(lineUserId);
         // 同一天已由後端確認報平安時，先立即顯示完成狀態；跨日快取不採用。
         renderCachedCheckinStatus(lineUserId);
+        // 第一次登入沒有快取時，也立刻預讀狀態；與註冊請求並行，縮短首頁等待。
+        startMemberStatusPrefetch();
 
         const betaCohort = String(getAppParam("beta_cohort") || "").trim().toUpperCase();
         const inviteFrom = String(getAppParam("invite_from") || "").trim();
@@ -11514,7 +11525,11 @@
     }
 
     async function loadInitialMemberData() {
-      const statusPromise = Promise.resolve().then(() => apiGetStatus());
+      const prefetchedStatus = pendingInitialStatusPromise;
+      pendingInitialStatusPromise = null;
+      const statusPromise = prefetchedStatus
+        ? prefetchedStatus.then((status) => status || apiGetStatus())
+        : Promise.resolve().then(() => apiGetStatus());
       const contactsPromise = Promise.resolve()
         .then(() => apiGetContacts(lineUserId))
         .catch(() => ({ status: 0, data: {} }));
