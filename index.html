@@ -5777,6 +5777,23 @@
       }
     }
 
+    async function withTimeout(operation, timeoutMs, message) {
+      let timer;
+      try {
+        return await Promise.race([
+          operation,
+          new Promise((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error(message || "載入逾時，請重新載入資料再試一次。")),
+              timeoutMs
+            );
+          })
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
     async function apiGetStatus() {
       if (useLocalMode) return buildLocalStatus(loadLocalState());
       if (!lineUserId) {
@@ -9159,7 +9176,11 @@
         window.__LIFF_ID__ = FIXED_LIFF_ID;
 
         // 1) 先 init（不要先判斷 isInClient）
-        await liff.init({ liffId: FIXED_LIFF_ID });
+        await withTimeout(
+          liff.init({ liffId: FIXED_LIFF_ID }),
+          12000,
+          "LINE 登入初始化逾時，請按重新載入資料再試一次。"
+        );
         appConfigPromise = fetch("/api/config")
           .then((response) => response.ok ? response.json() : {})
           .then((config) => {
@@ -11228,7 +11249,9 @@
       memberBootstrapState.error = null;
       setMemberInteractionLocked(true);
       hideInlineError();
-      const task = Promise.resolve().then(() => initApp());
+      const task = Promise.resolve().then(() => (
+        !useLocalMode && !lineUserId ? bootstrapApp() : initApp()
+      ));
       memberBootstrapState.inFlight = task;
       try {
         return await task;
@@ -12136,7 +12159,7 @@
         openRequestedPage();
       } catch (error) {
         console.warn("頁面初始化失敗", error);
-        showLineLoginRequired();
+        showMemberBootstrapError(error);
       } finally {
         document.body.removeAttribute("aria-busy");
         delete document.body.dataset.initialRoute;
