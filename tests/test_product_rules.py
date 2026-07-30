@@ -604,7 +604,7 @@ class ProductRulesTests(unittest.TestCase):
     def test_welcome_help_button_opens_help_and_faq(self):
         flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
 
-        self.assertIn('"label": "免費體驗 14 天"', flex)
+        self.assertIn('"label": "開始免費體驗 14 天"', flex)
         self.assertIn('"label": "一鍵守護邀請"', flex)
         self.assertIn('"label": "了解每日平安"', flex)
         self.assertIn("share_invite_liff_url()", flex)
@@ -625,7 +625,7 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn('"label": "常見問題"', welcome_fn)
         self.assertNotIn('"label": "接受守護邀請"', welcome_fn)
         self.assertNotIn('"label": "需要幫忙"', welcome_fn)
-        self.assertIn('"label": "免費體驗 14 天"', welcome_fn)
+        self.assertIn('"label": "開始免費體驗 14 天"', welcome_fn)
         self.assertIn('"label": "一鍵守護邀請"', welcome_fn)
         self.assertIn('"label": "了解每日平安"', welcome_fn)
         self.assertIn("invite_uri", welcome_fn)

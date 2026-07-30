@@ -3973,6 +3973,10 @@ def build_status(profile, state=None, now=None):
         "line_user_id": profile.get("line_user_id"),
         "display_name": profile.get("display_name", ""),
         "picture_url": profile.get("picture_url", ""),
+        "is_onboarding_completed": bool(profile.get("is_onboarding_completed")),
+        "onboarding_reminder_configured": bool(
+            profile.get("onboarding_reminder_configured")
+        ),
         "streak_days": compute_streak_days(profile.get("history") or [], today),
         "last_check_in": profile.get("last_check_in"),
         "history": sorted(set(profile.get("history") or [])),

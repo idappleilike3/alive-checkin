@@ -1173,7 +1173,7 @@ def welcome_flex(display_name: str | None = None):
     - Header：左上 Logo + 旁側問候文字（含暱稱）／每日平安
     - Hero：白卡視覺（心＋大字＋手機「我平安」），無第二個 Logo
     - Body：三步驟垂直排列、14 天新會員安心體驗、119／110 免責
-    - Footer：免費體驗 14 天 + 了解每日平安
+    - Footer：開始免費體驗 14 天 + 了解每日平安
 
     iPhone 與 Android 都由同一個 Flex payload 產生，避免兩個平台內容不一致。
     守護邀請由免費體驗設定流程引導，不在首次歡迎卡重複顯示。
@@ -1267,7 +1267,7 @@ def welcome_flex(display_name: str | None = None):
                             "contents": [
                                 {
                                     "type": "text",
-                                    "text": "① 一鍵邀請 1 位核心守護人",
+                                    "text": "① 填寫自己的姓名與基本資料",
                                     "weight": "bold",
                                     "size": "xl",
                                     "color": pink_accent,
@@ -1275,7 +1275,7 @@ def welcome_flex(display_name: str | None = None):
                                 },
                                 {
                                     "type": "text",
-                                    "text": "請對方接受邀請並完成 LINE 綁定",
+                                    "text": "先完成自己的資料與基本設定",
                                     "size": "xl",
                                     "color": GRAY,
                                     "wrap": True,
@@ -1292,7 +1292,7 @@ def welcome_flex(display_name: str | None = None):
                             "contents": [
                                 {
                                     "type": "text",
-                                    "text": "② 填寫守護人資料",
+                                    "text": "② 邀請我的核心守護人",
                                     "weight": "bold",
                                     "size": "xl",
                                     "color": pink_accent,
@@ -1300,7 +1300,7 @@ def welcome_flex(display_name: str | None = None):
                                 },
                                 {
                                     "type": "text",
-                                    "text": "填寫姓名、關係與聯絡方式",
+                                    "text": "對方接受後，才會收到你的重要通知",
                                     "size": "xl",
                                     "color": GRAY,
                                     "wrap": True,
@@ -1382,7 +1382,7 @@ def welcome_flex(display_name: str | None = None):
                     "type": "button",
                     "action": {
                         "type": "uri",
-                        "label": "免費體驗 14 天",
+                        "label": "開始免費體驗 14 天",
                         "uri": setup_uri,
                     },
                     "style": "primary",

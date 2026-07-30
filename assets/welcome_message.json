@@ -102,7 +102,7 @@
               "contents": [
                 {
                   "type": "text",
-                  "text": "① 新增 1 位核心守護人",
+                  "text": "① 填寫自己的姓名與基本資料",
                   "weight": "bold",
                   "size": "xl",
                   "color": "#DB2777",
@@ -110,7 +110,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "讓重要的人在關鍵時刻收到通知",
+                  "text": "先完成自己的資料與每日提醒設定",
                   "size": "lg",
                   "color": "#555555",
                   "wrap": true
@@ -127,7 +127,7 @@
               "contents": [
                 {
                   "type": "text",
-                  "text": "② 設定每日提醒時間",
+                  "text": "② 邀請我的核心守護人",
                   "weight": "bold",
                   "size": "xl",
                   "color": "#DB2777",
@@ -135,7 +135,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "系統會在你設定的時間提醒你報平安",
+                  "text": "對方接受後，才會收到你的重要通知",
                   "size": "lg",
                   "color": "#555555",
                   "wrap": true
@@ -192,7 +192,7 @@
           "type": "button",
           "action": {
             "type": "uri",
-            "label": "免費體驗 14 天",
+            "label": "開始免費體驗 14 天",
             "uri": "https://liff.line.me/2010848330-UAiqPPYD?open=onboarding"
           },
           "style": "primary",
