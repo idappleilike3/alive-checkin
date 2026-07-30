@@ -1483,4 +1483,599 @@
             ? `<img src="${pic}" alt="" width="28" height="28" style="border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px;" loading="lazy" referrerpolicy="no-referrer">`
             : "";
           const btnLabel = isCore ? "取消核心優先" : "設為核心";
-          const btn = `<button type="button" class="plan-select" style="margin-top:4px;padding:2px 8px;font-size:12px;" onclick="setCoreGuardian('${ownerId}', '${cid}', '${gid}', ${isCore ? "fa
+          const btn = `<button type="button" class="plan-select" style="margin-top:4px;padding:2px 8px;font-size:12px;" onclick="setCoreGuardian('${ownerId}', '${cid}', '${gid}', ${isCore ? "false" : "true"})">${btnLabel}</button>`;
+          return `<div>${avatar}<strong>${i + 1}. ${name}${rel}${isCore ? "（核心）" : ""}</strong><br><small>LINE ID：${gid}</small> <span class="badge ${st === "accepted" ? "ok" : "warn"}">${st === "accepted" ? "已綁定" : st}</span><br>${btn}</div>`;
+        });
+        parts.push(`<div style="display:grid;gap:6px;min-width:180px;"><strong>守護你的人</strong><span class="badge ok">已綁定 ${count} 位</span><small>核心優先 ${core} 位</small>${lines.join("")}</div>`);
+      }
+      if (guarding.length) {
+        const gLines = guarding.map((g, i) => {
+          const name = g.display_name || "邀請人";
+          const gid = g.line_user_id || "-";
+          return `<div><strong>守護對象 ${i + 1}. ${name}</strong><br><small>LINE ID：${gid}</small></div>`;
+        }).join("");
+        parts.push(`<div style="display:grid;gap:4px;margin-top:10px;"><strong>你正在守護的人</strong><span class="badge ok">${guarding.length} 位</span>${gLines}</div>`);
+      }
+      return parts.join("") || `<div><span class="badge warn">已綁定 0 位</span></div>`;
+    }
+
+    function formatEmergencyContactsCell(user) {
+      const contacts = (Array.isArray(user.contacts) ? user.contacts : []).filter((contact) => {
+        const role = String(contact?.contact_role || contact?.type || contact?.kind || "guardian").toLowerCase();
+        return ["emergency", "emergency_contact", "聯絡人", "緊急聯絡人"].includes(role);
+      });
+      const limit = Number(user.emergency_contact_limit || 0);
+      if (!contacts.length) {
+        return `<strong>電話備援 0/${limit || "-"}</strong><br><small>尚未新增緊急聯絡人</small>`;
+      }
+      const rows = contacts.map((contact, index) => {
+        const name = escapeHtml(contact.name || contact.display_name || "未命名");
+        const relationship = escapeHtml(contact.relationship || "關係未填");
+        const phone = escapeHtml(contact.phone || contact.mobile || "電話未填");
+        return `<div><strong>${index + 1}. ${name}</strong><br><small>${relationship}／${phone}</small></div>`;
+      }).join("");
+      return `<div style="display:grid;gap:6px;min-width:160px;"><span class="badge warn">電話備援 ${contacts.length}/${limit || contacts.length}</span>${rows}</div>`;
+    }
+
+    async function loadBusinessDashboard() {
+      const res = await adminFetch("/api/admin/business-dashboard");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        $("ga4Status").textContent = "流量資料載入失敗";
+        $("ga4Hint").textContent = "請重新整理；若持續失敗，檢查管理員工作階段與伺服器紀錄。";
+        return;
+      }
+      const funnel = data.funnel || {};
+      const delivery = data.delivery || {};
+      const integrations = data.integrations || {};
+      const incidents = data.incidents || {};
+      const lineBudget = data.line_budget || {};
+      $("funnelRegistered").textContent = funnel.registered_members || 0;
+      $("funnelGuardian").textContent = funnel.members_with_guardian || 0;
+      $("funnelPaid").textContent = funnel.active_paid_members || 0;
+      $("deliveryRate").textContent = delivery.success_rate == null ? "尚無資料" : `${delivery.success_rate}%`;
+      $("incidentTotal").textContent = incidents.total_open || 0;
+      $("incidentSos").textContent = incidents.open_sos || 0;
+      $("incidentDelivery").textContent = incidents.delivery_failures || 0;
+      const canResolve = adminPermissions.includes("incident.manage");
+      $("incidentQueue").innerHTML = (incidents.items || []).length
+        ? incidents.items.map((item) => `
+          <div class="log-item">
+            <div><strong>${item.kind === "sos" ? `SOS｜${escapeHtml(item.owner_display_name || "會員")}` : "LINE 通知失敗"}</strong><br><small>${item.created_at || ""}</small></div>
+            <span>${item.kind === "sos"
+              ? `狀態：${escapeHtml(item.status || "等待回應")}<br>接手：${escapeHtml(item.primary_responder || "尚無")}<br>協助：${escapeHtml((item.assistants || []).join("、") || "尚無")}<br>通知成功 ${Number(item.sent_count) || 0}／失敗 ${Number(item.failed_count) || 0}｜升級第 ${Number(item.escalation_round) || 0} 輪`
+              : escapeHtml(item.notification_kind || item.incident_id || "")}</span>
+            ${canResolve
+              ? `<button type="button" onclick="resolveIncident('${item.kind}', '${item.incident_id}')">確認結案</button>`
+              : `<span class="badge">僅查看</span>`}
+          </div>
+        `).join("")
+        : `<div class="log-item"><span>目前沒有待處理事件</span><span></span><span class="badge ok">正常</span></div>`;
+      $("lineMessagesUsed").textContent = lineBudget.used || 0;
+      $("lineMessagesRemaining").textContent = lineBudget.remaining == null ? "—" : lineBudget.remaining;
+      $("lineUsagePercent").textContent = `${lineBudget.usage_percent || 0}%`;
+      $("lineBudgetStatus").textContent = lineBudget.status === "exceeded"
+        ? "已超過額度"
+        : lineBudget.status === "warning" ? "接近額度" : "正常";
+      $("lineHardStopStatus").textContent = lineBudget.hard_stop_active ? "已停止一般推播" : "未啟動";
+      $("lineHardStopHint").textContent = lineBudget.hard_stop_active
+        ? `已達 ${lineBudget.hard_stop_percent || 100}% 硬上限；一般提醒暫停，SOS 與安全事件保留。`
+        : `目前硬上限 ${lineBudget.hard_stop_percent || 100}%；達標時停止一般提醒，SOS 與安全事件保留。`;
+      const ga4 = integrations.ga4 || {};
+      $("ga4Status").textContent = ga4.tracking_configured
+        ? "GA4 流量追蹤已安裝"
+        : "GA4 流量追蹤尚未安裝";
+      $("ga4Hint").textContent = ga4.reporting_configured
+        ? `評估 ID ${ga4.measurement_id || ""} 已追蹤，後台報表讀取憑證也已設定。`
+        : `評估 ID ${ga4.measurement_id || ""} 已開始收集流量；後台讀取 GA4 報表仍需 Service Account JSON。`;
+      const line = integrations.line || {};
+      $("lineStatus").textContent = line.messaging_ready
+        ? "LINE 正式通道已設定"
+        : "LINE 正式通道尚未設定";
+      $("lineWebhookStatus").textContent = line.webhook_configured
+        ? `Webhook 已設定：${line.webhook_url || ""}；LIFF ${line.liff_configured ? "已設定" : "待設定"}。`
+        : "Webhook 尚未就緒；請確認 Channel Secret 與公開網址。";
+      const wordpress = integrations.wordpress || {};
+      $("wordpressStatus").textContent = wordpress.configured
+        ? "WordPress 串接：已連接"
+        : "WordPress 串接：尚未連接";
+      $("wordpressHint").textContent = wordpress.configured
+        ? "WordPress 網址、帳號與 Application Password 已安全設定。"
+        : "尚未建立 WordPress 網站；有網站後再到 Render 設定連線資料，不需要現在安裝主程式。";
+      const seoPages = (data.seo || {}).pages || [];
+      $("seoAuditList").innerHTML = seoPages.length
+        ? seoPages.map((page) => `
+          <div class="log-item">
+            <strong>${page.page}</strong>
+            <span>通過 ${page.passed}/${page.total} 項基礎檢查</span>
+            <span class="badge ${page.passed === page.total ? "ok" : "warn"}">${page.passed === page.total ? "完整" : "待補強"}</span>
+          </div>
+        `).join("")
+        : `<div class="log-item"><span>尚無可稽核頁面</span><span>請確認公開頁面檔案存在</span><span class="badge warn">待處理</span></div>`;
+    }
+
+    async function resolveIncident(kind, incidentId) {
+      if (!adminPermissions.includes("incident.manage")) {
+        $("message").textContent = "目前帳號沒有事件結案權限。";
+        return;
+      }
+      const resolutionNote = prompt("請輸入處理摘要（例如：已電話確認平安）", "");
+      if (resolutionNote === null) return;
+      const res = await adminFetch("/api/admin/incidents/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, incident_id: incidentId, resolution_note: resolutionNote })
+      });
+      const data = await res.json().catch(() => ({}));
+      $("message").textContent = res.ok ? "事件已結案並留下操作紀錄。" : (data.error || "事件結案失敗。");
+      if (res.ok) await loadBusinessDashboard();
+    }
+
+    async function loadOperationsControls() {
+      const privacyRes = await adminFetch("/api/admin/privacy-requests");
+      const privacyData = privacyRes.ok ? await privacyRes.json() : { requests: [] };
+      const canManagePrivacy = adminPermissions.includes("privacy.manage");
+      $("privacyRequestList").innerHTML = (privacyData.requests || []).length
+        ? privacyData.requests.map((item) => `
+          <div class="support-item">
+            <div class="support-meta">
+              <strong>${item.request_type || "查詢"}</strong>
+              <span>${item.created_at || ""}</span>
+              <span class="badge ${item.status === "completed" ? "ok" : "warn"}">${item.status || "pending"}</span>
+            </div>
+            <div>${item.summary || "使用者提出個資處理申請"}</div>
+            ${item.resolution_note ? `<small>處理摘要：${item.resolution_note}</small>` : ""}
+            ${canManagePrivacy && !["completed", "rejected"].includes(item.status)
+              ? `<div class="toolbar">
+                  <button type="button" onclick="updatePrivacyRequest('${item.id}', 'in_progress')">開始處理</button>
+                  <button type="button" onclick="updatePrivacyRequest('${item.id}', 'completed')">完成申請</button>
+                </div>`
+              : ""}
+          </div>
+        `).join("")
+        : `<div class="support-item">目前沒有隱私權申請</div>`;
+    }
+
+    async function updatePrivacyRequest(requestId, status) {
+      let resolutionNote = "";
+      if (["completed", "rejected"].includes(status)) {
+        const answer = prompt("請輸入處理摘要（必填）", "");
+        if (answer === null) return;
+        resolutionNote = answer.trim();
+        if (!resolutionNote) {
+          $("message").textContent = "完成或拒絕申請前，必須輸入處理摘要。";
+          return;
+        }
+      }
+      const res = await adminFetch("/api/admin/privacy-requests/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request_id: requestId, status, resolution_note: resolutionNote })
+      });
+      const data = await res.json().catch(() => ({}));
+      $("message").textContent = res.ok ? "隱私權申請狀態已更新。" : (data.error || "隱私權申請更新失敗。");
+      if (res.ok) await loadOperationsControls();
+    }
+
+    async function refresh() {
+      setAuthStatus("正在載入後台資料…", "is-loading");
+      const res = await adminFetch("/api/admin/summary");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setAuthStatus(authErrorText(data, res.status), "is-err");
+        return;
+      }
+      await loadBetaMembers();
+      await loadLineAcceptance();
+      await loadLaunchReadiness();
+      $("totalUsers").textContent = data.total_users;
+      $("checkedToday").textContent = data.checked_today;
+      $("warningUsers").textContent = data.warning_users;
+      $("overdueUsers").textContent = data.overdue_users;
+      $("guardianGroups").textContent = data.guardian_group_count || 0;
+      if ($("boundGuardians")) $("boundGuardians").textContent = data.bound_guardian_total || 0;
+      const inviteCounts = data.guardian_invite_counts || {};
+      $("pendingGuardianInvites").textContent = inviteCounts.pending || 0;
+      $("acceptedGuardianInvites").textContent = inviteCounts.accepted || 0;
+      $("expiredGuardianInvites").textContent = inviteCounts.expired || 0;
+      const persistNote = $("persistenceNote");
+      if (persistNote) {
+        const persist = data.persistence || {};
+        if (persist.ephemeral_warning) {
+          persistNote.hidden = false;
+          persistNote.style.color = "#9a3412";
+          persistNote.textContent = `⚠️ 資料可能因重啟遺失請掛磁碟 — ${persist.ephemeral_warning}（目前：${persist.backend || "?"}／${persist.data_file || "?"}）`;
+        } else if (persist.durable) {
+          persistNote.hidden = false;
+          persistNote.style.color = "#166534";
+          const backendLabel = persist.backend === "postgres" ? "外部 Postgres" : "持久化磁碟";
+          persistNote.textContent = `✅ ${backendLabel}：${persist.data_file || persist.db_path || "ok"}（綁定不會因重啟消失）`;
+        } else {
+          persistNote.hidden = false;
+          persistNote.style.color = "#9a3412";
+          persistNote.textContent = `⚠️ 資料可能因重啟遺失請掛磁碟 — 目前：${persist.data_file || "?"}（尚未確認持久化）`;
+        }
+      }
+      $("paidRevenue").textContent = `NT$${Number(data.paid_revenue || 0).toLocaleString("zh-TW")}`;
+      $("paidOrders").textContent = data.paid_order_count || 0;
+      $("pendingOrders").textContent = data.pending_order_count || 0;
+      const lineUsage = data.line_message_usage || {};
+      $("lineMessagesUsed").textContent = `${lineUsage.used_units || 0}／${lineUsage.quota || "未設定"}`;
+      $("lineMessagesProjected").textContent = lineUsage.projected_units || 0;
+      $("falseAlarmUnits").textContent = lineUsage.false_alarm_units || 0;
+      $("lineUsageAlert").textContent = lineUsage.alert_level === "critical_90"
+        ? "90% 緊急"
+        : (lineUsage.alert_level === "warning_70" ? "70% 注意" : "正常");
+      $("countyStatsBody").innerHTML = (data.county_stats || []).length
+        ? data.county_stats.map((row) => `
+          <tr>
+            <td><strong>${row.county}</strong></td>
+            <td>${row.members || 0}</td>
+            <td>${row.orders || 0}</td>
+            <td>${row.paid_orders || 0}</td>
+            <td>NT$${Number(row.revenue || 0).toLocaleString("zh-TW")}</td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="5">目前還沒有縣市資料</td></tr>`;
+      $("usersBody").innerHTML = data.users.length
+        ? data.users.map((user) => `
+          <tr>
+            <td>${memberNameCell(user)}</td>
+            <td>${user.line_user_id || "-"}</td>
+            <td>${statusBadge(user)}</td>
+            <td>${user.is_today_checked ? "已簽到 ♡" : "還沒"}</td>
+            <td>${formatDate(user.last_check_in)}</td>
+            <td><strong>${escapeHtml(user.last_checkin_area || "未提供")}</strong></td>
+            <td>
+              ${membershipCell(user)}
+              <select id="plan-select-${user.line_user_id}" class="plan-select" data-saved-plan="${membershipMode(user)}" style="margin-top:6px;">
+                ${["trial", "free", "beta_A", "beta_B399", "beta_B799", "paid_199", "paid_199_year", "paid_399", "paid_399_year", "paid_799", "paid_799_year"].map((plan) =>
+                  `<option value="${plan}" ${membershipMode(user) === plan ? "selected" : ""}>${membershipModeLabels[plan] || planLabel(plan)}</option>`
+                ).join("")}
+              </select>
+              <button type="button" class="plan-save-button" style="margin-top:6px;" onclick="savePlanForMember('${user.line_user_id}')">儲存方案</button>
+              <small id="plan-status-${user.line_user_id}" role="status" aria-live="polite" style="display:block;margin-top:6px;"></small>
+            </td>
+            <td><span class="badge ${user.payment_status === "active" ? "ok" : user.payment_status === "expired" ? "bad" : "warn"}">${paymentLabel(user.payment_status)}</span></td>
+            <td><strong>${expiryText(user)}</strong></td>
+            <td><strong>${trialText(user)}</strong></td>
+            <td>${formatBoundGuardiansCell(user)}</td>
+            <td>${formatEmergencyContactsCell(user)}</td>
+            <td>${(user.guardian_group_ids || []).length}/${user.guardian_group_limit || 0}</td>
+            <td>${user.grace_hours} 小時</td>
+            <td>${user.reminder_time}</td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="15">還沒有 LINE 使用者進來簽到。</td></tr>`;
+      const selectedBetaMember = $("betaLineUserId").value;
+      $("betaLineUserId").innerHTML = `<option value="">請選擇會員</option>` + (data.users || []).map((user) => {
+        const lineUserId = String(user.line_user_id || "");
+        const displayName = String(user.display_name || "未取得暱稱");
+        return `<option value="${escapeHtml(lineUserId)}" ${lineUserId === selectedBetaMember ? "selected" : ""}>${escapeHtml(displayName)}｜${escapeHtml(lineUserId)}</option>`;
+      }).join("");
+      $("ordersBody").innerHTML = (data.orders || []).length
+        ? data.orders.map((order) => `
+          <tr>
+            <td>${order.order_id || "-"}</td>
+            <td>${order.display_name || order.line_user_id || "-"}</td>
+            <td>${planLabel(order.plan)}</td>
+            <td>NT$${Number(order.amount || 0).toLocaleString("zh-TW")}</td>
+            <td><span class="badge ${order.status === "paid" ? "ok" : "warn"}">${order.status === "paid" ? "已付款" : "待付款"}</span></td>
+            <td>${formatDate(order.created_at)}</td>
+            <td>${order.paid_at ? formatDate(order.paid_at) : "-"}</td>
+            <td>
+              ${order.status === "paid" || order.status === "partially_refunded"
+                ? `<button type="button" onclick="refundPaymentOrder('${order.order_id}', ${Number(order.amount || 0)}, ${Number(order.refunded_amount || 0)})">退款（可退 NT$${Math.max(0, Number(order.amount || 0) - Number(order.refunded_amount || 0)).toLocaleString("zh-TW")}）</button>`
+                : (order.status === "refunded" ? "已全額退款" : "-")}
+            </td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="8">目前沒有付款訂單</td></tr>`;
+      $("logList").innerHTML = (data.notification_logs || []).length
+        ? data.notification_logs.map((log) => `
+          <div class="log-item">
+            <div>
+              <strong>${logKindLabel(log.kind)}</strong><br>
+              <small>${log.created_at || ""}</small>
+            </div>
+            <div>
+              <strong>${log.line_user_id || "-"}</strong><br>
+              <small>${log.message || ""}</small>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+              <span class="badge ${log.status === "sent" ? "ok" : "bad"}">${log.status === "sent" ? "成功" : "失敗"}</span>
+              ${log.status !== "sent" && log.detail ? (() => { const e = (s) => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); return `<small style="color:#c0392b;max-width:320px;word-break:break-all;text-align:right;line-height:1.3">${e(log.detail)}</small>`; })() : ""}
+            </div>
+          </div>
+        `).join("")
+        : `<div class="log-item"><span>還沒有推播紀錄</span><span></span><span></span></div>`;
+      $("dailyPushStatsBody").innerHTML = (data.daily_push_member_stats || []).length
+        ? data.daily_push_member_stats.map((row) => `
+          <tr>
+            <td>${escapeHtml(row.date || "-")}</td>
+            <td><strong>${escapeHtml(row.display_name || "未取得暱稱")}</strong><br><small>${escapeHtml(row.line_user_id || "-")}</small></td>
+            <td>${escapeHtml(planLabel(row.plan || "free"))}</td>
+            <td>${row.expires_at ? escapeHtml(formatDate(row.expires_at)) : "無到期日"}</td>
+            <td><span class="badge ok">${Number(row.sent_count || 0)}</span></td>
+            <td><span class="badge ${Number(row.failed_count || 0) ? "bad" : "ok"}">${Number(row.failed_count || 0)}</span></td>
+            <td><strong>${Number(row.total_count || 0)}</strong></td>
+            <td>${(row.kinds || []).map((kind) => escapeHtml(logKindLabel(kind))).join("、") || "-"}</td>
+            <td>
+              ${row.last_push_at ? escapeHtml(formatDate(row.last_push_at)) : "-"}
+              ${row.latest_failure_detail
+                ? `<br><small style="color:#c0392b;max-width:360px;display:inline-block;word-break:break-all;">最近失敗：${escapeHtml(row.latest_failure_detail)}</small>`
+                : ""}
+            </td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="9">目前還沒有推播統計</td></tr>`;
+      $("rewardList").innerHTML = (data.contact_rewards || []).length
+        ? data.contact_rewards.map((reward) => `
+          <div class="reward-item">
+            <div>
+              <strong>邀請人</strong><br>
+              <small>${reward.inviter_display_name || ""} ${reward.inviter_line_user_id || "-"}</small>
+            </div>
+            <div>
+              <strong>綁定聯絡人</strong><br>
+              <small>${reward.contact_display_name || ""} ${reward.contact_line_user_id || "-"}</small>
+            </div>
+            <span class="badge ok">${reward.status || "available"}</span>
+          </div>
+        `).join("")
+        : `<div class="reward-item"><span>還沒有綁定獎勵紀錄</span><span></span><span></span></div>`;
+      if ($("inviteEdgeList")) {
+        $("inviteEdgeList").innerHTML = (data.invite_edges || []).length
+          ? data.invite_edges.map((edge) => `
+            <div class="reward-item">
+              <div>
+                <strong>邀請人（被守護）</strong><br>
+                <small>${edge.inviter_display_name || ""} ${edge.inviter_line_user_id || "-"}</small>
+              </div>
+              <div>
+                <strong>守護人（LINE 已綁）</strong><br>
+                <small>${edge.guardian_display_name || ""} ${edge.guardian_line_user_id || "-"}</small>
+              </div>
+              <span class="badge ${edge.binding_status === "accepted" ? "ok" : "warn"}">${edge.binding_status || "-"}</span>
+            </div>
+          `).join("")
+          : `<div class="reward-item"><span>尚無 LINE 邀請綁定關係</span><span></span><span></span></div>`;
+      }
+      await refreshAccountMigrations();
+      const ticketRes = await adminFetch("/api/admin/support-tickets");
+      const ticketData = ticketRes.ok ? await ticketRes.json() : { tickets: [] };
+      $("supportList").innerHTML = (ticketData.tickets || []).length
+        ? ticketData.tickets.map((ticket) => `
+          <div class="support-item">
+            <div class="support-meta">
+              <strong>${ticket.display_name || "LINE 使用者"}</strong>
+              <span>${ticket.line_user_id || "-"}</span>
+              <span>${ticket.created_at || ""}</span>
+              <span class="badge ${ticket.status === "resolved" ? "ok" : "warn"}">${ticket.status || "submitted"}</span>
+            </div>
+            <div>${ticket.category || "其他"}｜${ticket.subject || "客服工單"}</div>
+            <div>${ticket.message || ""}</div>
+            ${ticket.reply ? `<small>已回覆：${ticket.reply}</small>` : ""}
+            <div class="support-meta" style="margin-top:8px;">
+              <span>請至 LINE Official Account Manager 聊天室回覆</span>
+              <span>預計 1–3 個工作天內處理</span>
+            </div>
+          </div>
+        `).join("")
+        : `<div class="support-item">目前沒有客服訊息</div>`;
+      await loadBusinessDashboard();
+      await loadOperationsControls();
+      await refreshBackups();
+      await loadTestCenter();
+      setAuthStatus(`資料已載入（已綁守護人 ${data.bound_guardian_total || 0}、邀請關係 ${(data.invite_edges || []).length}）。`, "is-ok");
+    }
+
+    async function refreshBackups() {
+      const res = await adminFetch("/api/admin/backups");
+      const data = res.ok ? await res.json() : { backups: [] };
+      $("backupsBody").innerHTML = (data.backups || []).length
+        ? data.backups.map((backup) => `
+          <tr>
+            <td>${backup.id}</td>
+            <td>${formatDate(backup.created_at)}</td>
+            <td>${backup.user_count || 0}</td>
+            <td><button type="button" onclick="downloadBackup('${backup.id}')">再次下載</button></td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="4">目前還沒有備份紀錄</td></tr>`;
+    }
+
+    async function createBackup() {
+      const res = await adminFetch("/api/admin/backups", { method: "POST" });
+      const data = await res.json();
+      $("message").textContent = res.ok
+        ? `備份 ${data.backup.id} 已完成。`
+        : data.error || "備份失敗，請稍後再試。";
+      if (res.ok) await refreshBackups();
+    }
+
+    async function downloadBackup(backupId) {
+      const res = await adminFetch(`/api/admin/backups/${encodeURIComponent(backupId)}`);
+      const data = await res.json();
+      if (!res.ok) {
+        $("message").textContent = data.error || "備份檔案下載失敗。";
+        return;
+      }
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${backupId}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      $("message").textContent = `備份 ${backupId} 已下載。`;
+    }
+
+    async function sendReminders() {
+      if (!confirm("要推播提醒所有逾期使用者嗎？")) return;
+      const res = await adminFetch("/api/admin/send-reminders", { method: "POST" });
+      const data = await res.json();
+      $("message").textContent = res.ok
+        ? `已送出 ${data.sent} 則提醒。`
+        : data.error || "推播失敗，請檢查 LINE 設定。";
+      await refresh();
+    }
+
+    async function sendContactReminders() {
+      if (!confirm("要推播提醒未填緊急聯絡人的使用者嗎？")) return;
+      const res = await adminFetch("/api/admin/send-contact-reminders", { method: "POST" });
+      const data = await res.json();
+      $("message").textContent = res.ok
+        ? `已送出 ${data.sent} 則緊急聯絡人提醒。`
+        : data.error || "推播失敗，請檢查 LINE 設定。";
+      await refresh();
+    }
+
+    async function sendRenewalReminders() {
+      if (!confirm("要推播提醒 7 天內即將到期的會員嗎？")) return;
+      const res = await adminFetch("/api/admin/send-renewal-reminders", { method: "POST" });
+      const data = await res.json();
+      $("message").textContent = res.ok
+        ? `已送出 ${data.sent} 則續費提醒。`
+        : data.error || "續費提醒失敗，請檢查 LINE 設定。";
+      await refresh();
+    }
+
+    async function sendBirthdayReminders() {
+      if (!confirm("要推播今天符合條件的家人生日提醒嗎？")) return;
+      const res = await adminFetch("/api/admin/send-birthday-reminders", { method: "POST" });
+      const data = await res.json();
+      $("message").textContent = res.ok
+        ? `已送出 ${data.sent} 則生日提醒。`
+        : data.error || "生日提醒失敗，請檢查 LINE 設定。";
+      await refresh();
+    }
+
+    async function deployRichMenu() {
+      if (!confirm("要用伺服器上的 LINE token 上傳並設為預設圖文選單嗎？")) return;
+      $("message").textContent = "圖文選單上傳中…";
+      const res = await adminFetch("/api/admin/rich-menu/deploy", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        $("message").textContent = `圖文選單已設為預設：${data.richMenuId || ""}（${data.name || ""}）`;
+      } else {
+        $("message").textContent = data.error
+          ? `圖文選單上傳失敗：${typeof data.error === "string" ? data.error : JSON.stringify(data.error)}`
+          : "圖文選單上傳失敗，請確認後台密碼與 Render 的 LINE token。";
+      }
+    }
+
+    $("adminLoginForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      adminAuthGeneration += 1;
+      const generation = adminAuthGeneration;
+      const loginBtn = $("loginBtn");
+      loginBtn.disabled = true;
+      $("loginStatus").textContent = "";
+      try {
+        const response = await fetch("/api/admin/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ password: $("adminPassword").value })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (generation !== adminAuthGeneration) return;
+        if (!response.ok) return showLogin("密碼不正確，請再試一次。");
+        $("adminPassword").value = "";
+        adminCsrfToken = data.csrf_token || "";
+        applyAdminAccess(data.role, data.permissions);
+        showDashboard();
+        await refresh();
+      } catch (error) {
+        if (generation !== adminAuthGeneration || error.message === "admin_session_expired") return;
+        showLogin("連線失敗，請稍後再試。");
+      } finally {
+        if (generation === adminAuthGeneration) $("loginBtn").disabled = false;
+      }
+    });
+
+    $("logoutBtn").addEventListener("click", async () => {
+      adminAuthGeneration += 1;
+      const generation = adminAuthGeneration;
+      try {
+        await adminFetch("/api/admin/logout", { method: "POST" });
+        if (generation !== adminAuthGeneration) return;
+        showLogin("已安全登出。");
+      } catch (error) {
+        if (error.message !== "admin_session_expired") console.warn(error);
+      }
+    });
+
+    $("refreshBtn").addEventListener("click", async (event) => {
+      event.preventDefault();
+      try {
+        await refresh();
+      } catch (error) {
+        if (error.message !== "admin_session_expired") console.warn(error);
+      }
+    });
+    const betaAssignForm = $("betaAssignForm");
+    if (betaAssignForm) {
+      betaAssignForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await adminFetch("/api/admin/beta-members", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            line_user_id: $("betaLineUserId").value.trim(),
+            cohort: $("betaCohort").value,
+            source: $("betaSource").value.trim()
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        $("betaStatus").textContent = response.ok ? "已加入 21 天封閉測試。" : authErrorText(data, response.status);
+        if (response.ok) {
+          renderBetaMembers(data.beta || {});
+          $("betaLineUserId").value = "";
+        }
+      });
+    }
+    const lineAcceptanceForm = $("lineAcceptanceForm");
+    if (lineAcceptanceForm) {
+      lineAcceptanceForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await adminFetch("/api/admin/line-acceptance", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            line_user_id: $("lineAcceptanceMember").value.trim(),
+            kind: $("lineAcceptanceKind").value
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        $("lineAcceptanceStatus").textContent = response.ok ? "已建立待手機確認的驗收紀錄。" : authErrorText(data, response.status);
+        if (response.ok) {
+          $("lineAcceptanceMember").value = "";
+          await loadLineAcceptance();
+        }
+      });
+    }
+    $("contactRemindBtn").addEventListener("click", sendContactReminders);
+    $("remindBtn").addEventListener("click", sendReminders);
+    $("renewalRemindBtn").addEventListener("click", sendRenewalReminders);
+    $("birthdayRemindBtn").addEventListener("click", sendBirthdayReminders);
+    $("createBackupBtn").addEventListener("click", createBackup);
+    $("richMenuDeployBtn").addEventListener("click", deployRichMenu);
+    let autoRefreshAdminBusy = false;
+    async function autoRefreshAdmin() {
+      if (document.visibilityState !== "visible" || $("adminShell").hidden || autoRefreshAdminBusy) return;
+      autoRefreshAdminBusy = true;
+      try {
+        await refresh();
+      } catch (error) {
+        console.warn(error);
+      } finally {
+        autoRefreshAdminBusy = false;
+      }
+    }
+    setTimeout(restoreAdminSession, 0);
+    setInterval(autoRefreshAdmin, 20000);
+  </script>
+</body>
+</html>
