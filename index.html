@@ -6521,10 +6521,11 @@
       const fallbackUrl = landingUrl;
       const nameText = nickname ? `嗨 ${nickname}，` : "";
       const text = (
-        `${nameText}我想邀請你成為「每日平安」的守護人\n` +
-        `有緊急或我沒報平安時，系統會通知你\n` +
-        `請先加入 LINE 官方帳號「每日平安」，再點下面連結完成綁定\n` +
-        `${bindUrl}`
+        `${nameText}❤️ 我想邀請你成為我的安心守護人\n\n` +
+        `因為你是我信任的人，希望在我忘記報平安或需要幫助時，你能第一時間收到提醒。\n` +
+        `平常不打擾，只有需要時才通知你。\n\n` +
+        `點開連結，確認是否願意守護我：\n${bindUrl}\n\n` +
+        `這次只會由你守護我，不會自動互相綁定。`
       );
       return { bindUrl, fallbackUrl, text };
     }
@@ -9267,8 +9268,12 @@
       }
       const trialUrl = `${window.location.origin}/trial-14.html`;
       const text = (
-        `我正在使用「每日平安」，每天 10 秒就能讓家人放心。\n` +
-        `送你免費體驗 14 天，不用刷卡、不會自動扣款：\n${trialUrl}`
+        `🌿 送你 14 天安心體驗\n\n` +
+        `每天只要 10 秒報平安，讓在乎你的人知道你今天一切都好。\n` +
+        `平常不打擾，忘記報平安或需要幫助時，才會通知你指定的守護人。\n\n` +
+        `免費體驗 14 天、不會自動扣款：\n${trialUrl}\n\n` +
+        `開始體驗後，需要邀請至少一位親友成為你的守護人；對方接受後，安心連結才算建立完成。\n` +
+        `這是替自己建立每日平安，不會自動互相綁定。`
       );
       const shared = await tryLineShareTargetPicker(text);
       if (!shared) {
