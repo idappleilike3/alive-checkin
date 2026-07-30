@@ -9584,11 +9584,12 @@
           })
           .catch(() => ({}));
 
-        // LIFF links may be configured to open in LINE's external browser.
-        // In either browser mode, continue into LINE Login instead of leaving
-        // the user stranded on the Render endpoint without credentials.
         if (!liff.isLoggedIn()) {
-          startLineLogin(readSafeDeepLinkParams());
+          if (typeof liff.isInClient === "function" && liff.isInClient()) {
+            startLineLogin(readSafeDeepLinkParams());
+          } else {
+            showLineEntryGate("login");
+          }
           return false;
         }
 
