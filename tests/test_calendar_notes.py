@@ -463,12 +463,24 @@ class CalendarNotesTests(unittest.TestCase):
     def test_smart_reminder_editor_requires_full_date_time_and_supports_editing(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
 
+        self.assertIn('{ id: "memo", emoji: "📝", label: "一般備忘" }', page)
+        self.assertIn('fillSmartReminderCategoryOptions(existing ? existing.category : "memo")', page)
         self.assertIn("完整日期（西元年／月／日）", page)
         self.assertIn('id="smartReminderDate" type="date" required', page)
         self.assertIn('id="smartReminderTime" type="time" value="09:00" required', page)
         self.assertIn("生日／紀念日可選每年重複；吃藥、回診等預設單次提醒", page)
         self.assertIn('class="action-btn smart-edit-btn"', page)
         self.assertIn(">修改<", page)
+
+    def test_general_memo_is_single_timed_line_reminder_without_eve_push(self):
+        source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+        self.assertIn('"memo": {"emoji": "📝", "label": "一般備忘"}', source)
+        self.assertIn('category = str(raw.get("category") or "memo")', source)
+        self.assertIn('if category == "memo":\n        eve_remind = False', source)
+        self.assertIn('"memo": f"📝 備忘提醒：{label}"', source)
+        self.assertIn('title = "📝 備忘提醒"', source)
+        self.assertIn('alt = f"備忘提醒：{name}"', source)
 
 
 if __name__ == "__main__":

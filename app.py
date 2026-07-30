@@ -15623,6 +15623,7 @@ def send_birthday_reminders(config):
 
 # === 799 智能提醒（生活提醒：只走 LINE 私訊，預設不進守護群）===
 SMART_REMINDER_CATEGORIES = {
+    "memo": {"emoji": "📝", "label": "一般備忘"},
     "birthday": {"emoji": "🎂", "label": "生日"},
     "wedding": {"emoji": "💍", "label": "結婚紀念日"},
     "dating": {"emoji": "💕", "label": "交往紀念日"},
@@ -15649,7 +15650,7 @@ def plan_has_smart_reminders(profile, now=None):
 
 def normalize_smart_reminder(raw, index=0):
     raw = raw if isinstance(raw, dict) else {}
-    category = str(raw.get("category") or "custom").strip().lower()
+    category = str(raw.get("category") or "memo").strip().lower()
     if category not in SMART_REMINDER_CATEGORIES:
         category = "custom"
     meta = SMART_REMINDER_CATEGORIES[category]
@@ -15683,9 +15684,14 @@ def normalize_smart_reminder(raw, index=0):
     category_label = meta["label"]
     if category == "custom" and custom_title:
         category_label = custom_title
+    if category == "memo":
+        category_label = custom_title or str(raw.get("note") or "").strip()[:80] or "一般備忘"
     rid = str(raw.get("id") or "").strip() or f"sr_{secrets.token_hex(6)}"
     notify_private = True  # product: 智能提醒只走私訊
     notify_group = False
+    eve_remind = bool(raw.get("eve_remind", True))
+    if category == "memo":
+        eve_remind = False
     delivery_target = str(raw.get("delivery_target") or "private").strip()
     if not (delivery_target == "private" or delivery_target.startswith("guardian:")):
         delivery_target = str(raw.get("delivery_target") or "private").strip()
@@ -15704,7 +15710,7 @@ def normalize_smart_reminder(raw, index=0):
         "notify_private": notify_private,
         "notify_group": notify_group,
         "delivery_target": delivery_target,
-        "eve_remind": bool(raw.get("eve_remind", True)),
+        "eve_remind": eve_remind,
         "enabled": bool(raw.get("enabled", True)),
         "created_at": str(raw.get("created_at") or datetime.now().isoformat(timespec="seconds")),
         "updated_at": str(raw.get("updated_at") or ""),
@@ -15743,6 +15749,7 @@ def smart_reminder_canned_wish(reminder):
     cat = reminder.get("category") or "custom"
     label = reminder.get("category_label") or SMART_REMINDER_CATEGORIES.get(cat, {}).get("label", "日子")
     templates = {
+        "memo": f"📝 備忘提醒：{label}",
         "birthday": f"🎂 {name}，生日快樂！願你今天被溫柔包圍，平安健康每一天 ❤️",
         "wedding": f"💍 親愛的{name}，結婚紀念日快樂！感謝一路上的陪伴與包容 ❤️",
         "dating": f"💕 {name}，交往紀念日快樂！謝謝你讓平凡日子變得特別。",
@@ -15791,7 +15798,16 @@ def build_smart_reminder_flex(reminder, *, mode="day"):
         ]
         alt = f"明天是{name}的{label}"
     else:
-        if (reminder.get("category") or "") == "birthday":
+        if (reminder.get("category") or "") == "memo":
+            title = "📝 備忘提醒"
+            body = f"{name}\n時間：{date_text} {reminder.get('remind_time') or '09:00'}"
+            if reminder.get("note"):
+                body += f"\n備註：{reminder.get('note')}"
+            buttons = [
+                {"type": "button", "action": {"type": "postback", "label": "✅已完成", "data": f"smart:blessed:{rid}", "displayText": "已完成"}, "style": "primary", "color": "#2563EB", "height": "sm"},
+                {"type": "button", "action": {"type": "postback", "label": "⏰晚點提醒我", "data": f"smart:snooze:{rid}", "displayText": "晚點提醒我"}, "style": "secondary", "height": "sm"},
+            ]
+        elif (reminder.get("category") or "") == "birthday":
             title = f"🎂 今天是{name}的生日"
             body = f"別忘了送上一句祝福 ❤️\n姓名：{name}\n今天：{date_text}"
             buttons = [
@@ -15817,7 +15833,7 @@ def build_smart_reminder_flex(reminder, *, mode="day"):
                 {"type": "button", "action": {"type": "postback", "label": "✅已完成", "data": f"smart:blessed:{rid}", "displayText": "已完成"}, "style": "secondary", "height": "sm"},
                 {"type": "button", "action": {"type": "postback", "label": "⏰晚點提醒我", "data": f"smart:snooze:{rid}", "displayText": "晚點提醒我"}, "style": "secondary", "height": "sm"},
             ]
-        alt = f"今天是{name}的{label}"
+        alt = f"備忘提醒：{name}" if (reminder.get("category") or "") == "memo" else f"今天是{name}的{label}"
     return {
         "type": "flex",
         "altText": alt,

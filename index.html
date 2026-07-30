@@ -5039,12 +5039,12 @@
   <div class="modal-backdrop" id="smartReminderEditorModal" hidden>
     <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="smartReminderEditorTitle" style="max-height:88vh;overflow-y:auto;overscroll-behavior:contain;">
       <h2 id="smartReminderEditorTitle">新增日期提醒</h2>
-      <p class="helper">生日、吃藥、回診等提醒才會推播。請選擇完整日期與提醒時間；預設只通知自己，不會送到守護群。</p>
+      <p class="helper">一般備忘、生日、吃藥、回診等可設定 LINE 推播。請選擇完整日期與提醒時間；預設只通知自己，不會送到守護群。</p>
       <p class="helper">生日／紀念日可選每年重複；吃藥、回診等預設單次提醒。通知自己每天最多 2 則。</p>
       <p class="helper" id="smartReminderDailyUsage">今日日期提醒已使用 0／2 則</p>
       <div class="smart-editor-fields">
-        <label for="smartReminderName">對象名稱
-          <input id="smartReminderName" type="text" maxlength="40" placeholder="例如：媽媽" autocomplete="name">
+        <label for="smartReminderName">提醒主旨
+          <input id="smartReminderName" type="text" maxlength="40" placeholder="例如：繳費、媽媽生日、下午回診">
         </label>
         <label for="smartReminderCategory">類型
           <select id="smartReminderCategory"></select>
@@ -6908,6 +6908,7 @@
       const categories = (smartReminderCache.categories && smartReminderCache.categories.length)
         ? smartReminderCache.categories
         : [
+          { id: "memo", emoji: "📝", label: "一般備忘" },
           { id: "birthday", emoji: "🎂", label: "生日" },
           { id: "wedding", emoji: "💍", label: "結婚紀念日" },
           { id: "checkup", emoji: "💊", label: "回診" },
@@ -6917,7 +6918,7 @@
           { id: "custom", emoji: "🗓️", label: "自訂" }
         ];
       select.innerHTML = categories.map((c) =>
-        `<option value="${escapeHtml(c.id)}" ${(selected || "birthday") === c.id ? "selected" : ""}>${escapeHtml((c.emoji || "") + " " + (c.label || c.id))}</option>`
+        `<option value="${escapeHtml(c.id)}" ${(selected || "memo") === c.id ? "selected" : ""}>${escapeHtml((c.emoji || "") + " " + (c.label || c.id))}</option>`
       ).join("");
       syncSmartReminderCustomTitleVisibility();
     }
@@ -6939,7 +6940,7 @@
       const modal = $("smartReminderEditorModal");
       const title = $("smartReminderEditorTitle");
       if (title) title.textContent = existing ? "編輯日期提醒" : "新增日期提醒";
-      fillSmartReminderCategoryOptions(existing ? existing.category : "birthday");
+      fillSmartReminderCategoryOptions(existing ? existing.category : "memo");
       if ($("smartReminderName")) $("smartReminderName").value = existing ? (existing.target_name || "") : "";
       if ($("smartReminderCustomTitle")) $("smartReminderCustomTitle").value = existing ? (existing.custom_title || "") : "";
       if ($("smartReminderNote")) $("smartReminderNote").value = existing ? (existing.note || "") : "";
@@ -6963,7 +6964,7 @@
       const yearly = $("smartReminderYearly");
       if (yearly) {
         const isYearly = !(existing && existing.year);
-        yearly.checked = existing ? isYearly : smartReminderCategoryRepeatsYearly("birthday");
+        yearly.checked = existing ? isYearly : false;
       }
       const dateEl = $("smartReminderDate");
       if (dateEl) {
@@ -7000,7 +7001,7 @@
     async function submitSmartReminderEditor() {
       if (!requireMemberActionReady("data")) return false;
       const name = String(($("smartReminderName") && $("smartReminderName").value) || "").trim();
-      const category = String(($("smartReminderCategory") && $("smartReminderCategory").value) || "birthday").trim();
+      const category = String(($("smartReminderCategory") && $("smartReminderCategory").value) || "memo").trim();
       const customTitle = String(($("smartReminderCustomTitle") && $("smartReminderCustomTitle").value) || "").trim();
       const dateVal = String(($("smartReminderDate") && $("smartReminderDate").value) || "").trim();
       const timeVal = String(($("smartReminderTime") && $("smartReminderTime").value) || "09:00").trim();
@@ -7008,7 +7009,7 @@
       const deliveryTarget = String(($("smartReminderDeliveryTarget") && $("smartReminderDeliveryTarget").value) || "private");
       const yearly = Boolean($("smartReminderYearly") && $("smartReminderYearly").checked);
       if (!name) {
-        alert("請填寫對象名稱");
+        alert("請填寫提醒主旨");
         return;
       }
       if (category === "custom" && !customTitle) {
@@ -7035,7 +7036,7 @@
         delivery_target: deliveryTarget,
         notify_private: true,
         notify_group: false,
-        eve_remind: true,
+        eve_remind: category !== "memo",
         enabled: smartReminderEditingId
           ? ((smartReminderCache.reminders || []).find((row) => row.id === smartReminderEditingId)?.enabled !== false)
           : true,
