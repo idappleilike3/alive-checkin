@@ -5827,7 +5827,9 @@
         plan_expires_text: status.plan_expires_text || "",
         billing_cycle: status.billing_cycle || "",
         payment_status: status.payment_status || "",
-        paid_until: status.paid_until || ""
+        paid_until: status.paid_until || "",
+        is_today_checked: status.is_today_checked === true,
+        checkin_date: status.is_today_checked === true ? getToday() : ""
       };
       try {
         localStorage.setItem(
@@ -5872,6 +5874,16 @@
           || status.paid_until
           || (plan === "trial" ? "試用中" : "尚未設定");
       }
+      return true;
+    }
+
+    function renderCachedCheckinStatus(userId) {
+      const status = readCachedMemberStatus(userId);
+      if (!status || status.is_today_checked !== true || status.checkin_date !== getToday()) {
+        return false;
+      }
+      syncCheckBtn({ is_today_checked: true });
+      if ($("dailyStatus")) $("dailyStatus").textContent = "今日已簽到";
       return true;
     }
 
@@ -9379,6 +9391,8 @@
         if (!lineUserId) return false;
         // 先顯示上次已驗證的方案摘要；正式資料在背景載入後立即覆蓋。
         renderCachedMemberStatus(lineUserId);
+        // 同一天已由後端確認報平安時，先立即顯示完成狀態；跨日快取不採用。
+        renderCachedCheckinStatus(lineUserId);
 
         const betaCohort = String(getAppParam("beta_cohort") || "").trim().toUpperCase();
         const inviteFrom = String(getAppParam("invite_from") || "").trim();
@@ -10685,6 +10699,7 @@
           result.is_today_checked = true;
           const today = getToday();
           result.history = Array.from(new Set([...(result.history || []), today]));
+          writeCachedMemberStatus(lineUserId, result);
         }
         renderStatus(result);
         showCheckinSuccessMessage(result || currentStatusData);

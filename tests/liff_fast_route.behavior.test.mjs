@@ -153,6 +153,130 @@ test("first status renders without waiting for contacts or onboarding", async ()
   await result;
 });
 
+test("same-day confirmed check-in cache renders before the status request finishes", () => {
+  const rendered = [];
+  const storage = new Map();
+  storage.set(
+    "alive_member_status_v1:U123",
+    JSON.stringify({
+      saved_at: Date.now(),
+      status: {
+        plan: "trial",
+        is_today_checked: true,
+        checkin_date: "2026-07-30",
+      },
+    }),
+  );
+  const elements = {
+    dailyStatus: { textContent: "" },
+  };
+  const sandbox = expose(
+    [
+      functionSource("memberStatusCacheKey"),
+      functionSource("readCachedMemberStatus"),
+      functionSource("renderCachedCheckinStatus"),
+    ].join("\n"),
+    ["renderCachedCheckinStatus"],
+    {
+      MEMBER_STATUS_CACHE_PREFIX: "alive_member_status_v1:",
+      MEMBER_STATUS_CACHE_MAX_AGE_MS: 24 * 60 * 60 * 1000,
+      Date,
+      localStorage: { getItem: (key) => storage.get(key) || null },
+      getToday: () => "2026-07-30",
+      syncCheckBtn: (status) => rendered.push(status),
+      $: (id) => elements[id] || null,
+    },
+  );
+
+  assert.equal(sandbox.renderCachedCheckinStatus("U123"), true);
+  assert.equal(rendered.length, 1);
+  assert.equal(rendered[0].is_today_checked, true);
+  assert.equal(elements.dailyStatus.textContent, "今日已簽到");
+});
+
+test("yesterday's confirmed check-in cache never renders as checked today", () => {
+  const rendered = [];
+  const storage = new Map();
+  storage.set(
+    "alive_member_status_v1:U123",
+    JSON.stringify({
+      saved_at: Date.now(),
+      status: {
+        plan: "trial",
+        is_today_checked: true,
+        checkin_date: "2026-07-29",
+      },
+    }),
+  );
+  const sandbox = expose(
+    [
+      functionSource("memberStatusCacheKey"),
+      functionSource("readCachedMemberStatus"),
+      functionSource("renderCachedCheckinStatus"),
+    ].join("\n"),
+    ["renderCachedCheckinStatus"],
+    {
+      MEMBER_STATUS_CACHE_PREFIX: "alive_member_status_v1:",
+      MEMBER_STATUS_CACHE_MAX_AGE_MS: 24 * 60 * 60 * 1000,
+      Date,
+      localStorage: { getItem: (key) => storage.get(key) || null },
+      getToday: () => "2026-07-30",
+      syncCheckBtn: (status) => rendered.push(status),
+      $: () => null,
+    },
+  );
+
+  assert.equal(sandbox.renderCachedCheckinStatus("U123"), false);
+  assert.equal(rendered.length, 0);
+});
+
+test("successful check-in immediately persists today's confirmed state", async () => {
+  const storage = new Map();
+  const button = {
+    disabled: false,
+    dataset: { state: "pending" },
+    setAttribute() {},
+    innerHTML: "",
+  };
+  const sandbox = expose(
+    [
+      functionSource("memberStatusCacheKey"),
+      functionSource("writeCachedMemberStatus"),
+      functionSource("doCheckin"),
+    ].join("\n"),
+    ["doCheckin"],
+    {
+      MEMBER_STATUS_CACHE_PREFIX: "alive_member_status_v1:",
+      CHECK_BTN_LOADING_HTML: "loading",
+      requireMemberActionReady: () => true,
+      useLocalMode: false,
+      lineUserId: "U123",
+      appBootstrapPromise: null,
+      appBootstrapComplete: true,
+      currentStatusData: null,
+      getToday: () => "2026-07-30",
+      apiCheckin: async () => ({ ok: true, plan: "trial", history: [] }),
+      localStorage: { setItem: (key, value) => storage.set(key, value) },
+      $: (id) => (id === "checkBtn" ? button : null),
+      hideInlineError() {},
+      renderStatus(status) {
+        sandbox.currentStatusData = status;
+        button.dataset.state = "checked";
+      },
+      showCheckinSuccessMessage() {},
+      showInlineError() {},
+      syncCheckBtn() {},
+      showLineLoginRequired() {},
+    },
+  );
+
+  await sandbox.doCheckin();
+
+  const cached = JSON.parse(storage.get("alive_member_status_v1:U123"));
+  assert.equal(cached.status.is_today_checked, true);
+  assert.equal(cached.status.checkin_date, "2026-07-30");
+});
+
 test("canonical action keeps page and open aliases on the requested screen", () => {
   const parserSource = section(
     "function requestedAppAction()",
