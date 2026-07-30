@@ -3725,6 +3725,15 @@ def apply_invite_trial_reward(inviter, reward, *, accepted_at):
 
 def plan_type_label(profile):
     plan = str(profile.get("plan") or "trial")
+    if str(profile.get("membership_source") or "") == "beta":
+        cohort = str(profile.get("beta_cohort") or "").strip().upper()
+        beta_plan = BETA_COHORT_PLAN.get(cohort, plan)
+        beta_label = {
+            "paid_399_year": "399 年費｜21 天封測",
+            "paid_799_year": "799 年費｜21 天封測",
+        }.get(beta_plan)
+        if beta_label:
+            return beta_label
     return {
         "trial": "14 天安心體驗",
         "free": "未訂閱",
@@ -4117,6 +4126,8 @@ def build_status(profile, state=None, now=None):
 
 def _membership_label(profile):
     plan = str(profile.get("plan") or "trial")
+    if str(profile.get("membership_source") or "") == "beta":
+        return plan_type_label(profile)
     labels = {
         "trial": "14 天安心體驗",
         "free": "未訂閱",
@@ -4152,6 +4163,8 @@ def _trial_days_text(profile):
 def _upgrade_status(profile):
     plan = str(profile.get("plan") or "trial")
     payment = str(profile.get("payment_status") or "")
+    if str(profile.get("membership_source") or "") == "beta":
+        return f"{_membership_label(profile)}｜封測使用中"
     if plan.startswith("paid"):
         active = payment == "active" or paid_membership_is_active(profile)
         return f"{_membership_label(profile)}｜{'使用中' if active else paymentLabel_zh(payment)}"
