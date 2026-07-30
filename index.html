@@ -7739,14 +7739,32 @@
           : `已關閉每日提醒；未報平安門檻仍為 ${selectedMissedHours} 小時`;
         setMemberReminderSaveFeedback("success", `✅ ${successMessage}`);
         showInlineSuccess(successMessage);
+        return true;
       } catch (err) {
         const errorMessage = err.message || "提醒與逾時設定儲存失敗";
         setMemberReminderSaveFeedback("error", `❌ 儲存失敗：${errorMessage}`);
+        return false;
       } finally {
         if (saveButton) {
           saveButton.disabled = false;
           saveButton.textContent = originalLabel;
         }
+      }
+    }
+
+    async function applyAndSaveMemberReminderDefaults() {
+      const status = currentStatusData || {};
+      const count = currentChosenDailyReminderCount(status);
+      const defaultTimes = defaultTimesForDailyCount(count);
+      if (currentStatusData) currentStatusData.reminder_times = defaultTimes;
+      renderMemberDailyReminderUi();
+      setMemberReminderSaveFeedback("saving", "正在套用方案預設時間並儲存…");
+      const saved = await saveMemberDailyReminder();
+      if (saved) {
+        setMemberReminderSaveFeedback(
+          "success",
+          `✅ 已套用方案預設時間並儲存成功：${defaultTimes.join("、")}`
+        );
       }
     }
 
@@ -12093,12 +12111,7 @@
     }
     const dailyDefaultsBtn = $("memberDailyReminderDefaultsBtn");
     if (dailyDefaultsBtn) {
-      dailyDefaultsBtn.addEventListener("click", () => {
-        const status = currentStatusData || {};
-        const count = currentChosenDailyReminderCount(status);
-        if (currentStatusData) currentStatusData.reminder_times = defaultTimesForDailyCount(count);
-        renderMemberDailyReminderUi();
-      });
+      dailyDefaultsBtn.addEventListener("click", applyAndSaveMemberReminderDefaults);
     }
     const saveDailyReminderBtn = $("saveDailyReminderBtn");
     if (saveDailyReminderBtn) saveDailyReminderBtn.addEventListener("click", saveMemberDailyReminder);
