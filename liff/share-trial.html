@@ -96,9 +96,13 @@
         }
         const trialUrl = `${location.origin}/trial-14.html`;
         const text = (
-          "我正在使用「每日平安」，每天 10 秒就能讓家人放心。\n" +
-          "送你免費體驗 14 天，不用刷卡、不會自動扣款：\n" +
-          trialUrl
+          "🌿 送你 14 天安心體驗\n\n" +
+          "每天只要 10 秒報平安，讓在乎你的人知道你今天一切都好。\n" +
+          "平常不打擾，忘記報平安或需要幫助時，才會通知你指定的守護人。\n\n" +
+          "免費體驗 14 天、不會自動扣款：\n" +
+          trialUrl + "\n\n" +
+          "開始體驗後，需要邀請至少一位親友成為你的守護人；對方接受後，安心連結才算建立完成。\n" +
+          "這是替自己建立每日平安，不會自動互相綁定。"
         );
         setLoadingState(true, "連結已準備完成，正在開啟 LINE 好友選擇…");
         if (typeof liff.shareTargetPicker !== "function") {
