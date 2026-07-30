@@ -54,6 +54,28 @@ test("one or multiple checked guardians become the API target list", () => {
   assert.deepEqual(Array.from(sandbox.selectedIds()), ["U_sister", "U_mom"]);
 });
 
+test("safety guard never preselects a recipient, even when only one guardian exists", () => {
+  const renderStart = page.indexOf("function renderSafetyGuardTargetPickers");
+  const renderEnd = page.indexOf("function selectedSosGuardianIds", renderStart);
+  const renderSource = page.slice(renderStart, renderEnd);
+  assert.doesNotMatch(renderSource, /name="safetyGuardGuardian"[^>]*checked/);
+  assert.doesNotMatch(renderSource, /name="safetyGuardTargetMode"[^>]*checked/);
+});
+
+test("explicit recipient confirmation happens before geolocation and API delivery", () => {
+  const start = page.indexOf("async function shareMyLocation");
+  const end = page.indexOf("async function refreshSafetyGuardLocation", start);
+  const source = page.slice(start, end);
+  const selectedAt = source.indexOf("selectedSafetyGuardGuardianIds()");
+  const confirmedAt = source.indexOf("confirmSafetyGuardShare(");
+  const geolocationAt = source.indexOf("getCurrentPositionPromise(");
+  const deliveryAt = source.indexOf("apiUpdateLocation(");
+  assert.ok(selectedAt >= 0, "recipients must be selected");
+  assert.ok(confirmedAt > selectedAt, "confirmation must summarize the selected recipients");
+  assert.ok(geolocationAt > confirmedAt, "location permission must wait for confirmation");
+  assert.ok(deliveryAt > geolocationAt, "delivery must wait for confirmed geolocation");
+});
+
 test("199 duration is rendered as fifteen minutes", () => {
   assert.match(page, /value="0\.25"[^>]*>\s*15 分鐘/);
   assert.match(page, /199 方案：15 分鐘/);

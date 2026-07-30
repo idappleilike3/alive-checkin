@@ -8598,7 +8598,7 @@
       const host = mvpPanel && !mvpPanel.hidden
         ? document.getElementById("mvpSafetyGuardTargets")
         : document.getElementById("safetyGuardTargets");
-      return (host || document).querySelector('input[name="safetyGuardTargetMode"]:checked')?.value || "all";
+      return (host || document).querySelector('input[name="safetyGuardTargetMode"]:checked')?.value || "";
     }
 
     function selectedSafetyGuardGuardianIds() {
@@ -8618,23 +8618,37 @@
 
     function renderSafetyGuardTargetPickers() {
       const contacts = safetyGuardTargetCandidates();
-      const choices = contacts.map((contact, index) => {
+      const choices = contacts.map((contact) => {
         const lineId = contactPeerLineId(contact);
         const name = contactPeerDisplayName(contact);
-        return `<label class="guardian-target-choice"><input type="checkbox" name="safetyGuardGuardian" value="${escapeHtml(lineId)}" ${index === 0 ? "checked" : ""}> ${escapeHtml(name)}</label>`;
+        return `<label class="guardian-target-choice"><input type="checkbox" name="safetyGuardGuardian" value="${escapeHtml(lineId)}"> ${escapeHtml(name)}</label>`;
       }).join("");
       const html = `
-        <div class="settings-title">分享給誰</div>
+        <div class="settings-title">分享給誰（必選）</div>
+        <p class="helper">即使只有一位核心守護人，也請先選擇分享方式及對象；確認後才會取得位置並通知。</p>
         <div role="radiogroup" aria-label="核心守護人選擇方式">
           <label><input type="radio" name="safetyGuardTargetMode" value="one"> 指定 1 位核心守護人</label>
           <label><input type="radio" name="safetyGuardTargetMode" value="many"> 勾選多位核心守護人</label>
-          <label><input type="radio" name="safetyGuardTargetMode" value="all" checked> 全部核心守護人</label>
+          <label><input type="radio" name="safetyGuardTargetMode" value="all"> 全部核心守護人</label>
         </div>
         <div class="guardian-target-list">${choices || '<span class="helper">尚未綁定核心守護人</span>'}</div>`;
       ["mvpSafetyGuardTargets", "safetyGuardTargets"].forEach((id) => {
         const host = document.getElementById(id);
         if (host) host.innerHTML = html;
       });
+    }
+
+    function confirmSafetyGuardShare(guardianLineUserIds, duration) {
+      const mode = safetyGuardTargetMode();
+      if (!mode) throw new Error("請先選擇「指定 1 位」、「勾選多位」或「全部核心守護人」。");
+      const namesById = new Map(safetyGuardTargetCandidates().map((contact) => [
+        contactPeerLineId(contact),
+        contactPeerDisplayName(contact),
+      ]));
+      const names = guardianLineUserIds.map((lineId) => namesById.get(lineId) || "核心守護人").join("、");
+      return window.confirm(
+        `請確認安全守護分享設定：\n\n分享對象：${names}\n守護時間：${safetyGuardDurationLabel(duration)}\n\n按「確定」後才會取得您的位置並通知以上守護人。`,
+      );
     }
 
     function selectedSosGuardianIds() {
@@ -9193,9 +9207,13 @@
         if (!requireBoundGuardianForSafetyGuard()) return;
         if (!navigator.geolocation) throw new Error("這台裝置不支援定位。");
         const duration = selectedSafetyGuardDuration();
-        setBusy(true, "正在取得定位…");
         const guardianLineUserIds = selectedSafetyGuardGuardianIds();
         if (!guardianLineUserIds.length) throw new Error("請至少選擇 1 位核心守護人。");
+        if (!confirmSafetyGuardShare(guardianLineUserIds, duration)) {
+          setSafetyGuardFeedback("已取消，尚未取得或分享位置。", "info");
+          return false;
+        }
+        setBusy(true, "正在取得定位…");
         setSafetyGuardFeedback(`正在開啟安全守護（${safetyGuardDurationLabel(duration)}）…請允許位置權限`, "info");
         const position = await getCurrentPositionPromise({ timeout: 12000, maximumAge: 60000 }, 15000);
         setBusy(true, "開啟中…");
