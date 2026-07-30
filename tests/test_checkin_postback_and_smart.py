@@ -507,6 +507,15 @@ class SmartReminderTests(unittest.TestCase):
 
 
 class InviteButtonCleanupTests(unittest.TestCase):
+    def test_date_note_controls_live_in_history_not_member_center(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertNotIn('id="memberSmartRemindersSection"', page)
+        self.assertNotIn("日期提醒（799 月費／年費）", page)
+        self.assertIn('id="calendarNoteQuickCard"', page)
+        self.assertIn("日期備忘與提醒", page)
+        self.assertIn("修改記事與提醒", page)
+
     def test_member_center_keeps_wait_row_invite_only(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         # Wait-row invite remains
@@ -542,10 +551,12 @@ class InviteButtonCleanupTests(unittest.TestCase):
         self.assertNotIn("smartNotifyGroup", page)
         self.assertNotIn("群組提醒", page)
 
-    def test_index_smart_remind_second_layer_and_home_padding(self):
+    def test_index_date_reminders_stay_in_history_and_home_padding(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
-        self.assertIn('id="smartRemindersPanel"', page)
-        self.assertIn('id="smartRemindersToggleBtn"', page)
+        self.assertNotIn('id="smartRemindersPanel"', page)
+        self.assertNotIn('id="smartRemindersToggleBtn"', page)
+        self.assertIn('id="calendarNoteQuickCard"', page)
+        self.assertIn('showTab("history")', page)
         self.assertIn("dailyCheckinReminderEnabled", page)
         self.assertNotIn("smartReminderNotifyGroup", page)
         # 日期提醒不提供群組推播勾選；守護群仍可獨立設定群組通知。
