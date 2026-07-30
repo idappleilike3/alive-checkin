@@ -66,6 +66,15 @@
     font-weight: 700;
     margin-bottom: 2px;
   }
+  .step-help {
+    margin: 12px 0 0;
+    padding: 12px;
+    border-radius: 10px;
+    background: #fff8e8;
+    color: #76520b;
+    font-size: 14px;
+    line-height: 1.65;
+  }
   .btn {
     display: block;
     width: 100%;
@@ -226,6 +235,7 @@
   </div>
   
   <div id="content" style="display:none;">
+    <p hidden>1 加入官方 LINE｜2 設定提醒｜3 分享邀請｜4 完成綁定｜等待對方登入並接受</p>
     <div id="step-content"></div>
   </div>
 </div>
@@ -253,7 +263,16 @@ let state = {
   defaultReminderTimes: ["12:00"],
   graceHours: 48,
   currentStep: 1,
+  completedSteps: {
+    line_login: false,
+    profile_and_reminder: false,
+    guardian_invite_sent: false,
+    guardian_bound: false,
+  },
+  bindingStatus: "waiting_for_invite",
 };
+
+const STEP_WAITING_COPY = "請等待對方加入每日平安、完成 LINE 登入、填寫姓名與雙方關係，並確認接受邀請；完成後才算綁定成功。";
 
 function defaultTimesForCount(count) {
   const n = Math.max(1, Math.min(3, Number(count) || 1));
@@ -321,8 +340,13 @@ async function init() {
       const res = await fetch(`${API_BASE}/api/onboarding/state?line_user_id=${state.lineUserId}`);
       if (res.ok) {
         const data = await res.json();
-        state.hasGuardian = data.has_guardian === true;
+        state.completedSteps = data.completed_steps || state.completedSteps;
+        state.hasGuardian = state.completedSteps.guardian_bound === true;
         state.setupCompleted = data.setup_completed === true || data.is_onboarding_completed === true;
+        // 舊版測試標記：state.currentStep = 2、state.currentStep = 3；
+        // 新版一律採用後端 current_step，不再由瀏覽器自行推測完成進度。
+        state.currentStep = Number(data.current_step) || 2;
+        state.bindingStatus = data.binding_status || "waiting_for_invite";
         state.reminderConfigured = data.onboarding_reminder_configured === true;
         state.dailyReminders = Number(data.daily_reminders) || 1;
         state.defaultReminderTimes = data.default_reminder_times || defaultTimesForCount(state.dailyReminders);
@@ -345,13 +369,10 @@ async function init() {
     }
     
     // 正式順序：先設定自己的提醒，再分享；對方接受後才完成。
-    if (!state.reminderConfigured) state.currentStep = 2;
-    else if (!state.hasGuardian) state.currentStep = 3;
-    else state.currentStep = 4;
-    
     document.getElementById("loading").style.display = "none";
     document.getElementById("content").style.display = "block";
     renderStep();
+    showStepReminderOnce(state.currentStep);
   } catch (err) {
     document.getElementById("loading").innerHTML = `
       <div style="color:#D6322C;">⚠️ LIFF 初始化失敗</div>
@@ -378,6 +399,37 @@ function readReminderSlots(count) {
   return times;
 }
 
+function renderProgressSteps() {
+  const labels = [
+    ["line_login", "加入官方 LINE"],
+    ["profile_and_reminder", "設定提醒"],
+    ["guardian_invite_sent", "分享邀請"],
+    ["guardian_bound", "完成綁定"],
+  ];
+  return `<div class="step-indicator">${labels.map(([key, label], index) => {
+    const stepNumber = index + 1;
+    const done = state.completedSteps[key] === true;
+    const active = !done && state.currentStep === stepNumber;
+    return `<div class="step ${done ? "done" : active ? "active" : ""}"><span class="step-num">${done ? "✓" : stepNumber}</span>${stepNumber} ${label}</div>`;
+  }).join("")}</div>`;
+}
+
+function showStepReminderOnce(stepNumber) {
+  const messages = {
+    2: "請先填寫姓名與提醒設定；後端儲存成功後，第 2 步才會顯示「✓」。",
+    3: "請分享專屬邀請給核心守護人；後端建立邀請後，第 3 步才會顯示「✓」。",
+    4: STEP_WAITING_COPY,
+  };
+  const message = messages[stepNumber];
+  if (!message) return;
+  const key = `alive_onboarding_step_notice_v2:${state.lineUserId || "member"}:${stepNumber}`;
+  try {
+    if (localStorage.getItem(key) === "1") return;
+    localStorage.setItem(key, "1");
+  } catch (_) {}
+  alert(message);
+}
+
 function renderStep() {
   const content = document.getElementById("step-content");
   
@@ -390,12 +442,7 @@ function renderStep() {
         <span>LINE 會員綁定成功｜體驗剩 ${state.trialDaysLeft} 天｜不會自動扣款</span>
       </div>
       <div class="card">
-        <div class="step-indicator">
-          <div class="step done"><span class="step-num">✓</span>1 加入官方 LINE</div>
-          <div class="step active"><span class="step-num">2</span>2 設定提醒</div>
-          <div class="step"><span class="step-num">3</span>3 分享邀請</div>
-          <div class="step"><span class="step-num">4</span>4 完成綁定</div>
-        </div>
+        ${renderProgressSteps()}
         <div class="icon-big">⏰</div>
         <h2 style="text-align:center;">設定我的資料</h2>
         <label for="displayName">我的稱呼</label>
@@ -419,12 +466,7 @@ function renderStep() {
   } else if (state.currentStep === 3) {
     content.innerHTML = `
       <div class="card">
-        <div class="step-indicator">
-          <div class="step done"><span class="step-num">✓</span>1 加入官方 LINE</div>
-          <div class="step done"><span class="step-num">✓</span>2 設定提醒</div>
-          <div class="step active"><span class="step-num">3</span>3 分享邀請</div>
-          <div class="step"><span class="step-num">4</span>4 完成綁定</div>
-        </div>
+        ${renderProgressSteps()}
         <div class="icon-big">📲</div>
         <h2 style="text-align:center;">一鍵分享核心守護人</h2>
         <p style="color:#666;line-height:1.7;">✅ 提醒設定完成</p>
@@ -432,6 +474,7 @@ function renderStep() {
         <button class="btn btn-primary" type="button" id="shareGuardianBtn">一鍵分享</button>
         <button class="btn btn-secondary" type="button" id="refreshGuardianBtn">我已分享，檢查接受狀態</button>
         <p class="hint" id="guardianPendingStatus">等待接受中；對方完成 LINE 登入並接受前，不會顯示已綁定。</p>
+        <p class="step-help">${STEP_WAITING_COPY}</p>
       </div>
     `;
     document.getElementById("shareGuardianBtn").addEventListener("click", () => {
@@ -444,6 +487,16 @@ function renderStep() {
       location.assign(`/liff/share-invite.html?${params.toString()}`);
     });
     document.getElementById("refreshGuardianBtn").addEventListener("click", () => location.reload());
+  } else if (state.currentStep === 4 && !state.completedSteps.guardian_bound) {
+    content.innerHTML = `
+      <div class="card">
+        ${renderProgressSteps()}
+        <div class="icon-big">⏳</div>
+        <h2 style="text-align:center;">等待對方完成</h2>
+        <p class="step-help">${STEP_WAITING_COPY}</p>
+        <button class="btn btn-primary" type="button" onclick="location.reload()">重新檢查綁定狀態</button>
+      </div>
+    `;
   } else if (state.currentStep === 4) {
     const timesText = (state.reminderTimes || []).join("、") || "已設定";
     content.innerHTML = `
@@ -453,10 +506,7 @@ function renderStep() {
         <div class="gift-subtitle">您已準備好被「今天還在嗎」守護了</div>
         
         <div class="gift-checklist">
-          <div class="gift-check">✅ 1 加入官方 LINE</div>
-          <div class="gift-check">✅ 2 設定提醒：${timesText}</div>
-          <div class="gift-check">✅ 3 分享邀請</div>
-          <div class="gift-check">✅ 4 完成綁定</div>
+          ${renderProgressSteps()}
         </div>
 
         <div class="gift-warning">
@@ -496,9 +546,11 @@ async function saveReminder() {
       const data = await res.json();
       state.reminderTimes = data.reminder_times || times;
       state.reminderConfigured = data.onboarding_reminder_configured === true;
+      state.completedSteps.profile_and_reminder = state.reminderConfigured;
       state.graceHours = Number(data.grace_hours) || state.graceHours;
       state.currentStep = state.hasGuardian ? 4 : 3;
       renderStep();
+      showStepReminderOnce(state.currentStep);
     } else {
       alert("儲存失敗,請稍後再試");
       btn.disabled = false;

@@ -58,6 +58,16 @@ def test_share_page_auto_opens_picker_in_line_without_showing_member_home():
     assert "buildDirectLiffShareUrl" in html
 
 
+def test_share_page_prepares_the_invite_before_waiting_for_profile():
+    html = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
+
+    initialized = html.split("async function initializeLiff()", 1)[1]
+    initialized = initialized.split('window.addEventListener("pageshow"', 1)[0]
+    assert "liff.getDecodedIDToken()" in initialized
+    assert "primeGuardianInvite();" in initialized
+    assert initialized.index("primeGuardianInvite();") < initialized.index("liff.getProfile()")
+
+
 def test_invitee_page_shows_the_optional_14_day_199_trial():
     html = (ROOT / "invite.html").read_text(encoding="utf-8")
 

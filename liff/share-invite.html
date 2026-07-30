@@ -187,6 +187,8 @@
       <li data-state="upcoming">3. 你選擇要邀請的 LINE 好友並一鍵分享</li>
       <li data-state="upcoming">4. 對方加入官方 LINE、登入、填寫資料並親自同意後，綁定才生效</li>
     </ol>
+    <p class="share-ready-status">請等待對方加入每日平安、完成 LINE 登入、填寫姓名與雙方關係，並確認接受邀請；完成後才算綁定成功。</p>
+    <p class="share-ready-status">1. 你選擇要邀請的 LINE 好友<br>2. 對方收到邀請與完整流程說明<br>3. 對方加入官方 LINE、登入並填寫資料<br>4. 對方親自同意後，綁定才生效</p>
     <section id="desktopShare" class="desktop-share" hidden aria-live="polite">
       <h2>電腦版分享</h2>
       <p>可直接開啟 LINE 分享；也能複製專屬邀請連結，或用手機掃描 QR Code。</p>
@@ -228,6 +230,7 @@
     let shareBlocked = false;
     let shareAttempted = false;
     let activeInviteToken = "";
+    let inviteWarmupPromise = null;
     let inviterName = "";
 
     function sanitizeUserId(raw) {
@@ -372,7 +375,7 @@
       try { alert(String(msg || "暫時無法分享")); } catch (_) {}
     }
 
-    async function createGuardianInvite() {
+    async function requestGuardianInvite() {
       const idToken = (window.liff && typeof liff.getIDToken === "function")
         ? String(liff.getIDToken() || "")
         : "";
@@ -388,7 +391,24 @@
       if (!response.ok || !data.invite_token) {
         throw new Error(data.error || "invite_create_failed");
       }
-      activeInviteToken = String(data.invite_token);
+      return String(data.invite_token);
+    }
+
+    function primeGuardianInvite() {
+      if (!myUserId || activeInviteToken || inviteWarmupPromise) return;
+      inviteWarmupPromise = requestGuardianInvite().catch(function () {
+        inviteWarmupPromise = null;
+        return "";
+      });
+    }
+
+    async function createGuardianInvite() {
+      if (activeInviteToken) return activeInviteToken;
+      if (!inviteWarmupPromise) primeGuardianInvite();
+      let token = inviteWarmupPromise ? await inviteWarmupPromise : "";
+      inviteWarmupPromise = null;
+      if (!token) token = await requestGuardianInvite();
+      activeInviteToken = token;
       return activeInviteToken;
     }
 
@@ -507,15 +527,36 @@
 
         const urlParams = new URLSearchParams(window.location.search);
         const inviteFrom = urlParams.get("invite_from");
+        const queryInviterName = String(urlParams.get("inviter_name") || "").trim();
         try {
-          const profile = await liff.getProfile();
-          myUserId = (profile && profile.userId) || "";
-          inviterName = String(
-            urlParams.get("inviter_name") || (profile && profile.displayName) || ""
-          ).trim();
-        } catch (_) {
-          myUserId = "";
-          inviterName = String(urlParams.get("inviter_name") || "").trim();
+          const decoded = (typeof liff.getDecodedIDToken === "function")
+            ? (liff.getDecodedIDToken() || {})
+            : {};
+          myUserId = String(decoded.sub || "");
+          inviterName = String(queryInviterName || decoded.name || "").trim();
+        } catch (_) {}
+
+        // LIFF 初始化後立即建立邀請碼，與個人資料讀取並行，避免按分享後再空等數秒。
+        if (myUserId) primeGuardianInvite();
+        const profilePromise = (typeof liff.getProfile === "function")
+          ? liff.getProfile()
+          : Promise.reject(new Error("profile unavailable"));
+        if (!myUserId) {
+          try {
+            const profile = await profilePromise;
+            myUserId = (profile && profile.userId) || "";
+            inviterName = String(queryInviterName || (profile && profile.displayName) || "").trim();
+            primeGuardianInvite();
+          } catch (_) {
+            myUserId = "";
+            inviterName = queryInviterName;
+          }
+        } else {
+          profilePromise.then(function (profile) {
+            if (!inviterName) {
+              inviterName = String(queryInviterName || (profile && profile.displayName) || "").trim();
+            }
+          }).catch(function () {});
         }
         if (inviteFrom && myUserId && inviteFrom !== myUserId) {
           shareBlocked = true;

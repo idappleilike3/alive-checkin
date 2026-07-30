@@ -2301,6 +2301,30 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
         else default_reminder_times_for_count(1)
     )
     daily_reminders = int(plan_rules(profile).get("daily_reminders") or 1) if profile else 1
+    pending_invites = pending_guardian_invite_count(state, line_user_id)
+    completed_steps = {
+        # 此 API 只有完成 LINE 登入並建立後端會員後才能取得。
+        "line_login": bool(profile),
+        "profile_and_reminder": bool(
+            profile.get("onboarding_reminder_configured")
+        ),
+        # 後端確實有待接受邀請，或已完成綁定，才算分享步驟完成。
+        "guardian_invite_sent": bool(pending_invites or access["home_ready"]),
+        "guardian_bound": bool(access["home_ready"]),
+    }
+    if not completed_steps["profile_and_reminder"]:
+        current_step = 2
+    elif not completed_steps["guardian_invite_sent"]:
+        current_step = 3
+    else:
+        current_step = 4
+    binding_status = (
+        "bound"
+        if completed_steps["guardian_bound"]
+        else "waiting_for_guardian"
+        if completed_steps["guardian_invite_sent"]
+        else "waiting_for_invite"
+    )
     return {
         "ok": True,
         **access,
@@ -2309,9 +2333,10 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
         "setup_completed": access["home_ready"],
         "has_guardian": has_guardian,
         "guardian_count": len(contacts),
-        "pending_guardian_invite_count": pending_guardian_invite_count(
-            state, line_user_id
-        ),
+        "pending_guardian_invite_count": pending_invites,
+        "completed_steps": completed_steps,
+        "current_step": current_step,
+        "binding_status": binding_status,
         "onboarding_reminder_configured": bool(
             profile.get("onboarding_reminder_configured")
         ),
