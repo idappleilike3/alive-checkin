@@ -103,6 +103,27 @@ class LiffFastRouteTests(unittest.TestCase):
         self.assertIn("renderStatus(status)", loader)
         self.assertIn("syncCheckBtn(status)", loader)
 
+    def test_cached_member_plan_renders_before_registration_network_wait(self):
+        initializer = self.section(
+            "async function initializeLiff()",
+            "async function initLine()",
+        )
+        self.assertIn("renderCachedMemberStatus(lineUserId)", initializer)
+        self.assertLess(
+            initializer.index("renderCachedMemberStatus(lineUserId)"),
+            initializer.index('fetch("/api/line/register"'),
+        )
+        self.assertIn("writeCachedMemberStatus(lineUserId, status)", self.page)
+
+    def test_hash_route_survives_member_bootstrap(self):
+        parser = self.section(
+            "function requestedAppAction()",
+            "function setInitialRouteLoading",
+        )
+        self.assertIn("location.hash", parser)
+        self.assertIn('"member"', parser)
+        self.assertIn('"history"', parser)
+
     def test_first_status_response_unlocks_safe_member_actions(self):
         loader = self.section(
             "async function loadInitialMemberData()",
