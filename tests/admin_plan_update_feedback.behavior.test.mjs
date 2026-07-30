@@ -31,9 +31,14 @@ test("admin plan selector keeps a visible success or failure reminder after refr
   assert.match(update, /selectElement\.disabled = false/);
 });
 
-test("member rows pass the changed selector and previous plan into updatePlan", () => {
-  assert.match(
-    html,
-    /onchange="updatePlan\('[^']*', this\.value, this, '[^']*'\)"/,
-  );
+test("member rows use an explicit selector id instead of onchange-only saving", () => {
+  assert.match(html, /id="plan-select-[^"]*"/);
+  assert.doesNotMatch(html, /onchange="updatePlan\(/);
+});
+
+test("every member plan selector has an explicit save button and row-level status", () => {
+  assert.match(html, /class="plan-save-button"/);
+  assert.match(html, />儲存方案<\/button>/);
+  assert.match(html, /savePlanForMember\('[^']*'\)/);
+  assert.match(html, /id="plan-status-[^"]*"/);
 });
