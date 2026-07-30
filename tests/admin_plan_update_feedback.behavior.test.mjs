@@ -31,6 +31,17 @@ test("admin plan selector keeps a visible success or failure reminder after refr
   assert.match(update, /selectElement\.disabled = false/);
 });
 
+test("beta assignment accepts a pasted LINE user ID and gives visible selection feedback", () => {
+  assert.match(html, /id="betaLineUserIdManual"/);
+  assert.match(
+    html,
+    /const manualLineUserId = \$\("betaLineUserIdManual"\)\.value\.trim\(\)/
+  );
+  assert.match(html, /line_user_id: manualLineUserId \|\| \$\("betaLineUserId"\)\.value/);
+  assert.match(html, /plan: `beta_\$\{\$\("betaCohort"\)\.value\}`/);
+  assert.match(html, /已選擇會員：/);
+});
+
 test("member rows use an explicit selector id instead of onchange-only saving", () => {
   assert.match(html, /id="plan-select-[^"]*"/);
   assert.doesNotMatch(html, /onchange="updatePlan\(/);
