@@ -300,6 +300,24 @@
     font-weight: 700;
     text-decoration: none;
   }
+  .onboarding-footer-links {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 4px;
+    padding: 16px 12px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.72);
+  }
+  .onboarding-footer-links .public-entry-link {
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 6px;
+    text-align: center;
+    line-height: 1.35;
+  }
   @media (max-width: 520px) {
     .peace-benefits { grid-template-columns: 1fr; }
     body { padding: 12px; }
@@ -350,6 +368,11 @@
     <p hidden>1 加入官方 LINE｜2 設定提醒｜3 分享邀請｜4 完成綁定｜等待對方登入並接受</p>
     <div id="step-content"></div>
   </div>
+  <nav id="onboardingFooterActions" class="onboarding-footer-links" aria-label="14 天安心體驗頁面導覽">
+    <a class="public-entry-link" href="/">返回首頁</a>
+    <a class="public-entry-link" href="/trial-14.html">查看體驗與方案</a>
+    <a class="public-entry-link" href="/faq.html">常見問題</a>
+  </nav>
 </div>
 
 <script>
@@ -501,11 +524,6 @@ function renderPublicEntry({ liffReady, liffId }) {
     <p>介紹內容可以直接瀏覽。準備開始設定時，再使用 LINE 安全登入即可。</p>
     <button class="btn btn-primary peace-trial-cta" type="button" id="startTrialLoginBtn"><span class="btn-label">開始 14 天<br>安心體驗</span> <span aria-hidden="true">↗</span></button>
     <p class="privacy-note">LINE 登入只用於確認身分、綁定守護人與傳送報平安通知；不會讀取你的聊天內容，也不會自動傳訊息。</p>
-    <div class="public-entry-links" aria-label="其他瀏覽入口">
-      <a class="public-entry-link" href="/">返回首頁</a>
-      <a class="public-entry-link" href="/trial-14.html">查看體驗與方案</a>
-      <a class="public-entry-link" href="/faq.html">常見問題</a>
-    </div>
   `;
   document.getElementById("startTrialLoginBtn").addEventListener("click", () => {
     if (liffReady && liff && typeof liff.login === "function") {
