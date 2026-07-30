@@ -26,8 +26,8 @@ test("logged-out visitors see public actions instead of being auto-redirected", 
 
 test("public entry provides a clear opt-in LINE login action", () => {
   const render = functionBody("renderPublicEntry");
-  assert.match(render, /開始 14 天免費體驗/);
-  assert.match(render, /使用 LINE 安全登入/);
+  assert.match(render, /開始 14 天安心體驗/);
+  assert.match(render, /startTrialLoginBtn/);
   assert.match(render, /不會讀取你的聊天內容/);
   assert.match(render, /startTrialLoginBtn/);
 });
@@ -41,6 +41,7 @@ test("public entry remains useful when LIFF initialization fails", () => {
 });
 
 test("desktop and mobile visitors can navigate without logging in", () => {
+  assert.match(html, /id="onboardingFooterActions"/);
   assert.match(html, /href="\/">返回首頁/);
   assert.match(html, /href="\/trial-14\.html">查看體驗與方案/);
   assert.match(html, /href="\/faq\.html">常見問題/);
