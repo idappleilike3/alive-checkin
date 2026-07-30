@@ -4560,6 +4560,12 @@
           </article>
         </div>
 
+        <div class="member-data-section" aria-label="分享每日平安給朋友">
+          <h3>分享給朋友體驗</h3>
+          <p class="helper">這只是分享「14 天免費體驗」，不會把朋友綁定成你的核心守護人。</p>
+          <button class="action-btn primary" id="memberShareTrialBtn" type="button">分享 14 天免費體驗給朋友</button>
+        </div>
+
         <div class="member-data-section" id="memberGuardianDirectionSection">
           <button class="member-contacts-toggle" id="memberContactsToggleBtn" type="button" aria-expanded="false" aria-controls="memberContactsCombinedPanel">
             <span class="member-contacts-toggle-copy">
@@ -9048,6 +9054,24 @@
       return `${base}\n❌ 已通知 0 位守護人${targetHint}。${why}`;
     }
 
+    async function shareTrialWithFriend() {
+      if (!requireLineMembership("請先加入會員並完成 LINE 登入，再分享 14 天免費體驗。")) {
+        window.location.assign("/trial-14.html");
+        return false;
+      }
+      const trialUrl = `${window.location.origin}/trial-14.html`;
+      const text = (
+        `我正在使用「每日平安」，每天 10 秒就能讓家人放心。\n` +
+        `送你免費體驗 14 天，不用刷卡、不會自動扣款：\n${trialUrl}`
+      );
+      const shared = await tryLineShareTargetPicker(text);
+      if (!shared) {
+        alert("請在 LINE App 內重新開啟後，再按一次「分享 14 天免費體驗給朋友」。");
+        return false;
+      }
+      return true;
+    }
+
     async function shareFriendInvite() {
       try {
         if (!requireLineMembership("請先完成 LINE 登入綁定，才能分享好友地圖。")) return;
@@ -12209,6 +12233,8 @@
     $("closePrivacyExplainBtn").addEventListener("click", closePrivacyExplain);
     bindRelationshipFields();
     $("shareFriendInviteBtn")?.addEventListener("click", shareFriendInvite);
+    const memberShareTrialBtn = $("memberShareTrialBtn");
+    if (memberShareTrialBtn) memberShareTrialBtn.addEventListener("click", shareTrialWithFriend);
     $("acceptInviteBtn")?.addEventListener("click", acceptFriendInvite);
     $("scanQrBtn")?.addEventListener("click", startQrScanner);
     $("closeQrScannerBtn").addEventListener("click", stopQrScanner);
