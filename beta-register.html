@@ -29,6 +29,7 @@
     a.cta { display:block; padding:17px 16px; border-radius:16px; background:var(--green); color:#fff; text-align:center; text-decoration:none; font-size:20px; font-weight:900; }
     a.cta.secondary { margin-top:12px; color:var(--green); background:#fff; border:2px solid var(--green); }
     a.cta[aria-disabled="true"] { opacity:.42; pointer-events:none; }
+    .line-tip { margin:10px 4px 0; color:#526860; font-size:16px; line-height:1.6; font-weight:750; }
     .desktop-note { margin:14px 0 0; padding:14px 16px; border-radius:14px; background:#eaf6ff; color:#17496b; line-height:1.65; font-weight:750; }
 
     .demo-card { margin:22px 0; padding:18px; border:1px solid #cfe9dd; border-radius:20px; background:#f8fffb; }
@@ -53,7 +54,7 @@
     <section class="card">
       <div class="eyebrow"><img class="brand-logo" src="/assets/daily-peace-logo.png" alt="">每日平安限定招募</div>
       <h1 id="title">21天安心守護體驗</h1>
-      <p class="lead">每天 10 秒，讓家人知道你平安。先加入官方 LINE，再依照四個步驟完成設定。</p>
+      <p class="lead">每天10秒，讓家人知道你平安。先加入官方LINE，再依照四個步驟完成設定</p>
       <h2 class="story-title">每天 10 秒，讓家人知道你平安</h2>
       <p class="story-copy">媽媽按一下「我平安」，女兒收到通知，就能放心。平常不打擾，真的有事才通知核心守護人。</p>
       <img class="story-comic" src="/assets/daily-peace-story-comic.png" alt="女兒教媽媽每天按我平安，媽媽完成後女兒收到 LINE 通知的三段故事漫畫" width="941" height="1672">
@@ -84,19 +85,16 @@
         <p>定位、隱私、通知與解除方式都放在完整說明中，不會在未同意時自動綁定。</p>
       </section>
       <div class="benefits" aria-label="封測功能介紹">
-        <div class="benefit" id="entitlementSummary"><strong>本次體驗包含：</strong></div>
+        <div class="benefit" id="entitlementSummary"><strong>本次體驗，你可以使用：</strong></div>
         <div class="benefit" id="featureOne">✅ 最多 7 位核心守護人</div>
         <div class="benefit" id="featureTwo">✅ 每日 2 次私訊預警</div>
         <div class="benefit" id="featureThree">✅ SOS 緊急求救</div>
         <div class="benefit" id="featureFour">✅ 安全守護 1／3 小時</div>
         <div class="benefit" id="featureFive" hidden></div>
       </div>
-      <div class="registration-flow" aria-label="封測任務">
-        <div class="flow-step"><strong>這 21 天請協助測試</strong><br>完成報平安、逾時提醒、SOS、守護人通知與方案專屬功能，並回報看不懂或操作不順的地方。</div>
-        <div class="flow-step">799 組另請實測家庭 LINE 群組、多人守護與 1／3／6／8 小時安全守護。</div>
-      </div>
       <div class="feedback-note">
-        系統每天 19:00 會透過官方 LINE 詢問一次使用狀況；第 7、14、21 天也會邀請你提供階段心得。若發現問題，請附截圖、發生時間、操作步驟、手機型號與 LINE 版本。
+        體驗過程中，若遇到任何不清楚或操作不順的地方，歡迎告訴我～<br>
+        你的回饋，會讓這個服務變得更好。邀請你體驗並給予回饋，讓這個服務更好。
       </div>
       <div class="registration-flow" aria-label="加入封測流程">
         <div class="flow-step"><strong>① 加入「每日平安」官方LINE</strong><br>加入後，才能收到報平安通知與守護人綁定邀請。</div>
@@ -106,6 +104,7 @@
       </div>
       <p class="spots" id="spots"></p>
       <a class="cta" id="addOfficialLine" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener">點我加入官方LINE</a>
+      <p class="line-tip">小提醒：加入後，才能收到報平安通知與守護人綁定邀請</p>
       <label class="consent"><input id="consent" type="checkbox"><span>我已加入官方LINE，繼續登入設定</span></label>
       <a class="cta secondary" id="continueRegistration" href="#" aria-disabled="true">使用LINE登入</a>
       <p class="desktop-note"><strong>電腦版也能完成 21 天封測：</strong>登入後可開啟 LINE 分享、複製專屬連結或掃描 QR Code，手機與電腦使用同一份會員及守護人資料。</p>
@@ -116,6 +115,12 @@
         <details><summary>體驗結束會自動扣款嗎？</summary><p>不會自動扣款。體驗結束後，你可以自行決定是否查看與選擇正式方案。</p></details>
         <details><summary>守護人也要付費嗎？</summary><p>不用。受邀的守護人可免費接受綁定與接收守護通知。</p></details>
         <details><summary>兩個體驗頁有什麼不同？</summary><p>操作流程相同，差別只有本次開放測試的守護人數、守護群組、私訊預警次數與安全守護時數。</p></details>
+        <details><summary>為什麼要先加入官方LINE？</summary><p>因為報平安通知與守護人綁定，都是透過LINE發送，加入後才能完整體驗。</p></details>
+        <details>
+          <summary>封測期間需要做什麼？</summary>
+          <p>請實際體驗報平安、逾時提醒、SOS求救、守護人通知等功能。系統每天 19:00 會透過官方 LINE 詢問一次使用狀況；第 7、14、21 天也會邀請你提供階段心得。若發現問題，請附截圖、發生時間、操作步驟、手機型號與 LINE 版本，幫助我們優化服務。</p>
+          <p id="beta799Task" hidden>799 組另請實測家庭 LINE 群組、多人守護與 1／3／6／8 小時安全守護。</p>
+        </details>
       </section>
       <a class="pricing-link" href="/liff/pricing.html">查看方案</a>
     </section>
@@ -134,7 +139,7 @@
     document.getElementById("title").dataset.planCode = yearlyPlanCode;
     document.getElementById("spots").textContent =
       is799 ? "本組限額 10 人" : "本組限額 20 人";
-    document.getElementById("entitlementSummary").innerHTML = "<strong>本次體驗包含：</strong>";
+    document.getElementById("entitlementSummary").innerHTML = "<strong>本次體驗，你可以使用：</strong>";
     document.getElementById("featureOne").textContent = is799
       ? "✅ 最多 15 位核心守護人"
       : "✅ 最多 7 位核心守護人";
@@ -150,6 +155,8 @@
     document.getElementById("featureFive").hidden = !is799;
     document.getElementById("featureFive").textContent =
       "✅ 安全守護 1／3／6／8 小時";
+    const beta799Task = document.getElementById("beta799Task");
+    beta799Task.hidden = !is799;
     continueRegistration.href =
       `https://liff.line.me/2010848330-UAiqPPYD?beta_cohort=${cohort}&open=onboarding`;
     join.disabled = !consent.checked;
