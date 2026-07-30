@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 213275)
-Total output lines: 20722
-
 import copy
 import base64
 import calendar
@@ -1796,8 +1793,6 @@ def save_calendar_note(data_file, payload):
     birthday_relationship = str(payload.get("birthday_relationship") or "").strip()
     birthday_date = str(payload.get("birthday_date") or note_date).strip()
     birthday_yearly = bool(payload.get("birthday_yearly", True))
-    web_remind_time = str(payload.get("web_remind_time") or "").strip()
-    web_remind_yearly = bool(payload.get("web_remind_yearly", False))
     try:
         birthday_remind_days = int(payload.get("birthday_remind_days", 1))
     except (TypeError, ValueError):
@@ -1814,13 +1809,6 @@ def save_calendar_note(data_file, payload):
         return {"ok": False, "error": "invalid date"}, 400
     if len(content) > 500:
         return {"ok": False, "error": "note too long"}, 400
-    if web_remind_time:
-        try:
-            parsed_web_time = datetime.strptime(web_remind_time, "%H:%M")
-        except ValueError:
-            return {"ok": False, "error": "invalid web reminder time"}, 400
-        if parsed_web_time.strftime("%H:%M") != web_remind_time:
-            return {"ok": False, "error": "invalid web reminder time"}, 400
     if birthday_name:
         try:
             parsed_birthday = datetime.strptime(birthday_date, "%Y-%m-%d")
@@ -1838,24 +1826,18 @@ def save_calendar_note(data_file, payload):
             "required_plan": "paid_799",
         }, 403
     notes = dict(profile.get("calendar_notes") or {})
-    if content or birthday_name or web_remind_time:
-        if not birthday_name and not web_remind_time:
-            notes[note_date] = content
-        else:
-            note_payload = {
+    if content or birthday_name:
+        if birthday_name:
+            notes[note_date] = {
                 "content": content,
-                "web_remind_time": web_remind_time,
-                "web_remind_yearly": web_remind_yearly,
+                "birthday_name": birthday_name,
+                "birthday_relationship": birthday_relationship,
+                "birthday_date": birthday_date,
+                "birthday_yearly": birthday_yearly,
+                "birthday_remind_days": birthday_remind_days,
             }
-            if birthday_name:
-                note_payload.update({
-                    "birthday_name": birthday_name,
-                    "birthday_relationship": birthday_relationship,
-                    "birthday_date": birthday_date,
-                    "birthday_yearly": birthday_yearly,
-                    "birthday_remind_days": birthday_remind_days,
-                })
-            notes[note_date] = note_payload
+        else:
+            notes[note_date] = content
     else:
         notes.pop(note_date, None)
     profile["calendar_notes"] = notes
@@ -9956,7 +9938,1281 @@ def trigger_sos(data_file, payload, config=None):
             recovery_pending = (
                 pending_event.get("status") == "sending"
                 and any(
-                    row.get("status") == "pend…13275 tokens truncated…created = _account_migration_datetime(ticket.get("created_at"))
+                    row.get("status") == "pending"
+                    for row in (pending_event.get("deliveries") or [])
+                )
+            )
+            if elapsed < SOS_COOLDOWN_SEC and not recovery_pending:
+                wait_sec = int(SOS_COOLDOWN_SEC - elapsed)
+                return {
+                    "error": f"SOS cooldown active, wait {wait_sec}s",
+                    "cooldown_remaining_sec": wait_sec,
+                }, 429
+        except (ValueError, TypeError):
+            pass
+
+    token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not token:
+        return {"error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
+
+    limit = int(rules.get("core_guardian_alert_limit") or 1)
+    if abuse["mode"] == "restricted":
+        limit = 1
+    selected_guardian_ids = payload.get("guardian_line_user_ids")
+    if selected_guardian_ids is not None and not isinstance(selected_guardian_ids, list):
+        return {"error": "guardian_line_user_ids must be a list"}, 400
+    has_explicit_guardian_selection = bool(
+        isinstance(selected_guardian_ids, list)
+        and any(str(target or "").strip() for target in selected_guardian_ids)
+    )
+    selected_guardian_set = (
+        {
+            str(target).strip()
+            for target in selected_guardian_ids
+            if str(target).strip()
+        }
+        if has_explicit_guardian_selection
+        else None
+    )
+    guardian_delivery_limit = limit if has_explicit_guardian_selection else min(limit, 2)
+    # SOS directly consumes the accepted core-guardian relationship. A second,
+    # reciprocal invitation is not required for the guardian to receive help.
+    contacts = sorted(
+        profile.get("contacts") or [],
+        key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
+    )
+    phone_contacts = collect_phone_only_contacts(contacts)
+    eligible_line_contacts = ranked_sos_guardians(
+        profile,
+        line_user_id,
+        selected_ids=selected_guardian_set,
+        limit=limit,
+    )
+    line_contacts = eligible_line_contacts[:guardian_delivery_limit]
+    escalation_contacts = (
+        [] if selected_guardian_set is not None
+        else eligible_line_contacts[guardian_delivery_limit:]
+    )
+
+    active_group_ids = []
+    if (
+        selected_guardian_set is None
+        and rules.get("guardian_group_limit")
+        and abuse["mode"] != "restricted"
+    ):
+        groups = state.get("guardian_groups", {})
+        active_group_ids = [
+            group_id for group_id in (profile.get("guardian_group_ids") or [])
+            if groups.get(group_id, {}).get("owner_line_user_id") == line_user_id
+            and groups.get(group_id, {}).get("status") == "active"
+        ][: int(rules.get("guardian_group_limit") or 0)]
+
+    # 個人守護人或守護群任一可送；兩者都沒有才拒絕（方案本身不會自動綁定對象）
+    if not line_contacts and not active_group_ids:
+        return {
+            "error": "no bound LINE guardians",
+            "sent": 0,
+            "phone_only_count": len(phone_contacts),
+            "phone_contacts": phone_contacts[:5],
+            "has_bound_guardian": profile_has_bound_line_guardian(profile),
+        }, 400
+
+    claim = mutate_state_atomically(
+        data_file,
+        lambda current_state: _claim_sos_delivery(
+            current_state,
+            line_user_id,
+            now_dt,
+            daily_limit=SOS_DAILY_LIMIT,
+            cooldown_sec=SOS_COOLDOWN_SEC,
+            long_confirm=bool(payload.get("long_confirm")),
+            reason=str(payload.get("reason") or ""),
+        ),
+    )
+    if not claim.get("claimed"):
+        if claim.get("reason") == "member_not_found":
+            return {"error": "member not found"}, 404
+        if claim.get("reason") == "daily_limit":
+            return {
+                "error": f"daily SOS limit reached ({SOS_DAILY_LIMIT})",
+                "limit": SOS_DAILY_LIMIT,
+                "resets_at": f"{today_str}T23:59:59+08:00",
+            }, 429
+        if claim.get("reason") == "recover_pending":
+            recovered, recovered_code = retry_sos_event(
+                data_file,
+                {
+                    "line_user_id": line_user_id,
+                    "event_id": claim.get("event_id"),
+                },
+                config,
+            )
+            if recovered_code == 200:
+                recovered_deliveries = recovered.get("deliveries") or []
+                guardian_rows = [
+                    {
+                        "name": row.get("name") or "核心守護人",
+                        "status": row.get("status"),
+                        "error_hint": row.get("error_hint"),
+                    }
+                    for row in recovered_deliveries
+                    if row.get("kind") == "guardian"
+                ]
+                group_rows = [
+                    {
+                        "name": row.get("name") or "守護群",
+                        "status": row.get("status"),
+                        "error_hint": row.get("error_hint"),
+                    }
+                    for row in recovered_deliveries
+                    if row.get("kind") == "group"
+                ]
+                self_rows = [
+                    row for row in recovered_deliveries
+                    if row.get("kind") == "self"
+                ]
+                recovered_sent = sum(
+                    1 for row in guardian_rows + group_rows
+                    if row.get("status") == "sent"
+                )
+                recovered_failed = sum(
+                    1 for row in guardian_rows + group_rows
+                    if row.get("status") == "failed"
+                )
+                return {
+                    "sent": recovered_sent,
+                    "failed": recovered_failed,
+                    "group_sent": sum(1 for row in group_rows if row.get("status") == "sent"),
+                    "group_failed": sum(1 for row in group_rows if row.get("status") == "failed"),
+                    "guardian_limit": len(guardian_rows),
+                    "self": {
+                        "status": self_rows[0].get("status")
+                        if self_rows else "not_sent"
+                    },
+                    "guardians": guardian_rows,
+                    "groups": group_rows,
+                    "results": guardian_rows + group_rows,
+                    "location_attached": False,
+                    "phone_only_count": 0,
+                    "phone_contacts": [],
+                    "event_id": claim.get("event_id"),
+                    "sent_at": current_app_time(config or {}).isoformat(timespec="seconds"),
+                    "location_updated_at": None,
+                    "cancel_available": recovered_sent > 0,
+                    "abuse_mode": abuse["mode"],
+                    "abuse_expires_at": abuse["expires_at"],
+                    "emergency_numbers_available": True,
+                    "emergency_numbers": ["119", "110"],
+                    "recovered": True,
+                }, 200
+            return recovered, recovered_code
+        if claim.get("reason") == "long_confirmation_required":
+            latest_abuse = claim.get("abuse") or {}
+            return {
+                "error": "long confirmation required",
+                "abuse_mode": "observation",
+                "expires_at": latest_abuse.get("expires_at"),
+                "requires_reason": True,
+                "emergency_numbers_available": True,
+                "emergency_numbers": ["119", "110"],
+            }, 428
+        return {
+            "error": f"SOS cooldown active, wait {int(claim.get('wait_sec') or 1)}s",
+            "cooldown_remaining_sec": int(claim.get("wait_sec") or 1),
+        }, 429
+
+    # Continue from the claimed revision so the final audit write cannot overwrite
+    # the reservation or conflict merely because this request made the claim.
+    state = load_state(data_file)
+    profile = (state.get("users") or {}).get(line_user_id) or profile
+    notification_log_start = len(state.get("notification_logs") or [])
+    usage_start = len(state.get("line_message_usage") or [])
+    # Rebuild the emergency fan-out from the post-claim authoritative snapshot.
+    # A guardian may have been unbound, or a group disabled, between the first
+    # request read and the atomic claim.
+    rules = plan_rules(profile)
+    limit = 1 if abuse["mode"] == "restricted" else int(
+        rules.get("core_guardian_alert_limit") or 1
+    )
+    contacts = sorted(
+        profile.get("contacts") or [],
+        key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
+    )
+    phone_contacts = collect_phone_only_contacts(contacts)
+    eligible_line_contacts = ranked_sos_guardians(
+        profile,
+        line_user_id,
+        selected_ids=selected_guardian_set,
+        limit=limit,
+    )
+    line_contacts = eligible_line_contacts[:guardian_delivery_limit]
+    escalation_contacts = (
+        [] if selected_guardian_set is not None
+        else eligible_line_contacts[guardian_delivery_limit:]
+    )
+    active_group_ids = []
+    if (
+        selected_guardian_set is None
+        and rules.get("guardian_group_limit")
+        and abuse["mode"] != "restricted"
+    ):
+        groups = state.get("guardian_groups") or {}
+        active_group_ids = [
+            group_id
+            for group_id in (profile.get("guardian_group_ids") or [])
+            if groups.get(group_id, {}).get("owner_line_user_id") == line_user_id
+            and groups.get(group_id, {}).get("status") == "active"
+        ][: int(rules.get("guardian_group_limit") or 0)]
+    if not line_contacts and not active_group_ids:
+        return {
+            "error": "no bound LINE guardians",
+            "sent": 0,
+            "phone_only_count": len(phone_contacts),
+            "phone_contacts": phone_contacts[:5],
+            "has_bound_guardian": profile_has_bound_line_guardian(profile),
+        }, 400
+
+    # SOS only attaches coordinates obtained for this exact request.  A denied or
+    # timed-out lookup must never silently disclose a stale stored location.
+    location = {}
+    try:
+        req_lat = payload.get("latitude")
+        req_lng = payload.get("longitude")
+        if req_lat is not None and req_lng is not None:
+            location["latitude"] = float(req_lat)
+            location["longitude"] = float(req_lng)
+            city = str(payload.get("city") or "").strip()
+            if city:
+                location["city"] = city
+            location["updated_at"] = now_dt.isoformat(timespec="seconds")
+            stored_location = dict(profile.get("location") or {})
+            stored_location.update(location)
+            profile["location"] = stored_location
+    except (TypeError, ValueError):
+        location = {}
+
+    location_text = ""
+    if location.get("latitude") is not None and location.get("longitude") is not None:
+        city = str(location.get("city") or "").strip()
+        place = f"（{city}）" if city else ""
+        location_text = (
+            f"\n目前位置{place}："
+            f"https://www.google.com/maps?q={location['latitude']},{location['longitude']}"
+        )
+    import uuid
+    sos_event_id = f"sos-{uuid.uuid4().hex[:10]}"
+    message = (
+        f"🚨【SOS 緊急求助】{profile.get('display_name') or '你的親友'} 發出緊急求助，\n"
+        f"請立即聯絡本人並確認安全。若有立即危險，請撥打 119。{location_text}\n\n"
+        "本通知不會自動聯絡警消，請依現場狀況主動求助。"
+    )
+    group_delivery_members = {}
+    group_member_getter = (config or {}).get("GROUP_MEMBER_IDS_GETTER")
+    for group_id in active_group_ids:
+        group_info = (state.get("guardian_groups") or {}).get(group_id) or {}
+        try:
+            if callable(group_member_getter):
+                current_ids = group_member_getter(token, group_id)
+            elif ((config or {}).get("LINE_PUSH_SENDER") or line_push_message) is line_push_message:
+                current_ids = get_group_member_ids(token, group_id)
+            else:
+                current_ids = list(group_info.get("member_ids_at_bind") or [])
+        except Exception:
+            current_ids = list(group_info.get("member_ids_at_bind") or [])
+        group_delivery_members[group_id] = list(dict.fromkeys(current_ids or []))
+
+    requested_units = len(line_contacts) + sum(
+        max(1, len(group_delivery_members.get(group_id) or []))
+        for group_id in active_group_ids
+    )
+    budget = line_push_budget_decision(
+        state,
+        owner_line_user_id=line_user_id,
+        requested_units=requested_units,
+        now=now_dt,
+        monthly_hard_cap=int(
+            (config or {}).get("LINE_MONTHLY_MESSAGE_HARD_CAP")
+            or os.environ.get("LINE_MONTHLY_MESSAGE_HARD_CAP")
+            or (config or {}).get("LINE_MONTHLY_MESSAGE_QUOTA")
+            or os.environ.get("LINE_MONTHLY_MESSAGE_QUOTA")
+            or 200
+        ),
+        member_daily_hard_cap=int(
+            (config or {}).get("LINE_MEMBER_DAILY_MESSAGE_HARD_CAP")
+            or os.environ.get("LINE_MEMBER_DAILY_MESSAGE_HARD_CAP")
+            or 20
+        ),
+        emergency=True,
+    )
+    remaining_budget = int(budget.get("allowed_units") or 0)
+    line_contacts = line_contacts[:remaining_budget]
+    remaining_budget -= len(line_contacts)
+    budgeted_groups = []
+    for group_id in active_group_ids:
+        group_units = max(1, len(group_delivery_members.get(group_id) or []))
+        if group_units > remaining_budget:
+            continue
+        budgeted_groups.append(group_id)
+        remaining_budget -= group_units
+    active_group_ids = budgeted_groups
+    if budget.get("reason"):
+        append_notification_log(
+            state,
+            "sos",
+            line_user_id,
+            "budget_limited",
+            "SOS 額外推播已依成本上限縮減",
+            json.dumps(budget, ensure_ascii=False),
+        )
+
+    self_confirmation = (
+        "✅ SOS 通知流程已完成\n"
+        "請留意下方通知明細；若是誤觸或目前已安全，"
+        "請在 10 分鐘內回到 SOS 畫面取消通知"
+    )
+    prepared_escalation_guardians = [
+        {
+            "target": contact["line_id"],
+            "display_name": str(
+                contact.get("name") or contact.get("relationship") or "備援守護人"
+            ),
+            "priority": int(contact.get("priority") or 9999),
+        }
+        for contact in escalation_contacts
+    ]
+    prepared_deliveries = [
+        {
+            "kind": "guardian",
+            "target": contact["line_id"],
+            "display_name": str(
+                contact.get("name") or contact.get("relationship") or "核心守護人"
+            ),
+            "status": "pending",
+            "retry_key": _line_retry_key(
+                f"{sos_event_id}:guardian:{contact['line_id']}"
+            ),
+        }
+        for contact in line_contacts
+    ] + [
+        {
+            "kind": "group",
+            "target": group_id,
+            "display_name": str(
+                ((state.get("guardian_groups") or {}).get(group_id) or {}).get("group_name")
+                or ((state.get("guardian_groups") or {}).get(group_id) or {}).get("name")
+                or "守護群"
+            ),
+            "recipient_count": max(1, len(group_delivery_members.get(group_id) or [])),
+            "status": "pending",
+            "retry_key": f"{sos_event_id}:group:{group_id}",
+        }
+        for group_id in active_group_ids
+    ] + [{
+        "kind": "self",
+        "target": line_user_id,
+        "display_name": "本人",
+        "recipient_count": 1,
+        "status": "pending",
+        "message": self_confirmation,
+        "retry_key": _line_retry_key(f"{sos_event_id}:self:{line_user_id}"),
+    }]
+
+    def persist_sos_outbox(latest):
+        latest_profile = (latest.get("users") or {}).get(line_user_id)
+        if latest_profile is None:
+            return
+        latest_profile["last_sos_event_id"] = sos_event_id
+        if location:
+            stored_location = dict(latest_profile.get("location") or {})
+            stored_location.update(copy.deepcopy(location))
+            latest_profile["location"] = stored_location
+        latest.setdefault("sos_events", {})[sos_event_id] = {
+            "event_id": sos_event_id,
+            "owner_line_user_id": line_user_id,
+            "owner_display_name": profile.get("display_name") or "會員",
+            "status": "sending",
+            "created_at": now_dt.isoformat(timespec="seconds"),
+            "sent_at": None,
+            "deliveries": copy.deepcopy(prepared_deliveries),
+            "escalation_guardians": copy.deepcopy(prepared_escalation_guardians),
+            "message": message,
+            "location_attached": bool(location_text),
+            "abuse_mode": abuse["mode"],
+        }
+
+    mutate_state_atomically(data_file, persist_sos_outbox)
+    state = load_state(data_file)
+    profile = (state.get("users") or {}).get(line_user_id) or profile
+    notification_log_start = len(state.get("notification_logs") or [])
+    usage_start = len(state.get("line_message_usage") or [])
+
+    sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
+    sent = 0
+    sent_at = None
+    failed = 0
+    group_sent = 0
+    group_failed = 0
+    results = []
+    deliveries = []
+    guardian_results = []
+    group_results = []
+    print(
+        f"[sos] trigger user={line_user_id[:8]} line_targets={len(line_contacts)} "
+        f"groups={len(active_group_ids)} loc={bool(location_text)} phone_only={len(phone_contacts)}",
+        flush=True,
+    )
+    for contact in line_contacts:
+        target = contact["line_id"]
+        delivery_retry_key = _line_retry_key(
+            f"{sos_event_id}:guardian:{target}"
+        )
+        try:
+            guardian_message = (
+                build_sos_guardian_flex(message, sos_event_id)
+                if sender is line_push_message
+                else message
+            )
+            result = _send_line_with_retry_key(
+                sender,
+                token,
+                target,
+                guardian_message,
+                delivery_retry_key,
+            )
+            append_notification_log(state, "sos", target, "sent", message, json.dumps(result, ensure_ascii=False))
+            sent += 1
+            if sent_at is None:
+                sent_at = current_app_time(config or {}).isoformat(timespec="seconds")
+            results.append({"line_user_id": target, "status": "sent"})
+            deliveries.append({
+                "kind": "guardian",
+                "target": target,
+                "display_name": str(contact.get("name") or contact.get("relationship") or "核心守護人"),
+                "recipient_count": 1,
+                "status": "sent",
+                "retry_key": delivery_retry_key,
+            })
+            guardian_results.append({
+                "name": str(contact.get("name") or contact.get("relationship") or "核心守護人"),
+                "status": "sent",
+            })
+            print(f"[sos] push ok target={str(target)[:8]}", flush=True)
+        except Exception as exc:
+            append_notification_log(state, "sos", target, "failed", message, str(exc))
+            failed += 1
+            results.append({
+                "line_user_id": target,
+                "status": "failed",
+                "error_hint": classify_line_push_error(exc),
+            })
+            deliveries.append({
+                "kind": "guardian",
+                "target": target,
+                "display_name": str(contact.get("name") or contact.get("relationship") or "核心守護人"),
+                "recipient_count": 1,
+                "status": "failed",
+                "retry_key": delivery_retry_key,
+            })
+            guardian_results.append({
+                "name": str(contact.get("name") or contact.get("relationship") or "核心守護人"),
+                "status": "failed",
+                "error_hint": classify_line_push_error(exc),
+            })
+            print(f"[sos] push FAIL target={str(target)[:8]} err={str(exc)[:180]}", flush=True)
+
+    for group_id in active_group_ids:
+        delivery_retry_key = f"{sos_event_id}:group:{group_id}"
+        try:
+            group_info = (state.get("guardian_groups") or {}).get(group_id) or {}
+            member_ids = list(group_delivery_members.get(group_id) or [])
+            result, mention_mode, _payload = push_sos_to_guardian_group(
+                token,
+                group_id,
+                message,
+                sender=sender,
+                member_ids=member_ids,
+                retry_key=delivery_retry_key,
+            )
+            append_notification_log(
+                state,
+                "sos_guardian_group",
+                group_id,
+                "sent",
+                message,
+                json.dumps({"result": result, "mention": mention_mode}, ensure_ascii=False),
+            )
+            sent += 1
+            if sent_at is None:
+                sent_at = current_app_time(config or {}).isoformat(timespec="seconds")
+            group_sent += 1
+            results.append({
+                "group_id": group_id,
+                "status": "sent",
+                "mention": mention_mode,
+            })
+            deliveries.append({
+                "kind": "group",
+                "target": group_id,
+                "display_name": str(group_info.get("group_name") or group_info.get("name") or "守護群"),
+                "recipient_count": max(1, len(member_ids)),
+                "status": "sent",
+                "retry_key": delivery_retry_key,
+            })
+            group_results.append({
+                "name": str(group_info.get("group_name") or group_info.get("name") or "守護群"),
+                "status": "sent",
+                "mention": mention_mode,
+            })
+            print(f"[sos] group push ok group={str(group_id)[:8]} mention={mention_mode}", flush=True)
+        except Exception as exc:
+            append_notification_log(state, "sos_guardian_group", group_id, "failed", message, str(exc))
+            failed += 1
+            group_failed += 1
+            results.append({"group_id": group_id, "status": "failed"})
+            deliveries.append({
+                "kind": "group",
+                "target": group_id,
+                "display_name": str(group_info.get("group_name") or group_info.get("name") or "守護群"),
+                "recipient_count": max(1, len(group_delivery_members.get(group_id) or [])),
+                "status": "failed",
+                "retry_key": delivery_retry_key,
+            })
+            group_info = (state.get("guardian_groups") or {}).get(group_id) or {}
+            group_results.append({
+                "name": str(group_info.get("group_name") or group_info.get("name") or "守護群"),
+                "status": "failed",
+                "error_hint": classify_line_push_error(exc),
+            })
+            print(f"[sos] group push FAIL group={str(group_id)[:8]} err={str(exc)[:180]}", flush=True)
+
+    self_result = {"status": "not_sent"}
+    self_delivery = copy.deepcopy(prepared_deliveries[-1])
+    if sent:
+        confirmation = (
+            f"✅ SOS 已送出\n"
+            f"已通知 {sent} 個守護對象，失敗 {failed} 個\n"
+            f"{'已附上這次取得的位置' if location_text else '這次未附即時位置'}\n"
+            "若是誤觸或目前已安全，請在 10 分鐘內回到 SOS 畫面取消通知"
+        )
+        try:
+            result = _send_line_with_retry_key(
+                sender,
+                token,
+                line_user_id,
+                confirmation,
+                _line_retry_key(f"{sos_event_id}:self:{line_user_id}"),
+            )
+            append_notification_log(
+                state, "sos_self_confirmation", line_user_id, "sent",
+                confirmation, json.dumps(result, ensure_ascii=False),
+            )
+            self_result = {"status": "sent"}
+            self_delivery["status"] = "sent"
+        except Exception as exc:
+            append_notification_log(
+                state, "sos_self_confirmation", line_user_id, "failed",
+                confirmation, str(exc),
+            )
+            self_result = {
+                "status": "failed",
+                "error_hint": classify_line_push_error(exc),
+            }
+            self_delivery["status"] = "failed"
+            self_delivery["error_hint"] = self_result["error_hint"]
+    deliveries.append(self_delivery)
+
+    profile["last_sos_event_id"] = sos_event_id
+    state.setdefault("sos_events", {})[sos_event_id] = {
+        "event_id": sos_event_id,
+        "owner_line_user_id": line_user_id,
+        "owner_display_name": profile.get("display_name") or "會員",
+        "status": "sent" if sent else "delivery_failed",
+        "created_at": now_dt.isoformat(timespec="seconds"),
+        "sent_at": sent_at,
+        "deliveries": deliveries,
+        "escalation_guardians": copy.deepcopy(prepared_escalation_guardians),
+        "message": message,
+        "location_attached": bool(location_text),
+        "abuse_mode": abuse["mode"],
+        "push_budget": budget,
+    }
+    sos_units = 0
+    for delivery in deliveries:
+        if delivery.get("status") != "sent":
+            continue
+        if delivery.get("kind") == "group":
+            sos_units += max(1, int(delivery.get("recipient_count") or 1))
+        elif delivery.get("kind") == "self":
+            continue
+        else:
+            sos_units += 1
+    if self_result.get("status") == "sent":
+        sos_units += 1
+    record_line_message_usage(
+        state,
+        category="sos",
+        owner_line_user_id=line_user_id,
+        recipient_count=sos_units,
+        event_id=sos_event_id,
+        sent_at=now_dt,
+    )
+    code = 200 if sent else 502
+    cancel_available = sent > 0
+    pending_event = None
+    if cancel_available:
+        pending_event = {
+            "stage": "sent",
+            "tap_count": 3,
+            "first_tap_at": now_dt.isoformat(timespec="seconds"),
+            "last_tap_at": now_dt.isoformat(timespec="seconds"),
+            "sent_at": sent_at,
+            "event_id": sos_event_id,
+        }
+    event_record = copy.deepcopy(state["sos_events"][sos_event_id])
+    delivery_logs = copy.deepcopy(
+        (state.get("notification_logs") or [])[notification_log_start:]
+    )
+    delivery_usage = copy.deepcopy(
+        (state.get("line_message_usage") or [])[usage_start:]
+    )
+    profile_patch = {
+        "last_sos_event_id": sos_event_id,
+    }
+    if location:
+        profile_patch["location"] = copy.deepcopy(profile.get("location") or location)
+
+    def merge_sos_delivery(latest):
+        latest_profile = (latest.get("users") or {}).get(line_user_id)
+        if latest_profile is not None:
+            latest_profile.update(copy.deepcopy(profile_patch))
+            latest_policy = sos_abuse_state(latest_profile, now_dt)
+            latest_profile["sos_abuse_mode"] = latest_policy["mode"]
+            latest_profile["sos_abuse_expires_at"] = latest_policy["expires_at"]
+        latest.setdefault("sos_events", {})[sos_event_id] = copy.deepcopy(event_record)
+        if pending_event:
+            latest.setdefault("sos_pending", {})[line_user_id] = copy.deepcopy(pending_event)
+        if delivery_logs:
+            logs = list(latest.get("notification_logs") or [])
+            logs.extend(copy.deepcopy(delivery_logs))
+            latest["notification_logs"] = logs[-100:]
+        if delivery_usage:
+            ledger = list(latest.get("line_message_usage") or [])
+            known_keys = {
+                str(row.get("key") or "")
+                for row in ledger
+                if isinstance(row, dict)
+            }
+            for row in delivery_usage:
+                key = str(row.get("key") or "")
+                if key and key not in known_keys:
+                    ledger.append(copy.deepcopy(row))
+                    known_keys.add(key)
+            latest["line_message_usage"] = ledger[-10000:]
+
+    mutate_state_atomically(data_file, merge_sos_delivery)
+    return {
+        "sent": sent,
+        "failed": failed,
+        "group_sent": group_sent,
+        "group_failed": group_failed,
+        "guardian_limit": limit,
+        "self": self_result,
+        "guardians": guardian_results,
+        "groups": group_results,
+        "results": [*guardian_results, *group_results],
+        "location_attached": bool(location_text),
+        "phone_only_count": len(phone_contacts),
+        "phone_contacts": phone_contacts[:5],
+        "event_id": sos_event_id,
+        "sent_at": sent_at,
+        "location_updated_at": location.get("updated_at") if location_text else None,
+        "cancel_available": cancel_available,
+        "abuse_mode": abuse["mode"],
+        "abuse_expires_at": abuse["expires_at"],
+        "emergency_numbers_available": True,
+        "emergency_numbers": ["119", "110"],
+    }, code
+
+
+def friend_locations(data_file, line_user_id):
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id)
+    now = datetime.now()
+    friends = []
+    for friend_id in profile.get("friends") or []:
+        friend = state.get("users", {}).get(friend_id)
+        if not friend:
+            continue
+        location = friend.get("location") or {}
+        if not _location_session_active(location, now):
+            continue
+        snap = safety_guard_snapshot(friend, now)
+        friends.append(
+            {
+                "line_user_id": friend_id,
+                "display_name": friend.get("display_name", "LINE 使用者"),
+                "latitude": location.get("latitude"),
+                "longitude": location.get("longitude"),
+                "city": location.get("city", ""),
+                "updated_at": location.get("updated_at"),
+                "expires_at": location.get("expires_at"),
+                "started_at": location.get("started_at"),
+                "until_stop": bool(location.get("until_stop")),
+                "safety_status": snap.get("safety_status"),
+                "is_today_checked": snap.get("is_today_checked"),
+                "mode": "safety_guard",
+            }
+        )
+    return {"friends": friends}
+
+
+def admin_update_user_plan(data_file, payload):
+    """後台調整方案：只改方案／付款欄位，绝不清空守護人、好友或守護群。"""
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if not line_user_id:
+        return {"error": "missing line_user_id"}, 400
+    requested_plan = str(payload.get("plan") or "trial")
+    beta_cohort = (
+        requested_plan.removeprefix("beta_").upper()
+        if requested_plan.startswith("beta_")
+        else ""
+    )
+    if requested_plan not in PLAN_LIMITS and beta_cohort not in BETA_COHORT_PLAN:
+        return {"error": "unknown plan"}, 400
+    plan = BETA_COHORT_PLAN.get(beta_cohort, requested_plan)
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id)
+
+    # 升級前快照：確保後續邏輯不會誤清綁定資料
+    preserved_contacts = list(profile.get("contacts") or [])
+    preserved_friends = list(profile.get("friends") or [])
+    preserved_groups = list(profile.get("guardian_group_ids") or [])
+    preserved_onboarding = bool(profile.get("is_onboarding_completed"))
+    preserved_reminder_times = list(profile.get("reminder_times") or [])
+    preserved_reminder_time = profile.get("reminder_time")
+
+    profile["plan"] = plan
+    if beta_cohort:
+        now = current_app_time({})
+        profile["membership_source"] = "beta"
+        profile["free_eligibility_source"] = f"beta_{beta_cohort}"
+        profile["free_eligibility_used_at"] = now.isoformat(timespec="seconds")
+        profile["payment_status"] = "beta"
+        profile["beta_cohort"] = beta_cohort
+        profile["beta_started_at"] = now.isoformat(timespec="seconds")
+        profile["beta_ends_at"] = (
+            now + timedelta(days=BETA_TRIAL_DAYS)
+        ).isoformat(timespec="seconds")
+        profile["beta_revoked_at"] = None
+        profile["beta_recruitment_source"] = str(
+            payload.get("source") or profile.get("beta_recruitment_source") or ""
+        ).strip()[:80]
+    elif plan.startswith("paid_"):
+        profile["membership_source"] = "paid"
+        profile["trial_policy_version"] = TRIAL_POLICY_VERSION
+        profile["trial_bonus_days"] = 0
+        profile["beta_cohort"] = ""
+        profile["beta_started_at"] = ""
+        profile["beta_ends_at"] = ""
+        profile["beta_revoked_at"] = None
+    elif plan == "free":
+        profile["membership_source"] = "expired"
+    elif plan == "trial" and not str(profile.get("membership_source") or ""):
+        profile["membership_source"] = "public_trial"
+    if not beta_cohort:
+        profile["payment_status"] = str(
+            payload.get("payment_status") or ("trial" if plan == "trial" else "active")
+        )
+
+    paid_until = str(payload.get("paid_until") or "").strip()
+    if not paid_until:
+        paid_until = str(profile.get("paid_until") or "").strip()
+        existing_expiry = parse_datetime(paid_until) if paid_until else None
+        if plan.startswith("paid_") and existing_expiry:
+            comparable_expiry, comparable_now = _comparable_datetimes(
+                existing_expiry, current_app_time({})
+            )
+            if comparable_expiry < comparable_now:
+                paid_until = ""
+    # 後台改成付費方案但未填到期日時，自動補合理到期日，避免被過期降級排程立刻打回 free
+    if plan.startswith("paid_") and not beta_cohort and not paid_until:
+        product = PAYMENT_PRODUCTS.get(plan) or {}
+        days = int(product.get("duration_days") or (365 if "year" in plan else 30))
+        paid_until = (datetime.now() + timedelta(days=days)).isoformat(timespec="seconds")
+        profile["billing_cycle"] = product.get("billing_cycle") or (
+            "yearly" if "year" in plan else "monthly"
+        )
+    if paid_until and not beta_cohort:
+        profile["paid_until"] = paid_until
+        profile["next_billing_date"] = paid_until
+    elif plan in ("trial", "free"):
+        # 明確降為試用／免費時才清到期日；付費升級絕不因空字串清掉
+        if "paid_until" in payload:
+            profile["paid_until"] = ""
+
+    # 明確寫回綁定資料（防止任何中間步驟誤改）
+    profile["contacts"] = preserved_contacts
+    profile["friends"] = preserved_friends
+    profile["guardian_group_ids"] = preserved_groups
+    if preserved_onboarding:
+        profile["is_onboarding_completed"] = True
+    if preserved_reminder_times:
+        profile["reminder_times"] = preserved_reminder_times
+    if preserved_reminder_time:
+        profile["reminder_time"] = preserved_reminder_time
+
+    # 付費／重新開通試用：取消 30 天軟保留倒數（資料續留）
+    if plan.startswith("paid_") or (plan == "trial" and trial_days_left(profile) > 0):
+        clear_contacts_retain_window(profile)
+
+    # 後台升級到含守護群方案：自動授予守護群管理員
+    admin_granted = ensure_guardian_group_admin_for_user(state, profile)
+
+    save_state(data_file, state)
+    status = build_status(profile, state)
+    status["preserved_contacts"] = len(preserved_contacts)
+    status["preserved_friends"] = len(preserved_friends)
+    status["preserved_guardian_groups"] = len(preserved_groups)
+    status["guardian_group_admin_granted"] = admin_granted
+    return status, 200
+
+
+def admin_set_core_guardian(data_file, payload):
+    """後台指定／取消核心守護人（is_primary）。可同時指定多位，上限依方案 core_guardian_alert_limit。"""
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if not line_user_id:
+        return {"error": "missing line_user_id"}, 400
+    contact_id = str(payload.get("contact_id") or "").strip()
+    contact_line_id = str(
+        payload.get("contact_line_user_id") or payload.get("guardian_line_user_id") or ""
+    ).strip()
+    if not contact_id and not contact_line_id:
+        return {"error": "missing contact_id or contact_line_user_id"}, 400
+    make_core = payload.get("is_primary")
+    if make_core is None:
+        make_core = True
+    make_core = bool(make_core)
+
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if not profile:
+        return {"error": "member not found"}, 404
+    contacts = list(profile.get("contacts") or [])
+    if not contacts:
+        return {"error": "no contacts"}, 400
+
+    target_idx = None
+    for i, c in enumerate(contacts):
+        cid = str(c.get("id") or "")
+        lid = str(c.get("line_id") or c.get("line_user_id") or "")
+        if contact_id and cid == contact_id:
+            target_idx = i
+            break
+        if contact_line_id and lid == contact_line_id:
+            target_idx = i
+            break
+    if target_idx is None:
+        return {"error": "contact_not_found"}, 404
+
+    limit = int(plan_rules(profile).get("core_guardian_alert_limit") or 1)
+    now = iso_now()
+    if make_core:
+        contacts[target_idx]["is_primary"] = True
+        contacts[target_idx]["updated_at"] = now
+        # 超過方案核心人數時，依 priority 保留較前面的核心
+        core_idxs = [
+            i for i, c in enumerate(contacts)
+            if bool(c.get("is_primary"))
+        ]
+        if len(core_idxs) > limit:
+            core_idxs_sorted = sorted(
+                core_idxs,
+                key=lambda i: int(contacts[i].get("priority") or 9999),
+            )
+            keep = set(core_idxs_sorted[:limit])
+            # 確保剛指定的目標一定留下
+            if target_idx not in keep:
+                keep = set(core_idxs_sorted[: max(0, limit - 1)] + [target_idx])
+                keep = set(list(keep)[:limit])
+            for i, c in enumerate(contacts):
+                if bool(c.get("is_primary")) and i not in keep:
+                    c["is_primary"] = False
+                    c["updated_at"] = now
+    else:
+        contacts[target_idx]["is_primary"] = False
+        contacts[target_idx]["updated_at"] = now
+        # 不可全部沒有核心：若無人是核心，把順位最高者補回
+        if contacts and not any(bool(c.get("is_primary")) for c in contacts):
+            ranked = sorted(range(len(contacts)), key=lambda i: int(contacts[i].get("priority") or 9999))
+            contacts[ranked[0]]["is_primary"] = True
+            contacts[ranked[0]]["updated_at"] = now
+
+    profile["contacts"] = contacts
+    save_state(data_file, state)
+    status = build_status(profile, state)
+    status["ok"] = True
+    status["updated_contact"] = contacts[target_idx]
+    return status, 200
+
+
+def create_support_ticket(data_file, payload):
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    message = str(payload.get("message") or "").strip()
+    if not line_user_id or not message:
+        return {"error": "missing line_user_id or message"}, 400
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id)
+    email = str(payload.get("email") or profile.get("contact_email") or "").strip()
+    reply_channel = str(payload.get("reply_channel") or "").strip().lower()
+    if not reply_channel:
+        reply_channel = "email" if email else "line"
+    if reply_channel not in {"email", "line"}:
+        return {"error": "invalid reply_channel"}, 400
+    if reply_channel == "email" and not re.match(
+        r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email
+    ):
+        return {"error": "valid email required"}, 400
+    ticket = {
+        "id": secrets.token_urlsafe(8),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "line_user_id": line_user_id,
+        "display_name": str(payload.get("display_name") or profile.get("display_name") or "LINE 使用者"),
+        "email": email,
+        "reply_channel": reply_channel,
+        "category": str(payload.get("category") or "其他").strip()[:40],
+        "subject": str(payload.get("subject") or "").strip()[:120],
+        "message": message[:1000],
+        "status": "submitted",
+        "plan": profile.get("plan", "trial"),
+        "last_check_in": profile.get("last_check_in"),
+        "reply": "",
+        "replied_at": "",
+        "delivery_log": [],
+    }
+    tickets = state.setdefault("support_tickets", [])
+    tickets.append(ticket)
+    state["support_tickets"] = tickets[-200:]
+    save_state(data_file, state)
+    return {"ticket": ticket}, 201
+
+
+def member_support_tickets(data_file, line_user_id):
+    owner_id = str(line_user_id or "").strip()
+    if not owner_id:
+        return {"error": "missing line_user_id"}, 400
+    state = load_state(data_file)
+    tickets = [
+        ticket
+        for ticket in reversed(state.get("support_tickets", [])[-200:])
+        if str(ticket.get("line_user_id") or "") == owner_id
+    ]
+    return {"tickets": tickets}, 200
+
+
+def send_support_email(to_email, subject, message, config=None):
+    config = config or {}
+    host = str(config.get("SMTP_HOST") or os.environ.get("SMTP_HOST") or "").strip()
+    username = str(
+        config.get("SMTP_USERNAME") or os.environ.get("SMTP_USERNAME") or ""
+    ).strip()
+    password = str(
+        config.get("SMTP_PASSWORD") or os.environ.get("SMTP_PASSWORD") or ""
+    )
+    from_email = str(
+        config.get("SUPPORT_FROM_EMAIL")
+        or os.environ.get("SUPPORT_FROM_EMAIL")
+        or username
+    ).strip()
+    if not host or not username or not password or not from_email:
+        raise RuntimeError("support_email_not_configured")
+    port = int(config.get("SMTP_PORT") or os.environ.get("SMTP_PORT") or 587)
+    use_tls = str(
+        config.get("SMTP_USE_TLS")
+        if config.get("SMTP_USE_TLS") is not None
+        else os.environ.get("SMTP_USE_TLS", "true")
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    email = EmailMessage()
+    email["From"] = from_email
+    email["To"] = to_email
+    email["Subject"] = subject
+    email.set_content(message)
+    factory = config.get("SMTP_FACTORY") or smtplib.SMTP
+    with factory(host, port, timeout=10) as smtp:
+        if use_tls:
+            smtp.starttls()
+        smtp.login(username, password)
+        smtp.send_message(email)
+    return {"sent": True, "provider": "smtp"}
+
+
+def admin_support_tickets(data_file):
+    state = load_state(data_file)
+    tickets = list(reversed(state.get("support_tickets", [])[-100:]))
+    return {"tickets": tickets}
+
+
+def admin_reply_support_ticket(data_file, payload, config=None):
+    ticket_id = str(payload.get("ticket_id") or "").strip()
+    message = str(payload.get("message") or "").strip()
+    if not ticket_id or not message:
+        return {"error": "missing ticket_id or message"}, 400
+    state = load_state(data_file)
+    ticket = next((item for item in state.get("support_tickets", []) if item.get("id") == ticket_id), None)
+    if not ticket:
+        return {"error": "ticket not found"}, 404
+    reply_channel = str(
+        payload.get("reply_channel") or ticket.get("reply_channel") or "line"
+    ).lower()
+    now = datetime.now().isoformat(timespec="seconds")
+    delivery = {"channel": reply_channel, "status": "failed", "created_at": now}
+    try:
+        if reply_channel == "email":
+            email = str(ticket.get("email") or "").strip()
+            sender = (config or {}).get("SUPPORT_EMAIL_SENDER") or send_support_email
+            if not email:
+                return {"error": "ticket email is missing"}, 400
+            result = sender(
+                email,
+                str(ticket.get("subject") or "每日平安客服回覆"),
+                message,
+                config or {},
+            )
+            target = email
+        elif reply_channel == "line":
+            target = str(ticket.get("line_user_id") or "")
+            if target.startswith(("C", "R")):
+                return {"error": "line_private_reply_required"}, 400
+            token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+            sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
+            if not token:
+                return {"error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
+            result = sender(token, target, message)
+        else:
+            return {"error": "invalid reply_channel"}, 400
+    except Exception:
+        delivery["target"] = str(ticket.get("email") or ticket.get("line_user_id") or "")
+        ticket.setdefault("delivery_log", []).append(delivery)
+        save_state(data_file, state)
+        return {"error": "support_delivery_failed", "ticket": ticket}, 502
+    delivery.update({"status": "sent", "target": target})
+    ticket.setdefault("delivery_log", []).append(delivery)
+    ticket["status"] = (
+        "resolved"
+        if str(payload.get("status") or "") == "resolved"
+        else "waiting_user"
+    )
+    ticket["reply_channel"] = reply_channel
+    ticket["reply"] = message[:1000]
+    ticket["replied_at"] = now
+    append_notification_log(state, "support_reply", target, "sent", message, json.dumps(result, ensure_ascii=False))
+    save_state(data_file, state)
+    return {"ticket": ticket, "result": result}, 200
+
+
+def export_account_data(data_file, payload):
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if not line_user_id:
+        return {"error": "missing line_user_id"}, 400
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if profile is None:
+        return {"error": "user not found"}, 404
+
+    return {
+        "exported_at": datetime.now().isoformat(timespec="seconds"),
+        "member": profile,
+        "orders": [order for order in state.get("orders", []) if order.get("line_user_id") == line_user_id],
+        "support_tickets": [ticket for ticket in state.get("support_tickets", []) if ticket.get("line_user_id") == line_user_id],
+        "guardian_groups": [
+            group for group in state.get("guardian_groups", {}).values()
+            if group.get("owner_line_user_id") == line_user_id
+        ],
+        "contact_rewards": [
+            reward for reward in state.get("contact_rewards", [])
+            if line_user_id in {reward.get("inviter_line_user_id"), reward.get("contact_line_user_id")}
+        ],
+        "notification_logs": [
+            log for log in state.get("notification_logs", [])
+            if line_user_id in {log.get("line_user_id"), log.get("target")}
+        ],
+    }, 200
+
+
+def delete_account(data_file, payload):
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if not line_user_id:
+        return {"error": "missing line_user_id"}, 400
+    state = load_state(data_file)
+    removed = state.get("users", {}).pop(line_user_id, None)
+    if removed is None:
+        return {"deleted": False, "line_user_id": line_user_id}, 200
+
+    for profile in state.get("users", {}).values():
+        profile["friends"] = [friend_id for friend_id in (profile.get("friends") or []) if friend_id != line_user_id]
+        for contact in profile.get("contacts") or []:
+            if contact.get("line_id") == line_user_id:
+                contact["line_id"] = ""
+                contact["consent_status"] = "revoked"
+                contact["note"] = "對方已刪除平台帳號"
+
+    state["friend_invites"] = {
+        code: invite for code, invite in state.get("friend_invites", {}).items()
+        if invite.get("line_user_id") != line_user_id
+    }
+    state["guardian_groups"] = {
+        group_id: group for group_id, group in state.get("guardian_groups", {}).items()
+        if group.get("owner_line_user_id") != line_user_id
+    }
+    state["contact_rewards"] = [
+        reward for reward in state.get("contact_rewards", [])
+        if line_user_id not in {reward.get("inviter_line_user_id"), reward.get("contact_line_user_id")}
+    ]
+    state["support_tickets"] = [
+        ticket for ticket in state.get("support_tickets", []) if ticket.get("line_user_id") != line_user_id
+    ]
+    state["notification_logs"] = [
+        log for log in state.get("notification_logs", [])
+        if line_user_id not in {log.get("line_user_id"), log.get("target")}
+    ]
+    for order in state.get("orders", []):
+        if order.get("line_user_id") == line_user_id:
+            order["line_user_id"] = "deleted-user"
+            order["display_name"] = "已刪除會員"
+            order["personal_data_removed_at"] = datetime.now().isoformat(timespec="seconds")
+    save_state(data_file, state)
+    return {"deleted": bool(removed), "line_user_id": line_user_id}, 200
+
+
+def delete_personal_history(data_file, payload):
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    record_type = str(payload.get("record_type") or "checkins").strip()
+    if not line_user_id:
+        return {"error": "missing line_user_id"}, 400
+    if record_type != "checkins":
+        return {"error": "unsupported record_type"}, 400
+
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if profile is None:
+        return {"error": "user not found"}, 404
+
+    removed_count = len(profile.get("history") or [])
+    profile["history"] = []
+    profile["last_check_in"] = None
+    profile["last_warning_cancelled_at"] = None
+    save_state(data_file, state)
+    return {
+        "deleted": True,
+        "record_type": record_type,
+        "removed_count": removed_count,
+        "line_user_id": line_user_id,
+    }, 200
+
+
+def _normalize_admin_password(value):
+    """Strip whitespace / paste junk so env file CRLF and zero-width chars don't break login."""
+    text = str(value or "")
+    for ch in ("\ufeff", "\u200b", "\u200c", "\u200d", "\u2060"):
+        text = text.replace(ch, "")
+    # Normalize common unicode dashes to ASCII hyphen (copy/paste from chat)
+    for ch in ("\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\ufe58", "\ufe63", "\uff0d"):
+        text = text.replace(ch, "-")
+    return text.strip()
+
+
+def _env_flag_on(name, config=None):
+    raw = os.environ.get(name)
+    if raw is None and config is not None:
+        raw = config.get(name, "")
+    return str(raw or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def admin_open_mode(config=None):
+    """Legacy compatibility hook; secure admin never permits open mode."""
+    return False
+
+
+def admin_allowed(config, password):
+    return admin_password_matches(config, password)
+
+
+def admin_auth_error_payload(config, password):
+    """Return (payload, http_status) when auth fails; None when allowed."""
+    if not admin_security_ready(config):
+        return {"error": "admin_not_configured"}, 503
+    if not admin_allowed(config, password):
+        return {"error": "unauthorized"}, 401
+    return None
+
+
+def admin_security_ready(config):
+    password = any(
+        _normalize_admin_password(config.get(name, ""))
+        for name in (
+            "ADMIN_PASSWORD",
+            "ADMIN_OPERATIONS_PASSWORD",
+            "ADMIN_FINANCE_PASSWORD",
+            "ADMIN_VIEWER_PASSWORD",
+        )
+    )
+    session_secret = str(config.get("ADMIN_SESSION_SECRET") or "").strip()
+    return bool(password and len(session_secret) >= 32)
+
+
+def account_migration_ready(config):
+    legacy_channel = str(
+        config.get("LEGACY_LINE_LOGIN_CHANNEL_ID") or ""
+    ).strip()
+    current_channel = str(config.get("LINE_LOGIN_CHANNEL_ID") or "").strip()
+    secret = str(config.get("ACCOUNT_MIGRATION_SECRET") or "").strip()
+    return bool(
+        legacy_channel
+        and current_channel
+        and len(secret.encode("utf-8")) >= 32
+    )
+
+
+ACCOUNT_MIGRATION_TICKET_RETENTION_DAYS = 30
+ACCOUNT_MIGRATION_TICKET_MAX_PER_SOURCE = 20
+ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX = 2000
+ACCOUNT_MIGRATION_AUDIT_RETENTION_DAYS = 90
+ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX = 1000
+ACCOUNT_MIGRATION_START_WINDOW_SECONDS = 600
+ACCOUNT_MIGRATION_START_MAX_PER_WINDOW = 5
+ACCOUNT_MIGRATION_INVALID_REDEEM_WINDOW_SECONDS = 600
+ACCOUNT_MIGRATION_INVALID_REDEEM_MAX_PER_WINDOW = 30
+
+
+def _account_migration_now(now=None):
+    value = now or datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _account_migration_datetime(value):
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return _account_migration_now(parsed)
+
+
+def purge_account_migration_history(state, now=None):
+    current = _account_migration_now(now)
+    ticket_cutoff = current - timedelta(
+        days=ACCOUNT_MIGRATION_TICKET_RETENTION_DAYS
+    )
+    audit_cutoff = current - timedelta(
+        days=ACCOUNT_MIGRATION_AUDIT_RETENTION_DAYS
+    )
+    tickets = state.get("account_migration_tickets") or {}
+    active_tickets = []
+    history_tickets = []
+    for key, ticket in tickets.items():
+        if not isinstance(ticket, dict):
+            continue
+        created = _account_migration_datetime(ticket.get("created_at"))
         expires = _account_migration_datetime(ticket.get("expires_at"))
         status = str(ticket.get("status") or "")
         if status == "pending" and expires and expires > current:
