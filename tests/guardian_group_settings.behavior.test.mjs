@@ -30,6 +30,7 @@ function element(id) {
 const requests = [];
 const context = {
   console,
+  URL,
   URLSearchParams,
   encodeURIComponent,
   setTimeout(fn) { fn(); },
@@ -37,7 +38,12 @@ const context = {
     getElementById: element,
     querySelectorAll() { return []; },
   },
-  location: { href: "", assign(value) { this.href = value; } },
+  location: {
+    href: "https://alive-checkin.onrender.com/liff/guardian-groups.html",
+    origin: "https://alive-checkin.onrender.com",
+    assign(value) { this.href = value; },
+  },
+  history: { length: 1, backCalled: false, back() { this.backCalled = true; } },
   liff: {
     async init() {},
     isLoggedIn() { return true; },
@@ -94,6 +100,14 @@ assert.match(element("groupList").innerHTML, /每日摘要/);
 assert.match(element("groupList").innerHTML, /查看今日狀態/);
 assert.match(element("groupList").innerHTML, /value="20:00"/);
 assert.match(html, /id="retryButton"/);
+assert.match(html, /id="backButton"/);
+
+context.returnFromGuardianGroups();
+assert.equal(
+  context.location.href,
+  "https://liff.line.me/123-test?open=member",
+  "without a safe previous page, return to LIFF member center",
+);
 
 await context.saveGroupPreferences("C-family", true, "22:30");
 const saveRequest = requests.find((row) => row.options.method === "POST");
