@@ -411,14 +411,14 @@
         </div>
         <h2>14 天安心體驗</h2>
       </header>
-      <p><strong>每天 10 秒，讓家人知道你平安。先加入官方 LINE。</strong></p>
-      <p>先設定每日提醒，再分享守護邀請。對方接受後，你們的連結就建立了。</p>
+      <p><strong>每天 10 秒，換家人一夜好眠</strong></p>
+      <p><strong>一個簡單的按鈕，是給在乎的人最溫柔的定心丸。</strong><br>不需反覆問候、不打擾，只讓他們知道「我今天很好」。</p>
     </div>
     <div class="public-start-panel">
-      <h3>第一步：點我加入官方 LINE</h3>
-      <p class="public-start-tip">小提示：加入後，才能收到報平安通知與守護人綁定邀請；加入完請返回這個頁面。</p>
+      <h3>第一步：開啟你們的安心頻道</h3>
+      <p class="public-start-tip"><strong>加入後，你與守護人之間專屬的「安心頻道」就能開啟。</strong><br>我們只會在你設定好的時間輕聲提醒。加入後請返回這個頁面繼續設定。</p>
       <div class="public-primary-actions">
-        <a class="btn btn-secondary" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener"><span class="btn-label">點我加入<br>官方 LINE</span></a>
+        <a class="btn btn-secondary" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener"><span class="btn-label">傳送安心邀請 💚</span></a>
         <a class="btn btn-primary peace-trial-cta" href="https://liff.line.me/2010848330-UAiqPPYD?open=onboarding"><span class="btn-label">開始 14 天<br>安心體驗</span> <span aria-hidden="true">↗</span></a>
       </div>
     </div>
@@ -430,10 +430,10 @@
     </div>
     <h3 class="joined-steps-title">已加入，請完成以下四個步驟：</h3>
     <div class="peace-steps" aria-label="安心體驗四步驟">
-      <div class="peace-step"><strong>① 填寫資料</strong> <span class="info-tip" title="讓守護人知道你是誰">ⓘ 讓守護人知道你是誰</span><br>填寫你的姓名、與守護人的關係。緊急聯絡電話可事後填寫，SOS 時可用來緊急聯絡。</div>
-      <div class="peace-step"><strong>② 設定提醒</strong><br>選擇每天想收到提醒的時間。</div>
-      <div class="peace-step"><strong>③ 邀請守護人</strong> <span aria-hidden="true">↗</span><br>把專屬連結分享給在乎的人。</div>
-      <div class="peace-step"><strong>④ 完成綁定</strong><br>對方接受後，安心連結就建立了。</div>
+      <div class="peace-step"><strong>① 讓守護人認出你</strong><br>請寫下你希望被稱呼的名字。送出邀請後，再由對方確認「他／她是你的誰？」<br><small>緊急聯絡電話可先留空，之後隨時補上。這是為「萬一」準備的安心繩索。</small></div>
+      <div class="peace-step"><strong>② 約定每天的想念時刻</strong><br>選一個你方便的時間，讓平安問候準時抵達。</div>
+      <div class="peace-step"><strong>③ 向在乎的人，發出第一道守護之光</strong><br>產生你的專屬安心邀請，再選擇 LINE 好友分享。<br><small>不會自動互相綁定；這次邀請只代表「對方守護你」。</small></div>
+      <div class="peace-step"><strong>④ ✨ 連結完成，守護正式開始</strong><br>對方完成加入 LINE、填寫資料並接受邀請後，安心連結才會建立。</div>
     </div>
   </section>
   <div id="loading" class="card loading">
@@ -665,10 +665,10 @@ function renderStep() {
       <div class="card">
         ${renderProgressSteps()}
         <div class="icon-big">⏰</div>
-        <h2 style="text-align:center;">設定我的資料</h2>
-        <label for="displayName">我的稱呼</label>
-        <input id="displayName" type="text" value="${state.displayName || ""}" maxlength="30">
-        <p style="color:#666;margin:12px 0;line-height:1.7;">依目前方案可設定 ${count} 次每日提醒。完成後才會進入分享守護人；之後可到「我的會員」修改次數與時間。</p>
+        <h2 style="text-align:center;">讓守護人認出你</h2>
+        <label for="displayName">請寫下你希望被稱呼的名字</label>
+        <input id="displayName" type="text" value="${state.displayName || ""}" maxlength="30" placeholder="例如：媽媽、王小美">
+        <p style="color:#666;margin:12px 0;line-height:1.7;"><strong>約定每天的想念時刻</strong><br>選一個你方便的時間，讓平安問候準時抵達。這不是鬧鐘，是你和在乎的人之間無聲的約定。依目前方案可設定 ${count} 次每日提醒。</p>
         ${renderReminderSlots(defaults)}
         <label for="graceHours">忘記多久通知守護人</label>
         <select id="graceHours">
@@ -691,12 +691,12 @@ function renderStep() {
       <div class="card">
         ${renderProgressSteps()}
         <div class="icon-big">📲</div>
-        <h2 style="text-align:center;">一鍵分享核心守護人</h2>
+        <h2 style="text-align:center;">向在乎的人，發出第一道守護之光</h2>
         <p style="color:#666;line-height:1.7;">✅ 提醒設定完成</p>
         <p style="color:#888;line-height:1.7;">分享後會等待對方登入並接受，狀態分別顯示：<br>等待對方登入<br>等待對方接受</p>
         <div class="onboarding-action-group" id="guardianShareActions">
-          <p class="onboarding-action-note">這裡只負責傳送邀請，不會再次修改你的體驗設定。</p>
-          <button class="btn btn-primary" type="button" id="shareGuardianBtn">邀請守護人 <span aria-hidden="true">↗</span></button>
+          <p class="onboarding-action-note">按下後會先產生你的專屬安心邀請，再前往選擇 LINE 好友分享。這裡不會再次修改你的體驗設定。</p>
+          <button class="btn btn-primary" type="button" id="shareGuardianBtn">邀請他／她守護你 💌 <span aria-hidden="true">↗</span></button>
         </div>
         <div class="onboarding-action-group status-actions" id="guardianStatusActions">
           <p class="onboarding-action-note">分享完成後，再回來檢查對方是否接受。</p>
@@ -707,13 +707,18 @@ function renderStep() {
       </div>
     `;
     document.getElementById("shareGuardianBtn").addEventListener("click", () => {
+      const shareButton = document.getElementById("shareGuardianBtn");
+      shareButton.disabled = true;
+      shareButton.textContent = "正在產生專屬邀請連結…";
       const params = new URLSearchParams({
         return: "/liff/onboarding.html",
         open: "onboarding",
         inviter_id: state.lineUserId,
         inviter_name: state.displayName
       });
-      location.assign(`/liff/share-invite.html?${params.toString()}`);
+      setTimeout(() => {
+        location.assign(`/liff/share-invite.html?${params.toString()}`);
+      }, 120);
     });
     document.getElementById("refreshGuardianBtn").addEventListener("click", () => location.reload());
   } else if (state.currentStep === 4 && !state.completedSteps.guardian_bound) {
@@ -721,7 +726,7 @@ function renderStep() {
       <div class="card">
         ${renderProgressSteps()}
         <div class="icon-big">⏳</div>
-        <h2 style="text-align:center;">等待對方完成</h2>
+        <h2 style="text-align:center;">安心連結正在建立</h2>
         <p class="step-help">${STEP_WAITING_COPY}</p>
         <button class="btn btn-primary" type="button" onclick="location.reload()">重新檢查綁定狀態</button>
       </div>
@@ -731,8 +736,8 @@ function renderStep() {
     content.innerHTML = `
       <div class="gift-card">
         <div class="gift-emoji">🎉</div>
-        <div class="gift-title">完成設定!</div>
-        <div class="gift-subtitle">您已準備好被「今天還在嗎」守護了</div>
+        <div class="gift-title">✨ 連結完成，守護正式開始</div>
+        <div class="gift-subtitle">從這一刻起，你的平安，成了他／她心上最踏實的牽掛。明天開始，你會在約定的時間收到提醒，只需一鍵，就能讓愛流動。</div>
         
         <div class="gift-checklist">
           ${renderProgressSteps()}
