@@ -4669,30 +4669,6 @@
           <p class="helper" id="memberDailyReminderSaveFeedback" aria-live="polite" hidden style="margin-top:8px;"></p>
         </div>
 
-        <div class="member-data-section" id="memberSmartRemindersSection">
-          <button class="member-subpanel-toggle" id="smartRemindersToggleBtn" type="button" aria-expanded="false" aria-controls="smartRemindersPanel">
-            日期提醒（799 月費／年費）
-            <span aria-hidden="true">›</span>
-          </button>
-          <div class="member-subpanel-body" id="smartRemindersPanel" hidden>
-            <p class="helper" id="smartReminderHint">799 月費／年費：生日、紀念日、回診等日期提醒，只傳到 LINE 私訊。</p>
-            <div id="smartReminderUpgrade" class="member-limit-banner" hidden>
-              <strong>日期提醒為 799 月費／年費功能</strong>
-              <p>免費／399 僅可看說明。升級 799 後可新增提醒，系統會在到期日早上私訊你。</p>
-              <button class="action-btn primary" id="smartReminderUpgradeBtn" type="button">查看 799 方案</button>
-            </div>
-            <div id="smartReminderControls" hidden>
-              <div class="member-data-list" id="smartReminderList">
-                <div class="member-data-row"><span>目前狀態</span><strong>尚未新增提醒</strong></div>
-              </div>
-              <p class="helper" style="margin:8px 0;">提醒方式：私訊（預設）</p>
-              <div class="member-data-actions">
-                <button class="action-btn primary" id="smartReminderAddBtn" type="button">＋新增提醒</button>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <div class="member-data-section" id="guardianGroupsSection" hidden>
           <h3>我的守護群</h3>
           <div class="helper">799 月費會員最多可綁定 1 個 LINE 群組，年費會員最多 3 個。把官方帳號加入群組後，在群組輸入「點我綁定守護群」即可啟用。<br>注意：群組成員數 ≠ 已綁定守護人；加進群不會自動完成 LINE 一鍵邀請綁定。</div>
@@ -4736,7 +4712,7 @@
             <span class="member-subsection-chevron" aria-hidden="true">⌄</span>
           </button>
           <div class="member-collapsible-panel" id="memberHistoryPanel" hidden>
-            <p class="helper">799 月費／年費可在日期上新增備忘錄與提醒。</p>
+            <p class="helper">399／799 月費與年費可新增網頁備忘；799 才能設定 LINE 推播提醒。</p>
             <div class="member-data-actions" style="margin:10px 0;">
               <a class="action-btn primary" href="#history">＋ 新增備忘錄</a>
             </div>
@@ -5041,7 +5017,7 @@
       <div class="helper" style="margin-top:6px;"><strong>純文字備忘只儲存，不會推播 LINE。</strong>到設定日期與時間後，進入「每日平安」網頁時提醒一次；未設定時間就只儲存文字。</div>
       <div class="member-limit-banner" style="margin-top:12px;text-align:left;">
         <strong>需要 LINE 通知嗎？</strong>
-        <p>生日、吃藥、回診等提醒才會推播；請設定完整年月日與時間。通知自己每天最多 2 則。</p>
+        <p>生日、吃藥、回診等提醒才會推播；請設定完整年月日與時間。自己與受邀守護人合計每天最多 2 則。</p>
         <button class="action-btn primary" id="calendarNoteReminderBtn" type="button">設定 LINE 提醒</button>
       </div>
       <a class="google-calendar-link" id="googleCalendarLink" href="#" target="_blank" rel="noopener">加入 Google 日曆</a>
@@ -5057,7 +5033,7 @@
     <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="smartReminderEditorTitle" style="max-height:88vh;overflow-y:auto;overscroll-behavior:contain;">
       <h2 id="smartReminderEditorTitle">新增日期提醒</h2>
       <p class="helper">一般備忘、生日、吃藥、回診等可設定 LINE 推播。日期沿用你剛才在月曆選擇的日期；預設只通知自己，不會送到守護群。</p>
-      <p class="helper">生日／紀念日可選每年重複；吃藥、回診等預設單次提醒。通知自己每天最多 2 則。</p>
+      <p class="helper">生日／紀念日可選每年重複；吃藥、回診等預設單次提醒。自己與受邀守護人合計每天最多 2 則。</p>
       <p class="helper" id="smartReminderDailyUsage">今日日期提醒已使用 0／2 則</p>
       <div class="smart-editor-fields">
         <label for="smartReminderName">提醒主旨
@@ -7071,8 +7047,9 @@
       const usageEl = $("smartReminderDailyUsage");
       if (usageEl) {
         const usage = smartReminderCache.daily_usage || {};
-        const limits = smartReminderCache.daily_limits || { private: 2, guardian: 1 };
-        usageEl.textContent = `今日日期提醒：自己已使用 ${Number(usage.private) || 0}／${Number(limits.private) || 2} 則；核心守護人 ${Number(usage.guardian) || 0}／${Number(limits.guardian) || 1} 則`;
+        const limits = smartReminderCache.daily_limits || { total: 2 };
+        const totalUsed = (Number(usage.private) || 0) + (Number(usage.guardian) || 0);
+        usageEl.textContent = `今日 LINE 推播已使用 ${totalUsed}／${Number(limits.total) || 2} 則（自己與受邀守護人合計）`;
       }
       const yearly = $("smartReminderYearly");
       if (yearly) {
@@ -7169,7 +7146,7 @@
         delivery_target: deliveryTarget,
         notify_private: true,
         notify_group: false,
-        eve_remind: category !== "memo",
+        eve_remind: false,
         enabled: smartReminderEditingId
           ? ((smartReminderCache.reminders || []).find((row) => row.id === smartReminderEditingId)?.enabled !== false)
           : true,
@@ -9784,7 +9761,7 @@
 
     function openCalendarNote(dateText) {
       if (!(currentStatusData && currentStatusData.calendar_notes_enabled === true)) {
-        alert("備忘錄只開放 799 月費／年費方案使用");
+        alert("399／799 月費與年費方案皆可使用網頁日期備忘");
         return;
       }
       selectedCalendarDate = dateText;
@@ -9799,6 +9776,10 @@
       const webReminder = noteWebReminder(note);
       $("calendarNoteWebReminderTime").value = webReminder.time;
       $("calendarNoteWebReminderYearly").checked = webReminder.yearly;
+      const lineButton = $("calendarNoteReminderBtn");
+      if (lineButton) {
+        lineButton.hidden = !(currentStatusData && currentStatusData.smart_reminders_enabled === true);
+      }
       const hasSavedNote = Boolean(content || webReminder.time);
       $("calendarNoteTitle").textContent = hasSavedNote
         ? `${date.getMonth() + 1}月${date.getDate()}日｜修改記事與提醒`

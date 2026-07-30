@@ -1772,7 +1772,7 @@ def get_calendar_notes(data_file, line_user_id=None):
         return {"ok": False, "error": "missing line_user_id", "notes": {}}
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
-    if not plan_has_smart_reminders(profile):
+    if not plan_has_calendar_notes(profile):
         return {
             "ok": False,
             "error": "calendar_notes_require_799",
@@ -1819,7 +1819,7 @@ def save_calendar_note(data_file, payload):
 
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
-    if not plan_has_smart_reminders(profile):
+    if not plan_has_calendar_notes(profile):
         return {
             "ok": False,
             "error": "calendar_notes_require_799",
@@ -4097,7 +4097,7 @@ def build_status(profile, state=None, now=None):
         "core_guardian_alert_limit": plan_rules(profile).get("core_guardian_alert_limit", 1),
         "guardian_group_limit": plan_rules(profile).get("guardian_group_limit", 0),
         "guardian_group_member_limit": int(plan_rules(profile).get("guardian_group_member_limit") or 0),
-        "calendar_notes_enabled": plan_has_smart_reminders(profile),
+        "calendar_notes_enabled": plan_has_calendar_notes(profile),
         "smart_reminders_enabled": plan_has_smart_reminders(profile),
         "safety_guard_hours": allowed_safety_guard_hours(profile),
         "guardian_group_ids": profile.get("guardian_group_ids", []),
@@ -15770,6 +15770,17 @@ def plan_has_smart_reminders(profile, now=None):
     )
 
 
+def plan_has_calendar_notes(profile, now=None):
+    profile = profile or {}
+    plan = effective_entitlement_plan(profile, now=now)
+    return plan in {
+        "paid_399",
+        "paid_399_year",
+        "paid_799",
+        "paid_799_year",
+    } and membership_access_active(profile, now=now)
+
+
 def normalize_smart_reminder(raw, index=0):
     raw = raw if isinstance(raw, dict) else {}
     category = str(raw.get("category") or "memo").strip().lower()
@@ -15811,9 +15822,7 @@ def normalize_smart_reminder(raw, index=0):
     rid = str(raw.get("id") or "").strip() or f"sr_{secrets.token_hex(6)}"
     notify_private = True  # product: 智能提醒只走私訊
     notify_group = False
-    eve_remind = bool(raw.get("eve_remind", True))
-    if category == "memo":
-        eve_remind = False
+    eve_remind = False
     delivery_target = str(raw.get("delivery_target") or "private").strip()
     if not (delivery_target == "private" or delivery_target.startswith("guardian:")):
         delivery_target = str(raw.get("delivery_target") or "private").strip()
@@ -15936,39 +15945,39 @@ def build_smart_reminder_flex(reminder, *, mode="day"):
     date_text = f"{month}/{day}"
     rid = reminder.get("id") or ""
     if mode == "eve":
-        title = f"❤️ 明天是{name}{label}"
-        body = "需要幫你準備一句祝福嗎？"
-        buttons = [
-            {"type": "button", "action": {"type": "postback", "label": "✨每日產生祝福", "data": f"smart:wish:{rid}", "displayText": "幫我產生祝福"}, "style": "primary", "color": "#7C3AED", "height": "sm"},
-            {"type": "button", "action": {"type": "postback", "label": "🎁禮物建議", "data": f"smart:gift:{rid}", "displayText": "禮物建議"}, "style": "secondary", "height": "sm"},
-            {"type": "button", "action": {"type": "postback", "label": "📞明天提醒", "data": f"smart:snooze:{rid}", "displayText": "明天再提醒我"}, "style": "secondary", "height": "sm"},
-        ]
-        alt = f"明天是{name}的{label}"
-    else:
+        mode = "day"
+    if mode == "day":
         if (reminder.get("category") or "") == "memo":
             title = "📝 備忘提醒"
             body = f"{name}\n時間：{date_text} {reminder.get('remind_time') or '09:00'}"
             if reminder.get("note"):
                 body += f"\n備註：{reminder.get('note')}"
             buttons = [
-                {"type": "button", "action": {"type": "postback", "label": "✅已完成", "data": f"smart:blessed:{rid}", "displayText": "已完成"}, "style": "primary", "color": "#2563EB", "height": "sm"},
-                {"type": "button", "action": {"type": "postback", "label": "⏰晚點提醒我", "data": f"smart:snooze:{rid}", "displayText": "晚點提醒我"}, "style": "secondary", "height": "sm"},
+                {"type": "button", "action": {"type": "postback", "label": "📋查看備忘", "data": f"smart:view:{rid}", "displayText": "查看備忘"}, "style": "primary", "color": "#2563EB", "height": "sm"},
+                {"type": "button", "action": {"type": "postback", "label": "✅我知道了", "data": f"smart:blessed:{rid}", "displayText": "我知道了"}, "style": "secondary", "height": "sm"},
             ]
         elif (reminder.get("category") or "") == "birthday":
             title = f"🎂 今天是{name}的生日"
             body = f"別忘了送上一句祝福 ❤️\n姓名：{name}\n今天：{date_text}"
             buttons = [
                 {"type": "button", "action": {"type": "postback", "label": "🎁傳送祝福", "data": f"smart:wish:{rid}", "displayText": "傳送祝福"}, "style": "primary", "color": "#E11D48", "height": "sm"},
-                {"type": "button", "action": {"type": "postback", "label": "🎂已祝福", "data": f"smart:blessed:{rid}", "displayText": "已祝福"}, "style": "secondary", "height": "sm"},
-                {"type": "button", "action": {"type": "postback", "label": "⏰晚點提醒我", "data": f"smart:snooze:{rid}", "displayText": "晚點提醒我"}, "style": "secondary", "height": "sm"},
+                {"type": "button", "action": {"type": "postback", "label": "✅已祝福", "data": f"smart:blessed:{rid}", "displayText": "已祝福"}, "style": "secondary", "height": "sm"},
+            ]
+        elif (reminder.get("category") or "") in {"checkup", "medicine"}:
+            title = f"{emoji} {label}"
+            body = f"{name}\n時間：{date_text} {reminder.get('remind_time') or '09:00'}"
+            if reminder.get("note"):
+                body += f"\n備註：{reminder.get('note')}"
+            buttons = [
+                {"type": "button", "action": {"type": "postback", "label": "📋查看備忘", "data": f"smart:view:{rid}", "displayText": "查看備忘"}, "style": "primary", "color": "#2563EB", "height": "sm"},
+                {"type": "button", "action": {"type": "postback", "label": "✅我知道了", "data": f"smart:blessed:{rid}", "displayText": "我知道了"}, "style": "secondary", "height": "sm"},
             ]
         elif "父" in name or label in {"特殊紀念日"} and "父" in (reminder.get("note") or ""):
             title = f"🎉 今天是父親節"
             body = f"你設定的提醒對象：👨{name}\n記得向他說聲：父親節快樂 ❤️"
             buttons = [
                 {"type": "button", "action": {"type": "postback", "label": "💌LINE祝福", "data": f"smart:wish:{rid}", "displayText": "LINE祝福"}, "style": "primary", "color": "#2563EB", "height": "sm"},
-                {"type": "button", "action": {"type": "postback", "label": "📞打電話", "data": f"smart:call:{rid}", "displayText": "提醒我打電話"}, "style": "secondary", "height": "sm"},
-                {"type": "button", "action": {"type": "postback", "label": "⏰晚點提醒", "data": f"smart:snooze:{rid}", "displayText": "晚點提醒"}, "style": "secondary", "height": "sm"},
+                {"type": "button", "action": {"type": "postback", "label": "✅已完成", "data": f"smart:blessed:{rid}", "displayText": "已完成"}, "style": "secondary", "height": "sm"},
             ]
         else:
             title = f"{emoji} 今天是{name}的{label}"
@@ -15978,7 +15987,6 @@ def build_smart_reminder_flex(reminder, *, mode="day"):
             buttons = [
                 {"type": "button", "action": {"type": "postback", "label": "💌傳送祝福", "data": f"smart:wish:{rid}", "displayText": "傳送祝福"}, "style": "primary", "color": "#E11D48", "height": "sm"},
                 {"type": "button", "action": {"type": "postback", "label": "✅已完成", "data": f"smart:blessed:{rid}", "displayText": "已完成"}, "style": "secondary", "height": "sm"},
-                {"type": "button", "action": {"type": "postback", "label": "⏰晚點提醒我", "data": f"smart:snooze:{rid}", "displayText": "晚點提醒我"}, "style": "secondary", "height": "sm"},
             ]
         alt = f"備忘提醒：{name}" if (reminder.get("category") or "") == "memo" else f"今天是{name}的{label}"
     return {
@@ -16099,20 +16107,9 @@ def handle_smart_reminder_postback(data_file, line_user_id, data, config=None):
         return f"📞 現在就可以撥電話給「{reminder.get('target_name')}」。打完後可回「已完成」。"
     if action == "blessed":
         return f"太好了，已幫你記下「已祝福／已完成」：{reminder.get('target_name')}。"
-    if action == "snooze":
-        # Mark a soft snooze key so day cron can re-nudge later same day once
-        keys = set(profile.get("smart_reminder_sent_keys") or [])
-        today = today_string(config)
-        # Remove day key to allow one re-send after 2h via separate snooze marker
-        profile["smart_reminder_snooze"] = {
-            "id": rid,
-            "until": (current_app_time(config) + timedelta(hours=2)).isoformat(timespec="seconds"),
-        }
-        # Keep day key so we don't double-fire immediately; snooze path uses until
-        keys = {k for k in keys if not k.endswith(f":{rid}:day")}
-        profile["smart_reminder_sent_keys"] = sorted(keys)[-120:]
-        save_state(data_file, state)
-        return "好，約 2 小時後再私訊提醒你一次。"
+    if action == "view":
+        note = str(reminder.get("note") or "").strip()
+        return note or f"{reminder.get('target_name')}｜{reminder.get('category_label') or '提醒'}"
     return "已收到。"
 
 
@@ -16154,7 +16151,7 @@ def get_smart_reminders_payload(data_file, line_user_id):
             "private": int(usage.get("private") or 0),
             "guardian": int(usage.get("guardian") or 0),
         },
-        "daily_limits": {"private": 2, "guardian": 1},
+        "daily_limits": {"total": 2},
         "categories": [
             {"id": key, "emoji": meta["emoji"], "label": meta["label"]}
             for key, meta in SMART_REMINDER_CATEGORIES.items()
@@ -16262,7 +16259,6 @@ def send_smart_reminders(config):
             skipped += 1
             continue
         sent_keys = set(user.get("smart_reminder_sent_keys") or [])
-        snooze = user.get("smart_reminder_snooze") or {}
         daily_all = user.setdefault("smart_reminder_daily_usage", {})
         usage = daily_all.setdefault(today_key, {"private": 0, "guardian": 0})
         # Keep only a compact rolling window.
@@ -16296,10 +16292,7 @@ def send_smart_reminders(config):
                 continue
             if now_hm >= remind_hm and smart_reminder_occurs_on(reminder, today_date):
                 key = f"{today_key}:{rid}:day"
-                snooze_until = parse_datetime(snooze.get("until")) if snooze.get("id") == rid else None
-                if key in sent_keys and not (snooze_until and now >= snooze_until):
-                    continue
-                if snooze_until and now < snooze_until:
+                if key in sent_keys:
                     continue
                 due_groups.setdefault(("day", remind_hm, target_kind, target_id), []).append((key, reminder))
             if eve_window and reminder.get("eve_remind", True) and smart_reminder_occurs_on(reminder, tomorrow):
@@ -16309,8 +16302,8 @@ def send_smart_reminders(config):
                 due_groups.setdefault(("eve", "20:00", target_kind, target_id), []).append((key, reminder))
 
         for (mode, slot, target_kind, target_id), entries in sorted(due_groups.items()):
-            limit = 2 if target_kind == "private" else 1
-            if int(usage.get(target_kind) or 0) >= limit:
+            total_used = int(usage.get("private") or 0) + int(usage.get("guardian") or 0)
+            if total_used >= 2:
                 skipped += len(entries)
                 continue
             keys = [key for key, _reminder in entries]
@@ -16325,8 +16318,6 @@ def send_smart_reminders(config):
                 _clear_push_delivery_failure(user, delivery_key)
                 sent_keys.update(keys)
                 usage[target_kind] = int(usage.get(target_kind) or 0) + 1
-                if snooze.get("id") in {r.get("id") for r in reminders}:
-                    user["smart_reminder_snooze"] = {}
                 append_notification_log(
                     state, "smart_reminder", target_id, "sent",
                     message.get("altText"), json.dumps(result, ensure_ascii=False),

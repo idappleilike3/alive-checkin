@@ -65,13 +65,13 @@ class MemberSettingsAndGuardianGroupUxTests(unittest.TestCase):
 
         home = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("我的設定 → 每日提醒設定", home)
-        self.assertIn("日期提醒（799 月費／年費）", home)
+        self.assertIn("799 才能設定 LINE 推播提醒", home)
 
     def test_home_member_history_has_memo_entry(self):
         home = (ROOT / "index.html").read_text(encoding="utf-8")
 
         self.assertIn("<strong>我的平安紀錄</strong>", home)
-        self.assertIn("799 月費／年費可在日期上新增備忘錄與提醒。", home)
+        self.assertIn("399／799 月費與年費可新增網頁備忘", home)
         self.assertIn('href="#history"', home)
         self.assertIn("＋ 新增備忘錄", home)
 
