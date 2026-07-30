@@ -160,11 +160,11 @@ def test_guardian_acceptance_keeps_trial_optional_and_reverse_invite_separate():
     assert "activate_trial: trialAfterGuardian" not in html
     assert "activate_own_trial: true" in html
     assert "activateOwnTrialAfterGuardianBind" in html
-    assert "guardianBindStartTrialBtn" in html
-    assert "若希望原邀請人也守護您，仍須另外發送一次邀請" in html
+    assert "guardianBindReciprocalBtn" in html
+    assert "親自接受後才會完成互相守護" in html
     bind_flow = html.split("async function completeGuardianBindOnce", 1)[1].split(
         "function resetInviteAcceptPromptUi", 1
     )[0]
     assert "activateOwnTrialAfterGuardianBind" not in bind_flow
-    assert "方案沒有被改成 14 天體驗" in html
+    assert "/liff/pricing.html?from=reciprocal_guardian" in html
     assert "同時互相設為核心守護人" not in html
