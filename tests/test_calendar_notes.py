@@ -184,7 +184,7 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertNotIn("樂年", index)
         self.assertIn("399／799 月費與年費方案皆可使用網頁日期備忘", index)
         self.assertIn(
-            'lineButton.hidden = !(currentStatusData && currentStatusData.smart_reminders_enabled === true);',
+            'lineButton.hidden = status.smart_reminders_enabled !== true;',
             index,
         )
 
@@ -477,24 +477,25 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertIn("birthday-reminders", (ROOT / "app.py").read_text(encoding="utf-8"))
         self.assertIn("body.neon .day-cell.festival .day-number", page)
 
-    def test_calendar_note_modal_links_text_notes_and_line_reminders_in_one_place(self):
+    def test_web_note_and_line_reminder_use_separate_entry_points(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
 
         self.assertIn("純文字備忘只儲存，不會推播 LINE", page)
-        self.assertIn("生日、吃藥、回診等提醒才會推播", page)
-        self.assertIn("每天最多 2 則", page)
-        self.assertIn('id="calendarNoteReminderBtn"', page)
-        self.assertIn("設定 LINE 提醒", page)
-        self.assertIn("openSmartReminderEditorForCalendarDate", page)
+        self.assertIn('id="calendarNoteQuickAddBtn"', page)
+        self.assertIn("＋ 新增日期備忘", page)
+        self.assertIn('id="lineReminderQuickAddBtn"', page)
+        self.assertIn("＋ 新增 LINE 推播提醒", page)
+        note_modal = page.split('id="calendarNoteModal"')[1].split('id="smartReminderEditorModal"')[0]
+        self.assertNotIn("LINE 推播", note_modal)
+        self.assertNotIn("calendarNoteReminderBtn", note_modal)
         self.assertNotIn('<legend>家人生日提醒</legend>', page)
-        self.assertIn('id="smartReminderCancelBtn" type="button">返回</button>', page)
-        self.assertIn('let smartReminderReturnDate = "";', page)
-        self.assertIn('if (returnDate) openCalendarNote(returnDate);', page)
+        self.assertIn('id="smartReminderCancelBtn" type="button">取消</button>', page)
         self.assertIn('overscroll-behavior:contain', page)
 
     def test_calendar_note_has_web_only_time_and_yearly_repeat(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
 
+        self.assertIn('id="calendarNoteDate" type="date" required', page)
         self.assertIn('id="calendarNoteWebReminderTime" type="time"', page)
         self.assertIn('id="calendarNoteWebReminderYearly" type="checkbox"', page)
         self.assertIn("進入「每日平安」網頁時提醒一次", page)
@@ -509,20 +510,19 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertIn('openCalendarNote(button.dataset.date)', page)
         self.assertIn("每年重複", page)
 
-    def test_line_reminder_uses_selected_calendar_date_without_duplicate_date_picker(self):
+    def test_line_reminder_has_its_own_full_date_and_24_hour_time_fields(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
 
         self.assertIn('{ id: "memo", emoji: "📝", label: "一般備忘" }', page)
         self.assertIn('fillSmartReminderCategoryOptions(existing ? existing.category : "memo")', page)
-        self.assertNotIn("完整日期（西元年／月／日）", page)
-        self.assertIn('id="smartReminderDate" type="hidden"', page)
-        self.assertIn('id="smartReminderSelectedDate"', page)
+        self.assertIn("日期（年／月／日）", page)
+        self.assertIn('id="smartReminderDate" type="date" required', page)
         self.assertIn('id="smartReminderTime" type="time" value="09:00" required', page)
         self.assertIn("生日／紀念日可選每年重複；吃藥、回診等預設單次提醒", page)
         self.assertIn('class="action-btn smart-edit-btn"', page)
         self.assertIn(">修改<", page)
         self.assertIn("findSmartReminderForCalendarDate", page)
-        self.assertIn("openSmartReminderEditor(existing ? existing.id : null, presetDate)", page)
+        self.assertIn('openSmartReminderEditor(null, getToday())', page)
 
     def test_calendar_note_web_reminder_metadata_uses_existing_note_storage(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

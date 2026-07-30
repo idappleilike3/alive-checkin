@@ -4444,9 +4444,10 @@
     <section class="calendar-box" id="calendarNoteQuickCard" aria-label="799 日期備忘提醒" hidden>
       <div class="today-reminder-card">
         <strong>日期備忘與提醒</strong>
-        <span id="calendarNoteQuickText">點選日期新增備忘，系統會在指定時間提醒。</span>
+        <span id="calendarNoteQuickText">日期備忘只在網頁提醒；LINE 推播提醒為 799 專屬。</span>
         <div id="calendarNoteReminderList"></div>
-        <button class="action-btn primary" id="calendarNoteQuickAddBtn" type="button">＋ 新增日期與備忘</button>
+        <button class="action-btn primary" id="calendarNoteQuickAddBtn" type="button">＋ 新增日期備忘</button>
+        <button class="action-btn" id="lineReminderQuickAddBtn" type="button" hidden>＋ 新增 LINE 推播提醒</button>
       </div>
     </section>
 
@@ -5002,6 +5003,9 @@
   <div class="modal-backdrop" id="calendarNoteModal" hidden>
     <div class="guardian-modal calendar-note-modal" role="dialog" aria-modal="true" aria-labelledby="calendarNoteTitle">
       <h2 id="calendarNoteTitle">日期記事</h2>
+      <label for="calendarNoteDate">日期（年／月／日）
+        <input id="calendarNoteDate" type="date" required>
+      </label>
       <div class="calendar-note-date" id="calendarNoteDateText"></div>
       <label for="calendarNoteInput">今天想記下什麼？</label>
       <textarea id="calendarNoteInput" maxlength="500" placeholder="例如：回診、領藥、和家人吃飯"></textarea>
@@ -5015,11 +5019,6 @@
         </label>
       </div>
       <div class="helper" style="margin-top:6px;"><strong>純文字備忘只儲存，不會推播 LINE。</strong>到設定日期與時間後，進入「每日平安」網頁時提醒一次；未設定時間就只儲存文字。</div>
-      <div class="member-limit-banner" style="margin-top:12px;text-align:left;">
-        <strong>需要 LINE 通知嗎？</strong>
-        <p>生日、吃藥、回診等提醒才會推播；請設定完整年月日與時間。自己與受邀守護人合計每天最多 2 則。</p>
-        <button class="action-btn primary" id="calendarNoteReminderBtn" type="button">設定 LINE 提醒</button>
-      </div>
       <a class="google-calendar-link" id="googleCalendarLink" href="#" target="_blank" rel="noopener">加入 Google 日曆</a>
       <div class="actions">
         <button class="action-btn" id="deleteCalendarNoteBtn" type="button">清除記事</button>
@@ -5031,8 +5030,8 @@
 
   <div class="modal-backdrop" id="smartReminderEditorModal" hidden>
     <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="smartReminderEditorTitle" style="max-height:88vh;overflow-y:auto;overscroll-behavior:contain;">
-      <h2 id="smartReminderEditorTitle">新增日期提醒</h2>
-      <p class="helper">一般備忘、生日、吃藥、回診等可設定 LINE 推播。日期沿用你剛才在月曆選擇的日期；預設只通知自己，不會送到守護群。</p>
+      <h2 id="smartReminderEditorTitle">新增 LINE 推播提醒</h2>
+      <p class="helper">此為 799 月費／年費專屬功能。預設只通知自己，不會送到守護群。</p>
       <p class="helper">生日／紀念日可選每年重複；吃藥、回診等預設單次提醒。自己與受邀守護人合計每天最多 2 則。</p>
       <p class="helper" id="smartReminderDailyUsage">今日日期提醒已使用 0／2 則</p>
       <div class="smart-editor-fields">
@@ -5045,8 +5044,9 @@
         <label for="smartReminderCustomTitle" id="smartReminderCustomTitleWrap" hidden>自訂標題
           <input id="smartReminderCustomTitle" type="text" maxlength="40" placeholder="例如：結婚週年">
         </label>
-        <div class="helper">提醒日期：<strong id="smartReminderSelectedDate"></strong></div>
-        <input id="smartReminderDate" type="hidden">
+        <label for="smartReminderDate">日期（年／月／日）
+          <input id="smartReminderDate" type="date" required>
+        </label>
         <label class="checkbox-line" for="smartReminderYearly" style="display:flex;align-items:center;gap:8px;font-weight:750;">
           <input id="smartReminderYearly" type="checkbox" checked>
           <span>每年重複（生日／紀念日）</span>
@@ -5064,7 +5064,7 @@
         </label>
       </div>
       <div class="actions" style="margin-top:14px;">
-        <button class="action-btn" id="smartReminderCancelBtn" type="button">返回</button>
+        <button class="action-btn" id="smartReminderCancelBtn" type="button">取消</button>
         <button class="action-btn primary" id="smartReminderSaveBtn" type="button">儲存</button>
       </div>
     </div>
@@ -6903,7 +6903,6 @@
 
     let smartReminderCache = { entitled: false, reminders: [], categories: [] };
     let smartReminderEditingId = null;
-    let smartReminderReturnDate = "";
     let selectedDailyReminderCount = null;
     let selectedGraceHours = null;
     let selectedMissedHours = null;
@@ -7028,7 +7027,7 @@
       smartReminderEditingId = existing ? existing.id : null;
       const modal = $("smartReminderEditorModal");
       const title = $("smartReminderEditorTitle");
-      if (title) title.textContent = existing ? "編輯日期提醒" : "新增日期提醒";
+      if (title) title.textContent = existing ? "修改 LINE 推播提醒" : "新增 LINE 推播提醒";
       fillSmartReminderCategoryOptions(existing ? existing.category : "memo");
       if ($("smartReminderName")) $("smartReminderName").value = existing ? (existing.target_name || "") : "";
       if ($("smartReminderCustomTitle")) $("smartReminderCustomTitle").value = existing ? (existing.custom_title || "") : "";
@@ -7068,21 +7067,8 @@
           const d = existing ? Number(existing.day || 1) : now.getDate();
           dateEl.value = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
         }
-        const selectedDate = $("smartReminderSelectedDate");
-        if (selectedDate) {
-          const [displayYear, displayMonth, displayDay] = dateEl.value.split("-");
-          selectedDate.textContent = `${displayYear} 年 ${Number(displayMonth)} 月 ${Number(displayDay)} 日`;
-        }
       }
       if (modal) modal.hidden = false;
-    }
-
-    function openSmartReminderEditorForCalendarDate() {
-      const presetDate = selectedCalendarDate || getToday();
-      smartReminderReturnDate = presetDate;
-      $("calendarNoteModal").hidden = true;
-      const existing = findSmartReminderForCalendarDate(presetDate);
-      openSmartReminderEditor(existing ? existing.id : null, presetDate);
     }
 
     function findSmartReminderForCalendarDate(dateText) {
@@ -7103,9 +7089,6 @@
       const modal = $("smartReminderEditorModal");
       if (modal) modal.hidden = true;
       smartReminderEditingId = null;
-      const returnDate = smartReminderReturnDate;
-      smartReminderReturnDate = "";
-      if (returnDate) openCalendarNote(returnDate);
     }
 
     async function submitSmartReminderEditor() {
@@ -9770,20 +9753,17 @@
       const festival = festivalForDate(date, lunar);
       const note = calendarNotes[dateText] || "";
       const content = noteContent(note);
-      $("calendarNoteTitle").textContent = `${date.getMonth() + 1}月${date.getDate()}日記事`;
+      $("calendarNoteDate").value = dateText;
+      $("calendarNoteTitle").textContent = "新增日期備忘";
       $("calendarNoteDateText").textContent = `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日｜農曆 ${lunar.fullLabel}${festival ? `｜${festival}` : ""}`;
       $("calendarNoteInput").value = content;
       const webReminder = noteWebReminder(note);
       $("calendarNoteWebReminderTime").value = webReminder.time;
       $("calendarNoteWebReminderYearly").checked = webReminder.yearly;
-      const lineButton = $("calendarNoteReminderBtn");
-      if (lineButton) {
-        lineButton.hidden = !(currentStatusData && currentStatusData.smart_reminders_enabled === true);
-      }
       const hasSavedNote = Boolean(content || webReminder.time);
       $("calendarNoteTitle").textContent = hasSavedNote
-        ? `${date.getMonth() + 1}月${date.getDate()}日｜修改記事與提醒`
-        : `${date.getMonth() + 1}月${date.getDate()}日記事`;
+        ? "修改日期備忘"
+        : "新增日期備忘";
       $("saveCalendarNoteBtn").textContent = hasSavedNote ? "儲存修改" : "儲存記事";
       $("deleteCalendarNoteBtn").disabled = !hasSavedNote;
       $("googleCalendarLink").href = googleCalendarUrl(dateText, content);
@@ -9800,6 +9780,11 @@
       if (!requireMemberActionReady("data")) return false;
       if (!selectedCalendarDate) return;
       const saveButton = $("saveCalendarNoteBtn");
+      const targetDate = String($("calendarNoteDate").value || "").trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+        alert("請選擇完整年月日");
+        return false;
+      }
       const content = contentOverride === undefined ? $("calendarNoteInput").value : contentOverride;
       const existingNote = calendarNotes[selectedCalendarDate];
       const birthday = noteBirthday(existingNote) || {};
@@ -9820,7 +9805,10 @@
       saveButton.disabled = true;
       saveButton.textContent = "儲存中";
       try {
-        const result = await apiSaveCalendarNote(selectedCalendarDate, content, noteMeta);
+        let result = await apiSaveCalendarNote(targetDate, content, noteMeta);
+        if (targetDate !== selectedCalendarDate) {
+          result = await apiSaveCalendarNote(selectedCalendarDate, "", {});
+        }
         calendarNotes = result.notes || {};
         renderCalendar(currentYear, currentMonth, historyData);
         closeCalendarNote();
@@ -9868,9 +9856,11 @@
     function syncCalendarNoteQuickCard(status = currentStatusData || {}) {
       const card = $("calendarNoteQuickCard");
       const text = $("calendarNoteQuickText");
+      const lineButton = $("lineReminderQuickAddBtn");
       if (!card) return;
       const enabled = status.calendar_notes_enabled === true;
       card.hidden = !enabled || location.hash !== "#history";
+      if (lineButton) lineButton.hidden = status.smart_reminders_enabled !== true;
       if (!enabled || !text) return;
       const entries = Object.entries(calendarNotes || {})
         .filter(([, note]) => noteContent(note) || noteWebReminder(note).time)
@@ -12246,6 +12236,9 @@
       setCalendarExpanded(true);
       openCalendarNote(getToday());
     });
+    $("lineReminderQuickAddBtn")?.addEventListener("click", () => {
+      openSmartReminderEditor(null, getToday());
+    });
     $("calendarNoteReminderList")?.addEventListener("click", (event) => {
       const button = event.target.closest(".calendar-note-edit-btn[data-date]");
       if (button) openCalendarNote(button.dataset.date);
@@ -12415,12 +12408,18 @@
       if (dayButton) openCalendarNote(dayButton.dataset.date);
     });
     $("closeCalendarNoteBtn").addEventListener("click", closeCalendarNote);
-    $("calendarNoteReminderBtn")?.addEventListener("click", openSmartReminderEditorForCalendarDate);
     $("saveCalendarNoteBtn").addEventListener("click", () => saveSelectedCalendarNote());
     $("deleteCalendarNoteBtn").addEventListener("click", () => saveSelectedCalendarNote(""));
     $("calendarNoteInput").addEventListener("input", () => {
-      if (selectedCalendarDate) {
-        $("googleCalendarLink").href = googleCalendarUrl(selectedCalendarDate, $("calendarNoteInput").value.trim());
+      const chosenDate = String($("calendarNoteDate").value || selectedCalendarDate || "");
+      if (chosenDate) {
+        $("googleCalendarLink").href = googleCalendarUrl(chosenDate, $("calendarNoteInput").value.trim());
+      }
+    });
+    $("calendarNoteDate").addEventListener("change", () => {
+      const chosenDate = String($("calendarNoteDate").value || "");
+      if (chosenDate) {
+        $("googleCalendarLink").href = googleCalendarUrl(chosenDate, $("calendarNoteInput").value.trim());
       }
     });
     $("calendarNoteModal").addEventListener("click", (event) => {
