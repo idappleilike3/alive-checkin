@@ -5762,14 +5762,31 @@
       return url;
     }
 
+    async function fetchWithTimeout(input, options = {}, timeoutMs = 12000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await fetch(input, { ...options, signal: controller.signal });
+      } catch (error) {
+        if (error && error.name === "AbortError") {
+          throw new Error("會員資料載入逾時，請按重新載入資料再試一次。");
+        }
+        throw error;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
     async function apiGetStatus() {
       if (useLocalMode) return buildLocalStatus(loadLocalState());
       if (!lineUserId) {
         throw new Error("需要 LINE 登入,或在 URL 加 ?line_user_id=XXX 進入 dev 模式");
       }
-      const res = await fetch(await withAuthQuery(`/api/status?line_user_id=${encodeURIComponent(lineUserId)}`), {
-        headers: await authHeaders()
-      });
+      const res = await fetchWithTimeout(
+        await withAuthQuery(`/api/status?line_user_id=${encodeURIComponent(lineUserId)}`),
+        { headers: await authHeaders() },
+        12000
+      );
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         throw new Error(friendlyApiFailure(res.status, text));
