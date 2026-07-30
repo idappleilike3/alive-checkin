@@ -12977,8 +12977,8 @@ def inspect_default_rich_menu(config=None):
             invite_text = action.get("text")
             invite_type = action.get("type")
 
-    # 圖文選單的分享體驗入口必須直達輕量 LIFF 頁；
-    # 不可先進首頁，也不可建立核心守護人邀請。
+    # 圖文選單的一鍵邀請必須進入已登入會員的守護邀請 LIFF；
+    # 14 天安心體驗分享保留在獨立頁面，不可混用。
     invite_uri_ok = False
     if invite_uri:
         try:
@@ -12986,9 +12986,9 @@ def inspect_default_rich_menu(config=None):
             invite_query = urllib.parse.parse_qs(parsed_invite_uri.query)
             invite_uri_ok = (
                 parsed_invite_uri.scheme == "https"
-                and parsed_invite_uri.netloc == "alive-checkin.onrender.com"
-                and parsed_invite_uri.path.rstrip("/") == "/liff/share-trial.html"
-                and not invite_query
+                and parsed_invite_uri.netloc == "liff.line.me"
+                and parsed_invite_uri.path.rstrip("/") == "/2010848330-UAiqPPYD"
+                and invite_query.get("open") == ["share-invite"]
             )
         except (TypeError, ValueError):
             invite_uri_ok = False
