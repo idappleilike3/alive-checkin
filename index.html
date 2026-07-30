@@ -7556,6 +7556,13 @@
       loadMemberSupportTickets().catch(() => {});
       const guardianGroupIds = status.guardian_group_ids || [];
       const guardianGroups = status.guardian_groups || [];
+      const defaultGroupPrefs = status.guardian_group_default_preferences || {
+        notify_private_guardians: true,
+        notify_group_on_overdue: false,
+        daily_admin_summary: false,
+        notify_admin_only: true,
+        daily_summary_time: "20:00"
+      };
       const groupById = Object.fromEntries(guardianGroups.map((group) => [group.group_id, group]));
       $("guardianGroupsSection").hidden = !(status.guardian_group_limit > 0);
       const roster = status.today_safety_roster || null;
@@ -7590,7 +7597,19 @@
             <button class="action-btn guardian-group-unbind" type="button" data-group-id="${escapeHtml(groupId)}">解除綁定</button>
           </div>
         `; }).join("")
-        : `<div class="member-data-row"><span>目前狀態</span><strong>尚未綁定守護群</strong></div>`);
+        : `<div class="member-data-row guardian-group-card">
+            <span><strong>守護群通知設定</strong><small>799 月費、799 年費與 799 年費 21 天封測皆可使用；綁定守護群後會套用。</small></span>
+            <div class="guardian-group-preferences">
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="__default__" data-pref-key="notify_private_guardians" ${defaultGroupPrefs.notify_private_guardians !== false ? "checked" : ""}> 未報平安時，先私訊核心守護人</label>
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="__default__" data-pref-key="notify_group_on_overdue" ${defaultGroupPrefs.notify_group_on_overdue === true ? "checked" : ""}> 未報平安時，也通知這個 LINE 群</label>
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="__default__" data-pref-key="daily_admin_summary" ${defaultGroupPrefs.daily_admin_summary === true ? "checked" : ""}> 每天傳送一次群內平安摘要</label>
+              <label><input type="checkbox" class="guardian-group-pref" data-group-id="__default__" data-pref-key="notify_admin_only" ${defaultGroupPrefs.notify_admin_only !== false ? "checked" : ""}> 摘要中的詳細姓名只讓管理員查看</label>
+              <label>摘要時間（每天最多一次）<input type="time" class="guardian-group-summary-time" data-group-id="__default__" value="${escapeHtml(defaultGroupPrefs.daily_summary_time || "20:00")}"></label>
+              <small style="display:block;margin-top:6px;color:#a16207;line-height:1.45;">開啟群組通知或每日摘要會增加 LINE 推播用量；預設關閉。</small>
+            </div>
+            <button class="action-btn primary guardian-group-save" type="button" data-group-id="__default__">儲存守護群設定</button>
+            <button class="action-btn" type="button" onclick="showTab('guardians')">前往守護群綁定教學</button>
+          </div>`);
       updateGuardianGroupBindStatusCard(status);
       renderGuardianDetailsEditor();
       renderMemberRoleIntro({ autoExpand: false });
@@ -8598,7 +8617,7 @@
       const host = mvpPanel && !mvpPanel.hidden
         ? document.getElementById("mvpSafetyGuardTargets")
         : document.getElementById("safetyGuardTargets");
-      return (host || document).querySelector('input[name="safetyGuardTargetMode"]:checked')?.value || "";
+      return (host || document).querySelector('input[name="safetyGuardTargetMode"]:checked')?.value || "all";
     }
 
     function selectedSafetyGuardGuardianIds() {
@@ -8618,37 +8637,23 @@
 
     function renderSafetyGuardTargetPickers() {
       const contacts = safetyGuardTargetCandidates();
-      const choices = contacts.map((contact) => {
+      const choices = contacts.map((contact, index) => {
         const lineId = contactPeerLineId(contact);
         const name = contactPeerDisplayName(contact);
-        return `<label class="guardian-target-choice"><input type="checkbox" name="safetyGuardGuardian" value="${escapeHtml(lineId)}"> ${escapeHtml(name)}</label>`;
+        return `<label class="guardian-target-choice"><input type="checkbox" name="safetyGuardGuardian" value="${escapeHtml(lineId)}" ${index === 0 ? "checked" : ""}> ${escapeHtml(name)}</label>`;
       }).join("");
       const html = `
-        <div class="settings-title">分享給誰（必選）</div>
-        <p class="helper">即使只有一位核心守護人，也請先選擇分享方式及對象；確認後才會取得位置並通知。</p>
+        <div class="settings-title">分享給誰</div>
         <div role="radiogroup" aria-label="核心守護人選擇方式">
           <label><input type="radio" name="safetyGuardTargetMode" value="one"> 指定 1 位核心守護人</label>
           <label><input type="radio" name="safetyGuardTargetMode" value="many"> 勾選多位核心守護人</label>
-          <label><input type="radio" name="safetyGuardTargetMode" value="all"> 全部核心守護人</label>
+          <label><input type="radio" name="safetyGuardTargetMode" value="all" checked> 全部核心守護人</label>
         </div>
         <div class="guardian-target-list">${choices || '<span class="helper">尚未綁定核心守護人</span>'}</div>`;
       ["mvpSafetyGuardTargets", "safetyGuardTargets"].forEach((id) => {
         const host = document.getElementById(id);
         if (host) host.innerHTML = html;
       });
-    }
-
-    function confirmSafetyGuardShare(guardianLineUserIds, duration) {
-      const mode = safetyGuardTargetMode();
-      if (!mode) throw new Error("請先選擇「指定 1 位」、「勾選多位」或「全部核心守護人」。");
-      const namesById = new Map(safetyGuardTargetCandidates().map((contact) => [
-        contactPeerLineId(contact),
-        contactPeerDisplayName(contact),
-      ]));
-      const names = guardianLineUserIds.map((lineId) => namesById.get(lineId) || "核心守護人").join("、");
-      return window.confirm(
-        `請確認安全守護分享設定：\n\n分享對象：${names}\n守護時間：${safetyGuardDurationLabel(duration)}\n\n按「確定」後才會取得您的位置並通知以上守護人。`,
-      );
     }
 
     function selectedSosGuardianIds() {
@@ -9207,13 +9212,9 @@
         if (!requireBoundGuardianForSafetyGuard()) return;
         if (!navigator.geolocation) throw new Error("這台裝置不支援定位。");
         const duration = selectedSafetyGuardDuration();
+        setBusy(true, "正在取得定位…");
         const guardianLineUserIds = selectedSafetyGuardGuardianIds();
         if (!guardianLineUserIds.length) throw new Error("請至少選擇 1 位核心守護人。");
-        if (!confirmSafetyGuardShare(guardianLineUserIds, duration)) {
-          setSafetyGuardFeedback("已取消，尚未取得或分享位置。", "info");
-          return false;
-        }
-        setBusy(true, "正在取得定位…");
         setSafetyGuardFeedback(`正在開啟安全守護（${safetyGuardDurationLabel(duration)}）…請允許位置權限`, "info");
         const position = await getCurrentPositionPromise({ timeout: 12000, maximumAge: 60000 }, 15000);
         setBusy(true, "開啟中…");
