@@ -42,15 +42,15 @@ class OnboardingFlowTest(unittest.TestCase):
     def test_public_trial_page_uses_the_same_four_step_order(self):
         text = (ROOT / "trial-14.html").read_text(encoding="utf-8")
         labels = [
-            "Step 1 加入官方 LINE 並完成 LINE 登入",
-            "Step 2 填寫自己的資料",
-            "Step 3 一鍵分享核心守護人",
-            "Step 4 對方接受，完成綁定",
+            "1. 填寫邀請人資料",
+            "2. 設定提醒時間",
+            "3. 邀請守護人",
+            "4. 安心連結建立",
         ]
         positions = [text.index(label) for label in labels]
         self.assertEqual(positions, sorted(positions))
-        self.assertIn("分享後先顯示等待對方處理", text)
-        self.assertIn("受邀者加入官方 LINE、登入、填資料並親自同意後", text)
+        self.assertIn("讓守護人知道你是誰", text)
+        self.assertIn("對方接受後，安心連結就建立了", text)
 
 
 if __name__ == "__main__":
