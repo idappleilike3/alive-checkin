@@ -295,14 +295,14 @@ class Release20260729Tests(unittest.TestCase):
             index + member + trial + beta + share,
         )
 
-    def test_rich_menu_invite_uses_dedicated_trial_share_entry(self):
+    def test_rich_menu_invite_uses_dedicated_guardian_share_entry(self):
         rich_menu = (ROOT / "line-rich-menu-config.json").read_text(encoding="utf-8")
         backend = (ROOT / "app.py").read_text(encoding="utf-8")
-        direct_entry = "https://alive-checkin.onrender.com/liff/share-trial.html"
+        direct_entry = "https://liff.line.me/2010848330-UAiqPPYD?open=share-invite"
         self.assertIn(f'"uri": "{direct_entry}"', rich_menu)
-        self.assertNotIn("?open=share-invite", rich_menu)
+        self.assertIn("?open=share-invite", rich_menu)
         self.assertIn(
-            'parsed_invite_uri.path.rstrip("/") == "/liff/share-trial.html"',
+            'invite_query.get("open") == ["share-invite"]',
             backend,
         )
 
