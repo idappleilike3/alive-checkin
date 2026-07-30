@@ -176,6 +176,8 @@ class SosRulesTests(unittest.TestCase):
             [target for target in targets if target != "U-owner"],
             ["U-g1", "U-g2", "U-g3", "U-g4", "U-g5"],
         )
+        event = load_state(data_file)["sos_events"][result["event_id"]]
+        self.assertNotIn("escalation_guardians", event)
 
     def test_all_guardians_defer_or_decline_marks_event_unassigned(self):
         pushes = []
