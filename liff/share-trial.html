@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>分享 14 天免費體驗｜每日平安</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #fff7f9; color: #831843; }
+    main { width: min(88vw, 420px); padding: 28px 22px; text-align: center; background: #fff; border-radius: 24px; box-shadow: 0 12px 36px #83184318; }
+    h1 { margin: 0 0 12px; font-size: 1.45rem; }
+    p { margin: 8px 0 18px; line-height: 1.65; color: #57534e; }
+    button { width: 100%; border: 0; border-radius: 999px; padding: 14px 18px; font-size: 1rem; font-weight: 700; color: #fff; background: #06c755; }
+    button[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>正在開啟 LINE 好友選擇</h1>
+    <p id="status">請稍候，不需要回到報平安首頁。</p>
+    <button id="retryBtn" type="button" hidden>再次開啟好友選擇</button>
+  </main>
+  <script>
+    const LIFF_ID = "2010848330-UAiqPPYD";
+    const MEMBER_CACHE_PREFIX = "alive_member_status_v1:";
+    const statusEl = document.getElementById("status");
+    const retryBtn = document.getElementById("retryBtn");
+    let sharing = false;
+
+    function hasMemberCache(lineUserId) {
+      if (!lineUserId) return false;
+      try {
+        const cached = JSON.parse(
+          localStorage.getItem(MEMBER_CACHE_PREFIX + lineUserId) || "null"
+        );
+        return Boolean(cached && cached.status);
+      } catch (_) {
+        return false;
+      }
+    }
+
+    async function memberExists(lineUserId) {
+      if (hasMemberCache(lineUserId)) return true;
+      const idToken = typeof liff.getIDToken === "function" ? liff.getIDToken() || "" : "";
+      const response = await fetch("/api/member/exists", {
+        headers: {
+          ...(idToken ? { "Authorization": `Bearer ${idToken}` } : {}),
+          ...(idToken ? { "X-Line-Id-Token": idToken } : {}),
+        },
+      });
+      if (!response.ok) return false;
+      const data = await response.json().catch(() => ({}));
+      return data.registered === true;
+    }
+
+    async function openTrialShare() {
+      if (sharing) return;
+      sharing = true;
+      retryBtn.hidden = true;
+      statusEl.textContent = "正在開啟 LINE 好友選擇…";
+      try {
+        const profile = await liff.getProfile();
+        if (!await memberExists(profile.userId)) {
+          location.replace("/trial-14.html");
+          return;
+        }
+        const trialUrl = `${location.origin}/trial-14.html`;
+        const text = (
+          "我正在使用「每日平安」，每天 10 秒就能讓家人放心。\n" +
+          "送你免費體驗 14 天，不用刷卡、不會自動扣款：\n" +
+          trialUrl
+        );
+        if (typeof liff.shareTargetPicker !== "function") {
+          throw new Error("shareTargetPicker unavailable");
+        }
+        const result = await liff.shareTargetPicker([{ type: "text", text }]);
+        statusEl.textContent = result
+          ? "已完成分享，你可以關閉這個畫面。"
+          : "尚未選擇好友，按下方按鈕可以再試一次。";
+        retryBtn.hidden = Boolean(result);
+      } catch (_) {
+        statusEl.textContent = "無法自動開啟好友選擇，請按下方按鈕再試一次。";
+        retryBtn.hidden = false;
+      } finally {
+        sharing = false;
+      }
+    }
+
+    async function init() {
+      try {
+        await liff.init({ liffId: LIFF_ID });
+        if (!liff.isLoggedIn()) {
+          liff.login({ redirectUri: location.href });
+          return;
+        }
+        await openTrialShare();
+      } catch (_) {
+        statusEl.textContent = "請從「每日平安」官方 LINE 的圖文選單重新開啟。";
+        retryBtn.hidden = false;
+      }
+    }
+
+    retryBtn.addEventListener("click", openTrialShare);
+    init();
+  </script>
+</body>
+</html>

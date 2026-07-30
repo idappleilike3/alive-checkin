@@ -12962,8 +12962,8 @@ def inspect_default_rich_menu(config=None):
             invite_text = action.get("text")
             invite_type = action.get("type")
 
-    # 圖文選單必須進入永久 LIFF 入口。LIFF 會辨識登入會員、建立專屬邀請，
-    # 隨即開啟 shareTargetPicker；不可把網站路徑附加在 LIFF ID 後方。
+    # 圖文選單的分享體驗入口必須直達輕量 LIFF 頁；
+    # 不可先進首頁，也不可建立核心守護人邀請。
     invite_uri_ok = False
     if invite_uri:
         try:
@@ -12971,9 +12971,9 @@ def inspect_default_rich_menu(config=None):
             invite_query = urllib.parse.parse_qs(parsed_invite_uri.query)
             invite_uri_ok = (
                 parsed_invite_uri.scheme == "https"
-                and parsed_invite_uri.netloc == "liff.line.me"
-                and parsed_invite_uri.path.rstrip("/") == f"/{DEFAULT_LIFF_ID}"
-                and invite_query.get("open") == ["share-invite"]
+                and parsed_invite_uri.netloc == "alive-checkin.onrender.com"
+                and parsed_invite_uri.path.rstrip("/") == "/liff/share-trial.html"
+                and not invite_query
             )
         except (TypeError, ValueError):
             invite_uri_ok = False
@@ -17091,6 +17091,11 @@ def create_app(config=None):
         """專用一鍵分享頁（給 LIFF 子路徑直連；不經 SPA home）。"""
         return send_from_directory(app.static_folder, "liff/share-invite.html")
 
+    @app.get("/liff/share-trial.html")
+    def liff_share_trial_page():
+        """會員分享 14 天體驗；不建立或接受任何守護人邀請。"""
+        return send_from_directory(app.static_folder, "liff/share-trial.html")
+
     @app.get("/liff/sos.html")
     def liff_sos_page():
         """輕量 SOS 入口：先顯示求助畫面，再於背景完成 LIFF 驗證。"""
@@ -17234,6 +17239,20 @@ def create_app(config=None):
             request.args.get("display_name"),
         )
         return jsonify(data), code
+
+    @app.get("/api/member/exists")
+    def member_exists_api():
+        """只讀檢查會員是否已存在；不得因分享入口而自動註冊。"""
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
+        state = load_state(app.config["DATA_FILE"])
+        profile = (state.get("users") or {}).get(line_user_id)
+        return jsonify({
+            "ok": True,
+            "registered": bool(profile),
+            "home_ready": bool(profile and member_access_state(profile)["home_ready"]),
+        }), 200
 
     @app.post("/api/line/register")
     def line_register():

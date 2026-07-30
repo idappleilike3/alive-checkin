@@ -568,8 +568,12 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn("https://alive-checkin.onrender.com/liff/pricing.html", rich_menu)
         base = "https://liff.line.me/2010848330-UAiqPPYD"
         self.assertIn(f"{base}?open=checkin", rich_menu)
-        # 一鍵邀請：由永久 LIFF 入口辨識會員、建立專屬連結並自動開啟好友選擇器
-        self.assertIn(f"{base}?open=share-invite", rich_menu)
+        # 圖文選單分享體驗：直達輕量頁，不進首頁、不建立守護人邀請
+        self.assertIn(
+            "https://alive-checkin.onrender.com/liff/share-trial.html",
+            rich_menu,
+        )
+        self.assertNotIn(f"{base}?open=share-invite", rich_menu)
         self.assertNotIn(f"{base}/liff/share-invite.html", rich_menu)
         # 「需要幫忙」保留在原首頁的 SOS 小視窗，不切換成另一套全頁畫面
         self.assertIn(f"{base}?open=sos", rich_menu)
