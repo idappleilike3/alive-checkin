@@ -5052,10 +5052,10 @@
     <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="guardianBindSuccessTitle">
       <h2 id="guardianBindSuccessTitle">核心守護綁定完成</h2>
       <p id="guardianBindSuccessDetail">您現在可以免費收到對方的報平安、逾時與 SOS 通知。</p>
-      <p id="guardianBindNextStep">系統正在確認您的會員方案與下一步。</p>
+      <p id="guardianBindNextStep">目前是您守護對方的單向關係，不會自動互相綁定。</p>
       <div class="actions">
-        <button class="action-btn primary" id="guardianBindStartTrialBtn" type="button" hidden>我要使用 14 天免費體驗</button>
-        <button class="action-btn" id="guardianBindSuccessCloseBtn" type="button">先不用，回到首頁</button>
+        <button class="action-btn" id="guardianBindFinishBtn" type="button">完成，開始守護 A</button>
+        <button class="action-btn primary" id="guardianBindReciprocalBtn" type="button">我也想讓 A 守護我</button>
       </div>
     </div>
   </div>
@@ -5221,6 +5221,8 @@
     /** Once-guard: Android LIFF 上成功後勿重複 alert／重複 bind（自動綁定 + 同意按鈕／雙擊／URL 殘留）。 */
     let bindDone = false;
     let bindInFlight = false;
+    let lastAcceptedGuardianInviterId = "";
+    let lastAcceptedGuardianInviterName = "";
     let pendingInitialStatusPromise = null;
     let contactData = [];
     let currentContactLimit = 1;
@@ -8142,15 +8144,18 @@
       return "home";
     }
 
-    function buildShareInvitePageUrl(returnHash) {
+    function buildShareInvitePageUrl(returnHash, extraParams = {}) {
       const hash = String(returnHash || currentShareReturnHash() || "home").replace(/^#/, "") || "home";
       const params = new URLSearchParams();
       params.set("return", `/#${hash}`);
+      Object.entries(extraParams || {}).forEach(([key, value]) => {
+        if (value != null && String(value).trim()) params.set(key, String(value).trim());
+      });
       return `/liff/share-invite.html?${params.toString()}`;
     }
 
-    function openShareInvitePage(returnHash) {
-      location.assign(buildShareInvitePageUrl(returnHash));
+    function openShareInvitePage(returnHash, extraParams = {}) {
+      location.assign(buildShareInvitePageUrl(returnHash, extraParams));
     }
 
     function fillShareInviteSurfaces(bindUrl, text) {
@@ -8433,43 +8438,75 @@
       const title = $("guardianBindSuccessTitle");
       const detail = $("guardianBindSuccessDetail");
       const next = $("guardianBindNextStep");
-      const button = $("guardianBindSuccessCloseBtn");
-      const trialButton = $("guardianBindStartTrialBtn");
-      const guardianRequired = status.guardian_required === true;
-      const canRecommendTrial = plan === "free" && source !== "beta";
+      const finishButton = $("guardianBindFinishBtn");
+      const reciprocalButton = $("guardianBindReciprocalBtn");
+      const peerName = lastAcceptedGuardianInviterName || "對方";
 
       if (title) {
-        title.textContent = trialActivation.activated
-          ? "綁定完成，14 天體驗已開通"
-          : "核心守護綁定完成";
+        title.textContent = `✅ 你已成為 ${peerName} 的守護人`;
       }
       if (detail) {
-        if (source === "beta") {
-          detail.textContent = `您目前仍是 ${planLabel(plan)}｜21 天封測，方案沒有被改成 14 天體驗。`;
-        } else if (plan.startsWith("paid_")) {
-          detail.textContent = `您目前仍是 ${planLabel(plan)}，方案沒有被改成 14 天體驗。`;
-        } else if (plan === "trial") {
-          detail.textContent = "您的 14 天免費體驗已開通。";
-        } else {
-          detail.textContent = "您已可免費接收對方的報平安、逾時與 SOS 通知。";
-        }
+        detail.textContent = `目前是「你守護 ${peerName}」的單向關係，${peerName} 尚未成為你的守護人。`;
       }
       if (next) {
-        next.textContent = canRecommendTrial
-          ? "要不要使用 14 天免費體驗，開始使用自己的報平安功能？若希望原邀請人也守護您，仍須另外發送一次邀請；對方接受後才會完成反向綁定。"
-          : (guardianRequired
-            ? "若希望原邀請人也守護您，仍須另外發送一次邀請；對方接受後才會完成反向綁定。"
-            : "您的會員設定與原方案都已保留，可以直接繼續使用。");
+        const membershipHint = source === "beta"
+          ? `你目前的 ${planLabel(plan)}｜21 天封測會保留。`
+          : (plan.startsWith("paid_") ? `你目前的 ${planLabel(plan)}會保留。` : "");
+        next.textContent = `${membershipHint} 若也希望由 ${peerName} 守護，請送出反向邀請；${peerName} 親自接受後才會完成互相守護。`;
       }
-      if (trialButton) trialButton.hidden = !canRecommendTrial;
-      if (button) {
-        button.textContent = canRecommendTrial ? "先不用，回到首頁" : (guardianRequired
-          ? "另外邀請我的守護人"
-          : "確定，回到首頁");
-        button.dataset.nextAction = !canRecommendTrial && guardianRequired ? "invite" : "home";
-      }
+      if (finishButton) finishButton.textContent = `完成，開始守護 ${peerName}`;
+      if (reciprocalButton) reciprocalButton.textContent = `我也想讓 ${peerName} 守護我`;
       const prompt = $("guardianBindSuccessPrompt");
       if (prompt) prompt.hidden = false;
+    }
+
+    function openReciprocalGuardianShare() {
+      const peerId = sanitizeInviteUserId(lastAcceptedGuardianInviterId);
+      if (!peerId) {
+        alert("找不到原邀請人資料，請到會員中心重新發送守護邀請。");
+        openShareInvitePage("member");
+        return;
+      }
+      openShareInvitePage("member", {
+        reciprocal_for: peerId,
+        reciprocal_name: lastAcceptedGuardianInviterName || "對方"
+      });
+    }
+
+    async function startReciprocalGuardianInvite() {
+      const status = currentStatusData || {};
+      const plan = String(status.plan || "free");
+      const source = String(status.membership_source || "");
+      const hasActiveMembership = source === "beta" || plan === "trial" || plan.startsWith("paid_");
+      if (hasActiveMembership) {
+        openReciprocalGuardianShare();
+        return;
+      }
+      const accepted = window.confirm(
+        "要先免費啟用 14 天安心體驗，才能讓對方守護你的報平安服務。\n\n不用刷卡、不會自動扣款。要現在啟用嗎？"
+      );
+      if (!accepted) return;
+      const button = $("guardianBindReciprocalBtn");
+      if (button) {
+        button.disabled = true;
+        button.textContent = "正在確認免費資格…";
+      }
+      const trialActivation = await activateOwnTrialAfterGuardianBind();
+      if (trialActivation.ok) {
+        await refreshStatus().catch(() => {});
+        openReciprocalGuardianShare();
+        return;
+      }
+      if (trialActivation.already_used || trialActivation.result?.error === "free_eligibility_already_used") {
+        alert("這個帳號已使用過免費體驗。請先查看 199／399／799 方案，再送出反向邀請。");
+        location.assign("/liff/pricing.html?from=reciprocal_guardian");
+        return;
+      }
+      alert("目前無法確認免費資格，請稍後再試。");
+      if (button) {
+        button.disabled = false;
+        button.textContent = `我也想讓 ${lastAcceptedGuardianInviterName || "對方"} 守護我`;
+      }
     }
 
     /**
@@ -8492,6 +8529,8 @@
           contact_phone: options.contact_phone
         });
         if (bindResult?.bound || bindResult?.already_bound || bindResult?.ok) {
+          lastAcceptedGuardianInviterId = inviteFrom;
+          lastAcceptedGuardianInviterName = String(getAppParam("inviter_name") || "對方").trim() || "對方";
           bindDone = true;
           clearInviteFromUrl();
           clearPendingGuardianInvite();
@@ -12385,35 +12424,11 @@
     $("promptInviteBtn").addEventListener("click", goGuardianInvite);
     $("dismissGuardianPromptBtn").addEventListener("click", closeGuardianPrompt);
     $("acceptGuardianInviteBtn").addEventListener("click", acceptGuardianInviteFromPrompt);
-    $("guardianBindStartTrialBtn")?.addEventListener("click", async () => {
-      const trialButton = $("guardianBindStartTrialBtn");
-      if (trialButton) {
-        trialButton.disabled = true;
-        trialButton.textContent = "正在開通…";
-      }
-      const trialActivation = await activateOwnTrialAfterGuardianBind();
-      if (!trialActivation.ok) {
-        alert(trialActivation.already_used
-          ? "這個帳號已使用過免費資格，無法再次開通。"
-          : "目前無法開通 14 天體驗，請稍後再試。");
-        if (trialButton) {
-          trialButton.disabled = false;
-          trialButton.textContent = "我要使用 14 天免費體驗";
-        }
-        return;
-      }
-      await refreshStatus().catch(() => {});
-      showGuardianBindSuccessForCurrentPlan(trialActivation);
-    });
-    $("guardianBindSuccessCloseBtn")?.addEventListener("click", () => {
+    $("guardianBindFinishBtn")?.addEventListener("click", () => {
       $("guardianBindSuccessPrompt").hidden = true;
-      const button = $("guardianBindSuccessCloseBtn");
-      if (button?.dataset.nextAction === "invite") {
-        openShareInvitePage("home");
-      } else {
-        showTab("home");
-      }
+      showTab("home");
     });
+    $("guardianBindReciprocalBtn")?.addEventListener("click", startReciprocalGuardianInvite);
     $("cancelWarningBtn").addEventListener("click", hideWarningPrompt);
     $("confirmWarningBtn").addEventListener("click", hideWarningPrompt);
     $("openPrivacyExplainBtn").addEventListener("click", openPrivacyExplain);
