@@ -4055,10 +4055,10 @@
       <div class="line-entry-card" role="dialog" aria-modal="true" aria-labelledby="lineEntryTitle">
         <div class="first-entry-guide" aria-label="第一次設定教學">
           <p class="first-entry-guide-title">第一次使用，照著 4 步驟完成設定</p>
-          <div class="first-entry-step" id="lineGuideJoin" data-step="1">加入「每日平安」官方 LINE</div>
-          <div class="first-entry-step" id="lineGuideLogin" data-step="2">系統自動確認 LINE 身分</div>
-          <div class="first-entry-step" id="lineGuideProfile" data-step="3">填寫守護資料並發送邀請</div>
-          <div class="first-entry-step" id="lineGuideGuardian" data-step="4">核心守護人接受邀請，完成綁定</div>
+          <div class="first-entry-step" id="lineGuideJoin" data-step="1" data-state="upcoming">加入「每日平安」官方 LINE</div>
+          <div class="first-entry-step" id="lineGuideLogin" data-step="2" data-state="upcoming">系統自動確認 LINE 身分</div>
+          <div class="first-entry-step" id="lineGuideProfile" data-step="3" data-state="upcoming">填寫守護資料並發送邀請</div>
+          <div class="first-entry-step" id="lineGuideGuardian" data-step="4" data-state="upcoming">核心守護人接受邀請，完成綁定</div>
         </div>
         <div id="lineEntryFriendStep">
           <h2 id="lineEntryTitle">先加入「每日平安」官方帳號好友</h2>
@@ -4335,10 +4335,10 @@
           <p class="onboarding-story-copy">媽媽每天按一下「我平安」，女兒收到通知，知道媽媽平安，就能放心。</p>
           <div class="first-entry-guide" aria-label="第一次設定教學">
             <p class="first-entry-guide-title">還沒綁定守護人，請完成以下設定</p>
-            <div class="first-entry-step" id="onboardingGuideJoin" data-step="1">加入「每日平安」官方 LINE</div>
-            <div class="first-entry-step" id="onboardingGuideLogin" data-step="2">系統自動確認 LINE 身分</div>
-            <div class="first-entry-step" id="onboardingGuideProfile" data-step="3">填寫守護資料並發送邀請</div>
-            <div class="first-entry-step" id="onboardingGuideGuardian" data-step="4">核心守護人接受邀請，完成綁定</div>
+            <div class="first-entry-step" id="onboardingGuideJoin" data-step="1" data-state="upcoming">加入「每日平安」官方 LINE</div>
+            <div class="first-entry-step" id="onboardingGuideLogin" data-step="2" data-state="upcoming">系統自動確認 LINE 身分</div>
+            <div class="first-entry-step" id="onboardingGuideProfile" data-step="3" data-state="upcoming">填寫守護資料並發送邀請</div>
+            <div class="first-entry-step" id="onboardingGuideGuardian" data-step="4" data-state="upcoming">核心守護人接受邀請，完成綁定</div>
           </div>
           <p class="onboarding-intro" id="onboardingIntro">請先用一鍵分享，把綁定邀請傳給你信任的人；完成後再填寫對方資料。</p>
           <p class="onboarding-step" id="onboardingStepLabel">步驟 2／4　一鍵分享邀請守護人</p>
@@ -4972,7 +4972,8 @@
       <p id="guardianBindSuccessDetail">您現在可以免費收到對方的報平安、逾時與 SOS 通知。</p>
       <p id="guardianBindNextStep">系統正在確認您的會員方案與下一步。</p>
       <div class="actions">
-        <button class="action-btn primary" id="guardianBindSuccessCloseBtn" type="button">確定，繼續</button>
+        <button class="action-btn primary" id="guardianBindStartTrialBtn" type="button" hidden>我要使用 14 天免費體驗</button>
+        <button class="action-btn" id="guardianBindSuccessCloseBtn" type="button">先不用，回到首頁</button>
       </div>
     </div>
   </div>
@@ -5846,6 +5847,23 @@
       return "載入失敗，請稍後再試。";
     }
 
+    function registrationFailureMessage(httpStatus, data) {
+      const payload = data && typeof data === "object" ? data : {};
+      const error = String(payload.error || "").trim();
+      const message = String(payload.message || "").trim();
+      if (message) return message;
+      if (error === "invalid_token" || error === "invalid id_token" || error === "missing id_token") {
+        return "LINE 登入已過期。請關閉此頁，再從「每日平安」官方 LINE 重新開啟。";
+      }
+      if (error === "account_migrated") {
+        return "此帳號已移轉，舊入口不能再使用。請從「每日平安」官方 LINE 的新版 LINE 入口重新開啟。";
+      }
+      if (httpStatus === 401 || httpStatus === 403) {
+        return "LINE 登入驗證失敗。請關閉此頁，再從「每日平安」官方 LINE 重新開啟。";
+      }
+      return "目前無法完成會員註冊，請稍後再試。";
+    }
+
     async function apiGetCalendarNotes() {
       if (useLocalMode) return { ok: true, notes: loadLocalState().calendar_notes || {} };
       if (!lineUserId) return { ok: true, notes: {} };
@@ -6648,6 +6666,12 @@
       );
       const hasBound = bound.length > 0;
       syncInviteUiForBoundState(hasBound);
+      setSetupGuideState("onboarding", {
+        join: "done",
+        login: "done",
+        profile: contactData.length > 0 ? "done" : "current",
+        guardian: hasBound ? "done" : "upcoming",
+      });
       if (!box || !countEl || !listEl) return;
       if (!hasBound) {
         box.hidden = true;
@@ -8070,7 +8094,9 @@
       const detail = $("guardianBindSuccessDetail");
       const next = $("guardianBindNextStep");
       const button = $("guardianBindSuccessCloseBtn");
+      const trialButton = $("guardianBindStartTrialBtn");
       const guardianRequired = status.guardian_required === true;
+      const canRecommendTrial = plan === "free" && source !== "beta";
 
       if (title) {
         title.textContent = trialActivation.activated
@@ -8083,21 +8109,24 @@
         } else if (plan.startsWith("paid_")) {
           detail.textContent = `您目前仍是 ${planLabel(plan)}，方案沒有被改成 14 天體驗。`;
         } else if (plan === "trial") {
-          detail.textContent = "您的 14 天免費體驗已自動開通，不需要再點一次邀請連結。";
+          detail.textContent = "您的 14 天免費體驗已開通。";
         } else {
           detail.textContent = "您已可免費接收對方的報平安、逾時與 SOS 通知。";
         }
       }
       if (next) {
-        next.textContent = guardianRequired
-          ? "要完成自己的會員設定，還需要邀請至少一位親友成為您的核心守護人。按下確定後會直接進入分享流程。"
-          : "您的會員設定與原方案都已保留，可以直接繼續使用。";
+        next.textContent = canRecommendTrial
+          ? "要不要使用 14 天免費體驗，開始使用自己的報平安功能？若希望原邀請人也守護您，仍須另外發送一次邀請；對方接受後才會完成反向綁定。"
+          : (guardianRequired
+            ? "若希望原邀請人也守護您，仍須另外發送一次邀請；對方接受後才會完成反向綁定。"
+            : "您的會員設定與原方案都已保留，可以直接繼續使用。");
       }
+      if (trialButton) trialButton.hidden = !canRecommendTrial;
       if (button) {
-        button.textContent = guardianRequired
-          ? "確定，邀請我的守護人"
-          : "確定，回到首頁";
-        button.dataset.nextAction = guardianRequired ? "invite" : "home";
+        button.textContent = canRecommendTrial ? "先不用，回到首頁" : (guardianRequired
+          ? "另外邀請我的守護人"
+          : "確定，回到首頁");
+        button.dataset.nextAction = !canRecommendTrial && guardianRequired ? "invite" : "home";
       }
       const prompt = $("guardianBindSuccessPrompt");
       if (prompt) prompt.hidden = false;
@@ -8150,9 +8179,8 @@
             // 邀請方／本人進會員中心時，若尚未關閉介紹卡則帶一下免費體驗說明
             renderMemberRoleIntro({ autoExpand: false });
             if (bindResult?.binding_complete !== false) {
-              const trialActivation = await activateOwnTrialAfterGuardianBind();
               await refreshStatus().catch(() => {});
-              showGuardianBindSuccessForCurrentPlan(trialActivation);
+              showGuardianBindSuccessForCurrentPlan();
             }
           }
         }
@@ -9230,7 +9258,7 @@
         });
         const registrationResult = await registrationResponse.json().catch(() => ({}));
         if (!registrationResponse.ok) {
-          window.alert(registrationResult.message || "目前無法完成會員註冊");
+          window.alert(registrationFailureMessage(registrationResponse.status, registrationResult));
           return false;
         }
         hideLineEntryGate();
@@ -11875,6 +11903,26 @@
     $("promptInviteBtn").addEventListener("click", goGuardianInvite);
     $("dismissGuardianPromptBtn").addEventListener("click", closeGuardianPrompt);
     $("acceptGuardianInviteBtn").addEventListener("click", acceptGuardianInviteFromPrompt);
+    $("guardianBindStartTrialBtn")?.addEventListener("click", async () => {
+      const trialButton = $("guardianBindStartTrialBtn");
+      if (trialButton) {
+        trialButton.disabled = true;
+        trialButton.textContent = "正在開通…";
+      }
+      const trialActivation = await activateOwnTrialAfterGuardianBind();
+      if (!trialActivation.ok) {
+        alert(trialActivation.already_used
+          ? "這個帳號已使用過免費資格，無法再次開通。"
+          : "目前無法開通 14 天體驗，請稍後再試。");
+        if (trialButton) {
+          trialButton.disabled = false;
+          trialButton.textContent = "我要使用 14 天免費體驗";
+        }
+        return;
+      }
+      await refreshStatus().catch(() => {});
+      showGuardianBindSuccessForCurrentPlan(trialActivation);
+    });
     $("guardianBindSuccessCloseBtn")?.addEventListener("click", () => {
       $("guardianBindSuccessPrompt").hidden = true;
       const button = $("guardianBindSuccessCloseBtn");

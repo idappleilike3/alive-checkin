@@ -174,12 +174,13 @@ class BetaSelfRegistrationTests(unittest.TestCase):
         self.assertIn('beta_cohort: betaCohort', member)
         self.assertNotIn('fetch("/api/beta/claim"', member)
 
-    def test_guardian_trial_is_automatic_but_mutual_binding_still_requires_consent(self):
+    def test_guardian_trial_is_optional_and_mutual_binding_still_requires_consent(self):
         member = (ROOT / "index.html").read_text(encoding="utf-8")
         backend = (ROOT / "app.py").read_text(encoding="utf-8")
 
         self.assertIn("activateOwnTrialAfterGuardianBind", member)
-        self.assertIn("您的 14 天免費體驗已自動開通", member)
+        self.assertIn("要不要使用 14 天免費體驗", member)
+        self.assertNotIn("您的 14 天免費體驗已自動開通", member)
         self.assertIn("activate_trial", member)
         self.assertIn('activate_trial = bool(payload.get("activate_trial"))', backend)
         self.assertIn("reciprocal = False", backend)

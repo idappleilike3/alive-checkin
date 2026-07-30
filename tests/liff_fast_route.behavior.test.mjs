@@ -64,6 +64,26 @@ function expose(source, names, context = {}) {
   return sandbox;
 }
 
+test("registration failures explain refresh login and migrated-account recovery", () => {
+  const sandbox = expose(
+    functionSource("registrationFailureMessage"),
+    ["registrationFailureMessage"],
+  );
+
+  assert.match(
+    sandbox.registrationFailureMessage(401, {error: "invalid id_token"}),
+    /LINE 登入已過期/,
+  );
+  assert.match(
+    sandbox.registrationFailureMessage(409, {error: "account_migrated"}),
+    /新版 LINE 入口/,
+  );
+  assert.match(
+    sandbox.registrationFailureMessage(500, {}),
+    /目前無法完成會員註冊/,
+  );
+});
+
 test("first status renders without waiting for contacts or onboarding", async () => {
   const contacts = deferred();
   const onboarding = deferred();

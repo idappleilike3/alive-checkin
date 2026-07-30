@@ -27,31 +27,30 @@ class OnboardingFlowTest(unittest.TestCase):
 
     def test_share_page_explains_acceptance_is_required(self):
         text = (ROOT / "liff/share-invite.html").read_text(encoding="utf-8")
-        self.assertIn("Step 1 加入每日平安官方 LINE", text)
-        self.assertIn("Step 2 設定我的資料與提醒時間", text)
-        self.assertIn("Step 3 一鍵分享核心守護人", text)
-        self.assertIn("Step 4 完成綁定", text)
+        self.assertIn("1. 你加入每日平安官方 LINE 並完成 LINE 登入", text)
+        self.assertIn("2. 你填寫自己的資料", text)
+        self.assertIn("3. 你選擇要邀請的 LINE 好友並一鍵分享", text)
+        self.assertIn("4. 對方加入官方 LINE", text)
         self.assertLess(
-            text.index("Step 2 設定我的資料與提醒時間"),
-            text.index("Step 3 一鍵分享核心守護人"),
+            text.index("2. 你填寫自己的資料"),
+            text.index("3. 你選擇要邀請的 LINE 好友並一鍵分享"),
         )
-        self.assertIn("等待對方登入", text)
-        self.assertIn("等待對方接受", text)
+        self.assertIn("對方加入官方 LINE、登入、填寫資料並親自同意後", text)
         self.assertIn("對方完成 LINE 登入並同意後", text)
-        self.assertIn("對方接受後才顯示", text)
+        self.assertIn("同意後，才會正式成為核心守護人", text)
 
     def test_public_trial_page_uses_the_same_four_step_order(self):
         text = (ROOT / "trial-14.html").read_text(encoding="utf-8")
         labels = [
-            "Step 1 加入每日平安官方 LINE",
-            "Step 2 設定我的資料",
+            "Step 1 加入官方 LINE 並完成 LINE 登入",
+            "Step 2 填寫自己的資料",
             "Step 3 一鍵分享核心守護人",
-            "Step 4 完成綁定",
+            "Step 4 對方接受，完成綁定",
         ]
         positions = [text.index(label) for label in labels]
         self.assertEqual(positions, sorted(positions))
-        self.assertIn("等待對方登入", text)
-        self.assertIn("等待對方接受", text)
+        self.assertIn("分享後先顯示等待對方處理", text)
+        self.assertIn("受邀者加入官方 LINE、登入、填資料並親自同意後", text)
 
 
 if __name__ == "__main__":

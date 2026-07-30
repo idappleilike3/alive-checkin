@@ -14,8 +14,8 @@ def test_beta_pages_use_story_comic_and_keep_plan_specific_content():
     assert 'id="addOfficialLine"' in html
     assert 'href="https://line.me/R/ti/p/%40042kwqib"' in html
     assert 'id="continueRegistration"' in html
-    assert "第一步：先加入「每日平安」官方 LINE" in html
-    assert "第二步：回到這裡，用 LINE 登入並開始設定" in html
+    assert "第一步：加入每日平安官方 LINE" in html
+    assert "我已加入，繼續 LINE 登入與設定" in html
 
 
 def test_general_14_day_onboarding_uses_same_story_comic():
@@ -34,7 +34,7 @@ def test_trial_and_beta_follow_the_same_registration_order():
     member = (ROOT / "index.html").read_text(encoding="utf-8")
 
     expected_steps = [
-        "加入「每日平安」官方",
+        "加入官方 LINE",
         "LINE 登入",
         "核心守護人",
         "填寫",
@@ -108,7 +108,7 @@ def test_member_shares_the_story_landing_not_a_bare_liff_bind_url():
     assert "const bindUrl = landingUrl;" in html
 
 
-def test_guardian_acceptance_auto_activates_only_the_invitees_own_trial():
+def test_guardian_acceptance_keeps_trial_optional_and_reverse_invite_separate():
     html = (ROOT / "index.html").read_text(encoding="utf-8")
     assert "mutual_core: false" in html
     assert "activate_trial: false" in html
@@ -116,6 +116,11 @@ def test_guardian_acceptance_auto_activates_only_the_invitees_own_trial():
     assert "activate_trial: trialAfterGuardian" not in html
     assert "activate_own_trial: true" in html
     assert "activateOwnTrialAfterGuardianBind" in html
+    assert "guardianBindStartTrialBtn" in html
+    assert "若希望原邀請人也守護您，仍須另外發送一次邀請" in html
+    bind_flow = html.split("async function completeGuardianBindOnce", 1)[1].split(
+        "function resetInviteAcceptPromptUi", 1
+    )[0]
+    assert "activateOwnTrialAfterGuardianBind" not in bind_flow
     assert "方案沒有被改成 14 天體驗" in html
-    assert "不需要再點一次邀請連結" in html
     assert "同時互相設為核心守護人" not in html

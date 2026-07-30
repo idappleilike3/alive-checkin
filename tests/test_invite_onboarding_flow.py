@@ -57,10 +57,10 @@ class InviteOnboardingFlowTests(unittest.TestCase):
     def test_share_page_explains_official_line_and_three_steps(self):
         html = (ROOT / "liff/share-invite.html").read_text(encoding="utf-8")
         for copy in (
-            "1. 你選擇要邀請的 LINE 好友",
-            "2. 對方收到邀請與完整流程說明",
-            "3. 對方加入官方 LINE、登入並填寫資料",
-            "4. 對方親自同意後，綁定才生效",
+            "1. 你加入每日平安官方 LINE 並完成 LINE 登入",
+            "2. 你填寫自己的資料、與守護人的關係及緊急聯絡候補資料",
+            "3. 你選擇要邀請的 LINE 好友並一鍵分享",
+            "4. 對方加入官方 LINE、登入、填寫資料並親自同意後，綁定才生效",
         ):
             self.assertIn(copy, html)
 
@@ -73,15 +73,29 @@ class InviteOnboardingFlowTests(unittest.TestCase):
         self.assertIn("showInviteGuardianProfileForm", html)
         self.assertIn("請填寫您的資料，確認後才會完成核心守護綁定", html)
 
-    def test_acceptance_is_one_way_and_reverse_guarding_requires_a_new_invite(self):
+    def test_acceptance_recommends_trial_without_auto_activation_or_reverse_binding(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("這次只會由您守護邀請人，不會自動互相綁定", html)
-        self.assertIn("activateOwnTrialAfterGuardianBind", html)
-        self.assertIn("您的 14 天免費體驗已自動開通", html)
+        self.assertIn("guardianBindStartTrialBtn", html)
+        self.assertIn("要不要使用 14 天免費體驗", html)
+        self.assertIn("若希望原邀請人也守護您，仍須另外發送一次邀請", html)
+        self.assertNotIn("您的 14 天免費體驗已自動開通", html)
+        bind_flow = html.split("async function completeGuardianBindOnce", 1)[1].split(
+            "function resetInviteAcceptPromptUi", 1
+        )[0]
+        self.assertNotIn("activateOwnTrialAfterGuardianBind", bind_flow)
         self.assertIn("activate_own_trial: true", html)
         self.assertIn("guardian_only: Boolean(inviteFrom", html)
         self.assertNotIn("同時互相設為核心守護人", html)
         self.assertNotIn("同意互相成為核心守護人", html)
+
+    def test_setup_progress_only_marks_verified_steps_done(self):
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn('data-state="upcoming"', html)
+        self.assertIn('setSetupGuideState("line"', html)
+        self.assertIn('setSetupGuideState("onboarding"', html)
+        self.assertIn('guardian: hasBound ? "done" : "upcoming"', html)
+        self.assertNotIn("✅ 已加入後再進行下一步", (ROOT / "liff/share-invite.html").read_text(encoding="utf-8"))
 
     def test_public_invite_cannot_bundle_guardian_acceptance_with_a_trial(self):
         invite_html = (ROOT / "invite.html").read_text(encoding="utf-8")
