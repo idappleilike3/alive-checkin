@@ -14,6 +14,7 @@ from app import (
     sos_user_facing_error,
     retry_sos_event,
     trigger_sos,
+    respond_to_sos_event,
 )
 import app as app_module
 
@@ -136,6 +137,127 @@ class SosRulesTests(unittest.TestCase):
         self.assertEqual(
             [row["name"] for row in result["guardians"]], ["姊姊"]
         )
+
+    def test_sos_never_notifies_more_than_five_core_guardians(self):
+        targets = []
+        contacts = [{
+            "name": f"守護人{index}",
+            "line_id": f"U-g{index}",
+            "binding_status": "accepted",
+            "is_primary": True,
+            "priority": index,
+            "notify_methods": ["line"],
+        } for index in range(1, 8)]
+        profile = {
+            "line_user_id": "U-owner",
+            "display_name": "測試會員",
+            "plan": "paid_799_year",
+            "contacts": contacts,
+        }
+        data_file = self.make_data_file(profile)
+
+        result, status = trigger_sos(
+            data_file,
+            {
+                "line_user_id": "U-owner",
+                "guardian_line_user_ids": [row["line_id"] for row in contacts],
+            },
+            {
+                "LINE_CHANNEL_ACCESS_TOKEN": "test-token",
+                "LINE_PUSH_SENDER": lambda _token, target, _message: (
+                    targets.append(target) or {"ok": True}
+                ),
+            },
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(result["sent"], 5)
+        self.assertEqual(
+            [target for target in targets if target != "U-owner"],
+            ["U-g1", "U-g2", "U-g3", "U-g4", "U-g5"],
+        )
+
+    def test_all_guardians_defer_or_decline_marks_event_unassigned(self):
+        pushes = []
+        profile = {
+            "line_user_id": "U-owner",
+            "display_name": "測試會員",
+            "plan": "paid_799",
+            "contacts": [
+                {"name": "媽媽", "line_id": "U-mom", "binding_status": "accepted",
+                 "is_primary": True, "priority": 1, "notify_methods": ["line"]},
+                {"name": "姊姊", "line_id": "U-sister", "binding_status": "accepted",
+                 "is_primary": True, "priority": 2, "notify_methods": ["line"]},
+            ],
+        }
+        data_file = self.make_data_file(profile)
+        sent, status = trigger_sos(
+            data_file,
+            {"line_user_id": "U-owner",
+             "guardian_line_user_ids": ["U-mom", "U-sister"]},
+            {"LINE_CHANNEL_ACCESS_TOKEN": "token",
+             "LINE_PUSH_SENDER": lambda *_args: {"ok": True}},
+        )
+        self.assertEqual(status, 200)
+        config = {
+            "LINE_CHANNEL_ACCESS_TOKEN": "token",
+            "LINE_PUSH_SENDER": lambda _token, target, message: (
+                pushes.append((target, message)) or {"ok": True}
+            ),
+        }
+
+        first, first_status = respond_to_sos_event(
+            data_file,
+            {"event_id": sent["event_id"], "line_user_id": "U-mom", "action": "defer"},
+            config,
+        )
+        second, second_status = respond_to_sos_event(
+            data_file,
+            {"event_id": sent["event_id"], "line_user_id": "U-sister", "action": "unable"},
+            config,
+        )
+
+        self.assertEqual((first_status, second_status), (200, 200))
+        self.assertEqual(first["status"], "sent")
+        self.assertEqual(second["status"], "unassigned")
+        self.assertTrue(second["no_responder"])
+        self.assertTrue(any("尚無守護人接手" in str(message) for _, message in pushes))
+
+    def test_found_action_closes_event_and_rejects_later_changes(self):
+        profile = {
+            "line_user_id": "U-owner",
+            "display_name": "測試會員",
+            "plan": "free",
+            "contacts": [{
+                "name": "媽媽", "line_id": "U-mom", "binding_status": "accepted",
+                "is_primary": True, "priority": 1, "notify_methods": ["line"],
+            }],
+        }
+        data_file = self.make_data_file(profile)
+        sent, status = trigger_sos(
+            data_file,
+            {"line_user_id": "U-owner"},
+            {"LINE_CHANNEL_ACCESS_TOKEN": "token",
+             "LINE_PUSH_SENDER": lambda *_args: {"ok": True}},
+        )
+        self.assertEqual(status, 200)
+
+        found, found_status = respond_to_sos_event(
+            data_file,
+            {"event_id": sent["event_id"], "line_user_id": "U-mom", "action": "found"},
+            {"LINE_CHANNEL_ACCESS_TOKEN": "token",
+             "LINE_PUSH_SENDER": lambda *_args: {"ok": True}},
+        )
+        later, later_status = respond_to_sos_event(
+            data_file,
+            {"event_id": sent["event_id"], "line_user_id": "U-mom", "action": "take_over"},
+            {},
+        )
+
+        self.assertEqual(found_status, 200)
+        self.assertEqual(found["status"], "found_closed")
+        self.assertEqual(later_status, 409)
+        self.assertEqual(later["error"], "sos_event_closed")
 
     def test_active_799_does_not_attach_stale_location(self):
         messages = []
