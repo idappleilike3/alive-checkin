@@ -8198,7 +8198,7 @@ def guardian_group_daily_status(data_file, line_user_id, group_id, now=None):
     owner_id = str(group.get("owner_line_user_id") or "").strip()
     member_ids = [owner_id]
     for uid in group.get("member_ids_at_bind") or []:
-        if uid and uid not in member_ids:
+        if uid and uid in users and uid not in member_ids:
             member_ids.append(uid)
     now = now or datetime.now()
     today = now.strftime("%Y-%m-%d")
@@ -8206,12 +8206,6 @@ def guardian_group_daily_status(data_file, line_user_id, group_id, now=None):
     for uid in member_ids:
         profile = users.get(uid)
         if not isinstance(profile, dict):
-            members.append({
-                "line_user_id": uid,
-                "name": "LINE 群組成員",
-                "status": "unbound",
-                "status_label": "尚未綁定每日平安",
-            })
             continue
         name = profile.get("display_name") or profile.get("name") or "每日平安會員"
         if uid == owner_id:
@@ -8232,7 +8226,7 @@ def guardian_group_daily_status(data_file, line_user_id, group_id, now=None):
         })
     counts = {
         key: sum(1 for row in members if row["status"] == key)
-        for key in ("checked", "pending", "overdue", "unbound")
+        for key in ("checked", "pending", "overdue")
     }
     counts["total"] = len(members)
     return {
@@ -8256,7 +8250,6 @@ def guardian_group_daily_status_text(data_file, line_user_id, group_id):
         return messages.get(code, "目前無法查看守護群狀態。"), code
     checked = [row["name"] for row in result["members"] if row["status"] == "checked"]
     unchecked = [row["name"] for row in result["members"] if row["status"] in {"pending", "overdue"}]
-    unbound = [row["name"] for row in result["members"] if row["status"] == "unbound"]
     prefs = normalize_guardian_group_preferences(
         (load_state(data_file).get("guardian_groups", {}).get(group_id) or {}).get("preferences")
     )
@@ -8266,7 +8259,6 @@ def guardian_group_daily_status_text(data_file, line_user_id, group_id):
         f"✅ {len(checked)} 位已報平安",
         f"⚠️ {len(unchecked)} 位未報平安",
         f"未報平安：{'、'.join(unchecked) if unchecked else '目前都已完成'}",
-        f"🔗 尚未綁定：{'、'.join(unbound) if unbound else '無'}",
         "",
         "群組隱私設定：",
         f"私訊提醒（核心守護人）：{'開啟' if prefs.get('notify_private_guardians') else '關閉'}（預設建議開啟）",
