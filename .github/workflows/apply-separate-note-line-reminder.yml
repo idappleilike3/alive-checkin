@@ -1,0 +1,44 @@
+name: Apply separate note and LINE reminder changes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/apply_separate_note_line_reminder.py'
+      - '.github/workflows/apply-separate-note-line-reminder.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply targeted changes
+        run: python scripts/apply_separate_note_line_reminder.py
+      - name: Verify syntax and product rules
+        run: |
+          python -m py_compile app.py
+          grep -q '日期備忘（只在首頁提醒）' index.html
+          grep -q '新增 LINE 推播提醒' index.html
+          grep -q '提醒時間（24 小時制）' index.html
+          ! grep -q '晚點提醒' app.py
+          ! grep -q 'smart:snooze:' app.py
+      - name: Commit and push
+        run: |
+          if git diff --quiet -- index.html app.py; then
+            echo 'No changes needed'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html app.py
+          git commit -m 'fix: separate homepage notes and LINE push reminders'
+          git push
