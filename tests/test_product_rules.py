@@ -678,6 +678,12 @@ class ProductRulesTests(unittest.TestCase):
         faq_page = (ROOT / "faq.html").read_text(encoding="utf-8")
 
         self.assertIn("const publicOpenPages = {", page)
+        self.assertIn('params.get("open") === "sos"', page)
+        self.assertIn('location.replace("/liff/sos.html")', page)
+        self.assertLess(
+            page.index('params.get("open") === "sos"'),
+            page.index("https://www.googletagmanager.com"),
+        )
         self.assertIn('help: "help.html"', page)
         self.assertIn('pricing: "liff/pricing.html"', page)
         self.assertIn('faq: "faq.html"', page)
