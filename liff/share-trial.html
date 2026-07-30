@@ -7,28 +7,53 @@
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
     :root { color-scheme: light; font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif; }
-    body { margin: 0; min-height: 100vh; background: #fff; color: #831843; }
-    main { width: min(88vw, 420px); margin: 12vh auto 0; padding: 28px 22px; text-align: center; background: #fff; border-radius: 24px; box-shadow: 0 12px 36px #83184318; }
+    body { margin: 0; min-height: 100vh; background: #f0fdf4; color: #14532d; }
+    main { width: min(88vw, 420px); margin: 12vh auto 0; padding: 30px 22px; text-align: center; background: #fff; border: 1px solid #bbf7d0; border-radius: 24px; box-shadow: 0 12px 36px #14532d18; }
     main[hidden] { display: none; }
     h1 { margin: 0 0 12px; font-size: 1.45rem; }
     p { margin: 8px 0 18px; line-height: 1.65; color: #57534e; }
     button { width: 100%; border: 0; border-radius: 999px; padding: 14px 18px; font-size: 1rem; font-weight: 700; color: #fff; background: #06c755; }
     button[hidden] { display: none; }
+    .spinner {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 18px;
+      border: 5px solid #dcfce7;
+      border-top-color: #06c755;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    .spinner[hidden] { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .spinner { animation-duration: 1.8s; }
+    }
   </style>
 </head>
 <body>
-  <main id="shareFallback" hidden>
-    <h1>無法直接開啟好友選擇</h1>
-    <p id="status">請按下方按鈕再試一次。</p>
+  <main id="shareFallback" role="status" aria-live="polite">
+    <div class="spinner" id="shareSpinner" aria-hidden="true"></div>
+    <h1 id="statusTitle">正在準備分享</h1>
+    <p id="status">正在準備你的專屬分享連結，請稍候…</p>
     <button id="retryBtn" type="button" hidden>再次開啟好友選擇</button>
   </main>
   <script>
     const LIFF_ID = "2010848330-UAiqPPYD";
     const MEMBER_CACHE_PREFIX = "alive_member_status_v1:";
     const shareFallback = document.getElementById("shareFallback");
+    const shareSpinner = document.getElementById("shareSpinner");
+    const statusTitle = document.getElementById("statusTitle");
     const statusEl = document.getElementById("status");
     const retryBtn = document.getElementById("retryBtn");
     let sharing = false;
+
+    function setLoadingState(isLoading, message) {
+      shareFallback.hidden = false;
+      shareSpinner.hidden = !isLoading;
+      retryBtn.hidden = true;
+      statusTitle.textContent = isLoading ? "正在準備分享" : "分享狀態";
+      statusEl.textContent = message;
+    }
 
     function hasMemberCache(lineUserId) {
       if (!lineUserId) return false;
@@ -59,8 +84,7 @@
     async function openTrialShare() {
       if (sharing) return;
       sharing = true;
-      retryBtn.hidden = true;
-      statusEl.textContent = "正在開啟 LINE 好友選擇…";
+      setLoadingState(true, "正在準備你的專屬分享連結，請稍候…");
       try {
         const decoded = typeof liff.getDecodedIDToken === "function"
           ? liff.getDecodedIDToken()
@@ -76,18 +100,19 @@
           "送你免費體驗 14 天，不用刷卡、不會自動扣款：\n" +
           trialUrl
         );
+        setLoadingState(true, "連結已準備完成，正在開啟 LINE 好友選擇…");
         if (typeof liff.shareTargetPicker !== "function") {
           throw new Error("shareTargetPicker unavailable");
         }
         const result = await liff.shareTargetPicker([{ type: "text", text }]);
-        statusEl.textContent = result
+        setLoadingState(false, result
           ? "已完成分享，你可以關閉這個畫面。"
-          : "尚未選擇好友，按下方按鈕可以再試一次。";
+          : "尚未選擇好友，按下方按鈕可以再試一次。");
         shareFallback.hidden = Boolean(result);
         retryBtn.hidden = Boolean(result);
       } catch (_) {
+        setLoadingState(false, "無法自動開啟好友選擇，請按下方按鈕再試一次。");
         shareFallback.hidden = false;
-        statusEl.textContent = "無法自動開啟好友選擇，請按下方按鈕再試一次。";
         retryBtn.hidden = false;
       } finally {
         sharing = false;
@@ -96,6 +121,7 @@
 
     async function init() {
       try {
+        setLoadingState(true, "正在連接 LINE，請稍候…");
         await liff.init({ liffId: LIFF_ID });
         if (!liff.isLoggedIn()) {
           liff.login({ redirectUri: location.href });
@@ -103,8 +129,8 @@
         }
         await openTrialShare();
       } catch (_) {
+        setLoadingState(false, "請從「每日平安」官方 LINE 的圖文選單重新開啟。");
         shareFallback.hidden = false;
-        statusEl.textContent = "請從「每日平安」官方 LINE 的圖文選單重新開啟。";
         retryBtn.hidden = false;
       }
     }
