@@ -240,6 +240,59 @@
   .beginner-story-copy { padding: 20px; text-align: center; }
   .beginner-story-copy h2 { color: #0b5c2e; margin-bottom: 8px; }
   .beginner-story-copy p { color: #66736c; line-height: 1.65; font-size: 14px; }
+  .public-entry {
+    text-align: center;
+  }
+  .public-entry h2 {
+    color: #075c2b;
+    font-size: 22px;
+  }
+  .public-entry p {
+    color: #59665f;
+    font-size: 14px;
+    line-height: 1.75;
+  }
+  .public-entry .privacy-note {
+    margin-top: 14px;
+    padding: 12px;
+    border-radius: 10px;
+    background: #f3f8f5;
+    color: #536158;
+    font-size: 13px;
+  }
+  .public-entry-links {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 18px;
+  }
+  .public-entry-link {
+    padding: 12px 8px;
+    border: 1px solid #cfe1d4;
+    border-radius: 10px;
+    color: #176d38;
+    background: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    text-decoration: none;
+  }
+  @media (max-width: 520px) {
+    body { padding: 12px; }
+    .card { padding: 20px 16px; }
+    .public-entry .btn {
+      min-height: 54px;
+      font-size: 17px;
+    }
+    .public-entry-links {
+      grid-template-columns: 1fr;
+    }
+    .public-entry-link {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+  }
 </style>
 </head>
 <body>
@@ -316,12 +369,13 @@ async function resolveLiffId() {
 }
 
 async function init() {
+  let liffReady = false;
   try {
     const liffId = await resolveLiffId();
     await liff.init({ liffId });
+    liffReady = true;
     if (!liff.isLoggedIn()) {
-      // 絕對不要自己帶 redirectUri，LINE 會完美跳回當前頁（含參數）
-      liff.login();
+      renderPublicEntry({ liffReady: true, liffId });
       return;
     }
     
@@ -395,11 +449,33 @@ async function init() {
     renderStep();
     showStepReminderOnce(state.currentStep);
   } catch (err) {
-    document.getElementById("loading").innerHTML = `
-      <div style="color:#D6322C;">⚠️ LIFF 初始化失敗</div>
-      <div style="font-size:13px;margin-top:12px;">${err.message || err}</div>
-    `;
+    renderPublicEntry({ liffReady, liffId: LIFF_ID });
   }
+}
+
+function renderPublicEntry({ liffReady, liffId }) {
+  const loading = document.getElementById("loading");
+  const content = document.getElementById("content");
+  content.style.display = "none";
+  loading.className = "card public-entry";
+  loading.innerHTML = `
+    <h2>開始 14 天免費體驗</h2>
+    <p>介紹內容可以直接瀏覽。準備開始設定時，再使用 LINE 安全登入即可。</p>
+    <button class="btn btn-primary" type="button" id="startTrialLoginBtn">使用 LINE 安全登入</button>
+    <p class="privacy-note">LINE 登入只用於確認身分、綁定守護人與傳送報平安通知；不會讀取你的聊天內容，也不會自動傳訊息。</p>
+    <div class="public-entry-links" aria-label="其他瀏覽入口">
+      <a class="public-entry-link" href="/">返回首頁</a>
+      <a class="public-entry-link" href="/trial-14.html">查看體驗與方案</a>
+      <a class="public-entry-link" href="/faq.html">常見問題</a>
+    </div>
+  `;
+  document.getElementById("startTrialLoginBtn").addEventListener("click", () => {
+    if (liffReady && liff && typeof liff.login === "function") {
+      liff.login();
+      return;
+    }
+    location.href = `https://liff.line.me/${liffId || LIFF_ID}`;
+  });
 }
 
 function renderReminderSlots(times) {
