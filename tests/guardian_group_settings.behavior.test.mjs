@@ -3,6 +3,8 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const html = fs.readFileSync(new URL("../liff/guardian-groups.html", import.meta.url), "utf8");
+const memberHtml = fs.readFileSync(new URL("../liff/member.html", import.meta.url), "utf8");
+const homeHtml = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const scriptMatches = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
 const behaviorScript = scriptMatches.at(-1)?.[1];
 assert.ok(behaviorScript, "guardian groups page should include its behavior script");
@@ -105,8 +107,18 @@ assert.match(html, /id="backButton"/);
 context.returnFromGuardianGroups();
 assert.equal(
   context.location.href,
-  "https://liff.line.me/123-test?open=member",
-  "without a safe previous page, return to LIFF member center",
+  "/liff/member.html",
+  "without referrer history, return directly to the member center instead of reopening this LIFF page",
+);
+assert.match(
+  memberHtml,
+  /guardian-groups\.html\?return_to=%2Fliff%2Fmember\.html/,
+  "the standalone member center must tell the guardian-group page where to return",
+);
+assert.match(
+  homeHtml,
+  /guardian-groups\.html\?return_to=%2F%3Fopen%3Dmember/,
+  "the main member center must tell the guardian-group page where to return",
 );
 
 await context.saveGroupPreferences("C-family", true, "22:30");
