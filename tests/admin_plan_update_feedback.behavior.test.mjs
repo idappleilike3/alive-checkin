@@ -80,3 +80,24 @@ test("member plan selector can explicitly choose every 21-day beta cohort", () =
   assert.match(html, /21 天封測 B399｜399 年費權益/);
   assert.match(html, /21 天封測 B799｜799 年費權益/);
 });
+
+test("member plan controls explain and enforce the current admin permission", () => {
+  const update = functionBody("updatePlan");
+
+  assert.match(html, /function canManageMembers\(\)/);
+  assert.match(html, /adminPermissions\.includes\("member\.manage"\)/);
+  assert.match(html, /目前登入角色「\$\{adminRoleLabel\(\)\}」只能查看，不能修改會員方案/);
+  assert.match(html, /data-action="save-plan"[^>]*\$\{canManageMembers\(\) \? "" : "disabled"\}/s);
+  assert.match(update, /if \(!canManageMembers\(\)\)/);
+  assert.doesNotMatch(update, /throw new Error\(data\.error \|\| "方案更新失敗"\)/);
+  assert.match(update, /adminMutationErrorText\(data, res\.status\)/);
+});
+
+test("guardian and emergency contact lists stay collapsed and scroll inside a fixed panel", () => {
+  assert.match(html, /\.contact-details-list\s*{/);
+  assert.match(html, /max-height:\s*360px/);
+  assert.match(html, /overflow-y:\s*auto/);
+  assert.match(html, /class="contact-details"/);
+  assert.match(html, /查看守護關係明細/);
+  assert.match(html, /查看緊急聯絡人明細/);
+});
