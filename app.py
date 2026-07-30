@@ -17066,6 +17066,11 @@ def create_app(config=None):
         """專用一鍵分享頁（給 LIFF 子路徑直連；不經 SPA home）。"""
         return send_from_directory(app.static_folder, "liff/share-invite.html")
 
+    @app.get("/liff/sos.html")
+    def liff_sos_page():
+        """輕量 SOS 入口：先顯示求助畫面，再於背景完成 LIFF 驗證。"""
+        return send_from_directory(app.static_folder, "liff/sos.html")
+
     @app.get("/liff/migrate.html")
     def liff_migration_handoff_page():
         """Legacy LIFF handoff that asks users to explicitly reauthorize."""
@@ -19958,6 +19963,11 @@ class MiniClient:
             return MiniResponse({"ok": True})
         if route == "/liff/migrate.html":
             return MiniResponse({"ok": True})
+        if route == "/liff/sos.html":
+            path_obj = Path(__file__).resolve().parent / "liff" / "sos.html"
+            if path_obj.exists():
+                return MiniResponse(path_obj.read_text(encoding="utf-8"))
+            return MiniResponse({"error": "not found"}, 404)
         if route == "/liff/onboarding":
             liff_id = str(self.app.config.get("LIFF_ID") or DEFAULT_LIFF_ID).strip()
             return MiniResponse(
