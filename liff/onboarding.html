@@ -242,7 +242,36 @@
   .beginner-story { overflow: hidden; padding: 0; }
   .beginner-story img { display: block; width: 100%; height: auto; }
   .beginner-story-copy { padding: 24px 20px 18px; text-align: left; }
-  .beginner-story-copy h2 { color: #0b5c2e; margin-bottom: 10px; font-size: 30px; line-height: 1.25; }
+  .onboarding-brand-header {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .onboarding-brand {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    gap: 7px;
+    color: #0b5c2e;
+    font-size: 16px;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+  .onboarding-brand img {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+  }
+  .onboarding-brand-header h2 {
+    min-width: 0;
+    margin: 0;
+    color: #0b5c2e;
+    font-size: clamp(24px, 6.4vw, 30px);
+    line-height: 1.2;
+    white-space: nowrap;
+  }
   .beginner-story-copy p { color: #52645a; line-height: 1.7; font-size: 18px; }
   .peace-benefits {
     display: grid;
@@ -335,7 +364,10 @@
       align-items: center;
       justify-content: center;
     }
-    .beginner-story-copy h2 { font-size: 28px; }
+    .onboarding-brand-header { gap: 8px; }
+    .onboarding-brand { gap: 5px; font-size: 13px; }
+    .onboarding-brand img { width: 40px; height: 40px; }
+    .onboarding-brand-header h2 { font-size: clamp(21px, 6.3vw, 28px); }
     .peace-trial-cta { font-size: 21px; }
   }
 </style>
@@ -344,7 +376,13 @@
 <div class="container">
   <section class="card beginner-story" aria-label="14 天新會員安心體驗介紹">
     <div class="beginner-story-copy">
-      <h2>14 天安心體驗</h2>
+      <header class="onboarding-brand-header">
+        <div class="onboarding-brand">
+          <img src="/assets/daily-peace-logo.png" alt="每日平安 LOGO">
+          <span>每日平安</span>
+        </div>
+        <h2>14 天安心體驗</h2>
+      </header>
       <p>先設定每日提醒，再分享守護邀請。對方接受後，你們的連結就建立了。</p>
     </div>
     <img src="/assets/guardian-story-mother-daughter-mobile.webp" alt="媽媽每日報平安，女兒透過 LINE 收到通知的母女圖文故事">
