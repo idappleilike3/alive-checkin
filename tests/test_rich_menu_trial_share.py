@@ -32,8 +32,19 @@ class RichMenuTrialShareTests(unittest.TestCase):
     def test_trial_share_only_reveals_web_fallback_when_native_picker_cannot_open(self):
         page = (ROOT / "liff" / "share-trial.html").read_text(encoding="utf-8")
 
-        self.assertIn('id="shareFallback" hidden', page)
+        self.assertIn('id="shareFallback"', page)
+        self.assertNotIn('id="shareFallback" hidden', page)
         self.assertIn("shareFallback.hidden = false", page)
+
+    def test_trial_share_shows_progress_before_opening_line_picker(self):
+        page = (ROOT / "liff" / "share-trial.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="shareSpinner"', page)
+        self.assertIn('role="status"', page)
+        self.assertIn("正在準備你的專屬分享連結", page)
+        self.assertIn("正在開啟 LINE 好友選擇", page)
+        self.assertIn("setLoadingState(true", page)
+        self.assertIn("setLoadingState(false", page)
 
     def test_trial_share_page_does_not_create_guardian_invite(self):
         page = (ROOT / "liff" / "share-trial.html").read_text(encoding="utf-8")
