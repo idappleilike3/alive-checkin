@@ -45,6 +45,19 @@ class RichMenuTrialShareTests(unittest.TestCase):
         self.assertNotIn("register_line_user", exists_flow)
         self.assertNotIn("status_for_user", exists_flow)
 
+    def test_render_startup_syncs_rich_menu_only_when_outdated(self):
+        backend = (ROOT / "app.py").read_text(encoding="utf-8")
+
+        self.assertIn("def sync_default_rich_menu_if_needed", backend)
+        flow = backend.split(
+            "def sync_default_rich_menu_if_needed", 1
+        )[1].split("\\ndef ", 1)[0]
+        self.assertIn("inspect_default_rich_menu", flow)
+        self.assertIn('current.get("invite_uri_ok")', flow)
+        self.assertIn("deploy_default_rich_menu", flow)
+        self.assertIn("threading.Thread(", backend)
+        self.assertIn('app.config.get("TESTING") is True', backend)
+
 
 if __name__ == "__main__":
     unittest.main()
