@@ -17,7 +17,7 @@ def test_onboarding_shows_trial_activation_immediately_after_login():
     html = (ROOT / "liff" / "onboarding.html").read_text(encoding="utf-8")
 
     assert 'id="trialActivationNotice"' in html
-    assert "14 天免費體驗已啟用" in html
+    assert "14 天安心體驗已啟用" in html
     assert "體驗剩 ${state.trialDaysLeft} 天" in html
 
 
