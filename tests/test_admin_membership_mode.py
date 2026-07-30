@@ -3,7 +3,7 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
-from app import admin_update_user_plan, load_state, save_state
+from app import admin_summary, admin_update_user_plan, load_state, save_state
 
 
 class AdminMembershipModeTests(unittest.TestCase):
@@ -85,6 +85,35 @@ class AdminMembershipModeTests(unittest.TestCase):
         self.assertEqual(reloaded["payment_status"], "active")
         self.assertEqual(reloaded["membership_source"], "paid")
         self.assertTrue(reloaded["paid_until"])
+
+    def test_admin_summary_repairs_legacy_b799_beta_without_expiry(self):
+        state = load_state(self.data_file)
+        profile = state["users"]["U-member"]
+        profile.update(
+            {
+                "plan": "paid_799_year",
+                "membership_source": "beta",
+                "payment_status": "beta",
+                "beta_cohort": "B799",
+                "beta_started_at": "2026-07-30T10:00:00",
+                "beta_ends_at": "",
+            }
+        )
+        save_state(self.data_file, state)
+
+        summary = admin_summary(
+            self.data_file,
+            now=datetime.fromisoformat("2026-07-30T10:00:00"),
+        )
+
+        member = next(
+            user for user in summary["users"] if user["line_user_id"] == "U-member"
+        )
+        self.assertEqual(member["plan_type_label"], "799 年費｜21 天封測")
+        self.assertEqual(member["plan_expires_at"], "2026-08-20T10:00:00")
+        self.assertNotIn("尚未設定到期日", member["plan_expires_text"])
+        reloaded = load_state(self.data_file)["users"]["U-member"]
+        self.assertEqual(reloaded["beta_ends_at"], "2026-08-20T10:00:00")
 
 
 if __name__ == "__main__":
