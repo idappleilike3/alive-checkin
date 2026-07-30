@@ -170,7 +170,10 @@ class SosResponseWorkflowTests(unittest.TestCase):
         self.assertIn("/api/sos/status", front)
         self.assertIn("/api/sos/safe", front)
         self.assertIn("接手：", admin)
-        self.assertIn("https://liff.line.me/2010848330-UAiqPPYD?open=sos", menu)
+        self.assertIn(
+            "https://alive-checkin.onrender.com/liff/sos.html",
+            menu,
+        )
 
 
 if __name__ == "__main__":
