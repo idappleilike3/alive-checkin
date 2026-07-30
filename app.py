@@ -3052,7 +3052,7 @@ LINE_ACCEPTANCE_KINDS = (
     "family_group",
     "sos",
     "sos_cancel",
-    "sos_escalation",
+    "sos_recipient_reminder",
     "sos_retry",
     "abuse_block",
     "group_member_change",
@@ -9174,7 +9174,7 @@ def _sos_public_snapshot(event):
         "created_at": event.get("created_at"),
         "sent_at": event.get("sent_at"),
         "closed_at": event.get("closed_at") or event.get("resolved_at"),
-        "escalation_round": int(event.get("escalation_round") or 0),
+        "reminder_round": int(event.get("reminder_round") or 0),
         "escalation_stopped": bool(event.get("escalation_stopped")),
         "primary_responder": next(
             (row["name"] for row in recipients if row.get("role") == "primary"),
@@ -9436,8 +9436,8 @@ def close_sos_as_safe(data_file, payload, config=None):
     return result, code
 
 
-def process_sos_escalations(data_file, config=None, now=None):
-    """At three minutes, notify all remaining core guardians once."""
+def process_sos_recipient_reminders(data_file, config=None, now=None):
+    """At three minutes, remind only guardians who received the original SOS."""
     cfg = config or {}
     current = now or current_app_time(cfg)
     token = cfg.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
@@ -9461,7 +9461,7 @@ def process_sos_escalations(data_file, config=None, now=None):
         elif current.tzinfo is not None and sent_at.tzinfo is None:
             sent_at = sent_at.replace(tzinfo=current.tzinfo)
         elapsed_minutes = (current - sent_at).total_seconds() / 60
-        current_round = int(event.get("escalation_round") or 0)
+        current_round = int(event.get("reminder_round") or 0)
         due = next(
             (
                 (round_no, minute)
@@ -9473,31 +9473,22 @@ def process_sos_escalations(data_file, config=None, now=None):
         if not due:
             continue
         round_no, minute = due
-        label = "備援通知：前兩位尚未接手"
         message = (
-            f"⚠️【{label}】{event.get('owner_display_name') or '你的親友'} "
+            f"⚠️【SOS 再次提醒】{event.get('owner_display_name') or '你的親友'} "
             f"在 {minute} 分鐘前發出 SOS\n"
-            "你是本次新增通知的備援守護人。若能處理請按「我來聯繫」；"
+            "你已收到本次 SOS；若能處理請按「我來聯繫」；"
             "若有立即危險請撥打 119／110"
         )
         round_units = 0
-        already_attempted = {
-            str(delivery.get("target") or "")
+        recipients = [
+            delivery
             for delivery in (event.get("deliveries") or [])
             if delivery.get("kind") == "guardian"
-        }
-        candidates = [
-            row
-            for row in (event.get("escalation_guardians") or [])
-            if str(row.get("target") or "") not in already_attempted
+            and delivery.get("status") == "sent"
+            and delivery.get("target")
         ]
-        remaining_slots = max(
-            0,
-            SOS_MAX_GUARDIAN_RECIPIENTS - len(already_attempted),
-        )
-        batch = candidates[:remaining_slots]
-        for guardian in batch:
-            target = str(guardian.get("target") or "")
+        for delivery in recipients:
+            target = str(delivery.get("target") or "")
             if not target:
                 continue
             try:
@@ -9511,50 +9502,34 @@ def process_sos_escalations(data_file, config=None, now=None):
                     target,
                     outgoing,
                     _line_retry_key(
-                        f"{event.get('event_id')}:escalation:{round_no}:{target}"
+                        f"{event.get('event_id')}:recipient-reminder:{round_no}:{target}"
                     ),
                 )
                 sent += 1
                 round_units += 1
-                event.setdefault("deliveries", []).append({
-                    "kind": "guardian",
-                    "target": target,
-                    "display_name": str(guardian.get("display_name") or "備援守護人"),
-                    "recipient_count": 1,
-                    "status": "sent",
-                    "escalation_round": round_no,
-                })
                 append_notification_log(
-                    state, "sos_escalation", target, "sent",
+                    state, "sos_recipient_reminder", target, "sent",
                     message, json.dumps({"round": round_no}, ensure_ascii=False),
                 )
             except Exception as exc:
                 failed += 1
-                event.setdefault("deliveries", []).append({
-                    "kind": "guardian",
-                    "target": target,
-                    "display_name": str(guardian.get("display_name") or "備援守護人"),
-                    "recipient_count": 1,
-                    "status": "failed",
-                    "escalation_round": round_no,
-                })
                 append_notification_log(
-                    state, "sos_escalation", target, "failed",
+                    state, "sos_recipient_reminder", target, "failed",
                     message, str(exc),
                 )
-        event["escalation_round"] = round_no
-        event["last_escalated_at"] = current.isoformat(timespec="seconds")
+        event["reminder_round"] = round_no
+        event["last_reminded_at"] = current.isoformat(timespec="seconds")
         event.setdefault("timeline", []).append({
-            "action": f"escalation_{round_no}",
+            "action": f"recipient_reminder_{round_no}",
             "actor_name": "系統",
-            "at": event["last_escalated_at"],
+            "at": event["last_reminded_at"],
         })
         record_line_message_usage(
             state,
-            category="sos_escalation",
+            category="sos_recipient_reminder",
             owner_line_user_id=event.get("owner_line_user_id"),
             recipient_count=round_units,
-            event_id=f"{event.get('event_id')}:escalation:{round_no}",
+            event_id=f"{event.get('event_id')}:recipient-reminder:{round_no}",
             sent_at=current,
         )
         events_updated += 1
@@ -10153,11 +10128,6 @@ def trigger_sos(data_file, payload, config=None):
         key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
     )
     phone_contacts = collect_phone_only_contacts(contacts)
-    all_ranked_line_contacts = ranked_sos_guardians(
-        profile,
-        line_user_id,
-        limit=limit,
-    )
     eligible_line_contacts = ranked_sos_guardians(
         profile,
         line_user_id,
@@ -10165,12 +10135,6 @@ def trigger_sos(data_file, payload, config=None):
         limit=limit,
     )
     line_contacts = eligible_line_contacts[:guardian_delivery_limit]
-    initially_selected_ids = {contact["line_id"] for contact in line_contacts}
-    escalation_contacts = [
-        contact
-        for contact in all_ranked_line_contacts
-        if contact["line_id"] not in initially_selected_ids
-    ]
 
     active_group_ids = []
     if (
@@ -10316,11 +10280,6 @@ def trigger_sos(data_file, payload, config=None):
         key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
     )
     phone_contacts = collect_phone_only_contacts(contacts)
-    all_ranked_line_contacts = ranked_sos_guardians(
-        profile,
-        line_user_id,
-        limit=limit,
-    )
     eligible_line_contacts = ranked_sos_guardians(
         profile,
         line_user_id,
@@ -10328,12 +10287,6 @@ def trigger_sos(data_file, payload, config=None):
         limit=limit,
     )
     line_contacts = eligible_line_contacts[:guardian_delivery_limit]
-    initially_selected_ids = {contact["line_id"] for contact in line_contacts}
-    escalation_contacts = [
-        contact
-        for contact in all_ranked_line_contacts
-        if contact["line_id"] not in initially_selected_ids
-    ]
     active_group_ids = []
     if (
         rules.get("guardian_group_limit")
@@ -10453,16 +10406,6 @@ def trigger_sos(data_file, payload, config=None):
         "請留意下方通知明細；若是誤觸或目前已安全，"
         "請在 10 分鐘內回到 SOS 畫面取消通知"
     )
-    prepared_escalation_guardians = [
-        {
-            "target": contact["line_id"],
-            "display_name": str(
-                contact.get("name") or contact.get("relationship") or "備援守護人"
-            ),
-            "priority": int(contact.get("priority") or 9999),
-        }
-        for contact in escalation_contacts
-    ]
     prepared_deliveries = [
         {
             "kind": "guardian",
@@ -10517,7 +10460,6 @@ def trigger_sos(data_file, payload, config=None):
             "created_at": now_dt.isoformat(timespec="seconds"),
             "sent_at": None,
             "deliveries": copy.deepcopy(prepared_deliveries),
-            "escalation_guardians": copy.deepcopy(prepared_escalation_guardians),
             "message": message,
             "location_attached": bool(location_text),
             "abuse_mode": abuse["mode"],
@@ -10713,7 +10655,6 @@ def trigger_sos(data_file, payload, config=None):
         "created_at": now_dt.isoformat(timespec="seconds"),
         "sent_at": sent_at,
         "deliveries": deliveries,
-        "escalation_guardians": copy.deepcopy(prepared_escalation_guardians),
         "message": message,
         "location_attached": bool(location_text),
         "abuse_mode": abuse["mode"],
@@ -13587,7 +13528,7 @@ def admin_business_dashboard(data_file, config=None, now=None):
                     "status": item.get("status") or "pending",
                     "primary_responder": _sos_public_snapshot(item).get("primary_responder"),
                     "assistants": _sos_public_snapshot(item).get("assistants"),
-                    "escalation_round": int(item.get("escalation_round") or 0),
+                    "reminder_round": int(item.get("reminder_round") or 0),
                     "sent_count": sum(
                         1 for row in (item.get("deliveries") or [])
                         if row.get("status") == "sent"
@@ -14365,7 +14306,7 @@ LINE_MESSAGE_USAGE_CATEGORIES = {
     "overdue",
     "sos",
     "sos_cancel",
-    "sos_escalation",
+    "sos_recipient_reminder",
     "smart_reminder",
     "guardian_summary",
 }
@@ -16610,8 +16551,8 @@ def run_cron_tick(config):
         "overdue_alerts": send_due_reminders,
         "guardian_group_daily_summaries": send_guardian_group_daily_summaries,
         "smart_reminders": send_smart_reminders,
-        "sos_escalations": lambda cfg: (
-            process_sos_escalations(cfg["DATA_FILE"], cfg, now=now),
+        "sos_recipient_reminders": lambda cfg: (
+            process_sos_recipient_reminders(cfg["DATA_FILE"], cfg, now=now),
             200,
         ),
         "sos_cleanup": cleanup_expired_sos,

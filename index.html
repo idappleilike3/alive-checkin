@@ -6369,8 +6369,8 @@
       }).join("");
       $("sosResponseStatus").textContent = snapshot.primary_responder
         ? `目前由 ${snapshot.primary_responder} 接手${(snapshot.assistants || []).length ? `，${snapshot.assistants.join("、")} 協助` : ""}`
-        : snapshot.escalation_round
-          ? `尚無人接手，系統已進行第 ${snapshot.escalation_round} 輪提醒`
+        : snapshot.reminder_round
+          ? `尚無人接手，系統已再次提醒原收件者`
           : "已送達不代表已讀，系統正在等待守護人按鈕回應";
       $("sosSafeCloseBtn").hidden = closed;
     }

@@ -6,7 +6,7 @@ from app import (
     close_sos_as_safe,
     get_sos_event_status,
     load_state,
-    process_sos_escalations,
+    process_sos_recipient_reminders,
     respond_to_sos_event,
     save_state,
 )
@@ -97,9 +97,9 @@ class SosResponseWorkflowTests(unittest.TestCase):
         self.assertEqual(closed_status, 200)
         self.assertEqual(closed["status"], "safe_closed")
 
-    def test_escalation_sends_due_round_and_stops_after_response(self):
+    def test_three_minute_reminder_only_repeats_original_recipients(self):
         pushes = []
-        result = process_sos_escalations(
+        result = process_sos_recipient_reminders(
             self.data_file,
             {
                 "LINE_CHANNEL_ACCESS_TOKEN": "token",
@@ -107,14 +107,23 @@ class SosResponseWorkflowTests(unittest.TestCase):
             },
             now=__import__("datetime").datetime.fromisoformat("2026-07-27T22:03:30"),
         )
-        self.assertEqual(result["sent"], 1)
-        self.assertEqual({target for target, _ in pushes}, {"U-third"})
-        self.assertEqual(load_state(self.data_file)["sos_events"]["sos-1"]["escalation_round"], 1)
+        self.assertEqual(result["sent"], 2)
+        self.assertEqual(
+            [target for target, _ in pushes],
+            ["U-mom", "U-sister"],
+        )
+        self.assertNotIn("U-third", {target for target, _ in pushes})
+        event = load_state(self.data_file)["sos_events"]["sos-1"]
+        self.assertEqual(event["reminder_round"], 1)
+        self.assertEqual(
+            [row["target"] for row in event["deliveries"]],
+            ["U-mom", "U-sister"],
+        )
 
         respond_to_sos_event(self.data_file, {
             "event_id": "sos-1", "line_user_id": "U-mom", "action": "take_over",
         })
-        again = process_sos_escalations(
+        again = process_sos_recipient_reminders(
             self.data_file,
             {
                 "LINE_CHANNEL_ACCESS_TOKEN": "token",
@@ -124,7 +133,7 @@ class SosResponseWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(again["sent"], 0)
 
-    def test_three_minute_escalation_caps_total_guardian_notifications_at_five(self):
+    def test_three_minute_reminder_never_adds_unselected_guardians(self):
         state = load_state(self.data_file)
         event = state["sos_events"]["sos-1"]
         event["escalation_guardians"] = [
@@ -141,18 +150,22 @@ class SosResponseWorkflowTests(unittest.TestCase):
             ),
         }
 
-        first = process_sos_escalations(
+        first = process_sos_recipient_reminders(
             self.data_file, config,
             now=__import__("datetime").datetime.fromisoformat("2026-07-27T22:03:30"),
         )
 
-        self.assertEqual(first["sent"], 3)
+        self.assertEqual(first["sent"], 2)
         self.assertEqual(
             [target for target, _message in pushes],
-            ["U-backup-3", "U-backup-4", "U-backup-5"],
+            ["U-mom", "U-sister"],
         )
         event = load_state(self.data_file)["sos_events"]["sos-1"]
-        self.assertEqual(event["escalation_round"], 1)
+        self.assertEqual(event["reminder_round"], 1)
+        self.assertEqual(
+            [row["target"] for row in event["deliveries"]],
+            ["U-mom", "U-sister"],
+        )
 
     def test_front_admin_and_rich_menu_expose_shared_sos_workflow(self):
         root = Path(__file__).resolve().parents[1]
