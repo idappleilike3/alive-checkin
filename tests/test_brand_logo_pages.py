@@ -32,8 +32,9 @@ class BrandLogoPagesTests(unittest.TestCase):
         self.assertIn("每日平安限定招募", page)
         self.assertIn('"B399"', page)
         self.assertIn('"B799"', page)
-        self.assertIn("399 年費安心版｜21 天封測", page)
-        self.assertIn("799 年費守護版｜21 天封測", page)
+        self.assertIn("21天安心守護體驗", page)
+        self.assertNotIn("399 年費安心版｜21 天封測", page)
+        self.assertNotIn("799 年費守護版｜21 天封測", page)
 
     def test_beta_logo_resolves_to_public_asset_from_both_beta_routes(self):
         page = (ROOT / "beta-register.html").read_text(encoding="utf-8")
