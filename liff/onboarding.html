@@ -329,6 +329,34 @@
     font-weight: 700;
     text-decoration: none;
   }
+  .public-start-panel {
+    margin: 4px 20px 20px;
+    padding: 20px;
+    border: 2px solid #b9ddcb;
+    border-radius: 18px;
+    background: #f8fffb;
+    text-align: left;
+  }
+  .public-start-panel h3 {
+    margin: 0 0 10px;
+    color: #173c2b;
+    font-size: 22px;
+    line-height: 1.45;
+  }
+  .public-start-tip {
+    margin: 0 0 14px;
+    color: #4f6258;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.65;
+  }
+  .public-primary-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .public-primary-actions .btn { margin-top: 0; min-height: 66px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+  .joined-steps-title { margin: 18px 20px 4px; color: #173c2b; font-size: 20px; font-weight: 800; text-align: left; }
   .onboarding-footer-links {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -383,7 +411,16 @@
         </div>
         <h2>14 天安心體驗</h2>
       </header>
+      <p><strong>每天 10 秒，讓家人知道你平安。先加入官方 LINE。</strong></p>
       <p>先設定每日提醒，再分享守護邀請。對方接受後，你們的連結就建立了。</p>
+    </div>
+    <div class="public-start-panel">
+      <h3>第一步：點我加入官方 LINE</h3>
+      <p class="public-start-tip">小提示：加入後，才能收到報平安通知與守護人綁定邀請；加入完請返回這個頁面。</p>
+      <div class="public-primary-actions">
+        <a class="btn btn-secondary" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener"><span class="btn-label">點我加入<br>官方 LINE</span></a>
+        <a class="btn btn-primary peace-trial-cta" href="https://liff.line.me/2010848330-UAiqPPYD?open=onboarding"><span class="btn-label">開始 14 天<br>安心體驗</span> <span aria-hidden="true">↗</span></a>
+      </div>
     </div>
     <img src="/assets/guardian-story-mother-daughter-mobile.webp" alt="媽媽每日報平安，女兒透過 LINE 收到通知的母女圖文故事">
     <div class="peace-benefits" aria-label="安心體驗功能">
@@ -391,11 +428,12 @@
       <div class="peace-benefit"><span aria-hidden="true">👨‍👩‍👧</span><strong>多位守護人</strong></div>
       <div class="peace-benefit"><span aria-hidden="true">🆘</span><strong>SOS 緊急求助</strong></div>
     </div>
+    <h3 class="joined-steps-title">已加入，請完成以下四個步驟：</h3>
     <div class="peace-steps" aria-label="安心體驗四步驟">
-      <div class="peace-step"><strong>第一步：加入「每日平安」官方 LINE</strong><br>加入完成後，請返回這個頁面。</div>
-      <div class="peace-step"><strong>第二步：開始 14 天安心體驗</strong> <span class="info-tip" title="讓守護人知道你是誰">ⓘ 讓守護人知道你是誰</span><br>填寫邀請人資料，再設定提醒時間。緊急聯絡電話可事後填寫，SOS 時可用來緊急聯絡。</div>
-      <div class="peace-step"><strong>3. 邀請守護人</strong> <span aria-hidden="true">↗</span><br>把專屬連結分享給 LINE 好友。</div>
-      <div class="peace-step"><strong>4. 安心連結建立</strong><br>對方接受後，安心連結就建立了。</div>
+      <div class="peace-step"><strong>① 填寫資料</strong> <span class="info-tip" title="讓守護人知道你是誰">ⓘ 讓守護人知道你是誰</span><br>填寫你的姓名、與守護人的關係。緊急聯絡電話可事後填寫，SOS 時可用來緊急聯絡。</div>
+      <div class="peace-step"><strong>② 設定提醒</strong><br>選擇每天想收到提醒的時間。</div>
+      <div class="peace-step"><strong>③ 邀請守護人</strong> <span aria-hidden="true">↗</span><br>把專屬連結分享給在乎的人。</div>
+      <div class="peace-step"><strong>④ 完成綁定</strong><br>對方接受後，安心連結就建立了。</div>
     </div>
   </section>
   <div id="loading" class="card loading">
@@ -559,17 +597,9 @@ function renderPublicEntry({ liffReady, liffId }) {
   loading.className = "card public-entry";
   loading.innerHTML = `
     <h2>開始 14 天安心體驗</h2>
-    <p>介紹內容可以直接瀏覽。準備開始設定時，再使用 LINE 安全登入即可。</p>
-    <button class="btn btn-primary peace-trial-cta" type="button" id="startTrialLoginBtn"><span class="btn-label">開始 14 天<br>安心體驗</span> <span aria-hidden="true">↗</span></button>
+    <p>請先使用上方按鈕加入官方 LINE，再點「開始 14 天安心體驗」。</p>
     <p class="privacy-note">LINE 登入只用於確認身分、綁定守護人與傳送報平安通知；不會讀取你的聊天內容，也不會自動傳訊息。</p>
   `;
-  document.getElementById("startTrialLoginBtn").addEventListener("click", () => {
-    if (liffReady && liff && typeof liff.login === "function") {
-      liff.login();
-      return;
-    }
-    location.href = `https://liff.line.me/${liffId || LIFF_ID}`;
-  });
 }
 
 function renderReminderSlots(times) {
