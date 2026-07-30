@@ -70,6 +70,42 @@ class BetaCohortPolicyTests(unittest.TestCase):
                     "21 天封測剩 21 天",
                 )
 
+    def test_admin_summary_backfills_existing_legacy_799_member(self):
+        with TemporaryDirectory() as temp_dir:
+            data_file = Path(temp_dir) / "data.json"
+            state = {
+                "users": {
+                    "U-legacy": {
+                        "line_user_id": "U-legacy",
+                        "display_name": "舊封測者",
+                        "plan": "trial",
+                        "membership_source": "public_trial",
+                        "free_eligibility_source": "public_trial",
+                    }
+                },
+                "beta_program_members": [
+                    {
+                        "line_user_id": "U-legacy",
+                        "display_name": "舊封測者",
+                        "cohort": "family_group_10",
+                        "status": "active",
+                        "starts_at": "2026-07-27T12:00:00",
+                        "ends_at": "2026-08-17T12:00:00",
+                    }
+                ],
+            }
+            app_module.save_state(data_file, state)
+
+            app_module.admin_beta_summary(
+                data_file, now=datetime(2026, 7, 30, 12, 0, 0)
+            )
+
+            saved = app_module.load_state(data_file)["users"]["U-legacy"]
+            self.assertEqual(saved["membership_source"], "beta")
+            self.assertEqual(saved["beta_cohort"], "B799")
+            self.assertEqual(saved["plan"], "paid_799_year")
+            self.assertEqual(saved["beta_ends_at"], "2026-08-17T12:00:00")
+
     def test_duplicate_assignment_is_idempotent(self):
         first = app_module.assign_beta_cohort(
             self.state, "U-1", "B399", now=self.now

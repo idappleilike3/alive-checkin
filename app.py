@@ -12910,6 +12910,38 @@ def admin_beta_summary(data_file, now=None):
     state = load_state(data_file)
     members = list(state.get("beta_program_members") or [])
     current = now or current_app_time({})
+    legacy_cohort_map = {
+        "known_10": "A",
+        "standard_20": "B399",
+        "family_group_10": "B799",
+    }
+    backfilled = False
+    for member in members:
+        if member.get("status") not in BETA_ACTIVE_STATUSES:
+            continue
+        line_user_id = str(member.get("line_user_id") or "").strip()
+        profile = (state.get("users") or {}).get(line_user_id)
+        if not isinstance(profile, dict) or profile.get("membership_source") == "beta":
+            continue
+        entitlement_cohort = legacy_cohort_map.get(str(member.get("cohort") or ""))
+        if not entitlement_cohort:
+            continue
+        started = parse_datetime(member.get("starts_at")) or current
+        try:
+            assign_beta_cohort(
+                state,
+                line_user_id,
+                entitlement_cohort,
+                now=started,
+                recruitment_source=f"admin-{member.get('cohort')}",
+            )
+        except ValueError:
+            continue
+        if member.get("ends_at"):
+            profile["beta_ends_at"] = str(member["ends_at"])
+        backfilled = True
+    if backfilled:
+        save_state(data_file, state)
     cohorts = {}
     for key, definition in BETA_COHORTS.items():
         cohort_members = [row for row in members if row.get("cohort") == key]
