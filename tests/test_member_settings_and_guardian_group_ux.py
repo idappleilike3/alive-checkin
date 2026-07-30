@@ -32,6 +32,17 @@ class MemberSettingsAndGuardianGroupUxTests(unittest.TestCase):
         self.assertNotIn("群組提醒（選用）", page)
         self.assertNotIn("群組每日已報／未報摘要（選用）", page)
 
+    def test_unbound_guardian_group_shows_setup_prompt_without_active_preferences(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("<strong>尚未建立守護群</strong>", page)
+        self.assertIn(
+            "建立守護群後，才能設定群組通知、每日摘要與查看群組成員狀態。",
+            page,
+        )
+        self.assertIn("建立／綁定守護群", page)
+        self.assertNotIn('data-group-id="__default__"', page)
+
     def test_home_names_core_guardian_status_without_guardian_circle_jargon(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
 
