@@ -177,8 +177,9 @@
 </head>
 <body>
   <main class="guide">
-    <h1>一鍵分享邀請核心守護人</h1>
-    <p>選擇一位親友分享。對方完成 LINE 登入並同意後，才會正式成為核心守護人。</p>
+    <h1 id="sharePageTitle">一鍵分享邀請核心守護人</h1>
+    <p id="sharePageIntro">選擇一位親友分享。對方完成 LINE 登入並同意後，才會正式成為核心守護人。</p>
+    <p class="share-ready-status" id="reciprocalNotice" hidden></p>
     <button class="share-now" id="startShare" type="button">立即選擇 LINE 好友分享</button>
     <p class="share-ready-status" id="shareReadyStatus" aria-live="polite">進入 LINE 後會直接選擇好友，不會先跳到每日平安首頁。</p>
     <ol class="steps" aria-label="每日平安首次設定四步驟">
@@ -199,7 +200,7 @@
     </section>
   </main>
   <button id="tapLayer" type="button" aria-label="再試一次" disabled></button>
-  <p id="hint">分享完成後，請按下方按鈕回到原本頁面。受邀親友加入官方帳號、LINE 登入、填寫自己的資料並同意後，才會成為你的核心守護人；不會自動互相綁定。</p>
+  <p id="hint">分享完成後，請按下方按鈕回到原本頁面。守護關係預設為單向，不會自動互相綁定；受邀親友加入官方帳號、LINE 登入、填寫資料並親自接受後，這個方向的守護才會生效。</p>
   <div id="actions">
     <button id="retry" type="button">再分享一次</button>
     <button id="doneHome" type="button">完成，返回原位置</button>
@@ -223,6 +224,9 @@
     const copyInviteLink = document.getElementById("copyInviteLink");
     const inviteQrCode = document.getElementById("inviteQrCode");
     const desktopShareStatus = document.getElementById("desktopShareStatus");
+    const sharePageTitle = document.getElementById("sharePageTitle");
+    const sharePageIntro = document.getElementById("sharePageIntro");
+    const reciprocalNotice = document.getElementById("reciprocalNotice");
 
     let myUserId = "";
     let ready = false;
@@ -232,6 +236,15 @@
     let activeInviteToken = "";
     let inviteWarmupPromise = null;
     let inviterName = "";
+    const reciprocalParams = new URLSearchParams(window.location.search || "");
+    const reciprocalFor = sanitizeUserId(reciprocalParams.get("reciprocal_for"));
+    const reciprocalName = String(reciprocalParams.get("reciprocal_name") || "對方").trim() || "對方";
+    if (reciprocalFor) {
+      sharePageTitle.textContent = `邀請 ${reciprocalName} 守護我`;
+      sharePageIntro.textContent = `這是另一個方向的新邀請。請在 LINE 好友名單選擇 ${reciprocalName} 分享。`;
+      reciprocalNotice.hidden = false;
+      reciprocalNotice.textContent = `${reciprocalName} 接受後，才會完成互相守護；分享邀請不等於已綁定。`;
+    }
 
     function sanitizeUserId(raw) {
       return String(raw || "").trim().replace(/[^a-zA-Z0-9_-]/g, "");
