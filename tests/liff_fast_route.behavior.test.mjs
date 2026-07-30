@@ -348,6 +348,8 @@ test("retry reruns only member bootstrap and unlocks after success", async () =>
   );
   let calls = 0;
   const sandbox = expose(retrySource, ["retryMemberBootstrap"], {
+    useLocalMode: false,
+    lineUserId: "U123",
     memberBootstrapState: {
       statusReady: false,
       dataReady: false,
@@ -872,6 +874,7 @@ test("friendship return rechecks and runs registration migration and member boot
     ["initializeLiff", "recheckLineEntryGate"],
     {
       useLocalMode: false,
+      withTimeout: async (promise) => promise,
       window: { liff },
       liff,
       appConfig: {},
@@ -881,6 +884,8 @@ test("friendship return rechecks and runs registration migration and member boot
       linePictureUrl: "",
       pendingMigratedMemberData: null,
       memberBootstrapState: {},
+      renderCachedMemberStatus() {},
+      renderCachedCheckinStatus() {},
       $: (id) => elements[id] || null,
       document: {
         body: {
