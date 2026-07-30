@@ -266,9 +266,9 @@ async function loadGroupStatus(groupId, button) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "讀取失敗");
     const counts = data.counts || {};
-    const icons = { checked: "✅", pending: "⏳", overdue: "⚠️", unbound: "🔗" };
+    const icons = { checked: "✅", pending: "⏳", overdue: "⚠️" };
     panel.innerHTML = `
-      <strong>已報 ${counts.checked || 0} 人／未報 ${(counts.pending || 0) + (counts.overdue || 0)} 人／未綁定 ${counts.unbound || 0} 人</strong>
+      <strong>已報 ${counts.checked || 0} 人／未報 ${(counts.pending || 0) + (counts.overdue || 0)} 人</strong>
       <ul>${(data.members || []).map((row) =>
         `<li>${icons[row.status] || "•"} ${escapeHtml(row.name)}｜${escapeHtml(row.status_label)}</li>`
       ).join("")}</ul>`;
