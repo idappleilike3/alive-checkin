@@ -32,20 +32,19 @@
     .desktop-note { margin:14px 0 0; padding:14px 16px; border-radius:14px; background:#eaf6ff; color:#17496b; line-height:1.65; font-weight:750; }
 
     .demo-card { margin:22px 0; padding:18px; border:1px solid #cfe9dd; border-radius:20px; background:#f8fffb; }
-    .demo-card h2,.plans h2 { margin:0 0 8px; text-align:center; color:var(--green); }
-    .demo-card > p,.plans > p { text-align:center; line-height:1.65; }
+    .demo-card h2 { margin:0 0 8px; text-align:center; color:var(--green); }
+    .demo-card > p { text-align:center; line-height:1.65; }
     .demo-gif { display:block; width:min(100%,540px); height:auto; margin:16px auto; border-radius:18px; border:1px solid #cfe9dd; }
     .line-result { padding:16px; border-radius:16px; background:#fff; border:1px solid #d9e7dd; white-space:pre-line; font-size:17px; line-height:1.7; font-weight:700; }
     .guide { margin:20px 0; padding:18px; border-radius:18px; background:#fff; border:1px solid #cfe9dd; text-align:center; }
     .guide a { display:inline-flex; align-items:center; justify-content:center; min-height:44px; padding:6px 10px; color:#0b5c2e; font-size:20px; font-weight:900; text-underline-offset:4px; }
     .guide p { color:#5c6d63; line-height:1.65; }
-    .plans { margin:22px 0; }
-    .plan-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
-    .plan-card { padding:17px; border:2px solid #cfe9dd; border-radius:18px; background:#fff; }
-    .plan-card strong { display:block; color:var(--green); font-size:19px; margin-bottom:6px; }
-    .plan-price { font-size:24px; font-weight:900; }
-    .plan-note { color:#5c6d63; font-size:14px; line-height:1.5; }
-    @media(max-width:520px){ .plan-grid{grid-template-columns:1fr;} }
+    .faq { margin:24px 0 16px; padding-top:4px; }
+    .faq h2 { margin:0 0 12px; text-align:center; color:var(--green); }
+    .faq details { margin:10px 0; border:1px solid #cfe9dd; border-radius:14px; background:#fff; text-align:left; }
+    .faq summary { padding:15px 16px; cursor:pointer; font-weight:850; }
+    .faq p { margin:0; padding:0 16px 16px; color:#53675e; line-height:1.65; }
+    .pricing-link { display:block; width:max-content; max-width:100%; margin:22px auto 0; color:var(--green); font-size:18px; font-weight:900; text-underline-offset:5px; }
     small { display:block; text-align:center; margin-top:12px; color:#63746f; line-height:1.6; }
   .story-steps{margin:14px 0 20px;border:1px solid #d7eadf;border-radius:18px;overflow:hidden;background:#fff}.story-step{display:grid;grid-template-columns:48px 1fr;gap:12px;padding:16px;border-bottom:1px solid #d7eadf}.story-step:last-child{border-bottom:0}.story-step>span{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;background:#edf8f1;color:#087443;font-weight:900}.story-step strong{display:block;color:#173c2b;font-size:17px;line-height:1.45}.story-step p{margin:4px 0 0;color:#607268;line-height:1.55}.usage-heading{text-align:center;color:#087443;margin:24px 0 8px}.shared-demo-gif{display:block;width:100%;height:auto;margin:14px auto;border-radius:18px;border:1px solid #d7eadf;background:#fff}.demo-live-button{position:relative;display:block;width:min(360px,100%);min-height:64px;margin:16px auto 8px;border:0;border-radius:999px;background:#087443;color:#fff;font-size:24px;font-weight:900;cursor:pointer;box-shadow:0 10px 24px rgba(8,116,67,.22)}.demo-live-button.is-done{background:#0b633b}.tap-hand{position:absolute;right:12px;bottom:-18px;font-size:42px;filter:drop-shadow(0 3px 3px #0003);animation:tapHint 1.15s ease-in-out infinite;pointer-events:none}.demo-live-button.is-done .tap-hand{display:none}@keyframes tapHint{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-12px) scale(.94)}}.demo-live-result{margin:12px 0;padding:20px;border-radius:20px;background:#effaf4;color:#08643c;font-weight:800;line-height:1.55;text-align:center}.demo-live-result[hidden]{display:none}.success-title{font-size:25px;font-weight:900}.success-subtitle{margin:6px 0 18px;font-size:20px}.success-benefits{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.success-benefit{padding:16px 8px;border-radius:16px;background:#fff;color:#233a32}.success-benefit strong{display:block;font-size:18px}.success-benefit span{display:block;margin-top:6px;color:#69766f;font-weight:500}@media(max-width:520px){.success-benefits{grid-template-columns:1fr}}</style>
 </head>
@@ -53,8 +52,8 @@
   <main>
     <section class="card">
       <div class="eyebrow"><img class="brand-logo" src="/assets/daily-peace-logo.png" alt="">每日平安限定招募</div>
-      <h1 id="title">21 天封閉測試</h1>
-      <p class="lead">不用刷卡、不會自動扣款。先加入 LINE 並完成登入，填寫自己的姓名與基本資料，再邀請我的核心守護人。</p>
+      <h1 id="title">21天安心守護體驗</h1>
+      <p class="lead">每天 10 秒，讓家人知道你平安。先加入官方 LINE，再依照四個步驟完成設定。</p>
       <h2 class="story-title">每天 10 秒，讓家人知道你平安</h2>
       <p class="story-copy">媽媽按一下「我平安」，女兒收到通知，就能放心。平常不打擾，真的有事才通知核心守護人。</p>
       <img class="story-comic" src="/assets/daily-peace-story-comic.png" alt="女兒教媽媽每天按我平安，媽媽完成後女兒收到 LINE 通知的三段故事漫畫" width="941" height="1672">
@@ -84,28 +83,13 @@
         <a href="/guardian-guide">查看完整守護說明</a>
         <p>定位、隱私、通知與解除方式都放在完整說明中，不會在未同意時自動綁定。</p>
       </section>
-      <section class="plans" aria-label="正式方案">
-        <h2 id="planHeading">封測後可選擇的正式方案</h2>
-        <p>21 天封測不收費、不自動扣款；期滿後由你自行決定是否升級。</p>
-        <div class="plan-grid plan-199">
-          <div class="plan-card"><strong>199 活著版｜月費</strong><div class="plan-price">NT$199／月</div><div class="plan-note">最多 2 位核心守護人、每日 1 次私訊預警、安全守護 15 分鐘。</div></div>
-          <div class="plan-card"><strong>199 活著版｜年費</strong><div class="plan-price">NT$1,990／年</div><div class="plan-note">付 10 個月使用 12 個月；每日 2 次私訊預警，最多 3 位核心守護人。</div></div>
-        </div>
-        <div class="plan-grid plan-399">
-          <div class="plan-card"><strong>399 安心版｜月費</strong><div class="plan-price">NT$399／月</div><div class="plan-note">最多 5 位核心守護人、每日 2 次私訊預警、安全守護 1／3 小時。</div></div>
-          <div class="plan-card"><strong>399 安心版｜年費</strong><div class="plan-price">NT$3,990／年</div><div class="plan-note">付 10 個月使用 12 個月；每日 2 次私訊預警，最多 7 位核心守護人。</div></div>
-        </div>
-        <div class="plan-grid plan-799">
-          <div class="plan-card"><strong>799 守護版｜月費</strong><div class="plan-price">NT$799／月</div><div class="plan-note">最多 10 位核心守護人、1 個守護群、安全守護 1／3／6／8 小時。</div></div>
-          <div class="plan-card"><strong>799 守護版｜年費</strong><div class="plan-price">NT$7,990／年</div><div class="plan-note">付 10 個月使用 12 個月；最多 15 位核心守護人、3 個守護群。</div></div>
-        </div>
-        <a class="cta secondary" href="/liff/pricing.html">查看完整方案內容</a>
-      </section>
       <div class="benefits" aria-label="封測功能介紹">
-        <div class="benefit" id="entitlementSummary">✅ 21 天體驗指定方案的年費版完整功能</div>
-        <div class="benefit" id="featureOne">✅ 每日報平安、逾時提醒與 SOS</div>
-        <div class="benefit" id="featureTwo">✅ 守護人免費接收通知</div>
-        <div class="benefit" id="featureThree">✅ 安全守護與位置分享</div>
+        <div class="benefit" id="entitlementSummary"><strong>本次體驗包含：</strong></div>
+        <div class="benefit" id="featureOne">✅ 最多 7 位核心守護人</div>
+        <div class="benefit" id="featureTwo">✅ 每日 2 次私訊預警</div>
+        <div class="benefit" id="featureThree">✅ SOS 緊急求救</div>
+        <div class="benefit" id="featureFour">✅ 安全守護 1／3 小時</div>
+        <div class="benefit" id="featureFive" hidden></div>
       </div>
       <div class="registration-flow" aria-label="封測任務">
         <div class="flow-step"><strong>這 21 天請協助測試</strong><br>完成報平安、逾時提醒、SOS、守護人通知與方案專屬功能，並回報看不懂或操作不順的地方。</div>
@@ -115,18 +99,25 @@
         系統每天 19:00 會透過官方 LINE 詢問一次使用狀況；第 7、14、21 天也會邀請你提供階段心得。若發現問題，請附截圖、發生時間、操作步驟、手機型號與 LINE 版本。
       </div>
       <div class="registration-flow" aria-label="加入封測流程">
-        <div class="flow-step">Step 1 加入官方 LINE 並完成 LINE 登入；實際完成後才顯示「✓」</div>
-        <div class="flow-step">Step 2 填寫自己的姓名與基本資料、每日提醒及緊急聯絡候補資料</div>
-        <div class="flow-step">Step 3 邀請我的核心守護人；這代表「邀請對方守護我」，分享後先等待對方處理</div>
-        <div class="flow-step">Step 4 完成綁定<br>請等待對方加入每日平安、完成 LINE 登入、填寫姓名與雙方關係，並確認接受邀請；完成後才算綁定成功。</div>
-        <div class="flow-step">綁定是單向的；若要互相守護，雙方需要各邀請一次。</div>
+        <div class="flow-step"><strong>① 加入「每日平安」官方LINE</strong><br>加入後，才能收到報平安通知與守護人綁定邀請。</div>
+        <div class="flow-step"><strong>② 回到此頁，用LINE登入</strong><br>勾選「我已加入官方LINE」後，登入按鈕才會開放。</div>
+        <div class="flow-step"><strong>③ 一鍵邀請守護人</strong><br>分享連結，對方接受後即完成綁定。</div>
+        <div class="flow-step"><strong>④ 設定提醒時間，開始安心練習</strong><br>完成綁定後，設定每天適合你的報平安提醒時間。</div>
       </div>
       <p class="spots" id="spots"></p>
-      <a class="cta" id="addOfficialLine" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener">第一步：加入每日平安官方 LINE</a>
-      <label class="consent"><input id="consent" type="checkbox"><span>我已閱讀並同意封測規則，願意每天接收 1 則封測詢問並提供真實回饋</span></label>
-      <a class="cta secondary" id="continueRegistration" href="#" aria-disabled="true">我已加入，繼續 LINE 登入與設定</a>
+      <a class="cta" id="addOfficialLine" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener">點我加入官方LINE</a>
+      <label class="consent"><input id="consent" type="checkbox"><span>我已加入官方LINE，繼續登入設定</span></label>
+      <a class="cta secondary" id="continueRegistration" href="#" aria-disabled="true">使用LINE登入</a>
       <p class="desktop-note"><strong>電腦版也能完成 21 天封測：</strong>登入後可開啟 LINE 分享、複製專屬連結或掃描 QR Code，手機與電腦使用同一份會員及守護人資料。</p>
       <small>每人只能加入一個封測組別。額滿後連結會自動停止接受註冊。</small>
+      <section class="faq" aria-label="常見問題">
+        <h2>常見問題</h2>
+        <details><summary>21 天體驗會收費嗎？</summary><p>不會。這次是限額安心守護體驗，不需要刷卡。</p></details>
+        <details><summary>體驗結束會自動扣款嗎？</summary><p>不會自動扣款。體驗結束後，你可以自行決定是否查看與選擇正式方案。</p></details>
+        <details><summary>守護人也要付費嗎？</summary><p>不用。受邀的守護人可免費接受綁定與接收守護通知。</p></details>
+        <details><summary>兩個體驗頁有什麼不同？</summary><p>操作流程相同，差別只有本次開放測試的守護人數、守護群組、私訊預警次數與安全守護時數。</p></details>
+      </section>
+      <a class="pricing-link" href="/liff/pricing.html">查看方案</a>
     </section>
   </main>
   <script>
@@ -136,29 +127,29 @@
     const continueRegistration = document.getElementById("continueRegistration");
     const join = continueRegistration;
     const consent = document.getElementById("consent");
-    document.querySelector(".plan-399").hidden = is799;
-    document.querySelector(".plan-799").hidden = !is799;
-    document.getElementById("title").textContent =
-      is799 ? "799 年費守護版｜21 天封測" : "399 年費安心版｜21 天封測";
-    document.getElementById("title").dataset.fullTitle =
-      is799 ? "799 年費守護版｜21 天封測" : "399 年費安心版｜21 天封測";
+    document.getElementById("title").textContent = "21天安心守護體驗";
+    document.getElementById("title").dataset.fullTitle = "21天安心守護體驗";
     document.getElementById("title").dataset.planLabel =
       is799 ? "799 守護版年費" : "399 安心版年費";
     document.getElementById("title").dataset.planCode = yearlyPlanCode;
     document.getElementById("spots").textContent =
       is799 ? "本組限額 10 人" : "本組限額 20 人";
-    document.getElementById("entitlementSummary").textContent = is799
-      ? "✅ 21 天體驗 799 守護版的年費版完整功能"
-      : "✅ 21 天體驗 399 安心版的年費版完整功能";
+    document.getElementById("entitlementSummary").innerHTML = "<strong>本次體驗包含：</strong>";
     document.getElementById("featureOne").textContent = is799
-      ? "✅ 每日 3 次私訊預警，最多 15 位核心守護人"
-      : "✅ 每日 2 次私訊預警，最多 7 位核心守護人";
+      ? "✅ 最多 15 位核心守護人"
+      : "✅ 最多 7 位核心守護人";
     document.getElementById("featureTwo").textContent = is799
-      ? "✅ 最多 3 個守護群，每群可管理 50 位被守護成員"
-      : "✅ SOS、逾時提醒與守護人免費接收通知";
+      ? "✅ 最多 3 個守護群組"
+      : "✅ 每日 2 次私訊預警";
     document.getElementById("featureThree").textContent = is799
-      ? "✅ 安全守護 1／3／6／8 小時與位置分享"
-      : "✅ 安全守護 1／3 小時與位置分享";
+      ? "✅ 每日 3 次私訊預警"
+      : "✅ SOS 緊急求救";
+    document.getElementById("featureFour").textContent = is799
+      ? "✅ SOS 緊急求救"
+      : "✅ 安全守護 1／3 小時";
+    document.getElementById("featureFive").hidden = !is799;
+    document.getElementById("featureFive").textContent =
+      "✅ 安全守護 1／3／6／8 小時";
     continueRegistration.href =
       `https://liff.line.me/2010848330-UAiqPPYD?beta_cohort=${cohort}&open=onboarding`;
     join.disabled = !consent.checked;
