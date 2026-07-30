@@ -2711,6 +2711,11 @@ def assign_beta_cohort(
     if not isinstance(profile, dict):
         raise ValueError("member_not_found")
     if (
+        str(profile.get("plan") or "").startswith("paid_")
+        and str(profile.get("payment_status") or "") == "active"
+    ):
+        raise ValueError("paid_member_not_beta_eligible")
+    if (
         profile.get("membership_source") == "beta"
         and profile.get("beta_cohort") == cohort
         and not profile.get("beta_revoked_at")
@@ -2970,6 +2975,7 @@ def send_beta_daily_feedback(config, now=None):
         if (
             not target
             or not beta_access_active(profile, clock)
+            or str(profile.get("payment_status") or "") == "active"
             or profile.get("beta_feedback_last_push_date") == today
         ):
             skipped += 1
