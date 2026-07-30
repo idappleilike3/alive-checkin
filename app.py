@@ -4102,6 +4102,9 @@ def build_status(profile, state=None, now=None):
         "safety_guard_hours": allowed_safety_guard_hours(profile),
         "guardian_group_ids": profile.get("guardian_group_ids", []),
         "guardian_groups": guardian_groups,
+        "guardian_group_default_preferences": normalize_guardian_group_preferences(
+            profile.get("guardian_group_preferences")
+        ),
         "today_safety_roster": today_safety_roster,
         "is_today_checked": is_today_checked,
         "is_prealert": prealert,
@@ -7776,6 +7779,9 @@ def guardian_group_settings_for_user(data_file, line_user_id):
         ),
         "guardian_group_count": len(groups),
         "groups": groups,
+        "default_preferences": normalize_guardian_group_preferences(
+            profile.get("guardian_group_preferences")
+        ),
     }, 200
 
 
@@ -8007,12 +8013,9 @@ def bind_guardian_group(data_file, payload):
         "created_at": now,
         "member_count_at_bind": member_count_at_bind,
         "member_ids_at_bind": member_ids_at_bind,
-        "preferences": normalize_guardian_group_preferences({
-            "notify_private_guardians": True,
-            "notify_group_on_overdue": False,
-            "notify_admin_only": True,
-            "daily_admin_summary": False,
-        }),
+        "preferences": normalize_guardian_group_preferences(
+            profile.get("guardian_group_preferences")
+        ),
     }
     group_ids.append(group_id)
     profile["guardian_group_ids"] = group_ids
@@ -8043,6 +8046,31 @@ def update_guardian_group_preferences(data_file, payload):
         return {"error": "missing line_user_id or group_id"}, 400
 
     state = load_state(data_file)
+    profile = (state.get("users") or {}).get(line_user_id)
+    if not profile:
+        return {"error": "user not registered"}, 404
+    if group_id == "__default__":
+        if not plan_includes_guardian_group(profile):
+            return {"error": "guardian group plan required"}, 403
+        preferences = normalize_guardian_group_preferences(
+            profile.get("guardian_group_preferences")
+        )
+        for key in DEFAULT_GUARDIAN_GROUP_PREFERENCES:
+            if key in payload:
+                preferences[key] = bool(payload.get(key))
+        if "daily_summary_time" in payload:
+            summary_time = str(payload.get("daily_summary_time") or "").strip()
+            if not REMINDER_TIME_PATTERN.match(summary_time):
+                return {"error": "invalid daily_summary_time format, use HH:MM"}, 400
+            preferences["daily_summary_time"] = summary_time
+        profile["guardian_group_preferences"] = preferences
+        save_state(data_file, state)
+        return {
+            "ok": True,
+            "group_id": group_id,
+            "preferences": preferences,
+        }, 200
+
     group = state.get("guardian_groups", {}).get(group_id)
     if not group:
         return {"error": "guardian group not found"}, 404
