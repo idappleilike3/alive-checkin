@@ -60,7 +60,7 @@ class LiffFastRouteTests(unittest.TestCase):
             initializer.index('fetch("/api/config")'),
         )
 
-    def test_liff_entry_starts_login_even_when_line_opens_external_browser(self):
+    def test_external_desktop_browser_waits_for_an_explicit_login_click(self):
         initializer = self.page[
             self.page.index("async function initializeLiff()"):
             self.page.index("async function initLine()")
@@ -69,8 +69,9 @@ class LiffFastRouteTests(unittest.TestCase):
             initializer.index("if (!liff.isLoggedIn())"):
             initializer.index("// 2) 未登入無權呼叫 getFriendship")
         ]
+        self.assertIn("liff.isInClient()", login_gate)
+        self.assertIn("showLineEntryGate(\"login\")", login_gate)
         self.assertIn("startLineLogin(readSafeDeepLinkParams())", login_gate)
-        self.assertNotIn("liff.isInClient()", login_gate)
 
     def test_rejected_id_token_is_refreshed_once_instead_of_showing_expired_loop(self):
         self.assertIn("function refreshRejectedLineLogin(", self.page)
