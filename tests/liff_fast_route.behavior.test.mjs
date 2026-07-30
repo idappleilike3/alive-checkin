@@ -132,6 +132,7 @@ test("first status renders without waiting for contacts or onboarding", async ()
       contactData: [],
       currentContactLimit: 1,
       lineUserId: "U123",
+      pendingInitialStatusPromise: null,
       memberBootstrapState: {
         statusReady: false,
         dataReady: false,
@@ -151,6 +152,58 @@ test("first status renders without waiting for contacts or onboarding", async ()
   contacts.resolve({ status: 200, data: { contacts: [], contact_limit: 1 } });
   onboarding.resolve({ done: true, hasGuardian: true, data: {} });
   await result;
+});
+
+test("member status prefetch starts as soon as LINE identity is known and is reused", async () => {
+  const status = deferred();
+  let statusRequests = 0;
+  const sandbox = expose(
+    [
+      functionSource("startMemberStatusPrefetch"),
+      section("async function loadInitialMemberData()", "// 整合到 initApp"),
+    ].join("\n"),
+    ["startMemberStatusPrefetch", "loadInitialMemberData"],
+    {
+      apiGetStatus: () => {
+        statusRequests += 1;
+        return status.promise;
+      },
+      apiGetContacts: async () => ({ status: 200, data: { contacts: [] } }),
+      fetchOnboardingState: async () => ({ done: true, hasGuardian: true, data: {} }),
+      renderStatus() {},
+      syncCheckBtn() {},
+      renderSosAccess() {},
+      renderGuardians() {},
+      renderMemberCenter() {},
+      friendlyApiFailure: () => "bad status",
+      contactData: [],
+      currentContactLimit: 1,
+      lineUserId: "U123",
+      useLocalMode: false,
+      pendingInitialStatusPromise: null,
+      memberBootstrapState: {
+        statusReady: false,
+        dataReady: false,
+        inFlight: null,
+        error: null,
+      },
+      setMemberInteractionLocked() {},
+      $: () => null,
+      document: { body: { removeAttribute() {} } },
+    },
+  );
+
+  sandbox.startMemberStatusPrefetch();
+  assert.equal(statusRequests, 1);
+
+  const initial = sandbox.loadInitialMemberData();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(statusRequests, 1);
+
+  status.resolve({ is_today_checked: true, plan: "paid_799_year", contacts: [] });
+  const result = await initial;
+  assert.equal(result.status.plan, "paid_799_year");
+  assert.equal(statusRequests, 1);
 });
 
 test("same-day confirmed check-in cache renders before the status request finishes", () => {
@@ -528,6 +581,7 @@ test("guardian_required keeps member controls locked after bootstrap data arrive
       contactData: [],
       currentContactLimit: 1,
       lineUserId: "U-member",
+      pendingInitialStatusPromise: null,
       memberBootstrapState: { statusReady: false, dataReady: false, error: null },
       setMemberInteractionLocked: (locked) => locks.push(locked),
       $: (id) => elements[id] || null,
@@ -886,6 +940,7 @@ test("friendship return rechecks and runs registration migration and member boot
       memberBootstrapState: {},
       renderCachedMemberStatus() {},
       renderCachedCheckinStatus() {},
+      startMemberStatusPrefetch() {},
       $: (id) => elements[id] || null,
       document: {
         body: {
