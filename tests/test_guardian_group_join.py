@@ -64,7 +64,8 @@ class GuardianGroupJoinTests(unittest.TestCase):
         self.assertIn("未報平安", body_text)
         self.assertIn("15／30／60", body_text)
         self.assertIn("安全事件", body_text)
-        self.assertIn("今日守護宣言", body_text)
+        self.assertNotIn("今日守護宣言", body_text)
+        self.assertIn("平時不打擾", body_text)
         # 不再用長文牆講資格／上限
         self.assertNotIn("用途", body_text)
         self.assertNotIn("資格", body_text)
