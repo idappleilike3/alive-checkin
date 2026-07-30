@@ -41,14 +41,28 @@ class MemberSettingsAndGuardianGroupUxTests(unittest.TestCase):
         self.assertNotIn("簽到紀錄、守護圈與下次提醒", page)
 
     def test_frontend_replaces_smart_reminder_jargon_with_date_reminders(self):
-        for relative_path in ("index.html", "liff/member.html"):
+        for relative_path in (
+            "index.html",
+            "liff/member.html",
+            "faq.html",
+            "liff/pricing.html",
+        ):
             page = (ROOT / relative_path).read_text(encoding="utf-8")
             self.assertNotIn("智能提醒", page)
+            self.assertNotIn("智慧提醒", page)
             self.assertIn("日期提醒", page)
 
         home = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("我的設定 → 每日提醒設定", home)
         self.assertIn("日期提醒（799 月費／年費）", home)
+
+    def test_home_member_history_has_memo_entry(self):
+        home = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("<strong>我的平安紀錄</strong>", home)
+        self.assertIn("799 月費／年費可在日期上新增備忘錄與提醒。", home)
+        self.assertIn('href="#history"', home)
+        self.assertIn("＋ 新增備忘錄", home)
 
 
 if __name__ == "__main__":
