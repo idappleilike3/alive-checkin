@@ -4448,6 +4448,7 @@
         <div id="calendarNoteReminderList"></div>
         <button class="action-btn primary" id="calendarNoteQuickAddBtn" type="button">＋ 新增日期備忘</button>
         <button class="action-btn" id="lineReminderQuickAddBtn" type="button" hidden>＋ 新增 LINE 推播提醒</button>
+        <div id="lineReminderList" aria-label="已設定的 LINE 推播提醒"></div>
       </div>
     </section>
 
@@ -6932,7 +6933,7 @@
     async function refreshSmartRemindersUi() {
       const upgrade = $("smartReminderUpgrade");
       const controls = $("smartReminderControls");
-      const listEl = $("smartReminderList");
+      const listEl = $("lineReminderList");
       const hint = $("smartReminderHint");
       const plan = String((currentStatusData && currentStatusData.plan) || "trial");
       if (!lineUserId) {
