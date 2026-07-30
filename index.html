@@ -3,6 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <script>
+    // Keep previously published LINE rich menus fast while they still use ?open=sos.
+    (() => {
+      const params = new URLSearchParams(location.search);
+      if (params.get("open") === "sos" || params.get("page") === "sos") {
+        location.replace("/liff/sos.html");
+      }
+    })();
+  </script>
   <title>每日平安｜LINE 平安簽到與家人守護</title>
   <meta name="description" content="每日平安提供 LINE 平安簽到、守護人提醒、SOS 求助與安全守護，讓獨居、長輩與在外家人每天多一份安心。">
   <meta name="robots" content="index,follow,max-image-preview:large">
@@ -4440,7 +4449,7 @@
       </div>
     </section>
 
-    <section class="calendar-box" id="calendarNoteQuickCard" aria-label="日期備忘與提醒" hidden>
+    <section class="calendar-box" id="calendarNoteQuickCard" aria-label="799 日期備忘提醒" hidden>
       <div class="today-reminder-card">
         <strong>日期備忘與提醒</strong>
         <span id="calendarNoteQuickText">點選日期新增備忘，系統會在指定時間提醒。</span>
@@ -4662,6 +4671,30 @@
           <p class="helper" id="memberDailyReminderSaveFeedback" aria-live="polite" hidden style="margin-top:8px;"></p>
         </div>
 
+        <div class="member-data-section" id="memberSmartRemindersSection">
+          <button class="member-subpanel-toggle" id="smartRemindersToggleBtn" type="button" aria-expanded="false" aria-controls="smartRemindersPanel">
+            日期提醒（799 月費／年費）
+            <span aria-hidden="true">›</span>
+          </button>
+          <div class="member-subpanel-body" id="smartRemindersPanel" hidden>
+            <p class="helper" id="smartReminderHint">799 月費／年費：生日、紀念日、回診等日期提醒，只傳到 LINE 私訊。</p>
+            <div id="smartReminderUpgrade" class="member-limit-banner" hidden>
+              <strong>日期提醒為 799 月費／年費功能</strong>
+              <p>免費／399 僅可看說明。升級 799 後可新增提醒，系統會在到期日早上私訊你。</p>
+              <button class="action-btn primary" id="smartReminderUpgradeBtn" type="button">查看 799 方案</button>
+            </div>
+            <div id="smartReminderControls" hidden>
+              <div class="member-data-list" id="smartReminderList">
+                <div class="member-data-row"><span>目前狀態</span><strong>尚未新增提醒</strong></div>
+              </div>
+              <p class="helper" style="margin:8px 0;">提醒方式：私訊（預設）</p>
+              <div class="member-data-actions">
+                <button class="action-btn primary" id="smartReminderAddBtn" type="button">＋新增提醒</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="member-data-section" id="guardianGroupsSection" hidden>
           <h3>我的守護群</h3>
           <div class="helper">799 月費會員最多可綁定 1 個 LINE 群組，年費會員最多 3 個。把官方帳號加入群組後，在群組輸入「點我綁定守護群」即可啟用。<br>注意：群組成員數 ≠ 已綁定守護人；加進群不會自動完成 LINE 一鍵邀請綁定。</div>
@@ -4705,7 +4738,7 @@
             <span class="member-subsection-chevron" aria-hidden="true">⌄</span>
           </button>
           <div class="member-collapsible-panel" id="memberHistoryPanel" hidden>
-            <p class="helper">日期記事與提醒請到「平安紀錄」新增或修改。</p>
+            <p class="helper">799 月費／年費可在日期上新增備忘錄與提醒。</p>
             <div class="member-data-actions" style="margin:10px 0;">
               <a class="action-btn primary" href="#history">＋ 新增備忘錄</a>
             </div>
@@ -7871,9 +7904,10 @@
     }
 
     function openSmartRemindersSecondLayer() {
-      if (typeof showTab === "function") showTab("history");
-      setCalendarExpanded(true);
-      const section = $("calendarNoteQuickCard");
+      if (typeof showTab === "function") showTab("member");
+      setMemberCenterExpanded(true);
+      setSmartRemindersExpanded(true);
+      const section = $("memberSmartRemindersSection");
       if (section && section.scrollIntoView) {
         setTimeout(() => section.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
       }
@@ -11709,7 +11743,7 @@
       const tabMap = {
         home: [],
         guardians: ["守護群設定教學"],
-        history: ["簽到月曆與平安紀錄", "日期備忘與提醒", "簽到狀態"],
+        history: ["簽到月曆與平安紀錄", "799 日期備忘提醒", "簽到狀態"],
         member: ["會員個人中心", "升級方案"],
       };
       const showLabels = tabMap[tabName] || [];
