@@ -128,7 +128,7 @@ class GuardianGroupSettingsTests(unittest.TestCase):
         self.assertIn("未報平安：爸爸、阿嬤", text)
         self.assertNotIn("別群成員", text)
 
-    def test_group_status_includes_owner_and_unregistered_line_members(self):
+    def test_group_status_includes_owner_but_hides_unregistered_line_members(self):
         state = app.load_state(self.data_file)
         today = datetime.now().strftime("%Y-%m-%d")
         state["users"]["U-owner"]["display_name"] = "媽媽"
@@ -153,14 +153,17 @@ class GuardianGroupSettingsTests(unittest.TestCase):
 
         self.assertEqual(code, 200)
         self.assertEqual(result["counts"]["checked"], 1)
-        self.assertEqual(result["counts"]["unbound"], 1)
-        self.assertEqual(result["counts"]["total"], 3)
+        self.assertEqual(result["counts"].get("unbound", 0), 0)
+        self.assertEqual(result["counts"]["total"], 2)
         self.assertEqual(
             [row["status"] for row in result["members"]],
-            ["checked", "pending", "unbound"],
+            ["checked", "pending"],
         )
         self.assertEqual(result["members"][0]["name"], "媽媽（管理員）")
-        self.assertEqual(result["members"][2]["name"], "LINE 群組成員")
+        self.assertNotIn(
+            "U-not-registered",
+            [row["line_user_id"] for row in result["members"]],
+        )
 
     def test_group_status_is_available_through_authenticated_http_api(self):
         client = app.create_app({
