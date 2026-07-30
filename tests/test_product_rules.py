@@ -3,6 +3,8 @@ import re
 import unittest
 from pathlib import Path
 
+import app as app_module
+
 
 ROOT = Path(__file__).resolve().parents[1]
 NEW_LIFF_ID = "2010848330-UAiqPPYD"
@@ -19,6 +21,27 @@ def load_plan_limits():
 
 
 class ProductRulesTests(unittest.TestCase):
+    def test_beta_members_are_labeled_as_closed_beta_not_trial_or_paid(self):
+        profile = {
+            "plan": "paid_799_year",
+            "membership_source": "beta",
+            "payment_status": "beta",
+            "beta_cohort": "B799",
+            "beta_started_at": "2026-07-30T12:00:00",
+            "beta_ends_at": "2099-08-20T12:00:00",
+        }
+
+        self.assertEqual(
+            app_module.plan_type_label(profile),
+            "799 年費｜21 天封測",
+        )
+        self.assertEqual(
+            app_module._membership_label(profile),
+            "799 年費｜21 天封測",
+        )
+        self.assertIn("封測使用中", app_module._upgrade_status(profile))
+        self.assertNotIn("體驗", app_module._upgrade_status(profile))
+
     def test_guardian_share_creates_server_invite_and_carries_unique_token(self):
         share_page = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
         member_page = (ROOT / "index.html").read_text(encoding="utf-8")

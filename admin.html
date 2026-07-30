@@ -515,9 +515,12 @@
         </div>
         <form id="betaAssignForm" class="toolbar">
           <label>選擇會員
-            <select id="betaLineUserId" required>
+            <select id="betaLineUserId">
               <option value="">請選擇會員</option>
             </select>
+          </label>
+          <label>或貼上 LINE User ID
+            <input id="betaLineUserIdManual" placeholder="U 開頭的 33 碼 LINE ID">
           </label>
           <label>測試組別
             <select id="betaCohort">
@@ -2017,22 +2020,37 @@
     });
     const betaAssignForm = $("betaAssignForm");
     if (betaAssignForm) {
+      $("betaLineUserId").addEventListener("change", () => {
+        const selected = $("betaLineUserId");
+        const label = selected.options[selected.selectedIndex]?.textContent || "";
+        $("betaStatus").textContent = selected.value ? `已選擇會員：${label}，請再按「加入封測」。` : "";
+      });
       betaAssignForm.addEventListener("submit", async (event) => {
         event.preventDefault();
-        const response = await adminFetch("/api/admin/beta-members", {
+        const manualLineUserId = $("betaLineUserIdManual").value.trim();
+        const selectedLineUserId = $("betaLineUserId").value.trim();
+        if (!manualLineUserId && !selectedLineUserId) {
+          $("betaStatus").textContent = "請從下拉選單選會員，或貼上 LINE User ID。";
+          return;
+        }
+        const targetLineUserId = manualLineUserId || selectedLineUserId;
+        const response = await adminFetch("/api/admin/user-plan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            line_user_id: $("betaLineUserId").value.trim(),
-            cohort: $("betaCohort").value,
+            line_user_id: manualLineUserId || $("betaLineUserId").value,
+            plan: `beta_${$("betaCohort").value}`,
             source: $("betaSource").value.trim()
           })
         });
         const data = await response.json().catch(() => ({}));
-        $("betaStatus").textContent = response.ok ? "已加入 21 天封閉測試。" : authErrorText(data, response.status);
+        $("betaStatus").textContent = response.ok
+          ? `✓ ${data.display_name || targetLineUserId} 已改為 ${membershipModeLabels[`beta_${$("betaCohort").value}`]}，不是 14 天體驗。`
+          : `✗ 修改失敗：${authErrorText(data, response.status)}`;
         if (response.ok) {
-          renderBetaMembers(data.beta || {});
+          await loadBetaMembers();
           $("betaLineUserId").value = "";
+          $("betaLineUserIdManual").value = "";
         }
       });
     }
