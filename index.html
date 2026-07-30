@@ -5091,6 +5091,8 @@
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script>
     const STORAGE_KEY = "alive_checkin_state_v2";
+    const MEMBER_STATUS_CACHE_PREFIX = "alive_member_status_v1:";
+    const MEMBER_STATUS_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
     const defaultState = {
       last_check_in: null,
       history: [],
@@ -5393,7 +5395,13 @@
     }
 
     function requestedAppAction() {
-      const action = String(getAppParam("open") || getAppParam("page") || "").trim().toLowerCase();
+      const hashAction = typeof location === "undefined"
+        ? ""
+        : String(location.hash || "").replace(/^#/, "").trim().toLowerCase();
+      const safeHashAction = ["home", "member", "guardians", "history"].includes(hashAction)
+        ? hashAction
+        : "";
+      const action = String(getAppParam("open") || getAppParam("page") || safeHashAction).trim().toLowerCase();
       return {
         profile: "member",
         guardian: "guardians",
@@ -5802,7 +5810,69 @@
         const text = await res.text().catch(() => "");
         throw new Error(friendlyApiFailure(res.status, text));
       }
-      return await res.json();
+      const status = await res.json();
+      writeCachedMemberStatus(lineUserId, status);
+      return status;
+    }
+
+    function memberStatusCacheKey(userId) {
+      return MEMBER_STATUS_CACHE_PREFIX + String(userId || "").trim();
+    }
+
+    function writeCachedMemberStatus(userId, status) {
+      if (!userId || !status || typeof status !== "object") return;
+      const snapshot = {
+        plan: status.plan || "trial",
+        trial_days_left: status.trial_days_left,
+        plan_expires_text: status.plan_expires_text || "",
+        billing_cycle: status.billing_cycle || "",
+        payment_status: status.payment_status || "",
+        paid_until: status.paid_until || ""
+      };
+      try {
+        localStorage.setItem(
+          memberStatusCacheKey(userId),
+          JSON.stringify({ saved_at: Date.now(), status: snapshot })
+        );
+      } catch (_) {}
+    }
+
+    function readCachedMemberStatus(userId) {
+      if (!userId) return null;
+      try {
+        const cached = JSON.parse(localStorage.getItem(memberStatusCacheKey(userId)) || "null");
+        if (!cached || !cached.status || !cached.saved_at) return null;
+        if (Date.now() - Number(cached.saved_at) > MEMBER_STATUS_CACHE_MAX_AGE_MS) return null;
+        return cached.status;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function renderCachedMemberStatus(userId) {
+      const status = readCachedMemberStatus(userId);
+      if (!status) return false;
+      const plan = status.plan || "trial";
+      const planView = planPresentation(plan, status.trial_days_left);
+      if ($("planStateLabel")) {
+        $("planStateLabel").textContent = plan === "trial" ? "14 天安心體驗" : planLabel(plan);
+      }
+      if ($("planDetailText")) $("planDetailText").textContent = planView.detail;
+      if ($("planStrip")) $("planStrip").dataset.planTone = planView.tone;
+      if ($("memberBillingPlan")) $("memberBillingPlan").textContent = planLabel(plan);
+      if ($("memberBillingCycle")) {
+        $("memberBillingCycle").textContent = {
+          monthly: "月繳",
+          yearly: "年繳",
+          trial: "安心體驗"
+        }[status.billing_cycle] || "尚未設定";
+      }
+      if ($("memberBillingExpiry")) {
+        $("memberBillingExpiry").textContent = status.plan_expires_text
+          || status.paid_until
+          || (plan === "trial" ? "試用中" : "尚未設定");
+      }
+      return true;
     }
 
     function friendlyApiFailure(httpStatus, rawText) {
@@ -9307,6 +9377,8 @@
         lineDisplayName = profile.displayName || "";
         linePictureUrl = profile.pictureUrl || "";
         if (!lineUserId) return false;
+        // 先顯示上次已驗證的方案摘要；正式資料在背景載入後立即覆蓋。
+        renderCachedMemberStatus(lineUserId);
 
         const betaCohort = String(getAppParam("beta_cohort") || "").trim().toUpperCase();
         const inviteFrom = String(getAppParam("invite_from") || "").trim();
