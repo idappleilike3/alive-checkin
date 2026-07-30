@@ -140,9 +140,11 @@
     document.querySelector(".plan-399").hidden = is799;
     document.querySelector(".plan-799").hidden = !is799;
     document.getElementById("title").textContent =
-      is799 ? "21 天封測｜799 守護版年費" : "21 天封測｜399 安心版年費";
+      is799 ? "799 年費守護版｜21 天封測" : "399 年費安心版｜21 天封測";
     document.getElementById("title").dataset.fullTitle =
-      is799 ? "21 天封測｜799 守護版年費" : "21 天封測｜399 安心版年費";
+      is799 ? "799 年費守護版｜21 天封測" : "399 年費安心版｜21 天封測";
+    document.getElementById("title").dataset.planLabel =
+      is799 ? "799 守護版年費" : "399 安心版年費";
     document.getElementById("title").dataset.planCode = yearlyPlanCode;
     document.getElementById("spots").textContent =
       is799 ? "本組限額 10 人" : "本組限額 20 人";

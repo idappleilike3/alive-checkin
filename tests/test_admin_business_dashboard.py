@@ -71,6 +71,7 @@ class AdminBusinessDashboardTests(unittest.TestCase):
                 "kind": "overdue",
                 "line_user_id": "U-active",
                 "created_at": "2026-07-27T20:00:00+08:00",
+                "detail": "LINE 400: user has blocked the LINE Official Account",
             },
             {
                 "status": "sent",
@@ -99,6 +100,14 @@ class AdminBusinessDashboardTests(unittest.TestCase):
         self.assertEqual(row["failed_count"], 1)
         self.assertEqual(row["total_count"], 2)
         self.assertEqual(row["kinds"], ["beta_daily_feedback", "overdue"])
+        self.assertEqual(
+            row["latest_failure_detail"],
+            "LINE 400: user has blocked the LINE Official Account",
+        )
+        self.assertEqual(
+            row["latest_failure_at"],
+            "2026-07-27T20:00:00+08:00",
+        )
 
     def test_dashboard_reports_actionable_incidents_and_line_budget(self):
         data_file = self.make_state()

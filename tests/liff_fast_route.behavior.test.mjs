@@ -232,6 +232,7 @@ test("member mutations execute the shared gate before any operation", async () =
         calls.push(scope);
         return false;
       },
+      setMemberReminderSaveFeedback() {},
     },
   );
 

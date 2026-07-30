@@ -29,3 +29,23 @@ test("beta roster shows caps and uses the protected admin API", () => {
   assert.match(html, /\/api\/admin\/beta-members/);
   assert.match(html, /const betaAssignForm = \$\("betaAssignForm"\)/);
 });
+
+test("admin has one canonical beta management flow", () => {
+  for (const obsoleteId of [
+    "betaMemberSelect",
+    "betaCohortSelect",
+    "betaAssignBtn",
+    "betaMemberList",
+  ]) {
+    assert.doesNotMatch(html, new RegExp(`id="${obsoleteId}"`));
+  }
+  assert.doesNotMatch(html, /\/api\/admin\/beta-program\/assign/);
+  assert.doesNotMatch(html, /function assignBetaMember\(/);
+  assert.match(html, /<select id="betaLineUserId" required/);
+  assert.match(html, /\$\("betaLineUserId"\)\.innerHTML/);
+});
+
+test("daily member push summary exposes the latest LINE failure reason", () => {
+  assert.match(html, /row\.latest_failure_detail/);
+  assert.match(html, /最近失敗/);
+});

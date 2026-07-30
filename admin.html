@@ -438,30 +438,6 @@
       <p class="note" id="lineHardStopHint">達到硬上限時停止一般提醒與批次推播；SOS 與安全事件仍可發送。</p>
     </section>
 
-    <section class="panel section-heading" id="beta-program" style="margin-bottom:16px;">
-      <h2 style="margin:0 0 6px;">21 天封測管理</h2>
-      <p class="note">名額固定為 10／20／10；封測結束不自動扣款，同一會員只會占用一組進行中名額。</p>
-      <div class="stats">
-        <div class="stat"><strong id="betaKnown">0/10</strong><span>認識會員 10 人</span></div>
-        <div class="stat"><strong id="betaStandard">0/20</strong><span>一般會員 20 人</span></div>
-        <div class="stat"><strong id="betaFamily">0/10</strong><span>家庭群組 10 人</span></div>
-      </div>
-      <div class="toolbar" style="margin-top:14px;">
-        <select id="betaMemberSelect" aria-label="選擇封測會員">
-          <option value="">選擇會員</option>
-        </select>
-        <select id="betaCohortSelect" aria-label="選擇封測組別">
-          <option value="known_10">認識會員 10 人</option>
-          <option value="standard_20">一般會員 20 人</option>
-          <option value="family_group_10">家庭群組 10 人</option>
-        </select>
-        <button type="button" id="betaAssignBtn">加入 21 天封測</button>
-      </div>
-      <div class="log-list" id="betaMemberList">
-        <div class="log-item"><span>正在載入封測名單…</span><span></span><span></span></div>
-      </div>
-    </section>
-
     <section class="panel section-heading" id="analytics" style="margin-bottom:16px;">
       <h2 style="margin:0 0 6px;">流量分析</h2>
       <p class="note">站內轉換資料可直接驗證；GA4 報表需設定 Property ID 與服務帳號後才會顯示正式流量。</p>
@@ -529,7 +505,7 @@
         <div class="stat"><strong id="lineUsageAlert">正常</strong><span>LINE 額度警示</span></div>
       </div>
 
-      <section class="release-status" aria-label="21 天封閉測試名單">
+      <section class="release-status section-heading" id="beta-program" aria-label="21 天封閉測試名單">
         <h2>21 天封閉測試名單</h2>
         <p class="note">A 10 人、B399 20 人、B799 10 人。不會建立訂單，也不會自動扣款。</p>
         <div class="stats">
@@ -538,7 +514,11 @@
           <div class="stat"><strong id="betaCountB799">0／10</strong><span>B799｜家庭群組測試</span></div>
         </div>
         <form id="betaAssignForm" class="toolbar">
-          <label>會員 LINE ID<input id="betaLineUserId" required autocomplete="off"></label>
+          <label>選擇會員
+            <select id="betaLineUserId" required>
+              <option value="">請選擇會員</option>
+            </select>
+          </label>
           <label>測試組別
             <select id="betaCohort">
               <option value="A">A</option>
@@ -1551,39 +1531,8 @@
       if (res.ok) await loadBusinessDashboard();
     }
 
-    function betaStatusLabel(status) {
-      return {
-        active: "進行中",
-        waitlisted: "候補",
-        completed: "已完成",
-        withdrawn: "已退出"
-      }[status] || status || "未知";
-    }
-
     async function loadOperationsControls() {
-      const [betaRes, privacyRes] = await Promise.all([
-        adminFetch("/api/admin/beta-program"),
-        adminFetch("/api/admin/privacy-requests")
-      ]);
-      const betaData = betaRes.ok ? await betaRes.json() : { cohorts: {}, members: [] };
-      const cohorts = betaData.cohorts || {};
-      $("betaKnown").textContent = `${cohorts.known_10?.active || 0}/10`;
-      $("betaStandard").textContent = `${cohorts.standard_20?.active || 0}/20`;
-      $("betaFamily").textContent = `${cohorts.family_group_10?.active || 0}/10`;
-      const canManageBeta = adminPermissions.includes("beta.manage");
-      $("betaAssignBtn").disabled = !canManageBeta;
-      $("betaMemberList").innerHTML = (betaData.members || []).length
-        ? betaData.members.map((member) => `
-          <div class="log-item">
-            <div><strong>${member.display_name || "未取得暱稱"}</strong><br><small>${member.line_user_id || ""}</small></div>
-            <span>${(cohorts[member.cohort] || {}).label || member.cohort}<br><small>${String(member.starts_at || "").slice(0, 10)}～${String(member.ends_at || "").slice(0, 10)}</small></span>
-            ${canManageBeta && ["active", "waitlisted"].includes(member.status)
-              ? `<button type="button" onclick="updateBetaMember('${member.line_user_id}', 'completed')">標記完成</button>`
-              : `<span class="badge ${member.status === "completed" ? "ok" : "warn"}">${betaStatusLabel(member.status)}</span>`}
-          </div>
-        `).join("")
-        : `<div class="log-item"><span>尚無封測會員</span><span>可從上方選擇會員加入</span><span class="badge">0 人</span></div>`;
-
+      const privacyRes = await adminFetch("/api/admin/privacy-requests");
       const privacyData = privacyRes.ok ? await privacyRes.json() : { requests: [] };
       const canManagePrivacy = adminPermissions.includes("privacy.manage");
       $("privacyRequestList").innerHTML = (privacyData.requests || []).length
@@ -1605,39 +1554,6 @@
           </div>
         `).join("")
         : `<div class="support-item">目前沒有隱私權申請</div>`;
-    }
-
-    async function assignBetaMember() {
-      if (!adminPermissions.includes("beta.manage")) {
-        $("message").textContent = "目前帳號沒有封測管理權限。";
-        return;
-      }
-      const lineUserId = $("betaMemberSelect").value;
-      if (!lineUserId) {
-        $("message").textContent = "請先選擇要加入封測的會員。";
-        return;
-      }
-      const res = await adminFetch("/api/admin/beta-program/assign", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ line_user_id: lineUserId, cohort: $("betaCohortSelect").value })
-      });
-      const data = await res.json().catch(() => ({}));
-      $("message").textContent = res.ok ? "會員已加入 21 天封測。" : (data.error || "加入封測失敗。");
-      if (res.ok) await loadOperationsControls();
-    }
-
-    async function updateBetaMember(lineUserId, status) {
-      const outcomeNote = prompt("請輸入封測結果摘要", "");
-      if (outcomeNote === null) return;
-      const res = await adminFetch("/api/admin/beta-program/update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ line_user_id: lineUserId, status, outcome_note: outcomeNote })
-      });
-      const data = await res.json().catch(() => ({}));
-      $("message").textContent = res.ok ? "封測狀態已更新。" : (data.error || "封測狀態更新失敗。");
-      if (res.ok) await loadOperationsControls();
     }
 
     async function updatePrivacyRequest(requestId, status) {
@@ -1749,9 +1665,12 @@
           </tr>
         `).join("")
         : `<tr><td colspan="15">還沒有 LINE 使用者進來簽到。</td></tr>`;
-      $("betaMemberSelect").innerHTML = `<option value="">選擇會員</option>` + (data.users || []).map((user) =>
-        `<option value="${user.line_user_id || ""}">${user.display_name || "未取得暱稱"}</option>`
-      ).join("");
+      const selectedBetaMember = $("betaLineUserId").value;
+      $("betaLineUserId").innerHTML = `<option value="">請選擇會員</option>` + (data.users || []).map((user) => {
+        const lineUserId = String(user.line_user_id || "");
+        const displayName = String(user.display_name || "未取得暱稱");
+        return `<option value="${escapeHtml(lineUserId)}" ${lineUserId === selectedBetaMember ? "selected" : ""}>${escapeHtml(displayName)}｜${escapeHtml(lineUserId)}</option>`;
+      }).join("");
       $("ordersBody").innerHTML = (data.orders || []).length
         ? data.orders.map((order) => `
           <tr>
@@ -1799,7 +1718,12 @@
             <td><span class="badge ${Number(row.failed_count || 0) ? "bad" : "ok"}">${Number(row.failed_count || 0)}</span></td>
             <td><strong>${Number(row.total_count || 0)}</strong></td>
             <td>${(row.kinds || []).map((kind) => escapeHtml(logKindLabel(kind))).join("、") || "-"}</td>
-            <td>${row.last_push_at ? escapeHtml(formatDate(row.last_push_at)) : "-"}</td>
+            <td>
+              ${row.last_push_at ? escapeHtml(formatDate(row.last_push_at)) : "-"}
+              ${row.latest_failure_detail
+                ? `<br><small style="color:#c0392b;max-width:360px;display:inline-block;word-break:break-all;">最近失敗：${escapeHtml(row.latest_failure_detail)}</small>`
+                : ""}
+            </td>
           </tr>
         `).join("")
         : `<tr><td colspan="9">目前還沒有推播統計</td></tr>`;
@@ -2056,7 +1980,6 @@
     $("birthdayRemindBtn").addEventListener("click", sendBirthdayReminders);
     $("createBackupBtn").addEventListener("click", createBackup);
     $("richMenuDeployBtn").addEventListener("click", deployRichMenu);
-    if ($("betaAssignBtn")) $("betaAssignBtn").addEventListener("click", assignBetaMember);
     let autoRefreshAdminBusy = false;
     async function autoRefreshAdmin() {
       if (document.visibilityState !== "visible" || $("adminShell").hidden || autoRefreshAdminBusy) return;
