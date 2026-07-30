@@ -558,15 +558,37 @@ class InviteButtonCleanupTests(unittest.TestCase):
             'member-guardian-manage-actions${bound ? "" : " has-invite"}',
             page,
         )
-        # Top share / re-invite button kept in member guardian section
+        # Guardian creation has one entry point; pending rows keep their own send-invite action.
         member_section = page.split('id="memberGuardianSection"')[1].split('id="guardianGroupsSection"')[0]
-        self.assertIn("再邀請一位守護人", member_section)
-        self.assertIn("memberInviteMoreGuardianBtn", member_section)
-        self.assertIn("memberReinviteGuardianBtn", member_section)
-        self.assertIn("inviteMoreGuardiansFromMember", page)
+        self.assertNotIn("memberInviteMoreGuardianBtn", member_section)
+        self.assertNotIn("memberReinviteGuardianBtn", member_section)
+        self.assertEqual(member_section.count('id="memberAddGuardianBtn"'), 1)
+        self.assertIn("再新增一位守護人", page)
+        self.assertIn("先新增守護人資料，儲存後再傳送 LINE 邀請", member_section)
         # Edit / delete kept
         self.assertIn("member-edit-guardian", page)
         self.assertIn("member-delete-guardian", page)
+
+    def test_guardian_group_shows_enabled_preference_count(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("目前已開啟 ${enabledPreferenceCount}/4 項", page)
+        self.assertIn("updateGuardianGroupPreferenceCount", page)
+        self.assertIn('class="guardian-group-pref-count"', page)
+        self.assertIn('"主要守護人"', page)
+        self.assertNotIn('"目前核心"', page)
+
+    def test_guardian_cards_show_one_primary_and_numbered_notification_order(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("guardianNotificationRank", page)
+        self.assertIn("第 ${rank} 順位", page)
+        self.assertIn("第 1 順位｜主要守護人", page)
+        self.assertIn("核心守護人", page)
+        self.assertIn("等待接受者不能設為主要守護人", page)
+        self.assertIn("調整順位", page)
+        self.assertIn("提高通報順位", page)
+        self.assertIn("降低通報順位", page)
 
     def test_member_html_keeps_wait_invite_and_reinvite(self):
         page = (ROOT / "liff" / "member.html").read_text(encoding="utf-8")

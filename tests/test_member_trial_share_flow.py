@@ -11,8 +11,8 @@ class MemberTrialShareFlowTests(unittest.TestCase):
 
         self.assertIn('id="memberShareTrialBtn"', html)
         self.assertIn("分享 14 天免費體驗給朋友", html)
-        self.assertIn('id="memberReinviteGuardianBtn"', html)
-        self.assertIn("一鍵邀請守護人", html)
+        self.assertNotIn('id="memberReinviteGuardianBtn"', html)
+        self.assertIn('id="memberAddGuardianBtn"', html)
         self.assertIn('memberShareTrialBtn.addEventListener("click", shareTrialWithFriend)', html)
 
     def test_trial_share_opens_line_picker_directly_for_members(self):

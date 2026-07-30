@@ -150,8 +150,8 @@ class InviteRewardRetainTests(unittest.TestCase):
     def test_ui_copy_does_not_sell_cancelled_invite_bonus(self):
         page = Path(__file__).resolve().parents[1].joinpath("index.html").read_text(encoding="utf-8")
         self.assertNotIn("每成功邀請 1 位守護人", page)
-        self.assertIn("memberInviteMoreGuardianBtn", page)
-        self.assertIn("inviteMoreGuardiansFromMember", page)
+        self.assertNotIn("memberInviteMoreGuardianBtn", page)
+        self.assertIn("memberAddGuardianBtn", page)
 
 
 if __name__ == "__main__":

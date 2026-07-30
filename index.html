@@ -4686,15 +4686,14 @@
               <strong id="memberLimitTitle">你已經有 1 位守護人囉</strong>
               <p id="memberLimitBody">免費／試用方案最多 1 位。升級可新增更多守護人。</p>
               <div class="member-limit-actions" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
-                <button class="action-btn primary" id="memberInviteMoreGuardianBtn" type="button">再邀請一位守護人</button>
                 <button class="action-btn" id="memberLimitUpgradeBtn" type="button">立即升級</button>
               </div>
               <p class="helper" id="memberInviteRewardHint" style="margin-top:8px;">對方先加入「每日平安」官方 LINE，再登入並同意後，才會完成「對方守護你」的綁定。</p>
             </div>
             <div class="member-data-actions" id="memberGuardianInviteActions">
-              <button class="action-btn primary share-contact-invite-btn" id="memberReinviteGuardianBtn" type="button">一鍵邀請守護人</button>
-              <button class="action-btn" id="memberAddGuardianBtn" type="button">➕ 新增守護人資料</button>
+              <button class="action-btn primary" id="memberAddGuardianBtn" type="button">➕ 新增守護人資料</button>
             </div>
+            <p class="helper">先新增守護人資料，儲存後再傳送 LINE 邀請；對方同意後才會完成綁定。</p>
             <div id="guardianDetails799" hidden>
               <div class="helper" style="margin-top:14px;">從已綁定守護人指定核心（緊急時優先通知）。姓名／關係／電話請用上方列表的「編輯」補齊。</div>
               <div class="core-guardian-pick" id="memberCoreGuardianPick"></div>
@@ -7298,6 +7297,10 @@
         const isEmergency = role === "emergency";
         const bound = !isEmergency && isContactBound(contact);
         const tier = isEmergency ? "緊急聯絡人" : "核心守護人";
+        const rank = isEmergency
+          ? index + 1
+          : list.slice(0, index + 1).filter((row) => isContactBound(row)).length;
+        const rankLabel = isEmergency ? "" : guardianNotificationRank(rank, contact, bound);
         const added = formatGuardianAddedAt(contact);
         const nick = contactPeerDisplayName(contact);
         const statusHtml = isEmergency
@@ -7311,7 +7314,7 @@
         return `
           <div class="member-guardian-manage-row" data-id="${cid}">
             <button class="member-contact-card-toggle" type="button" aria-expanded="false" aria-controls="${bodyId}" data-contact-card-toggle="${bodyId}">
-              <span class="member-guardian-manage-head">${guardianAvatarHtml(contact)}<span class="guardian-manage-meta"><span class="guardian-manage-name">${escapeHtml(nick)}</span><small>${escapeHtml(contact.relationship || "關係未設定")}・${tier}${contact.is_primary ? "・主要" : ""}</small></span></span>
+              <span class="member-guardian-manage-head">${guardianAvatarHtml(contact)}<span class="guardian-manage-meta"><span class="guardian-manage-name">${escapeHtml(nick)}</span><small>${escapeHtml(contact.relationship || "關係未設定")}・${tier}${rankLabel ? `・${rankLabel}` : ""}</small></span></span>
               <span class="member-contact-card-chevron" aria-hidden="true">⌄</span>
             </button>
             <div class="member-contact-card-body" id="${bodyId}" hidden>
@@ -7322,12 +7325,65 @@
               ${added ? `<small>新增日期：${escapeHtml(added)}</small>` : ""}
               </div>
               <div class="member-guardian-manage-actions">
+                ${!isEmergency && bound ? `<button class="action-btn member-rank-up" type="button" data-id="${cid}" aria-label="提高通報順位" title="調整順位：提高" ${rank === 1 ? "disabled" : ""}>↑ 提高通報順位</button>
+                <button class="action-btn member-rank-down" type="button" data-id="${cid}" aria-label="降低通報順位" title="調整順位：降低" ${rank === list.filter((row) => isContactBound(row)).length ? "disabled" : ""}>↓ 降低通報順位</button>
+                <button class="action-btn member-set-primary" type="button" data-id="${cid}" ${bound && !contact.is_primary ? "" : "disabled"}>${contact.is_primary ? "主要守護人" : bound ? "設為主要守護人" : "等待接受者不能設為主要守護人"}</button>` : ""}
                 <button class="action-btn member-edit-guardian" type="button" data-id="${cid}" aria-label="編輯">編輯</button>
                 <button class="action-btn danger-action member-delete-guardian" type="button" data-id="${cid}" aria-label="解除守護關係">解除守護關係</button>
               </div>
             </div>
           </div>`;
       }).join("");
+    }
+
+    function guardianNotificationRank(rank, contact, bound) {
+      if (!bound) return "等待接受";
+      return rank === 1 && contact.is_primary
+        ? "第 1 順位｜主要守護人"
+        : `第 ${rank} 順位｜核心守護人`;
+    }
+
+    async function updateGuardianOrder(contactId, direction) {
+      const guardians = contactsByRole("guardian");
+      const bound = guardians.filter((contact) => isContactBound(contact));
+      const pending = guardians.filter((contact) => !isContactBound(contact));
+      const current = bound.findIndex((contact) => String(contact.id || "") === String(contactId || ""));
+      const target = current + direction;
+      if (current < 0 || target < 0 || target >= bound.length) return;
+      [bound[current], bound[target]] = [bound[target], bound[current]];
+      const orderedGuardians = [...bound, ...pending];
+      const emergencies = contactsByRole("emergency");
+      contactData = [...orderedGuardians, ...emergencies].map((contact, index) => ({
+        ...contact,
+        priority: index + 1,
+        is_primary: contactRoleOf(contact) === "guardian" ? index === 0 && isContactBound(contact) : false
+      }));
+      const saved = await apiSaveContacts(false);
+      contactData = saved.contacts || contactData;
+      renderContacts();
+      renderMemberCenter();
+      showInlineSuccess("已更新守護人通報順位");
+    }
+
+    async function setPrimaryGuardian(contactId) {
+      const guardians = contactsByRole("guardian");
+      const chosen = guardians.find((contact) => String(contact.id || "") === String(contactId || ""));
+      if (!chosen || !isContactBound(chosen)) {
+        alert("等待接受者不能設為主要守護人");
+        return;
+      }
+      const reordered = [chosen, ...guardians.filter((contact) => contact !== chosen)];
+      const emergencies = contactsByRole("emergency");
+      contactData = [...reordered, ...emergencies].map((contact, index) => ({
+        ...contact,
+        priority: index + 1,
+        is_primary: contactRoleOf(contact) === "guardian" ? index === 0 : false
+      }));
+      const saved = await apiSaveContacts(false);
+      contactData = saved.contacts || contactData;
+      renderContacts();
+      renderMemberCenter();
+      showInlineSuccess("已设为第 1 顺位主要守护人");
     }
 
     function formatGuardianAddedAt(contact) {
@@ -7507,8 +7563,8 @@
       const atLimit = totalCount >= coreLimit;
       const limitBanner = $("memberGuardianLimitBanner");
       if (limitBanner) {
-        // 已有 ≥1 位守護人時顯示橫幅；名額未滿也顯示，方便繼續建立守護圈。
-        const showBanner = totalCount >= 1;
+        // 名額用完才顯示升級提示，避免與唯一的新增入口重複。
+        const showBanner = atLimit;
         limitBanner.hidden = !showBanner;
         if (showBanner) {
           const title = $("memberLimitTitle");
@@ -7516,7 +7572,7 @@
           if (title) title.textContent = `你已經有 ${totalCount} 位守護人囉`;
           if (body) {
             body.textContent = atLimit
-              ? `${planQuotaLabel(memberPlan)}最多 ${coreLimit} 位核心守護人。仍可點「再邀請」了解升級名額。`
+              ? `${planQuotaLabel(memberPlan)}最多 ${coreLimit} 位核心守護人；如需新增，請先升級方案。`
               : `${planQuotaLabel(memberPlan)}上限 ${coreLimit} 位核心守護人。`;
           }
           const upgradeBtn = $("memberLimitUpgradeBtn");
@@ -7524,15 +7580,13 @@
         }
       }
       const addBtn = $("memberAddGuardianBtn");
-      if (addBtn) addBtn.textContent = atLimit ? "➕ 名額已滿（可升級）" : "➕ 新增守護人資料";
-      const reinviteBtn = $("memberReinviteGuardianBtn");
-      if (reinviteBtn) {
-        reinviteBtn.hidden = false;
-        reinviteBtn.textContent = totalCount >= 1 ? "再邀請一位守護人" : "一鍵邀請守護人";
-      }
-      const inviteMoreBtn = $("memberInviteMoreGuardianBtn");
-      if (inviteMoreBtn) {
-        inviteMoreBtn.textContent = atLimit ? "再邀請（需升級名額）" : "再邀請一位守護人";
+      if (addBtn) {
+        addBtn.textContent = atLimit
+          ? "➕ 守護人名額已滿"
+          : totalCount >= 1
+            ? "➕ 再新增一位守護人"
+            : "➕ 新增守護人資料";
+        addBtn.disabled = atLimit;
       }
 
       $("memberBillingExpiry").textContent =
@@ -7575,6 +7629,9 @@
           const inviteBtn = event.target.closest(".member-invite-guardian, .one-tap-invite-btn");
           const editBtn = event.target.closest(".member-edit-guardian");
           const deleteBtn = event.target.closest(".member-delete-guardian");
+          const rankUpBtn = event.target.closest(".member-rank-up");
+          const rankDownBtn = event.target.closest(".member-rank-down");
+          const setPrimaryBtn = event.target.closest(".member-set-primary");
           const toggleBtn = event.target.closest("[data-contact-card-toggle]");
           if (toggleBtn) {
             event.preventDefault();
@@ -7594,6 +7651,19 @@
           if (inviteBtn) {
             event.preventDefault();
             openShareInviteForContact();
+            return;
+          }
+          if (rankUpBtn || rankDownBtn) {
+            event.preventDefault();
+            const button = rankUpBtn || rankDownBtn;
+            updateGuardianOrder(button.dataset.id, rankUpBtn ? -1 : 1)
+              .catch((error) => alert(error.message || "无法调整守护人顺位"));
+            return;
+          }
+          if (setPrimaryBtn) {
+            event.preventDefault();
+            setPrimaryGuardian(setPrimaryBtn.dataset.id)
+              .catch((error) => alert(error.message || "无法更新主要守护人"));
             return;
           }
           if (editBtn) {
@@ -7654,9 +7724,15 @@
         ? guardianGroupIds.map((groupId, index) => {
           const group = groupById[groupId] || { group_id: groupId, preferences: {} };
           const prefs = group.preferences || {};
+          const enabledPreferenceCount = [
+            prefs.notify_private_guardians !== false,
+            prefs.notify_group_on_overdue === true,
+            prefs.daily_admin_summary === true,
+            prefs.notify_admin_only !== false
+          ].filter(Boolean).length;
           return `
           <div class="member-data-row guardian-group-card">
-            <span><strong>守護群 ${index + 1}</strong><small>群組成員 ${escapeHtml(group.member_count_at_bind != null ? group.member_count_at_bind : "—")} 人（進群≠已綁定守護人）</small></span>
+            <span><strong>守護群 ${index + 1}</strong><small>群組成員 ${escapeHtml(group.member_count_at_bind != null ? group.member_count_at_bind : "—")} 人（進群≠已綁定守護人）</small><small class="guardian-group-pref-count" data-group-id="${escapeHtml(groupId)}">目前已開啟 ${enabledPreferenceCount}/4 項</small></span>
             <div class="guardian-group-preferences">
               <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_private_guardians" ${prefs.notify_private_guardians !== false ? "checked" : ""}> 未報平安時，先私訊核心守護人</label>
               <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_group_on_overdue" ${prefs.notify_group_on_overdue === true ? "checked" : ""}> 未報平安時，也通知這個 LINE 群</label>
@@ -7745,7 +7821,7 @@
             <div class="helper" style="margin:0;">${escapeHtml(contact.relationship || "關係未設定")}${isCore ? " ／ 核心" : ""}</div>
           </div>
           <button class="action-btn ${isCore ? "primary" : ""} core-set-primary-btn" type="button" data-id="${escapeHtml(contact.id || "")}" ${isCore ? "disabled" : ""}>
-            ${isCore ? "目前核心" : "設為核心"}
+            ${isCore ? "主要守護人" : "設為主要守護人"}
           </button>
         </div>`;
       }).join("");
@@ -12341,14 +12417,6 @@
     $("memberUpgradeBtn").addEventListener("click", openUpgradePlans);
     const memberLimitUpgradeBtn = $("memberLimitUpgradeBtn");
     if (memberLimitUpgradeBtn) memberLimitUpgradeBtn.addEventListener("click", openUpgradePlans);
-    const memberInviteMoreGuardianBtn = $("memberInviteMoreGuardianBtn");
-    if (memberInviteMoreGuardianBtn) {
-      memberInviteMoreGuardianBtn.addEventListener("click", inviteMoreGuardiansFromMember);
-    }
-    const memberReinviteGuardianBtn = $("memberReinviteGuardianBtn");
-    if (memberReinviteGuardianBtn) {
-      memberReinviteGuardianBtn.addEventListener("click", inviteMoreGuardiansFromMember);
-    }
     document.querySelectorAll(".price-btn[data-plan]").forEach((button) => {
       button.addEventListener("click", () => startPlanCheckout(button.dataset.plan, button));
     });
@@ -12494,6 +12562,22 @@
         if (event.target === smartReminderEditorModal) closeSmartReminderEditor();
       });
     }
+    function updateGuardianGroupPreferenceCount(groupId) {
+      const list = $("guardianGroupsList");
+      if (!list || !groupId) return;
+      const checkboxes = Array.from(
+        list.querySelectorAll(`.guardian-group-pref[data-group-id="${CSS.escape(groupId)}"]`)
+      );
+      const count = checkboxes.filter((checkbox) => checkbox.checked).length;
+      const label = list.querySelector(
+        `.guardian-group-pref-count[data-group-id="${CSS.escape(groupId)}"]`
+      );
+      if (label) label.textContent = `目前已開啟 ${count}/4 項`;
+    }
+    $("guardianGroupsList").addEventListener("change", (event) => {
+      const checkbox = event.target.closest(".guardian-group-pref");
+      if (checkbox) updateGuardianGroupPreferenceCount(checkbox.dataset.groupId);
+    });
     $("guardianGroupsList").addEventListener("click", (event) => {
       const unbindButton = event.target.closest(".guardian-group-unbind");
       if (unbindButton) {
