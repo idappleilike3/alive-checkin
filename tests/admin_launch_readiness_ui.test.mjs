@@ -41,8 +41,10 @@ test("admin has one canonical beta management flow", () => {
   }
   assert.doesNotMatch(html, /\/api\/admin\/beta-program\/assign/);
   assert.doesNotMatch(html, /function assignBetaMember\(/);
-  assert.match(html, /<select id="betaLineUserId" required/);
+  assert.match(html, /<select id="betaLineUserId">/);
+  assert.match(html, /<input id="betaLineUserIdManual"/);
   assert.match(html, /\$\("betaLineUserId"\)\.innerHTML/);
+  assert.match(html, /if \(!manualLineUserId && !selectedLineUserId\)/);
 });
 
 test("daily member push summary exposes the latest LINE failure reason", () => {
