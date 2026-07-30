@@ -9046,6 +9046,7 @@ def eligible_sos_retry_recipients(event: dict) -> list[dict]:
 
 SOS_RESPONSE_ACTIONS = {"take_over", "assist", "contacted", "unable"}
 SOS_CLOSED_STATUSES = {"safe_closed", "cancelled", "resolved", "closed"}
+SOS_MAX_GUARDIAN_RECIPIENTS = 5
 
 
 def build_sos_guardian_flex(message, event_id):
@@ -9416,7 +9417,11 @@ def process_sos_escalations(data_file, config=None, now=None):
             for row in (event.get("escalation_guardians") or [])
             if str(row.get("target") or "") not in already_attempted
         ]
-        batch = candidates
+        remaining_slots = max(
+            0,
+            SOS_MAX_GUARDIAN_RECIPIENTS - len(already_attempted),
+        )
+        batch = candidates[:remaining_slots]
         for guardian in batch:
             target = str(guardian.get("target") or "")
             if not target:

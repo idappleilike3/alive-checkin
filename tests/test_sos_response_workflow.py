@@ -124,7 +124,7 @@ class SosResponseWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(again["sent"], 0)
 
-    def test_three_minute_escalation_notifies_all_remaining_guardians_once(self):
+    def test_three_minute_escalation_caps_total_guardian_notifications_at_five(self):
         state = load_state(self.data_file)
         event = state["sos_events"]["sos-1"]
         event["escalation_guardians"] = [
@@ -146,10 +146,10 @@ class SosResponseWorkflowTests(unittest.TestCase):
             now=__import__("datetime").datetime.fromisoformat("2026-07-27T22:03:30"),
         )
 
-        self.assertEqual(first["sent"], 5)
+        self.assertEqual(first["sent"], 3)
         self.assertEqual(
             [target for target, _message in pushes],
-            ["U-backup-3", "U-backup-4", "U-backup-5", "U-backup-6", "U-backup-7"],
+            ["U-backup-3", "U-backup-4", "U-backup-5"],
         )
         event = load_state(self.data_file)["sos_events"]["sos-1"]
         self.assertEqual(event["escalation_round"], 1)
