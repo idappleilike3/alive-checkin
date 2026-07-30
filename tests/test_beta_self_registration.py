@@ -10,6 +10,27 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BetaSelfRegistrationTests(unittest.TestCase):
+    def test_active_paid_member_cannot_be_changed_to_beta(self):
+        state = {
+            "users": {
+                "U-jennie": {
+                    "line_user_id": "U-jennie",
+                    "plan": "paid_799_year",
+                    "membership_source": "paid",
+                    "payment_status": "active",
+                    "paid_until": "2027-07-24T15:54:00",
+                }
+            }
+        }
+
+        with self.assertRaisesRegex(ValueError, "paid_member_not_beta_eligible"):
+            app.assign_beta_cohort(
+                state,
+                "U-jennie",
+                "B799",
+                now=datetime(2026, 7, 30, 19, 0, 0),
+            )
+
     def test_claim_beta_link_assigns_399_yearly_entitlements_for_21_days(self):
         state = {"users": {"U-member": {"line_user_id": "U-member", "plan": "trial"}}}
         result = app.claim_beta_link(
