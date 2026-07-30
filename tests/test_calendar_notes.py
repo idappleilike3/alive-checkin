@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app import (
+    build_smart_reminder_flex,
     build_status,
     calendar_note_content,
     get_calendar_notes,
@@ -39,7 +40,7 @@ class CalendarNotesTests(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
-    def test_calendar_notes_require_active_paid_799_membership(self):
+    def test_calendar_notes_allow_active_399_and_799_memberships(self):
         state = load_state(self.data_file)
         state["users"] = {
             "U-trial": {
@@ -51,6 +52,12 @@ class CalendarNotesTests(unittest.TestCase):
             "U-399": {
                 "line_user_id": "U-399",
                 "plan": "paid_399",
+                "payment_status": "active",
+                "paid_until": "2099-01-01T00:00:00",
+            },
+            "U-399-year": {
+                "line_user_id": "U-399-year",
+                "plan": "paid_399_year",
                 "payment_status": "active",
                 "paid_until": "2099-01-01T00:00:00",
             },
@@ -72,7 +79,7 @@ class CalendarNotesTests(unittest.TestCase):
         }
         save_state(self.data_file, state)
 
-        for line_user_id in ("U-trial", "U-399"):
+        for line_user_id in ("U-trial",):
             read_result = get_calendar_notes(self.data_file, line_user_id)
             write_result, write_code = save_calendar_note(
                 self.data_file,
@@ -86,6 +93,27 @@ class CalendarNotesTests(unittest.TestCase):
             self.assertEqual(read_result["error"], "calendar_notes_require_799")
             self.assertEqual(write_code, 403)
             self.assertEqual(write_result["error"], "calendar_notes_require_799")
+
+        allowed_399, allowed_399_code = save_calendar_note(
+            self.data_file,
+            {
+                "line_user_id": "U-399",
+                "date": "2026-07-27",
+                "content": "399 網頁備忘",
+            },
+        )
+        self.assertEqual(allowed_399_code, 200)
+        self.assertTrue(allowed_399["ok"])
+        allowed_399_year, allowed_399_year_code = save_calendar_note(
+            self.data_file,
+            {
+                "line_user_id": "U-399-year",
+                "date": "2026-07-27",
+                "content": "399 年費網頁備忘",
+            },
+        )
+        self.assertEqual(allowed_399_year_code, 200)
+        self.assertTrue(allowed_399_year["ok"])
 
         beta_allowed, beta_allowed_code = save_calendar_note(
             self.data_file,
@@ -109,15 +137,15 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertEqual(allowed_code, 200)
         self.assertTrue(allowed["ok"])
 
-    def test_status_exposes_calendar_note_entitlement_only_for_formal_799(self):
+    def test_status_separates_calendar_notes_from_799_line_reminders(self):
         base = {"line_user_id": "U", "paid_until": "2099-01-01T00:00:00"}
-        self.assertFalse(
-            build_status({
+        status_399 = build_status({
                 **base,
                 "plan": "paid_399",
                 "payment_status": "active",
-            })["calendar_notes_enabled"]
-        )
+            })
+        self.assertTrue(status_399["calendar_notes_enabled"])
+        self.assertFalse(status_399["smart_reminders_enabled"])
         beta_799_status = build_status({
             **base,
             "plan": "paid_799_year",
@@ -154,13 +182,17 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertIn("799 年費", member)
         self.assertNotIn("樂年", member)
         self.assertNotIn("樂年", index)
-        self.assertIn("備忘錄只開放 799 月費／年費方案使用", index)
+        self.assertIn("399／799 月費與年費方案皆可使用網頁日期備忘", index)
+        self.assertIn(
+            'lineButton.hidden = !(currentStatusData && currentStatusData.smart_reminders_enabled === true);',
+            index,
+        )
 
-    def test_liff_pricing_shows_memo_only_for_799(self):
+    def test_liff_pricing_shows_web_memo_for_399_and_799(self):
         page = (ROOT / "liff" / "pricing.html").read_text(encoding="utf-8")
         self.assertIn(
-            '<tr><td>月曆備忘</td><td class="no">✗</td><td class="no">✗</td>'
-            '<td class="no">✗</td><td class="no">✗</td><td class="no">✗</td>'
+            '<tr><td>網頁日期備忘</td><td class="no">✗</td><td class="no">✗</td>'
+            '<td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td>'
             '<td class="yes">✓</td><td class="yes">✓</td></tr>',
             page,
         )
@@ -505,10 +537,42 @@ class CalendarNotesTests(unittest.TestCase):
 
         self.assertIn('"memo": {"emoji": "📝", "label": "一般備忘"}', source)
         self.assertIn('category = str(raw.get("category") or "memo")', source)
-        self.assertIn('if category == "memo":\n        eve_remind = False', source)
+        self.assertIn("eve_remind = False", source)
         self.assertIn('"memo": f"📝 備忘提醒：{label}"', source)
         self.assertIn('title = "📝 備忘提醒"', source)
         self.assertIn('alt = f"備忘提醒：{name}"', source)
+
+    def test_line_reminder_cards_have_two_actions_and_no_snooze(self):
+        source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("smart:snooze:", source)
+        self.assertNotIn("晚點提醒", source)
+        birthday = build_smart_reminder_flex({
+            "id": "birthday-1",
+            "target_name": "媽媽",
+            "category": "birthday",
+            "category_label": "生日",
+            "month": 7,
+            "day": 30,
+        })
+        medicine = build_smart_reminder_flex({
+            "id": "medicine-1",
+            "target_name": "自己",
+            "category": "medicine",
+            "category_label": "吃藥",
+            "month": 7,
+            "day": 30,
+        })
+        birthday_labels = [
+            item["action"]["label"]
+            for item in birthday["contents"]["footer"]["contents"]
+        ]
+        medicine_labels = [
+            item["action"]["label"]
+            for item in medicine["contents"]["footer"]["contents"]
+        ]
+        self.assertEqual(birthday_labels, ["🎁傳送祝福", "✅已祝福"])
+        self.assertEqual(medicine_labels, ["📋查看備忘", "✅我知道了"])
 
 
 if __name__ == "__main__":

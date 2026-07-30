@@ -399,7 +399,7 @@ class SmartReminderTests(unittest.TestCase):
         app.save_state(self.data_file, state)
         payload = app.get_smart_reminders_payload(self.data_file, "U799")
         self.assertEqual(payload["state"], "entitled")
-        self.assertEqual(payload["daily_limits"], {"private": 2, "guardian": 1})
+        self.assertEqual(payload["daily_limits"], {"total": 2})
         self.assertEqual(payload["daily_usage"]["private"], 1)
         self.assertEqual([g["line_user_id"] for g in payload["bound_guardians"]], ["U-bound"])
 
@@ -478,7 +478,7 @@ class SmartReminderTests(unittest.TestCase):
         })
         self.assertEqual(len(sent), 2)
 
-    def test_selected_guardian_receives_at_most_one_smart_reminder_per_day(self):
+    def test_selected_guardian_can_receive_up_to_two_smart_reminders_per_day(self):
         sent = []
         now = datetime(2026, 7, 27, 9, 0, 0)
         state = app.load_state(self.data_file)
@@ -503,7 +503,39 @@ class SmartReminderTests(unittest.TestCase):
         app.send_smart_reminders(config)
         config["CRON_NOW"] = now.replace(hour=10)
         app.send_smart_reminders(config)
-        self.assertEqual([target for target, _message in sent], ["U-guardian"])
+        self.assertEqual([target for target, _message in sent], ["U-guardian", "U-guardian"])
+
+    def test_self_and_guardian_share_one_daily_limit_of_two_messages(self):
+        sent = []
+        now = datetime(2026, 7, 27, 9, 0, 0)
+        state = app.load_state(self.data_file)
+        profile = app.get_profile(state, "U799")
+        profile.update({
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": "2099-01-01",
+            "contacts": [{"line_user_id": "U-guardian", "binding_status": "accepted", "is_primary": True}],
+            "smart_reminders": [
+                {"id": "self-1", "target_name": "自己", "month": 7, "day": 27, "remind_time": "09:00"},
+                {"id": "guardian-1", "target_name": "媽媽", "month": 7, "day": 27, "remind_time": "10:00", "delivery_target": "guardian:U-guardian"},
+                {"id": "self-2", "target_name": "回診", "month": 7, "day": 27, "remind_time": "11:00"},
+            ],
+        })
+        app.save_state(self.data_file, state)
+        config = {
+            "DATA_FILE": self.data_file,
+            "LINE_CHANNEL_ACCESS_TOKEN": "x",
+            "LINE_PUSH_SENDER": lambda _token, target, message: sent.append((target, message)) or {"ok": True},
+            "CRON_NOW": now,
+        }
+
+        app.send_smart_reminders(config)
+        config["CRON_NOW"] = now.replace(hour=10)
+        app.send_smart_reminders(config)
+        config["CRON_NOW"] = now.replace(hour=11)
+        app.send_smart_reminders(config)
+
+        self.assertEqual([target for target, _message in sent], ["U799", "U-guardian"])
 
 
 class InviteButtonCleanupTests(unittest.TestCase):
@@ -527,7 +559,7 @@ class InviteButtonCleanupTests(unittest.TestCase):
             page,
         )
         # Top share / re-invite button kept in member guardian section
-        member_section = page.split('id="memberGuardianSection"')[1].split('id="memberSmartRemindersSection"')[0]
+        member_section = page.split('id="memberGuardianSection"')[1].split('id="guardianGroupsSection"')[0]
         self.assertIn("再邀請一位守護人", member_section)
         self.assertIn("memberInviteMoreGuardianBtn", member_section)
         self.assertIn("memberReinviteGuardianBtn", member_section)
@@ -563,7 +595,7 @@ class InviteButtonCleanupTests(unittest.TestCase):
         self.assertIn('id="smartReminderDeliveryTarget"', page)
         self.assertIn("只通知自己（預設）", page)
         self.assertIn("通知核心守護人", page)
-        self.assertIn("今日日期提醒", page)
+        self.assertIn("今日 LINE 推播", page)
         self.assertIn("核心守護人", page)
         self.assertIn("148px + env(safe-area-inset-bottom", page)
         self.assertIn("72px + env(safe-area-inset-bottom", page)
