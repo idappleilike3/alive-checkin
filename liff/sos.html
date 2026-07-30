@@ -2,12 +2,394 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SOS 緊急求助｜今天還在嗎</title>
-  <meta http-equiv="refresh" content="0; url=../?page=sos">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#991b1b">
+  <title>需要幫忙｜每日平安</title>
+  <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #3f1515;
+      background: linear-gradient(160deg, #fff7ed 0%, #fee2e2 55%, #fecaca 100%);
+    }
+    button, a { font: inherit; }
+    .modal {
+      display: none;
+      min-height: 100vh;
+      padding: max(18px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+      align-items: center;
+      justify-content: center;
+    }
+    .modal.open { display: flex; }
+    .card {
+      width: min(100%, 440px);
+      padding: 22px 18px;
+      border: 2px solid rgba(185, 28, 28, .16);
+      border-radius: 28px;
+      background: rgba(255, 255, 255, .96);
+      box-shadow: 0 22px 60px rgba(127, 29, 29, .2);
+      text-align: center;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      color: #991b1b;
+      background: #fee2e2;
+      font-size: 14px;
+      font-weight: 800;
+    }
+    h1 { margin: 12px 0 8px; font-size: clamp(27px, 8vw, 36px); line-height: 1.15; }
+    .lead { margin: 0 auto 16px; max-width: 330px; font-size: 17px; line-height: 1.65; }
+    .status {
+      min-height: 50px;
+      margin: 12px 0;
+      padding: 12px;
+      border-radius: 16px;
+      color: #7f1d1d;
+      background: #fff7ed;
+      font-size: 15px;
+      font-weight: 750;
+      line-height: 1.55;
+    }
+    .sos {
+      width: min(260px, 76vw);
+      aspect-ratio: 1;
+      margin: 6px auto 12px;
+      border: 10px solid #fecaca;
+      border-radius: 50%;
+      color: #fff;
+      background: linear-gradient(145deg, #ef4444, #991b1b);
+      box-shadow: 0 12px 28px rgba(185, 28, 28, .35), inset 0 3px 3px rgba(255,255,255,.25);
+      font-size: 26px;
+      font-weight: 900;
+      line-height: 1.25;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    .sos:active { transform: scale(.97); }
+    .sos:disabled { cursor: wait; opacity: .62; }
+    .count {
+      min-height: 30px;
+      margin: 0;
+      color: #991b1b;
+      font-size: 19px;
+      font-weight: 900;
+    }
+    .targets {
+      margin: 16px 0 8px;
+      padding: 14px;
+      border-radius: 18px;
+      background: #fff7ed;
+      text-align: left;
+    }
+    .targets strong { display: block; margin-bottom: 8px; }
+    .target { display: flex; gap: 9px; align-items: center; padding: 7px 0; }
+    .target input { width: 21px; height: 21px; accent-color: #b91c1c; }
+    .actions { display: grid; gap: 10px; margin-top: 15px; }
+    .action {
+      display: block;
+      width: 100%;
+      min-height: 50px;
+      padding: 12px 15px;
+      border: 0;
+      border-radius: 15px;
+      text-decoration: none;
+      font-weight: 850;
+      cursor: pointer;
+    }
+    .primary { color: #fff; background: #334155; }
+    .secondary { color: #7f1d1d; background: #fee2e2; }
+    [hidden] { display: none !important; }
+  </style>
 </head>
 <body>
-  <p>正在開啟 SOS 緊急求助</p>
-  <script>location.replace("../?page=sos");</script>
+  <!-- The emergency UI is visible in the first HTML paint. Authentication loads behind it. -->
+  <main id="sosModal" class="modal open" aria-live="polite">
+    <section class="card">
+      <span class="badge">每日平安・需要幫忙</span>
+      <h1>聯絡家人</h1>
+      <p class="lead">為避免誤觸，請連續按 3 次。第三次才會正式通知守護人。</p>
+
+      <div id="status" class="status">畫面已開啟，正在背景確認 LINE 身分…</div>
+
+      <button id="sosButton" class="sos" type="button">
+        <span id="buttonLabel">連按 3 次<br>需要幫忙</span>
+      </button>
+      <p id="tapStatus" class="count">尚未送出</p>
+
+      <div id="targets" class="targets" hidden>
+        <strong>通知對象</strong>
+        <div id="targetList"></div>
+      </div>
+
+      <div class="actions">
+        <button id="retryButton" class="action primary" type="button" hidden>重新連線</button>
+        <button id="cancelButton" class="action secondary" type="button" hidden>取消剛才的通知</button>
+        <button id="closeButton" class="action secondary" type="button">關閉</button>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const LIFF_ID = "2010848330-UAiqPPYD";
+    const statusEl = document.getElementById("status");
+    const tapStatusEl = document.getElementById("tapStatus");
+    const sosButton = document.getElementById("sosButton");
+    const buttonLabel = document.getElementById("buttonLabel");
+    const retryButton = document.getElementById("retryButton");
+    const cancelButton = document.getElementById("cancelButton");
+    const targetBox = document.getElementById("targets");
+    const targetList = document.getElementById("targetList");
+
+    let lineUserId = "";
+    let idToken = "";
+    let memberReady = false;
+    let tapCount = 0;
+    let tapResetTimer = null;
+    let locationPromise = null;
+    let lastEventId = "";
+
+    function setStatus(message) {
+      statusEl.textContent = message;
+    }
+
+    function authHeaders() {
+      return {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${idToken}`,
+        "X-Line-Id-Token": idToken
+      };
+    }
+
+    function loginRedirectUri() {
+      return `${location.origin}/liff/sos.html`;
+    }
+
+    function resetTaps() {
+      tapCount = 0;
+      tapStatusEl.textContent = "尚未送出";
+      buttonLabel.innerHTML = "連按 3 次<br>需要幫忙";
+      locationPromise = null;
+      if (tapResetTimer) clearTimeout(tapResetTimer);
+    }
+
+    function selectedGuardianIds() {
+      return [...targetList.querySelectorAll('input[type="checkbox"]:checked')]
+        .map((input) => input.value)
+        .filter(Boolean);
+    }
+
+    function boundGuardians(status) {
+      return (Array.isArray(status.contacts) ? status.contacts : []).filter((contact) => {
+        const role = String(contact.role || contact.contact_type || "guardian");
+        const lineId = String(contact.line_user_id || contact.line_id || "");
+        return role === "guardian" && lineId && contact.status !== "pending";
+      });
+    }
+
+    function renderTargets(status) {
+      const guardians = boundGuardians(status);
+      targetList.replaceChildren();
+      guardians.forEach((guardian, index) => {
+        const label = document.createElement("label");
+        label.className = "target";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = guardian.line_user_id || guardian.line_id;
+        checkbox.checked = index < 2;
+        const name = document.createElement("span");
+        name.textContent = guardian.name || guardian.relationship || `守護人 ${index + 1}`;
+        label.append(checkbox, name);
+        targetList.append(label);
+      });
+      targetBox.hidden = guardians.length === 0;
+    }
+
+    async function loadStatus() {
+      const response = await fetch("/api/status?" + new URLSearchParams({
+        line_user_id: lineUserId
+      }), { headers: authHeaders() });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "status_failed");
+      if (data.guardian_required === true) {
+        memberReady = false;
+        sosButton.disabled = true;
+        setStatus("尚未綁定可通知的核心守護人，請先完成守護人綁定。");
+        return;
+      }
+      renderTargets(data);
+      memberReady = true;
+      sosButton.disabled = false;
+      setStatus("已連線。需要幫忙時，請連續按 3 次。");
+    }
+
+    async function registerLineUser(profile) {
+      const response = await fetch("/api/line/register", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          line_user_id: lineUserId,
+          display_name: profile.displayName || "",
+          picture_url: profile.pictureUrl || ""
+        })
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "register_failed");
+      }
+    }
+
+    async function initializeLiff() {
+      retryButton.hidden = true;
+      sosButton.disabled = true;
+      setStatus("畫面已開啟，正在背景確認 LINE 身分…");
+      if (!window.liff) throw new Error("LINE SDK 尚未載入");
+      await liff.init({ liffId: LIFF_ID });
+      if (!liff.isLoggedIn()) {
+        liff.login({ redirectUri: loginRedirectUri() });
+        return;
+      }
+      idToken = String(liff.getIDToken() || "");
+      const profile = await liff.getProfile();
+      lineUserId = String(profile.userId || "");
+      if (!idToken || !lineUserId) throw new Error("LINE 身分確認失敗");
+      await registerLineUser(profile);
+      await loadStatus();
+    }
+
+    function getPosition() {
+      if (!navigator.geolocation) return Promise.resolve({ ok: false });
+      return new Promise((resolve) => {
+        let settled = false;
+        const done = (value) => {
+          if (settled) return;
+          settled = true;
+          resolve(value);
+        };
+        const timer = setTimeout(() => done({ ok: false }), 1500);
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            clearTimeout(timer);
+            done({
+              ok: true,
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude
+            });
+          },
+          () => {
+            clearTimeout(timer);
+            done({ ok: false });
+          },
+          { timeout: 1200, maximumAge: 60000 }
+        );
+      });
+    }
+
+    async function sendSos() {
+      sosButton.disabled = true;
+      buttonLabel.textContent = "正在通知守護人…";
+      setStatus("正在通知，定位逾時時會改送不含位置的通知。");
+      try {
+        const position = await (locationPromise || getPosition());
+        const payload = {
+          line_user_id: lineUserId,
+          guardian_line_user_ids: selectedGuardianIds()
+        };
+        if (position.ok) {
+          payload.latitude = position.latitude;
+          payload.longitude = position.longitude;
+        }
+        const response = await fetch("/api/sos", {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify(payload)
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || "sos_failed");
+        lastEventId = String(result.event_id || "");
+        const sent = Number(result.sent || 0);
+        const locationText = position.ok ? "，已附上位置" : "，這次未附位置";
+        setStatus(`已通知 ${sent} 個守護對象${locationText}。`);
+        tapStatusEl.textContent = "SOS 已送出";
+        buttonLabel.textContent = "已通知家人";
+        cancelButton.hidden = !(result.cancel_available && lastEventId);
+        if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
+      } catch (error) {
+        setStatus("暫時無法通知家人，請直接聯絡親友後再重試。");
+        buttonLabel.innerHTML = "連按 3 次<br>重新嘗試";
+      } finally {
+        tapCount = 0;
+        locationPromise = null;
+        sosButton.disabled = !memberReady;
+      }
+    }
+
+    function handleSosTap() {
+      if (!memberReady) {
+        setStatus("LINE 身分與守護人資料仍在背景確認，請稍候。");
+        return;
+      }
+      tapCount += 1;
+      if (tapCount === 1) locationPromise = getPosition();
+      if (tapResetTimer) clearTimeout(tapResetTimer);
+      tapResetTimer = setTimeout(resetTaps, 5000);
+      if (tapCount < 3) {
+        const remaining = 3 - tapCount;
+        tapStatusEl.textContent = `再按 ${remaining} 次才會送出`;
+        buttonLabel.textContent = `第 ${tapCount} 次確認`;
+        return;
+      }
+      if (tapCount === 3) sendSos();
+    }
+
+    async function cancelSos() {
+      if (!lastEventId) return;
+      cancelButton.disabled = true;
+      try {
+        const response = await fetch("/api/sos/cancel", {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({
+            line_user_id: lineUserId,
+            event_id: lastEventId,
+            reason: "本人取消，需要幫忙狀況已解除"
+          })
+        });
+        if (!response.ok) throw new Error("cancel_failed");
+        setStatus("已取消通知，守護人會收到狀況已解除。");
+        cancelButton.hidden = true;
+        lastEventId = "";
+      } catch (_) {
+        setStatus("取消失敗，請直接聯絡剛才收到通知的家人。");
+      } finally {
+        cancelButton.disabled = false;
+      }
+    }
+
+    sosButton.addEventListener("click", handleSosTap);
+    retryButton.addEventListener("click", () => {
+      initializeLiff().catch(showInitError);
+    });
+    cancelButton.addEventListener("click", cancelSos);
+    document.getElementById("closeButton").addEventListener("click", () => {
+      if (window.liff && liff.isInClient()) liff.closeWindow();
+      else history.back();
+    });
+
+    function showInitError() {
+      memberReady = false;
+      sosButton.disabled = true;
+      retryButton.hidden = false;
+      setStatus("LINE 連線較慢，請按「重新連線」。畫面不需要重新載入。");
+    }
+
+    initializeLiff().catch(showInitError);
+  </script>
 </body>
 </html>
