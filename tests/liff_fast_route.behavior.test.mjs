@@ -84,6 +84,30 @@ test("registration failures explain refresh login and migrated-account recovery"
   );
 });
 
+test("expired registration token restarts LINE login on the same page", () => {
+  const calls = [];
+  const sandbox = expose(
+    functionSource("recoverRejectedLineRegistration"),
+    ["recoverRejectedLineRegistration"],
+    {
+      refreshRejectedLineLogin: () => {
+        calls.push("refresh");
+        return true;
+      },
+      showLineLoginRequired: () => calls.push("generic-error"),
+      readSafeDeepLinkParams: () => ({open: "onboarding"}),
+    },
+  );
+
+  const recovered = sandbox.recoverRejectedLineRegistration(
+    {status: 401},
+    {error: "invalid_token"},
+  );
+
+  assert.equal(recovered, true);
+  assert.deepEqual(calls, ["refresh"]);
+});
+
 test("first status renders without waiting for contacts or onboarding", async () => {
   const contacts = deferred();
   const onboarding = deferred();
@@ -408,13 +432,14 @@ test("guardian-required onboarding cannot be dismissed by an unbound contact", a
     setRelationshipValue() {},
     setOnboardingCloseVisible: (visible) => closeVisibility.push(visible),
     showOnboardingShareStep: () => steps.push("share"),
+    showOnboardingGuardianStep: () => steps.push("profile"),
     showOnboardingReminderStep: () => steps.push("reminder"),
     $: (id) => elements[id] || null,
   });
 
   await sandbox.showOnboarding();
   assert.deepEqual(closeVisibility, [false]);
-  assert.deepEqual(steps, ["share"]);
+  assert.deepEqual(steps, ["profile"]);
   assert.equal(elements.onboardingModal.hidden, false);
 });
 
@@ -553,13 +578,15 @@ test("first-time unbound entry keeps the four-step setup guide visible across LI
     functionSource("setSetupGuideState"),
     functionSource("setLineSetupGuideState"),
     functionSource("showLineEntryGate"),
+    functionSource("showOnboardingGuardianStep"),
     functionSource("showOnboardingShareStep"),
   ].join("\n");
   const sandbox = expose(
     source,
-    ["showLineEntryGate", "showOnboardingShareStep"],
+    ["showLineEntryGate", "showOnboardingGuardianStep", "showOnboardingShareStep"],
     {
       $: (id) => elements[id] || null,
+      setTimeout: (callback) => callback(),
       document: {
         body: {
           classList: {
@@ -579,12 +606,15 @@ test("first-time unbound entry keeps the four-step setup guide visible across LI
   assert.equal(elements.lineGuideJoin.dataset.state, "done");
   assert.equal(elements.lineGuideLogin.dataset.state, "current");
 
-  sandbox.showOnboardingShareStep();
+  sandbox.showOnboardingGuardianStep();
   assert.equal(elements.onboardingGuideJoin.dataset.state, "done");
   assert.equal(elements.onboardingGuideLogin.dataset.state, "done");
   assert.equal(elements.onboardingGuideProfile.dataset.state, "current");
   assert.equal(elements.onboardingGuideGuardian.dataset.state, "upcoming");
-  assert.match(elements.onboardingIntro.textContent, /填寫資料/);
+  assert.match(elements.onboardingIntro.textContent, /守護人姓名/);
+
+  sandbox.showOnboardingShareStep();
+  assert.equal(elements.onboardingGuideProfile.dataset.state, "done");
   assert.match(elements.onboardingIntro.textContent, /核心守護人/);
 });
 

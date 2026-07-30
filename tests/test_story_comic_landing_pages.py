@@ -18,15 +18,28 @@ def test_beta_pages_use_story_comic_and_keep_plan_specific_content():
     assert "我已加入，繼續 LINE 登入與設定" in html
 
 
+def test_trial_and_beta_pages_keep_only_join_and_login_actions():
+    trial = (ROOT / "trial-14.html").read_text(encoding="utf-8")
+    beta = (ROOT / "beta-register.html").read_text(encoding="utf-8")
+
+    assert trial.count('class="cta') == 3  # two setup actions + plan comparison
+    assert "LINE 登入後，一鍵分享邀請核心守護人" not in trial
+    assert "一鍵分享這個頁面給 LINE 好友" not in trial
+
+    assert beta.count('class="cta') == 3  # two setup actions + plan comparison
+    assert "LINE 登入後，一鍵分享邀請核心守護人" not in beta
+    assert "一鍵分享這個頁面給 LINE 好友" not in beta
+
+
 def test_general_14_day_onboarding_uses_same_story_comic():
     html = (ROOT / "index.html").read_text(encoding="utf-8")
     assert 'class="onboarding-story-comic"' in html
     assert 'src="assets/daily-peace-story-comic.png"' in html
     assert "女兒收到通知，知道媽媽平安，就能放心" in html
     assert "先加入「每日平安」官方帳號好友" in html
-    assert "步驟 2／4　一鍵分享邀請守護人" in html
-    assert "步驟 3／4　填寫守護人資料" in html
-    assert "步驟 4／4　私訊預警通知提醒設定" in html
+    assert "步驟 2／4　填寫資料與提醒設定" in html
+    assert "步驟 3／4　一鍵分享邀請守護人" in html
+    assert "緊急聯絡候補（選填）" in html
 
 
 def test_trial_and_beta_follow_the_same_registration_order():

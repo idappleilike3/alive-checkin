@@ -89,16 +89,13 @@ def test_every_member_share_entry_uses_the_same_picker_page():
     assert "/liff/share-invite.html?" in home
 
 
-def test_trial_and_beta_pages_offer_a_direct_member_guardian_share_action():
+def test_trial_and_beta_pages_send_members_to_onboarding_before_guardian_share():
     trial = (ROOT / "trial-14.html").read_text(encoding="utf-8")
     beta = (ROOT / "beta-register.html").read_text(encoding="utf-8")
-    direct_liff_share = (
-        "https://liff.line.me/2010848330-UAiqPPYD?open=share-invite"
-    )
 
     for html in (trial, beta):
-        assert direct_liff_share in html
-        assert "LINE 登入後，一鍵分享邀請核心守護人" in html
+        assert "open=onboarding" in html
+        assert "open=share-invite" not in html
 def test_guardian_share_page_has_a_desktop_fallback_after_line_login():
     html = (ROOT / "liff" / "share-invite.html").read_text(encoding="utf-8")
 
