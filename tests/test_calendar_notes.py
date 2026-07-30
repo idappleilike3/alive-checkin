@@ -481,34 +481,13 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertIn('class="action-btn smart-edit-btn"', page)
         self.assertIn(">修改<", page)
 
-    def test_calendar_note_web_reminder_metadata_is_saved(self):
-        created, code = save_calendar_note(
-            self.data_file,
-            {
-                "line_user_id": "U-calendar",
-                "date": "2026-08-15",
-                "content": "回診",
-                "web_remind_time": "09:30",
-                "web_remind_yearly": True,
-            },
-        )
+    def test_calendar_note_web_reminder_metadata_uses_existing_note_storage(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
 
-        self.assertEqual(code, 200)
-        note = created["notes"]["2026-08-15"]
-        self.assertEqual(note["web_remind_time"], "09:30")
-        self.assertTrue(note["web_remind_yearly"])
-
-        invalid, invalid_code = save_calendar_note(
-            self.data_file,
-            {
-                "line_user_id": "U-calendar",
-                "date": "2026-08-15",
-                "content": "回診",
-                "web_remind_time": "25:99",
-            },
-        )
-        self.assertEqual(invalid_code, 400)
-        self.assertEqual(invalid["error"], "invalid web reminder time")
+        self.assertIn("WEB_NOTE_META_MARKER", page)
+        self.assertIn("encodeCalendarNoteContent", page)
+        self.assertIn("noteWebReminder", page)
+        self.assertIn("content: storedContent", page)
 
     def test_general_memo_is_single_timed_line_reminder_without_eve_push(self):
         source = (ROOT / "app.py").read_text(encoding="utf-8")

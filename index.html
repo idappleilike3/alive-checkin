@@ -5869,19 +5869,16 @@
     }
 
     async function apiSaveCalendarNote(date, content, noteMeta = {}) {
+      const storedContent = encodeCalendarNoteContent(content, noteMeta);
       if (useLocalMode) {
         const state = loadLocalState();
         const notes = { ...(state.calendar_notes || {}) };
-        const cleanContent = String(content || "").trim();
+        const cleanContent = String(storedContent || "").trim();
         const birthdayPayload = normalizeBirthdayPayload(noteMeta);
-        const webRemindTime = String(noteMeta.web_remind_time || "").trim();
-        const webRemindYearly = Boolean(noteMeta.web_remind_yearly);
-        if (cleanContent || birthdayPayload.birthday_name || webRemindTime) {
+        if (cleanContent || birthdayPayload.birthday_name) {
           notes[date] = {
             content: cleanContent,
-            ...birthdayPayload,
-            web_remind_time: webRemindTime,
-            web_remind_yearly: webRemindYearly
+            ...birthdayPayload
           };
         }
         else delete notes[date];
@@ -5895,10 +5892,8 @@
         body: JSON.stringify({
           line_user_id: lineUserId,
           date,
-          content,
-          ...normalizeBirthdayPayload(noteMeta),
-          web_remind_time: String(noteMeta.web_remind_time || "").trim(),
-          web_remind_yearly: Boolean(noteMeta.web_remind_yearly)
+          content: storedContent,
+          ...normalizeBirthdayPayload(noteMeta)
         })
       });
       const data = await res.json();
@@ -9494,10 +9489,34 @@
       }
     }
 
-    function noteContent(note) {
+    const WEB_NOTE_META_MARKER = "\n\u2063wr:";
+
+    function rawNoteContent(note) {
       if (!note) return "";
       if (typeof note === "string") return note;
       return String(note.content || "");
+    }
+
+    function noteWebReminder(note) {
+      const raw = rawNoteContent(note);
+      const markerIndex = raw.lastIndexOf(WEB_NOTE_META_MARKER);
+      if (markerIndex < 0) return { time: "", yearly: false };
+      const encoded = raw.slice(markerIndex + WEB_NOTE_META_MARKER.length);
+      const match = encoded.match(/^(\d{2}:\d{2}):(0|1)$/);
+      return match ? { time: match[1], yearly: match[2] === "1" } : { time: "", yearly: false };
+    }
+
+    function noteContent(note) {
+      const raw = rawNoteContent(note);
+      const markerIndex = raw.lastIndexOf(WEB_NOTE_META_MARKER);
+      return (markerIndex < 0 ? raw : raw.slice(0, markerIndex)).trim();
+    }
+
+    function encodeCalendarNoteContent(content, noteMeta = {}) {
+      const clean = String(content || "").replace(/\n\u2063wr:[^\n]*$/, "").trim();
+      const time = String(noteMeta.web_remind_time || "").trim();
+      if (!time) return clean;
+      return `${clean}${WEB_NOTE_META_MARKER}${time}:${noteMeta.web_remind_yearly ? "1" : "0"}`;
     }
 
     function normalizeBirthdayPayload(raw = {}) {
@@ -9627,12 +9646,9 @@
       $("calendarNoteTitle").textContent = `${date.getMonth() + 1}月${date.getDate()}日記事`;
       $("calendarNoteDateText").textContent = `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日｜農曆 ${lunar.fullLabel}${festival ? `｜${festival}` : ""}`;
       $("calendarNoteInput").value = content;
-      $("calendarNoteWebReminderTime").value = note && typeof note === "object"
-        ? String(note.web_remind_time || "")
-        : "";
-      $("calendarNoteWebReminderYearly").checked = Boolean(
-        note && typeof note === "object" && note.web_remind_yearly
-      );
+      const webReminder = noteWebReminder(note);
+      $("calendarNoteWebReminderTime").value = webReminder.time;
+      $("calendarNoteWebReminderYearly").checked = webReminder.yearly;
       $("deleteCalendarNoteBtn").disabled = !content;
       $("googleCalendarLink").href = googleCalendarUrl(dateText, content);
       $("calendarNoteModal").hidden = false;
@@ -9656,6 +9672,10 @@
         web_remind_time: String($("calendarNoteWebReminderTime").value || "").trim(),
         web_remind_yearly: Boolean($("calendarNoteWebReminderYearly").checked)
       };
+      if (contentOverride === undefined && encodeCalendarNoteContent(content, noteMeta).length > 500) {
+        alert("備忘文字加上提醒設定後最多 500 字，請稍微縮短內容");
+        return false;
+      }
       if (contentOverride === "") {
         noteMeta.birthday_name = "";
         noteMeta.web_remind_time = "";
@@ -9694,9 +9714,10 @@
       const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
       for (const [noteDate, note] of Object.entries(calendarNotes || {})) {
         if (!note || typeof note !== "object") continue;
-        const remindTime = String(note.web_remind_time || "");
+        const webReminder = noteWebReminder(note);
+        const remindTime = webReminder.time;
         if (!/^\d{2}:\d{2}$/.test(remindTime) || currentTime < remindTime) continue;
-        const yearly = Boolean(note.web_remind_yearly);
+        const yearly = webReminder.yearly;
         const dueToday = yearly ? noteDate.slice(5) === today.slice(5) : noteDate === today;
         if (!dueToday) continue;
         const occurrence = yearly ? `${now.getFullYear()}-${noteDate.slice(5)}` : noteDate;
