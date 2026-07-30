@@ -7798,6 +7798,38 @@ def is_guardian_group_admin(group, line_user_id) -> bool:
     return uid in {str(x).strip() for x in admins if str(x).strip()}
 
 
+def can_view_guardian_group_status(state, group, line_user_id) -> bool:
+    """Allow an admin or an accepted guardian in this LINE group to view status.
+
+    notify_admin_only controls names included in pushed summaries. It must not
+    block an invited guardian who actively signs in and opens the status page.
+    Mere LINE group membership is never sufficient.
+    """
+    uid = str(line_user_id or "").strip()
+    if not uid or not isinstance(group, dict):
+        return False
+    if is_guardian_group_admin(group, uid):
+        return True
+    users = (state or {}).get("users") or {}
+    if uid not in users:
+        return False
+    group_member_ids = {
+        str(value or "").strip()
+        for value in (group.get("member_ids_at_bind") or [])
+        if str(value or "").strip()
+    }
+    if uid not in group_member_ids:
+        return False
+    owner_id = str(group.get("owner_line_user_id") or "").strip()
+    owner = users.get(owner_id) or {}
+    return any(
+        get_contact_line_id(contact) == uid
+        and resolve_contact_role(contact) == "guardian"
+        and contact_is_bound_guardian(contact, owner_id)
+        for contact in (owner.get("contacts") or [])
+    )
+
+
 def grant_guardian_group_admin(group, line_user_id) -> bool:
     """把用戶寫入守護群管理員名單；必要時補 owner。回傳是否有變更。"""
     uid = str(line_user_id or "").strip()
@@ -8190,9 +8222,8 @@ def guardian_group_daily_status(data_file, line_user_id, group_id, now=None):
     group = state.get("guardian_groups", {}).get(group_id)
     if not group or group.get("status") != "active":
         return {"error": "guardian group not found"}, 404
-    prefs = normalize_guardian_group_preferences(group.get("preferences"))
-    if prefs.get("notify_admin_only", True) and not is_guardian_group_admin(group, line_user_id):
-        return {"error": "guardian group status is admin only"}, 403
+    if not can_view_guardian_group_status(state, group, line_user_id):
+        return {"error": "guardian group status forbidden"}, 403
 
     users = state.get("users", {}) or {}
     owner_id = str(group.get("owner_line_user_id") or "").strip()
@@ -8244,7 +8275,7 @@ def guardian_group_daily_status_text(data_file, line_user_id, group_id):
     if code != 200:
         messages = {
             400: "目前無法確認你的身分，請稍後再試。",
-            403: "為了保護成員隱私，今日平安名單只有守護群管理員可以查看。",
+            403: "今日平安名單只開放守護群管理員及已接受邀請的守護人查看。",
             404: "此群尚未完成守護群綁定。請由有效的 799 會員在群裡輸入「點我綁定守護群」。",
         }
         return messages.get(code, "目前無法查看守護群狀態。"), code
