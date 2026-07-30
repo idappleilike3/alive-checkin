@@ -272,7 +272,8 @@
     line-height: 1.2;
     white-space: nowrap;
   }
-  .beginner-story-copy p { color: #52645a; line-height: 1.7; font-size: 18px; }
+  .beginner-story-copy p { color: #52645a; line-height: 1.7; font-size: 18px; text-align: left; }
+  .story-copy-left { margin: 18px 20px; color: #173c2b; font-size: 19px; font-weight: 750; line-height: 1.65; text-align: left; }
   .peace-benefits {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -402,8 +403,8 @@
 </head>
 <body>
 <div class="container">
-  <section class="card beginner-story" aria-label="14 天新會員安心體驗介紹">
-    <div class="beginner-story-copy">
+  <section class="card beginner-story" aria-label="14 天新會員安心體驗介紹" data-trial-flow-version="2026-07-31-v2">
+    <div class="beginner-story-copy" data-flow-stage="meaning">
       <header class="onboarding-brand-header">
         <div class="onboarding-brand">
           <img src="/assets/daily-peace-logo.png" alt="每日平安 LOGO">
@@ -414,14 +415,15 @@
       <p><strong>每天 10 秒，換家人一夜好眠</strong></p>
       <p><strong>一個簡單的按鈕，是給在乎的人最溫柔的定心丸。</strong><br>不需反覆問候、不打擾，只讓他們知道「我今天很好」。</p>
     </div>
-    <div class="public-start-panel">
-      <h3>第一步：開啟你們的安心頻道</h3>
-      <p class="public-start-tip"><strong>加入後，你與守護人之間專屬的「安心頻道」就能開啟。</strong><br>我們只會在你設定好的時間輕聲提醒。加入後請返回這個頁面繼續設定。</p>
+    <div class="public-start-panel" data-flow-stage="line">
+      <h3>開啟你們的安心頻道</h3>
+      <p class="public-start-tip"><strong>加入後，你與守護人之間專屬的「安心頻道」就能開啟。</strong><br>我們只會在你設定好的時間輕聲提醒，絕不打擾。加入後請返回這個頁面繼續設定。</p>
       <div class="public-primary-actions">
         <a class="btn btn-secondary" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener"><span class="btn-label">傳送安心邀請 💚</span></a>
         <a class="btn btn-primary peace-trial-cta" href="https://liff.line.me/2010848330-UAiqPPYD?open=onboarding"><span class="btn-label">開始 14 天<br>安心體驗</span> <span aria-hidden="true">↗</span></a>
       </div>
     </div>
+    <p class="story-copy-left">媽媽按一下「我平安」，女兒收到通知，就能放心。平常不打擾，真的有事才通知核心守護人。</p>
     <img src="/assets/guardian-story-mother-daughter-mobile.webp" alt="媽媽每日報平安，女兒透過 LINE 收到通知的母女圖文故事">
     <div class="peace-benefits" aria-label="安心體驗功能">
       <div class="peace-benefit"><span aria-hidden="true">⏰</span><strong>每日提醒</strong></div>
@@ -430,10 +432,10 @@
     </div>
     <h3 class="joined-steps-title">已加入，請完成以下四個步驟：</h3>
     <div class="peace-steps" aria-label="安心體驗四步驟">
-      <div class="peace-step"><strong>① 讓守護人認出你</strong><br>請寫下你希望被稱呼的名字。送出邀請後，再由對方確認「他／她是你的誰？」<br><small>緊急聯絡電話可先留空，之後隨時補上。這是為「萬一」準備的安心繩索。</small></div>
-      <div class="peace-step"><strong>② 約定每天的想念時刻</strong><br>選一個你方便的時間，讓平安問候準時抵達。</div>
-      <div class="peace-step"><strong>③ 向在乎的人，發出第一道守護之光</strong><br>產生你的專屬安心邀請，再選擇 LINE 好友分享。<br><small>不會自動互相綁定；這次邀請只代表「對方守護你」。</small></div>
-      <div class="peace-step"><strong>④ ✨ 連結完成，守護正式開始</strong><br>對方完成加入 LINE、填寫資料並接受邀請後，安心連結才會建立。</div>
+      <div class="peace-step" data-flow-stage="profile"><strong>① 讓守護人認出你</strong><br>請寫下你希望被稱呼的名字。關係欄位會清楚詢問：「他／她是你的誰？」<br><small>緊急聯絡電話可先留空，之後隨時補上。這是為「萬一」準備的安心繩索。</small></div>
+      <div class="peace-step" data-flow-stage="reminder"><strong>② 約定每天的想念時刻</strong><br>選一個你方便的時間，讓你的平安問候準時抵達。這不是鬧鐘，是你和在乎的人之間，無聲的約定。</div>
+      <div class="peace-step" data-flow-stage="invite"><strong>③ 向在乎的人，發出第一道守護之光</strong><br>送出邀請時，你是在把對彼此的在乎，化成每天都能收到的平安。<br><small>邀請他／她守護你 💌<br>系統會先產生專屬連結，再讓你選擇 LINE 好友分享。不會自動互相綁定；這次邀請只代表「對方守護你」。</small></div>
+      <div class="peace-step" data-flow-stage="complete"><strong>④ ✨ 連結完成，守護正式開始</strong><br>對方完成加入 LINE、填寫資料並接受邀請後，安心連結才會建立。從這一刻起，你的平安，成了他／她心上最輕也最踏實的牽掛。<br><small>明天開始，你會在約定時間收到提醒，只需一鍵，就能讓愛流動。完成後可把頁面加入手機主畫面，讓「每日平安」成為每天的安心習慣。</small></div>
     </div>
   </section>
   <div id="loading" class="card loading">
