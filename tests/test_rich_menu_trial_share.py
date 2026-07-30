@@ -22,6 +22,19 @@ class RichMenuTrialShareTests(unittest.TestCase):
         )
         self.assertNotIn("share-invite", invite["uri"])
 
+    def test_trial_share_uses_cached_liff_identity_without_profile_round_trip(self):
+        page = (ROOT / "liff" / "share-trial.html").read_text(encoding="utf-8")
+
+        self.assertIn("liff.getDecodedIDToken()", page)
+        self.assertIn("decoded.sub", page)
+        self.assertNotIn("await liff.getProfile()", page)
+
+    def test_trial_share_only_reveals_web_fallback_when_native_picker_cannot_open(self):
+        page = (ROOT / "liff" / "share-trial.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="shareFallback" hidden', page)
+        self.assertIn("shareFallback.hidden = false", page)
+
     def test_trial_share_page_does_not_create_guardian_invite(self):
         page = (ROOT / "liff" / "share-trial.html").read_text(encoding="utf-8")
 
