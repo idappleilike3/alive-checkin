@@ -3,15 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <script>
-    // Keep previously published LINE rich menus fast while they still use ?open=sos.
-    (() => {
-      const params = new URLSearchParams(location.search);
-      if (params.get("open") === "sos" || params.get("page") === "sos") {
-        location.replace("/liff/sos.html");
-      }
-    })();
-  </script>
   <title>每日平安｜LINE 平安簽到與家人守護</title>
   <meta name="description" content="每日平安提供 LINE 平安簽到、守護人提醒、SOS 求助與安全守護，讓獨居、長輩與在外家人每天多一份安心。">
   <meta name="robots" content="index,follow,max-image-preview:large">
@@ -4020,6 +4011,7 @@
         <p>請只按下方這一個大按鈕，連按 3 次就會通知家人</p>
         <p class="sos-disclaimer">有立即危險請先撥打 119 或 110（本服務不是報警系統）</p>
         <div class="sos-plan-status" id="sosPlanStatus">正在確認通知家人狀態</div>
+        <p class="sos-feedback" id="sosLocationStatus" aria-live="polite">📍 正在取得當下位置…</p>
         <p id="sosModalMessage">連按 3 次後，會通知家人，並附上可分享的位置</p>
         <div id="sosGuardianTargets" class="guardian-targets" aria-label="SOS 核心守護人選擇"></div>
         <button class="sos-hold-button" id="sosHoldButton" type="button" disabled>
@@ -10183,6 +10175,24 @@
       return Promise.race([sosLocationPromise, sosLocationDeadlinePromise]);
     }
 
+    function renderSosCurrentLocation(locationMeta) {
+      const host = $("sosLocationStatus");
+      if (!host) return;
+      host.replaceChildren();
+      if (!locationMeta || !locationMeta.ok) {
+        host.textContent = "📍 暫時無法取得當下位置；仍可連按 3 次通知家人";
+        return;
+      }
+      const city = String(locationMeta.city || "目前位置");
+      host.append(document.createTextNode(`📍 當下定位：${city}　`));
+      const mapLink = document.createElement("a");
+      mapLink.href = `https://www.google.com/maps?q=${locationMeta.latitude},${locationMeta.longitude}`;
+      mapLink.target = "_blank";
+      mapLink.rel = "noopener noreferrer";
+      mapLink.textContent = "查看地圖";
+      host.append(mapLink);
+    }
+
     function hasActiveSosAccess() {
       // SOS 不依方案／價格分級：登入後即可用（後端另有每日上限／冷卻）
       if (currentStatusData && currentStatusData.guardian_required === true) return false;
@@ -10240,6 +10250,11 @@
       $("sosConfirmModal").hidden = false;
       $("sosFeedback").textContent = "";
       $("sosCancelSentBtn").hidden = true;
+      const locationStatus = $("sosLocationStatus");
+      if (locationStatus) locationStatus.textContent = "📍 正在取得當下位置…";
+      sosLocationPromise = null;
+      sosLocationDeadlinePromise = null;
+      startSosLocationLookup().then(renderSosCurrentLocation);
       renderSosGuardianTargetPicker();
       renderSosAccess();
     }
