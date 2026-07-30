@@ -574,7 +574,8 @@
         beginInternalWait("正在產生你的專屬邀請連結，請稍候…");
 
         if (!liff.isLoggedIn()) {
-          finishInternalWait("請按綠色按鈕，用 LINE 登入並選擇好友分享。");
+          beginInternalWait("正在開啟 LINE 登入，請稍候…");
+          liff.login({ redirectUri: buildSafeRedirectUri() });
           return;
         }
 
@@ -620,7 +621,8 @@
         }
 
         ready = true;
-        finishInternalWait("專屬邀請連結已準備完成，請按綠色按鈕選擇 LINE 好友。");
+        finishInternalWait("專屬邀請連結已準備完成，正在開啟 LINE 好友選擇…");
+        await openShare();
       } catch (_) {
         finishInternalWait("請按綠色按鈕，改用 LINE 開啟分享。");
       }
