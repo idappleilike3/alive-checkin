@@ -49,7 +49,8 @@ class BetaShareFeedbackTests(unittest.TestCase):
         self.assertIn("每天 19:00", page)
         self.assertIn("截圖、發生時間、操作步驟、手機型號與 LINE 版本", page)
         self.assertIn("家庭 LINE 群組", page)
-        self.assertIn("我已閱讀並同意封測規則", page)
+        self.assertIn("我已加入官方LINE，繼續登入設定", page)
+        self.assertIn("beta799Task.hidden = !is799", page)
         self.assertIn("join.disabled = !consent.checked", page)
 
     def test_trial_and_guardian_entries_include_beginner_story(self):
