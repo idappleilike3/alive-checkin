@@ -21,3 +21,9 @@ test("SOS request sends only the selected guardian ids", () => {
     /\.\.\.sosPayload,\s*guardian_line_user_ids:\s*sosPayload\.guardian_line_user_ids/,
   );
 });
+
+test("original SOS modal displays the current location before sending", () => {
+  assert.match(page, /id="sosLocationStatus"/);
+  assert.match(page, /function renderSosCurrentLocation/);
+  assert.match(page, /startSosLocationLookup\(\)\.then\(renderSosCurrentLocation\)/);
+});
