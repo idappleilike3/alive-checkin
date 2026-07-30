@@ -32,7 +32,8 @@ class BrandLogoPagesTests(unittest.TestCase):
         self.assertIn("每日平安限定招募", page)
         self.assertIn('"B399"', page)
         self.assertIn('"B799"', page)
-        self.assertIn("21天安心守護體驗", page)
+        self.assertIn("個人安心練習｜21天體驗", page)
+        self.assertIn("家庭守護練習｜21天體驗", page)
         self.assertNotIn("399 年費安心版｜21 天封測", page)
         self.assertNotIn("799 年費守護版｜21 天封測", page)
 
