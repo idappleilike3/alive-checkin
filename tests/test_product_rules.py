@@ -584,7 +584,12 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn(f"{base}?open=help", rich_menu)
         self.assertNotIn(f"{base}?open=pricing", rich_menu)
         self.assertNotIn(f"{base}/?open=pricing", rich_menu)
-        self.assertIn(f"{base}?open=guard", rich_menu)
+        # 安全守護直接進正式網頁的 guard 路由，省略 liff.line.me 的中轉。
+        self.assertIn(
+            "https://alive-checkin.onrender.com/?open=guard",
+            rich_menu,
+        )
+        self.assertNotIn(f"{base}?open=guard", rich_menu)
         self.assertIn('url += "?" + urlencode(params, safe="/")', flex)
         self.assertNotIn('url += "/?" + urlencode(params, safe="/")', flex)
         self.assertIn("line_native_share_url", flex)

@@ -29,7 +29,7 @@
     },
     {
       "bounds": { "x": 1667, "y": 843, "width": 833, "height": 843 },
-      "action": { "type": "uri", "label": "安全守護", "uri": "https://liff.line.me/2010848330-UAiqPPYD?open=guard" }
+      "action": { "type": "uri", "label": "安全守護", "uri": "https://alive-checkin.onrender.com/?open=guard" }
     }
   ]
 }
