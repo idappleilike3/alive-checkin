@@ -1377,6 +1377,8 @@
       const message = $(`plan-status-${lineUserId}`) || $("message");
       message.setAttribute("role", "status");
       selectElement.disabled = true;
+      message.style.color = "#1e3a8a";
+      message.style.fontWeight = "800";
       message.textContent = "方案更新中，請稍候…";
       try {
         const res = await adminFetch("/api/admin/user-plan", {
@@ -1390,14 +1392,20 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "方案更新失敗");
+        delete selectElement.dataset.dirty;
         await refresh();
         const refreshedMessage = $(`plan-status-${lineUserId}`) || $("message");
+        refreshedMessage.style.color = "#166534";
+        refreshedMessage.style.fontWeight = "900";
         refreshedMessage.textContent =
           `✓ 方案已更新成功：${data.display_name || lineUserId} → ${membershipModeLabels[plan] || planLabel(plan)}。` +
           `守護人 ${data.preserved_contacts ?? (data.contacts || []).length} 位、` +
           `好友 ${data.preserved_friends ?? (data.friends || []).length} 位已保留。`;
       } catch (error) {
         selectElement.value = previousPlan;
+        delete selectElement.dataset.dirty;
+        message.style.color = "#991b1b";
+        message.style.fontWeight = "900";
         message.textContent = `✗ 方案更新失敗：${error.message || "請稍後再試"}`;
       } finally {
         selectElement.disabled = false;
@@ -1731,12 +1739,12 @@
             <td><strong>${escapeHtml(user.last_checkin_area || "未提供")}</strong></td>
             <td>
               ${membershipCell(user)}
-              <select id="plan-select-${user.line_user_id}" class="plan-select" data-saved-plan="${membershipMode(user)}" style="margin-top:6px;">
+              <select id="plan-select-${user.line_user_id}" class="plan-select" data-line-user-id="${escapeHtml(user.line_user_id)}" data-saved-plan="${membershipMode(user)}" style="margin-top:6px;">
                 ${["trial", "free", "beta_A", "beta_B399", "beta_B799", "paid_199", "paid_199_year", "paid_399", "paid_399_year", "paid_799", "paid_799_year"].map((plan) =>
                   `<option value="${plan}" ${membershipMode(user) === plan ? "selected" : ""}>${membershipModeLabels[plan] || planLabel(plan)}</option>`
                 ).join("")}
               </select>
-              <button type="button" class="plan-save-button" style="margin-top:6px;" onclick="savePlanForMember('${user.line_user_id}')">儲存方案</button>
+              <button type="button" class="plan-save-button" data-action="save-plan" data-line-user-id="${escapeHtml(user.line_user_id)}" style="margin-top:6px;">儲存方案</button>
               <small id="plan-status-${user.line_user_id}" role="status" aria-live="polite" style="display:block;margin-top:6px;"></small>
             </td>
             <td><span class="badge ${user.payment_status === "active" ? "ok" : user.payment_status === "expired" ? "bad" : "warn"}">${paymentLabel(user.payment_status)}</span></td>
@@ -2080,9 +2088,21 @@
     $("birthdayRemindBtn").addEventListener("click", sendBirthdayReminders);
     $("createBackupBtn").addEventListener("click", createBackup);
     $("richMenuDeployBtn").addEventListener("click", deployRichMenu);
+    $("usersBody").addEventListener("change", (event) => {
+      const selectElement = event.target.closest(".plan-select");
+      if (!selectElement) return;
+      selectElement.dataset.dirty = selectElement.value === selectElement.dataset.savedPlan ? "" : "true";
+      if (!selectElement.dataset.dirty) delete selectElement.dataset.dirty;
+    });
+    $("usersBody").addEventListener("click", (event) => {
+      const button = event.target.closest('[data-action="save-plan"]');
+      if (!button) return;
+      savePlanForMember(button.dataset.lineUserId);
+    });
     let autoRefreshAdminBusy = false;
     async function autoRefreshAdmin() {
-      if (document.visibilityState !== "visible" || $("adminShell").hidden || autoRefreshAdminBusy) return;
+      const hasUnsavedPlan = document.querySelector('.plan-select[data-dirty="true"]');
+      if (document.visibilityState !== "visible" || $("adminShell").hidden || autoRefreshAdminBusy || hasUnsavedPlan) return;
       autoRefreshAdminBusy = true;
       try {
         await refresh();

@@ -15,11 +15,13 @@ function response({ok = true, status = 200, data = {}} = {}) {
 function createHarness(fetchImpl) {
   const elements = new Map();
   const scheduled = [];
+  const intervals = [];
+  let querySelectorResult = null;
   const ids = [
     "adminShell", "loginPanel", "loginStatus", "adminLoginForm", "loginBtn",
     "adminPassword", "logoutBtn", "refreshBtn", "contactRemindBtn", "remindBtn",
     "renewalRemindBtn", "birthdayRemindBtn", "createBackupBtn", "richMenuDeployBtn",
-    "authStatus", "message", "migrationConfigured", "migrationTotals",
+    "authStatus", "message", "usersBody", "migrationConfigured", "migrationTotals",
     "migrationLastAttempt", "migrationFailure", "migrationCounts"
   ];
   for (const id of ids) {
@@ -48,12 +50,12 @@ function createHarness(fetchImpl) {
     console,
     document: {
       getElementById: (id) => elements.get(id),
-      querySelector: () => null,
+      querySelector: () => querySelectorResult,
       visibilityState: "hidden",
       createElement: () => ({click() {}})
     },
     fetch: fetchImpl,
-    setInterval() {},
+    setInterval(callback) { intervals.push(callback); return intervals.length; },
     setTimeout(callback) { scheduled.push(callback); return scheduled.length; }
   };
   let source = script;
@@ -64,8 +66,29 @@ function createHarness(fetchImpl) {
     );
   }
   vm.runInNewContext(source, context, {filename: "admin.html"});
-  return {context, elements, scheduled};
+  return {
+    context,
+    elements,
+    scheduled,
+    intervals,
+    setQuerySelectorResult(value) { querySelectorResult = value; }
+  };
 }
+
+test("admin auto refresh pauses while a member plan selection is unsaved", async () => {
+  let fetchCalls = 0;
+  const harness = createHarness(() => {
+    fetchCalls += 1;
+    throw new Error("refresh must not run while a plan selection is unsaved");
+  });
+  harness.elements.get("adminShell").hidden = false;
+  harness.context.document.visibilityState = "visible";
+  harness.setQuerySelectorResult({dataset: {dirty: "true"}});
+
+  await harness.intervals.at(-1)();
+
+  assert.equal(fetchCalls, 0);
+});
 
 test("stale session restore cannot hide dashboard after successful login", async () => {
   let resolveSession;

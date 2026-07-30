@@ -50,7 +50,9 @@ test("member rows use an explicit selector id instead of onchange-only saving", 
 test("every member plan selector has an explicit save button and row-level status", () => {
   assert.match(html, /class="plan-save-button"/);
   assert.match(html, />儲存方案<\/button>/);
-  assert.match(html, /savePlanForMember\('[^']*'\)/);
+  assert.match(html, /data-action="save-plan"/);
+  assert.doesNotMatch(html, /onclick="savePlanForMember\(/);
+  assert.match(html, /usersBody.*addEventListener\("click"/s);
   assert.match(html, /id="plan-status-[^"]*"/);
 });
 
