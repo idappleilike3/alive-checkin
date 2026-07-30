@@ -87,7 +87,7 @@ class BotKeywordHandlerTests(unittest.TestCase):
         ]
         self.assertEqual(
             labels,
-            ["免費體驗 14 天", "了解每日平安"],
+            ["開始免費體驗 14 天", "了解每日平安"],
         )
         headline = next(
             item
@@ -113,7 +113,7 @@ class BotKeywordHandlerTests(unittest.TestCase):
             for item in asset["contents"]["footer"]["contents"]
             if item.get("type") == "button"
         ]
-        self.assertEqual(labels, ["免費體驗 14 天", "了解每日平安"])
+        self.assertEqual(labels, ["開始免費體驗 14 天", "了解每日平安"])
         headline = next(
             item
             for item in asset["contents"]["body"]["contents"][0]["contents"]

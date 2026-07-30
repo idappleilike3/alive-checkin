@@ -4651,9 +4651,10 @@
           </article>
         </div>
 
-        <div class="member-data-section" aria-label="分享每日平安給朋友">
-          <h3>分享給朋友體驗</h3>
-          <p class="helper">這只是分享「14 天免費體驗」，不會把朋友綁定成你的核心守護人。</p>
+        <div class="member-data-section" id="memberTrialShareSection" aria-label="分享每日平安給朋友">
+          <h3 id="memberTrialShareTitle">完成設定後即可分享</h3>
+          <p class="helper" id="memberTrialShareHelp">請先填寫自己的資料，並成功綁定至少 1 位核心守護人。</p>
+          <button class="action-btn primary" id="memberCompleteSetupBtn" type="button" onclick="showOnboarding()">繼續完成我的體驗設定</button>
           <button class="action-btn primary" id="memberShareTrialBtn" type="button">分享 14 天免費體驗給朋友</button>
         </div>
 
@@ -7414,6 +7415,28 @@
       const realCore = guardians.filter((c) => isContactBound(c) && c.is_primary).length;
       const shownCore = realCore > 0 ? realCore : (boundCount > 0 ? Math.min(1, boundCount) : 0);
       const shownGeneral = Math.max(0, boundCount - shownCore);
+      const canShareTrial = Boolean(status.is_onboarding_completed) && boundCount > 0;
+      const memberShareTrialBtn = $("memberShareTrialBtn");
+      const memberCompleteSetupBtn = $("memberCompleteSetupBtn");
+      const memberTrialShareTitle = $("memberTrialShareTitle");
+      const memberTrialShareHelp = $("memberTrialShareHelp");
+      if (memberShareTrialBtn) memberShareTrialBtn.hidden = !canShareTrial;
+      if (memberCompleteSetupBtn) {
+        memberCompleteSetupBtn.hidden = canShareTrial;
+        memberCompleteSetupBtn.textContent = status.onboarding_reminder_configured
+          ? "邀請我的核心守護人"
+          : "繼續完成我的體驗設定";
+      }
+      if (memberTrialShareTitle) {
+        memberTrialShareTitle.textContent = canShareTrial
+          ? "分享給朋友體驗"
+          : "先完成我的設定";
+      }
+      if (memberTrialShareHelp) {
+        memberTrialShareHelp.textContent = canShareTrial
+          ? "這只是分享「14 天免費體驗」，不會把朋友綁定成你的核心守護人。"
+          : "完成自己的資料並成功綁定至少 1 位核心守護人後，才會開放分享朋友體驗。";
+      }
       $("memberDisplayName").textContent = displayName;
       $("memberAvatar").textContent = displayName.trim().slice(0, 1) || "我";
       $("memberPlanText").textContent = planLabel(memberPlan);
