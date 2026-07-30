@@ -468,6 +468,15 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertIn("進入「每日平安」網頁時提醒一次", page)
         self.assertIn("checkDueWebCalendarNotes", page)
 
+    def test_saved_web_reminders_have_an_explicit_edit_entry(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="calendarNoteReminderList"', page)
+        self.assertIn("calendar-note-edit-btn", page)
+        self.assertIn("修改記事與提醒", page)
+        self.assertIn('openCalendarNote(button.dataset.date)', page)
+        self.assertIn("每年重複", page)
+
     def test_line_reminder_uses_selected_calendar_date_without_duplicate_date_picker(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
 
