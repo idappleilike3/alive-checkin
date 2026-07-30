@@ -235,7 +235,7 @@ class SmartReminderTests(unittest.TestCase):
         self.assertTrue(ok["reminder"]["notify_private"])
         self.assertFalse(ok["reminder"]["notify_group"])
 
-    def test_beta_799_cannot_use_formal_smart_reminders(self):
+    def test_active_beta_799_can_use_799_smart_reminders(self):
         state = app.load_state(self.data_file)
         profile = app.get_profile(state, "U-beta-799")
         profile.update({
@@ -259,8 +259,9 @@ class SmartReminderTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(code, 403)
-        self.assertEqual(result["error"], "smart_reminders_require_799")
+        self.assertEqual(code, 200)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["reminder"]["target_name"], "媽媽")
 
     def test_expired_799_cannot_use_smart_reminders(self):
         state = app.load_state(self.data_file)

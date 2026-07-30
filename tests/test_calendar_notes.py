@@ -445,6 +445,26 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertIn("birthday-reminders", (ROOT / "app.py").read_text(encoding="utf-8"))
         self.assertIn("body.neon .day-cell.festival .day-number", page)
 
+    def test_calendar_note_modal_links_text_notes_and_line_reminders_in_one_place(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("純文字備忘只儲存，不會推播 LINE", page)
+        self.assertIn("生日、吃藥、回診等提醒才會推播", page)
+        self.assertIn("每天最多 2 則", page)
+        self.assertIn('id="calendarNoteReminderBtn"', page)
+        self.assertIn("設定 LINE 提醒", page)
+        self.assertIn("openSmartReminderEditorForCalendarDate", page)
+
+    def test_smart_reminder_editor_requires_full_date_time_and_supports_editing(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("完整日期（西元年／月／日）", page)
+        self.assertIn('id="smartReminderDate" type="date" required', page)
+        self.assertIn('id="smartReminderTime" type="time" value="09:00" required', page)
+        self.assertIn("生日／紀念日可選每年重複；吃藥、回診等預設單次提醒", page)
+        self.assertIn('class="action-btn smart-edit-btn"', page)
+        self.assertIn(">修改<", page)
+
 
 if __name__ == "__main__":
     unittest.main()

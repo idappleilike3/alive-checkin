@@ -5021,7 +5021,12 @@
       <div class="calendar-note-date" id="calendarNoteDateText"></div>
       <label for="calendarNoteInput">今天想記下什麼？</label>
       <textarea id="calendarNoteInput" maxlength="500" placeholder="例如：回診、領藥、和家人吃飯"></textarea>
-      <div class="helper" style="margin-top:6px;">記事會保存在你的會員資料中，最多 500 字。</div>
+      <div class="helper" style="margin-top:6px;"><strong>純文字備忘只儲存，不會推播 LINE。</strong>記事會保存在你的會員資料中，最多 500 字。</div>
+      <div class="member-limit-banner" style="margin-top:12px;text-align:left;">
+        <strong>需要 LINE 通知嗎？</strong>
+        <p>生日、吃藥、回診等提醒才會推播；請設定完整年月日與時間。通知自己每天最多 2 則。</p>
+        <button class="action-btn primary" id="calendarNoteReminderBtn" type="button">設定 LINE 提醒</button>
+      </div>
       <fieldset class="birthday-fields">
         <legend>家人生日提醒</legend>
         <label for="birthdayNameInput">家人姓名
@@ -5074,7 +5079,8 @@
   <div class="modal-backdrop" id="smartReminderEditorModal" hidden>
     <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="smartReminderEditorTitle">
       <h2 id="smartReminderEditorTitle">新增日期提醒</h2>
-      <p class="helper">選擇類型、日期與提醒時間。預設只通知自己，也可指定一位已綁定核心守護人；不會送到守護群。</p>
+      <p class="helper">生日、吃藥、回診等提醒才會推播。請選擇完整日期與提醒時間；預設只通知自己，不會送到守護群。</p>
+      <p class="helper">生日／紀念日可選每年重複；吃藥、回診等預設單次提醒。通知自己每天最多 2 則。</p>
       <p class="helper" id="smartReminderDailyUsage">今日日期提醒已使用 0／2 則</p>
       <div class="smart-editor-fields">
         <label for="smartReminderName">對象名稱
@@ -5086,15 +5092,15 @@
         <label for="smartReminderCustomTitle" id="smartReminderCustomTitleWrap" hidden>自訂標題
           <input id="smartReminderCustomTitle" type="text" maxlength="40" placeholder="例如：結婚週年">
         </label>
-        <label for="smartReminderDate">日期
-          <input id="smartReminderDate" type="date">
+        <label for="smartReminderDate">完整日期（西元年／月／日）
+          <input id="smartReminderDate" type="date" required>
         </label>
         <label class="checkbox-line" for="smartReminderYearly" style="display:flex;align-items:center;gap:8px;font-weight:750;">
           <input id="smartReminderYearly" type="checkbox" checked>
           <span>每年重複（生日／紀念日）</span>
         </label>
-        <label for="smartReminderTime">提醒時間
-          <input id="smartReminderTime" type="time" value="09:00">
+        <label for="smartReminderTime">提醒時間（幾點幾分）
+          <input id="smartReminderTime" type="time" value="09:00" required>
         </label>
         <label for="smartReminderDeliveryTarget">通知對象
           <select id="smartReminderDeliveryTarget">
@@ -6913,7 +6919,7 @@
               </div>
               <div class="member-guardian-manage-actions">
                 <button class="action-btn smart-toggle-btn" type="button" data-id="${escapeHtml(r.id)}" data-enabled="${r.enabled === false ? "false" : "true"}">${r.enabled === false ? "啟用" : "停用"}</button>
-                <button class="action-btn smart-edit-btn" type="button" data-id="${escapeHtml(r.id)}">編輯</button>
+                <button class="action-btn smart-edit-btn" type="button" data-id="${escapeHtml(r.id)}">修改</button>
                 <button class="action-btn danger-action smart-delete-btn" type="button" data-id="${escapeHtml(r.id)}">刪除</button>
               </div>
             </div>`).join("")
@@ -6962,7 +6968,11 @@
       wrap.hidden = select.value !== "custom";
     }
 
-    function openSmartReminderEditor(id) {
+    function smartReminderCategoryRepeatsYearly(category) {
+      return ["birthday", "wedding", "dating", "child_birthday", "elder_birthday", "special"].includes(category);
+    }
+
+    function openSmartReminderEditor(id, presetDate = "") {
       const existing = (smartReminderCache.reminders || []).find((r) => r.id === id) || null;
       smartReminderEditingId = existing ? existing.id : null;
       const modal = $("smartReminderEditorModal");
@@ -6992,17 +7002,28 @@
       const yearly = $("smartReminderYearly");
       if (yearly) {
         const isYearly = !(existing && existing.year);
-        yearly.checked = existing ? isYearly : true;
+        yearly.checked = existing ? isYearly : smartReminderCategoryRepeatsYearly("birthday");
       }
       const dateEl = $("smartReminderDate");
       if (dateEl) {
         const now = new Date();
-        const y = existing && existing.year ? existing.year : now.getFullYear();
-        const m = existing ? Number(existing.month || 1) : (now.getMonth() + 1);
-        const d = existing ? Number(existing.day || 1) : now.getDate();
-        dateEl.value = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        const validPreset = /^\d{4}-\d{2}-\d{2}$/.test(presetDate) ? presetDate : "";
+        if (validPreset && !existing) {
+          dateEl.value = validPreset;
+        } else {
+          const y = existing && existing.year ? existing.year : now.getFullYear();
+          const m = existing ? Number(existing.month || 1) : (now.getMonth() + 1);
+          const d = existing ? Number(existing.day || 1) : now.getDate();
+          dateEl.value = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        }
       }
       if (modal) modal.hidden = false;
+    }
+
+    function openSmartReminderEditorForCalendarDate() {
+      const presetDate = selectedCalendarDate || getToday();
+      closeCalendarNote();
+      openSmartReminderEditor(null, presetDate);
     }
 
     function closeSmartReminderEditor() {
@@ -12119,7 +12140,12 @@
     if (memberSupportForm) memberSupportForm.addEventListener("submit", submitMemberSupportTicket);
     const smartReminderCategory = $("smartReminderCategory");
     if (smartReminderCategory) {
-      smartReminderCategory.addEventListener("change", syncSmartReminderCustomTitleVisibility);
+      smartReminderCategory.addEventListener("change", () => {
+        syncSmartReminderCustomTitleVisibility();
+        if (!smartReminderEditingId && $("smartReminderYearly")) {
+          $("smartReminderYearly").checked = smartReminderCategoryRepeatsYearly(smartReminderCategory.value);
+        }
+      });
     }
     const smartReminderCancelBtn = $("smartReminderCancelBtn");
     if (smartReminderCancelBtn) smartReminderCancelBtn.addEventListener("click", closeSmartReminderEditor);
@@ -12164,6 +12190,7 @@
       if (dayButton) openCalendarNote(dayButton.dataset.date);
     });
     $("closeCalendarNoteBtn").addEventListener("click", closeCalendarNote);
+    $("calendarNoteReminderBtn")?.addEventListener("click", openSmartReminderEditorForCalendarDate);
     $("saveCalendarNoteBtn").addEventListener("click", () => saveSelectedCalendarNote());
     $("deleteCalendarNoteBtn").addEventListener("click", () => saveSelectedCalendarNote(""));
     $("calendarNoteInput").addEventListener("input", () => {
