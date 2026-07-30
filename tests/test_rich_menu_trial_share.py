@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RichMenuTrialShareTests(unittest.TestCase):
-    def test_rich_menu_uses_dedicated_trial_share_entry(self):
+    def test_rich_menu_uses_dedicated_guardian_share_entry(self):
         menu = json.loads((ROOT / "line-rich-menu-config.json").read_text(encoding="utf-8"))
         invite = next(
             area["action"]
@@ -18,9 +18,9 @@ class RichMenuTrialShareTests(unittest.TestCase):
         self.assertEqual(invite["type"], "uri")
         self.assertEqual(
             invite["uri"],
-            "https://alive-checkin.onrender.com/liff/share-trial.html",
+            "https://liff.line.me/2010848330-UAiqPPYD?open=share-invite",
         )
-        self.assertNotIn("share-invite", invite["uri"])
+        self.assertIn("share-invite", invite["uri"])
 
     def test_trial_share_uses_cached_liff_identity_without_profile_round_trip(self):
         page = (ROOT / "liff" / "share-trial.html").read_text(encoding="utf-8")
