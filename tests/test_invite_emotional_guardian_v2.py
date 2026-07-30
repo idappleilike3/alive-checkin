@@ -74,6 +74,19 @@ class InviteEmotionalGuardianV2Tests(unittest.TestCase):
             html,
         )
 
+    def test_shared_entry_pages_show_immediate_waiting_feedback(self):
+        invite = page()
+        trial = (ROOT / "trial-14.html").read_text(encoding="utf-8")
+        self.assertIn('id="entryLoading"', invite)
+        self.assertIn("正在載入你的專屬守護邀請", invite)
+        self.assertIn("LINE 開啟可能需要 5–10 秒，請不要關閉頁面", invite)
+        self.assertIn('id="entryLoading"', trial)
+        self.assertIn("正在準備 14 天安心體驗", trial)
+        self.assertIn("LINE 開啟可能需要 5–10 秒，請不要關閉頁面", trial)
+        for html in (invite, trial):
+            self.assertIn("entry-loading-spinner", html)
+            self.assertIn('document.getElementById("entryLoading")', html)
+
 
 if __name__ == "__main__":
     unittest.main()
