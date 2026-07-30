@@ -53,7 +53,7 @@
   <main>
     <section class="card">
       <div class="eyebrow"><img class="brand-logo" src="/assets/daily-peace-logo.png" alt="">每日平安限定招募</div>
-      <h1 id="title">21天安心守護體驗</h1>
+      <h1 id="title">個人安心練習｜21天體驗</h1>
       <p class="lead">每天10秒，讓家人知道你平安。先加入官方LINE，再依照四個步驟完成設定</p>
       <h2 class="story-title">每天 10 秒，讓家人知道你平安</h2>
       <p class="story-copy">媽媽按一下「我平安」，女兒收到通知，就能放心。平常不打擾，真的有事才通知核心守護人。</p>
@@ -114,7 +114,7 @@
         <details><summary>21 天體驗會收費嗎？</summary><p>不會。這次是限額安心守護體驗，不需要刷卡。</p></details>
         <details><summary>體驗結束會自動扣款嗎？</summary><p>不會自動扣款。體驗結束後，你可以自行決定是否查看與選擇正式方案。</p></details>
         <details><summary>守護人也要付費嗎？</summary><p>不用。受邀的守護人可免費接受綁定與接收守護通知。</p></details>
-        <details><summary>兩個體驗頁有什麼不同？</summary><p>操作流程相同，差別只有本次開放測試的守護人數、守護群組、私訊預警次數與安全守護時數。</p></details>
+        <details><summary>三個方案有什麼不同？</summary><p>199、399、799 主要差在核心守護人數、私訊預警次數、安全守護時數與守護群組功能。199 適合個人基礎報平安；399 適合需要更多守護人與較長安全守護的使用者；799 適合家庭多人與 LINE 守護群共同守護。詳細內容可點頁面最下方「查看方案」。</p></details>
         <details><summary>為什麼要先加入官方LINE？</summary><p>因為報平安通知與守護人綁定，都是透過LINE發送，加入後才能完整體驗。</p></details>
         <details>
           <summary>封測期間需要做什麼？</summary>
@@ -132,8 +132,11 @@
     const continueRegistration = document.getElementById("continueRegistration");
     const join = continueRegistration;
     const consent = document.getElementById("consent");
-    document.getElementById("title").textContent = "21天安心守護體驗";
-    document.getElementById("title").dataset.fullTitle = "21天安心守護體驗";
+    const practiceTitle =
+      is799 ? "家庭守護練習｜21天體驗" : "個人安心練習｜21天體驗";
+    document.getElementById("title").textContent = practiceTitle;
+    document.getElementById("title").dataset.fullTitle = practiceTitle;
+    document.title = `每日平安｜${practiceTitle}`;
     document.getElementById("title").dataset.planLabel =
       is799 ? "799 守護版年費" : "399 安心版年費";
     document.getElementById("title").dataset.planCode = yearlyPlanCode;
