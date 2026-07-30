@@ -42,3 +42,12 @@ test("every member plan selector has an explicit save button and row-level statu
   assert.match(html, /savePlanForMember\('[^']*'\)/);
   assert.match(html, /id="plan-status-[^"]*"/);
 });
+
+test("member plan selector can explicitly choose every 21-day beta cohort", () => {
+  assert.match(html, /"beta_A"/);
+  assert.match(html, /"beta_B399"/);
+  assert.match(html, /"beta_B799"/);
+  assert.match(html, /21 天封測 A｜799 年費權益/);
+  assert.match(html, /21 天封測 B399｜399 年費權益/);
+  assert.match(html, /21 天封測 B799｜799 年費權益/);
+});
