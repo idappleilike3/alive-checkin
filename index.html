@@ -5027,46 +5027,6 @@
         <p>生日、吃藥、回診等提醒才會推播；請設定完整年月日與時間。通知自己每天最多 2 則。</p>
         <button class="action-btn primary" id="calendarNoteReminderBtn" type="button">設定 LINE 提醒</button>
       </div>
-      <fieldset class="birthday-fields">
-        <legend>家人生日提醒</legend>
-        <label for="birthdayNameInput">家人姓名
-          <input id="birthdayNameInput" maxlength="40" placeholder="例如：爸爸、媽媽、小明">
-        </label>
-        <label for="birthdayRelationInput">關係
-          <select id="birthdayRelationInput">
-            <option value="">不設定</option>
-            <option value="爸爸">爸爸</option>
-            <option value="媽媽">媽媽</option>
-            <option value="爺爺">爺爺</option>
-            <option value="奶奶">奶奶</option>
-            <option value="阿公">阿公</option>
-            <option value="阿嬤">阿嬤</option>
-            <option value="老公">老公</option>
-            <option value="老婆">老婆</option>
-            <option value="兒子">兒子</option>
-            <option value="女兒">女兒</option>
-            <option value="媳婦">媳婦</option>
-            <option value="女婿">女婿</option>
-            <option value="家人">家人</option>
-            <option value="朋友">朋友</option>
-          </select>
-        </label>
-        <label for="birthdayDateInput">生日日期
-          <input id="birthdayDateInput" type="date">
-        </label>
-        <label for="birthdayRemindDaysInput">提前提醒
-          <select id="birthdayRemindDaysInput">
-            <option value="0">當天提醒</option>
-            <option value="1">前 1 天提醒</option>
-            <option value="3">前 3 天提醒</option>
-            <option value="7">前 7 天提醒</option>
-          </select>
-        </label>
-        <label class="checkbox-line" for="birthdayYearlyInput">
-          <input id="birthdayYearlyInput" type="checkbox" checked>
-          <span>每年提醒</span>
-        </label>
-      </fieldset>
       <a class="google-calendar-link" id="googleCalendarLink" href="#" target="_blank" rel="noopener">加入 Google 日曆</a>
       <div class="actions">
         <button class="action-btn" id="deleteCalendarNoteBtn" type="button">清除記事</button>
@@ -5077,7 +5037,7 @@
   </div>
 
   <div class="modal-backdrop" id="smartReminderEditorModal" hidden>
-    <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="smartReminderEditorTitle">
+    <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="smartReminderEditorTitle" style="max-height:88vh;overflow-y:auto;overscroll-behavior:contain;">
       <h2 id="smartReminderEditorTitle">新增日期提醒</h2>
       <p class="helper">生日、吃藥、回診等提醒才會推播。請選擇完整日期與提醒時間；預設只通知自己，不會送到守護群。</p>
       <p class="helper">生日／紀念日可選每年重複；吃藥、回診等預設單次提醒。通知自己每天最多 2 則。</p>
@@ -5112,7 +5072,7 @@
         </label>
       </div>
       <div class="actions" style="margin-top:14px;">
-        <button class="action-btn" id="smartReminderCancelBtn" type="button">取消</button>
+        <button class="action-btn" id="smartReminderCancelBtn" type="button">返回</button>
         <button class="action-btn primary" id="smartReminderSaveBtn" type="button">儲存</button>
       </div>
     </div>
@@ -6854,6 +6814,7 @@
 
     let smartReminderCache = { entitled: false, reminders: [], categories: [] };
     let smartReminderEditingId = null;
+    let smartReminderReturnDate = "";
     let selectedDailyReminderCount = null;
     let selectedGraceHours = null;
     let selectedMissedHours = null;
@@ -7022,7 +6983,8 @@
 
     function openSmartReminderEditorForCalendarDate() {
       const presetDate = selectedCalendarDate || getToday();
-      closeCalendarNote();
+      smartReminderReturnDate = presetDate;
+      $("calendarNoteModal").hidden = true;
       openSmartReminderEditor(null, presetDate);
     }
 
@@ -7030,6 +6992,9 @@
       const modal = $("smartReminderEditorModal");
       if (modal) modal.hidden = true;
       smartReminderEditingId = null;
+      const returnDate = smartReminderReturnDate;
+      smartReminderReturnDate = "";
+      if (returnDate) openCalendarNote(returnDate);
     }
 
     async function submitSmartReminderEditor() {
@@ -9634,16 +9599,10 @@
       const festival = festivalForDate(date, lunar);
       const note = calendarNotes[dateText] || "";
       const content = noteContent(note);
-      const birthday = noteBirthday(note) || { birthday_name: "", birthday_relationship: "", birthday_date: dateText, birthday_yearly: true, birthday_remind_days: 1 };
       $("calendarNoteTitle").textContent = `${date.getMonth() + 1}月${date.getDate()}日記事`;
       $("calendarNoteDateText").textContent = `農曆 ${lunar.fullLabel}${festival ? `｜${festival}` : ""}`;
       $("calendarNoteInput").value = content;
-      $("birthdayNameInput").value = birthday.birthday_name || "";
-      $("birthdayRelationInput").value = birthday.birthday_relationship || "";
-      $("birthdayDateInput").value = birthday.birthday_date || dateText;
-      $("birthdayYearlyInput").checked = birthday.birthday_yearly !== false;
-      $("birthdayRemindDaysInput").value = String(birthday.birthday_remind_days ?? 1);
-      $("deleteCalendarNoteBtn").disabled = !content && !birthday.birthday_name;
+      $("deleteCalendarNoteBtn").disabled = !content;
       $("googleCalendarLink").href = googleCalendarUrl(dateText, content);
       $("calendarNoteModal").hidden = false;
       window.setTimeout(() => $("calendarNoteInput").focus(), 100);
@@ -9659,13 +9618,7 @@
       if (!selectedCalendarDate) return;
       const saveButton = $("saveCalendarNoteBtn");
       const content = contentOverride === undefined ? $("calendarNoteInput").value : contentOverride;
-      const birthday = contentOverride === "" ? {} : {
-        birthday_name: $("birthdayNameInput").value,
-        birthday_relationship: $("birthdayRelationInput").value,
-        birthday_date: $("birthdayDateInput").value,
-        birthday_yearly: $("birthdayYearlyInput").checked,
-        birthday_remind_days: Number($("birthdayRemindDaysInput").value || 1)
-      };
+      const birthday = noteBirthday(calendarNotes[selectedCalendarDate]) || {};
       saveButton.disabled = true;
       saveButton.textContent = "儲存中";
       try {

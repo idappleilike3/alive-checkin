@@ -441,7 +441,7 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertIn("TAIWAN_FESTIVALS", page)
         self.assertIn("LUNAR_FESTIVALS", page)
         self.assertIn('id="todayReminderCard"', page)
-        self.assertIn('id="birthdayNameInput"', page)
+        self.assertNotIn('id="birthdayNameInput"', page)
         self.assertIn("birthday-reminders", (ROOT / "app.py").read_text(encoding="utf-8"))
         self.assertIn("body.neon .day-cell.festival .day-number", page)
 
@@ -454,6 +454,11 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertIn('id="calendarNoteReminderBtn"', page)
         self.assertIn("設定 LINE 提醒", page)
         self.assertIn("openSmartReminderEditorForCalendarDate", page)
+        self.assertNotIn('<legend>家人生日提醒</legend>', page)
+        self.assertIn('id="smartReminderCancelBtn" type="button">返回</button>', page)
+        self.assertIn('let smartReminderReturnDate = "";', page)
+        self.assertIn('if (returnDate) openCalendarNote(returnDate);', page)
+        self.assertIn('overscroll-behavior:contain', page)
 
     def test_smart_reminder_editor_requires_full_date_time_and_supports_editing(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
