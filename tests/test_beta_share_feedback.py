@@ -10,6 +10,39 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BetaShareFeedbackTests(unittest.TestCase):
+    def test_paid_member_with_stale_beta_fields_does_not_receive_feedback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_file = str(Path(tmp) / "state.json")
+            app.save_state(data_file, {
+                "users": {
+                    "U-jennie": {
+                        "line_user_id": "U-jennie",
+                        "display_name": "JENNIE",
+                        "plan": "paid_799_year",
+                        "membership_source": "beta",
+                        "payment_status": "active",
+                        "paid_until": "2027-07-24T15:54:00",
+                        "beta_cohort": "B799",
+                        "beta_started_at": "2026-07-27T10:00:00",
+                        "beta_ends_at": "2026-08-17T10:00:00",
+                    }
+                }
+            })
+            sent = []
+
+            result, code = app.send_beta_daily_feedback(
+                {
+                    "DATA_FILE": data_file,
+                    "LINE_CHANNEL_ACCESS_TOKEN": "token",
+                    "LINE_PUSH_SENDER": lambda token, target, message: sent.append(target),
+                },
+                now=datetime(2026, 7, 30, 19, 0, 0),
+            )
+
+            self.assertEqual(code, 200)
+            self.assertEqual(result["sent"], 0)
+            self.assertEqual(sent, [])
+
     def test_beta_pages_explain_story_tasks_rules_and_require_consent(self):
         page = (ROOT / "beta-register.html").read_text(encoding="utf-8")
         self.assertIn("daily-peace-story-comic.png", page)
