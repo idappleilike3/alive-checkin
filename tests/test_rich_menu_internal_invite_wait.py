@@ -21,13 +21,19 @@ class RichMenuInternalInviteWaitTests(unittest.TestCase):
             "https://liff.line.me/2010848330-UAiqPPYD?open=share-invite",
         )
 
-    def test_internal_invite_waits_visibly_until_liff_is_ready(self):
+    def test_internal_invite_waits_visibly_then_opens_picker_automatically(self):
         page = (ROOT / "liff/share-invite.html").read_text(encoding="utf-8")
         self.assertIn('id="shareSpinner"', page)
         self.assertIn("LINE 開啟可能需要 5–10 秒，請不要關閉頁面", page)
         self.assertIn('id="startShare" type="button" disabled', page)
-        self.assertIn("startShareBtn.disabled = false", page)
-        self.assertNotIn("if (isInsideLine() && !shareAttempted)", page)
+        self.assertIn('finishInternalWait("專屬邀請連結已準備完成，正在開啟 LINE 好友選擇…")', page)
+        self.assertIn("await openShare();", page)
+        self.assertNotIn("專屬邀請連結已準備完成，請按綠色按鈕選擇 LINE 好友", page)
+
+    def test_logged_out_liff_session_redirects_to_login_without_second_tap(self):
+        page = (ROOT / "liff/share-invite.html").read_text(encoding="utf-8")
+        self.assertIn('beginInternalWait("正在開啟 LINE 登入，請稍候…")', page)
+        self.assertIn("liff.login({ redirectUri: buildSafeRedirectUri() });", page)
 
     def test_guardian_and_trial_share_remain_separate(self):
         guardian = (ROOT / "liff/share-invite.html").read_text(encoding="utf-8")
