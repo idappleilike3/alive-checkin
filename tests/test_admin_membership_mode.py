@@ -72,6 +72,20 @@ class AdminMembershipModeTests(unittest.TestCase):
         self.assertEqual(profile.get("beta_started_at"), "")
         self.assertEqual(profile.get("beta_ends_at"), "")
 
+    def test_formal_plan_is_still_saved_after_reloading_state(self):
+        result, code = admin_update_user_plan(
+            self.data_file,
+            {"line_user_id": "U-member", "plan": "paid_399_year"},
+        )
+
+        self.assertEqual(code, 200)
+        self.assertEqual(result["plan"], "paid_399_year")
+        reloaded = load_state(self.data_file)["users"]["U-member"]
+        self.assertEqual(reloaded["plan"], "paid_399_year")
+        self.assertEqual(reloaded["payment_status"], "active")
+        self.assertEqual(reloaded["membership_source"], "paid")
+        self.assertTrue(reloaded["paid_until"])
+
 
 if __name__ == "__main__":
     unittest.main()
