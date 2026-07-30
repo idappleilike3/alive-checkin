@@ -1312,7 +1312,7 @@
     }
 
     async function updatePlan(lineUserId, plan, selectElement, previousPlan) {
-      const message = $("message");
+      const message = $(`plan-status-${lineUserId}`) || $("message");
       message.setAttribute("role", "status");
       selectElement.disabled = true;
       message.textContent = "方案更新中，請稍候…";
@@ -1329,7 +1329,8 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "方案更新失敗");
         await refresh();
-        message.textContent =
+        const refreshedMessage = $(`plan-status-${lineUserId}`) || $("message");
+        refreshedMessage.textContent =
           `✓ 方案已更新成功：${data.display_name || lineUserId} → ${planLabel(plan)}。` +
           `守護人 ${data.preserved_contacts ?? (data.contacts || []).length} 位、` +
           `好友 ${data.preserved_friends ?? (data.friends || []).length} 位已保留。`;
@@ -1339,6 +1340,13 @@
       } finally {
         selectElement.disabled = false;
       }
+    }
+
+    async function savePlanForMember(lineUserId) {
+      const selectElement = $(`plan-select-${lineUserId}`);
+      if (!selectElement) return;
+      const previousPlan = selectElement.dataset.savedPlan || selectElement.value;
+      await updatePlan(lineUserId, selectElement.value, selectElement, previousPlan);
     }
 
     async function refundPaymentOrder(orderId, paidAmount, alreadyRefunded) {
@@ -1661,11 +1669,13 @@
             <td><strong>${escapeHtml(user.last_checkin_area || "未提供")}</strong></td>
             <td>
               ${membershipCell(user)}
-              <select class="plan-select" style="margin-top:6px;" onchange="updatePlan('${user.line_user_id}', this.value, this, '${user.plan}')">
+              <select id="plan-select-${user.line_user_id}" class="plan-select" data-saved-plan="${user.plan}" style="margin-top:6px;">
                 ${["trial", "free", "paid_199", "paid_199_year", "paid_399", "paid_399_year", "paid_799", "paid_799_year"].map((plan) =>
                   `<option value="${plan}" ${user.plan === plan ? "selected" : ""}>${planLabel(plan)}</option>`
                 ).join("")}
               </select>
+              <button type="button" class="plan-save-button" style="margin-top:6px;" onclick="savePlanForMember('${user.line_user_id}')">儲存方案</button>
+              <small id="plan-status-${user.line_user_id}" role="status" aria-live="polite" style="display:block;margin-top:6px;"></small>
             </td>
             <td><span class="badge ${user.payment_status === "active" ? "ok" : user.payment_status === "expired" ? "bad" : "warn"}">${paymentLabel(user.payment_status)}</span></td>
             <td><strong>${expiryText(user)}</strong></td>
