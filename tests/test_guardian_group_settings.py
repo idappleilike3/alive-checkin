@@ -180,6 +180,39 @@ class GuardianGroupSettingsTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["group_id"], "C-family")
 
+    def test_group_status_allows_accepted_guardian_but_rejects_other_member(self):
+        state = app.load_state(self.data_file)
+        state["users"]["U-owner"]["contacts"] = [{
+            "line_user_id": "U-guardian",
+            "contact_role": "guardian",
+            "binding_status": "accepted",
+        }]
+        state["users"]["U-guardian"] = {
+            "line_user_id": "U-guardian",
+            "display_name": "女兒",
+        }
+        state["users"]["U-other-member"] = {
+            "line_user_id": "U-other-member",
+            "display_name": "一般群成員",
+        }
+        state["guardian_groups"]["C-family"]["member_ids_at_bind"] = [
+            "U-guardian",
+            "U-other-member",
+        ]
+        app.save_state(self.data_file, state)
+
+        guardian_result, guardian_code = app.guardian_group_daily_status(
+            self.data_file, "U-guardian", "C-family"
+        )
+        other_result, other_code = app.guardian_group_daily_status(
+            self.data_file, "U-other-member", "C-family"
+        )
+
+        self.assertEqual(guardian_code, 200)
+        self.assertTrue(guardian_result["ok"])
+        self.assertEqual(other_code, 403)
+        self.assertEqual(other_result["error"], "guardian group status forbidden")
+
     def test_unchecked_registered_member_is_overdue_after_reminder_time(self):
         state = app.load_state(self.data_file)
         state["users"]["U-a"] = {
