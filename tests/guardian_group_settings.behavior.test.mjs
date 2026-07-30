@@ -63,7 +63,7 @@ const context = {
               member_count: 4,
               preferences: {
                 daily_admin_summary: false,
-                daily_summary_time: "21:00",
+                daily_summary_time: "20:00",
               },
             }],
           };
@@ -91,6 +91,8 @@ await context.init();
 assert.match(element("groupCount").textContent, /1\/3/);
 assert.match(element("groupList").innerHTML, /家人守護群/);
 assert.match(element("groupList").innerHTML, /每日摘要/);
+assert.match(element("groupList").innerHTML, /查看今日狀態/);
+assert.match(element("groupList").innerHTML, /value="20:00"/);
 assert.match(html, /id="retryButton"/);
 
 await context.saveGroupPreferences("C-family", true, "22:30");
