@@ -16585,15 +16585,12 @@ def create_app(config=None):
         or os.environ.get("LIFF_ID")
         or DEFAULT_LIFF_ID
     ).strip() or DEFAULT_LIFF_ID
-    explicit_channel_id = (
-        supplied_config.get("LINE_LOGIN_CHANNEL_ID")
-        or os.environ.get("LINE_LOGIN_CHANNEL_ID")
-        or os.environ.get("LINE_Login_Channel_ID")
-        or ""
-    ).strip()
+    # A LIFF ID token is issued for the LINE Login Channel encoded in the
+    # LIFF ID prefix. Keep this as the single source of truth so a stale
+    # Render environment variable cannot mix old and new providers.
+    # LEGACY_LINE_LOGIN_CHANNEL_ID remains independent for account migration.
     line_login_channel_id = (
-        explicit_channel_id
-        or liff_id.split("-", 1)[0]
+        liff_id.split("-", 1)[0]
         or DEFAULT_LINE_LOGIN_CHANNEL_ID
     )
 
@@ -20262,6 +20259,11 @@ class MiniApp:
         }
         if config:
             self.config.update(config)
+        current_liff_id = str(self.config.get("LIFF_ID") or DEFAULT_LIFF_ID).strip()
+        self.config["LIFF_ID"] = current_liff_id
+        self.config["LINE_LOGIN_CHANNEL_ID"] = (
+            current_liff_id.split("-", 1)[0] or DEFAULT_LINE_LOGIN_CHANNEL_ID
+        )
 
     def test_client(self):
         return MiniClient(self)
