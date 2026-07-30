@@ -27,6 +27,8 @@ services:
         value: "1"
       - key: ENABLE_INTERNAL_SCHEDULER
         value: "0"
+      - key: AUTO_SYNC_RICH_MENU
+        value: "1"
       - key: DEPLOY_VERSION
         value: W260729release1
       # Prefer Postgres kv_store when DATABASE_URL is set (survives Free redeploys).
