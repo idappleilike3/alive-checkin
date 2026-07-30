@@ -187,9 +187,10 @@ class BetaSelfRegistrationTests(unittest.TestCase):
 
         self.assertIn('@app.get("/beta/399")', backend)
         self.assertIn('@app.get("/beta/799")', backend)
-        self.assertIn("399 年費安心版｜21 天封測", page)
-        self.assertIn("799 年費守護版｜21 天封測", page)
-        self.assertIn("年費版完整功能", page)
+        self.assertIn("21天安心守護體驗", page)
+        self.assertNotIn("399 年費安心版｜21 天封測", page)
+        self.assertNotIn("799 年費守護版｜21 天封測", page)
+        self.assertIn("本次體驗包含", page)
         self.assertIn("這 21 天請協助測試", page)
         self.assertIn("beta_cohort", member)
         self.assertIn('beta_cohort: betaCohort', member)
