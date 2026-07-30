@@ -46,12 +46,26 @@
     .trial-link{display:inline-block;margin-top:13px;padding:10px 16px;border:2px solid var(--line);border-radius:999px;color:var(--forest);font-weight:850;text-decoration:none}
     .guide{display:block;margin:18px auto 0;text-align:center}
     .footer{margin:12px 4px 0;color:#718078;font-size:.78rem;line-height:1.55;text-align:center}
+    .entry-loading{position:fixed;inset:0;z-index:9999;display:grid;place-items:center;padding:24px;background:linear-gradient(180deg,#e7f8ed,#f7fbf8);text-align:center}
+    .entry-loading[hidden]{display:none}
+    .entry-loading-card{width:min(360px,100%);padding:28px 22px;border:1px solid #cfe5d6;border-radius:22px;background:#fff;box-shadow:0 18px 48px rgba(20,74,42,.12)}
+    .entry-loading-spinner{width:48px;height:48px;margin:0 auto 16px;border:5px solid #d9f2e2;border-top-color:var(--line);border-radius:50%;animation:entrySpin .8s linear infinite}
+    .entry-loading strong{display:block;color:var(--forest);font-size:1.15rem}
+    .entry-loading p{margin:9px 0 0;color:var(--muted);font-size:.9rem;line-height:1.55}
+    @keyframes entrySpin{to{transform:rotate(360deg)}}
     .btn:focus-visible,.trial-link:focus-visible,.fallback a:focus-visible,.fallback button:focus-visible,.guide:focus-visible{outline:3px solid rgba(6,199,85,.34);outline-offset:3px}
     @media(max-width:420px){.wrap{padding-inline:12px}.card{padding:21px 16px}.identity{grid-template-columns:1fr}.step{grid-template-columns:40px 1fr;padding:13px}.num{width:38px;height:38px}}
     @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
   </style>
 </head>
 <body>
+  <div class="entry-loading" id="entryLoading" role="status" aria-live="polite">
+    <div class="entry-loading-card">
+      <div class="entry-loading-spinner" aria-hidden="true"></div>
+      <strong>正在載入你的專屬守護邀請…</strong>
+      <p>LINE 開啟可能需要 5–10 秒，請不要關閉頁面。</p>
+    </div>
+  </div>
   <main class="wrap">
     <div class="page">
       <p class="brand"><img src="assets/daily-peace-logo.png" alt="">每日平安</p>
@@ -114,6 +128,13 @@
       var openBtn = document.getElementById("acceptGuardianCta");
       var altBtn = document.getElementById("openLiffAlt");
       var copyBtn = document.getElementById("copyLink");
+      var entryLoading = document.getElementById("entryLoading");
+      window.addEventListener("load", function () {
+        if (entryLoading) entryLoading.hidden = true;
+      }, { once: true });
+      setTimeout(function () {
+        if (entryLoading) entryLoading.hidden = true;
+      }, 1600);
 
       if (inviterName) {
         inviterNameEl.textContent = inviterName;
@@ -152,6 +173,10 @@
         altBtn.href = secondaryUrl;
       }
       function openLine(url) {
+        if (entryLoading) {
+          entryLoading.hidden = false;
+          entryLoading.querySelector("strong").textContent = "正在開啟 LINE…";
+        }
         setStatus("正在開啟 LINE，準備確認守護約定…");
         location.href = url || primaryUrl;
         setTimeout(function () {
