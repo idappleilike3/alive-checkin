@@ -98,6 +98,21 @@
     cursor: pointer;
   }
   .save-btn:disabled { opacity: .6; cursor: wait; }
+  .status-btn {
+    width: 100%;
+    min-height: 48px;
+    margin-top: 10px;
+    border: 2px solid var(--leaf);
+    border-radius: 13px;
+    color: var(--leaf-dark);
+    background: #fff;
+    font-size: 16px;
+    font-weight: 850;
+    cursor: pointer;
+  }
+  .member-status { margin-top: 12px; padding: 14px; border-radius: 13px; background: var(--mint); }
+  .member-status ul { margin: 8px 0 0; padding: 0; list-style: none; }
+  .member-status li { padding: 5px 0; border-top: 1px solid #cce7da; }
   .join-btn { display: block; padding: 13px; text-align: center; text-decoration: none; }
   .empty, .error {
     padding: 22px 18px;
@@ -216,9 +231,11 @@ function renderGroups() {
         </div>
         <div class="setting-row">
           <label class="setting-copy" for="time-${id}"><strong>摘要時間</strong><small>使用台灣時間，每天最多一則</small></label>
-          <input id="time-${id}" type="time" value="${escapeHtml(prefs.daily_summary_time || "21:00")}">
+          <input id="time-${id}" type="time" value="${escapeHtml(prefs.daily_summary_time || "20:00")}">
         </div>
         <button class="save-btn" type="button" data-save="${id}">儲存這個群的設定</button>
+        <button class="status-btn" type="button" data-status="${id}">查看今日狀態</button>
+        <div class="member-status" id="status-${id}" hidden></div>
       </article>`;
   }).join("");
   list.querySelectorAll("[data-save]").forEach((button) => {
@@ -232,6 +249,37 @@ function renderGroups() {
       );
     });
   });
+  list.querySelectorAll("[data-status]").forEach((button) => {
+    button.addEventListener("click", () => loadGroupStatus(button.dataset.status, button));
+  });
+}
+
+async function loadGroupStatus(groupId, button) {
+  const panel = document.getElementById(`status-${groupId}`);
+  button.disabled = true;
+  button.textContent = "讀取中…";
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/guardian-groups/status?line_user_id=${encodeURIComponent(pageState.lineUserId)}&group_id=${encodeURIComponent(groupId)}`,
+      { headers: authHeaders() }
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "讀取失敗");
+    const counts = data.counts || {};
+    const icons = { checked: "✅", pending: "⏳", overdue: "⚠️", unbound: "🔗" };
+    panel.innerHTML = `
+      <strong>已報 ${counts.checked || 0} 人／未報 ${(counts.pending || 0) + (counts.overdue || 0)} 人／未綁定 ${counts.unbound || 0} 人</strong>
+      <ul>${(data.members || []).map((row) =>
+        `<li>${icons[row.status] || "•"} ${escapeHtml(row.name)}｜${escapeHtml(row.status_label)}</li>`
+      ).join("")}</ul>`;
+    panel.hidden = false;
+  } catch (error) {
+    panel.textContent = `無法讀取：${error.message}`;
+    panel.hidden = false;
+  } finally {
+    button.disabled = false;
+    button.textContent = "查看今日狀態";
+  }
 }
 
 async function saveGroupPreferences(groupId, enabled, time, button) {
@@ -249,7 +297,7 @@ async function saveGroupPreferences(groupId, enabled, time, button) {
         line_user_id: pageState.lineUserId,
         group_id: groupId,
         daily_admin_summary: Boolean(enabled),
-        daily_summary_time: time || "21:00",
+        daily_summary_time: time || "20:00",
       }),
     });
     const data = await response.json();
