@@ -76,9 +76,10 @@ class InviteOnboardingFlowTests(unittest.TestCase):
     def test_acceptance_recommends_trial_without_auto_activation_or_reverse_binding(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("這次只會由您守護邀請人，不會自動互相綁定", html)
-        self.assertIn("guardianBindStartTrialBtn", html)
-        self.assertIn("要不要使用 14 天免費體驗", html)
-        self.assertIn("若希望原邀請人也守護您，仍須另外發送一次邀請", html)
+        self.assertIn("guardianBindFinishBtn", html)
+        self.assertIn("guardianBindReciprocalBtn", html)
+        self.assertIn("要先免費啟用 14 天安心體驗", html)
+        self.assertIn("親自接受後才會完成互相守護", html)
         self.assertNotIn("您的 14 天免費體驗已自動開通", html)
         bind_flow = html.split("async function completeGuardianBindOnce", 1)[1].split(
             "function resetInviteAcceptPromptUi", 1
