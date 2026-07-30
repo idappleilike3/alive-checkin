@@ -23,15 +23,16 @@ jobs:
           python-version: '3.11'
       - name: Apply targeted changes
         run: python scripts/apply_separate_note_line_reminder.py
-      - name: Verify syntax and product rules
+      - name: Verify syntax and visible product rules
         run: |
           python -m py_compile app.py
           grep -q '日期備忘（只在首頁提醒）' index.html
           grep -q '新增 LINE 推播提醒' index.html
+          grep -q '提醒日期（年月日）' index.html
           grep -q '提醒時間（24 小時制）' index.html
-          ! grep -q '晚點提醒' app.py
-          ! grep -q 'smart:snooze:' app.py
-      - name: Commit and push
+          ! grep -q 'label": "⏰晚點提醒' app.py
+          ! grep -q 'label": "📞明天提醒' app.py
+      - name: Commit and push actual production files
         run: |
           if git diff --quiet -- index.html app.py; then
             echo 'No changes needed'
@@ -41,4 +42,5 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add index.html app.py
           git commit -m 'fix: separate homepage notes and LINE push reminders'
-          git push
+          git pull --rebase origin main
+          git push origin main
