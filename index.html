@@ -451,6 +451,80 @@
     }
     .today-reminder-card strong { color: #9a3412; font-size: 18px; }
     .today-reminder-card span { color: #7c2d12; font-size: 16px; }
+    .today-gratitude-label {
+      display: inline-block;
+      margin-right: 6px;
+      color: #087f5b;
+      font-weight: 950;
+    }
+    .history-tool-accordion {
+      margin-top: 10px;
+      overflow: hidden;
+      border: 1.5px solid #f9a8d4;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.76);
+      text-align: left;
+    }
+    .history-tool-accordion[hidden] { display: none !important; }
+    .history-tool-summary {
+      min-height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 14px;
+      color: #5b1535;
+      font-weight: 950;
+      cursor: pointer;
+      list-style: none;
+    }
+    .history-tool-summary::-webkit-details-marker { display: none; }
+    .history-tool-summary::after {
+      content: "⌄";
+      flex: 0 0 auto;
+      color: #db2777;
+      font-size: 22px;
+      transition: transform 0.16s ease;
+    }
+    .history-tool-accordion[open] > .history-tool-summary::after { transform: rotate(180deg); }
+    .history-tool-summary-label {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+    .history-tool-summary-label small {
+      color: #9a566f;
+      font-size: 13px;
+      font-weight: 750;
+    }
+    .history-tool-count {
+      margin-left: auto;
+      padding: 4px 9px;
+      border-radius: 999px;
+      background: #fff1f7;
+      color: #be185d;
+      font-size: 13px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+    .history-tool-body {
+      display: grid;
+      gap: 10px;
+      padding: 12px 14px 14px;
+      border-top: 1px solid #fbcfe8;
+    }
+    .history-tool-body > .action-btn { width: 100%; margin: 0; }
+    body.neon .history-tool-accordion {
+      border-color: rgba(103, 232, 249, 0.45);
+      background: rgba(255, 255, 255, 0.06);
+    }
+    body.neon .history-tool-summary { color: #fff; }
+    body.neon .history-tool-summary-label small { color: #bae6fd; }
+    body.neon .history-tool-count {
+      background: rgba(103, 232, 249, 0.16);
+      color: #cffafe;
+    }
+    body.neon .history-tool-body { border-top-color: rgba(103, 232, 249, 0.32); }
     .daily-almanac-card {
       display: grid;
       gap: 10px;
@@ -4444,11 +4518,34 @@
     <section class="calendar-box" id="calendarNoteQuickCard" aria-label="799 日期備忘提醒" hidden>
       <div class="today-reminder-card">
         <strong>日期備忘與提醒</strong>
-        <span id="calendarNoteQuickText">日期備忘只在網頁提醒；LINE 推播提醒為 799 專屬。</span>
-        <div id="calendarNoteReminderList"></div>
-        <button class="action-btn primary" id="calendarNoteQuickAddBtn" type="button">＋ 新增日期備忘</button>
-        <button class="action-btn" id="lineReminderQuickAddBtn" type="button" hidden>＋ 新增 LINE 推播提醒</button>
-        <div id="lineReminderList" aria-label="已設定的 LINE 推播提醒"></div>
+        <span id="calendarNoteQuickText">各項功能預設收合，點開才會顯示內容。</span>
+        <details class="history-tool-accordion" id="calendarNoteCreateSection">
+          <summary class="history-tool-summary">
+            <span class="history-tool-summary-label">＋ 新增日期備忘<small>可設定登入網頁時提醒一次</small></span>
+          </summary>
+          <div class="history-tool-body">
+            <button class="action-btn primary" id="calendarNoteQuickAddBtn" type="button">新增日期備忘</button>
+          </div>
+        </details>
+        <details class="history-tool-accordion" id="calendarNoteManageSection">
+          <summary class="history-tool-summary">
+            <span class="history-tool-summary-label">修改記事與網頁提醒<small>查看、修改或刪除已建立的記事</small></span>
+            <span class="history-tool-count" id="calendarNoteCount">0 筆</span>
+          </summary>
+          <div class="history-tool-body">
+            <div id="calendarNoteReminderList"></div>
+          </div>
+        </details>
+        <details class="history-tool-accordion" id="lineReminderManageSection" hidden>
+          <summary class="history-tool-summary">
+            <span class="history-tool-summary-label">LINE 推播提醒<small>799 專屬，每日合計最多 2 則</small></span>
+            <span class="history-tool-count" id="lineReminderCount">0 筆</span>
+          </summary>
+          <div class="history-tool-body">
+            <button class="action-btn" id="lineReminderQuickAddBtn" type="button">＋ 新增 LINE 推播提醒</button>
+            <div id="lineReminderList" aria-label="已設定的 LINE 推播提醒"></div>
+          </div>
+        </details>
       </div>
     </section>
 
@@ -4462,10 +4559,10 @@
       <div id="calendarDetails" hidden>
         <div class="today-reminder-card" id="todayReminderCard">
           <strong id="todayReminderTitle">今天：農曆載入中</strong>
-          <span id="todayReminderText">正在整理今天的平安提醒</span>
+          <span><b class="today-gratitude-label">每日感恩</b><span id="todayReminderText">正在整理今天的一句話</span></span>
         </div>
         <section class="daily-almanac-card" id="dailyAlmanacCard" aria-label="799 每日農民曆宜忌" hidden>
-          <h3 id="dailyBlessingText">日日平安，事事順心</h3>
+          <h3 id="dailyAttentionTitle">今日提醒事項</h3>
           <div class="almanac-row"><span class="almanac-tag yi">宜</span><span id="dailyAlmanacYi">載入中</span></div>
           <div class="almanac-row"><span class="almanac-tag ji">忌</span><span id="dailyAlmanacJi">載入中</span></div>
           <small class="almanac-source">民俗生活參考；婚嫁、開工、安葬等重要決定仍請依家庭信仰與專業擇日意見。</small>
@@ -6959,6 +7056,8 @@
         if (controls) controls.hidden = !entitled;
         if (!entitled || !listEl) return;
         const rows = data.reminders || [];
+        const lineCount = $("lineReminderCount");
+        if (lineCount) lineCount.textContent = `${rows.length} 筆`;
         listEl.innerHTML = rows.length
           ? rows.map((r) => `
             <div class="member-guardian-manage-row" data-smart-id="${escapeHtml(r.id)}">
@@ -9577,11 +9676,6 @@
       card.hidden = !enabled;
       if (!enabled) return;
       const now = new Date();
-      const lunar = lunarInfo(now);
-      const festival = festivalForDate(now, lunar);
-      $("dailyBlessingText").textContent =
-        FESTIVAL_BLESSINGS[festival]
-        || DAILY_BLESSINGS[now.getDay() % DAILY_BLESSINGS.length];
       try {
         const SolarClass = window.Solar;
         if (!SolarClass || typeof SolarClass.fromYmd !== "function") {
@@ -9858,21 +9952,26 @@
       const card = $("calendarNoteQuickCard");
       const text = $("calendarNoteQuickText");
       const lineButton = $("lineReminderQuickAddBtn");
+      const lineSection = $("lineReminderManageSection");
       if (!card) return;
       const enabled = status.calendar_notes_enabled === true;
       card.hidden = !enabled || location.hash !== "#history";
+      const lineEnabled = status.smart_reminders_enabled === true;
       if (lineButton) lineButton.hidden = status.smart_reminders_enabled !== true;
+      if (lineSection) lineSection.hidden = !lineEnabled;
       if (!enabled || !text) return;
       const entries = Object.entries(calendarNotes || {})
         .filter(([, note]) => noteContent(note) || noteWebReminder(note).time)
         .sort(([a], [b]) => a.localeCompare(b));
       const count = entries.length;
-      text.textContent = count
-        ? `目前已有 ${count} 個日期備忘；點日期可新增或編輯提醒。`
-        : "先新增日期與備忘，系統才會在指定時間提醒。";
+      text.textContent = count || (smartReminderCache.reminders || []).length
+        ? "已建立的內容收在下方，點選項目即可展開管理。"
+        : "尚未建立備忘或提醒，點開「新增日期備忘」開始設定。";
+      const countEl = $("calendarNoteCount");
+      if (countEl) countEl.textContent = `${count} 筆`;
       const list = $("calendarNoteReminderList");
       if (!list) return;
-      list.innerHTML = entries.map(([dateText, note]) => {
+      list.innerHTML = entries.length ? entries.map(([dateText, note]) => {
         const reminder = noteWebReminder(note);
         const reminderLabel = reminder.time
           ? `${reminder.time}${reminder.yearly ? "｜每年重複" : "｜提醒一次"}`
@@ -9881,7 +9980,7 @@
           <span><strong>${escapeHtml(dateText)}</strong><small>${escapeHtml(noteContent(note) || "備忘")}｜${escapeHtml(reminderLabel)}</small></span>
           <button class="action-btn calendar-note-edit-btn" type="button" data-date="${escapeHtml(dateText)}">修改記事與提醒</button>
         </div>`;
-      }).join("");
+      }).join("") : `<div class="member-data-row"><span>目前狀態</span><strong>尚未新增記事</strong></div>`;
     }
 
     function setCalendarExpanded(expanded) {

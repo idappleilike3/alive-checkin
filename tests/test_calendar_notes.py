@@ -535,6 +535,32 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertIn('openSmartReminderEditor(btn.dataset.id)', page)
         self.assertIn('deleteSmartReminder(btn.dataset.id)', page)
 
+    def test_history_reminder_tools_are_compact_independent_accordions(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="calendarNoteCreateSection"', page)
+        self.assertIn('id="calendarNoteManageSection"', page)
+        self.assertIn('id="lineReminderManageSection"', page)
+        self.assertIn('id="calendarNoteCount"', page)
+        self.assertIn('id="lineReminderCount"', page)
+        self.assertIn("筆", page)
+        self.assertIn(".history-tool-accordion", page)
+        self.assertIn(".history-tool-summary", page)
+        self.assertIn("history-tool-body", page)
+
+    def test_gratitude_and_daily_attention_are_not_repeated(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("每日感恩", page)
+        self.assertIn('id="todayReminderText"', page)
+        self.assertIn('id="dailyAttentionTitle">今日提醒事項</h3>', page)
+        self.assertNotIn('id="dailyBlessingText"', page)
+        almanac_renderer = page.split("function renderDailyAlmanac")[1].split(
+            "const WEB_NOTE_META_MARKER"
+        )[0]
+        self.assertNotIn("DAILY_BLESSINGS", almanac_renderer)
+        self.assertNotIn("FESTIVAL_BLESSINGS", almanac_renderer)
+
     def test_calendar_note_web_reminder_metadata_uses_existing_note_storage(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
 

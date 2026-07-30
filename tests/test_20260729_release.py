@@ -284,7 +284,7 @@ class Release20260729Tests(unittest.TestCase):
         self.assertIn('document.body.classList.add("post-share-visible")', share)
         self.assertIn('document.body.classList.remove("post-share-visible")', share)
         self.assertIn('id="calendarNoteQuickCard"', index)
-        self.assertIn("先新增日期與備忘，系統才會在指定時間提醒", index)
+        self.assertIn("尚未建立備忘或提醒，點開「新增日期備忘」開始設定", index)
         self.assertIn("toggleSmartReminder", index)
         self.assertIn('id="guardianDataBlock"', member)
         self.assertIn('id="emergencyDataBlock"', member)
@@ -312,10 +312,12 @@ class Release20260729Tests(unittest.TestCase):
         self.assertIn("open=checkin", page)
         self.assertIn("一鍵邀請守護人", page)
 
-    def test_799_calendar_has_daily_blessing_and_real_almanac_yi_ji(self):
+    def test_799_calendar_separates_daily_gratitude_from_almanac_attention(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("lunar-javascript/1.7.7/lunar.min.js", page)
-        self.assertIn('id="dailyBlessingText"', page)
+        self.assertIn("每日感恩", page)
+        self.assertIn('id="dailyAttentionTitle">今日提醒事項</h3>', page)
+        self.assertNotIn('id="dailyBlessingText"', page)
         self.assertIn('id="dailyAlmanacYi"', page)
         self.assertIn('id="dailyAlmanacJi"', page)
         self.assertIn("almanac.getDayYi()", page)
