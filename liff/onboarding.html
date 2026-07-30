@@ -87,7 +87,11 @@
     margin-top: 12px;
     text-align: center;
     text-decoration: none;
+    text-wrap: balance;
+    word-break: keep-all;
+    line-height: 1.4;
   }
+  .btn-label { display: inline-block; text-align: center; }
   .btn-primary { background: #00B900; color: #fff; }
   .btn-secondary { background: #fff; color: #00B900; border: 2px solid #00B900; }
   .onboarding-action-group {
@@ -237,9 +241,9 @@
   }
   .beginner-story { overflow: hidden; padding: 0; }
   .beginner-story img { display: block; width: 100%; height: auto; }
-  .beginner-story-copy { padding: 20px; text-align: center; }
-  .beginner-story-copy h2 { color: #0b5c2e; margin-bottom: 8px; }
-  .beginner-story-copy p { color: #66736c; line-height: 1.65; font-size: 14px; }
+  .beginner-story-copy { padding: 24px 20px 18px; text-align: left; }
+  .beginner-story-copy h2 { color: #0b5c2e; margin-bottom: 10px; font-size: 30px; line-height: 1.25; }
+  .beginner-story-copy p { color: #52645a; line-height: 1.7; font-size: 18px; }
   .peace-benefits {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -256,8 +260,8 @@
   .peace-benefit span { display: block; font-size: 26px; margin-bottom: 6px; }
   .peace-benefit strong { display: block; color: #075c2b; font-size: 14px; }
   .peace-steps { margin: 0 20px 20px; padding: 16px; border-radius: 16px; background: #f7fcf9; }
-  .peace-step { margin: 9px 0; color: #42564c; font-size: 14px; line-height: 1.65; }
-  .peace-step strong { color: #173c2b; }
+  .peace-step { margin: 16px 0; color: #42564c; font-size: 17px; line-height: 1.75; text-align: left; }
+  .peace-step strong { color: #173c2b; font-size: 20px; line-height: 1.55; }
   .info-tip { display: inline-flex; padding: 2px 7px; border-radius: 999px; background: #e7f7ed; color: #087443; font-size: 11px; font-weight: 700; }
   .peace-trial-cta { min-height: 64px; font-size: 19px; box-shadow: 0 10px 22px rgba(0,185,0,.2); }
   .public-entry {
@@ -313,25 +317,27 @@
       align-items: center;
       justify-content: center;
     }
+    .beginner-story-copy h2 { font-size: 28px; }
+    .peace-trial-cta { font-size: 21px; }
   }
 </style>
 </head>
 <body>
 <div class="container">
   <section class="card beginner-story" aria-label="14 天新會員安心體驗介紹">
-    <img src="/assets/guardian-story-mother-daughter-mobile.webp" alt="媽媽每日報平安，女兒透過 LINE 收到通知的母女圖文故事">
     <div class="beginner-story-copy">
       <h2>14 天安心體驗</h2>
       <p>先設定每日提醒，再分享守護邀請。對方接受後，你們的連結就建立了。</p>
     </div>
+    <img src="/assets/guardian-story-mother-daughter-mobile.webp" alt="媽媽每日報平安，女兒透過 LINE 收到通知的母女圖文故事">
     <div class="peace-benefits" aria-label="安心體驗功能">
       <div class="peace-benefit"><span aria-hidden="true">⏰</span><strong>每日提醒</strong></div>
       <div class="peace-benefit"><span aria-hidden="true">👨‍👩‍👧</span><strong>多位守護人</strong></div>
       <div class="peace-benefit"><span aria-hidden="true">🆘</span><strong>SOS 緊急求助</strong></div>
     </div>
     <div class="peace-steps" aria-label="安心體驗四步驟">
-      <div class="peace-step"><strong>1. 填寫邀請人資料</strong> <span class="info-tip" title="讓守護人知道你是誰">ⓘ 讓守護人知道你是誰</span><br>姓名與關係會讓守護人知道你是誰；緊急聯絡電話可事後填寫，SOS 時可用來緊急聯絡。</div>
-      <div class="peace-step"><strong>2. 設定提醒時間</strong><br>選擇每天想收到提醒的時間。</div>
+      <div class="peace-step"><strong>第一步：加入「每日平安」官方 LINE</strong><br>加入完成後，請返回這個頁面。</div>
+      <div class="peace-step"><strong>第二步：開始 14 天安心體驗</strong> <span class="info-tip" title="讓守護人知道你是誰">ⓘ 讓守護人知道你是誰</span><br>填寫邀請人資料，再設定提醒時間。緊急聯絡電話可事後填寫，SOS 時可用來緊急聯絡。</div>
       <div class="peace-step"><strong>3. 邀請守護人</strong> <span aria-hidden="true">↗</span><br>把專屬連結分享給 LINE 好友。</div>
       <div class="peace-step"><strong>4. 安心連結建立</strong><br>對方接受後，安心連結就建立了。</div>
     </div>
@@ -493,7 +499,7 @@ function renderPublicEntry({ liffReady, liffId }) {
   loading.innerHTML = `
     <h2>開始 14 天安心體驗</h2>
     <p>介紹內容可以直接瀏覽。準備開始設定時，再使用 LINE 安全登入即可。</p>
-    <button class="btn btn-primary peace-trial-cta" type="button" id="startTrialLoginBtn">開始 14 天安心體驗 <span aria-hidden="true">↗</span></button>
+    <button class="btn btn-primary peace-trial-cta" type="button" id="startTrialLoginBtn"><span class="btn-label">開始 14 天<br>安心體驗</span> <span aria-hidden="true">↗</span></button>
     <p class="privacy-note">LINE 登入只用於確認身分、綁定守護人與傳送報平安通知；不會讀取你的聊天內容，也不會自動傳訊息。</p>
     <div class="public-entry-links" aria-label="其他瀏覽入口">
       <a class="public-entry-link" href="/">返回首頁</a>
