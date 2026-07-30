@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +32,26 @@ class TrialPublicHeaderActionsTests(unittest.TestCase):
         self.assertIn("加入完請返回這個頁面", HTML)
         self.assertIn(".line-join-step", HTML)
         self.assertIn(".primary-actions", HTML)
+
+    def test_page_ends_with_three_requested_navigation_buttons(self):
+        footer = re.search(
+            r'<nav class="trial-footer-actions".*?</nav>',
+            HTML,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(footer)
+        markup = footer.group(0)
+        self.assertIn('href="/"', markup)
+        self.assertIn(">返回首頁</a>", markup)
+        self.assertIn('href="/pricing.html"', markup)
+        self.assertIn(">查看體驗與方案</a>", markup)
+        self.assertIn('href="/faq.html"', markup)
+        self.assertIn(">常見問答</a>", markup)
+        self.assertRegex(
+            HTML,
+            r"\.trial-footer-actions\{[^}]*display:grid;"
+            r"[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)",
+        )
 
 if __name__ == "__main__":
     unittest.main()
