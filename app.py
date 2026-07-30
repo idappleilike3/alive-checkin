@@ -7683,7 +7683,7 @@ def normalize_guardian_group_preferences(raw=None):
         summary_time = str(raw.get("daily_summary_time") or "").strip()
         if REMINDER_TIME_PATTERN.match(summary_time):
             prefs["daily_summary_time"] = summary_time
-    prefs.setdefault("daily_summary_time", "21:00")
+    prefs.setdefault("daily_summary_time", "20:00")
     return prefs
 
 
@@ -7796,6 +7796,38 @@ def is_guardian_group_admin(group, line_user_id) -> bool:
         return True
     admins = group.get("admin_line_user_ids") or []
     return uid in {str(x).strip() for x in admins if str(x).strip()}
+
+
+def can_view_guardian_group_status(state, group, line_user_id) -> bool:
+    """Allow an admin or an accepted guardian in this LINE group to view status.
+
+    notify_admin_only controls names included in pushed summaries. It must not
+    block an invited guardian who actively signs in and opens the status page.
+    Mere LINE group membership is never sufficient.
+    """
+    uid = str(line_user_id or "").strip()
+    if not uid or not isinstance(group, dict):
+        return False
+    if is_guardian_group_admin(group, uid):
+        return True
+    users = (state or {}).get("users") or {}
+    if uid not in users:
+        return False
+    group_member_ids = {
+        str(value or "").strip()
+        for value in (group.get("member_ids_at_bind") or [])
+        if str(value or "").strip()
+    }
+    if uid not in group_member_ids:
+        return False
+    owner_id = str(group.get("owner_line_user_id") or "").strip()
+    owner = users.get(owner_id) or {}
+    return any(
+        get_contact_line_id(contact) == uid
+        and resolve_contact_role(contact) == "guardian"
+        and contact_is_bound_guardian(contact, owner_id)
+        for contact in (owner.get("contacts") or [])
+    )
 
 
 def grant_guardian_group_admin(group, line_user_id) -> bool:
@@ -8182,36 +8214,79 @@ def owner_today_safety_roster_text(data_file, line_user_id, config=None):
     return "\n".join(lines), 200
 
 
-def guardian_group_daily_status_text(data_file, line_user_id, group_id):
+def guardian_group_daily_status(data_file, line_user_id, group_id, now=None):
     if not line_user_id or not group_id:
-        return "目前無法確認你的身分，請稍後再試。", 400
+        return {"error": "missing line_user_id or group_id"}, 400
 
     state = load_state(data_file)
     group = state.get("guardian_groups", {}).get(group_id)
     if not group or group.get("status") != "active":
-        return "此群尚未完成守護群綁定。請由有效的 799 會員在群裡輸入「點我綁定守護群」。", 404
-    prefs = normalize_guardian_group_preferences(group.get("preferences"))
-    if prefs.get("notify_admin_only", True) and not is_guardian_group_admin(group, line_user_id):
-        return "為了保護成員隱私，今日平安名單只有守護群管理員可以查看。", 403
+        return {"error": "guardian group not found"}, 404
+    if not can_view_guardian_group_status(state, group, line_user_id):
+        return {"error": "guardian group status forbidden"}, 403
 
     users = state.get("users", {}) or {}
-    member_ids = [group.get("owner_line_user_id")]
+    owner_id = str(group.get("owner_line_user_id") or "").strip()
+    member_ids = [owner_id]
     for uid in group.get("member_ids_at_bind") or []:
-        if uid not in member_ids and uid in users:
+        if uid and uid in users and uid not in member_ids:
             member_ids.append(uid)
-    today = datetime.now().strftime("%Y-%m-%d")
-    checked = []
-    unchecked = []
+    now = now or datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    members = []
     for uid in member_ids:
-        profile = users.get(uid) or {}
-        name = profile.get("display_name") or profile.get("name") or "LINE 成員"
-        is_checked = _member_checked_today(profile, today)
-        (checked if is_checked else unchecked).append(name)
+        profile = users.get(uid)
+        if not isinstance(profile, dict):
+            continue
+        name = profile.get("display_name") or profile.get("name") or "每日平安會員"
+        if uid == owner_id:
+            name = f"{name}（管理員）"
+        checked = _member_checked_today(profile, today)
+        reminder_times = reminder_times_for_profile(profile) or ["12:00"]
+        latest_reminder = max(reminder_times)
+        overdue = not checked and now.strftime("%H:%M") > latest_reminder
+        members.append({
+            "line_user_id": uid,
+            "name": name,
+            "status": "checked" if checked else ("overdue" if overdue else "pending"),
+            "status_label": (
+                "今日已報平安"
+                if checked
+                else ("已超過設定時間" if overdue else "尚未報平安")
+            ),
+        })
+    counts = {
+        key: sum(1 for row in members if row["status"] == key)
+        for key in ("checked", "pending", "overdue")
+    }
+    counts["total"] = len(members)
+    return {
+        "ok": True,
+        "group_id": group_id,
+        "group_name": group.get("group_name") or "守護群",
+        "date": today,
+        "counts": counts,
+        "members": members,
+    }, 200
 
-    total_count = len(checked) + len(unchecked)
+
+def guardian_group_daily_status_text(data_file, line_user_id, group_id):
+    result, code = guardian_group_daily_status(data_file, line_user_id, group_id)
+    if code != 200:
+        messages = {
+            400: "目前無法確認你的身分，請稍後再試。",
+            403: "今日平安名單只開放守護群管理員及已接受邀請的守護人查看。",
+            404: "此群尚未完成守護群綁定。請由有效的 799 會員在群裡輸入「點我綁定守護群」。",
+        }
+        return messages.get(code, "目前無法查看守護群狀態。"), code
+    checked = [row["name"] for row in result["members"] if row["status"] == "checked"]
+    unchecked = [row["name"] for row in result["members"] if row["status"] in {"pending", "overdue"}]
+    prefs = normalize_guardian_group_preferences(
+        (load_state(data_file).get("guardian_groups", {}).get(group_id) or {}).get("preferences")
+    )
     lines = [
-        f"📊 {group.get('group_name') or '守護群'}今日平安狀態",
-        f"共 {total_count} 位成員",
+        f"📊 {result['group_name']}今日平安狀態",
+        f"共 {result['counts']['total']} 位成員",
         f"✅ {len(checked)} 位已報平安",
         f"⚠️ {len(unchecked)} 位未報平安",
         f"未報平安：{'、'.join(unchecked) if unchecked else '目前都已完成'}",
@@ -14553,7 +14628,7 @@ def send_guardian_group_daily_summaries(config):
         if not prefs.get("daily_admin_summary"):
             skipped += 1
             continue
-        summary_time = str(prefs.get("daily_summary_time") or "21:00")
+        summary_time = str(prefs.get("daily_summary_time") or "20:00")
         current_hm = now.strftime("%H:%M")
         if current_hm < summary_time:
             deferred += 1
@@ -18703,6 +18778,18 @@ def create_app(config=None):
         )
         return jsonify(data), code
 
+    @app.get("/api/guardian-groups/status")
+    def guardian_groups_status_api():
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = guardian_group_daily_status(
+            app.config["DATA_FILE"],
+            line_user_id,
+            str(request.args.get("group_id") or "").strip(),
+        )
+        return jsonify(data), code
+
     # ===== 2026-07-20 蝦董 added: 測試頁 endpoints =====
     TEST_USER_PREFIX = "U_TEST_"
 
@@ -19920,6 +20007,18 @@ class MiniClient:
                 return MiniResponse(err[0], err[1])
             body, code = guardian_group_settings_for_user(
                 self.app.config["DATA_FILE"], line_user_id
+            )
+            return MiniResponse(body, code)
+        if route == "/api/guardian-groups/status":
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            body, code = guardian_group_daily_status(
+                self.app.config["DATA_FILE"],
+                line_user_id,
+                params.get("group_id"),
             )
             return MiniResponse(body, code)
         if route == "/api/admin/summary":

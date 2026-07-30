@@ -268,7 +268,7 @@ def _ceremonial_oath_block():
     }
 
 
-def guardian_group_intro_flex(owner_info: dict | None = None, *, include_oath: bool = True):
+def guardian_group_intro_flex(owner_info: dict | None = None, *, include_oath: bool = False):
     """進群歡迎 Flex（短、暖、像 LINE／Apple 官方首次加入）。
 
     只說明「這個群何時會通知」，不塞資格／上限長文。

@@ -7572,9 +7572,12 @@
               <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_group_on_overdue" ${prefs.notify_group_on_overdue === true ? "checked" : ""}> 未報平安時，也通知這個 LINE 群</label>
               <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="daily_admin_summary" ${prefs.daily_admin_summary === true ? "checked" : ""}> 每天傳送一次群內平安摘要</label>
               <label><input type="checkbox" class="guardian-group-pref" data-group-id="${escapeHtml(groupId)}" data-pref-key="notify_admin_only" ${prefs.notify_admin_only !== false ? "checked" : ""}> 摘要中的詳細姓名只讓管理員查看</label>
+              <label>摘要時間（每天最多一次）<input type="time" class="guardian-group-summary-time" data-group-id="${escapeHtml(groupId)}" value="${escapeHtml(prefs.daily_summary_time || "20:00")}"></label>
+              <small style="display:block;margin-top:6px;color:#a16207;line-height:1.45;">開啟群組通知或每日摘要會增加 LINE 推播用量；預設關閉。</small>
               <small style="display:block;margin-top:6px;color:#64748b;line-height:1.45;">生日、回診與生活備忘只會私訊本人，不會發到守護群。</small>
             </div>
             <button class="action-btn primary guardian-group-save" type="button" data-group-id="${escapeHtml(groupId)}">儲存守護群設定</button>
+            <button class="action-btn guardian-group-status" type="button" onclick="location.href='/liff/guardian-groups.html'">查看今日狀態</button>
             <button class="action-btn guardian-group-unbind" type="button" data-group-id="${escapeHtml(groupId)}">解除綁定</button>
           </div>
         `; }).join("")
@@ -12352,6 +12355,10 @@
       const preferences = Object.fromEntries(
         checkboxes.map((checkbox) => [checkbox.dataset.prefKey, checkbox.checked])
       );
+      const summaryTime = $("guardianGroupsList").querySelector(
+        `.guardian-group-summary-time[data-group-id="${CSS.escape(groupId)}"]`
+      );
+      preferences.daily_summary_time = summaryTime?.value || "20:00";
       saveButton.disabled = true;
       saveButton.textContent = "儲存中…";
       apiSaveGuardianGroupPreferences(groupId, preferences)
