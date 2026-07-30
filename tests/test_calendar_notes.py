@@ -524,6 +524,17 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertIn("findSmartReminderForCalendarDate", page)
         self.assertIn('openSmartReminderEditor(null, getToday())', page)
 
+    def test_saved_line_reminders_are_listed_with_edit_and_delete_actions(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="lineReminderList"', page)
+        self.assertIn('const listEl = $("lineReminderList")', page)
+        self.assertIn("修改 LINE 推播提醒", page)
+        self.assertIn('class="action-btn smart-edit-btn"', page)
+        self.assertIn('class="action-btn danger-action smart-delete-btn"', page)
+        self.assertIn('openSmartReminderEditor(btn.dataset.id)', page)
+        self.assertIn('deleteSmartReminder(btn.dataset.id)', page)
+
     def test_calendar_note_web_reminder_metadata_uses_existing_note_storage(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
 
