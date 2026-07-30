@@ -1,7 +1,7 @@
 from pathlib import Path
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import app
 
@@ -84,6 +84,91 @@ class GuardianGroupSettingsTests(unittest.TestCase):
         self.assertEqual(result["guardian_group_limit"], 1)
         self.assertEqual(result["guardian_group_count"], 0)
         self.assertEqual(result["groups"], [])
+        self.assertEqual(
+            result["default_preferences"],
+            {
+                "notify_private_guardians": True,
+                "notify_group_on_overdue": False,
+                "notify_admin_only": True,
+                "daily_admin_summary": False,
+                "daily_summary_time": "20:00",
+            },
+        )
+
+    def test_guardian_group_defaults_are_available_to_monthly_yearly_and_beta_799(self):
+        state = app.load_state(self.data_file)
+        now = datetime.now()
+        state["users"]["U-month"] = {
+            "line_user_id": "U-month",
+            "plan": "paid_799",
+            "payment_status": "active",
+            "paid_until": (now + timedelta(days=30)).isoformat(timespec="seconds"),
+        }
+        state["users"]["U-year"] = {
+            "line_user_id": "U-year",
+            "plan": "paid_799_year",
+            "payment_status": "active",
+            "paid_until": (now + timedelta(days=365)).isoformat(timespec="seconds"),
+        }
+        state["users"]["U-beta"] = {
+            "line_user_id": "U-beta",
+            "plan": "paid_799_year",
+            "membership_source": "beta",
+            "payment_status": "beta",
+            "beta_cohort": "B799",
+            "beta_started_at": (now - timedelta(days=1)).isoformat(timespec="seconds"),
+            "beta_ends_at": (now + timedelta(days=20)).isoformat(timespec="seconds"),
+        }
+        app.save_state(self.data_file, state)
+
+        monthly, monthly_code = app.guardian_group_settings_for_user(
+            self.data_file, "U-month"
+        )
+        yearly, yearly_code = app.guardian_group_settings_for_user(
+            self.data_file, "U-year"
+        )
+        beta, beta_code = app.guardian_group_settings_for_user(
+            self.data_file, "U-beta"
+        )
+
+        self.assertEqual((monthly_code, yearly_code, beta_code), (200, 200, 200))
+        self.assertEqual(monthly["guardian_group_limit"], 1)
+        self.assertEqual(yearly["guardian_group_limit"], 3)
+        self.assertEqual(beta["guardian_group_limit"], 3)
+        for result in (monthly, yearly, beta):
+            self.assertTrue(result["default_preferences"]["notify_private_guardians"])
+            self.assertFalse(result["default_preferences"]["notify_group_on_overdue"])
+            self.assertFalse(result["default_preferences"]["daily_admin_summary"])
+            self.assertTrue(result["default_preferences"]["notify_admin_only"])
+
+    def test_unbound_member_can_save_defaults_for_the_first_guardian_group(self):
+        state = app.load_state(self.data_file)
+        state["users"]["U-empty"] = {
+            "line_user_id": "U-empty",
+            "plan": "paid_799",
+            "guardian_group_ids": [],
+        }
+        app.save_state(self.data_file, state)
+
+        result, code = app.update_guardian_group_preferences(
+            self.data_file,
+            {
+                "line_user_id": "U-empty",
+                "group_id": "__default__",
+                "notify_private_guardians": True,
+                "notify_group_on_overdue": True,
+                "daily_admin_summary": False,
+                "notify_admin_only": True,
+                "daily_summary_time": "20:30",
+            },
+        )
+
+        self.assertEqual(code, 200)
+        self.assertTrue(result["preferences"]["notify_group_on_overdue"])
+        profile = app.load_state(self.data_file)["users"]["U-empty"]
+        self.assertEqual(
+            profile["guardian_group_preferences"]["daily_summary_time"], "20:30"
+        )
 
     def test_new_group_preferences_default_to_twenty_hundred(self):
         self.assertEqual(
