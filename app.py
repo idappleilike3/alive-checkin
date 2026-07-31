@@ -2893,15 +2893,13 @@ def _beta_feedback_task(cohort, day):
 
 
 def build_beta_feedback_flex(profile, day):
-    """Build one daily beta question with five explicit reply paths."""
+    """Build one caring daily beta check-in with three clear reply paths."""
     day = max(1, min(BETA_TRIAL_DAYS, int(day or 1)))
     cohort = str((profile or {}).get("beta_cohort") or "B399").upper()
     buttons = [
-        ("使用正常", "normal", "#168C65"),
-        ("發現問題", "issue", "#C2413A"),
-        ("使用心得", "insight", "#3178C6"),
-        ("不會操作", "help", "#8A5A16"),
-        ("稍後提醒", "later", "#6B7280"),
+        ("✅ 一切順利", "normal", "#168C65"),
+        ("⚠️ 有遇到問題", "issue", "#C2413A"),
+        ("💬 分享心得", "insight", "#3178C6"),
     ]
     return {
         "type": "flex",
@@ -2916,7 +2914,7 @@ def build_beta_feedback_flex(profile, day):
                 "contents": [
                     {"type": "text", "text": f"21 天封測 Day {day}", "color": "#FFFFFF",
                      "weight": "bold", "size": "xl"},
-                    {"type": "text", "text": "今天使用上有遇到問題嗎？",
+                    {"type": "text", "text": "今天用起來還順利嗎？",
                      "color": "#EAF8F1", "margin": "sm"},
                 ],
             },
@@ -2928,7 +2926,9 @@ def build_beta_feedback_flex(profile, day):
                      "color": "#168C65"},
                     {"type": "text", "text": _beta_feedback_task(cohort, day),
                      "wrap": True, "margin": "sm", "color": "#33443F"},
-                    {"type": "text", "text": "點選下方最符合的狀況即可回報",
+                    {"type": "text", "text": "如果有任何卡住的地方，或是有想分享的心得，都可以直接回覆跟我說喔。",
+                     "wrap": True, "margin": "lg", "size": "sm", "color": "#52625D"},
+                    {"type": "text", "text": "點選下方最符合的狀況：",
                      "wrap": True, "margin": "lg", "size": "sm", "color": "#6B7773"},
                 ],
             },
@@ -16187,12 +16187,15 @@ def build_smart_reminder_flex(reminder, *, mode="day"):
     if mode == "day":
         if (reminder.get("category") or "") == "memo":
             title = "📝 備忘提醒"
-            body = f"{name}\n時間：{date_text} {reminder.get('remind_time') or '09:00'}"
+            body = (
+                f"提醒：{date_text} {reminder.get('remind_time') or '09:00'} "
+                f"{name}，請記得處理喔。"
+            )
             if reminder.get("note"):
                 body += f"\n備註：{reminder.get('note')}"
             buttons = [
                 {"type": "button", "action": {"type": "postback", "label": "📋查看備忘", "data": f"smart:view:{rid}", "displayText": "查看備忘"}, "style": "primary", "color": "#2563EB", "height": "sm"},
-                {"type": "button", "action": {"type": "postback", "label": "✅我知道了", "data": f"smart:blessed:{rid}", "displayText": "我知道了"}, "style": "secondary", "height": "sm"},
+                {"type": "button", "action": {"type": "postback", "label": "好的，謝謝提醒 🙏", "data": f"smart:blessed:{rid}", "displayText": "好的，謝謝提醒 🙏"}, "style": "secondary", "height": "sm"},
             ]
         elif (reminder.get("category") or "") == "birthday":
             title = f"🎂 今天是{name}的生日"
