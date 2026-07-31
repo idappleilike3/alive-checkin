@@ -142,7 +142,7 @@ async function init() {
   let liffReady = false;
   try {
     const liffId = await resolveLiffId();
-    await liff.init({ liffId });
+    await liff.init({ liffId, withLoginOnExternalBrowser: true });
     liffReady = true;
     if (!liff.isLoggedIn()) {
       liff.login({ redirectUri: buildOnboardingLoginRedirect() });
