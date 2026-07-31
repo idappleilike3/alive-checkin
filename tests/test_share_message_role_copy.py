@@ -17,18 +17,16 @@ class ShareMessageRoleCopyTests(unittest.TestCase):
         self.assertNotIn("14 天免費體驗｜199 活著版", page)
 
     def test_trial_share_message_invites_recipient_to_start_own_checkins(self):
-        pages = [
-            (ROOT / "liff" / "share-trial.html").read_text(encoding="utf-8"),
-            (ROOT / "index.html").read_text(encoding="utf-8"),
-        ]
+        share_page = (ROOT / "liff" / "share-trial.html").read_text(encoding="utf-8")
+        member_page = (ROOT / "index.html").read_text(encoding="utf-8")
 
-        for page in pages:
-            self.assertIn("🌿 送你 14 天安心體驗", page)
-            self.assertIn("每天只要 10 秒報平安", page)
-            self.assertIn("才會通知你指定的守護人", page)
-            self.assertIn("免費體驗 14 天、不會自動扣款", page)
-            self.assertIn("需要邀請至少一位親友成為你的守護人", page)
-            self.assertIn("不會自動互相綁定", page)
+        self.assertIn("想把 14 天安心體驗分享給你", share_page)
+        self.assertIn("每天只要 10 秒報平安", share_page)
+        self.assertIn("這是你的每日平安體驗", share_page)
+        self.assertIn("不會自動扣款", share_page)
+        self.assertIn("不會自動互相綁定", share_page)
+        self.assertIn("🌿 送你 14 天安心體驗", member_page)
+        self.assertIn("需要邀請至少一位親友成為你的守護人", member_page)
 
 
 if __name__ == "__main__":

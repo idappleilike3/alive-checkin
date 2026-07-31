@@ -40,7 +40,7 @@ class RichMenuInternalInviteWaitTests(unittest.TestCase):
         trial = (ROOT / "liff/share-trial.html").read_text(encoding="utf-8")
         self.assertIn("我想邀請你成為我的安心守護人", guardian)
         self.assertIn("這次只會由你守護我，不會自動互相綁定", guardian)
-        self.assertIn("送你 14 天安心體驗", trial)
+        self.assertIn("想把 14 天安心體驗分享給你", trial)
         self.assertNotIn("送你 14 天安心體驗", guardian)
 
 

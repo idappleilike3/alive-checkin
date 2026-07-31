@@ -9,9 +9,11 @@ const read = (name) => fs.readFileSync(path.join(ROOT, name), "utf8");
 
 test("guardian acceptance offers finish and reciprocal invite as separate actions", () => {
   const html = read("index.html");
-  assert.match(html, /id="guardianBindFinishBtn"[^>]*>完成，開始守護/);
-  assert.match(html, /id="guardianBindReciprocalBtn"[^>]*>我也想讓/);
+  assert.match(html, /finishButton\.textContent = "先不用，完成設定"/);
+  assert.match(html, /reciprocalButton\.textContent = `好，邀請 \$\{peerName\} 守護我`/);
+  assert.match(html, /你已成為 \$\{peerName\} 的守護人/);
   assert.match(html, /目前是.*單向關係/);
+  assert.match(html, /符合首次體驗資格者，將免費啟用 14 天安心體驗；不會自動扣款/);
   assert.match(html, /async function startReciprocalGuardianInvite/);
 });
 
