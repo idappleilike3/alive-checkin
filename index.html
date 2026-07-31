@@ -9607,6 +9607,16 @@
       }
     }
 
+    async function resumeLineEntryWhenVisible() {
+      if (document.visibilityState !== "visible") return;
+      const gate = $("lineEntryGate");
+      const friendStep = $("lineEntryFriendStep");
+      if (!gate || gate.hidden || !friendStep || friendStep.hidden) return;
+      await recheckLineEntryGate();
+    }
+
+    document.addEventListener("visibilitychange", resumeLineEntryWhenVisible);
+
     /**
      * LIFF 初始化後，未登入者只顯示明確登入按鈕；登入後才查官方好友。
      * 只有登入與實際好友狀態都通過，才讀取 profile 或開始會員／搬家業務。
