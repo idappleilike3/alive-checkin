@@ -463,6 +463,53 @@
       return activeInviteToken;
     }
 
+    function buildGuardianShareCard(senderName, bindUrl) {
+      const safeName = String(senderName || "").trim();
+      const title = safeName
+        ? `💌 ${safeName} 邀請你成為安心守護人`
+        : "💌 有人邀請你成為安心守護人";
+      return {
+        "type": "flex",
+        "altText": title,
+        "contents": {
+          "type": "bubble",
+          "styles": {
+            "header": { "backgroundColor": "#F0FDF4" },
+            "footer": { "backgroundColor": "#FFFFFF" }
+          },
+          "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+              { "type": "text", "text": "💚 每日平安・守護邀請", "size": "sm", "weight": "bold", "color": "#15803D" },
+              { "type": "text", "text": title, "size": "xl", "weight": "bold", "color": "#14532D", "wrap": true, "margin": "md" }
+            ]
+          },
+          "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "contents": [
+              { "type": "text", "text": "因為你是我信任的人，希望在我忘記報平安或需要幫助時，你能第一時間收到提醒。", "wrap": true, "color": "#57534E" },
+              { "type": "text", "text": "平常不打擾，真的有事才通知你。", "wrap": true, "weight": "bold", "color": "#166534" },
+              { "type": "separator", "margin": "md", "color": "#BBF7D0" },
+              { "type": "text", "text": "這次只會由你守護我；雙方仍需親自同意，不會自動互相綁定。", "wrap": true, "size": "sm", "color": "#6B7280", "margin": "md" }
+            ]
+          },
+          "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [{
+              "type": "button",
+              "style": "primary",
+              "color": "#06C755",
+              "action": { "type": "uri", "label": "查看守護邀請", "uri": bindUrl }
+            }]
+          }
+        }
+      };
+    }
+
     async function buildInvitePayload(inviterId) {
       const safeId = sanitizeUserId(inviterId);
       if (!safeId) throw new Error("missing_inviter_id");
@@ -474,7 +521,8 @@
       const bindUrl = inviteUrl.toString();
       return {
         bindUrl,
-        message: `❤️ 我想邀請你成為我的安心守護人\n\n因為你是我信任的人，希望在我忘記報平安或需要幫助時，你能第一時間收到提醒。\n平常不打擾，只有需要時才通知你。\n\n點開連結，確認是否願意守護我：\n${bindUrl}\n\n這次只會由你守護我，不會自動互相綁定。`,
+        card: buildGuardianShareCard(inviterName, bindUrl),
+        message: `💌 ${inviterName || "有人"} 邀請你成為安心守護人\n\n平常不打擾，真的有事才通知你。\n\n查看守護邀請：\n${bindUrl}\n\n這次只會由你守護我，不會自動互相綁定。`,
       };
     }
 
@@ -507,10 +555,7 @@
           throw new Error("shareTargetPicker unavailable");
         }
         const payload = await buildInvitePayload(safeId);
-        const result = await liff.shareTargetPicker([{
-          type: "text",
-          text: payload.message,
-        }]);
+        const result = await liff.shareTargetPicker([payload.card]);
         return Boolean(result);
       } catch (_) {
         await renderDesktopFallback(safeId);

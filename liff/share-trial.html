@@ -43,13 +43,13 @@
     <h1 id="statusTitle">正在準備分享</h1>
     <p id="status">正在準備你的專屬分享連結，請稍候…</p>
     <section class="trial-share-card" aria-label="14 天安心體驗分享卡預覽">
-      <p class="eyebrow">🌿 每日平安・安心邀請</p>
-      <h2 id="cardTitle">想把 14 天安心體驗分享給你</h2>
-      <p>每天只要 10 秒報平安，讓在乎你的人知道你今天一切都好。</p>
+      <p class="eyebrow">💚🌿 每日平安邀請</p>
+      <h2 id="cardTitle">想分享一份安心給你</h2>
+      <p>每天 10 秒，讓你在乎的人一夜好眠。</p>
       <div class="trial-points" aria-label="體驗特色">
         <span>每天 10 秒</span><span>平常不打擾</span><span>有事才通知</span>
       </div>
-      <p class="trial-note">這是你的每日平安體驗；免費 14 天、不會自動扣款，也不會自動互相綁定。</p>
+      <p class="trial-note">一份不打擾的平安問候，免費體驗 14 天；不會自動扣款，也不會自動互相綁定。</p>
     </section>
     <button id="retryBtn" type="button" hidden>再次開啟好友選擇</button>
   </main>
@@ -67,14 +67,22 @@
     function buildTrialShareCard(senderName, trialUrl) {
       const safeName = String(senderName || "").trim();
       const invitationTitle = safeName
-        ? `${safeName} 想把 14 天安心體驗分享給你`
-        : "想把 14 天安心體驗分享給你";
+        ? `💌 ${safeName} 想分享一份安心給你`
+        : "💌 有人想分享一份安心給你";
       cardTitle.textContent = invitationTitle;
       return {
         "type": "flex",
-        "altText": `🌿 ${invitationTitle}`,
+        "altText": invitationTitle,
         "contents": {
           "type": "bubble",
+          "hero": {
+            "type": "image",
+            "url": `${location.origin}/assets/daily-peace-story-comic.png`,
+            "size": "full",
+            "aspectRatio": "20:13",
+            "aspectMode": "cover",
+            "action": { "type": "uri", "uri": trialUrl }
+          },
           "styles": {
             "header": { "backgroundColor": "#F0FDF4" },
             "footer": { "backgroundColor": "#FFFFFF" }
@@ -83,7 +91,7 @@
             "type": "box",
             "layout": "vertical",
             "contents": [
-              { "type": "text", "text": "🌿 每日平安・安心邀請", "size": "sm", "weight": "bold", "color": "#15803D" },
+              { "type": "text", "text": "💚🌿 每日平安邀請", "size": "sm", "weight": "bold", "color": "#15803D" },
               { "type": "text", "text": invitationTitle, "size": "xl", "weight": "bold", "color": "#14532D", "wrap": true, "margin": "md" }
             ]
           },
@@ -92,23 +100,21 @@
             "layout": "vertical",
             "spacing": "md",
             "contents": [
-              { "type": "text", "text": "每天只要 10 秒報平安，讓在乎你的人知道你今天一切都好。", "wrap": true, "color": "#57534E" },
-              { "type": "text", "text": "✓ 每天 10 秒　✓ 平常不打擾　✓ 有事才通知", "wrap": true, "size": "sm", "weight": "bold", "color": "#166534" },
+              { "type": "text", "text": "每天 10 秒，讓你在乎的人一夜好眠。", "wrap": true, "weight": "bold", "color": "#14532D" },
+              { "type": "text", "text": "一份不打擾的平安問候，免費體驗 14 天。", "wrap": true, "color": "#57534E" },
               { "type": "separator", "margin": "md", "color": "#BBF7D0" },
-              { "type": "text", "text": "這是你的每日平安體驗；免費 14 天、不會自動扣款，也不會自動互相綁定。", "wrap": true, "size": "sm", "color": "#57534E", "margin": "md" }
+              { "type": "text", "text": "不會自動扣款，也不會自動互相綁定。", "wrap": true, "size": "sm", "color": "#6B7280", "margin": "md" }
             ]
           },
           "footer": {
             "type": "box",
             "layout": "vertical",
-            "contents": [
-              {
-                "type": "button",
-                "style": "primary",
-                "color": "#06C755",
-                "action": { "type": "uri", "label": "開始我的 14 天安心體驗", "uri": trialUrl }
-              }
-            ]
+            "contents": [{
+              "type": "button",
+              "style": "primary",
+              "color": "#06C755",
+              "action": { "type": "uri", "label": "免費體驗 14 天", "uri": trialUrl }
+            }]
           }
         }
       };
