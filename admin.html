@@ -1248,6 +1248,44 @@
       })[char]);
     }
 
+    function linePushFailureText(detail) {
+      const text = String(detail || "").trim();
+      const lower = text.toLowerCase();
+      if (!text) return "推播失敗，但系統沒有留下詳細原因。";
+      if (
+        lower.includes("property 'to'")
+        || lower.includes('property "to"')
+        || lower.includes("invalid recipient")
+        || lower.includes("invalid user id")
+      ) {
+        return "推播失敗（HTTP 400）：收件人的 LINE ID 無效或已失效，請確認此會員是否已用目前的官方帳號重新登入並完成綁定。";
+      }
+      if (
+        lower.includes("failed to send messages")
+        || lower.includes("not a friend")
+        || lower.includes("blocked")
+        || lower.includes("friendship")
+      ) {
+        return "推播失敗（HTTP 400）：LINE 無法將訊息傳送給收件人。對方可能尚未加入、已封鎖官方帳號，或 LINE ID 已失效。";
+      }
+      if (lower.includes("429") || lower.includes("rate limit")) {
+        return "推播失敗（HTTP 429）：LINE 推播額度或發送頻率已達限制，請稍後再試並檢查本月訊息用量。";
+      }
+      if (lower.includes("401") || lower.includes("unauthorized") || lower.includes("access token")) {
+        return "推播失敗（HTTP 401）：LINE 推播憑證無效或已過期，請檢查 Render 的 LINE Channel Access Token。";
+      }
+      if (lower.includes("timeout") || lower.includes("timed out")) {
+        return "推播失敗：連線 LINE 逾時，請稍後再試。";
+      }
+      if (/\b5\d\d\b/.test(lower)) {
+        return "推播失敗：LINE 服務暫時異常，請稍後再試。";
+      }
+      if (lower.includes("400") || lower.includes("bad request")) {
+        return "推播失敗（HTTP 400）：LINE 拒絕這次請求，請檢查收件人 LINE ID 與推播訊息格式。";
+      }
+      return "推播失敗：系統目前無法判斷詳細原因，請由技術人員查看伺服器紀錄。";
+    }
+
     function renderBetaMembers(data) {
       const counts = data.counts || {};
       const limits = data.limits || { A: 10, B399: 20, B799: 10 };
@@ -2141,7 +2179,7 @@
             </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
               <span class="badge ${log.status === "sent" ? "ok" : "bad"}">${log.status === "sent" ? "成功" : "失敗"}</span>
-              ${log.status !== "sent" && log.detail ? (() => { const e = (s) => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); return `<small style="color:#c0392b;max-width:320px;word-break:break-all;text-align:right;line-height:1.3">${e(log.detail)}</small>`; })() : ""}
+              ${log.status !== "sent" && log.detail ? `<small style="color:#c0392b;max-width:320px;word-break:break-word;text-align:right;line-height:1.3">${escapeHtml(linePushFailureText(log.detail))}</small>` : ""}
             </div>
           </div>
         `).join("")
@@ -2160,7 +2198,7 @@
             <td>
               ${row.last_push_at ? escapeHtml(formatDate(row.last_push_at)) : "-"}
               ${row.latest_failure_detail
-                ? `<br><small style="color:#c0392b;max-width:360px;display:inline-block;word-break:break-all;">最近失敗：${escapeHtml(row.latest_failure_detail)}</small>`
+                ? `<br><small style="color:#c0392b;max-width:360px;display:inline-block;word-break:break-word;">最近失敗：${escapeHtml(linePushFailureText(row.latest_failure_detail))}</small>`
                 : ""}
             </td>
           </tr>
