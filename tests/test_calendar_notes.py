@@ -613,5 +613,33 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertEqual(medicine_labels, ["📋查看備忘", "✅我知道了"])
 
 
+    def test_private_memo_push_explains_the_reminder_and_uses_warm_acknowledgement(self):
+        message = build_smart_reminder_flex({
+            "id": "memo-1",
+            "target_name": "房租包",
+            "category": "memo",
+            "category_label": "一般備忘",
+            "month": 7,
+            "day": 31,
+            "remind_time": "13:00",
+            "note": "帶租約",
+        })
+
+        body_texts = [
+            item["text"]
+            for item in message["contents"]["body"]["contents"]
+            if item.get("type") == "text"
+        ]
+        labels = [
+            item["action"]["label"]
+            for item in message["contents"]["footer"]["contents"]
+        ]
+        body_copy = "\n".join(body_texts)
+        self.assertIn("提醒：7/31 13:00 房租包，請記得處理喔。", body_copy)
+        self.assertIn("備註：帶租約", body_copy)
+        self.assertEqual(labels, ["📋查看備忘", "好的，謝謝提醒 🙏"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
