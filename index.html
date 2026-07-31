@@ -75,7 +75,7 @@
     }
     .theme-switcher {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, 1fr);
       gap: 8px;
       margin-bottom: 18px;
       position: relative;
@@ -142,15 +142,6 @@
       font-weight: 750;
     }
     .subtitle-quiet { color: #0c75a8; }
-    body.neon .subtitle {
-      background: rgba(7, 34, 43, 0.92);
-      border-color: #43d7b0;
-      border-left-color: #67f0bf;
-      box-shadow: 0 10px 28px rgba(54, 224, 181, 0.18);
-    }
-    body.neon .safety-headline { color: #eafff8; }
-    body.neon .subtitle-safe { color: #67f0bf; }
-    body.neon .subtitle-quiet { color: #65d6ff; }
     body.cute .subtitle {
       background: #fff5f7;
       border-color: #ffafc2;
@@ -158,7 +149,7 @@
       box-shadow: 0 10px 24px rgba(237, 102, 136, 0.14);
     }
     body.cute .safety-headline { color: #56333e; }
-    body.cute .subtitle-safe { color: #16845d; }
+    body.cute .subtitle-safe { color: #be185d; }
     body.cute .subtitle-quiet { color: #1679a7; }
     .status-box, .calendar-box, .settings {
       border-radius: 18px;
@@ -514,17 +505,6 @@
       border-top: 1px solid #fbcfe8;
     }
     .history-tool-body > .action-btn { width: 100%; margin: 0; }
-    body.neon .history-tool-accordion {
-      border-color: rgba(103, 232, 249, 0.45);
-      background: rgba(255, 255, 255, 0.06);
-    }
-    body.neon .history-tool-summary { color: #fff; }
-    body.neon .history-tool-summary-label small { color: #bae6fd; }
-    body.neon .history-tool-count {
-      background: rgba(103, 232, 249, 0.16);
-      color: #cffafe;
-    }
-    body.neon .history-tool-body { border-top-color: rgba(103, 232, 249, 0.32); }
     .daily-almanac-card {
       display: grid;
       gap: 10px;
@@ -2844,70 +2824,6 @@
       color: #ffffff;
       border-color: transparent;
     }
-    body.neon {
-      --text: #ffffff; --muted: #c7e2eb; --panel: #182638; --line: #4dbbd1;
-      --input: #1b2a3d; --soft: #20384a; --accent: #67e8f9; --today: #facc15;
-      --checked: #0891b2; --button: linear-gradient(135deg,#22d3ee,#0f766e);
-      --button-shadow: 0 14px 34px rgba(34,211,238,0.26);
-      --glow-a: radial-gradient(circle, rgba(34,211,238,0.35), transparent 62%);
-      --glow-b: radial-gradient(circle, rgba(168,85,247,0.27), transparent 64%);
-      --doodle: #67e8f9; --ring: rgba(34,211,238,0.5);
-      --theme-active: rgba(34,211,238,0.12); --badge-bg: rgba(34,211,238,0.12); --badge-text: #a5f3fc;
-      --pill: rgba(20,184,166,0.18); --pill-text: #99f6e4;
-      background: #090f18; color: var(--text);
-    }
-    body.neon .app { background: #121a27; border: 1px solid rgba(125,211,252,0.24); }
-    body.neon input,
-    body.neon select {
-      color: #ffffff;
-      background: #1b2a3d;
-      border-color: #58c5dc;
-    }
-    body.neon input::placeholder { color: #c0d8e1; opacity: 1; }
-    body.neon select option { color: #ffffff; background: #1b2a3d; }
-    body.neon .plan-card.tier-199 {
-      color: #102a43;
-      border-color: #53a8ff;
-      background: linear-gradient(155deg, #e8f4ff, #ffffff 68%);
-      box-shadow: 0 12px 30px rgba(0, 107, 214, 0.22);
-    }
-    body.neon .plan-card.tier-399 {
-      color: #123746;
-      border-color: #31c3d6;
-      background: linear-gradient(155deg, #e5fdff, #ffffff 68%);
-      box-shadow: 0 12px 30px rgba(0, 153, 174, 0.22);
-    }
-    body.neon .plan-card.tier-799 {
-      color: #3f2b08;
-      border-color: #f4bd32;
-      background: linear-gradient(155deg, #fff4bd, #ffffff 68%);
-      box-shadow: 0 12px 32px rgba(244, 189, 50, 0.26);
-    }
-    body.neon .plan-card ul { color: #24384a; }
-    body.neon .plan-card .plan-card-note { color: #455b6d; }
-    body.neon .plan-card .plan-cycle-badge {
-      color: #064e5b;
-      background: #d9fbff;
-      border-color: #46cde0;
-    }
-    body.neon .plan-card.tier-199 .price-head strong,
-    body.neon .plan-card.tier-199 .plan-price,
-    body.neon .plan-card.tier-399 .price-head strong,
-    body.neon .plan-card.tier-399 .plan-price { color: var(--tier-ink); }
-    body.neon .premium-month-card,
-    body.neon .premium-year-card {
-      border-color: #facc15;
-      background: linear-gradient(145deg, #2b2414, #171c25);
-      box-shadow: 0 16px 40px rgba(250, 204, 21, 0.2), inset 0 1px 0 rgba(255,255,255,0.1);
-    }
-    body.neon .premium-month-card .price-head strong,
-    body.neon .premium-month-card .monthly-price,
-    body.neon .premium-year-card .price-head strong { color: #fde68a; }
-    body.neon .premium-month-card ul,
-    body.neon .premium-year-card ul,
-    body.neon .premium-year-card .annual-proof { color: #fef3c7; }
-    body.neon .premium-month-card .price-meta span,
-    body.neon .premium-year-card .price-meta span { background: rgba(250,204,21,0.1); border-color: rgba(250,204,21,0.32); }
     body.cute {
       --text: #4c1937; --muted: #9f466b; --panel: #fff1f5; --line: #f8b4c8;
       --input: #fffafb; --soft: #fff7ed; --accent: #db2777; --today: #7c3aed;
@@ -3286,157 +3202,11 @@
       font-weight: 700;
       color: #444;
     }
-    body.neon .mvp-brand,
-    body.neon .mvp-welcome {
-      color: #fff;
-      text-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
-    }
-    body.neon .mvp-slogan {
-      color: #d1fae5;
-      font-size: clamp(18px, 4.8vw, 22px);
-      font-weight: 950;
-    }
-    body.neon .mvp-welcome-sub {
-      color: #d1d5db;
-      font-size: clamp(18px, 4.8vw, 21px);
-      font-weight: 900;
-    }
     .calendar-box,
     .settings[aria-label="會員個人中心"] {
       background: linear-gradient(180deg, #fff7ed 0%, #fff1f7 100%);
       border: 2px solid #f9a8d4;
       color: #5b1535;
-    }
-    body.neon .calendar-box,
-    body.neon .settings[aria-label="會員個人中心"],
-    body.neon .settings[aria-label="緊急聯絡人"] {
-      background: #121a27;
-      border-color: #67e8f9;
-      color: #bae6fd;
-    }
-    body.neon .calendar-box .calendar-month,
-    body.neon .calendar-box .day-cell,
-    body.neon .settings[aria-label="會員個人中心"] .member-data-row,
-    body.neon .settings[aria-label="會員個人中心"] .helper {
-      color: #f8fafc;
-    }
-    body.neon .settings-title,
-    body.neon .member-center-toggle,
-    body.neon .member-data-section h3,
-    body.neon .member-data-row strong,
-    body.neon .calendar-box strong,
-    body.neon .history-note,
-    body.neon .member-profile-row strong {
-      color: #ffffff;
-    }
-    body.neon .member-center-toggle span { color: #67e8f9; }
-    body.neon .member-profile-row {
-      background: linear-gradient(135deg, #020617 0%, #0f172a 54%, #082f49 100%);
-      border-color: #67e8f9;
-      box-shadow: 0 16px 32px rgba(8, 47, 73, 0.36);
-    }
-    body.neon .member-upgrade-btn {
-      background: linear-gradient(135deg, #1d4ed8 0%, #0369a1 50%, #0891b2 100%);
-      box-shadow: 0 12px 28px rgba(14, 165, 233, 0.3);
-    }
-    body.neon .plan-toggle {
-      background: linear-gradient(135deg, #020617 0%, #0f172a 54%, #0891b2 100%);
-      border-color: #67e8f9;
-      color: #ffffff;
-      box-shadow: 0 0 0 2px rgba(103,232,249,0.16), 0 14px 32px rgba(8,145,178,0.34);
-    }
-    body.neon .member-data-section,
-    body.neon .guardian-details-form,
-    body.neon .member-data-row,
-    body.neon .member-advanced-note,
-    body.neon .setting-choice,
-    body.neon .calendar-day-note {
-      background: rgba(255, 255, 255, 0.08);
-      border-color: rgba(103, 232, 249, 0.45);
-      color: #f8fafc;
-    }
-    body.neon .member-data-row span,
-    body.neon .member-profile-row small,
-    body.neon .guardian-details-status,
-    body.neon .calendar-lunar,
-    body.neon .calendar-note-preview {
-      color: #dbeafe;
-    }
-    body.neon .day-cell.festival .day-number,
-    body.neon .day-cell.festival .lunar-mini {
-      color: #ff4d6d;
-      text-shadow: 0 0 10px rgba(255, 77, 109, 0.42);
-    }
-    body.neon .day-cell.birthday .day-number,
-    body.neon .day-cell.birthday .lunar-mini {
-      color: #f9a8d4;
-      text-shadow: 0 0 10px rgba(249, 168, 212, 0.44);
-    }
-    body.neon .today-reminder-card,
-    body.neon .birthday-fields {
-      background: rgba(255, 255, 255, 0.08);
-      border-color: rgba(103, 232, 249, 0.45);
-      color: #f8fafc;
-    }
-    body.neon .today-reminder-card strong,
-    body.neon .today-reminder-card span,
-    body.neon .birthday-fields legend,
-    body.neon .birthday-fields label {
-      color: #ffffff;
-    }
-    body.neon input,
-    body.neon select,
-    body.neon textarea {
-      background: #020617;
-      border-color: #67e8f9;
-      color: #ffffff;
-    }
-    body.neon input::placeholder,
-    body.neon textarea::placeholder {
-      color: #bfdbfe;
-      opacity: 1;
-    }
-    body.neon .check-btn:not(.danger):not(.warning),
-    body.neon .check-btn.checked:not(.danger):not(.warning) {
-      background: radial-gradient(circle at 35% 30%, #ffffff 0%, #ecfeff 48%, #67e8f9 100%);
-      color: #0f172a;
-      box-shadow: 0 0 0 10px rgba(255,255,255,0.08), 0 0 44px rgba(103,232,249,0.38);
-    }
-    body.neon .check-btn:not(.danger):not(.warning) .sub,
-    body.neon .check-btn.checked:not(.danger):not(.warning) .sub {
-      color: #164e63;
-    }
-    body.neon .settings[aria-label="緊急聯絡人"] .settings-title,
-    body.neon .settings[aria-label="緊急聯絡人"] .price-head strong,
-    body.neon .settings[aria-label="緊急聯絡人"] .helper {
-      color: #bae6fd;
-    }
-    body.neon .settings[aria-label="緊急聯絡人"] .contact-card {
-      background: #182638;
-      border-color: #4dbbd1;
-    }
-    body.neon .settings[aria-label="緊急聯絡人"] .contact-primary {
-      background: linear-gradient(135deg, rgba(15, 23, 42, 0.96) 0%, rgba(12, 74, 110, 0.88) 100%);
-      border-color: #67e8f9;
-      color: #bae6fd;
-      box-shadow: 0 0 32px rgba(103, 232, 249, 0.2);
-    }
-    body.neon .settings[aria-label="緊急聯絡人"] .contact-primary .helper {
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(186, 230, 253, 0.28);
-      color: #bae6fd;
-    }
-    body.neon .settings[aria-label="緊急聯絡人"] .contact-primary .price-head span {
-      background: rgba(103, 232, 249, 0.16);
-      color: #e0f2fe;
-      border-color: #67e8f9;
-    }
-    body.neon .settings[aria-label="緊急聯絡人"] .contact-primary .price-btn,
-    body.neon .settings[aria-label="緊急聯絡人"] .scan-qr-btn {
-      background: linear-gradient(135deg, #67e8f9 0%, #38bdf8 100%);
-      color: #082f49;
-      border-color: transparent;
-      box-shadow: 0 12px 26px rgba(56, 189, 248, 0.28);
     }
     body.cute .member-upgrade-btn {
       background: linear-gradient(135deg, #fb7185, #db2777);
@@ -3482,6 +3252,22 @@
       border-color: #f9a8d4;
       color: #ffffff;
       box-shadow: 0 14px 28px rgba(219, 39, 119, 0.22);
+    }
+    body.cute .mvp-home .countdown-block {
+      background: #fff1f7;
+      border-color: #f9a8d4;
+      color: #831843;
+    }
+    body.cute .mvp-home .countdown,
+    body.cute .mvp-home .countdown-label {
+      color: #9d174d;
+    }
+    body.cute .mvp-btn.safe,
+    body.cute .mvp-btn.done,
+    body.cute .mvp-action.primary {
+      background: linear-gradient(180deg, #fb7185 0%, #db2777 100%);
+      border-color: #f9a8d4;
+      color: #ffffff;
     }
     .mvp-hero-img {
       display: block;
@@ -4114,7 +3900,6 @@
     </div>
     <div class="theme-switcher" aria-label="主題切換" hidden>
       <button class="theme-btn active" data-theme="classic" type="button">經典</button>
-      <button class="theme-btn" data-theme="neon" type="button">霓虹</button>
       <button class="theme-btn" data-theme="cute" type="button">可愛</button>
     </div>
 
@@ -5736,11 +5521,13 @@
     }
 
     function setTheme(theme) {
-      document.body.className = theme;
+      const supportedThemes = new Set(["classic", "cute"]);
+      const safeTheme = supportedThemes.has(theme) ? theme : "classic";
+      document.body.className = safeTheme;
       document.querySelectorAll(".theme-btn").forEach((button) => {
-        button.classList.toggle("active", button.dataset.theme === theme);
+        button.classList.toggle("active", button.dataset.theme === safeTheme);
       });
-      localStorage.setItem("preferred_theme", theme);
+      localStorage.setItem("preferred_theme", safeTheme);
     }
 
     function getToday() {
