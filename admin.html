@@ -6,6 +6,12 @@
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <title>今天還在嗎後台</title>
   <style>
+    :root {
+      --admin-body-size: 16px;
+      --admin-note-size: 15px;
+      --admin-control-height: 48px;
+      --admin-sidebar-width: 280px;
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -17,31 +23,81 @@
         radial-gradient(circle at 92% 16%, rgba(251,113,133,0.25), transparent 32%),
         #eef3f7;
       padding: 24px;
+      font-size: var(--admin-body-size);
     }
-    .shell { max-width: 1380px; margin: 0 auto; }
+    .shell { max-width: 1600px; margin: 0 auto; }
+    .admin-layout {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 20px;
+      align-items: start;
+    }
+    .admin-content { min-width: 0; }
     .admin-nav {
       position: sticky;
-      top: 10px;
-      z-index: 5;
-      display: flex;
-      gap: 8px;
-      overflow-x: auto;
-      margin: 0 0 16px;
-      padding: 10px;
-      border-radius: 16px;
+      top: 18px;
+      z-index: 20;
+      max-height: calc(100vh - 36px);
+      overflow-y: auto;
+      padding: 16px;
+      border-radius: 18px;
       background: #102a43;
       box-shadow: 0 14px 30px rgba(16,42,67,0.2);
     }
+    .admin-nav-title {
+      margin: 0 0 14px;
+      color: #fff;
+      font-size: 20px;
+      font-weight: 900;
+    }
+    .admin-nav details { margin: 5px 0; }
+    .admin-nav summary {
+      min-height: var(--admin-control-height);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border-radius: 12px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 17px;
+      font-weight: 900;
+      list-style: none;
+    }
+    .admin-nav summary::-webkit-details-marker { display: none; }
+    .admin-nav summary::after { content: "⌄"; }
+    .admin-nav details[open] > summary { background: #173f59; }
+    .admin-subnav {
+      display: grid;
+      gap: 4px;
+      margin: 5px 0 10px;
+      padding-left: 10px;
+      border-left: 2px solid #2f6178;
+    }
     .admin-nav a {
-      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      min-height: var(--admin-control-height);
       color: #d9f9e6;
       text-decoration: none;
       font-weight: 800;
-      font-size: 14px;
-      padding: 9px 12px;
+      font-size: 16px;
+      padding: 10px 12px;
       border-radius: 10px;
     }
-    .admin-nav a:hover, .admin-nav a:focus-visible { background: #1f4d61; outline: 2px solid #86efac; }
+    .admin-nav a:hover, .admin-nav a:focus-visible,
+    .admin-nav a[aria-current="page"] {
+      color: #102a43;
+      background: #bbf7d0;
+      outline: 2px solid #86efac;
+    }
+    .admin-nav-toggle {
+      display: none;
+      min-height: var(--admin-control-height);
+      margin-bottom: 12px;
+    }
+    .admin-nav-backdrop { display: none; }
+    [data-admin-page][hidden] { display: none !important; }
     .section-heading { scroll-margin-top: 82px; }
     .integration-grid {
       display: grid;
@@ -151,8 +207,8 @@
     @media (max-width: 760px) {
       .auth-bar { grid-template-columns: 1fr; }
     }
-    input, button {
-      min-height: 42px;
+    input, button, select {
+      min-height: var(--admin-control-height);
       border-radius: 12px;
       border: 1px solid #d8dee9;
       padding: 9px 12px;
@@ -181,7 +237,7 @@
       border: 1px solid #e2e8f0;
     }
     .stat strong { display: block; font-size: 28px; margin-bottom: 2px; }
-    .stat span { color: #667085; font-size: 13px; }
+    .stat span { color: #667085; font-size: 15px; }
     .release-status {
       margin-bottom: 16px;
       padding: 4px 0 10px;
@@ -334,7 +390,7 @@
       gap: 8px;
       flex-wrap: wrap;
       color: #667085;
-      font-size: 13px;
+      font-size: 15px;
     }
     .reward-item {
       display: grid;
@@ -345,7 +401,7 @@
       border-radius: 14px;
       background: #f8fafc;
       padding: 10px 12px;
-      font-size: 13px;
+      font-size: 15px;
     }
     .log-item {
       display: grid;
@@ -356,7 +412,7 @@
       border-radius: 14px;
       background: #f8fafc;
       padding: 10px 12px;
-      font-size: 13px;
+      font-size: 15px;
     }
     .log-item strong { font-size: 14px; }
     .log-item small { color: #667085; }
@@ -369,10 +425,10 @@
       padding: 12px 10px;
       text-align: left;
       border-bottom: 1px solid #e8edf3;
-      font-size: 14px;
+      font-size: 16px;
       vertical-align: middle;
     }
-    th { color: #667085; font-size: 12px; }
+    th { color: #667085; font-size: 15px; }
     .plan-reference tbody tr { transition: background 0.18s ease; }
     .plan-reference tbody tr:hover { filter: saturate(1.05); }
     .plan-reference .tier-199 {
@@ -433,8 +489,35 @@
     .note {
       margin-top: 12px;
       color: #667085;
-      font-size: 13px;
+      font-size: var(--admin-note-size);
       line-height: 1.6;
+    }
+    @media (max-width: 900px) {
+      body { padding: 12px; }
+      .admin-layout { display: block; }
+      .admin-nav-toggle { display: inline-flex; align-items: center; gap: 8px; }
+      .admin-nav {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: min(var(--admin-sidebar-width), calc(100vw - 44px));
+        max-height: none;
+        border-radius: 0 18px 18px 0;
+        transform: translateX(-105%);
+        transition: transform 0.2s ease;
+      }
+      .admin-nav.is-open { transform: translateX(0); }
+      .admin-nav-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 15;
+        border: 0;
+        border-radius: 0;
+        background: rgba(15, 23, 42, 0.55);
+        box-shadow: none;
+      }
+      .admin-nav-backdrop.is-open { display: block; }
     }
     @media (max-width: 760px) {
       body { padding: 12px; }
@@ -466,21 +549,57 @@
       <button id="logoutBtn" class="secondary" type="button">登出</button>
     </div>
 
-    <nav class="admin-nav" aria-label="後台主要功能">
-      <a href="#operations">營運總覽</a>
-      <a href="#members">會員管理</a>
-      <a href="#guardian-operations">守護營運</a>
-      <a href="#incidents">緊急事件</a>
-      <a href="#beta-program">封測管理</a>
-      <a href="#orders">方案與訂單</a>
-      <a href="#support">客服與隱私</a>
-      <a href="#analytics">流量分析</a>
-      <a href="#test-center">測試中心</a>
-      <a href="#seo">SEO 管理</a>
-      <a href="#system">系統設定</a>
-    </nav>
+    <button id="adminNavToggle" class="admin-nav-toggle" type="button" aria-controls="adminSidebar" aria-expanded="false">☰ 功能選單</button>
+    <button id="adminNavBackdrop" class="admin-nav-backdrop" type="button" aria-label="關閉功能選單"></button>
+    <div class="admin-layout">
+      <nav class="admin-nav" id="adminSidebar" aria-label="後台主要功能">
+        <p class="admin-nav-title">管理功能</p>
+        <details data-admin-group="operations">
+          <summary>營運管理</summary>
+          <div class="admin-subnav">
+            <a href="/admin?page=operations" data-admin-link="operations">營運總覽</a>
+            <details data-admin-group="analytics">
+              <summary>數據分析</summary>
+              <div class="admin-subnav">
+                <a href="/admin?page=analytics" data-admin-link="analytics">流量分析</a>
+                <a href="/admin?page=line-cost" data-admin-link="line-cost">LINE 訊息用量</a>
+              </div>
+            </details>
+          </div>
+        </details>
+        <details data-admin-group="members">
+          <summary>會員與守護</summary>
+          <div class="admin-subnav">
+            <a href="/admin?page=members" data-admin-link="members">會員管理</a>
+            <a href="/admin?page=guardian-operations" data-admin-link="guardian-operations">守護營運</a>
+          </div>
+        </details>
+        <details data-admin-group="safety">
+          <summary>安全與通知</summary>
+          <div class="admin-subnav">
+            <a href="/admin?page=incidents" data-admin-link="incidents">緊急事件</a>
+          </div>
+        </details>
+        <details data-admin-group="business">
+          <summary>商業營運</summary>
+          <div class="admin-subnav">
+            <a href="/admin?page=beta-program" data-admin-link="beta-program">封測管理</a>
+            <a href="/admin?page=orders" data-admin-link="orders">方案與訂單</a>
+          </div>
+        </details>
+        <details data-admin-group="system">
+          <summary>客服與系統</summary>
+          <div class="admin-subnav">
+            <a href="/admin?page=support" data-admin-link="support">客服與隱私</a>
+            <a href="/admin?page=test-center" data-admin-link="test-center">測試中心</a>
+            <a href="/admin?page=seo" data-admin-link="seo">SEO 管理</a>
+            <a href="/admin?page=system" data-admin-link="system">系統設定</a>
+          </div>
+        </details>
+      </nav>
+      <div class="admin-content">
 
-    <section class="panel section-heading" id="incidents" style="margin-bottom:16px;">
+    <section class="panel section-heading" id="incidents" data-admin-page="incidents" style="margin-bottom:16px;">
       <h2 style="margin:0 0 6px;">緊急事件中心</h2>
       <p class="note">優先處理尚未結案的 SOS 與 LINE 發送失敗；數字會隨後台刷新更新。</p>
       <div class="stats">
@@ -494,7 +613,7 @@
       </div>
     </section>
 
-    <section class="panel section-heading" id="line-cost" style="margin-bottom:16px;">
+    <section class="panel section-heading" id="line-cost" data-admin-page="line-cost" style="margin-bottom:16px;">
       <h2 style="margin:0 0 6px;">LINE 訊息用量</h2>
       <p class="note">以本系統推播紀錄估算當月用量；正式帳單仍以 LINE Developers 後台為準。</p>
       <div class="stats">
@@ -507,7 +626,7 @@
       <p class="note" id="lineHardStopHint">達到硬上限時停止一般提醒與批次推播；SOS 與安全事件仍可發送。</p>
     </section>
 
-    <section class="panel section-heading" id="analytics" style="margin-bottom:16px;">
+    <section class="panel section-heading" id="analytics" data-admin-page="analytics" style="margin-bottom:16px;">
       <h2 style="margin:0 0 6px;">流量分析</h2>
       <p class="note">站內轉換資料可直接驗證；GA4 報表需設定 Property ID 與服務帳號後才會顯示正式流量。</p>
       <div class="stats">
@@ -532,7 +651,7 @@
       </div>
     </section>
 
-    <section class="panel section-heading" id="seo" style="margin-bottom:16px;">
+    <section class="panel section-heading" id="seo" data-admin-page="seo" style="margin-bottom:16px;">
       <h2 style="margin:0 0 6px;">SEO 管理</h2>
       <p class="note">自動稽核公開頁面的標題、摘要、canonical、robots 與結構化資料。</p>
       <div id="seoAuditList" class="log-list">
@@ -568,13 +687,13 @@
         <div class="stat"><strong id="paidRevenue">NT$0</strong><span>已付款營收</span></div>
         <div class="stat"><strong id="paidOrders">0</strong><span>已付款訂單</span></div>
         <div class="stat"><strong id="pendingOrders">0</strong><span>待付款訂單</span></div>
-        <div class="stat"><strong id="lineMessagesUsed">0</strong><span>本月 LINE 訊息則數</span></div>
+        <div class="stat"><strong id="lineMessagesOverview">0</strong><span>本月 LINE 訊息則數</span></div>
         <div class="stat"><strong id="lineMessagesProjected">0</strong><span>月底預估則數</span></div>
         <div class="stat"><strong id="falseAlarmUnits">0</strong><span>SOS 取消通知成本</span></div>
         <div class="stat"><strong id="lineUsageAlert">正常</strong><span>LINE 額度警示</span></div>
       </div>
 
-      <section class="release-status section-heading" id="beta-program" aria-label="21 天封閉測試名單">
+      <section class="release-status section-heading" id="beta-program" data-admin-page="beta-program" aria-label="21 天封閉測試名單">
         <h2>21 天封閉測試名單</h2>
         <p class="note">A 10 人、B399 20 人、B799 10 人。不會建立訂單，也不會自動扣款。</p>
         <div class="stats">
@@ -615,7 +734,7 @@
         </div>
       </section>
 
-      <section class="release-status" aria-label="封測上線門檻">
+      <section class="release-status" data-admin-page="beta-program" aria-label="封測上線門檻">
         <h2>封測上線量化門檻</h2>
         <p id="launchGateBanner" class="auth-status">尚未載入；未通過時必須停止新增測試者。</p>
         <div class="stats">
@@ -630,7 +749,7 @@
         <div id="launchFailures" class="log-list"><div class="log-item"><span>尚無推播失敗紀錄</span></div></div>
       </section>
 
-      <section class="release-status" aria-label="LINE 半自動實機驗收">
+      <section class="release-status" data-admin-page="beta-program" aria-label="LINE 半自動實機驗收">
         <h2>LINE 半自動實機驗收</h2>
         <p class="note">只記錄封測會員既有測試結果，不會從後台發送測試訊息。</p>
         <div class="stats">
@@ -724,7 +843,7 @@
         </div>
       </section>
 
-      <div class="plan-reference">
+      <div class="plan-reference" data-admin-page="orders">
         <h2>方案差異表</h2>
         <table>
           <thead>
@@ -811,6 +930,7 @@
         </table>
       </div>
 
+      <div data-admin-page="members">
       <h2 class="section-heading" id="members" style="margin:20px 0 8px;">會員管理</h2>
       <div class="table-wrap member-table-wrap">
         <table class="member-table">
@@ -838,8 +958,9 @@
           </tbody>
         </table>
       </div>
+      </div>
 
-      <div class="plan-reference section-heading" id="orders" style="margin-top:16px;">
+      <div class="plan-reference section-heading" id="orders" data-admin-page="orders" style="margin-top:16px;">
         <h2>付款訂單</h2>
         <table>
           <thead>
@@ -860,9 +981,9 @@
         </table>
       </div>
 
-      <h2 class="section-heading" id="system" style="margin: 20px 0 8px;">系統設定與資料備份</h2>
-      <p class="note">每次備份都會保留歷史紀錄，可隨時再次下載。系統最多保留最近 50 筆紀錄。</p>
-      <div class="table-wrap">
+      <h2 class="section-heading" id="system" data-admin-page="system" style="margin: 20px 0 8px;">系統設定與資料備份</h2>
+      <p class="note" data-admin-page="system">每次備份都會保留歷史紀錄，可隨時再次下載。系統最多保留最近 50 筆紀錄。</p>
+      <div class="table-wrap" data-admin-page="system">
         <table>
           <thead>
             <tr>
@@ -881,7 +1002,7 @@
       <p class="note" id="message" role="status" aria-live="polite">小提醒：推播需要設定 LINE_CHANNEL_ACCESS_TOKEN，使用者也要先加官方帳號好友。</p>
     </section>
 
-    <section class="panel section-heading" id="test-center" style="margin-top:16px;">
+    <section class="panel section-heading" id="test-center" data-admin-page="test-center" style="margin-top:16px;">
       <h2 style="margin:0 0 6px;">部署前安全測試中心</h2>
       <p class="note">所有操作均標示「測試模式」，只傳給白名單測試帳號，不扣款、不改方案、不計入正式會員推播次數。</p>
       <div class="toolbar">
@@ -914,7 +1035,7 @@
       <div class="log-list" id="testCenterRuns"><div class="log-item"><span>尚無紀錄</span><span></span><span></span></div></div>
     </section>
 
-    <section class="panel section-heading" id="guardian-operations" style="margin-top: 16px;">
+    <section class="panel section-heading" id="guardian-operations" data-admin-page="guardian-operations" style="margin-top: 16px;">
       <h2 style="margin: 0 0 8px;">邀請綁定關係（誰邀請誰）</h2>
       <p class="note">依邀請人 contacts 的 LINE 綁定列出；每個人分享連結都帶自己的 <code>invite_from</code>。</p>
       <div class="reward-list" id="inviteEdgeList">
@@ -922,14 +1043,14 @@
       </div>
     </section>
 
-    <section class="panel" style="margin-top: 16px;">
+    <section class="panel" data-admin-page="guardian-operations" style="margin-top: 16px;">
       <h2 style="margin: 0 0 8px;">綁定獎勵紀錄</h2>
       <div class="reward-list" id="rewardList">
         <div class="reward-item"><span>尚未載入</span><span></span><span></span></div>
       </div>
     </section>
 
-    <section class="panel section-heading" id="support" style="margin-top: 16px;">
+    <section class="panel section-heading" id="support" data-admin-page="support" style="margin-top: 16px;">
       <h2 style="margin: 0 0 8px;">客服訊息</h2>
       <p class="note">使用者的自由提問會出現在這裡。請到 LINE Official Account Manager 的聊天室人工回覆；網站後台不再提供 LINE 私訊推播，避免占用主動推播額度。</p>
       <div class="support-list" id="supportList">
@@ -942,7 +1063,7 @@
       </div>
     </section>
 
-    <section class="panel" style="margin-top: 16px;">
+    <section class="panel" data-admin-page="line-cost" style="margin-top: 16px;">
       <h2 style="margin: 0 0 8px;">每日會員推播次數</h2>
       <p class="note">依日期與會員統計成功、失敗及總推播數，並顯示目前方案與到期時間。</p>
       <div class="table-wrap">
@@ -957,16 +1078,85 @@
       </div>
     </section>
 
-    <section class="panel" style="margin-top: 16px;">
+    <section class="panel" data-admin-page="operations" style="margin-top: 16px;">
       <h2 style="margin: 0 0 8px;">最近推播紀錄</h2>
       <div class="log-list" id="logList">
         <div class="log-item"><span>尚未載入</span><span></span><span></span></div>
       </div>
     </section>
+      </div>
+    </div>
   </main>
 
   <script>
     const $ = (id) => document.getElementById(id);
+    const ADMIN_PAGES = new Set([
+      "operations", "members", "guardian-operations", "incidents",
+      "beta-program", "orders", "support", "analytics", "line-cost",
+      "test-center", "seo", "system"
+    ]);
+    const EMBEDDED_ADMIN_PAGES = new Set(["operations", "members", "beta-program", "orders", "system"]);
+    const ADMIN_PAGE_TITLES = {
+      operations: "營運總覽",
+      members: "會員管理",
+      "guardian-operations": "守護營運",
+      incidents: "緊急事件",
+      "beta-program": "封測管理",
+      orders: "方案與訂單",
+      support: "客服與隱私",
+      analytics: "流量分析",
+      "line-cost": "LINE 訊息用量",
+      "test-center": "測試中心",
+      seo: "SEO 管理",
+      system: "系統設定"
+    };
+
+    function getAdminPage() {
+      const currentUrl = new URL(globalThis.location?.href || "https://example.test/admin");
+      const requestedPage = currentUrl.searchParams.get("page") || "operations";
+      return ADMIN_PAGES.has(requestedPage) ? requestedPage : "operations";
+    }
+
+    function toggleAdminNav(forceOpen) {
+      const sidebar = $("adminSidebar");
+      const backdrop = $("adminNavBackdrop");
+      const toggle = $("adminNavToggle");
+      if (!sidebar || !backdrop || !toggle) return;
+      const open = typeof forceOpen === "boolean" ? forceOpen : !sidebar.classList.contains("is-open");
+      sidebar.classList.toggle("is-open", open);
+      backdrop.classList.toggle("is-open", open);
+      toggle.setAttribute("aria-expanded", String(open));
+    }
+
+    function applyAdminPage() {
+      const activePage = getAdminPage();
+      const operations = $("operations");
+      const pageNodes = document.querySelectorAll ? document.querySelectorAll("[data-admin-page]") : [];
+      pageNodes.forEach((node) => { node.hidden = node.dataset.adminPage !== activePage; });
+
+      if (operations) {
+        operations.hidden = !EMBEDDED_ADMIN_PAGES.has(activePage);
+        Array.from(operations.children || []).forEach((node) => {
+          const assignedPage = node.dataset?.adminPage;
+          node.hidden = assignedPage ? assignedPage !== activePage : activePage !== "operations";
+        });
+      }
+
+      const links = document.querySelectorAll ? document.querySelectorAll("[data-admin-link]") : [];
+      links.forEach((link) => {
+        if (link.dataset.adminLink === activePage) link.setAttribute("aria-current", "page");
+        else link.removeAttribute("aria-current");
+      });
+      const activeLink = Array.from(links).find((link) => link.dataset.adminLink === activePage);
+      let parent = activeLink?.parentElement;
+      while (parent) {
+        if (parent.tagName === "DETAILS") parent.open = true;
+        parent = parent.parentElement;
+      }
+      const heading = document.querySelector ? document.querySelector(".topbar h1") : null;
+      if (heading) heading.textContent = `${ADMIN_PAGE_TITLES[activePage]} ♡`;
+      toggleAdminNav(false);
+    }
 
     let adminCsrfToken = "";
     let adminAuthGeneration = 0;
@@ -1013,6 +1203,7 @@
     function showDashboard() {
       $("loginPanel").hidden = true;
       $("adminShell").hidden = false;
+      applyAdminPage();
     }
 
     async function adminFetch(url, options = {}) {
@@ -1864,7 +2055,7 @@
       $("paidOrders").textContent = data.paid_order_count || 0;
       $("pendingOrders").textContent = data.pending_order_count || 0;
       const lineUsage = data.line_message_usage || {};
-      $("lineMessagesUsed").textContent = `${lineUsage.used_units || 0}／${lineUsage.quota || "未設定"}`;
+      $("lineMessagesOverview").textContent = `${lineUsage.used_units || 0}／${lineUsage.quota || "未設定"}`;
       $("lineMessagesProjected").textContent = lineUsage.projected_units || 0;
       $("falseAlarmUnits").textContent = lineUsage.false_alarm_units || 0;
       $("lineUsageAlert").textContent = lineUsage.alert_level === "critical_90"
@@ -2266,6 +2457,10 @@
     $("birthdayRemindBtn").addEventListener("click", sendBirthdayReminders);
     $("createBackupBtn").addEventListener("click", createBackup);
     $("richMenuDeployBtn").addEventListener("click", deployRichMenu);
+    const adminNavToggle = $("adminNavToggle");
+    const adminNavBackdrop = $("adminNavBackdrop");
+    if (adminNavToggle) adminNavToggle.addEventListener("click", () => toggleAdminNav());
+    if (adminNavBackdrop) adminNavBackdrop.addEventListener("click", () => toggleAdminNav(false));
     $("usersBody").addEventListener("change", (event) => {
       const selectElement = event.target.closest(".plan-select");
       if (!selectElement) return;
