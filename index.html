@@ -5068,8 +5068,9 @@
       <p id="guardianBindSuccessDetail">您現在可以免費收到對方的報平安、逾時與 SOS 通知。</p>
       <p id="guardianBindNextStep">目前是您守護對方的單向關係，不會自動互相綁定。</p>
       <div class="actions">
-        <button class="action-btn" id="guardianBindFinishBtn" type="button">完成，開始守護 A</button>
-        <button class="action-btn primary" id="guardianBindReciprocalBtn" type="button">我也想讓 A 守護我</button>
+        <button class="action-btn primary" id="guardianBindReciprocalBtn" type="button">好，邀請 A 守護我</button>
+        <small>符合首次體驗資格者，將免費啟用 14 天安心體驗；不會自動扣款。</small>
+        <button class="action-btn" id="guardianBindFinishBtn" type="button">先不用，完成設定</button>
       </div>
     </div>
   </div>
@@ -8470,7 +8471,7 @@
           : (plan.startsWith("paid_") ? `你目前的 ${planLabel(plan)}會保留。` : "");
         next.textContent = `${membershipHint} 是否也想邀請 ${peerName} 守護你的每日平安？${peerName} 親自接受後，才會完成互相守護。`;
       }
-      if (finishButton) finishButton.textContent = `完成，開始守護 ${peerName}`;
+      if (finishButton) finishButton.textContent = "先不用，完成設定";
       if (reciprocalButton) reciprocalButton.textContent = `好，邀請 ${peerName} 守護我`;
       const prompt = $("guardianBindSuccessPrompt");
       if (prompt) prompt.hidden = false;
