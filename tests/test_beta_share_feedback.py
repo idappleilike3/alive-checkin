@@ -62,14 +62,19 @@ class BetaShareFeedbackTests(unittest.TestCase):
         self.assertIn("guardian-story-mother-daughter", invite)
         self.assertIn("不會全天偷追蹤", guide)
 
-    def test_feedback_flex_has_all_five_responses_and_cohort_task(self):
+    def test_feedback_flex_uses_caring_copy_and_three_clear_responses(self):
         profile = {"beta_cohort": "B799", "beta_started_at": "2026-07-27T10:00:00"}
-        message = app.build_beta_feedback_flex(profile, 3)
+        message = app.build_beta_feedback_flex(profile, 2)
         payload = str(message)
-        for label in ("使用正常", "發現問題", "使用心得", "不會操作", "稍後提醒"):
+        self.assertIn("21 天封測 Day 2", payload)
+        self.assertIn("今天用起來還順利嗎？", payload)
+        self.assertIn("如果有任何卡住的地方，或是有想分享的心得，都可以直接回覆跟我說喔。", payload)
+        for label in ("✅ 一切順利", "⚠️ 有遇到問題", "💬 分享心得"):
             self.assertIn(label, payload)
+        for label in ("不會操作", "稍後提醒"):
+            self.assertNotIn(label, payload)
         self.assertIn("家庭群組", payload)
-        self.assertIn("beta_feedback:issue:3", payload)
+        self.assertIn("beta_feedback:issue:2", payload)
 
     def test_daily_feedback_sends_once_at_1900_and_persists_log(self):
         with tempfile.TemporaryDirectory() as tmp:
