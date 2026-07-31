@@ -6929,13 +6929,12 @@ def bind_emergency_contact(
         not contact_display_name
         or contact_display_name == "LINE 聯絡人"
         or not contact_relationship
-        or not contact_phone
     ):
         return {
             "ok": False,
-            "error": "請填寫姓名、與邀請人的關係及電話後再完成綁定",
+            "error": "請填寫本人姓名及與邀請人的關係後再完成綁定；電話可不填",
             "code": "guardian_profile_required",
-            "required_fields": ["name", "relationship", "phone"],
+            "required_fields": ["name", "relationship"],
         }, 400
     # 綁定前偵測反向：綁定後 guarding_for 一定會寫入，不可事後判斷
     is_reverse_invite = detect_reverse_invite(state, inviter_id, contact_line_user_id)
