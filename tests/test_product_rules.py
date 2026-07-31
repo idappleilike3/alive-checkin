@@ -169,8 +169,8 @@ class ProductRulesTests(unittest.TestCase):
         self.assertIn('♡ 緊急聯絡人', page)
         self.assertIn("background: linear-gradient(135deg, #ecfdf5", page)
         self.assertIn("border: 2px solid #22c55e", page)
-        self.assertIn("body.neon .settings[aria-label=\"緊急聯絡人\"] .contact-primary", page)
-        self.assertIn("background: linear-gradient(135deg, #67e8f9 0%, #38bdf8 100%)", page)
+        self.assertIn("body.cute .settings[aria-label=\"緊急聯絡人\"] .contact-primary", page)
+        self.assertIn("background: linear-gradient(135deg, #ec4899 0%, #db2777 100%)", page)
         self.assertIn("font-size: 20px", page)
         self.assertIn("一鍵邀請守護人", page)
 
@@ -179,9 +179,9 @@ class ProductRulesTests(unittest.TestCase):
         help_page = (ROOT / "help.html").read_text(encoding="utf-8")
         rich_menu_script = (ROOT / "scripts" / "generate_rich_menu_image.py").read_text(encoding="utf-8")
 
-        self.assertIn("body.neon .mvp-brand", page)
-        self.assertIn("body.neon .mvp-welcome-sub", page)
-        self.assertIn("color: #d1d5db", page)
+        self.assertIn("body.cute .mvp-home .countdown-block", page)
+        self.assertIn("body.cute .mvp-action.primary", page)
+        self.assertNotIn("body.neon", page)
         self.assertIn(".day-cell.festival .lunar-mini { color: #dc2626", page)
         self.assertIn('if (tabName === "history") setCalendarExpanded(true);', page)
         self.assertIn("需要幫忙時怎麼做", help_page)

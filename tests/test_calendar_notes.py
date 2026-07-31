@@ -475,7 +475,8 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertIn('id="todayReminderCard"', page)
         self.assertNotIn('id="birthdayNameInput"', page)
         self.assertIn("birthday-reminders", (ROOT / "app.py").read_text(encoding="utf-8"))
-        self.assertIn("body.neon .day-cell.festival .day-number", page)
+        self.assertIn(".day-cell.festival .day-number", page)
+        self.assertNotIn("body.neon", page)
 
     def test_web_note_and_line_reminder_use_separate_entry_points(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
