@@ -5600,6 +5600,196 @@ def send_trial_milestone_notices(config, now=None):
     return {"sent": sent, "skipped": skipped, "results": results}, 200
 
 
+def membership_activation_time(profile):
+    """Return the start of the member's current trial, beta, or paid period."""
+    source = str((profile or {}).get("membership_source") or "").strip()
+    plan = str((profile or {}).get("plan") or "").strip()
+    if source == "beta":
+        return parse_datetime(profile.get("beta_started_at"))
+    if plan == "trial":
+        return parse_datetime(profile.get("trial_started_at"))
+    if not plan.startswith("paid_"):
+        return None
+    explicit = parse_datetime(profile.get("membership_started_at"))
+    if explicit:
+        return explicit
+    paid_until = parse_datetime(profile.get("paid_until"))
+    product = PAYMENT_PRODUCTS.get(plan) or {}
+    duration_days = int(
+        product.get("duration_days") or (365 if "year" in plan else 30)
+    )
+    return paid_until - timedelta(days=duration_days) if paid_until else None
+
+
+def build_day7_pin_reminder_flex():
+    """Build the warm one-time reminder explaining how to pin the LINE OA."""
+    return {
+        "type": "flex",
+        "altText": "使用一週的小提醒：請將每日平安官方 LINE 置頂",
+        "contents": {
+            "type": "bubble",
+            "size": "mega",
+            "header": {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#168C65",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": "🌿 使用一週的小提醒",
+                        "color": "#FFFFFF",
+                        "weight": "bold",
+                        "size": "xl",
+                    }
+                ],
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "使用一週了，還習慣嗎？建議把「每日平安」官方帳號置頂，"
+                            "才不會錯過報平安提醒與守護通知喔！"
+                        ),
+                        "wrap": True,
+                        "color": "#33443F",
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "置頂方式：在 LINE 聊天列表長按「每日平安」，"
+                            "選擇「釘選」。"
+                        ),
+                        "wrap": True,
+                        "margin": "lg",
+                        "size": "sm",
+                        "color": "#52625D",
+                    },
+                ],
+            },
+        },
+    }
+
+
+def _day7_pin_qualification_key(profile, activated_at):
+    return "|".join(
+        (
+            str(profile.get("plan") or ""),
+            str(profile.get("membership_source") or ""),
+            activated_at.isoformat(timespec="seconds"),
+        )
+    )
+
+
+def _day7_pin_membership_is_active(profile, clock):
+    source = str((profile or {}).get("membership_source") or "").strip()
+    plan = str((profile or {}).get("plan") or "").strip()
+    if source == "beta":
+        return beta_access_active(profile, clock)
+    if plan == "trial":
+        return trial_days_left(profile, now=clock) > 0
+    if plan.startswith("paid_"):
+        return paid_membership_is_active(profile, now=clock)
+    return False
+
+
+def send_day7_pin_reminders(config, now=None):
+    """Send one pin reminder for post-launch memberships reaching day seven."""
+    clock = now or current_app_time(config)
+    state = load_state(config["DATA_FILE"])
+    enabled_at = parse_datetime(state.get("day7_pin_reminder_enabled_at"))
+    if not enabled_at:
+        state["day7_pin_reminder_enabled_at"] = clock.isoformat(timespec="seconds")
+        save_state(config["DATA_FILE"], state)
+        return {
+            "sent": 0,
+            "failed": 0,
+            "skipped": 0,
+            "reason": "feature_initialized",
+        }, 200
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+        "LINE_CHANNEL_ACCESS_TOKEN", ""
+    )
+    if not token:
+        return {
+            "sent": 0,
+            "failed": 0,
+            "skipped": 0,
+            "error": "LINE_CHANNEL_ACCESS_TOKEN is not set",
+        }, 400
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    sent = 0
+    failed = 0
+    skipped = 0
+    results = []
+    for profile in (state.get("users") or {}).values():
+        target = str(profile.get("line_user_id") or "").strip()
+        activated_at = membership_activation_time(profile)
+        if (
+            not target
+            or not activated_at
+            or not _day7_pin_membership_is_active(profile, clock)
+        ):
+            skipped += 1
+            continue
+        due_at = activated_at + timedelta(days=7)
+        comparable_due, comparable_clock = _comparable_datetimes(due_at, clock)
+        comparable_enabled, _ = _comparable_datetimes(enabled_at, clock)
+        if comparable_due < comparable_enabled or comparable_clock < comparable_due:
+            skipped += 1
+            continue
+        qualification_key = _day7_pin_qualification_key(profile, activated_at)
+        completed = set(profile.get("day7_pin_reminder_keys_sent") or [])
+        if qualification_key in completed:
+            skipped += 1
+            continue
+        message = build_day7_pin_reminder_flex()
+        retry_key = _line_retry_key(
+            f"day7-pin-reminder:{target}:{qualification_key}"
+        )
+        status = "sent"
+        detail = ""
+        try:
+            _send_line_with_retry_key(sender, token, target, message, retry_key)
+            completed.add(qualification_key)
+            profile["day7_pin_reminder_keys_sent"] = sorted(completed)
+            sent += 1
+        except Exception as exc:
+            status = "failed"
+            detail = str(exc)[:400]
+            failed += 1
+        append_notification_log(
+            state,
+            "day7_pin_reminder",
+            target,
+            status,
+            message.get("altText") or "第 7 天 LINE 置頂提醒",
+            detail,
+            metadata={
+                "plan": str(profile.get("plan") or ""),
+                "membership_source": str(profile.get("membership_source") or ""),
+                "beta_cohort": str(profile.get("beta_cohort") or ""),
+                "scheduled_at": due_at.isoformat(timespec="seconds"),
+                "sent_at": clock.isoformat(timespec="seconds"),
+            },
+        )
+        results.append({
+            "line_user_id": target,
+            "plan": str(profile.get("plan") or ""),
+            "scheduled_at": due_at.isoformat(timespec="seconds"),
+            "status": status,
+        })
+    save_state(config["DATA_FILE"], state)
+    return {
+        "sent": sent,
+        "failed": failed,
+        "skipped": skipped,
+        "results": results,
+    }, 200
+
+
 def send_renewal_reminders(config):
     """Scheduled beta/paid expiry reminders with a single upgrade CTA."""
     return send_membership_lifecycle_notices(
@@ -14488,23 +14678,36 @@ def line_push_message(token, line_user_id, message, *, retry_key=None):
         ) from exc
 
 
-def append_notification_log(state, kind, line_user_id, status, message, detail=None):
+def append_notification_log(
+    state, kind, line_user_id, status, message, detail=None, metadata=None
+):
     logs = state.setdefault("notification_logs", [])
     if isinstance(message, dict):
         message_text = str(message.get("altText") or message.get("type") or message)[:120]
     else:
         message_text = str(message or "")[:120]
     created_at = datetime.now().isoformat(timespec="seconds")
-    logs.append(
-        {
-            "created_at": created_at,
-            "kind": kind,
-            "line_user_id": line_user_id,
-            "status": status,
-            "message": message_text,
-            "detail": detail or "",
-        }
-    )
+    row = {
+        "created_at": created_at,
+        "kind": kind,
+        "line_user_id": line_user_id,
+        "status": status,
+        "message": message_text,
+        "detail": detail or "",
+    }
+    if isinstance(metadata, dict):
+        row.update({
+            key: metadata.get(key)
+            for key in (
+                "plan",
+                "membership_source",
+                "beta_cohort",
+                "scheduled_at",
+                "sent_at",
+            )
+            if metadata.get(key) not in (None, "")
+        })
+    logs.append(row)
     state["notification_logs"] = logs[-100:]
     member_id = str(line_user_id or "").strip()
     date = created_at[:10]
@@ -16778,6 +16981,11 @@ def run_cron_tick(config):
     results["trial_milestone_notices"] = {
         "status": milestone_code,
         "result": milestone_data,
+    }
+    pin_data, pin_code = send_day7_pin_reminders(config, now=now)
+    results["day7_pin_reminders"] = {
+        "status": pin_code,
+        "result": pin_data,
     }
     expiry_data, expiry_code = apply_expired_plan_downgrades(config)
     results["membership_expiry"] = {

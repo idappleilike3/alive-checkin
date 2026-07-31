@@ -1696,7 +1696,8 @@
         missing_contact: "補填聯絡人",
         checkin: "簽到提醒",
         birthday: "生日提醒",
-        support_reply: "客服回覆"
+        support_reply: "客服回覆",
+        day7_pin_reminder: "第 7 天置頂提醒"
       }[kind] || "推播";
     }
 
@@ -2178,6 +2179,8 @@
               <span class="badge ${log.recipient_type_label?.includes("測試資料") ? "warn" : ""}" style="margin-left:6px">${escapeHtml(log.recipient_type_label || "未知收件者")}</span><br>
               <small><strong>LINE User ID：</strong>${escapeHtml(log.line_user_id || "未記錄")}</small><br>
               <small><strong>推播內容：</strong>${escapeHtml(log.message || "未記錄訊息內容")}</small>
+              ${log.plan ? `<br><small><strong>當時方案：</strong>${escapeHtml(planLabel(log.plan))}${log.beta_cohort ? `（${escapeHtml(log.beta_cohort)} 免繳封測）` : ""}</small>` : ""}
+              ${log.scheduled_at ? `<br><small><strong>預定發送：</strong>${escapeHtml(formatDate(log.scheduled_at))}</small>` : ""}
               ${log.status !== "sent" ? `
                 <div style="margin-top:8px;padding:10px 12px;border-radius:10px;background:#fff1f2;color:#881337;line-height:1.55">
                   <strong>失敗原因：</strong>${escapeHtml(log.failure_reason_zh || "LINE 推播失敗")}<br>
