@@ -44,5 +44,36 @@ class ThemeOptionsTests(unittest.TestCase):
         self.assertIn("background: linear-gradient(180deg, #fb7185 0%, #db2777 100%);", self.page)
 
 
+    def test_cute_guardian_relationship_and_group_surfaces_use_pink(self):
+        expected_rules = [
+            "body.cute .mvp-reward-card",
+            "body.cute .mvp-bound-summary",
+            "body.cute .member-contact-group.guardian-group",
+            "body.cute .guardian-status-card",
+            "body.cute .guardian-group-guide-intro",
+            'body.cute .guardian-group-bind-status[data-bound="false"]',
+            "body.cute .guardian-group-card",
+            "body.cute .guardian-group-preferences",
+        ]
+
+        for rule in expected_rules:
+            with self.subTest(rule=rule):
+                self.assertIn(rule, self.page)
+
+        cute_guardian_palette = re.search(
+            r"/\* 可愛主題：守護關係與守護群統一粉色 \*/(?P<rules>.*?)"
+            r"/\* 可愛主題守護區塊結束 \*/",
+            self.page,
+            re.S,
+        )
+        self.assertIsNotNone(cute_guardian_palette)
+        rules = cute_guardian_palette.group("rules")
+        self.assertIn("#fff1f7", rules)
+        self.assertIn("#f9a8d4", rules)
+        self.assertNotIn("#fff7ed", rules)
+        self.assertNotIn("#fffbeb", rules)
+        self.assertNotIn("#fef3c7", rules)
+
+
 if __name__ == "__main__":
     unittest.main()
