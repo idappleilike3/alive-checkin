@@ -582,6 +582,11 @@
           <div class="stat"><strong id="betaCountB399">0／20</strong><span>B399｜安心版測試</span></div>
           <div class="stat"><strong id="betaCountB799">0／10</strong><span>B799｜家庭群組測試</span></div>
         </div>
+        <div class="toolbar" aria-label="21 天封測專屬分享">
+          <button type="button" data-beta-share="B399" data-beta-url="/beta/399">分享 399｜21 天封測</button>
+          <button type="button" data-beta-share="B799" data-beta-url="/beta/799">分享 799｜21 天封測</button>
+        </div>
+        <p class="note">兩個連結各自帶入正確封測資格；註冊完成後不會轉成一般 14 天體驗，也不會互相串組。</p>
         <form id="betaAssignForm" class="toolbar">
           <label>選擇會員
             <select id="betaLineUserId">
@@ -2212,6 +2217,29 @@
         }
       });
     }
+    document.querySelectorAll("[data-beta-share]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const cohort = button.dataset.betaShare;
+        const url = new URL(button.dataset.betaUrl, location.origin).toString();
+        const title = cohort === "B799"
+          ? "每日平安｜799 守護版 21 天封測"
+          : "每日平安｜399 安心版 21 天封測";
+        const text = `${title}\n免費封測 21 天，不刷卡、不會自動扣款。\n${url}`;
+        try {
+          if (navigator.share) {
+            await navigator.share({title, text, url});
+            $("betaStatus").textContent = `✓ 已開啟 ${cohort} 專屬分享。`;
+          } else {
+            await navigator.clipboard.writeText(text);
+            $("betaStatus").textContent = `✓ ${cohort} 專屬連結已複製，可貼給朋友。`;
+          }
+        } catch (error) {
+          if (error && error.name === "AbortError") return;
+          $("betaStatus").textContent = `請手動複製：${url}`;
+        }
+      });
+    });
+
     const lineAcceptanceForm = $("lineAcceptanceForm");
     if (lineAcceptanceForm) {
       lineAcceptanceForm.addEventListener("submit", async (event) => {

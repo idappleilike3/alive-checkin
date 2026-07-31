@@ -4234,15 +4234,16 @@
             <div class="first-entry-step" id="onboardingGuideProfile" data-step="3" data-state="upcoming">填寫守護資料並發送邀請</div>
             <div class="first-entry-step" id="onboardingGuideGuardian" data-step="4" data-state="upcoming">核心守護人接受邀請，完成綁定</div>
           </div>
+          <p class="onboarding-note" id="onboardingEntryPlan">本次註冊：14 天安心體驗</p>
           <p class="onboarding-intro" id="onboardingIntro">先填寫資料與提醒設定，完成後再一鍵分享給你信任的守護人。</p>
           <p class="onboarding-step" id="onboardingStepLabel">步驟 2／4　填寫資料與提醒設定</p>
 
           <div class="onboarding-form" id="onboardingGuardianStep">
             <div class="onboarding-fields">
-              <label class="onboarding-field" for="obName">預計邀請的守護人姓名 <span class="onboarding-required">必填</span>
+              <label class="onboarding-field" for="obName">預計邀請的守護人姓名（對方） <span class="onboarding-required">必填</span>
                 <input type="text" id="obName" placeholder="例如：王小明" autocomplete="name" required>
               </label>
-              <label class="onboarding-field" for="obRelationship">你與守護人的關係 <span class="onboarding-required">必選</span>
+              <label class="onboarding-field" for="obRelationship">對方是你的誰？ <span class="onboarding-required">必選</span>
                 <select id="obRelationship" required>
                   <option value="">請選擇關係</option>
                   <option value="爺爺">爺爺</option>
@@ -4271,13 +4272,13 @@
                 </select>
                 <input type="text" id="obRelationshipOther" class="relationship-other" placeholder="請輸入關係" hidden>
               </label>
-              <label class="onboarding-field" for="obPhone">緊急聯絡候補（選填）
+              <label class="onboarding-field" for="obPhone">守護人的聯絡電話（選填）
                 <input type="tel" id="obPhone" inputmode="tel" placeholder="可稍後補上手機號碼" autocomplete="tel">
               </label>
               <label class="onboarding-field" for="obEmail">電子信箱（選填）
                 <input type="email" id="obEmail" inputmode="email" placeholder="例如：name@example.com" autocomplete="email">
               </label>
-              <p class="onboarding-note">手機號碼只會用於安全守護與緊急聯絡，不會拿來發送廣告。</p>
+              <p class="onboarding-note">這裡填預計邀請的守護人資料，不是你的本人資料。電話可先不填，只供緊急聯絡，不會拿來發送廣告。</p>
               <p id="onboardingError" class="inline-error" role="alert" hidden></p>
             </div>
             <button class="onboarding-submit" id="onboardingSaveBtn" type="button">儲存資料，下一步設定提醒</button>
@@ -4853,10 +4854,10 @@
       <p id="inviteAcceptBody">成為核心守護人免費。你將收到對方的報平安、逾時未報平安、SOS 與安全守護通知；定位只在對方主動求助或啟用安全守護時通知，也可隨時解除綁定。</p>
       <p><strong>這次只會由您守護邀請人，不會自動互相綁定。</strong></p>
       <div class="invite-profile-fields">
-        <label>您的姓名（必填）
+        <label>你的姓名（本人） <span class="onboarding-required">必填</span>
           <input id="inviteGuardianName" type="text" maxlength="40" autocomplete="name" required>
         </label>
-        <label>您的邀請人關係（必填）
+        <label>你是邀請人的誰？ <span class="onboarding-required">必選</span>
           <select id="inviteGuardianRelationship" required>
             <option value="">請選擇關係</option>
             <option value="爸爸">爸爸</option>
@@ -4873,9 +4874,10 @@
           </select>
           <input id="inviteGuardianRelationshipOther" class="relationship-other" type="text" maxlength="20" placeholder="選擇「其他」後請自行填寫" hidden>
         </label>
-        <label>您的手機號碼（必填）
-          <input id="inviteGuardianPhone" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" placeholder="例如：0912345678" required>
+        <label>你的聯絡電話（選填）
+          <input id="inviteGuardianPhone" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" placeholder="可不填，或填 0912345678">
         </label>
+        <p class="onboarding-note">請填你本人的資料，不是邀請人的資料。電話可不填；填寫後邀請人可以看到，僅供緊急聯絡使用。</p>
       </div>
       <button class="agree-btn" id="acceptGuardianInviteBtn" type="button">同意成為守護人</button>
     </div>
@@ -8509,8 +8511,8 @@
       const guardianName = String($("inviteGuardianName")?.value || lineDisplayName || "").trim();
       const guardianRelationship = readRelationship("inviteGuardianRelationship", "inviteGuardianRelationshipOther");
       const guardianPhone = String($("inviteGuardianPhone")?.value || "").trim();
-      if (!guardianName || !guardianRelationship || !guardianPhone) {
-        alert("請先填寫姓名、與邀請人的關係及手機號碼。");
+      if (!guardianName || !guardianRelationship) {
+        alert("請先填寫你的姓名，並選擇你是邀請人的誰。聯絡電話可以不填。");
         if (btn) {
           btn.disabled = false;
           btn.textContent = "同意成為守護人";
@@ -11362,6 +11364,14 @@
       setRelationshipValue("obRelationship", "obRelationshipOther", "");
       $("obPhone").value = "";
       $("obEmail").value = "";
+      const entryPlan = $("onboardingEntryPlan");
+      if (entryPlan) {
+        const cohort = String(getAppParam("beta_cohort") || "").trim().toUpperCase();
+        const planCopy = cohort === "B799"
+          ? "799 守護版｜21 天封測"
+          : (cohort === "B399" ? "399 安心版｜21 天封測" : "14 天安心體驗");
+        entryPlan.textContent = `本次註冊：${planCopy}。完成 LINE 登入後仍保留此資格，不會轉到其他方案。`;
+      }
 
       const contacts = currentGuardianContacts();
       const guardianRequired = currentStatusData && currentStatusData.guardian_required === true;
