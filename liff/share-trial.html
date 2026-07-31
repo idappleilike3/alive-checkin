@@ -8,12 +8,19 @@
   <style>
     :root { color-scheme: light; font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif; }
     body { margin: 0; min-height: 100vh; background: #f0fdf4; color: #14532d; }
-    main { width: min(88vw, 420px); margin: 12vh auto 0; padding: 30px 22px; text-align: center; background: #fff; border: 1px solid #bbf7d0; border-radius: 24px; box-shadow: 0 12px 36px #14532d18; }
+    main { width: min(88vw, 420px); margin: 5vh auto 24px; padding: 24px 20px; text-align: center; background: #fff; border: 1px solid #bbf7d0; border-radius: 24px; box-shadow: 0 12px 36px #14532d18; }
     main[hidden] { display: none; }
     h1 { margin: 0 0 12px; font-size: 1.45rem; }
     p { margin: 8px 0 18px; line-height: 1.65; color: #57534e; }
     button { width: 100%; border: 0; border-radius: 999px; padding: 14px 18px; font-size: 1rem; font-weight: 700; color: #fff; background: #06c755; }
     button[hidden] { display: none; }
+    .trial-share-card { margin: 18px 0; padding: 20px; text-align: left; border: 1px solid #86efac; border-radius: 20px; background: linear-gradient(145deg, #f0fdf4, #fff); box-shadow: 0 8px 24px #16653412; }
+    .trial-share-card .eyebrow { margin: 0 0 8px; color: #15803d; font-size: .82rem; font-weight: 800; letter-spacing: .04em; }
+    .trial-share-card h2 { margin: 0 0 10px; color: #14532d; font-size: 1.18rem; line-height: 1.45; }
+    .trial-share-card p { margin: 7px 0; font-size: .93rem; }
+    .trial-points { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 16px 0; }
+    .trial-points span { padding: 9px 4px; text-align: center; color: #166534; background: #dcfce7; border-radius: 12px; font-size: .78rem; font-weight: 700; }
+    .trial-note { padding-top: 12px; border-top: 1px solid #bbf7d0; color: #57534e; font-size: .82rem !important; }
     .spinner {
       width: 48px;
       height: 48px;
@@ -35,6 +42,15 @@
     <div class="spinner" id="shareSpinner" aria-hidden="true"></div>
     <h1 id="statusTitle">正在準備分享</h1>
     <p id="status">正在準備你的專屬分享連結，請稍候…</p>
+    <section class="trial-share-card" aria-label="14 天安心體驗分享卡預覽">
+      <p class="eyebrow">🌿 每日平安・安心邀請</p>
+      <h2 id="cardTitle">想把 14 天安心體驗分享給你</h2>
+      <p>每天只要 10 秒報平安，讓在乎你的人知道你今天一切都好。</p>
+      <div class="trial-points" aria-label="體驗特色">
+        <span>每天 10 秒</span><span>平常不打擾</span><span>有事才通知</span>
+      </div>
+      <p class="trial-note">這是你的每日平安體驗；免費 14 天、不會自動扣款，也不會自動互相綁定。</p>
+    </section>
     <button id="retryBtn" type="button" hidden>再次開啟好友選擇</button>
   </main>
   <script>
@@ -44,8 +60,59 @@
     const shareSpinner = document.getElementById("shareSpinner");
     const statusTitle = document.getElementById("statusTitle");
     const statusEl = document.getElementById("status");
+    const cardTitle = document.getElementById("cardTitle");
     const retryBtn = document.getElementById("retryBtn");
     let sharing = false;
+
+    function buildTrialShareCard(senderName, trialUrl) {
+      const safeName = String(senderName || "").trim();
+      const invitationTitle = safeName
+        ? `${safeName} 想把 14 天安心體驗分享給你`
+        : "想把 14 天安心體驗分享給你";
+      cardTitle.textContent = invitationTitle;
+      return {
+        "type": "flex",
+        "altText": `🌿 ${invitationTitle}`,
+        "contents": {
+          "type": "bubble",
+          "styles": {
+            "header": { "backgroundColor": "#F0FDF4" },
+            "footer": { "backgroundColor": "#FFFFFF" }
+          },
+          "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+              { "type": "text", "text": "🌿 每日平安・安心邀請", "size": "sm", "weight": "bold", "color": "#15803D" },
+              { "type": "text", "text": invitationTitle, "size": "xl", "weight": "bold", "color": "#14532D", "wrap": true, "margin": "md" }
+            ]
+          },
+          "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "contents": [
+              { "type": "text", "text": "每天只要 10 秒報平安，讓在乎你的人知道你今天一切都好。", "wrap": true, "color": "#57534E" },
+              { "type": "text", "text": "✓ 每天 10 秒　✓ 平常不打擾　✓ 有事才通知", "wrap": true, "size": "sm", "weight": "bold", "color": "#166534" },
+              { "type": "separator", "margin": "md", "color": "#BBF7D0" },
+              { "type": "text", "text": "這是你的每日平安體驗；免費 14 天、不會自動扣款，也不會自動互相綁定。", "wrap": true, "size": "sm", "color": "#57534E", "margin": "md" }
+            ]
+          },
+          "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+              {
+                "type": "button",
+                "style": "primary",
+                "color": "#06C755",
+                "action": { "type": "uri", "label": "開始我的 14 天安心體驗", "uri": trialUrl }
+              }
+            ]
+          }
+        }
+      };
+    }
 
     function setLoadingState(isLoading, message) {
       shareFallback.hidden = false;
@@ -90,25 +157,18 @@
           ? liff.getDecodedIDToken()
           : null;
         const lineUserId = decoded && decoded.sub ? decoded.sub : "";
+        const senderName = decoded && decoded.name ? decoded.name : "";
         if (!lineUserId || !await memberExists(lineUserId)) {
           location.replace("/trial-14.html");
           return;
         }
         const trialUrl = `${location.origin}/trial-14.html`;
-        const text = (
-          "🌿 送你 14 天安心體驗\n\n" +
-          "每天只要 10 秒報平安，讓在乎你的人知道你今天一切都好。\n" +
-          "平常不打擾，忘記報平安或需要幫助時，才會通知你指定的守護人。\n\n" +
-          "免費體驗 14 天、不會自動扣款：\n" +
-          trialUrl + "\n\n" +
-          "開始體驗後，需要邀請至少一位親友成為你的守護人；對方接受後，安心連結才算建立完成。\n" +
-          "這是替自己建立每日平安，不會自動互相綁定。"
-        );
+        const card = buildTrialShareCard(senderName, trialUrl);
         setLoadingState(true, "連結已準備完成，正在開啟 LINE 好友選擇…");
         if (typeof liff.shareTargetPicker !== "function") {
           throw new Error("shareTargetPicker unavailable");
         }
-        const result = await liff.shareTargetPicker([{ type: "text", text }]);
+        const result = await liff.shareTargetPicker([card]);
         setLoadingState(false, result
           ? "已完成分享，你可以關閉這個畫面。"
           : "尚未選擇好友，按下方按鈕可以再試一次。");
