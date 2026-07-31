@@ -109,6 +109,59 @@ class AdminBusinessDashboardTests(unittest.TestCase):
             "2026-07-27T20:00:00+08:00",
         )
 
+    def test_admin_summary_explains_push_recipient_and_failure_in_chinese(self):
+        data_file = self.make_state()
+        state = alive_app.load_state(data_file)
+        state["notification_logs"] = [
+            {
+                "status": "failed",
+                "kind": "beta_daily_feedback",
+                "line_user_id": "U-active",
+                "created_at": "2026-07-27T20:00:00+08:00",
+                "detail": 'HTTP Error 400: Bad Request: {"message":"Failed to send messages"}',
+            },
+            {
+                "status": "failed",
+                "kind": "beta_daily_feedback",
+                "line_user_id": "U_deploy_smoke_ax",
+                "created_at": "2026-07-27T20:01:00+08:00",
+                "detail": (
+                    'HTTP Error 400: Bad Request: {"message":"The property, '
+                    '\'to\', in the request body is invalid"}'
+                ),
+            },
+        ]
+        alive_app.save_state(data_file, state)
+
+        summary = alive_app.admin_summary(
+            data_file,
+            now=alive_app.datetime.fromisoformat("2026-07-27T21:00:00+08:00"),
+        )
+        logs = summary["notification_logs"]
+        real_member = next(row for row in logs if row["line_user_id"] == "U-active")
+        test_target = next(
+            row for row in logs if row["line_user_id"] == "U_deploy_smoke_ax"
+        )
+
+        self.assertEqual(real_member["recipient_display_name"], "安心會員")
+        self.assertEqual(real_member["recipient_type_label"], "LINE 會員")
+        self.assertEqual(real_member["failure_reason_zh"], "LINE 無法將訊息送給這位使用者")
+        self.assertIn("封鎖", real_member["failure_action_zh"])
+        self.assertEqual(test_target["recipient_display_name"], "部署測試假帳號")
+        self.assertEqual(test_target["recipient_type_label"], "測試資料（不是真實會員）")
+        self.assertEqual(test_target["failure_reason_zh"], "收件者 LINE User ID 格式無效")
+        self.assertIn("移除", test_target["failure_action_zh"])
+        daily_real_member = next(
+            row
+            for row in summary["daily_push_member_stats"]
+            if row["line_user_id"] == "U-active"
+        )
+        self.assertEqual(
+            daily_real_member["latest_failure_reason_zh"],
+            "LINE 無法將訊息送給這位使用者",
+        )
+        self.assertIn("封鎖", daily_real_member["latest_failure_action_zh"])
+
     def test_dashboard_reports_actionable_incidents_and_line_budget(self):
         data_file = self.make_state()
         dashboard = alive_app.admin_business_dashboard(
