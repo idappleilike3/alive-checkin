@@ -1521,6 +1521,46 @@
       await updatePlan(lineUserId, selectElement.value, selectElement, previousPlan);
     }
 
+    async function resetTestAccount(lineUserId, displayName) {
+      if (!canManageMembers()) return;
+      const confirmed = window.confirm(
+        `確定要重設測試帳號「${displayName || lineUserId}」嗎？\n\n` +
+        "會清除會員設定、14／21 天資格、提醒、守護綁定、報平安及 SOS 測試資料。\n" +
+        "LINE UID、付款訂單與後台稽核紀錄會保留。"
+      );
+      if (!confirmed) return;
+      const button = document.querySelector(
+        `[data-action="reset-test-account"][data-line-user-id="${CSS.escape(lineUserId)}"]`
+      );
+      if (button) {
+        button.disabled = true;
+        button.textContent = "重設中…";
+      }
+      try {
+        const response = await adminFetch(
+          `/api/admin/test-accounts/${encodeURIComponent(lineUserId)}/reset`,
+          {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({confirm: true})
+          }
+        );
+        const data = await response.json();
+        if (!response.ok) throw new Error(adminMutationErrorText(data, response.status));
+        showPlanSaveToast(
+          `✓ ${displayName || lineUserId} 已重設，可從 14 天分享卡重新測試；帳務與稽核已保留。`,
+          "success"
+        );
+        await refresh();
+      } catch (error) {
+        showPlanSaveToast(`✗ 重設失敗：${error.message || "請稍後再試"}`, "error");
+        if (button) {
+          button.disabled = false;
+          button.textContent = "重設測試帳號";
+        }
+      }
+    }
+
     async function refundPaymentOrder(orderId, paidAmount, alreadyRefunded) {
       const remaining = Math.max(0, Number(paidAmount || 0) - Number(alreadyRefunded || 0));
       const amountText = prompt(`可退 NT$${remaining.toLocaleString("zh-TW")}。請輸入本次退款金額：`, String(remaining));
@@ -1853,6 +1893,7 @@
                 ).join("")}
               </select>
               <button type="button" class="plan-save-button" data-action="save-plan" data-line-user-id="${escapeHtml(user.line_user_id)}" style="margin-top:6px;" ${canManageMembers() ? "" : "disabled"}>儲存方案</button>
+              ${user.is_test_account ? `<button type="button" class="secondary" data-action="reset-test-account" data-line-user-id="${escapeHtml(user.line_user_id)}" data-display-name="${escapeHtml(user.display_name || "")}" style="margin-top:6px;" ${canManageMembers() ? "" : "disabled"}>重設測試帳號</button><small style="display:block;margin-top:5px;color:#76520b;">保留 LINE UID、付款訂單與後台稽核</small>` : ""}
               ${canManageMembers() ? "" : `<small style="display:block;margin-top:6px;color:#991b1b;font-weight:800;">目前角色「${adminRoleLabel()}」無修改權限，請用超級管理員或營運客服帳號登入。</small>`}
               <small id="plan-status-${user.line_user_id}" role="status" aria-live="polite" style="display:block;margin-top:6px;"></small>
             </td>
@@ -2204,9 +2245,13 @@
       if (!selectElement.dataset.dirty) delete selectElement.dataset.dirty;
     });
     $("usersBody").addEventListener("click", (event) => {
-      const button = event.target.closest('[data-action="save-plan"]');
+      const button = event.target.closest("[data-action]");
       if (!button) return;
-      savePlanForMember(button.dataset.lineUserId);
+      if (button.dataset.action === "save-plan") {
+        savePlanForMember(button.dataset.lineUserId);
+      } else if (button.dataset.action === "reset-test-account") {
+        resetTestAccount(button.dataset.lineUserId, button.dataset.displayName);
+      }
     });
     let autoRefreshAdminBusy = false;
     async function autoRefreshAdmin() {

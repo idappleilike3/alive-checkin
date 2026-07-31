@@ -4324,6 +4324,8 @@ def register_line_user(data_file, payload):
         line_user_id,
         start_public_trial=not bool(requested_beta) and not guardian_only,
     )
+    if user.pop("test_reset_pending", False) and not requested_beta and not guardian_only:
+        ensure_membership_trial(user, source="public_trial")
     # Re-apply preserved fields after get_profile defaults (merge, don't replace).
     for key, value in preserved.items():
         if key == "trial_started_at" and value:
@@ -10901,6 +10903,145 @@ def admin_update_user_plan(data_file, payload):
     return status, 200
 
 
+def _test_reset_row_matches_user(row, line_user_id):
+    if not isinstance(row, dict):
+        return False
+    identity_keys = (
+        "line_user_id",
+        "owner_line_user_id",
+        "inviter_line_user_id",
+        "invitee_line_user_id",
+        "guardian_line_user_id",
+        "target_line_user_id",
+        "user_id",
+    )
+    return any(
+        str(row.get(key) or "").strip() == line_user_id
+        for key in identity_keys
+    )
+
+
+def _remove_user_from_group_members(group, line_user_id):
+    if not isinstance(group, dict):
+        return
+    for key in ("members", "member_line_user_ids", "admins"):
+        values = group.get(key)
+        if isinstance(values, list):
+            group[key] = [
+                item for item in values
+                if (
+                    str(item.get("line_user_id") or "").strip()
+                    if isinstance(item, dict)
+                    else str(item or "").strip()
+                ) != line_user_id
+            ]
+
+
+def admin_reset_test_account(data_file, line_user_id, allowed_test_user_ids):
+    """Reset a whitelisted test member while retaining billing and audit records."""
+    line_user_id = str(line_user_id or "").strip()
+    allowed = {
+        str(value or "").strip()
+        for value in (allowed_test_user_ids or [])
+        if str(value or "").strip()
+    }
+    if not line_user_id:
+        return {"ok": False, "error": "missing_line_user_id"}, 400
+    if line_user_id not in allowed:
+        return {"ok": False, "error": "not_a_test_account"}, 403
+
+    state = load_state(data_file)
+    existing = (state.get("users") or {}).get(line_user_id)
+    if not isinstance(existing, dict):
+        return {"ok": False, "error": "member_not_found"}, 404
+
+    identity = {
+        "line_user_id": line_user_id,
+        "display_name": str(existing.get("display_name") or "LINE 使用者"),
+        "picture_url": str(existing.get("picture_url") or ""),
+    }
+    fresh_profile = copy.deepcopy(DEFAULT_PROFILE)
+    fresh_profile.update(identity)
+    # The next verified LINE registration starts a new one-time test trial.
+    fresh_profile["test_reset_pending"] = True
+    state.setdefault("users", {})[line_user_id] = fresh_profile
+
+    for other_id, profile in (state.get("users") or {}).items():
+        if other_id == line_user_id or not isinstance(profile, dict):
+            continue
+        contacts = profile.get("contacts")
+        if isinstance(contacts, list):
+            profile["contacts"] = [
+                item for item in contacts
+                if not _test_reset_row_matches_user(item, line_user_id)
+            ]
+        for key in ("friends", "guarding_for"):
+            values = profile.get(key)
+            if isinstance(values, list):
+                profile[key] = [
+                    value for value in values
+                    if str(value or "").strip() != line_user_id
+                ]
+        details = profile.get("guarding_details")
+        if isinstance(details, list):
+            profile["guarding_details"] = [
+                item for item in details
+                if not _test_reset_row_matches_user(item, line_user_id)
+            ]
+
+    for key in (
+        "guardian_invites",
+        "beta_program_members",
+        "beta_feedback_reports",
+        "notification_logs",
+        "contact_rewards",
+    ):
+        rows = state.get(key)
+        if isinstance(rows, list):
+            state[key] = [
+                row for row in rows
+                if not _test_reset_row_matches_user(row, line_user_id)
+            ]
+
+    for key in ("sos_pending", "location_grants", "location_grant_index"):
+        values = state.get(key)
+        if isinstance(values, dict):
+            values.pop(line_user_id, None)
+            state[key] = {
+                item_key: item
+                for item_key, item in values.items()
+                if not _test_reset_row_matches_user(item, line_user_id)
+            }
+    events = state.get("sos_events")
+    if isinstance(events, dict):
+        state["sos_events"] = {
+            event_id: event
+            for event_id, event in events.items()
+            if not _test_reset_row_matches_user(event, line_user_id)
+        }
+
+    groups = state.get("guardian_groups")
+    if isinstance(groups, dict):
+        retained_groups = {}
+        for group_id, group in groups.items():
+            if _test_reset_row_matches_user(group, line_user_id):
+                continue
+            _remove_user_from_group_members(group, line_user_id)
+            retained_groups[group_id] = group
+        state["guardian_groups"] = retained_groups
+
+    # Deliberately untouched: orders, refunds/payment fields in orders,
+    # admin_audit_logs, account_migration_audit and privacy/legal records.
+    save_state(data_file, state)
+    return {
+        "ok": True,
+        "line_user_id": line_user_id,
+        "billing_preserved": True,
+        "audit_preserved": True,
+        "message": "測試帳號已重設；LINE UID、付款訂單與後台稽核紀錄已保留。",
+    }, 200
+
+
 def admin_set_core_guardian(data_file, payload):
     """後台指定／取消核心守護人（is_primary）。可同時指定多位，上限依方案 core_guardian_alert_limit。"""
     line_user_id = str(payload.get("line_user_id") or "").strip()
@@ -13628,6 +13769,9 @@ def admin_summary(data_file, config=None, now=None):
     invite_edges = []
     for user in state.get("users", {}).values():
         status = build_status(user, state, now=status_now)
+        status["is_test_account"] = str(
+            status.get("line_user_id") or ""
+        ) in set(_test_line_user_ids(config or {}))
         latest_checkin = (status.get("checkin_records") or [])[-1:] or [{}]
         status["last_checkin_area"] = str(
             latest_checkin[0].get("area")
@@ -19578,6 +19722,25 @@ def create_app(config=None):
             app.config["DATA_FILE"], line_user_id
         )
         return _admin_mutation_response("beta.revoke", data, code)
+
+    @app.post("/api/admin/test-accounts/<line_user_id>/reset")
+    def admin_test_account_reset_api(line_user_id):
+        denied = _admin_guard(write=True, permission="member.manage")
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        if payload.get("confirm") is not True:
+            return _admin_mutation_response(
+                "test_account.reset",
+                {"ok": False, "error": "confirmation_required"},
+                400,
+            )
+        data, code = admin_reset_test_account(
+            app.config["DATA_FILE"],
+            line_user_id,
+            allowed_test_user_ids=_test_line_user_ids(app.config),
+        )
+        return _admin_mutation_response("test_account.reset", data, code)
 
     @app.get("/api/admin/launch-readiness")
     def admin_launch_readiness_api():
