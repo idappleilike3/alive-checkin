@@ -51,7 +51,6 @@
     const shareSpinner = document.getElementById("shareSpinner");
     const statusTitle = document.getElementById("statusTitle");
     const statusEl = document.getElementById("status");
-    const cardTitle = document.getElementById("cardTitle");
     const retryBtn = document.getElementById("retryBtn");
     let sharing = false;
 
@@ -60,7 +59,6 @@
       const invitationTitle = safeName
         ? `💌 ${safeName} 想分享一份安心給你`
         : "💌 有人想分享一份安心給你";
-      cardTitle.textContent = invitationTitle;
       return {
         "type": "flex",
         "altText": invitationTitle,
