@@ -122,8 +122,14 @@
       touch-action: manipulation;
     }
     .share-now:disabled {
+      display: none;
       cursor: wait;
       opacity: 0.72;
+    }
+    .guide > h1,
+    .guide > #sharePageIntro,
+    .guide > #reciprocalNotice {
+      display: none;
     }
     .share-spinner {
       width: 34px;
@@ -198,14 +204,6 @@
     <button class="share-now" id="startShare" type="button" disabled>正在準備專屬邀請連結…</button>
     <div class="share-spinner" id="shareSpinner" aria-hidden="true"></div>
     <p class="share-ready-status" id="shareReadyStatus" aria-live="polite">正在連接 LINE，請稍候…</p>
-    <ol class="steps" aria-label="每日平安首次設定四步驟">
-      <li data-state="upcoming">1. 你加入每日平安官方 LINE 並完成 LINE 登入</li>
-      <li data-state="upcoming">2. 你填寫自己的資料、與守護人的關係及緊急聯絡候補資料</li>
-      <li data-state="upcoming">3. 你選擇要邀請的 LINE 好友並一鍵分享</li>
-      <li data-state="upcoming">4. 對方加入官方 LINE、登入、填寫資料並親自同意後，綁定才生效</li>
-    </ol>
-    <p class="share-ready-status">請等待對方加入每日平安、完成 LINE 登入、填寫姓名與雙方關係，並確認接受邀請；完成後才算綁定成功。</p>
-    <p class="share-ready-status">1. 你選擇要邀請的 LINE 好友<br>2. 對方收到邀請與完整流程說明<br>3. 對方加入官方 LINE、登入並填寫資料<br>4. 對方親自同意後，綁定才生效</p>
     <section id="desktopShare" class="desktop-share" hidden aria-live="polite">
       <h2>電腦版分享</h2>
       <p>可直接開啟 LINE 分享；也能複製專屬邀請連結，或用手機掃描 QR Code。</p>
@@ -571,8 +569,18 @@
       hidePostShareUi();
       try {
         const shared = await openGuardianShare(myUserId);
-        if (!shared) await renderDesktopFallback(myUserId);
-        // 分享完成或使用者取消後都留在專用頁，讓使用者自行決定何時返回。
+        if (shared) {
+          markShareDone();
+          try {
+            if (window.liff && typeof liff.closeWindow === "function") {
+              liff.closeWindow();
+              return;
+            }
+          } catch (_) {}
+          goNextStep();
+          return;
+        }
+        await renderDesktopFallback(myUserId);
         showPostShareUi();
       } finally {
         sharing = false;
