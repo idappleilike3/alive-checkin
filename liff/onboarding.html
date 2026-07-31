@@ -132,10 +132,46 @@ function renderFriendshipEntry() {
   loading.className = "card public-entry";
   loading.innerHTML = `
     <h2>最後確認：加入「每日平安」官方 LINE</h2>
-    <p>加入後系統會自動接續本頁，直接顯示姓名與提醒設定，不必再次登入。</p>
-    <a class="btn btn-primary" href="https://line.me/R/ti/p/%40042kwqib">加入官方 LINE 並繼續</a>
+    <p>按下後會在目前頁面顯示 LINE 官方加好友視窗。確認加入後，系統會直接接續姓名與提醒設定，不必再按第二次。</p>
+    <button class="btn btn-primary" id="requestOfficialAccountFriendship" type="button">加入官方 LINE 並繼續</button>
+    <p id="friendshipRequestError" class="privacy-note" hidden></p>
+    <a class="btn btn-secondary" href="https://line.me/R/ti/p/%40042kwqib">改用 LINE 官方加好友頁</a>
     <p class="privacy-note">LINE 必須由你親自確認加入；每日平安不會讀取聊天內容。</p>
   `;
+  document.getElementById("requestOfficialAccountFriendship")
+    .addEventListener("click", requestOfficialAccountFriendship);
+}
+
+async function continueAfterFriendshipCheck() {
+  friendshipPending = false;
+  await init();
+}
+
+async function requestOfficialAccountFriendship() {
+  const button = document.getElementById("requestOfficialAccountFriendship");
+  const error = document.getElementById("friendshipRequestError");
+  button.disabled = true;
+  button.textContent = "正在開啟 LINE 加好友視窗…";
+  error.hidden = true;
+
+  try {
+    if (typeof liff.requestFriendship !== "function") {
+      throw new Error("目前的 LINE 版本不支援內嵌加好友");
+    }
+    await liff.requestFriendship();
+    const friendship = await liff.getFriendship();
+    if (friendship && friendship.friendFlag === true) {
+      await continueAfterFriendshipCheck();
+      return;
+    }
+    error.textContent = "尚未完成加入。請在 LINE 視窗按下「加入」，再重試一次。";
+  } catch (err) {
+    error.textContent = "無法顯示 LINE 加好友視窗，請更新 LINE，或改用下方官方加好友頁。";
+  }
+
+  error.hidden = false;
+  button.disabled = false;
+  button.textContent = "重新顯示 LINE 加好友視窗";
 }
 
 async function init() {
