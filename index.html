@@ -8468,10 +8468,10 @@
         const membershipHint = source === "beta"
           ? `你目前的 ${planLabel(plan)}｜21 天封測會保留。`
           : (plan.startsWith("paid_") ? `你目前的 ${planLabel(plan)}會保留。` : "");
-        next.textContent = `${membershipHint} 若也希望由 ${peerName} 守護，請送出反向邀請；${peerName} 親自接受後才會完成互相守護。`;
+        next.textContent = `${membershipHint} 是否也想邀請 ${peerName} 守護你的每日平安？${peerName} 親自接受後，才會完成互相守護。`;
       }
       if (finishButton) finishButton.textContent = `完成，開始守護 ${peerName}`;
-      if (reciprocalButton) reciprocalButton.textContent = `我也想讓 ${peerName} 守護我`;
+      if (reciprocalButton) reciprocalButton.textContent = `好，邀請 ${peerName} 守護我`;
       const prompt = $("guardianBindSuccessPrompt");
       if (prompt) prompt.hidden = false;
     }
@@ -8499,7 +8499,7 @@
         return;
       }
       const accepted = window.confirm(
-        "要先免費啟用 14 天安心體驗，才能讓對方守護你的報平安服務。\n\n不用刷卡、不會自動扣款。要現在啟用嗎？"
+        `為了建立你的每日平安守護連線，系統會免費啟用 14 天安心體驗。\n\n接著請邀請 ${lastAcceptedGuardianInviterName || "對方"} 守護你；對方親自接受後才會完成互相守護。不用刷卡，也不會自動扣款。要繼續嗎？`
       );
       if (!accepted) return;
       const button = $("guardianBindReciprocalBtn");
@@ -8521,7 +8521,7 @@
       alert("目前無法確認免費資格，請稍後再試。");
       if (button) {
         button.disabled = false;
-        button.textContent = `我也想讓 ${lastAcceptedGuardianInviterName || "對方"} 守護我`;
+        button.textContent = `好，邀請 ${lastAcceptedGuardianInviterName || "對方"} 守護我`;
       }
     }
 
@@ -9635,6 +9635,12 @@
           12000,
           "LINE 登入初始化逾時，請按重新載入資料再試一次。"
         );
+        // 圖文選單「一鍵邀請」不需要讀取好友、會員或今日平安狀態。
+        // 專用分享頁會自行完成登入、建立邀請碼並自動開啟好友選擇。
+        if (requestedAppAction() === "share-invite") {
+          location.replace(buildShareInvitePageUrl("home"));
+          return false;
+        }
         appConfigPromise = fetch("/api/config")
           .then((response) => response.ok ? response.json() : {})
           .then((config) => {
