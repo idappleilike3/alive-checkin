@@ -4655,7 +4655,7 @@
           <h3 id="memberTrialShareTitle">完成設定後即可分享</h3>
           <p class="helper" id="memberTrialShareHelp">請先填寫自己的資料，並成功綁定至少 1 位核心守護人。</p>
           <button class="action-btn primary" id="memberCompleteSetupBtn" type="button" onclick="showOnboarding()">繼續完成我的體驗設定</button>
-          <button class="action-btn primary" id="memberShareTrialBtn" type="button">分享 14 天免費體驗給朋友</button>
+          <button class="action-btn primary" id="memberShareTrialBtn" type="button">分享 14 天安心體驗</button>
         </div>
 
         <div class="member-data-section" id="memberGuardianDirectionSection">
@@ -9263,24 +9263,15 @@
     }
 
     async function shareTrialWithFriend() {
-      if (!requireLineMembership("請先加入會員並完成 LINE 登入，再分享 14 天免費體驗。")) {
+      if (!requireLineMembership("請先加入會員並完成 LINE 登入，再分享 14 天安心體驗。")) {
         window.location.assign("/trial-14.html");
         return false;
       }
-      const trialUrl = `${window.location.origin}/trial-14.html`;
-      const text = (
-        `🌿 送你 14 天安心體驗\n\n` +
-        `每天只要 10 秒報平安，讓在乎你的人知道你今天一切都好。\n` +
-        `平常不打擾，忘記報平安或需要幫助時，才會通知你指定的守護人。\n\n` +
-        `免費體驗 14 天、不會自動扣款：\n${trialUrl}\n\n` +
-        `開始體驗後，需要邀請至少一位親友成為你的守護人；對方接受後，安心連結才算建立完成。\n` +
-        `這是替自己建立每日平安，不會自動互相綁定。`
-      );
-      const shared = await tryLineShareTargetPicker(text);
-      if (!shared) {
-        alert("請在 LINE App 內重新開啟後，再按一次「分享 14 天免費體驗給朋友」。");
-        return false;
-      }
+      const params = new URLSearchParams({
+        return: "/#member",
+        open: "member"
+      });
+      window.location.assign(`/liff/share-trial.html?${params.toString()}`);
       return true;
     }
 
