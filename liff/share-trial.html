@@ -42,15 +42,6 @@
     <div class="spinner" id="shareSpinner" aria-hidden="true"></div>
     <h1 id="statusTitle">正在準備分享</h1>
     <p id="status">正在準備你的專屬分享連結，請稍候…</p>
-    <section class="trial-share-card" aria-label="14 天安心體驗分享卡預覽">
-      <p class="eyebrow">💚🌿 每日平安邀請</p>
-      <h2 id="cardTitle">想分享一份安心給你</h2>
-      <p>每天 10 秒，讓你在乎的人一夜好眠。</p>
-      <div class="trial-points" aria-label="體驗特色">
-        <span>每天 10 秒</span><span>平常不打擾</span><span>有事才通知</span>
-      </div>
-      <p class="trial-note">一份不打擾的平安問候，免費體驗 14 天；不會自動扣款，也不會自動互相綁定。</p>
-    </section>
     <button id="retryBtn" type="button" hidden>再次開啟好友選擇</button>
   </main>
   <script>
@@ -175,11 +166,20 @@
           throw new Error("shareTargetPicker unavailable");
         }
         const result = await liff.shareTargetPicker([card]);
-        setLoadingState(false, result
-          ? "已完成分享，你可以關閉這個畫面。"
-          : "尚未選擇好友，按下方按鈕可以再試一次。");
-        shareFallback.hidden = Boolean(result);
-        retryBtn.hidden = Boolean(result);
+        if (result) {
+          setLoadingState(false, "已完成分享，正在返回每日平安…");
+          try {
+            if (typeof liff.closeWindow === "function") {
+              liff.closeWindow();
+              return;
+            }
+          } catch (_) {}
+          location.replace("/#member");
+          return;
+        }
+        setLoadingState(false, "尚未選擇好友，按下方按鈕可以再試一次。");
+        shareFallback.hidden = false;
+        retryBtn.hidden = false;
       } catch (_) {
         setLoadingState(false, "無法自動開啟好友選擇，請按下方按鈕再試一次。");
         shareFallback.hidden = false;
