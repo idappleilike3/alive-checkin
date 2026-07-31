@@ -23,6 +23,16 @@
     .inviter-role{margin:0;padding:11px 13px;border-radius:12px;background:#fff;color:var(--forest);font-weight:850;overflow-wrap:anywhere}
     .benefits{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:16px 0 0}
     .benefit{padding:13px 8px;border:1px solid var(--border);border-radius:14px;background:#fff;color:#365441;font-size:.86rem;font-weight:800;line-height:1.45;text-align:center}
+
+    .guide-card{margin:22px 0 0;padding:20px 18px;border:1px solid var(--border);border-radius:20px;background:#f8fffa}
+    .guide-card h2{margin:0;color:var(--forest);font-size:clamp(1.25rem,4.8vw,1.5rem);line-height:1.45;text-align:center}
+    .guide-intro{margin:8px auto 16px;color:var(--muted);font-size:.92rem;line-height:1.65;text-align:center}
+    .steps{display:grid;gap:10px}
+    .step{display:grid;grid-template-columns:42px 1fr;gap:12px;align-items:start;padding:13px;border:1px solid #d7eadf;border-radius:15px;background:#fff}
+    .step-number{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;background:var(--forest);color:#fff;font-size:1rem;font-weight:900}
+    .step strong{display:block;margin:1px 0 3px;color:var(--ink);font-size:.98rem;line-height:1.45}
+    .step p{margin:0;color:var(--muted);font-size:.86rem;line-height:1.55}
+    .relationship-note{margin:14px 0 0;padding:14px;border-left:4px solid var(--line);border-radius:11px;background:#eaf8ee;color:#31583e;font-size:.88rem;font-weight:700;line-height:1.65}
     .actions{display:grid;gap:11px;margin-top:20px}
     .btn{display:grid;place-items:center;width:100%;min-height:62px;padding:15px 16px;border:0;border-radius:15px;background:var(--line);color:#fff;font-size:clamp(1.08rem,4.5vw,1.28rem);font-weight:900;line-height:1.4;text-align:center;text-decoration:none;box-shadow:0 10px 24px rgba(6,199,85,.25)}
     .btn:active{transform:scale(.99);background:var(--line-dark)}
@@ -72,6 +82,31 @@
           <div class="benefit">🔔 有事才通知</div>
           <div class="benefit">❤️ 由你親自同意</div>
         </div>
+
+
+        <section class="guide-card" aria-labelledby="bindingGuideTitle">
+          <h2 id="bindingGuideTitle">照著 4 步驟完成守護綁定</h2>
+          <p class="guide-intro">不用先離開頁面找官方帳號。點一次邀請按鈕後，系統會在同一個 LINE 流程帶你完成。</p>
+          <div class="steps" aria-label="守護綁定四步驟">
+            <article class="step">
+              <span class="step-number">1</span>
+              <div><strong>點擊接受守護邀請</strong><p>從這個專屬邀請頁開啟每日平安 LINE 內網。</p></div>
+            </article>
+            <article class="step">
+              <span class="step-number">2</span>
+              <div><strong>確認加入每日平安官方 LINE</strong><p>尚未加入者會在 LIFF 內看到官方加好友視窗；已加入者會自動略過。</p></div>
+            </article>
+            <article class="step">
+              <span class="step-number">3</span>
+              <div><strong>LINE 一鍵登入並填寫資料</strong><p>填寫姓名、與邀請人的關係及必要聯絡資料，確認雙方身分。</p></div>
+            </article>
+            <article class="step">
+              <span class="step-number">4</span>
+              <div><strong>親自同意，完成守護綁定</strong><p>對方完成加入、登入、填寫資料並確認接受後，才算正式綁定成功。</p></div>
+            </article>
+          </div>
+          <p class="relationship-note"><strong>守護關係是單向的：</strong>接受後是「你守護邀請人」，不會自動變成雙向綁定。若要互相守護，雙方都必須各自發出並親自接受一次邀請。</p>
+        </section>
 
         <div class="actions">
           <a class="btn" id="acceptGuardianCta" href="#" aria-describedby="lineOpenHelp">我願意守護邀請人 ❤️</a>
