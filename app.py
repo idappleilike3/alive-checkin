@@ -13726,6 +13726,93 @@ def admin_business_dashboard(data_file, config=None, now=None):
     }
 
 
+def _admin_push_failure_explanation(detail):
+    raw = str(detail or "").strip()
+    lowered = raw.casefold()
+    if (
+        "property" in lowered
+        and "'to'" in lowered
+        and "invalid" in lowered
+    ):
+        return {
+            "failure_reason_zh": "收件者 LINE User ID 格式無效",
+            "failure_action_zh": (
+                "這不是 LINE 核發的有效收件者 ID。若為部署測試假帳號，請從正式推播名單移除；"
+                "若為會員，請讓對方重新從官方 LINE 登入以更新 UID。"
+            ),
+        }
+    if "failed to send messages" in lowered:
+        return {
+            "failure_reason_zh": "LINE 無法將訊息送給這位使用者",
+            "failure_action_zh": (
+                "請確認對方仍為官方帳號好友、沒有封鎖官方帳號，且此 UID 與目前的 "
+                "LINE Messaging API Channel 相同；確認後再重新發送。"
+            ),
+        }
+    if "401" in lowered or "unauthorized" in lowered or "invalid token" in lowered:
+        return {
+            "failure_reason_zh": "LINE 通道驗證失敗",
+            "failure_action_zh": "請檢查 Render 的 LINE Channel Access Token 是否正確且尚未失效。",
+        }
+    if "429" in lowered or "rate limit" in lowered or "quota" in lowered:
+        return {
+            "failure_reason_zh": "LINE 推播額度或發送頻率已達限制",
+            "failure_action_zh": "請查看 LINE 訊息用量與方案額度，等待限制解除或調整發送量。",
+        }
+    if "timeout" in lowered or "timed out" in lowered:
+        return {
+            "failure_reason_zh": "連線逾時，LINE 未在時間內回應",
+            "failure_action_zh": "請稍後重試；若持續發生，再檢查 Render 與 LINE API 連線狀態。",
+        }
+    if raw:
+        return {
+            "failure_reason_zh": "LINE 推播失敗（系統尚未辨識此錯誤）",
+            "failure_action_zh": "請保留下方技術訊息並交由系統管理者檢查。",
+        }
+    return {
+        "failure_reason_zh": "LINE 推播失敗，但沒有收到詳細錯誤",
+        "failure_action_zh": "請查看 Render 伺服器紀錄，確認 LINE API 回傳內容。",
+    }
+
+
+def _admin_notification_logs(state, users_by_id):
+    rows = []
+    for source in reversed((state.get("notification_logs") or [])[-20:]):
+        row = dict(source)
+        line_user_id = str(row.get("line_user_id") or "").strip()
+        member = users_by_id.get(line_user_id) or {}
+        is_test_target = bool(
+            line_user_id
+            and not member
+            and (
+                "deploy" in line_user_id.casefold()
+                or "smoke" in line_user_id.casefold()
+                or line_user_id.startswith(("TEST_", "test_"))
+            )
+        )
+        if member:
+            row["recipient_display_name"] = (
+                member.get("display_name") or "未取得暱稱"
+            )
+            row["recipient_type_label"] = "LINE 會員"
+        elif is_test_target:
+            row["recipient_display_name"] = "部署測試假帳號"
+            row["recipient_type_label"] = "測試資料（不是真實會員）"
+        elif line_user_id.startswith("C"):
+            row["recipient_display_name"] = "LINE 守護群"
+            row["recipient_type_label"] = "LINE 群組"
+        else:
+            row["recipient_display_name"] = "未能對應會員姓名"
+            row["recipient_type_label"] = "未知收件者"
+        if row.get("status") in {"failed", "error", "blocked"}:
+            row.update(_admin_push_failure_explanation(row.get("detail")))
+        else:
+            row["failure_reason_zh"] = ""
+            row["failure_action_zh"] = ""
+        rows.append(row)
+    return rows
+
+
 def admin_summary(data_file, config=None, now=None):
     state = load_state(data_file)
     status_now = now or current_app_time(config or {})
@@ -13897,11 +13984,19 @@ def admin_summary(data_file, config=None, now=None):
                 item["latest_failure_at"] = str(
                     latest_failure.get("created_at") or ""
                 )
+        failure_explanation = _admin_push_failure_explanation(
+            item.get("latest_failure_detail")
+        ) if int(item.get("failed_count") or 0) else {
+            "failure_reason_zh": "",
+            "failure_action_zh": "",
+        }
         daily_push_member_stats.append({
             **item,
             "display_name": member.get("display_name") or "未取得暱稱",
             "plan": member.get("plan") or "free",
             "expires_at": member.get("plan_expires_at") or "",
+            "latest_failure_reason_zh": failure_explanation["failure_reason_zh"],
+            "latest_failure_action_zh": failure_explanation["failure_action_zh"],
         })
     daily_push_member_stats.sort(
         key=lambda item: (item.get("date") or "", item.get("last_push_at") or ""),
@@ -13993,7 +14088,7 @@ def admin_summary(data_file, config=None, now=None):
         "county_stats": county_stats,
         "users": users,
         "contact_rewards": list(reversed(state.get("contact_rewards", [])[-20:])),
-        "notification_logs": list(reversed(state.get("notification_logs", [])[-20:])),
+        "notification_logs": _admin_notification_logs(state, users_by_id),
         "daily_push_member_stats": daily_push_member_stats[:500],
         "line_message_usage": line_usage,
         "display_names_hydrated": hydrated,

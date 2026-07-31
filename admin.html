@@ -2171,15 +2171,28 @@
           <div class="log-item">
             <div>
               <strong>${logKindLabel(log.kind)}</strong><br>
-              <small>${log.created_at || ""}</small>
+              <small>${escapeHtml(log.created_at || "")}</small>
             </div>
             <div>
-              <strong>${log.line_user_id || "-"}</strong><br>
-              <small>${log.message || ""}</small>
+              <strong>發送給：${escapeHtml(log.recipient_display_name || "未能對應會員姓名")}</strong>
+              <span class="badge ${log.recipient_type_label?.includes("測試資料") ? "warn" : ""}" style="margin-left:6px">${escapeHtml(log.recipient_type_label || "未知收件者")}</span><br>
+              <small><strong>LINE User ID：</strong>${escapeHtml(log.line_user_id || "未記錄")}</small><br>
+              <small><strong>推播內容：</strong>${escapeHtml(log.message || "未記錄訊息內容")}</small>
+              ${log.status !== "sent" ? `
+                <div style="margin-top:8px;padding:10px 12px;border-radius:10px;background:#fff1f2;color:#881337;line-height:1.55">
+                  <strong>失敗原因：</strong>${escapeHtml(log.failure_reason_zh || "LINE 推播失敗")}<br>
+                  <strong>處理建議：</strong>${escapeHtml(log.failure_action_zh || "請交由系統管理者檢查。")}
+                  ${log.detail ? `
+                    <details style="margin-top:6px">
+                      <summary style="cursor:pointer;font-weight:800">查看技術訊息（原始英文）</summary>
+                      <small style="display:block;margin-top:4px;word-break:break-all">${escapeHtml(log.detail)}</small>
+                    </details>
+                  ` : ""}
+                </div>
+              ` : ""}
             </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
               <span class="badge ${log.status === "sent" ? "ok" : "bad"}">${log.status === "sent" ? "成功" : "失敗"}</span>
-              ${log.status !== "sent" && log.detail ? `<small style="color:#c0392b;max-width:320px;word-break:break-word;text-align:right;line-height:1.3">${escapeHtml(linePushFailureText(log.detail))}</small>` : ""}
             </div>
           </div>
         `).join("")
@@ -2198,7 +2211,14 @@
             <td>
               ${row.last_push_at ? escapeHtml(formatDate(row.last_push_at)) : "-"}
               ${row.latest_failure_detail
-                ? `<br><small style="color:#c0392b;max-width:360px;display:inline-block;word-break:break-word;">最近失敗：${escapeHtml(linePushFailureText(row.latest_failure_detail))}</small>`
+                ? `<div style="margin-top:6px;color:#9f1239;line-height:1.5;">
+                    <small><strong>最近失敗原因：</strong>${escapeHtml(row.latest_failure_reason_zh || "LINE 推播失敗")}</small><br>
+                    <small><strong>處理建議：</strong>${escapeHtml(row.latest_failure_action_zh || "請交由系統管理者檢查。")}</small>
+                    <details>
+                      <summary style="cursor:pointer;font-weight:800">查看技術訊息（原始英文）</summary>
+                      <small style="display:inline-block;max-width:360px;word-break:break-all;">${escapeHtml(row.latest_failure_detail)}</small>
+                    </details>
+                  </div>`
                 : ""}
             </td>
           </tr>
