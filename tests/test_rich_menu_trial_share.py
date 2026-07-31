@@ -46,6 +46,18 @@ class RichMenuTrialShareTests(unittest.TestCase):
         self.assertIn("setLoadingState(true", page)
         self.assertIn("setLoadingState(false", page)
 
+    def test_trial_share_uses_a_visual_card_with_clear_relationship_copy(self):
+        page = (ROOT / "liff" / "share-trial.html").read_text(encoding="utf-8")
+
+        self.assertIn('class="trial-share-card"', page)
+        self.assertIn("想把 14 天安心體驗分享給你", page)
+        self.assertIn('"type": "flex"', page)
+        self.assertIn('"type": "bubble"', page)
+        self.assertIn("開始我的 14 天安心體驗", page)
+        self.assertIn("這是你的每日平安體驗", page)
+        self.assertIn("不會自動互相綁定", page)
+        self.assertIn("不會自動扣款", page)
+
     def test_trial_share_page_does_not_create_guardian_invite(self):
         page = (ROOT / "liff" / "share-trial.html").read_text(encoding="utf-8")
 
