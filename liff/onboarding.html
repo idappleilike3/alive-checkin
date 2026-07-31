@@ -91,6 +91,7 @@ let state = {
 };
 
 const STEP_WAITING_COPY = "請等待對方加入每日平安、完成 LINE 登入、填寫姓名與雙方關係，並確認接受邀請；完成後才算綁定成功。";
+const FRIENDSHIP_STATUS_MAX_ATTEMPTS = 3;
 let friendshipPending = false;
 
 function defaultTimesForCount(count) {
@@ -147,6 +148,37 @@ async function continueAfterFriendshipCheck() {
   await init();
 }
 
+async function getOfficialAccountFriendshipWithRetry() {
+  let lastError = null;
+  for (let attempt = 1; attempt <= FRIENDSHIP_STATUS_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await liff.getFriendship();
+    } catch (err) {
+      lastError = err;
+      if (attempt < FRIENDSHIP_STATUS_MAX_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+      }
+    }
+  }
+  throw lastError || new Error("friendship_status_unavailable");
+}
+
+function renderFriendshipStatusError() {
+  friendshipPending = false;
+  const loading = document.getElementById("loading");
+  const content = document.getElementById("content");
+  content.style.display = "none";
+  loading.style.display = "block";
+  loading.className = "card public-entry";
+  loading.innerHTML = `
+    <h2>正在確認你是否已加入官方 LINE</h2>
+    <p>LINE 好友狀態暫時沒有回應。你不需要重新登入，也不需要再次加入。</p>
+    <button class="btn btn-primary" id="retryFriendshipStatus" type="button">重新檢查加入狀態</button>
+    <p class="privacy-note">若你已加入，重新檢查後會直接接續會員資料或顯示「你已是會員」。</p>
+  `;
+  document.getElementById("retryFriendshipStatus").addEventListener("click", init);
+}
+
 async function requestOfficialAccountFriendship() {
   const button = document.getElementById("requestOfficialAccountFriendship");
   const error = document.getElementById("friendshipRequestError");
@@ -159,7 +191,7 @@ async function requestOfficialAccountFriendship() {
       throw new Error("目前的 LINE 版本不支援內嵌加好友");
     }
     await liff.requestFriendship();
-    const friendship = await liff.getFriendship();
+    const friendship = await getOfficialAccountFriendshipWithRetry();
     if (friendship && friendship.friendFlag === true) {
       await continueAfterFriendshipCheck();
       return;
@@ -209,7 +241,13 @@ async function init() {
     state.displayName = lineProfile.displayName || "";
     state.pictureUrl = lineProfile.pictureUrl || "";
     if (typeof liff.getFriendship === "function") {
-      const friendship = await liff.getFriendship();
+      let friendship;
+      try {
+        friendship = await getOfficialAccountFriendshipWithRetry();
+      } catch (_) {
+        renderFriendshipStatusError();
+        return;
+      }
       if (!friendship || friendship.friendFlag !== true) {
         renderFriendshipEntry();
         return;
