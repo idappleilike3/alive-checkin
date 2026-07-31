@@ -51,6 +51,7 @@ function createHarness(fetchImpl) {
     document: {
       getElementById: (id) => elements.get(id),
       querySelector: () => querySelectorResult,
+      querySelectorAll: () => [],
       visibilityState: "hidden",
       createElement: () => ({click() {}})
     },
