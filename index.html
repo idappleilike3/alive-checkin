@@ -8354,11 +8354,26 @@
      * 擋住 Android 雙擊、自動綁定 + 同意按鈕雙路徑、URL 殘留重入。
      * 已綁定／名額已滿：友善中文，不顯示英文 contact_limit exceeded。
      */
+    function handleSelfGuardianInvite() {
+      alert("這是你自己發出的守護邀請，不能接受自己發出的邀請。請把邀請連結分享給要守護你的家人或朋友。");
+      clearInviteFromUrl();
+      clearPendingGuardianInvite();
+      closeInviteAcceptPrompt();
+      showTab("member");
+      return {
+        ok: false,
+        bound: false,
+        code: "self_invite",
+        message: "不能接受自己發出的邀請"
+      };
+    }
+
     async function completeGuardianBindOnce(inviteFromRaw, options = {}) {
       const inviteFrom = sanitizeInviteUserId(inviteFromRaw || getAppParam("invite_from"));
       if (bindDone) return { bound: true, already_bound: true, skipped: true };
       if (bindInFlight) return { bound: false, skipped: true, inFlight: true };
-      if (!inviteFrom || inviteFrom === lineUserId) return null;
+      if (!inviteFrom) return null;
+      if (inviteFrom === lineUserId) return handleSelfGuardianInvite();
       bindInFlight = true;
       try {
         const activateTrial = Boolean(options && options.activate_trial);
@@ -8438,7 +8453,8 @@
     async function maybeShowInviteAcceptPrompt() {
       if (bindDone || bindInFlight) return;
       const inviteFrom = getAppParam("invite_from");
-      if (!inviteFrom || inviteFrom === lineUserId) return;
+      if (!inviteFrom) return;
+      if (inviteFrom === lineUserId) return handleSelfGuardianInvite();
       // 僅在網址真的帶邀請參數時顯示「同意成為守護人」；一般登入不跳
       const modal = $("inviteAcceptPrompt");
       if (!modal) return;
@@ -12572,6 +12588,11 @@
           showLineLoginRequired();
           // 外部瀏覽器不自動導轉，避免 LINE OAuth 反覆登入循環；讓使用者按「用 LINE 開啟」。
           return;
+        }
+        // 邀請流程只需要已驗證的 LINE 身分；先顯示接受／自邀請提示，
+        // 不必等待首頁狀態、聯絡人與 onboarding 三組資料全部載入。
+        if (getAppParam("invite_from")) {
+          maybeShowInviteAcceptPrompt();
         }
 
         const migration = hasPendingMigration
