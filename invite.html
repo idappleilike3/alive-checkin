@@ -17,33 +17,20 @@
     .eyebrow{width:max-content;margin:0 auto 12px;padding:6px 12px;border-radius:999px;background:#e1f6e8;color:var(--forest);font-size:.82rem;font-weight:850}
     h1{margin:0;font-size:clamp(1.65rem,6vw,2.25rem);line-height:1.35;text-align:center}
     .opening{margin:14px auto 0;max-width:32rem;color:#405c4b;font-size:clamp(1rem,3.8vw,1.1rem);font-weight:650;line-height:1.8;text-align:center}
-    .identity{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:24px 0 15px;padding:16px;border:1px solid #cfe5d6;border-radius:18px;background:linear-gradient(145deg,#f5fcf7,#fff)}
-    .identity div{min-width:0}
-    .identity small{display:block;margin-bottom:4px;color:var(--muted);font-weight:700}
-    .identity strong{display:block;overflow-wrap:anywhere;color:var(--forest);font-size:1.08rem}
-    .connection{margin:0;padding:0 4px;color:#425e4d;font-size:.98rem;line-height:1.75;text-align:center}
-    .value{margin:20px 0 0;padding:17px;border-radius:17px;background:var(--soft);line-height:1.75;text-align:center}
-    .value strong{display:block;margin-bottom:3px;color:var(--forest);font-size:1.08rem}
-    .journey-title{margin:28px 0 14px;font-size:1.35rem;text-align:center}
-    .steps{display:grid;gap:11px}
-    .step{display:grid;grid-template-columns:46px 1fr;gap:12px;align-items:start;padding:15px;border:1px solid var(--border);border-radius:17px;background:#fff}
-    .num{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;background:var(--forest);color:#fff;font-weight:900}
-    .step h3{margin:0 0 4px;font-size:1.05rem}
-    .step p{margin:0;color:var(--muted);font-size:.92rem;line-height:1.6}
-    .field-hints{display:grid;gap:6px;margin-top:9px;color:#365441;font-size:.84rem;font-weight:700}
+    .inviter-card{margin:24px 0 17px;padding:21px 18px;border:2px solid #9fdeb3;border-radius:21px;background:linear-gradient(145deg,#edfaf1,#fff);box-shadow:0 12px 30px rgba(20,92,46,.1);text-align:left}
+    .inviter-card h2{margin:0;color:var(--forest);font-size:clamp(1.2rem,4.8vw,1.48rem);line-height:1.45}
+    .inviter-message{margin:10px 0 14px;color:#365441;font-size:.98rem;font-weight:650;line-height:1.7}
+    .inviter-role{margin:0;padding:11px 13px;border-radius:12px;background:#fff;color:var(--forest);font-weight:850;overflow-wrap:anywhere}
+    .benefits{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:16px 0 0}
+    .benefit{padding:13px 8px;border:1px solid var(--border);border-radius:14px;background:#fff;color:#365441;font-size:.86rem;font-weight:800;line-height:1.45;text-align:center}
     .actions{display:grid;gap:11px;margin-top:20px}
     .btn{display:grid;place-items:center;width:100%;min-height:62px;padding:15px 16px;border:0;border-radius:15px;background:var(--line);color:#fff;font-size:clamp(1.08rem,4.5vw,1.28rem);font-weight:900;line-height:1.4;text-align:center;text-decoration:none;box-shadow:0 10px 24px rgba(6,199,85,.25)}
     .btn:active{transform:scale(.99);background:var(--line-dark)}
-    .btn.secondary{border:2px solid var(--line);background:#fff;color:var(--forest);box-shadow:none}
     .helper{margin:0;color:var(--muted);font-size:.82rem;line-height:1.55;text-align:center}
     .fallback{margin-top:14px;padding-top:14px;border-top:1px solid var(--border);text-align:center}
     .fallback a,.fallback button,.guide{color:var(--forest);font:inherit;font-weight:750;text-underline-offset:3px}
     .fallback button{margin-left:8px;padding:7px 10px;border:1px solid #c9d9ce;border-radius:9px;background:#fff;cursor:pointer}
     .status{min-height:1.4em;margin:10px 0 0;color:var(--muted);font-size:.84rem}
-    .trial{margin-top:18px;padding:20px;border:1px solid #cfe4d5;border-radius:20px;background:rgba(255,255,255,.82);text-align:center}
-    .trial h2{margin:0 0 7px;font-size:1.18rem}
-    .trial p{margin:0;color:var(--muted);line-height:1.65}
-    .trial-link{display:inline-block;margin-top:13px;padding:10px 16px;border:2px solid var(--line);border-radius:999px;color:var(--forest);font-weight:850;text-decoration:none}
     .guide{display:block;margin:18px auto 0;text-align:center}
     .footer{margin:12px 4px 0;color:#718078;font-size:.78rem;line-height:1.55;text-align:center}
     .entry-loading{position:fixed;inset:0;z-index:9999;display:grid;place-items:center;padding:24px;background:linear-gradient(180deg,#e7f8ed,#f7fbf8);text-align:center}
@@ -53,8 +40,8 @@
     .entry-loading strong{display:block;color:var(--forest);font-size:1.15rem}
     .entry-loading p{margin:9px 0 0;color:var(--muted);font-size:.9rem;line-height:1.55}
     @keyframes entrySpin{to{transform:rotate(360deg)}}
-    .btn:focus-visible,.trial-link:focus-visible,.fallback a:focus-visible,.fallback button:focus-visible,.guide:focus-visible{outline:3px solid rgba(6,199,85,.34);outline-offset:3px}
-    @media(max-width:420px){.wrap{padding-inline:12px}.card{padding:21px 16px}.identity{grid-template-columns:1fr}.step{grid-template-columns:40px 1fr;padding:13px}.num{width:38px;height:38px}}
+    .btn:focus-visible,.fallback a:focus-visible,.fallback button:focus-visible,.guide:focus-visible{outline:3px solid rgba(6,199,85,.34);outline-offset:3px}
+    @media(max-width:420px){.wrap{padding-inline:12px}.card{padding:21px 16px}.benefits{grid-template-columns:1fr}.benefit{padding:11px}}
     @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
   </style>
 </head>
@@ -71,28 +58,24 @@
       <p class="brand"><img src="assets/daily-peace-logo.png" alt="">每日平安</p>
       <section class="card" aria-labelledby="inviteTitle">
         <p class="eyebrow">一份安心的邀請</p>
-        <h1 id="inviteTitle">❤️ 我在乎的人，邀請你成為我的安心守護者</h1>
-        <p class="opening">因為你是我最信任的人，所以在需要時，我希望第一個讓你知道。<br>這不是責任，而是一個讓彼此都安心的默契。</p>
+        <h1 id="inviteTitle">有人希望你成為他的安心守護人</h1>
+        <p class="opening">每天只要知道一聲平安，就能多一份放心。</p>
 
-        <div class="identity" aria-label="邀請人資訊">
-          <div><small>邀請人</small><strong id="inviterName">開啟 LINE 後確認</strong></div>
-          <div><small>你與邀請人的關係</small><strong id="inviterRelationship">開啟 LINE 後確認</strong></div>
+        <div class="inviter-card" aria-label="邀請人資訊">
+          <h2 id="inviterCardTitle">💌 來自邀請人的守護邀請</h2>
+          <p class="inviter-message">「因為你是我最信任的人，所以在需要時，我希望第一個讓你知道。」</p>
+          <p class="inviter-role" id="inviterCardRole">你的身份：邀請人的重要的人</p>
         </div>
-        <p class="connection">當你點下「接受」，你與 <strong id="connectionName">邀請人</strong> 之間，就會建立一條專屬的「安心連線」。他／她每天的平安，會輕輕地抵達你心上。</p>
-        <p class="value"><strong>你的存在，就是最好的守護。</strong>平時不打擾，只有在對方忘記或需要幫助時，你才會收到溫柔的提醒，讓你能即時關心。</p>
 
-        <h2 class="journey-title">四步驟，完成安心約定</h2>
-        <div class="steps">
-          <article class="step"><span class="num">1</span><div><h3>開啟安心頻道</h3><p>這是我們之間專屬的安心橋樑。加入後，你與邀請人的守護約定就能正式啟動。</p></div></article>
-          <article class="step"><span class="num">2</span><div><h3>確認你的身分</h3><p>使用 LINE 快速確認身分，安全且安心。此步驟僅用於確認你是你，不會自動綁定，請放心。</p></div></article>
-          <article class="step"><span class="num">3</span><div><h3>讓他知道是你</h3><p>留下必要的守護資訊，讓彼此在重要時刻能正確聯絡。</p><div class="field-hints"><span>姓名：請填寫你希望被稱呼的名字</span><span>關係：邀請人是你的...？</span><span>手機：留下聯絡電話（以備萬一，讓我們能緊急找到你）</span></div></div></article>
-          <article class="step"><span class="num">4</span><div><h3>完成守護約定</h3><p>由你親自確認後，安心連線才會成立；系統不會自動替你接受。</p></div></article>
+        <div class="benefits" aria-label="守護方式">
+          <div class="benefit">🌿 平常不打擾</div>
+          <div class="benefit">🔔 有事才通知</div>
+          <div class="benefit">❤️ 由你親自同意</div>
         </div>
 
         <div class="actions">
-          <a class="btn secondary" id="joinOfficialLineCta" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener">點我，開啟守護連線 💚</a>
-          <a class="btn" id="acceptGuardianCta" href="#" aria-describedby="lineOpenHelp">我願意守護 ❤️</a>
-          <p class="helper" id="lineOpenHelp">開啟 LINE、確認資料並親自同意後，才會正式完成綁定。</p>
+          <a class="btn" id="acceptGuardianCta" href="#" aria-describedby="lineOpenHelp">我願意守護邀請人 ❤️</a>
+          <p class="helper" id="lineOpenHelp">點擊後將引導你完成 LINE 官方確認，接著在同一流程填寫資料。</p>
         </div>
 
         <div class="fallback">
@@ -102,11 +85,6 @@
         </div>
       </section>
 
-      <section class="trial" aria-labelledby="trialTitle">
-        <h2 id="trialTitle">你也希望有人關心你的平安嗎？</h2>
-        <p>接受邀請只會讓你免費接收對方通知，不會自動開啟自己的報平安功能。完成守護後，如果你也希望有人關心你的每日平安，歡迎開始你的 14 天免費體驗；不用刷卡、不自動扣款。</p>
-        <a class="trial-link" href="/trial-14.html">開始你的 14 天免費體驗</a>
-      </section>
       <a class="guide" href="/guardian-guide">查看完整守護說明</a>
       <p class="footer">綁定是單向的；若要互相守護，雙方需要各自發出並接受一次邀請。</p>
     </div>
@@ -121,9 +99,8 @@
       var inviterName = (params.get("inviter_name") || "").trim();
       var inviterRelationship = (params.get("inviter_relationship") || params.get("relationship") || "").trim();
       var openAction = (params.get("open") || "").trim();
-      var inviterNameEl = document.getElementById("inviterName");
-      var relationshipEl = document.getElementById("inviterRelationship");
-      var connectionNameEl = document.getElementById("connectionName");
+      var inviterCardTitleEl = document.getElementById("inviterCardTitle");
+      var inviterCardRoleEl = document.getElementById("inviterCardRole");
       var statusEl = document.getElementById("status");
       var openBtn = document.getElementById("acceptGuardianCta");
       var altBtn = document.getElementById("openLiffAlt");
@@ -136,11 +113,11 @@
         if (entryLoading) entryLoading.hidden = true;
       }, 1600);
 
-      if (inviterName) {
-        inviterNameEl.textContent = inviterName;
-        connectionNameEl.textContent = inviterName;
-      }
-      if (inviterRelationship) relationshipEl.textContent = inviterRelationship;
+      var displayName = inviterName || "邀請人";
+      var displayRelationship = inviterRelationship || "重要的人";
+      inviterCardTitleEl.textContent = "💌 來自 " + displayName + " 的守護邀請";
+      inviterCardRoleEl.textContent = "你的身份：" + displayName + " 的" + displayRelationship;
+      openBtn.textContent = "我願意守護 " + displayName + " ❤️";
 
       function getLiffId() { return window.__INVITE_LIFF_ID__ || DEFAULT_LIFF_ID; }
       function buildQuery() {
@@ -215,7 +192,7 @@
             setStatus("偵測到 LINE，正在開啟守護確認…");
             location.replace(buildLiffUrl());
           } else {
-            setStatus("請依序加入官方 LINE，再按「我願意守護」。");
+            setStatus("點擊主按鈕後，系統會接續完成 LINE 官方確認與資料填寫。");
           }
         });
     })();
