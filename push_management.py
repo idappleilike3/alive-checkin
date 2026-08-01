@@ -226,6 +226,91 @@ def list_delivery_records(
     }
 
 
+def append_system_delivery_record(
+    state: dict,
+    *,
+    kind: str,
+    line_user_id: str,
+    status: str,
+    message,
+    created_at: str,
+    detail: str = "",
+    metadata: dict | None = None,
+) -> dict:
+    """Append one permanent system-delivery record; stable event IDs are idempotent."""
+    ensure_push_state(state)
+    metadata = metadata if isinstance(metadata, dict) else {}
+    event_id = str(metadata.get("event_id") or "").strip()
+    if event_id:
+        existing = next(
+            (
+                row
+                for row in state["push_delivery_records"]
+                if row.get("source") == "system" and row.get("event_id") == event_id
+            ),
+            None,
+        )
+        if existing:
+            return existing
+    uid = str(line_user_id or "").strip()
+    profile = (state.get("users") or {}).get(uid) or {}
+    membership_source = str(
+        metadata.get("membership_source") or profile.get("membership_source") or ""
+    )
+    plan = str(metadata.get("plan") or profile.get("plan") or "")
+    beta_cohort = str(metadata.get("beta_cohort") or profile.get("beta_cohort") or "")
+    gift_code = str(metadata.get("gift_code") or profile.get("gift_code") or "")
+    audience_code = str(metadata.get("audience_code") or "")
+    if not audience_code:
+        if membership_source == "gift" and gift_code:
+            audience_code = gift_code
+        elif membership_source == "beta" and beta_cohort:
+            audience_code = beta_cohort
+        elif plan == "trial":
+            audience_code = "trial"
+        else:
+            audience_code = plan
+    succeeded = str(status or "").lower() == "sent"
+    message_text = (
+        str(message.get("altText") or message.get("type") or message)
+        if isinstance(message, dict)
+        else str(message or "")
+    )
+    record = {
+        "id": str(uuid5(NAMESPACE_URL, f"daily-peace:system:{event_id}")) if event_id else _new_id(),
+        "source": "system",
+        "kind": str(kind or "other"),
+        "event_id": event_id,
+        "campaign_id": "",
+        "campaign_version_id": "",
+        "recipient_display_name": str(
+            metadata.get("recipient_display_name")
+            or profile.get("display_name")
+            or "未能對應會員姓名"
+        ),
+        "line_user_id": uid,
+        "audience_code": audience_code,
+        "plan": plan,
+        "membership_source": membership_source,
+        "beta_cohort": beta_cohort,
+        "gift_code": gift_code,
+        "scheduled_at": str(metadata.get("scheduled_at") or ""),
+        "status": "sent" if succeeded else "failed",
+        "attempts": max(1, int(metadata.get("attempts") or 1)),
+        "message": message_text[:500],
+        "created_at": str(created_at or ""),
+        "failure_reason_zh": "" if succeeded else str(metadata.get("failure_reason_zh") or "LINE 推播失敗。")[:500],
+        "failure_action_zh": "" if succeeded else str(metadata.get("failure_action_zh") or "請由系統管理員檢查。")[:500],
+        "technical_detail": str(detail or "")[:1000],
+    }
+    if succeeded:
+        record["sent_at"] = str(metadata.get("sent_at") or created_at or "")
+    else:
+        record["failed_at"] = str(metadata.get("sent_at") or created_at or "")
+    state["push_delivery_records"].append(record)
+    return record
+
+
 def _campaign(state: dict, campaign_id: str) -> dict:
     ensure_push_state(state)
     for item in state["push_campaigns"]:

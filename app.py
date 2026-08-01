@@ -147,6 +147,7 @@ from push_management import (
     CampaignConflictError,
     CampaignNotFoundError,
     CampaignValidationError,
+    append_system_delivery_record,
     cancel_campaign,
     claim_due_campaign,
     claim_next_delivery,
@@ -15096,6 +15097,25 @@ def append_notification_log(
         })
     logs.append(row)
     state["notification_logs"] = logs[-100:]
+    permanent_metadata = dict(metadata or {}) if isinstance(metadata, dict) else {}
+    if status in {"failed", "error", "blocked"}:
+        explanation = _admin_push_failure_explanation(detail)
+        permanent_metadata.setdefault(
+            "failure_reason_zh", explanation.get("failure_reason_zh") or "LINE 推播失敗。"
+        )
+        permanent_metadata.setdefault(
+            "failure_action_zh", explanation.get("failure_action_zh") or "請由系統管理員檢查。"
+        )
+    append_system_delivery_record(
+        state,
+        kind=kind,
+        line_user_id=line_user_id,
+        status=status,
+        message=message,
+        created_at=created_at,
+        detail=detail or "",
+        metadata=permanent_metadata,
+    )
     member_id = str(line_user_id or "").strip()
     date = created_at[:10]
     if member_id:
