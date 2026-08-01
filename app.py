@@ -1563,17 +1563,44 @@ def build_expiry_remind_flex(profile, now=None):
     info = membership_expiry_info(profile, now) or {}
     label = info.get("label") or "方案"
     days = info.get("days_left")
-    if info.get("expired") or (isinstance(days, int) and days <= 0):
-        title = f"你的{label}已到期"
+    is_upgrade = (
+        str(profile.get("plan") or "") == "trial"
+        or str(profile.get("membership_source") or "") == "beta"
+    )
+    action_word = "升級" if is_upgrade else "續訂"
+    if isinstance(days, int) and days < 0:
+        title = f"您的{label}已到期"
         body = (
-            "續用後可繼續每日問候與守護提醒，家人也能安心。"
-            "升級時補差額即可，不必重設聯絡人；對方也有 7 天考慮期可慢慢決定。"
+            f"{action_word}後，每日問候與守護服務可繼續使用，"
+            "原有守護設定仍會保留。"
+        )
+    elif days == 0:
+        title = f"您的{label}今天到期"
+        body = (
+            f"今天是方案最後一天。{action_word}後，"
+            "每日問候與守護服務將持續不中斷。"
+        )
+    elif days == 1:
+        title = f"您的{label}即將到期"
+        body = (
+            f"明天是最後一天。{action_word}後繼續享有每日問候與安全守護。"
+        )
+    elif days == 3:
+        title = f"您的{label}即將到期"
+        body = (
+            f"將在 4 天後到期。{action_word}後可保留你的連續報到天數與守護設定。"
+        )
+    elif days == 7:
+        title = f"您的{label}即將到期"
+        body = (
+            f"將在 8 天後到期。{action_word}後，每日問候與守護服務將持續不中斷。"
+            "提前通知，方便家人一起決定。"
         )
     else:
-        title = f"你的{label}即將到期"
+        title = f"您的{label}即將到期"
         body = (
-            f"還剩約 {days} 天。續用後可繼續每日問候，守護不中斷。"
-            "升級補差額即可；另有 7 天考慮期，方便家人一起決定。"
+            f"將在 {max(1, int(days or 0) + 1)} 天後到期。"
+            f"{action_word}後，每日問候與守護服務將持續不中斷。"
         )
     pricing_uri = pricing_direct_url()
     return {
@@ -1630,7 +1657,7 @@ def build_expiry_remind_flex(profile, now=None):
                         "type": "button",
                         "action": {
                             "type": "uri",
-                            "label": "升級後繼續每日問候",
+                            "label": f"{action_word}方案",
                             "uri": pricing_uri,
                         },
                         "style": "primary",
@@ -1641,7 +1668,7 @@ def build_expiry_remind_flex(profile, now=None):
                         "type": "button",
                         "action": {
                             "type": "postback",
-                            "label": "不再提醒我",
+                            "label": "不再提醒",
                             "data": "action=expiry_opt_out",
                             "displayText": "不再提醒我方案到期",
                         },
@@ -1652,7 +1679,6 @@ def build_expiry_remind_flex(profile, now=None):
             },
         },
     }
-
 
 def mark_expiry_remind_sent(profile, now=None):
     now = now or current_app_time({})
@@ -5536,8 +5562,8 @@ def _claim_trial_milestone_notices(state, clock):
         }
         profile["trial_notice_days_sent"] = sorted(completed)
         active_claims = dict(profile.get("trial_notice_claims") or {})
-        for day in (7, 12, 14):
-            if elapsed_days < day or day in completed:
+        for day in (7, 11, 13, 14):
+            if elapsed_days != day or day in completed:
                 continue
             existing = active_claims.get(str(day)) or {}
             claimed_at = parse_datetime(existing.get("claimed_at"))
@@ -5594,17 +5620,17 @@ def membership_notice_milestones(profile, now=None):
     now = now or current_app_time({})
     plan = str(profile.get("plan") or "")
     if str(profile.get("membership_source") or "") == "beta":
-        started = parse_datetime(profile.get("beta_started_at"))
-        if not started:
+        beta_end = parse_datetime(profile.get("beta_ends_at"))
+        if not beta_end:
             return []
-        elapsed = max(0, (now.date() - started.date()).days)
-        return [day for day in (18, 20, 21) if elapsed == day]
+        days_left = (beta_end.date() - now.date()).days
+        return [day for day in (7, 3, 1, 0) if days_left == day]
     if plan == "trial":
         started = parse_datetime(profile.get("trial_started_at"))
         if not started:
             return []
         elapsed = max(0, (now.date() - started.date()).days)
-        return [day for day in (7, 12, 14) if elapsed == day]
+        return [day for day in (7, 11, 13, 14) if elapsed == day]
     if plan.startswith("paid_"):
         paid_until = parse_datetime(profile.get("paid_until"))
         if not paid_until:
@@ -5612,7 +5638,6 @@ def membership_notice_milestones(profile, now=None):
         days_left = (paid_until.date() - now.date()).days
         return [day for day in (7, 3, 1, 0) if days_left == day]
     return []
-
 
 def _membership_notice_key(profile, milestone):
     if str(profile.get("membership_source") or "") == "beta":
@@ -5720,9 +5745,11 @@ def send_trial_milestone_notices(config, now=None):
         profile = (state.get("users") or {}).get(target) or {}
         message = build_expiry_remind_flex(profile, now=clock)
         if day == 7:
-            message["altText"] = "14 天安心體驗已進行 7 天"
-        elif day == 12:
-            message["altText"] = "14 天安心體驗還剩 2 天"
+            message["altText"] = "14 天安心體驗將在 8 天後到期"
+        elif day == 11:
+            message["altText"] = "14 天安心體驗將在 4 天後到期"
+        elif day == 13:
+            message["altText"] = "14 天安心體驗明天是最後一天"
         else:
             message["altText"] = "14 天安心體驗今天到期"
         retry_key = _line_retry_key(
