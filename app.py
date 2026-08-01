@@ -13651,7 +13651,7 @@ def _test_line_user_ids(config):
     if isinstance(raw, (list, tuple, set)):
         values = raw
     else:
-        values = str(raw).split(",")
+        values = re.split(r"[,;；\s]+", str(raw))
     return [str(value).strip() for value in values if str(value).strip()]
 
 
@@ -21276,14 +21276,16 @@ def create_app(config=None):
         if denied:
             return denied
         is_super_admin = str(session.get("admin_role") or "viewer") == "super_admin"
+        allowed_test_user_ids = _test_line_user_ids(app.config)
         candidates = list_beta_reset_candidates(
             load_state(app.config["DATA_FILE"]),
-            _test_line_user_ids(app.config),
+            allowed_test_user_ids,
         ) if is_super_admin else []
         return jsonify({
             "ok": True,
             "can_reset": is_super_admin,
             "message": "" if is_super_admin else "只有最高管理員可以重置封測帳號",
+            "whitelist_configured": bool(allowed_test_user_ids),
             "candidates": candidates,
         })
 
