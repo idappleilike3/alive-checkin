@@ -56,6 +56,25 @@ class BetaAccountFullResetTests(unittest.TestCase):
         self.assertEqual(candidates[0]["account_state_version"], "old-version")
         self.assertNotIn("masked_line_user_id", candidates[0])
 
+    def test_enrolled_beta_member_is_listed_without_manual_test_whitelist(self):
+        candidates = app.list_beta_reset_candidates(self.state, set())
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["candidate_id"], self.uid)
+        self.assertEqual(candidates[0]["cohort"], "B799")
+
+    def test_enrolled_beta_member_can_reset_without_manual_test_whitelist(self):
+        result, status = app.admin_reset_test_account(
+            self.data_file,
+            self.uid,
+            set(),
+            expected_version="old-version",
+            actor="admin-1",
+        )
+
+        self.assertEqual(status, 200, result)
+        self.assertTrue(result["ok"])
+
     def test_test_account_whitelist_accepts_common_render_formats(self):
         config = {
             "TEST_LINE_USER_IDS": "U-one\nU-two； U-three;U-four, U-five"
