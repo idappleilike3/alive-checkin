@@ -43,7 +43,12 @@ class AdminResetTestAccountTests(unittest.TestCase):
                                 "name": "測試會員",
                                 "line_user_id": "U-test",
                                 "bound": True,
-                            }
+                            },
+                            {
+                                "name": "舊版測試會員",
+                                "line_id": "U-test",
+                                "bound": True,
+                            },
                         ],
                         "guarding_for": ["U-test"],
                     },
@@ -68,6 +73,7 @@ class AdminResetTestAccountTests(unittest.TestCase):
                 "beta_program_members": [{"line_user_id": "U-test"}],
                 "beta_feedback_reports": [{"line_user_id": "U-test"}],
                 "notification_logs": [{"line_user_id": "U-test", "kind": "checkin"}],
+                "contact_rewards": [{"contact_line_user_id": "U-test"}],
                 "sos_pending": {"U-test": {"event_id": "sos-1"}},
                 "sos_events": {
                     "sos-1": {"event_id": "sos-1", "line_user_id": "U-test"}
@@ -112,6 +118,7 @@ class AdminResetTestAccountTests(unittest.TestCase):
         self.assertEqual(state["beta_program_members"], [])
         self.assertEqual(state["beta_feedback_reports"], [])
         self.assertEqual(state["notification_logs"], [])
+        self.assertEqual(state["contact_rewards"], [])
         self.assertNotIn("U-test", state["sos_pending"])
         self.assertNotIn("sos-1", state["sos_events"])
         self.assertNotIn("G-owned", state["guardian_groups"])
@@ -149,6 +156,59 @@ class AdminResetTestAccountTests(unittest.TestCase):
             alive_app.load_state(self.data_file)["users"]["U-test"]["plan"],
             "paid_799_year",
         )
+
+    def test_delete_test_account_removes_profile_checkins_and_peer_visibility(self):
+        result, code = alive_app.admin_delete_test_account(
+            self.data_file,
+            "U-test",
+            allowed_test_user_ids={"U-test"},
+        )
+
+        self.assertEqual(code, 200)
+        self.assertTrue(result["ok"])
+        state = alive_app.load_state(self.data_file)
+        self.assertNotIn("U-test", state["users"])
+        self.assertEqual(state["users"]["U-guardian"]["contacts"], [])
+        self.assertEqual(state["users"]["U-guardian"].get("guarding_for") or [], [])
+        self.assertEqual(state["guardian_invites"], [])
+        self.assertNotIn("U-test", state["sos_pending"])
+        self.assertNotIn("sos-1", state["sos_events"])
+        self.assertNotIn("G-owned", state["guardian_groups"])
+        self.assertEqual(state["guardian_groups"]["G-other"]["members"], ["U-guardian"])
+        self.assertEqual(state["orders"][0]["line_user_id"], "deleted-test-user")
+        self.assertEqual(state["admin_audit_logs"], [{"action": "existing.audit"}])
+        self.assertEqual(
+            state["account_migration_audit"], [{"event_id": "migration-1"}]
+        )
+
+    def test_delete_test_account_rejects_non_whitelisted_member(self):
+        result, code = alive_app.admin_delete_test_account(
+            self.data_file,
+            "U-test",
+            allowed_test_user_ids={"U-someone-else"},
+        )
+
+        self.assertEqual(code, 403)
+        self.assertEqual(result["error"], "not_a_test_account")
+        self.assertIn("U-test", alive_app.load_state(self.data_file)["users"])
+
+    def test_admin_exposes_protected_delete_test_account_route(self):
+        source = Path(alive_app.__file__).read_text(encoding="utf-8")
+
+        self.assertIn(
+            '@app.delete("/api/admin/test-accounts/<line_user_id>")', source
+        )
+        self.assertIn(
+            '_admin_guard(write=True, permission="member.manage")', source
+        )
+        self.assertIn("admin_delete_test_account(", source)
+
+    def test_admin_ui_has_explicit_delete_test_account_action(self):
+        page = Path("admin.html").read_text(encoding="utf-8")
+
+        self.assertIn('data-action="delete-test-account"', page)
+        self.assertIn("async function deleteTestAccount", page)
+        self.assertIn('method: "DELETE"', page)
 
     def test_admin_route_requires_member_permission_csrf_and_test_whitelist(self):
         application = alive_app.create_app(

@@ -11280,9 +11280,17 @@
       try {
         const res = await apiDeleteGuardian(id, lineUserId);
         if (res.status === 200 && res.data.ok !== false) {
-          renderGuardians(res.data.contacts || [], null);
-          if (currentStatusData) renderMemberCenter();
+          const updatedContacts = res.data.contacts || [];
+          if (currentStatusData) currentStatusData.contacts = updatedContacts;
+          contactData = updatedContacts;
+          renderGuardians(updatedContacts, null);
           closeDeleteGuardian();
+          try {
+            await refreshStatus();
+          } catch (refreshError) {
+            console.warn("guardian delete status refresh failed", refreshError);
+            if (currentStatusData) renderMemberCenter();
+          }
         } else {
           alert("刪除失敗: " + ((res.data && res.data.error) || "未知錯誤"));
         }

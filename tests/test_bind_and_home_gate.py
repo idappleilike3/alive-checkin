@@ -397,6 +397,78 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(rebound_code, 200)
         self.assertTrue(rebound["binding_complete"])
 
+    def test_delete_legacy_bound_guardian_removes_peer_checkin_visibility(self):
+        state = app_module.load_state(self.data_file)
+        owner = app_module.get_profile(state, "U-owner")
+        guardian = app_module.get_profile(state, "U-guardian")
+        owner["contacts"] = [
+            {
+                "id": "legacy-guardian",
+                "line_user_id": "U-guardian",
+                "contact_role": "guardian",
+                "bound": True,
+                "is_primary": True,
+            }
+        ]
+        guardian["guarding_for"] = ["U-owner"]
+        guardian["guarding_details"] = [
+            {
+                "line_user_id": "U-owner",
+                "display_name": "阿媽",
+                "last_check_in": "2026-08-01T09:00:00",
+            }
+        ]
+        app_module.save_state(self.data_file, state)
+
+        deleted, code = app_module.delete_single_contact(
+            self.data_file, "U-owner", "legacy-guardian"
+        )
+
+        self.assertEqual(code, 200)
+        self.assertTrue(deleted["deleted"])
+        stored = app_module.load_state(self.data_file)
+        self.assertEqual(stored["users"]["U-owner"]["contacts"], [])
+        self.assertNotIn(
+            "U-owner", stored["users"]["U-guardian"].get("guarding_for") or []
+        )
+        self.assertEqual(
+            stored["users"]["U-guardian"].get("guarding_details") or [], []
+        )
+
+    def test_delete_pending_guardian_keeps_peer_emergency_contact(self):
+        state = app_module.load_state(self.data_file)
+        owner = app_module.get_profile(state, "U-owner")
+        peer = app_module.get_profile(state, "U-peer")
+        owner["contacts"] = [
+            {
+                "id": "pending-guardian",
+                "line_user_id": "U-peer",
+                "contact_role": "guardian",
+                "binding_status": "pending",
+            }
+        ]
+        peer["contacts"] = [
+            {
+                "id": "phone-backup",
+                "line_user_id": "U-owner",
+                "contact_role": "emergency",
+                "phone": "0912345678",
+            }
+        ]
+        app_module.save_state(self.data_file, state)
+
+        deleted, code = app_module.delete_single_contact(
+            self.data_file, "U-owner", "pending-guardian"
+        )
+
+        self.assertEqual(code, 200)
+        self.assertTrue(deleted["deleted"])
+        stored = app_module.load_state(self.data_file)
+        self.assertEqual(
+            [row["id"] for row in stored["users"]["U-peer"]["contacts"]],
+            ["phone-backup"],
+        )
+
     def test_delete_bound_guardian_clears_profile_completion_reminders(self):
         invite, _ = app_module.create_guardian_invite(
             self.data_file, "U-owner", {"display_name": "阿媽"}
