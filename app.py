@@ -140,6 +140,29 @@ from push_delivery import (
     push_attempt_allowed,
     record_push_failure,
 )
+from push_management import (
+    APPROVED_PUSH_TEMPLATES,
+    AUDIENCE_CODES,
+    CAMPAIGN_STATUS_LABELS_ZH,
+    MAX_DELIVERY_ATTEMPTS,
+    CampaignConflictError,
+    CampaignNotFoundError,
+    CampaignValidationError,
+    append_system_delivery_record,
+    cancel_campaign,
+    claim_due_campaign,
+    claim_next_delivery,
+    create_campaign,
+    finalize_claimed_campaign,
+    get_campaign_detail,
+    list_campaigns,
+    list_delivery_records,
+    mark_due_campaigns_budget_blocked,
+    prepare_campaign,
+    schedule_campaign,
+    settle_delivery_attempt,
+    update_campaign,
+)
 
 
 DEFAULT_LIFF_ID = "2010848330-UAiqPPYD"
@@ -288,6 +311,10 @@ DEFAULT_STATE = {
     **DEFAULT_PROFILE,
     "users": {},
     "notification_logs": [],
+    "push_campaigns": [],
+    "push_campaign_versions": [],
+    "push_delivery_records": [],
+    "push_campaign_events": [],
     "line_message_usage": [],
     "friend_invites": {},
     "contact_rewards": [],
@@ -895,6 +922,10 @@ def _hydrate_state(saved, revision=None):
     state["history"] = sorted(set(state.get("history") or []))
     state["users"] = state.get("users") or {}
     state["notification_logs"] = state.get("notification_logs") or []
+    state["push_campaigns"] = state.get("push_campaigns") or []
+    state["push_campaign_versions"] = state.get("push_campaign_versions") or []
+    state["push_delivery_records"] = state.get("push_delivery_records") or []
+    state["push_campaign_events"] = state.get("push_campaign_events") or []
     state["friend_invites"] = state.get("friend_invites") or {}
     state["contact_rewards"] = state.get("contact_rewards") or []
     state["support_tickets"] = state.get("support_tickets") or []
@@ -2599,6 +2630,39 @@ def effective_entitlement_plan(profile, now=None):
     if str(profile.get("membership_source") or "") == "beta":
         return "free"
     return str(profile.get("plan") or "free")
+
+
+def push_audience_code(profile, now=None):
+    """回傳會員在指定時間唯一且可用的推播受眾代碼。"""
+    if not isinstance(profile, dict):
+        return None
+    now = now or current_app_time({})
+    source = str(profile.get("membership_source") or "")
+    if source == "beta":
+        if not beta_access_active(profile, now):
+            return None
+        cohort = str(profile.get("beta_cohort") or "").upper()
+        return cohort if cohort in {"A", "B399", "B799"} else None
+    if source == "gift":
+        if str(profile.get("gift_code") or "").upper() != "G799":
+            return None
+        started = parse_datetime(profile.get("gift_started_at"))
+        ends = parse_datetime(profile.get("gift_ends_at"))
+        if not started or not ends:
+            return None
+        comparable_now, comparable_start = _comparable_datetimes(now, started)
+        comparable_now, comparable_end = _comparable_datetimes(comparable_now, ends)
+        return "G799" if comparable_start <= comparable_now < comparable_end else None
+    plan = str(profile.get("plan") or "free")
+    if plan == "trial":
+        return "trial" if membership_access_active(profile, now) else None
+    if not plan.startswith("paid_"):
+        return None
+    if profile.get("expiry_review_required"):
+        return None
+    if str(profile.get("payment_status") or "") != "active":
+        return None
+    return plan if membership_access_active(profile, now) else None
 
 
 def plan_rules_for_effective_entitlement(profile, now=None):
@@ -7562,6 +7626,7 @@ def bind_emergency_contact(
     notify_errors = []
     notify_hint = ""
     notification_log_start = len(state.get("notification_logs") or [])
+    permanent_delivery_start = len(state.get("push_delivery_records") or [])
     usage_start = len(state.get("line_message_usage") or [])
     # 首次綁定成功：一定推播雙方（重複綁定不狂推）
     if config and not was_duplicate:
@@ -7652,6 +7717,9 @@ def bind_emergency_contact(
     delivery_logs = copy.deepcopy(
         (state.get("notification_logs") or [])[notification_log_start:]
     )
+    permanent_deliveries = copy.deepcopy(
+        (state.get("push_delivery_records") or [])[permanent_delivery_start:]
+    )
     delivery_usage = copy.deepcopy(
         (state.get("line_message_usage") or [])[usage_start:]
     )
@@ -7698,6 +7766,7 @@ def bind_emergency_contact(
                 logs = list(latest.get("notification_logs") or [])
                 logs.extend(delivery_logs)
                 latest["notification_logs"] = logs[-100:]
+            _merge_permanent_delivery_rows(latest, permanent_deliveries)
             if delivery_usage:
                 ledger = list(latest.get("line_message_usage") or [])
                 known_keys = {
@@ -9941,6 +10010,7 @@ def cancel_sos_event(data_file, payload, config=None):
     token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
     notification_log_start = len(state.get("notification_logs") or [])
+    permanent_delivery_start = len(state.get("push_delivery_records") or [])
     usage_start = len(state.get("line_message_usage") or [])
     cancel_results = []
     cancel_sent = 0
@@ -10029,6 +10099,9 @@ def cancel_sos_event(data_file, payload, config=None):
     false_alarm_at = now.isoformat(timespec="seconds") if not previous_cancel else None
     pending_snapshot = copy.deepcopy(pending) if pending else None
     new_logs = copy.deepcopy((state.get("notification_logs") or [])[notification_log_start:])
+    new_permanent_deliveries = copy.deepcopy(
+        (state.get("push_delivery_records") or [])[permanent_delivery_start:]
+    )
     new_usage = copy.deepcopy((state.get("line_message_usage") or [])[usage_start:])
 
     def finish_cancel(latest):
@@ -10054,6 +10127,7 @@ def cancel_sos_event(data_file, payload, config=None):
         logs = list(latest.get("notification_logs") or [])
         logs.extend(new_logs)
         latest["notification_logs"] = logs[-100:]
+        _merge_permanent_delivery_rows(latest, new_permanent_deliveries)
         ledger = list(latest.get("line_message_usage") or [])
         known = {str(row.get("key") or "") for row in ledger if isinstance(row, dict)}
         for row in new_usage:
@@ -10114,6 +10188,7 @@ def retry_sos_event(data_file, payload, config=None):
     token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
     notification_log_start = len(state.get("notification_logs") or [])
+    permanent_delivery_start = len(state.get("push_delivery_records") or [])
     usage_start = len(state.get("line_message_usage") or [])
     message = str(event.get("message") or "🚨【SOS 緊急求助】請立即聯絡本人並確認安全")
     retried_sent = 0
@@ -10182,6 +10257,9 @@ def retry_sos_event(data_file, payload, config=None):
     )
     event_snapshot = copy.deepcopy(event)
     new_logs = copy.deepcopy((state.get("notification_logs") or [])[notification_log_start:])
+    new_permanent_deliveries = copy.deepcopy(
+        (state.get("push_delivery_records") or [])[permanent_delivery_start:]
+    )
     new_usage = copy.deepcopy((state.get("line_message_usage") or [])[usage_start:])
 
     def finish_retry(latest):
@@ -10205,6 +10283,7 @@ def retry_sos_event(data_file, payload, config=None):
         logs = list(latest.get("notification_logs") or [])
         logs.extend(new_logs)
         latest["notification_logs"] = logs[-100:]
+        _merge_permanent_delivery_rows(latest, new_permanent_deliveries)
         ledger = list(latest.get("line_message_usage") or [])
         known = {str(row.get("key") or "") for row in ledger if isinstance(row, dict)}
         for row in new_usage:
@@ -10583,6 +10662,7 @@ def trigger_sos(data_file, payload, config=None):
     state = load_state(data_file)
     profile = (state.get("users") or {}).get(line_user_id) or profile
     notification_log_start = len(state.get("notification_logs") or [])
+    permanent_delivery_start = len(state.get("push_delivery_records") or [])
     usage_start = len(state.get("line_message_usage") or [])
     # Rebuild the emergency fan-out from the post-claim authoritative snapshot.
     # A guardian may have been unbound, or a group disabled, between the first
@@ -11012,6 +11092,9 @@ def trigger_sos(data_file, payload, config=None):
     delivery_logs = copy.deepcopy(
         (state.get("notification_logs") or [])[notification_log_start:]
     )
+    permanent_deliveries = copy.deepcopy(
+        (state.get("push_delivery_records") or [])[permanent_delivery_start:]
+    )
     delivery_usage = copy.deepcopy(
         (state.get("line_message_usage") or [])[usage_start:]
     )
@@ -11035,6 +11118,7 @@ def trigger_sos(data_file, payload, config=None):
             logs = list(latest.get("notification_logs") or [])
             logs.extend(copy.deepcopy(delivery_logs))
             latest["notification_logs"] = logs[-100:]
+        _merge_permanent_delivery_rows(latest, permanent_deliveries)
         if delivery_usage:
             ledger = list(latest.get("line_message_usage") or [])
             known_keys = {
@@ -11106,115 +11190,258 @@ def friend_locations(data_file, line_user_id):
     return {"friends": friends}
 
 
-def admin_update_user_plan(data_file, payload):
-    """後台調整方案：只改方案／付款欄位，绝不清空守護人、好友或守護群。"""
-    line_user_id = str(payload.get("line_user_id") or "").strip()
-    if not line_user_id:
-        return {"error": "missing line_user_id"}, 400
-    requested_plan = str(payload.get("plan") or "trial")
+def _membership_period_days(plan):
+    product = PAYMENT_PRODUCTS.get(str(plan or "")) or {}
+    return int(product.get("duration_days") or (365 if "year" in str(plan or "") else 30))
+
+
+def _entitlement_iso(value):
+    parsed = value if isinstance(value, datetime) else parse_datetime(value)
+    return parsed.isoformat(timespec="seconds") if parsed else ""
+
+
+def apply_admin_entitlement_change(profile, payload, *, effective_at, actor):
+    """套用後台資格變更；只調整權益欄位，不重設任何簽到或等級資料。"""
+    if not isinstance(profile, dict):
+        raise ValueError("invalid profile")
+    if not isinstance(effective_at, datetime):
+        raise ValueError("invalid effective_at")
+    payload = payload or {}
+    requested_plan = str(payload.get("plan") or "trial").strip()
     beta_cohort = (
         requested_plan.removeprefix("beta_").upper()
         if requested_plan.startswith("beta_")
         else ""
     )
-    if requested_plan not in PLAN_LIMITS and beta_cohort not in BETA_COHORT_PLAN:
-        return {"error": "unknown plan"}, 400
-    plan = BETA_COHORT_PLAN.get(beta_cohort, requested_plan)
-    state = load_state(data_file)
-    profile = get_profile(state, line_user_id)
+    is_gift = requested_plan.upper() == "G799"
+    if requested_plan not in PLAN_LIMITS and beta_cohort not in BETA_COHORT_PLAN and not is_gift:
+        raise ValueError("unknown plan")
 
-    # 升級前快照：確保後續邏輯不會誤清綁定資料
-    preserved_contacts = list(profile.get("contacts") or [])
-    preserved_friends = list(profile.get("friends") or [])
-    preserved_groups = list(profile.get("guardian_group_ids") or [])
-    preserved_onboarding = bool(profile.get("is_onboarding_completed"))
-    preserved_reminder_times = list(profile.get("reminder_times") or [])
-    preserved_reminder_time = profile.get("reminder_time")
+    previous_plan = str(profile.get("plan") or "trial")
+    previous_source = str(profile.get("membership_source") or "")
+    plan = "paid_799_year" if is_gift else BETA_COHORT_PLAN.get(beta_cohort, requested_plan)
+    changed_at = effective_at.isoformat(timespec="seconds")
 
+    profile["previous_plan"] = previous_plan
+    profile["membership_changed_at"] = changed_at
+    profile["membership_changed_by"] = str(actor or "super_admin")
     profile["plan"] = plan
-    if beta_cohort:
-        now = current_app_time({})
-        profile["membership_source"] = "beta"
-        profile["free_eligibility_source"] = f"beta_{beta_cohort}"
-        profile["free_eligibility_used_at"] = now.isoformat(timespec="seconds")
-        profile["payment_status"] = "beta"
-        profile["beta_cohort"] = beta_cohort
-        profile["beta_started_at"] = now.isoformat(timespec="seconds")
-        profile["beta_ends_at"] = (
-            now + timedelta(days=BETA_TRIAL_DAYS)
-        ).isoformat(timespec="seconds")
-        profile["beta_revoked_at"] = None
-        profile["beta_recruitment_source"] = str(
-            payload.get("source") or profile.get("beta_recruitment_source") or ""
-        ).strip()[:80]
-    elif plan.startswith("paid_"):
-        profile["membership_source"] = "paid"
-        profile["trial_policy_version"] = TRIAL_POLICY_VERSION
-        profile["trial_bonus_days"] = 0
-        profile["beta_cohort"] = ""
-        profile["beta_started_at"] = ""
-        profile["beta_ends_at"] = ""
-        profile["beta_revoked_at"] = None
-    elif plan == "free":
-        profile["membership_source"] = "expired"
-    elif plan == "trial" and not str(profile.get("membership_source") or ""):
-        profile["membership_source"] = "public_trial"
-    if not beta_cohort:
-        profile["payment_status"] = str(
-            payload.get("payment_status") or ("trial" if plan == "trial" else "active")
-        )
 
-    paid_until = str(payload.get("paid_until") or "").strip()
-    if not paid_until:
-        paid_until = str(profile.get("paid_until") or "").strip()
-        existing_expiry = parse_datetime(paid_until) if paid_until else None
-        if plan.startswith("paid_") and existing_expiry:
-            comparable_expiry, comparable_now = _comparable_datetimes(
-                existing_expiry, current_app_time({})
+    if beta_cohort:
+        existing_start = _entitlement_iso(profile.get("beta_started_at"))
+        existing_end = _entitlement_iso(profile.get("beta_ends_at"))
+        if previous_source != "beta" or not existing_start or not existing_end:
+            existing_start = changed_at
+            existing_end = (effective_at + timedelta(days=BETA_TRIAL_DAYS)).isoformat(
+                timespec="seconds"
             )
-            if comparable_expiry < comparable_now:
-                paid_until = ""
-    # 後台改成付費方案但未填到期日時，自動補合理到期日，避免被過期降級排程立刻打回 free
-    if plan.startswith("paid_") and not beta_cohort and not paid_until:
+        profile.update(
+            {
+                "membership_source": "beta",
+                "free_eligibility_source": f"beta_{beta_cohort}",
+                "free_eligibility_used_at": changed_at,
+                "payment_status": "beta",
+                "beta_cohort": beta_cohort,
+                "beta_started_at": existing_start,
+                "beta_ends_at": existing_end,
+                "beta_revoked_at": None,
+                "beta_recruitment_source": str(
+                    payload.get("source") or profile.get("beta_recruitment_source") or ""
+                ).strip()[:80],
+                "paid_until": "",
+                "next_billing_date": "",
+                "billing_cycle": "beta",
+                "expiry_review_required": False,
+                "auto_renew_enabled": False,
+            }
+        )
+        return profile
+
+    if is_gift:
+        gift_start = parse_datetime(payload.get("gift_started_at"))
+        gift_end = parse_datetime(payload.get("gift_ends_at"))
+        if not gift_start or not gift_end:
+            raise ValueError("gift start and end are required")
+        comparable_start, comparable_end = _comparable_datetimes(gift_start, gift_end)
+        if comparable_end <= comparable_start:
+            raise ValueError("gift end must be after start")
+        start_text = gift_start.isoformat(timespec="seconds")
+        end_text = gift_end.isoformat(timespec="seconds")
+        profile.update(
+            {
+                "membership_source": "gift",
+                "gift_code": "G799",
+                "gift_started_at": start_text,
+                "gift_ends_at": end_text,
+                "membership_started_at": start_text,
+                "payment_status": "active",
+                "paid_until": end_text,
+                "next_billing_date": "",
+                "billing_cycle": "gift",
+                "expiry_review_required": False,
+                "auto_renew_requested": False,
+                "auto_renew_enabled": False,
+                "auto_renew_status": "off",
+                "beta_cohort": "",
+                "beta_started_at": "",
+                "beta_ends_at": "",
+                "beta_revoked_at": None,
+            }
+        )
+        return profile
+
+    if plan.startswith("paid_"):
+        is_actual_change = (
+            previous_plan != plan
+            or previous_source != "paid"
+            or str(profile.get("payment_status") or "") != "active"
+        )
+        profile.update(
+            {
+                "membership_source": "paid",
+                "payment_status": str(payload.get("payment_status") or "active"),
+                "trial_policy_version": TRIAL_POLICY_VERSION,
+                "trial_bonus_days": 0,
+                "beta_cohort": "",
+                "beta_started_at": "",
+                "beta_ends_at": "",
+                "beta_revoked_at": None,
+                "gift_code": "",
+                "gift_started_at": "",
+                "gift_ends_at": "",
+            }
+        )
+        if is_actual_change:
+            expires_at = effective_at + timedelta(days=_membership_period_days(plan))
+            expiry_text = expires_at.isoformat(timespec="seconds")
+            profile["membership_started_at"] = changed_at
+            profile["paid_until"] = expiry_text
+            profile["next_billing_date"] = expiry_text
         product = PAYMENT_PRODUCTS.get(plan) or {}
-        days = int(product.get("duration_days") or (365 if "year" in plan else 30))
-        paid_until = (datetime.now() + timedelta(days=days)).isoformat(timespec="seconds")
         profile["billing_cycle"] = product.get("billing_cycle") or (
             "yearly" if "year" in plan else "monthly"
         )
-    if paid_until and not beta_cohort:
-        profile["paid_until"] = paid_until
-        profile["next_billing_date"] = paid_until
-    elif plan in ("trial", "free"):
-        # 明確降為試用／免費時才清到期日；付費升級絕不因空字串清掉
-        if "paid_until" in payload:
-            profile["paid_until"] = ""
+        profile["expiry_review_required"] = not bool(str(profile.get("paid_until") or ""))
+        return profile
 
-    # 明確寫回綁定資料（防止任何中間步驟誤改）
-    profile["contacts"] = preserved_contacts
-    profile["friends"] = preserved_friends
-    profile["guardian_group_ids"] = preserved_groups
-    if preserved_onboarding:
-        profile["is_onboarding_completed"] = True
-    if preserved_reminder_times:
-        profile["reminder_times"] = preserved_reminder_times
-    if preserved_reminder_time:
-        profile["reminder_time"] = preserved_reminder_time
+    if plan == "free":
+        profile["membership_source"] = "expired"
+        profile["payment_status"] = str(payload.get("payment_status") or "expired")
+    else:
+        profile["membership_source"] = "public_trial"
+        profile["payment_status"] = str(payload.get("payment_status") or "trial")
+    if "paid_until" in payload:
+        profile["paid_until"] = ""
+        profile["next_billing_date"] = ""
+    return profile
 
-    # 付費／重新開通試用：取消 30 天軟保留倒數（資料續留）
-    if plan.startswith("paid_") or (plan == "trial" and trial_days_left(profile) > 0):
-        clear_contacts_retain_window(profile)
 
-    # 後台升級到含守護群方案：自動授予守護群管理員
-    admin_granted = ensure_guardian_group_admin_for_user(state, profile)
+def backfill_membership_expiry_reviews(state, now=None):
+    """只用可靠付款／權益時間補到期日；沒有證據時標記人工檢查。"""
+    _ = now
+    backfilled = 0
+    review_required = 0
+    orders = state.get("orders") or []
+    for line_user_id, profile in (state.get("users") or {}).items():
+        plan = str(profile.get("plan") or "")
+        if (
+            not plan.startswith("paid_")
+            or str(profile.get("membership_source") or "") != "paid"
+            or str(profile.get("payment_status") or "") != "active"
+            or str(profile.get("paid_until") or "").strip()
+        ):
+            continue
+        candidates = []
+        for order in orders:
+            if (
+                str(order.get("line_user_id") or "") == str(line_user_id)
+                and str(order.get("status") or "") in {"paid", "partially_refunded"}
+                and str(order.get("plan") or plan) == plan
+            ):
+                paid_at = parse_datetime(order.get("paid_at"))
+                if paid_at:
+                    candidates.append(paid_at)
+        changed_at = parse_datetime(profile.get("membership_changed_at"))
+        if changed_at and str(profile.get("membership_changed_by") or "").strip():
+            candidates.append(changed_at)
+        if not candidates:
+            profile["expiry_review_required"] = True
+            review_required += 1
+            continue
+        started_at = max(candidates)
+        expires_at = started_at + timedelta(days=_membership_period_days(plan))
+        profile["membership_started_at"] = started_at.isoformat(timespec="seconds")
+        profile["paid_until"] = expires_at.isoformat(timespec="seconds")
+        profile["next_billing_date"] = profile["paid_until"]
+        profile["expiry_review_required"] = False
+        backfilled += 1
+    return {"backfilled": backfilled, "review_required": review_required}
 
-    save_state(data_file, state)
-    status = build_status(profile, state)
-    status["preserved_contacts"] = len(preserved_contacts)
-    status["preserved_friends"] = len(preserved_friends)
-    status["preserved_guardian_groups"] = len(preserved_groups)
-    status["guardian_group_admin_granted"] = admin_granted
-    return status, 200
+
+def admin_update_user_plan(
+    data_file,
+    payload,
+    *,
+    effective_at=None,
+    actor="super_admin",
+):
+    """後台調整會員資格；以原子交易保存，絕不清空簽到或守護資料。"""
+    payload = payload or {}
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if not line_user_id:
+        return {"error": "missing line_user_id"}, 400
+    requested_plan = str(payload.get("plan") or "trial").strip()
+    beta_cohort = (
+        requested_plan.removeprefix("beta_").upper()
+        if requested_plan.startswith("beta_")
+        else ""
+    )
+    if (
+        requested_plan not in PLAN_LIMITS
+        and beta_cohort not in BETA_COHORT_PLAN
+        and requested_plan.upper() != "G799"
+    ):
+        return {"error": "unknown plan"}, 400
+    changed_at = effective_at or current_app_time({})
+
+    def mutate(state):
+        profile = get_profile(state, line_user_id)
+        preserved_contacts = list(profile.get("contacts") or [])
+        preserved_friends = list(profile.get("friends") or [])
+        preserved_groups = list(profile.get("guardian_group_ids") or [])
+
+        apply_admin_entitlement_change(
+            profile,
+            payload,
+            effective_at=changed_at,
+            actor=actor,
+        )
+
+        if profile.get("plan", "").startswith("paid_") or (
+            profile.get("plan") == "trial" and trial_days_left(profile) > 0
+        ):
+            clear_contacts_retain_window(profile)
+        admin_granted = ensure_guardian_group_admin_for_user(state, profile)
+        status = build_status(profile, state, now=changed_at)
+        status.update(
+            {
+                "preserved_contacts": len(preserved_contacts),
+                "preserved_friends": len(preserved_friends),
+                "preserved_guardian_groups": len(preserved_groups),
+                "guardian_group_admin_granted": admin_granted,
+                "membership_source": profile.get("membership_source", ""),
+                "gift_code": profile.get("gift_code", ""),
+                "gift_started_at": profile.get("gift_started_at", ""),
+                "gift_ends_at": profile.get("gift_ends_at", ""),
+                "expiry_review_required": bool(profile.get("expiry_review_required")),
+            }
+        )
+        return status
+
+    try:
+        return mutate_state_atomically(data_file, mutate), 200
+    except ValueError as exc:
+        return {"error": "invalid membership change", "detail": str(exc)}, 400
 
 
 def _test_reset_row_matches_user(row, line_user_id):
@@ -13851,7 +14078,19 @@ def line_message_budget_status(state, config=None, now=None):
         if not str(item.get("created_at") or "")
         or str(item.get("created_at") or "").startswith(month_key)
     ]
-    used = len(monthly_logs)
+    campaign_units = [
+        item
+        for item in (state.get("push_delivery_records") or [])
+        if item.get("source") == "campaign"
+        and item.get("status") in {"sending", "sent"}
+        and str(
+            item.get("sent_at")
+            or item.get("attempt_started_at")
+            or item.get("created_at")
+            or ""
+        ).startswith(month_key)
+    ]
+    used = len(monthly_logs) + len(campaign_units)
     usage_percent = round(used / message_limit * 100, 1)
     hard_stop_active = usage_percent >= hard_stop_percent
     if used >= message_limit:
@@ -14398,6 +14637,9 @@ def admin_summary(data_file, config=None, now=None):
     # 後台載入時補齊「LINE 使用者」佔位名稱（最多打 40 次 LINE profile，避免逾時）
     hydrated = 0
     dirty = False
+    expiry_review = backfill_membership_expiry_reviews(state, now=status_now)
+    if expiry_review["backfilled"] or expiry_review["review_required"]:
+        dirty = True
     for user in (state.get("users") or {}).values():
         if (
             str(user.get("membership_source") or "") == "beta"
@@ -14447,6 +14689,10 @@ def admin_summary(data_file, config=None, now=None):
         return matches[0] if len(matches) == 1 else None
     for user in state.get("users", {}).values():
         status = build_status(user, state, now=status_now)
+        status["expiry_review_required"] = bool(user.get("expiry_review_required"))
+        status["gift_code"] = str(user.get("gift_code") or "")
+        status["gift_started_at"] = str(user.get("gift_started_at") or "")
+        status["gift_ends_at"] = str(user.get("gift_ends_at") or "")
         status["is_test_account"] = str(
             status.get("line_user_id") or ""
         ) in set(_test_line_user_ids(config or {}))
@@ -15096,6 +15342,26 @@ def line_push_message(token, line_user_id, message, *, retry_key=None):
         ) from exc
 
 
+def _merge_permanent_delivery_rows(state, rows):
+    """Merge delivery snapshots back after external I/O without losing concurrent writes."""
+    ledger = list(state.get("push_delivery_records") or [])
+    known_ids = {
+        str(row.get("id") or "")
+        for row in ledger
+        if isinstance(row, dict) and str(row.get("id") or "")
+    }
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        record_id = str(row.get("id") or "")
+        if record_id and record_id in known_ids:
+            continue
+        ledger.append(copy.deepcopy(row))
+        if record_id:
+            known_ids.add(record_id)
+    state["push_delivery_records"] = ledger
+
+
 def append_notification_log(
     state, kind, line_user_id, status, message, detail=None, metadata=None
 ):
@@ -15127,6 +15393,25 @@ def append_notification_log(
         })
     logs.append(row)
     state["notification_logs"] = logs[-100:]
+    permanent_metadata = dict(metadata or {}) if isinstance(metadata, dict) else {}
+    if status in {"failed", "error", "blocked"}:
+        explanation = _admin_push_failure_explanation(detail)
+        permanent_metadata.setdefault(
+            "failure_reason_zh", explanation.get("failure_reason_zh") or "LINE 推播失敗。"
+        )
+        permanent_metadata.setdefault(
+            "failure_action_zh", explanation.get("failure_action_zh") or "請由系統管理員檢查。"
+        )
+    append_system_delivery_record(
+        state,
+        kind=kind,
+        line_user_id=line_user_id,
+        status=status,
+        message=message,
+        created_at=created_at,
+        detail=detail or "",
+        metadata=permanent_metadata,
+    )
     member_id = str(line_user_id or "").strip()
     date = created_at[:10]
     if member_id:
@@ -17384,6 +17669,241 @@ def send_profile_completion_reminders(config):
     return {"sent": sent, "skipped": skipped, "results": results}, 200
 
 
+def _push_campaign_failure_zh(exc):
+    failure = classify_push_exception(exc)
+    if failure.kind == "permanent":
+        return {
+            "transient": False,
+            "reason_zh": "LINE 收件人已封鎖官方帳號或帳號無法接收訊息。",
+            "action_zh": "請確認會員仍為官方帳號好友，並重新核對完整 LINE UID。",
+        }
+    if failure.kind == "system":
+        return {
+            "transient": False,
+            "reason_zh": "LINE 頻道授權失效或權限不足。",
+            "action_zh": "請由系統管理員檢查 Channel Access Token 與 Messaging API 權限。",
+        }
+    if failure.kind == "message":
+        return {
+            "transient": False,
+            "reason_zh": "LINE 拒絕此收件人或訊息內容。",
+            "action_zh": "請檢查完整 LINE UID、好友狀態與推播模板內容。",
+        }
+    if failure.kind == "rate_limited":
+        return {
+            "transient": True,
+            "reason_zh": "LINE 發送頻率暫時超過限制。",
+            "action_zh": "系統會使用相同重試鍵自動重試，請稍後查看結果。",
+        }
+    return {
+        "transient": True,
+        "reason_zh": "LINE 服務暫時無法連線或回應逾時。",
+        "action_zh": "系統會使用相同重試鍵自動重試，若仍失敗請檢查網路與 LINE 狀態。",
+    }
+
+
+def _push_campaign_version(state, campaign_id, version_number):
+    return next(
+        (
+            row
+            for row in state.get("push_campaign_versions") or []
+            if row.get("campaign_id") == campaign_id
+            and int(row.get("version") or 0) == int(version_number or 0)
+        ),
+        {},
+    )
+
+
+def _push_campaign_message(version, profile):
+    if str(version.get("content_type") or "text") == "text":
+        return str(version.get("text") or "")
+    template_key = str(version.get("template_key") or "")
+    if template_key == "day7_pin_reminder":
+        return build_day7_pin_reminder_flex()
+    if template_key == "beta_day2_private_note":
+        return build_beta_feedback_flex(profile or {}, 2)
+    raise ValueError("approved push template is unavailable")
+
+
+def _send_push_campaign_message(config, target, message, retry_key):
+    token = str(config.get("LINE_CHANNEL_ACCESS_TOKEN") or "").strip()
+    if not token:
+        raise PermissionError("LINE_CHANNEL_ACCESS_TOKEN is not set")
+    injected = config.get("PUSH_CAMPAIGN_SENDER")
+    if injected:
+        return injected(token, target, message, retry_key)
+    return line_push_message(token, target, message, retry_key=retry_key)
+
+
+def send_due_push_campaigns(config, now=None):
+    """Claim and deliver due campaigns without holding a database lock during LINE I/O."""
+    injected_clock = config.get("PUSH_CAMPAIGN_CLOCK")
+
+    def clock_now():
+        if callable(injected_clock):
+            return injected_clock()
+        if now is not None:
+            return now
+        return current_app_time(config)
+
+    worker_id = f"push-{uuid.uuid4()}"
+    summary = {
+        "claimed": 0,
+        "completed": 0,
+        "partially_failed": 0,
+        "fully_failed": 0,
+        "cancelled": 0,
+        "sent": 0,
+        "failed": 0,
+        "blocked": 0,
+        "block_reason": "",
+    }
+    while True:
+        operation_clock = clock_now()
+        budget_state = load_state(config["DATA_FILE"])
+        if not line_non_emergency_push_allowed(
+            budget_state, config, operation_clock
+        ):
+            summary["blocked"] = mutate_state_atomically(
+                config["DATA_FILE"],
+                lambda state: mark_due_campaigns_budget_blocked(
+                    state, operation_clock
+                ),
+            )
+            summary["block_reason"] = "line_non_emergency_budget_hard_stop"
+            break
+        claim = mutate_state_atomically(
+            config["DATA_FILE"],
+            lambda state: claim_due_campaign(
+                state,
+                operation_clock,
+                worker_id=worker_id,
+                audience_classifier=push_audience_code,
+            ),
+        )
+        if claim is None:
+            break
+        action = claim.get("action")
+        if action == "cancelled":
+            summary["cancelled"] += 1
+            continue
+        if action == "empty_audience":
+            summary["fully_failed"] += 1
+            continue
+        campaign_id = claim["campaign_id"]
+        summary["claimed"] += 1
+        campaign_budget_blocked = False
+        while True:
+            operation_clock = clock_now()
+
+            def claim_delivery_with_budget(state):
+                has_pending_delivery = any(
+                    row.get("source") == "campaign"
+                    and row.get("campaign_id") == campaign_id
+                    and row.get("status") in {"pending", "retry"}
+                    and int(row.get("attempts") or 0) < MAX_DELIVERY_ATTEMPTS
+                    for row in (state.get("push_delivery_records") or [])
+                )
+                if not has_pending_delivery:
+                    return None
+                if not line_non_emergency_push_allowed(
+                    state, config, operation_clock
+                ):
+                    blocked_count = mark_due_campaigns_budget_blocked(
+                        state, operation_clock
+                    )
+                    return {
+                        "budget_blocked": True,
+                        "blocked_count": blocked_count,
+                    }
+                return claim_next_delivery(
+                    state,
+                    campaign_id,
+                    worker_id=worker_id,
+                    now=operation_clock,
+                )
+
+            delivery = mutate_state_atomically(
+                config["DATA_FILE"],
+                claim_delivery_with_budget,
+            )
+            if isinstance(delivery, dict) and delivery.get("budget_blocked"):
+                summary["blocked"] = int(delivery.get("blocked_count") or 1)
+                summary["block_reason"] = "line_non_emergency_budget_hard_stop"
+                campaign_budget_blocked = True
+                break
+            if delivery is None:
+                break
+            state = load_state(config["DATA_FILE"])
+            version = _push_campaign_version(
+                state,
+                campaign_id,
+                delivery.get("campaign_version"),
+            )
+            profile = (state.get("users") or {}).get(delivery["line_user_id"]) or {}
+            try:
+                message = _push_campaign_message(version, profile)
+                result = _send_push_campaign_message(
+                    config,
+                    delivery["line_user_id"],
+                    message,
+                    delivery["retry_key"],
+                )
+                if isinstance(result, dict) and result.get("ok") is False:
+                    raise RuntimeError(str(result))
+                mutate_state_atomically(
+                    config["DATA_FILE"],
+                    lambda saved_state: settle_delivery_attempt(
+                        saved_state,
+                        campaign_id,
+                        delivery["id"],
+                        worker_id=worker_id,
+                        now=clock_now(),
+                        success=True,
+                    ),
+                )
+                summary["sent"] += 1
+            except Exception as exc:
+                if isinstance(exc, PermissionError):
+                    failure = {
+                        "transient": False,
+                        "reason_zh": "尚未設定 LINE Channel Access Token，無法發送。",
+                        "action_zh": "請由系統管理員完成 Render 的 LINE_CHANNEL_ACCESS_TOKEN 設定。",
+                    }
+                else:
+                    failure = _push_campaign_failure_zh(exc)
+                settled = mutate_state_atomically(
+                    config["DATA_FILE"],
+                    lambda saved_state: settle_delivery_attempt(
+                        saved_state,
+                        campaign_id,
+                        delivery["id"],
+                        worker_id=worker_id,
+                        now=clock_now(),
+                        success=False,
+                        transient=failure["transient"],
+                        failure_reason_zh=failure["reason_zh"],
+                        failure_action_zh=failure["action_zh"],
+                        technical_detail=str(exc)[:1000],
+                    ),
+                )
+                if settled["status"] == "failed":
+                    summary["failed"] += 1
+        if campaign_budget_blocked:
+            break
+        finished = mutate_state_atomically(
+            config["DATA_FILE"],
+            lambda state: finalize_claimed_campaign(
+                state,
+                campaign_id,
+                worker_id=worker_id,
+                now=clock_now(),
+            ),
+        )
+        summary[finished["status"]] += 1
+    return summary, 200
+
+
 def run_cron_tick(config):
     now = current_app_time(config)
     results = {}
@@ -17412,6 +17932,7 @@ def run_cron_tick(config):
     }
 
     always = {
+        "push_campaigns": send_due_push_campaigns,
         "checkin_reminders": send_checkin_reminders,
         "binding_notification_retries": retry_pending_bind_notifications,
         "profile_completion_reminders": send_profile_completion_reminders,
@@ -17854,6 +18375,21 @@ def create_app(config=None):
                     {"role": role, "required_permission": permission},
                 )
                 return jsonify({"error": "forbidden", "required_permission": permission}), 403
+        return None
+
+    def _super_admin_mutation_guard():
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
+        role = str(session.get("admin_role") or "viewer")
+        if role != "super_admin":
+            append_admin_audit(
+                app.config["DATA_FILE"],
+                "push_campaign.permission_denied",
+                "failed",
+                {"role": role, "required_role": "super_admin"},
+            )
+            return jsonify({"error": "forbidden", "required_role": "super_admin"}), 403
         return None
 
     def _admin_mutation_response(action, data, code=200):
@@ -20301,6 +20837,187 @@ def create_app(config=None):
         if denied:
             return denied
         return jsonify(admin_summary(app.config["DATA_FILE"], app.config))
+
+    def _push_campaign_error_response(exc):
+        if isinstance(exc, CampaignNotFoundError):
+            return jsonify({"error": "campaign_not_found"}), 404
+        if isinstance(exc, CampaignConflictError):
+            return jsonify({"error": "campaign_conflict", "detail": str(exc)}), 409
+        return jsonify({"error": "invalid_campaign", "detail": str(exc)}), 400
+
+    @app.get("/api/admin/push-options")
+    def admin_push_options_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        return jsonify(
+            {
+                "audience_codes": sorted(AUDIENCE_CODES),
+                "templates": sorted(APPROVED_PUSH_TEMPLATES),
+                "status_labels": CAMPAIGN_STATUS_LABELS_ZH,
+                "can_mutate": str(session.get("admin_role") or "") == "super_admin",
+            }
+        )
+
+    @app.get("/api/admin/push-campaigns")
+    def admin_push_campaigns_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        state = load_state(app.config["DATA_FILE"])
+        return jsonify(
+            {
+                "campaigns": list_campaigns(
+                    state,
+                    status=request.args.get("status", ""),
+                    query=request.args.get("query", ""),
+                )
+            }
+        )
+
+    @app.post("/api/admin/push-campaigns")
+    def admin_push_campaign_create_api():
+        denied = _super_admin_mutation_guard()
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        now = current_app_time(app.config)
+        try:
+            campaign = mutate_state_atomically(
+                app.config["DATA_FILE"],
+                lambda state: create_campaign(
+                    state, payload, actor="super_admin", now=now
+                ),
+            )
+        except (CampaignValidationError, CampaignConflictError, CampaignNotFoundError) as exc:
+            return _push_campaign_error_response(exc)
+        return _admin_mutation_response(
+            "push_campaign.create", {"campaign": campaign}, 201
+        )
+
+    @app.get("/api/admin/push-campaigns/<campaign_id>")
+    def admin_push_campaign_detail_api(campaign_id):
+        denied = _admin_guard()
+        if denied:
+            return denied
+        try:
+            detail = get_campaign_detail(load_state(app.config["DATA_FILE"]), campaign_id)
+        except CampaignNotFoundError as exc:
+            return _push_campaign_error_response(exc)
+        return jsonify(detail)
+
+    @app.post("/api/admin/push-campaigns/<campaign_id>/edit")
+    def admin_push_campaign_edit_api(campaign_id):
+        denied = _super_admin_mutation_guard()
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        now = current_app_time(app.config)
+        try:
+            campaign = mutate_state_atomically(
+                app.config["DATA_FILE"],
+                lambda state: update_campaign(
+                    state, campaign_id, payload, actor="super_admin", now=now
+                ),
+            )
+        except (CampaignValidationError, CampaignConflictError, CampaignNotFoundError) as exc:
+            return _push_campaign_error_response(exc)
+        return _admin_mutation_response("push_campaign.edit", {"campaign": campaign})
+
+    @app.post("/api/admin/push-campaigns/<campaign_id>/prepare")
+    def admin_push_campaign_prepare_api(campaign_id):
+        denied = _super_admin_mutation_guard()
+        if denied:
+            return denied
+        now = current_app_time(app.config)
+        try:
+            campaign = mutate_state_atomically(
+                app.config["DATA_FILE"],
+                lambda state: prepare_campaign(
+                    state,
+                    campaign_id,
+                    actor="super_admin",
+                    now=now,
+                    audience_classifier=push_audience_code,
+                ),
+            )
+        except (CampaignValidationError, CampaignConflictError, CampaignNotFoundError) as exc:
+            return _push_campaign_error_response(exc)
+        return _admin_mutation_response("push_campaign.prepare", {"campaign": campaign})
+
+    @app.post("/api/admin/push-campaigns/<campaign_id>/schedule")
+    def admin_push_campaign_schedule_api(campaign_id):
+        denied = _super_admin_mutation_guard()
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        scheduled_at = parse_datetime(payload.get("scheduled_at"))
+        now = current_app_time(app.config)
+        try:
+            campaign = mutate_state_atomically(
+                app.config["DATA_FILE"],
+                lambda state: schedule_campaign(
+                    state,
+                    campaign_id,
+                    scheduled_at=scheduled_at,
+                    actor="super_admin",
+                    now=now,
+                ),
+            )
+        except (CampaignValidationError, CampaignConflictError, CampaignNotFoundError) as exc:
+            return _push_campaign_error_response(exc)
+        return _admin_mutation_response("push_campaign.schedule", {"campaign": campaign})
+
+    @app.post("/api/admin/push-campaigns/<campaign_id>/cancel")
+    def admin_push_campaign_cancel_api(campaign_id):
+        denied = _super_admin_mutation_guard()
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        now = current_app_time(app.config)
+        try:
+            campaign = mutate_state_atomically(
+                app.config["DATA_FILE"],
+                lambda state: cancel_campaign(
+                    state,
+                    campaign_id,
+                    reason_zh=payload.get("reason_zh"),
+                    actor="super_admin",
+                    now=now,
+                ),
+            )
+        except (CampaignValidationError, CampaignConflictError, CampaignNotFoundError) as exc:
+            return _push_campaign_error_response(exc)
+        return _admin_mutation_response("push_campaign.cancel", {"campaign": campaign})
+
+    @app.get("/api/admin/push-deliveries")
+    def admin_push_deliveries_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        try:
+            offset = int(request.args.get("offset", 0))
+            limit = int(request.args.get("limit", 50))
+        except (TypeError, ValueError):
+            return jsonify({"error": "invalid_pagination"}), 400
+        state = load_state(app.config["DATA_FILE"])
+        return jsonify(
+            list_delivery_records(
+                state,
+                campaign_id=request.args.get("campaign_id", ""),
+                source=request.args.get("source", ""),
+                kind=request.args.get("kind", ""),
+                status=request.args.get("status", ""),
+                audience_code=request.args.get("audience_code", ""),
+                plan=request.args.get("plan", ""),
+                member=request.args.get("member", ""),
+                line_user_id=request.args.get("line_user_id", ""),
+                date_from=request.args.get("date_from", ""),
+                date_to=request.args.get("date_to", ""),
+                offset=offset,
+                limit=limit,
+            )
+        )
 
     @app.get("/api/admin/test-center")
     def admin_test_center_api():

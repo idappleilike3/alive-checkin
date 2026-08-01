@@ -278,7 +278,9 @@
       min-width: 300px;
     }
     .member-plan-cell .plan-select,
-    .member-plan-cell .plan-save-button {
+    .member-plan-cell .plan-save-button,
+    .member-plan-cell .gift-date,
+    .member-plan-cell .gift-save-button {
       display: block;
       width: 100%;
     }
@@ -578,6 +580,7 @@
           <summary>安全與通知</summary>
           <div class="admin-subnav">
             <a href="/admin?page=incidents" data-admin-link="incidents">緊急事件</a>
+            <a href="/admin?page=push-management" data-admin-link="push-management">推播管理</a>
           </div>
         </details>
         <details data-admin-group="business">
@@ -611,6 +614,81 @@
       <div class="log-list" id="incidentQueue">
         <div class="log-item"><span>正在載入事件…</span><span></span><span></span></div>
       </div>
+    </section>
+
+    <section class="panel section-heading" id="push-management" data-admin-page="push-management" style="margin-bottom:16px;">
+      <h2 style="margin:0 0 6px;">推播管理中心</h2>
+      <p class="note">儲存與修改都不會發送；完成排程後，系統才會在預定時間依會員當下方案判斷收件資格。</p>
+      <p id="pushManagementAccessNote" class="note"></p>
+      <div class="stats" id="pushStatusSummary">
+        <div class="stat"><strong data-push-status-count="draft">0</strong><span>草稿</span></div>
+        <div class="stat"><strong data-push-status-count="pending_schedule">0</strong><span>待排程</span></div>
+        <div class="stat"><strong data-push-status-count="scheduled">0</strong><span>已排程</span></div>
+        <div class="stat"><strong data-push-status-count="sending">0</strong><span>發送中</span></div>
+        <div class="stat"><strong data-push-status-count="completed">0</strong><span>已完成</span></div>
+        <div class="stat"><strong data-push-status-count="partially_failed">0</strong><span>部分失敗</span></div>
+        <div class="stat"><strong data-push-status-count="fully_failed">0</strong><span>全部失敗</span></div>
+        <div class="stat"><strong data-push-status-count="cancelled">0</strong><span>已取消</span></div>
+      </div>
+
+      <div class="toolbar">
+        <input id="pushCampaignSearch" type="search" placeholder="搜尋推播名稱">
+        <select id="pushCampaignStatusFilter">
+          <option value="">全部狀態</option><option value="draft">草稿</option><option value="pending_schedule">待排程</option>
+          <option value="scheduled">已排程</option><option value="sending">發送中</option><option value="completed">已完成</option>
+          <option value="partially_failed">部分失敗</option><option value="fully_failed">全部失敗</option><option value="cancelled">已取消</option>
+        </select>
+        <button id="pushCampaignSearchBtn" type="button" class="info">查詢</button>
+        <button id="pushNewCampaignBtn" type="button" class="push-management-mutation">新增推播</button>
+      </div>
+      <div class="table-wrap">
+        <table><thead><tr><th>名稱</th><th>狀態</th><th>版本</th><th>預定時間</th><th>建立人／時間</th><th>結果</th><th>操作</th></tr></thead>
+          <tbody id="pushCampaignList"><tr><td colspan="7">正在載入推播資料…</td></tr></tbody></table>
+      </div>
+
+      <hr style="margin:24px 0;border:0;border-top:1px solid #dbe5ec;">
+      <h3 id="pushEditorTitle">新增推播</h3>
+      <input id="pushCampaignId" type="hidden">
+      <div class="integration-grid">
+        <label>名稱<input id="pushCampaignName" type="text" maxlength="120"></label>
+        <label>內容類型<select id="pushContentType"><option value="text">純文字</option><option value="template">核准模板</option></select></label>
+        <label>模板<select id="pushTemplateKey"><option value="">請選擇</option><option value="day7_pin_reminder">第 7 天置頂提醒</option><option value="beta_day2_private_note">封測 Day 2 私人備忘</option></select></label>
+        <label>模板變數（JSON）<textarea id="pushTemplateVariables" rows="3" placeholder='例如 {"name":"寶寶"}'></textarea></label>
+      </div>
+      <label style="display:block;margin-top:12px;">推播內容<textarea id="pushCampaignText" rows="6" style="width:100%;" placeholder="請輸入推播文字"></textarea></label>
+      <fieldset style="margin-top:14px;border:1px solid #dbe5ec;border-radius:14px;padding:14px;">
+        <legend><strong>適用方案（發送當下重新判斷）</strong></legend>
+        <div id="pushAudienceOptions" class="integration-grid"></div>
+      </fieldset>
+      <label style="display:block;margin-top:12px;">明確指定會員 LINE UID（每行或逗號分隔）
+        <textarea id="pushExplicitMembers" rows="4" style="width:100%;"></textarea>
+      </label>
+      <p class="note" id="pushCampaignMeta">建立人、建立時間與版本會在儲存後顯示。</p>
+      <div class="toolbar">
+        <button id="pushSaveBtn" type="button" class="push-management-mutation">儲存草稿／修改</button>
+        <button id="pushPrepareBtn" type="button" class="info push-management-mutation">準備排程</button>
+        <input id="pushScheduledAt" class="push-management-mutation" type="datetime-local" aria-label="預定發送時間">
+        <button id="pushScheduleBtn" type="button" class="push-management-mutation">確認排程</button>
+        <button id="pushCancelBtn" type="button" class="secondary push-management-mutation">取消推播</button>
+      </div>
+      <p id="pushManagementMessage" class="note" role="status"></p>
+
+      <h3>修改歷程（永久保留）</h3>
+      <div id="pushVersionHistory" class="log-list"><div class="log-item"><span>請先選擇一筆推播</span></div></div>
+
+      <h3>永久發送紀錄</h3>
+      <form id="pushDeliveryFilters" class="toolbar">
+        <select id="pushDeliverySource"><option value="">全部來源</option><option value="campaign">後台活動</option><option value="system">系統通知</option></select>
+        <select id="pushDeliveryStatus"><option value="">全部結果</option><option value="sent">成功</option><option value="failed">失敗</option></select>
+        <input id="pushDeliveryMember" type="search" placeholder="會員姓名">
+        <input id="pushDeliveryLineUid" type="search" placeholder="LINE UID">
+        <input id="pushDeliveryPlan" type="search" placeholder="當時方案">
+        <input id="pushDeliveryFrom" type="date" aria-label="起始日期">
+        <input id="pushDeliveryTo" type="date" aria-label="結束日期">
+        <button type="submit" class="info">篩選紀錄</button>
+      </form>
+      <div class="table-wrap"><table><thead><tr><th>來源</th><th>會員姓名／LINE UID</th><th>當時方案</th><th>預定時間／實際時間</th><th>嘗試次數</th><th>成功／失敗</th><th>中文原因／處理建議</th><th>技術訊息</th></tr></thead>
+        <tbody id="pushDeliveryList"><tr><td colspan="8">正在載入永久發送紀錄…</td></tr></tbody></table></div>
     </section>
 
     <section class="panel section-heading" id="line-cost" data-admin-page="line-cost" style="margin-bottom:16px;">
@@ -1092,6 +1170,7 @@
     const $ = (id) => document.getElementById(id);
     const ADMIN_PAGES = new Set([
       "operations", "members", "guardian-operations", "incidents",
+      "push-management",
       "beta-program", "orders", "support", "analytics", "line-cost",
       "test-center", "seo", "system"
     ]);
@@ -1101,6 +1180,7 @@
       members: "會員管理",
       "guardian-operations": "守護營運",
       incidents: "緊急事件",
+      "push-management": "推播管理",
       "beta-program": "封測管理",
       orders: "方案與訂單",
       support: "客服與隱私",
@@ -1168,6 +1248,7 @@
       adminPermissions = Array.isArray(permissions) ? permissions : [];
       const badge = $("adminRoleBadge");
       if (badge) badge.textContent = adminRoleLabel();
+      if ($("pushManagementAccessNote")) applyPushManagementAccess();
     }
 
     function adminRoleLabel() {
@@ -1181,6 +1262,206 @@
 
     function canManageMembers() {
       return adminPermissions.includes("member.manage");
+    }
+
+    const pushStatusLabels = {
+      draft: "草稿", pending_schedule: "待排程", scheduled: "已排程", sending: "發送中",
+      completed: "已完成", partially_failed: "部分失敗", fully_failed: "全部失敗", cancelled: "已取消"
+    };
+    const pushAudienceLabels = {
+      trial: "14 天體驗", paid_199: "199 月繳", paid_199_year: "199 年繳",
+      paid_399: "399 月繳", paid_399_year: "399 年繳", paid_799: "799 月繳",
+      paid_799_year: "799 年繳", A: "A 封測", B399: "B399 封測",
+      B799: "B799 封測", G799: "G799 人工贈送／免繳"
+    };
+    let pushManagementOptions = { audience_codes: [], templates: [], can_mutate: false };
+    let pushCampaignRows = [];
+    let currentPushDetail = null;
+
+    function applyPushManagementAccess() {
+      const canMutate = adminRole === "super_admin" && pushManagementOptions.can_mutate !== false;
+      document.querySelectorAll(".push-management-mutation").forEach((control) => {
+        control.hidden = !canMutate;
+        control.disabled = !canMutate;
+      });
+      const note = $("pushManagementAccessNote");
+      if (note) note.textContent = canMutate
+        ? "只有最高管理員能新增、修改、排程或取消；所有角色都能查看永久紀錄。"
+        : "只有最高管理員可以新增、修改、排程或取消推播。";
+    }
+
+    function resetPushCampaignEditor() {
+      currentPushDetail = null;
+      $("pushCampaignId").value = "";
+      $("pushCampaignName").value = "";
+      $("pushContentType").value = "text";
+      $("pushCampaignText").value = "";
+      $("pushTemplateKey").value = "";
+      $("pushTemplateVariables").value = "{}";
+      $("pushExplicitMembers").value = "";
+      $("pushScheduledAt").value = "";
+      document.querySelectorAll('input[name="pushAudience"]').forEach((item) => { item.checked = false; });
+      $("pushEditorTitle").textContent = "新增推播";
+      $("pushCampaignMeta").textContent = "建立人、建立時間與版本會在儲存後顯示。";
+      $("pushVersionHistory").innerHTML = '<div class="log-item"><span>請先選擇一筆推播</span></div>';
+    }
+
+    function toLocalDateTimeInput(value) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      const pad = (number) => String(number).padStart(2, "0");
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
+    function pushCampaignPayload() {
+      let templateVariables = {};
+      const rawVariables = $("pushTemplateVariables").value.trim();
+      if (rawVariables) templateVariables = JSON.parse(rawVariables);
+      return {
+        name: $("pushCampaignName").value.trim(),
+        content_type: $("pushContentType").value,
+        text: $("pushCampaignText").value.trim(),
+        template_key: $("pushTemplateKey").value,
+        template_variables: templateVariables,
+        plan_audiences: Array.from(document.querySelectorAll('input[name="pushAudience"]:checked')).map((item) => item.value),
+        explicit_member_ids: $("pushExplicitMembers").value.split(/[\n,]+/).map((item) => item.trim()).filter(Boolean)
+      };
+    }
+
+    function pushApiError(data, fallback) {
+      const detail = String(data?.detail || data?.error || "");
+      const known = {
+        "campaign name is required": "請輸入推播名稱。", "text content is required": "請輸入推播內容。",
+        "template is not approved": "請選擇系統核准的模板。", "at least one audience is required": "請至少選擇一個方案或指定一位會員。",
+        "scheduled time must be in the future": "預定時間必須晚於現在。", "cancellation reason is required": "取消原因不能空白。",
+        campaign_conflict: "這筆推播的狀態已變更，請重新載入後再操作。", forbidden: "只有最高管理員可以執行這項操作。"
+      };
+      return known[detail] || known[data?.error] || fallback;
+    }
+
+    async function savePushCampaign() {
+      if (adminRole !== "super_admin") return;
+      const message = $("pushManagementMessage");
+      try {
+        const payload = pushCampaignPayload();
+        const campaignId = $("pushCampaignId").value;
+        const url = campaignId ? `/api/admin/push-campaigns/${encodeURIComponent(campaignId)}/edit` : "/api/admin/push-campaigns";
+        const response = await adminFetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(pushApiError(data, "推播儲存失敗。"));
+        message.textContent = campaignId ? "修改已儲存，並新增一個永久版本。" : "草稿已建立；目前尚未排程，也不會發送。";
+        await loadPushCampaigns();
+        await openPushCampaign(data.campaign.id);
+      } catch (error) {
+        message.textContent = error instanceof SyntaxError ? "模板變數必須是正確的 JSON。" : error.message;
+      }
+    }
+
+    async function preparePushCampaign() {
+      const campaignId = $("pushCampaignId").value;
+      if (!campaignId || adminRole !== "super_admin") return;
+      const response = await adminFetch(`/api/admin/push-campaigns/${encodeURIComponent(campaignId)}/prepare`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      $("pushManagementMessage").textContent = response.ok
+        ? `已準備排程；依目前資格預估 ${Number(data.campaign.preview_recipient_count || 0)} 位，實際發送時會重新計算。`
+        : pushApiError(data, "準備排程失敗。");
+      if (response.ok) { await loadPushCampaigns(); await openPushCampaign(campaignId); }
+    }
+
+    async function schedulePushCampaign() {
+      const campaignId = $("pushCampaignId").value;
+      const localTime = $("pushScheduledAt").value;
+      if (!campaignId || !localTime || adminRole !== "super_admin") {
+        $("pushManagementMessage").textContent = "請先準備排程並選擇未來的發送時間。";
+        return;
+      }
+      if (!confirm("確認排程這筆推播嗎？排程不會立刻發送。")) return;
+      const response = await adminFetch(`/api/admin/push-campaigns/${encodeURIComponent(campaignId)}/schedule`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scheduled_at: new Date(localTime).toISOString() })
+      });
+      const data = await response.json().catch(() => ({}));
+      $("pushManagementMessage").textContent = response.ok ? "推播已排程。" : pushApiError(data, "排程失敗。");
+      if (response.ok) { await loadPushCampaigns(); await openPushCampaign(campaignId); }
+    }
+
+    async function cancelPushCampaign() {
+      const campaignId = $("pushCampaignId").value;
+      if (!campaignId || adminRole !== "super_admin") return;
+      const reasonZh = prompt("請輸入取消原因（會永久保留）：");
+      if (reasonZh === null) return;
+      const response = await adminFetch(`/api/admin/push-campaigns/${encodeURIComponent(campaignId)}/cancel`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason_zh: reasonZh.trim() })
+      });
+      const data = await response.json().catch(() => ({}));
+      $("pushManagementMessage").textContent = response.ok ? "推播已取消並保留取消原因。" : pushApiError(data, "取消失敗。");
+      if (response.ok) { await loadPushCampaigns(); await openPushCampaign(campaignId); }
+    }
+
+    function renderPushVersions(versions) {
+      $("pushVersionHistory").innerHTML = versions.length ? versions.map((version, index) => {
+        const previous = index ? versions[index - 1] : null;
+        const before = previous ? JSON.stringify(previous, null, 2) : "（新建）";
+        const after = JSON.stringify(version, null, 2);
+        return `<details class="log-item"><summary><strong>版本 ${Number(version.version || 0)}</strong>｜${escapeHtml(version.created_by || "-")}｜${escapeHtml(formatDate(version.created_at))}</summary><div class="integration-grid"><div><strong>修改前</strong><pre style="white-space:pre-wrap;word-break:break-word">${escapeHtml(before)}</pre></div><div><strong>修改後</strong><pre style="white-space:pre-wrap;word-break:break-word">${escapeHtml(after)}</pre></div></div></details>`;
+      }).join("") : '<div class="log-item"><span>尚無版本紀錄</span></div>';
+    }
+
+    async function openPushCampaign(campaignId) {
+      const response = await adminFetch(`/api/admin/push-campaigns/${encodeURIComponent(campaignId)}`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { $("pushManagementMessage").textContent = "推播資料載入失敗。"; return; }
+      currentPushDetail = data;
+      const campaign = data.campaign;
+      const version = data.versions[data.versions.length - 1] || {};
+      $("pushCampaignId").value = campaign.id;
+      $("pushCampaignName").value = version.name || campaign.name || "";
+      $("pushContentType").value = version.content_type || "text";
+      $("pushCampaignText").value = version.text || "";
+      $("pushTemplateKey").value = version.template_key || "";
+      $("pushTemplateVariables").value = JSON.stringify(version.template_variables || {}, null, 2);
+      $("pushExplicitMembers").value = (version.explicit_member_ids || []).join("\n");
+      document.querySelectorAll('input[name="pushAudience"]').forEach((item) => { item.checked = (version.plan_audiences || []).includes(item.value); });
+      $("pushEditorTitle").textContent = `編輯推播｜${pushStatusLabels[campaign.status] || campaign.status}`;
+      $("pushCampaignMeta").textContent = `建立人：${campaign.created_by || "-"}｜建立時間：${formatDate(campaign.created_at)}｜目前版本：${campaign.current_version || 1}`;
+      if (campaign.scheduled_at) $("pushScheduledAt").value = toLocalDateTimeInput(campaign.scheduled_at);
+      renderPushVersions(data.versions || []);
+      await loadPushDeliveries(campaign.id);
+    }
+
+    async function loadPushCampaigns() {
+      const params = new URLSearchParams();
+      if ($("pushCampaignSearch").value.trim()) params.set("query", $("pushCampaignSearch").value.trim());
+      if ($("pushCampaignStatusFilter").value) params.set("status", $("pushCampaignStatusFilter").value);
+      const response = await adminFetch(`/api/admin/push-campaigns?${params}`);
+      const data = await response.json().catch(() => ({ campaigns: [] }));
+      pushCampaignRows = data.campaigns || [];
+      document.querySelectorAll("[data-push-status-count]").forEach((node) => {
+        node.textContent = pushCampaignRows.filter((row) => row.status === node.dataset.pushStatusCount).length;
+      });
+      $("pushCampaignList").innerHTML = pushCampaignRows.length ? pushCampaignRows.map((row) => `<tr><td><strong>${escapeHtml(row.name || "未命名")}</strong></td><td><span class="badge">${escapeHtml(pushStatusLabels[row.status] || row.status)}</span></td><td>${Number(row.current_version || 1)}</td><td>${row.scheduled_at ? escapeHtml(formatDate(row.scheduled_at)) : "-"}</td><td>${escapeHtml(row.created_by || "-")}<br><small>${escapeHtml(formatDate(row.created_at))}</small></td><td>成功 ${Number(row.sent_count || 0)}／失敗 ${Number(row.failed_count || 0)}</td><td><button type="button" class="info push-campaign-open" data-campaign-id="${escapeHtml(row.id)}">查看</button></td></tr>`).join("") : '<tr><td colspan="7">目前沒有符合條件的推播</td></tr>';
+    }
+
+    async function loadPushDeliveries(campaignId = "") {
+      const params = new URLSearchParams({ limit: "100" });
+      const filters = {
+        campaign_id: campaignId, source: $("pushDeliverySource").value, status: $("pushDeliveryStatus").value,
+        member: $("pushDeliveryMember").value.trim(), line_user_id: $("pushDeliveryLineUid").value.trim(),
+        plan: $("pushDeliveryPlan").value.trim(), date_from: $("pushDeliveryFrom").value, date_to: $("pushDeliveryTo").value
+      };
+      Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+      const response = await adminFetch(`/api/admin/push-deliveries?${params}`);
+      const data = await response.json().catch(() => ({ deliveries: [] }));
+      $("pushDeliveryList").innerHTML = (data.deliveries || []).length ? data.deliveries.map((row) => `<tr><td>${escapeHtml(row.source === "campaign" ? "後台活動" : `系統：${row.kind || "其他"}`)}</td><td><strong>${escapeHtml(row.recipient_display_name || "-")}</strong><br><small>${escapeHtml(row.line_user_id || "-")}</small></td><td>${escapeHtml(row.plan || "-")}<br><small>${escapeHtml(row.audience_code || "-")}</small></td><td>預定：${row.scheduled_at ? escapeHtml(formatDate(row.scheduled_at)) : "-"}<br>實際：${escapeHtml(formatDate(row.sent_at || row.failed_at || row.created_at))}</td><td>${Number(row.attempts || 1)}</td><td><span class="badge ${row.status === "sent" ? "ok" : "bad"}">${row.status === "sent" ? "成功" : "失敗"}</span></td><td>${escapeHtml(row.failure_reason_zh || "-")}<br><small>${escapeHtml(row.failure_action_zh || "-")}</small></td><td>${row.technical_detail ? `<details><summary>查看技術訊息</summary><small style="word-break:break-all">${escapeHtml(row.technical_detail)}</small></details>` : "-"}</td></tr>`).join("") : '<tr><td colspan="8">目前沒有符合條件的永久發送紀錄</td></tr>';
+    }
+
+    async function loadPushManagement() {
+      const optionsResponse = await adminFetch("/api/admin/push-options");
+      if (!optionsResponse.ok) return;
+      pushManagementOptions = await optionsResponse.json();
+      $("pushAudienceOptions").innerHTML = (pushManagementOptions.audience_codes || []).map((code) => `<label><input type="checkbox" name="pushAudience" value="${escapeHtml(code)}"> ${escapeHtml(pushAudienceLabels[code] || code)}</label>`).join("");
+      applyPushManagementAccess();
+      await loadPushCampaigns();
+      await loadPushDeliveries();
     }
 
     function adminMutationErrorText(data, status) {
@@ -1681,6 +1962,7 @@
         <span class="badge ${tone}">${trial}</span>
         <small>${upgrade}</small>
         <small>付款：${paymentLabel(user.payment_status)}｜到期：${expiryText(user)}</small>
+        ${user.expiry_review_required ? `<small style="color:#991b1b;font-weight:850;">缺少可靠付款或異動時間，請人工確認到期日。</small>` : ""}
       </div>`;
     }
 
@@ -1735,6 +2017,7 @@
         refreshedMessage.style.fontWeight = "900";
         refreshedMessage.textContent =
           `✓ 方案已更新成功：${data.display_name || lineUserId} → ${membershipModeLabels[plan] || planLabel(plan)}。` +
+          `${data.paid_until ? `新到期日：${formatDate(data.paid_until)}。` : ""}` +
           `守護人 ${data.preserved_contacts ?? (data.contacts || []).length} 位、` +
           `好友 ${data.preserved_friends ?? (data.friends || []).length} 位已保留。`;
         showPlanSaveToast(refreshedMessage.textContent, "success");
@@ -1747,6 +2030,42 @@
         showPlanSaveToast(message.textContent, "error");
       } finally {
         selectElement.disabled = false;
+      }
+    }
+
+    async function grantG799(lineUserId) {
+      const message = $(`plan-status-${lineUserId}`) || $("message");
+      const giftStart = $(`gift-start-${lineUserId}`)?.value.trim() || "";
+      const giftEnd = $(`gift-end-${lineUserId}`)?.value.trim() || "";
+      if (!canManageMembers()) {
+        message.textContent = `目前登入角色「${adminRoleLabel()}」不能設定贈送資格。`;
+        return;
+      }
+      if (!giftStart || !giftEnd || new Date(giftEnd) <= new Date(giftStart)) {
+        message.textContent = "請填寫有效的 G799 贈送開始與結束時間。";
+        return;
+      }
+      message.textContent = "G799 贈送資格設定中…";
+      try {
+        const response = await adminFetch("/api/admin/user-plan", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            line_user_id: lineUserId,
+            plan: "G799",
+            gift_started_at: giftStart,
+            gift_ends_at: giftEnd
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(adminMutationErrorText(data, response.status));
+        await refresh();
+        const refreshedMessage = $(`plan-status-${lineUserId}`) || $("message");
+        refreshedMessage.textContent = `✓ G799 贈送資格已設定，贈送到期日：${formatDate(data.gift_ends_at || data.paid_until)}。`;
+        showPlanSaveToast(refreshedMessage.textContent, "success");
+      } catch (error) {
+        message.textContent = `✗ G799 設定失敗：${error.message || "請稍後再試"}`;
+        showPlanSaveToast(message.textContent, "error");
       }
     }
 
@@ -2167,6 +2486,16 @@
                 ).join("")}
               </select>
               <button type="button" class="plan-save-button" data-action="save-plan" data-line-user-id="${escapeHtml(user.line_user_id)}" style="margin-top:6px;" ${canManageMembers() ? "" : "disabled"}>儲存方案</button>
+              <details style="margin-top:8px;">
+                <summary style="cursor:pointer;font-weight:850;color:#14532d;">G799 人工贈送／免繳</summary>
+                <label style="display:block;margin-top:6px;">開始時間
+                  <input id="gift-start-${escapeHtml(user.line_user_id)}" class="gift-date" type="datetime-local" value="${escapeHtml(String(user.gift_started_at || "").slice(0, 16))}" ${canManageMembers() ? "" : "disabled"}>
+                </label>
+                <label style="display:block;margin-top:6px;">結束時間
+                  <input id="gift-end-${escapeHtml(user.line_user_id)}" class="gift-date" type="datetime-local" value="${escapeHtml(String(user.gift_ends_at || "").slice(0, 16))}" ${canManageMembers() ? "" : "disabled"}>
+                </label>
+                <button type="button" class="gift-save-button info" data-action="grant-g799" data-line-user-id="${escapeHtml(user.line_user_id)}" style="margin-top:6px;" ${canManageMembers() ? "" : "disabled"}>設定 G799 贈送資格</button>
+              </details>
               ${user.is_test_account ? `<button type="button" class="secondary" data-action="reset-test-account" data-line-user-id="${escapeHtml(user.line_user_id)}" data-display-name="${escapeHtml(user.display_name || "")}" style="margin-top:6px;" ${canManageMembers() ? "" : "disabled"}>重設測試帳號</button><button type="button" class="danger" data-action="delete-test-account" data-line-user-id="${escapeHtml(user.line_user_id)}" data-display-name="${escapeHtml(user.display_name || "")}" style="margin-top:6px;" ${canManageMembers() ? "" : "disabled"}>刪除測試帳號</button><small style="display:block;margin-top:5px;color:#76520b;">重設會保留 LINE UID；刪除會清除帳號與測試資料，帳務及稽核仍保留</small>` : ""}
               ${canManageMembers() ? "" : `<small style="display:block;margin-top:6px;color:#991b1b;font-weight:800;">目前角色「${adminRoleLabel()}」無修改權限，請用超級管理員或營運客服帳號登入。</small>`}
               <small id="plan-status-${user.line_user_id}" role="status" aria-live="polite" style="display:block;margin-top:6px;"></small>
@@ -2332,6 +2661,7 @@
       await loadOperationsControls();
       await refreshBackups();
       await loadTestCenter();
+      if (getAdminPage() === "push-management") await loadPushManagement();
       setAuthStatus(`資料已載入（已綁守護人 ${data.bound_guardian_total || 0}、邀請關係 ${(data.invite_edges || []).length}）。`, "is-ok");
     }
 
@@ -2448,6 +2778,22 @@
           : "圖文選單上傳失敗，請確認後台密碼與 Render 的 LINE token。";
       }
     }
+
+    $("pushNewCampaignBtn")?.addEventListener("click", resetPushCampaignEditor);
+    $("pushCampaignSearchBtn")?.addEventListener("click", loadPushCampaigns);
+    $("pushSaveBtn")?.addEventListener("click", savePushCampaign);
+    $("pushPrepareBtn")?.addEventListener("click", preparePushCampaign);
+    $("pushScheduleBtn")?.addEventListener("click", schedulePushCampaign);
+    $("pushCancelBtn")?.addEventListener("click", cancelPushCampaign);
+    $("pushCampaignList")?.addEventListener("click", (event) => {
+      const button = event.target.closest(".push-campaign-open[data-campaign-id]");
+      if (button) openPushCampaign(button.dataset.campaignId);
+    });
+    $("pushDeliveryFilters")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await loadPushDeliveries($("pushCampaignId").value);
+    });
+    resetPushCampaignEditor();
 
     $("adminLoginForm").addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -2599,6 +2945,8 @@
       if (!button) return;
       if (button.dataset.action === "save-plan") {
         savePlanForMember(button.dataset.lineUserId);
+      } else if (button.dataset.action === "grant-g799") {
+        grantG799(button.dataset.lineUserId);
       } else if (button.dataset.action === "reset-test-account") {
         resetTestAccount(button.dataset.lineUserId, button.dataset.displayName);
       } else if (button.dataset.action === "delete-test-account") {
