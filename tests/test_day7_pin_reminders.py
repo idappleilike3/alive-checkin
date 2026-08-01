@@ -21,6 +21,40 @@ class Day7PinReminderTests(unittest.TestCase):
             ) or {"ok": True},
         }
 
+    def test_week_one_flex_is_personalized_for_each_membership(self):
+        cases = (
+            ({"display_name": "安安", "plan": "trial"}, "14 天安心體驗", "安安", "#F7B84B"),
+            ({
+                "display_name": "小美",
+                "plan": "paid_799_year",
+                "membership_source": "beta",
+                "beta_cohort": "B799",
+            }, "21 天安心守護封測", "小美", "#8B6BCB"),
+            ({"display_name": "阿明", "plan": "paid_199"}, "199 平安版", "阿明", "#4FAF83"),
+            ({"display_name": "林媽媽", "plan": "paid_399_year"}, "399 安心版", "林媽媽", "#E59B45"),
+            ({"display_name": "Jennie", "plan": "paid_799"}, "799 守護版", "Jennie", "#4776C6"),
+        )
+
+        for profile, expected_plan, expected_name, expected_color in cases:
+            with self.subTest(plan=expected_plan):
+                message = app_module.build_day7_pin_reminder_flex(profile)
+                rendered = str(message)
+                self.assertEqual(message["type"], "flex")
+                self.assertIn(expected_plan, rendered)
+                self.assertIn(expected_name, rendered)
+                self.assertIn(expected_color, rendered)
+                self.assertIn("使用一週", rendered)
+                self.assertIn("提供建議", rendered)
+                self.assertEqual(
+                    len(message["contents"]["footer"]["contents"]), 2
+                )
+
+    def test_week_one_flex_uses_warm_fallback_without_nickname(self):
+        message = app_module.build_day7_pin_reminder_flex({"plan": "trial"})
+
+        self.assertIn("您好", str(message))
+        self.assertIn("今天也要報平安", str(message))
+
     def test_first_run_sets_cutoff_without_backfilling_existing_members(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             data_file = Path(temp_dir) / "state.json"
@@ -51,7 +85,7 @@ class Day7PinReminderTests(unittest.TestCase):
             self.assertEqual(result["reason"], "feature_initialized")
             self.assertEqual(sent, [])
             self.assertEqual(
-                state["day7_pin_reminder_enabled_at"],
+                state["day7_flex_reminder_enabled_at"],
                 self.now.isoformat(timespec="seconds"),
             )
 
@@ -62,7 +96,7 @@ class Day7PinReminderTests(unittest.TestCase):
             app_module.save_state(
                 data_file,
                 {
-                    "day7_pin_reminder_enabled_at": (
+                    "day7_flex_reminder_enabled_at": (
                         started + timedelta(days=7) - timedelta(minutes=1)
                     ).isoformat(timespec="seconds"),
                     "users": {
@@ -111,7 +145,8 @@ class Day7PinReminderTests(unittest.TestCase):
                 "U-trial", "U-beta", "U-paid",
             })
             self.assertTrue(all(message["type"] == "flex" for _, message in sent))
-            self.assertIn("置頂", str(sent))
+            self.assertIn("使用一週", str(sent))
+            self.assertIn("提供建議", str(sent))
 
     def test_log_preserves_beta_plan_schedule_and_actual_send_time(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -121,7 +156,7 @@ class Day7PinReminderTests(unittest.TestCase):
             app_module.save_state(
                 data_file,
                 {
-                    "day7_pin_reminder_enabled_at": (
+                    "day7_flex_reminder_enabled_at": (
                         due_at - timedelta(seconds=1)
                     ).isoformat(timespec="seconds"),
                     "users": {
@@ -160,7 +195,7 @@ class Day7PinReminderTests(unittest.TestCase):
             app_module.save_state(
                 data_file,
                 {
-                    "day7_pin_reminder_enabled_at": (
+                    "day7_flex_reminder_enabled_at": (
                         self.now - timedelta(seconds=1)
                     ).isoformat(timespec="seconds"),
                     "users": {
@@ -230,6 +265,7 @@ class Day7PinReminderTests(unittest.TestCase):
         source = Path("admin.html").read_text(encoding="utf-8")
         self.assertIn("當時方案", source)
         self.assertIn("預定發送", source)
+        self.assertIn('day7_pin_reminder: "使用一週關懷圖文卡"', source)
 
 
 if __name__ == "__main__":
