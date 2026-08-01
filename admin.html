@@ -2477,7 +2477,15 @@
             <td>${statusBadge(user)}</td>
             <td>${user.is_today_checked ? "已簽到 ♡" : "還沒"}</td>
             <td>${formatDate(user.last_check_in)}</td>
-            <td><strong>${escapeHtml(user.last_checkin_area || "未提供")}</strong></td>
+            <td>
+              <strong>${escapeHtml(user.last_checkin_area || "未提供")}</strong>
+              <details style="margin-top:6px;"><summary>修改會員所在地</summary>
+                <input id="location-city-${escapeHtml(user.line_user_id)}" value="${escapeHtml((user.user_location || {}).city || "")}" placeholder="縣市，例如台北市" ${canManageMembers() ? "" : "disabled"}>
+                <input id="location-district-${escapeHtml(user.line_user_id)}" value="${escapeHtml((user.user_location || {}).district || "")}" placeholder="鄉鎮市區，例如中山區" ${canManageMembers() ? "" : "disabled"}>
+                <button type="button" data-action="save-location" data-line-user-id="${escapeHtml(user.line_user_id)}" ${canManageMembers() ? "" : "disabled"}>儲存所在地</button>
+                <small id="location-status-${escapeHtml(user.line_user_id)}" role="status"></small>
+              </details>
+            </td>
             <td class="member-plan-cell">
               ${membershipCell(user)}
               <select id="plan-select-${user.line_user_id}" class="plan-select" data-line-user-id="${escapeHtml(user.line_user_id)}" data-saved-plan="${membershipMode(user)}" style="margin-top:6px;" ${canManageMembers() ? "" : "disabled"}>
@@ -2940,11 +2948,26 @@
       selectElement.dataset.dirty = selectElement.value === selectElement.dataset.savedPlan ? "" : "true";
       if (!selectElement.dataset.dirty) delete selectElement.dataset.dirty;
     });
+    async function saveLocationForMember(lineUserId) {
+      const city = $(`location-city-${lineUserId}`)?.value.trim() || "";
+      const district = $(`location-district-${lineUserId}`)?.value.trim() || "";
+      const status = $(`location-status-${lineUserId}`);
+      if (!city || !district) { if (status) status.textContent = "請填寫縣市與鄉鎮市區"; return; }
+      const response = await adminFetch("/api/admin/member-location", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ line_user_id: lineUserId, city, district })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (status) status.textContent = response.ok ? "✓ 所在地已更新" : `✗ ${authErrorText(data, response.status)}`;
+    }
+
     $("usersBody").addEventListener("click", (event) => {
       const button = event.target.closest("[data-action]");
       if (!button) return;
       if (button.dataset.action === "save-plan") {
         savePlanForMember(button.dataset.lineUserId);
+      } else if (button.dataset.action === "save-location") {
+        saveLocationForMember(button.dataset.lineUserId);
       } else if (button.dataset.action === "grant-g799") {
         grantG799(button.dataset.lineUserId);
       } else if (button.dataset.action === "reset-test-account") {
