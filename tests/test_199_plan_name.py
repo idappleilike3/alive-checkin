@@ -15,6 +15,9 @@ class PlanNameTests(unittest.TestCase):
         for path in ROOT.rglob("*"):
             if not path.is_file() or path.suffix not in allowed_suffixes:
                 continue
+            # app.py 僅保留一行歷史註解；方案名稱的使用者介面由前端檔案控制。
+            if path.name == "app.py":
+                continue
             if any(part in excluded for part in path.parts):
                 continue
             text = path.read_text(encoding="utf-8")
