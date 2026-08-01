@@ -5881,6 +5881,13 @@ def _day7_pin_membership_is_active(profile, clock):
 
 def send_day7_pin_reminders(config, now=None):
     """Send one pin reminder for post-launch memberships reaching day seven."""
+    if not config.get("LEGACY_DAY7_PIN_REMINDER_ENABLED", False):
+        return {
+            "sent": 0,
+            "failed": 0,
+            "skipped": 0,
+            "reason": "legacy_scheduler_retired",
+        }, 200
     clock = now or current_app_time(config)
     state = load_state(config["DATA_FILE"])
     enabled_at = parse_datetime(state.get("day7_pin_reminder_enabled_at"))
@@ -5972,6 +5979,31 @@ def send_day7_pin_reminders(config, now=None):
         "skipped": skipped,
         "results": results,
     }, 200
+
+
+def remove_retired_push_uids(data_file, config):
+    """Remove explicitly retired/test LINE recipients from production state."""
+    raw = config.get("RETIRED_LINE_USER_IDS") or "U_deploy_smoke_ax"
+    retired = {
+        value.strip()
+        for value in re.split(r"[,;；\s]+", str(raw))
+        if value.strip()
+    }
+    if not retired:
+        return {"removed": 0}
+
+    def mutate(state):
+        users = state.get("users") or {}
+        removed = 0
+        for key, profile in list(users.items()):
+            target = str((profile or {}).get("line_user_id") or key).strip()
+            if key in retired or target in retired:
+                users.pop(key, None)
+                removed += 1
+        state["users"] = users
+        return {"removed": removed}
+
+    return mutate_state_atomically(data_file, mutate)
 
 
 def send_renewal_reminders(config):
@@ -18155,6 +18187,11 @@ def run_cron_tick(config):
     results = {}
     slot = now.strftime("%H:%M")
 
+    results["retired_push_uids"] = {
+        "status": 200,
+        "result": remove_retired_push_uids(config["DATA_FILE"], config),
+    }
+
     migration_data, migration_code = migrate_existing_free_members(config)
     results["membership_transition_migration"] = {
         "status": migration_code,
@@ -18593,6 +18630,10 @@ def create_app(config=None):
             "R2_BACKUP_ENCRYPTION_KEY", ""
         ),
         TEST_LINE_USER_IDS=os.environ.get("TEST_LINE_USER_IDS", ""),
+        RETIRED_LINE_USER_IDS=os.environ.get(
+            "RETIRED_LINE_USER_IDS", "U_deploy_smoke_ax"
+        ),
+        LEGACY_DAY7_PIN_REMINDER_ENABLED=False,
     )
     if config:
         app.config.update(config)
