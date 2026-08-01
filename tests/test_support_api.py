@@ -57,6 +57,33 @@ class SupportApiTests(unittest.TestCase):
             listed.get_json()["tickets"][0]["line_user_id"], "U-member"
         )
 
+    def test_failed_email_reply_keeps_draft_and_retry_log(self):
+        created, code = alive_app.create_support_ticket(
+            self.data_file,
+            {
+                "line_user_id": "U-member",
+                "email": "member@example.com",
+                "reply_channel": "email",
+                "category": "會員與付款",
+                "subject": "退款問題",
+                "message": "請協助確認",
+            },
+        )
+        self.assertEqual(code, 201)
+
+        def failed_sender(*_args, **_kwargs):
+            raise RuntimeError("smtp unavailable")
+
+        result, reply_code = alive_app.admin_reply_support_ticket(
+            self.data_file,
+            {"ticket_id": created["ticket"]["id"], "message": "已收到，正在確認。", "reply_channel": "email"},
+            {"SUPPORT_EMAIL_SENDER": failed_sender},
+        )
+        self.assertEqual(reply_code, 502)
+        self.assertEqual(result["ticket"]["status"], "submitted")
+        self.assertEqual(result["ticket"]["reply_draft"], "已收到，正在確認。")
+        self.assertEqual(result["ticket"]["delivery_log"][-1]["status"], "failed")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -94,13 +94,14 @@ this.renderMemberSupportTickets = renderMemberSupportTickets;`,
   assert.equal(context.compromised, undefined);
 });
 
-test("support UI keeps free-form LINE workflow without email or push reply controls", () => {
-  assert.doesNotMatch(memberHtml, /id="memberSupportCategory"/);
-  assert.doesNotMatch(memberHtml, /id="memberSupportEmail"/);
+test("support UI collects Email details and admin replies by Email", () => {
+  assert.match(memberHtml, /id="memberSupportCategory"/);
+  assert.match(memberHtml, /id="memberSupportEmail"/);
   assert.doesNotMatch(memberHtml, /id="memberSupportReplyChannel"/);
-  assert.match(memberHtml, /1–3 個工作天內/);
+  assert.match(memberHtml, /1～3 個工作天內/);
   assert.match(memberHtml, /常見問題與解答/);
   assert.doesNotMatch(adminHtml, /data-support-channel/);
   assert.doesNotMatch(adminHtml, /LINE 私訊（主動推播，計入訊息量）/);
-  assert.match(adminHtml, /LINE Official Account Manager/);
+  assert.doesNotMatch(adminHtml, /LINE Official Account Manager/);
+  assert.match(adminHtml, /確認並寄出 Email/);
 });

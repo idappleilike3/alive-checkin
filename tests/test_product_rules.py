@@ -392,11 +392,10 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("儲存續扣", page)
         self.assertNotIn("有效的 799 守護版會員，可連續按 3 次", page)
 
-    def test_privacy_requests_require_verified_contact_path(self):
+    def test_member_center_removes_standalone_privacy_application(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
-        self.assertIn("隱私權申請", page)
+        self.assertNotIn("<h3>隱私權申請</h3>", page)
         self.assertIn("alivecheckin.tw@gmail.com", page)
-        self.assertIn("LINE 身分確認", page)
         self.assertNotIn('id="exportMyDataBtn"', page)
         self.assertNotIn('id="deleteCheckinHistoryBtn"', page)
         self.assertNotIn('id="deleteAccountBtn"', page)
