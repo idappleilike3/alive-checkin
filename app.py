@@ -11523,10 +11523,11 @@ def _beta_reset_candidate(state, line_user_id, allowed):
             return None
         cohort = ""
     version = str((profile or {}).get("account_state_version") or (tombstone or {}).get("account_state_version") or "legacy")
+    plan = "399" if cohort == "B399" else ("799" if cohort in {"A", "B799"} else "待指派")
     return {
         "display_name": str((profile or {}).get("display_name") or (tombstone or {}).get("display_name") or "LINE 使用者"),
-        "masked_line_user_id": _mask_line_user_id(line_user_id),
         "cohort": cohort or "待重新封測",
+        "plan": plan,
         "status": "可重置",
         "account_state_version": version,
         "_line_user_id": line_user_id,
