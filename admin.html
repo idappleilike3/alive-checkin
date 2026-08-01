@@ -278,7 +278,9 @@
       min-width: 300px;
     }
     .member-plan-cell .plan-select,
-    .member-plan-cell .plan-save-button {
+    .member-plan-cell .plan-save-button,
+    .member-plan-cell .gift-date,
+    .member-plan-cell .gift-save-button {
       display: block;
       width: 100%;
     }
@@ -1681,6 +1683,7 @@
         <span class="badge ${tone}">${trial}</span>
         <small>${upgrade}</small>
         <small>付款：${paymentLabel(user.payment_status)}｜到期：${expiryText(user)}</small>
+        ${user.expiry_review_required ? `<small style="color:#991b1b;font-weight:850;">缺少可靠付款或異動時間，請人工確認到期日。</small>` : ""}
       </div>`;
     }
 
@@ -1735,6 +1738,7 @@
         refreshedMessage.style.fontWeight = "900";
         refreshedMessage.textContent =
           `✓ 方案已更新成功：${data.display_name || lineUserId} → ${membershipModeLabels[plan] || planLabel(plan)}。` +
+          `${data.paid_until ? `新到期日：${formatDate(data.paid_until)}。` : ""}` +
           `守護人 ${data.preserved_contacts ?? (data.contacts || []).length} 位、` +
           `好友 ${data.preserved_friends ?? (data.friends || []).length} 位已保留。`;
         showPlanSaveToast(refreshedMessage.textContent, "success");
@@ -1747,6 +1751,42 @@
         showPlanSaveToast(message.textContent, "error");
       } finally {
         selectElement.disabled = false;
+      }
+    }
+
+    async function grantG799(lineUserId) {
+      const message = $(`plan-status-${lineUserId}`) || $("message");
+      const giftStart = $(`gift-start-${lineUserId}`)?.value.trim() || "";
+      const giftEnd = $(`gift-end-${lineUserId}`)?.value.trim() || "";
+      if (!canManageMembers()) {
+        message.textContent = `目前登入角色「${adminRoleLabel()}」不能設定贈送資格。`;
+        return;
+      }
+      if (!giftStart || !giftEnd || new Date(giftEnd) <= new Date(giftStart)) {
+        message.textContent = "請填寫有效的 G799 贈送開始與結束時間。";
+        return;
+      }
+      message.textContent = "G799 贈送資格設定中…";
+      try {
+        const response = await adminFetch("/api/admin/user-plan", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            line_user_id: lineUserId,
+            plan: "G799",
+            gift_started_at: giftStart,
+            gift_ends_at: giftEnd
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(adminMutationErrorText(data, response.status));
+        await refresh();
+        const refreshedMessage = $(`plan-status-${lineUserId}`) || $("message");
+        refreshedMessage.textContent = `✓ G799 贈送資格已設定，贈送到期日：${formatDate(data.gift_ends_at || data.paid_until)}。`;
+        showPlanSaveToast(refreshedMessage.textContent, "success");
+      } catch (error) {
+        message.textContent = `✗ G799 設定失敗：${error.message || "請稍後再試"}`;
+        showPlanSaveToast(message.textContent, "error");
       }
     }
 
@@ -2167,6 +2207,16 @@
                 ).join("")}
               </select>
               <button type="button" class="plan-save-button" data-action="save-plan" data-line-user-id="${escapeHtml(user.line_user_id)}" style="margin-top:6px;" ${canManageMembers() ? "" : "disabled"}>儲存方案</button>
+              <details style="margin-top:8px;">
+                <summary style="cursor:pointer;font-weight:850;color:#14532d;">G799 人工贈送／免繳</summary>
+                <label style="display:block;margin-top:6px;">開始時間
+                  <input id="gift-start-${escapeHtml(user.line_user_id)}" class="gift-date" type="datetime-local" value="${escapeHtml(String(user.gift_started_at || "").slice(0, 16))}" ${canManageMembers() ? "" : "disabled"}>
+                </label>
+                <label style="display:block;margin-top:6px;">結束時間
+                  <input id="gift-end-${escapeHtml(user.line_user_id)}" class="gift-date" type="datetime-local" value="${escapeHtml(String(user.gift_ends_at || "").slice(0, 16))}" ${canManageMembers() ? "" : "disabled"}>
+                </label>
+                <button type="button" class="gift-save-button info" data-action="grant-g799" data-line-user-id="${escapeHtml(user.line_user_id)}" style="margin-top:6px;" ${canManageMembers() ? "" : "disabled"}>設定 G799 贈送資格</button>
+              </details>
               ${user.is_test_account ? `<button type="button" class="secondary" data-action="reset-test-account" data-line-user-id="${escapeHtml(user.line_user_id)}" data-display-name="${escapeHtml(user.display_name || "")}" style="margin-top:6px;" ${canManageMembers() ? "" : "disabled"}>重設測試帳號</button><button type="button" class="danger" data-action="delete-test-account" data-line-user-id="${escapeHtml(user.line_user_id)}" data-display-name="${escapeHtml(user.display_name || "")}" style="margin-top:6px;" ${canManageMembers() ? "" : "disabled"}>刪除測試帳號</button><small style="display:block;margin-top:5px;color:#76520b;">重設會保留 LINE UID；刪除會清除帳號與測試資料，帳務及稽核仍保留</small>` : ""}
               ${canManageMembers() ? "" : `<small style="display:block;margin-top:6px;color:#991b1b;font-weight:800;">目前角色「${adminRoleLabel()}」無修改權限，請用超級管理員或營運客服帳號登入。</small>`}
               <small id="plan-status-${user.line_user_id}" role="status" aria-live="polite" style="display:block;margin-top:6px;"></small>
@@ -2572,6 +2622,8 @@
       if (!button) return;
       if (button.dataset.action === "save-plan") {
         savePlanForMember(button.dataset.lineUserId);
+      } else if (button.dataset.action === "grant-g799") {
+        grantG799(button.dataset.lineUserId);
       } else if (button.dataset.action === "reset-test-account") {
         resetTestAccount(button.dataset.lineUserId, button.dataset.displayName);
       } else if (button.dataset.action === "delete-test-account") {
