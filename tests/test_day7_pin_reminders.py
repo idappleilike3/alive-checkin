@@ -15,6 +15,7 @@ class Day7PinReminderTests(unittest.TestCase):
         return {
             "DATA_FILE": data_file,
             "LINE_CHANNEL_ACCESS_TOKEN": "token",
+            "LEGACY_DAY7_PIN_REMINDER_ENABLED": True,
             "LINE_PUSH_SENDER": lambda token, target, message: sent.append(
                 (target, message)
             ) or {"ok": True},
@@ -152,7 +153,7 @@ class Day7PinReminderTests(unittest.TestCase):
             self.assertEqual(log["scheduled_at"], due_at.isoformat(timespec="seconds"))
             self.assertEqual(log["sent_at"], self.now.isoformat(timespec="seconds"))
 
-    def test_failed_delivery_is_logged_and_remains_retryable(self):
+    def test_legacy_day7_scheduler_is_retired_and_does_not_send(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             data_file = Path(temp_dir) / "state.json"
             started = self.now - timedelta(days=7)
@@ -181,6 +182,7 @@ class Day7PinReminderTests(unittest.TestCase):
             config = {
                 "DATA_FILE": data_file,
                 "LINE_CHANNEL_ACCESS_TOKEN": "token",
+                "LEGACY_DAY7_PIN_REMINDER_ENABLED": False,
                 "LINE_PUSH_SENDER": fail_sender,
             }
             first, _ = app_module.send_day7_pin_reminders(config, now=self.now)
@@ -194,11 +196,35 @@ class Day7PinReminderTests(unittest.TestCase):
                 row for row in state["notification_logs"]
                 if row["kind"] == "day7_pin_reminder"
             ]
-            self.assertEqual(first["failed"], 1)
-            self.assertEqual(second["failed"], 1)
-            self.assertEqual(attempts, ["U-fail", "U-fail"])
-            self.assertEqual([row["status"] for row in logs], ["failed", "failed"])
+            self.assertEqual(first["failed"], 0)
+            self.assertEqual(second["failed"], 0)
+            self.assertEqual(first["reason"], "legacy_scheduler_retired")
+            self.assertEqual(second["reason"], "legacy_scheduler_retired")
+            self.assertEqual(attempts, [])
+            self.assertEqual(logs, [])
             self.assertEqual(profile.get("day7_pin_reminder_keys_sent", []), [])
+
+    def test_deploy_smoke_uid_is_removed_before_any_push(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_file = Path(temp_dir) / "state.json"
+            app_module.save_state(data_file, {
+                "users": {
+                    "U_deploy_smoke_ax": {
+                        "line_user_id": "U_deploy_smoke_ax",
+                        "plan": "trial",
+                    },
+                    "U-real": {"line_user_id": "U-real", "plan": "trial"},
+                }
+            })
+
+            result = app_module.remove_retired_push_uids(
+                data_file, {"RETIRED_LINE_USER_IDS": "U_deploy_smoke_ax"}
+            )
+
+            state = app_module.load_state(data_file)
+            self.assertEqual(result["removed"], 1)
+            self.assertNotIn("U_deploy_smoke_ax", state["users"])
+            self.assertIn("U-real", state["users"])
 
     def test_admin_page_displays_plan_and_scheduled_time_for_push_logs(self):
         source = Path("admin.html").read_text(encoding="utf-8")
