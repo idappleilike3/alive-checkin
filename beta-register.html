@@ -54,6 +54,8 @@
   .story-steps{margin:14px 0 20px;border:1px solid #d7eadf;border-radius:18px;overflow:hidden;background:#fff}.story-step{display:grid;grid-template-columns:48px 1fr;gap:12px;padding:16px;border-bottom:1px solid #d7eadf}.story-step:last-child{border-bottom:0}.story-step>span{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;background:#edf8f1;color:#087443;font-weight:900}.story-step strong{display:block;color:#173c2b;font-size:17px;line-height:1.45}.story-step p{margin:4px 0 0;color:#607268;line-height:1.55}.usage-heading{text-align:center;color:#087443;margin:30px 0 8px}.shared-demo-gif{display:block;width:100%;height:auto;margin:14px auto;border-radius:18px;border:1px solid #d7eadf;background:#fff}.demo-live-button{position:relative;display:block;width:min(360px,100%);min-height:64px;margin:16px auto 8px;border:0;border-radius:999px;background:#087443;color:#fff;font-size:24px;font-weight:900;cursor:pointer;box-shadow:0 10px 24px rgba(8,116,67,.22)}.demo-live-button.is-done{background:#0b633b}.tap-hand{position:absolute;right:12px;bottom:-18px;font-size:42px;filter:drop-shadow(0 3px 3px #0003);animation:tapHint 1.15s ease-in-out infinite;pointer-events:none}.demo-live-button.is-done .tap-hand{display:none}@keyframes tapHint{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-12px) scale(.94)}}.demo-live-result{margin:12px 0;padding:20px;border-radius:20px;background:#effaf4;color:#08643c;font-weight:800;line-height:1.55;text-align:center}.demo-live-result[hidden]{display:none}.success-title{font-size:25px;font-weight:900}.success-subtitle{margin:6px 0 18px;font-size:20px}.success-benefits{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.success-benefit{padding:16px 8px;border-radius:16px;background:#fff;color:#233a32}.success-benefit strong{display:block;font-size:18px}.success-benefit span{display:block;margin-top:6px;color:#69766f;font-weight:500}@media(max-width:520px){.core-benefits,.success-benefits{grid-template-columns:1fr}}</style>
 </head>
 <body>
+  <div id="entryLoading" role="status" aria-live="polite" hidden style="position:fixed;inset:0;z-index:9999;display:grid;place-items:center;padding:24px;background:rgba(238,249,244,.97);text-align:center"><div style="width:min(360px,100%);padding:28px 22px;border:1px solid #cfe9dd;border-radius:22px;background:#fff;box-shadow:0 18px 48px #1c72552a"><div class="entry-loading-spinner" aria-hidden="true">⏳</div><strong>正在準備 21 天封測註冊</strong><p>請稍候 5–10 秒，請不要重複點擊或關閉頁面。</p></div></div>
+  <style>#entryLoading[hidden]{display:none!important}</style>
   <main>
     <section class="card">
       <div class="eyebrow"><img class="brand-logo" src="/assets/daily-peace-logo.png" alt="">每日平安限定招募</div>
@@ -178,6 +180,14 @@
       join.disabled = !consent.checked;
       continueRegistration.setAttribute("aria-disabled", String(!consent.checked));
     });
+    function showEntryLoading(event) {
+      if (!consent.checked) { event.preventDefault(); return; }
+      if (continueRegistration.dataset.opening === "1") { event.preventDefault(); return; }
+      continueRegistration.dataset.opening = "1";
+      continueRegistration.setAttribute("aria-disabled", "true");
+      document.getElementById("entryLoading").hidden = false;
+    }
+    continueRegistration.addEventListener("click", showEntryLoading);
   </script>
 <script>
     document.querySelectorAll('.demo-live-button').forEach(function(btn){

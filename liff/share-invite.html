@@ -245,6 +245,7 @@
 
     let myUserId = "";
     let ready = false;
+    let shareActionInProgress = false;
     let sharing = false;
     let shareBlocked = false;
     let shareAttempted = false;
@@ -385,6 +386,7 @@
       if (shareSpinner) shareSpinner.hidden = true;
       startShareBtn.disabled = false;
       startShareBtn.textContent = "選擇 LINE 好友分享";
+      shareActionInProgress = false;
       setShareReadyStatus(message);
     }
 
@@ -603,6 +605,9 @@
         event.preventDefault();
         event.stopPropagation();
       }
+      if (shareActionInProgress) return;
+      shareActionInProgress = true;
+      beginInternalWait("正在產生你的專屬邀請連結，請稍候…");
       if (!isInsideLine()) {
         setShareReadyStatus("正在用 LINE 開啟好友選擇器…");
         window.location.href = buildDirectLiffShareUrl();
