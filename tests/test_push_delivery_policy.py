@@ -307,6 +307,7 @@ class PushDeliveryPolicyTests(unittest.TestCase):
                     "trial_milestone_notices",
                     "day7_pin_reminders",
                     "membership_expiry",
+                    "push_campaigns",
                     "checkin_reminders",
                 ],
             )

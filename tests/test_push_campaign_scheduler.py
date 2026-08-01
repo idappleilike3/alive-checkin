@@ -3,7 +3,13 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from app import load_state, push_audience_code, save_state, send_due_push_campaigns
+from app import (
+    load_state,
+    mutate_state_atomically,
+    push_audience_code,
+    save_state,
+    send_due_push_campaigns,
+)
 from push_management import (
     claim_due_campaign,
     create_campaign,
@@ -231,6 +237,97 @@ class PushCampaignSchedulerTests(unittest.TestCase):
             state["push_campaign_events"][-1]["reason_zh"],
             "發送當下沒有符合資格的收件人。",
         )
+
+    def test_monthly_hard_stop_leaves_campaign_scheduled_without_sending(self):
+        campaign_id = self.seed()
+        state = load_state(self.data_file)
+        state["notification_logs"] = [
+            {"kind": "checkin", "status": "sent", "created_at": "2026-08-02T08:00:00"}
+        ]
+        save_state(self.data_file, state)
+        sender = RecordingSender()
+        config = self.config(sender)
+        config["LINE_MONTHLY_MESSAGE_LIMIT"] = 1
+
+        result, code = send_due_push_campaigns(config, now=SCHEDULED_AT)
+
+        self.assertEqual(code, 200)
+        self.assertEqual(result["blocked"], 1)
+        self.assertEqual(result["block_reason"], "line_non_emergency_budget_hard_stop")
+        self.assertEqual(sender.calls, [])
+        saved_state, campaign = self.campaign(campaign_id)
+        self.assertEqual(campaign["status"], "scheduled")
+        self.assertEqual(
+            campaign["budget_block_reason"],
+            "line_non_emergency_budget_hard_stop",
+        )
+        self.assertEqual(saved_state["push_campaign_events"][-1]["event_type"], "budget_blocked")
+
+    def test_live_clock_renews_campaign_lease_between_recipients(self):
+        users = {"U1": paid_member("U1"), "U2": paid_member("U2")}
+        self.seed(users=users)
+        clock = [SCHEDULED_AT]
+        competing_claims = []
+        sender = RecordingSender()
+
+        def behavior(_uid, attempt):
+            if len(sender.calls) == 1:
+                clock[0] = SCHEDULED_AT + timedelta(minutes=4)
+            elif len(sender.calls) == 2:
+                competing_claims.append(
+                    mutate_state_atomically(
+                        self.data_file,
+                        lambda state: claim_due_campaign(
+                            state,
+                            SCHEDULED_AT + timedelta(minutes=8),
+                            worker_id="worker-2",
+                            audience_classifier=push_audience_code,
+                        ),
+                    )
+                )
+            return {"ok": True, "status": 200}
+
+        sender.behavior = behavior
+        config = self.config(sender)
+        config["PUSH_CAMPAIGN_CLOCK"] = lambda: clock[0]
+
+        result, _ = send_due_push_campaigns(config)
+
+        self.assertEqual(result["completed"], 1)
+        self.assertEqual(competing_claims, [None])
+
+    def test_campaign_stops_at_monthly_limit_and_resumes_remaining_recipient(self):
+        users = {"U1": paid_member("U1"), "U2": paid_member("U2")}
+        campaign_id = self.seed(users=users)
+        state = load_state(self.data_file)
+        state["notification_logs"] = [
+            {"kind": "checkin", "status": "sent", "created_at": "2026-08-02T08:00:00"}
+        ]
+        save_state(self.data_file, state)
+        sender = RecordingSender()
+        config = self.config(sender)
+        config["LINE_MONTHLY_MESSAGE_LIMIT"] = 2
+
+        first, _ = send_due_push_campaigns(config, now=SCHEDULED_AT)
+
+        self.assertEqual(len(sender.calls), 1)
+        self.assertEqual(first["blocked"], 1)
+        state, campaign = self.campaign(campaign_id)
+        self.assertEqual(campaign["status"], "sending")
+        self.assertEqual(
+            sorted(row["status"] for row in state["push_delivery_records"]),
+            ["pending", "sent"],
+        )
+
+        config["LINE_MONTHLY_MESSAGE_LIMIT"] = 3
+        second, _ = send_due_push_campaigns(
+            config, now=SCHEDULED_AT + timedelta(minutes=6)
+        )
+
+        self.assertEqual(len(sender.calls), 2)
+        self.assertEqual(second["completed"], 1)
+        _state, campaign = self.campaign(campaign_id)
+        self.assertEqual(campaign["status"], "completed")
 
 
 class CampaignLeaseTests(unittest.TestCase):

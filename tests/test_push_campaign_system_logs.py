@@ -3,7 +3,13 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
-from app import append_notification_log, cleanup_expired_data, load_state, save_state
+from app import (
+    _merge_permanent_delivery_rows,
+    append_notification_log,
+    cleanup_expired_data,
+    load_state,
+    save_state,
+)
 
 
 def state_fixture():
@@ -23,6 +29,22 @@ def state_fixture():
 
 
 class PermanentSystemDeliveryLogTests(unittest.TestCase):
+    def test_concurrent_snapshot_merge_keeps_every_permanent_row_once(self):
+        latest = {"push_delivery_records": [{"id": "existing", "event_id": "E0"}]}
+        snapshot_rows = [
+            {"id": "existing", "event_id": "E0"},
+            {"id": "new-1", "event_id": "E1"},
+            {"id": "new-2", "event_id": ""},
+        ]
+
+        _merge_permanent_delivery_rows(latest, snapshot_rows)
+        _merge_permanent_delivery_rows(latest, snapshot_rows)
+
+        self.assertEqual(
+            [row["id"] for row in latest["push_delivery_records"]],
+            ["existing", "new-1", "new-2"],
+        )
+
     def test_successful_system_notification_is_mirrored_with_member_snapshot(self):
         state = state_fixture()
 

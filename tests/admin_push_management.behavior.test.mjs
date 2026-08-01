@@ -80,3 +80,13 @@ test("admin scripts remain valid JavaScript", () => {
   assert.ok(scripts.length);
   for (const source of scripts) assert.doesNotThrow(() => new Function(source));
 });
+
+test("scheduled timestamps round-trip through datetime-local in local time", () => {
+  const converter = functionBody("toLocalDateTimeInput");
+  assert.match(converter, /new Date\(/);
+  assert.match(converter, /getFullYear\(\)/);
+  assert.match(converter, /getHours\(\)/);
+  const open = functionBody("openPushCampaign");
+  assert.match(open, /toLocalDateTimeInput\(campaign\.scheduled_at\)/);
+  assert.doesNotMatch(open, /campaign\.scheduled_at\)\.slice\(0, 16\)/);
+});

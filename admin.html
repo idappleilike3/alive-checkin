@@ -1306,6 +1306,13 @@
       $("pushVersionHistory").innerHTML = '<div class="log-item"><span>請先選擇一筆推播</span></div>';
     }
 
+    function toLocalDateTimeInput(value) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      const pad = (number) => String(number).padStart(2, "0");
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
     function pushCampaignPayload() {
       let templateVariables = {};
       const rawVariables = $("pushTemplateVariables").value.trim();
@@ -1416,7 +1423,7 @@
       document.querySelectorAll('input[name="pushAudience"]').forEach((item) => { item.checked = (version.plan_audiences || []).includes(item.value); });
       $("pushEditorTitle").textContent = `編輯推播｜${pushStatusLabels[campaign.status] || campaign.status}`;
       $("pushCampaignMeta").textContent = `建立人：${campaign.created_by || "-"}｜建立時間：${formatDate(campaign.created_at)}｜目前版本：${campaign.current_version || 1}`;
-      if (campaign.scheduled_at) $("pushScheduledAt").value = String(campaign.scheduled_at).slice(0, 16);
+      if (campaign.scheduled_at) $("pushScheduledAt").value = toLocalDateTimeInput(campaign.scheduled_at);
       renderPushVersions(data.versions || []);
       await loadPushDeliveries(campaign.id);
     }

@@ -54,6 +54,8 @@ DELIVERY_LEASE_DURATION = timedelta(minutes=2)
 LATE_SEND_WINDOW = timedelta(hours=24)
 LATE_CANCELLATION_REASON_ZH = "已超過預定發送時間 24 小時，系統自動取消。"
 EMPTY_AUDIENCE_REASON_ZH = "發送當下沒有符合資格的收件人。"
+BUDGET_BLOCK_REASON = "line_non_emergency_budget_hard_stop"
+BUDGET_BLOCK_REASON_ZH = "LINE 非緊急訊息已達本月硬上限，活動暫停等待額度恢復。"
 
 _VERSION_FIELDS = (
     "name",
@@ -663,6 +665,38 @@ def cancel_campaign(
     return campaign
 
 
+def mark_due_campaigns_budget_blocked(state: dict, now: datetime) -> int:
+    """Keep due campaigns recoverable while persisting one explicit budget block event."""
+    ensure_push_state(state)
+    blocked = 0
+    for campaign in state["push_campaigns"]:
+        if campaign.get("status") not in {"scheduled", "sending"}:
+            continue
+        scheduled_at = _parse_datetime(campaign.get("scheduled_at"))
+        if not scheduled_at:
+            continue
+        comparable_now, comparable_scheduled = _comparable(now, scheduled_at)
+        if comparable_now < comparable_scheduled:
+            continue
+        blocked += 1
+        if campaign.get("budget_block_reason") == BUDGET_BLOCK_REASON:
+            continue
+        campaign["budget_block_reason"] = BUDGET_BLOCK_REASON
+        campaign["budget_block_reason_zh"] = BUDGET_BLOCK_REASON_ZH
+        campaign["budget_blocked_at"] = _iso(now)
+        campaign["updated_at"] = _iso(now)
+        _append_event(
+            state,
+            campaign,
+            "budget_blocked",
+            "system",
+            now,
+            reason=BUDGET_BLOCK_REASON,
+            reason_zh=BUDGET_BLOCK_REASON_ZH,
+        )
+    return blocked
+
+
 def _stable_retry_key(campaign_id: str, version: int, line_user_id: str) -> str:
     return str(uuid5(NAMESPACE_URL, f"daily-peace:campaign:{campaign_id}:{version}:{line_user_id}"))
 
@@ -793,6 +827,9 @@ def claim_due_campaign(
                     delivery["status"] = "retry"
                     delivery["delivery_lease_expires_at"] = ""
         campaign["worker_id"] = str(worker_id)
+        campaign.pop("budget_block_reason", None)
+        campaign.pop("budget_block_reason_zh", None)
+        campaign.pop("budget_blocked_at", None)
         campaign["lease_expires_at"] = _iso(now + CAMPAIGN_LEASE_DURATION)
         campaign["updated_at"] = _iso(now)
         _append_event(

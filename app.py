@@ -144,6 +144,7 @@ from push_management import (
     APPROVED_PUSH_TEMPLATES,
     AUDIENCE_CODES,
     CAMPAIGN_STATUS_LABELS_ZH,
+    MAX_DELIVERY_ATTEMPTS,
     CampaignConflictError,
     CampaignNotFoundError,
     CampaignValidationError,
@@ -156,6 +157,7 @@ from push_management import (
     get_campaign_detail,
     list_campaigns,
     list_delivery_records,
+    mark_due_campaigns_budget_blocked,
     prepare_campaign,
     schedule_campaign,
     settle_delivery_attempt,
@@ -7595,6 +7597,7 @@ def bind_emergency_contact(
     notify_errors = []
     notify_hint = ""
     notification_log_start = len(state.get("notification_logs") or [])
+    permanent_delivery_start = len(state.get("push_delivery_records") or [])
     usage_start = len(state.get("line_message_usage") or [])
     # 首次綁定成功：一定推播雙方（重複綁定不狂推）
     if config and not was_duplicate:
@@ -7685,6 +7688,9 @@ def bind_emergency_contact(
     delivery_logs = copy.deepcopy(
         (state.get("notification_logs") or [])[notification_log_start:]
     )
+    permanent_deliveries = copy.deepcopy(
+        (state.get("push_delivery_records") or [])[permanent_delivery_start:]
+    )
     delivery_usage = copy.deepcopy(
         (state.get("line_message_usage") or [])[usage_start:]
     )
@@ -7731,6 +7737,7 @@ def bind_emergency_contact(
                 logs = list(latest.get("notification_logs") or [])
                 logs.extend(delivery_logs)
                 latest["notification_logs"] = logs[-100:]
+            _merge_permanent_delivery_rows(latest, permanent_deliveries)
             if delivery_usage:
                 ledger = list(latest.get("line_message_usage") or [])
                 known_keys = {
@@ -9950,6 +9957,7 @@ def cancel_sos_event(data_file, payload, config=None):
     token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
     notification_log_start = len(state.get("notification_logs") or [])
+    permanent_delivery_start = len(state.get("push_delivery_records") or [])
     usage_start = len(state.get("line_message_usage") or [])
     cancel_results = []
     cancel_sent = 0
@@ -10038,6 +10046,9 @@ def cancel_sos_event(data_file, payload, config=None):
     false_alarm_at = now.isoformat(timespec="seconds") if not previous_cancel else None
     pending_snapshot = copy.deepcopy(pending) if pending else None
     new_logs = copy.deepcopy((state.get("notification_logs") or [])[notification_log_start:])
+    new_permanent_deliveries = copy.deepcopy(
+        (state.get("push_delivery_records") or [])[permanent_delivery_start:]
+    )
     new_usage = copy.deepcopy((state.get("line_message_usage") or [])[usage_start:])
 
     def finish_cancel(latest):
@@ -10063,6 +10074,7 @@ def cancel_sos_event(data_file, payload, config=None):
         logs = list(latest.get("notification_logs") or [])
         logs.extend(new_logs)
         latest["notification_logs"] = logs[-100:]
+        _merge_permanent_delivery_rows(latest, new_permanent_deliveries)
         ledger = list(latest.get("line_message_usage") or [])
         known = {str(row.get("key") or "") for row in ledger if isinstance(row, dict)}
         for row in new_usage:
@@ -10123,6 +10135,7 @@ def retry_sos_event(data_file, payload, config=None):
     token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
     notification_log_start = len(state.get("notification_logs") or [])
+    permanent_delivery_start = len(state.get("push_delivery_records") or [])
     usage_start = len(state.get("line_message_usage") or [])
     message = str(event.get("message") or "🚨【SOS 緊急求助】請立即聯絡本人並確認安全")
     retried_sent = 0
@@ -10191,6 +10204,9 @@ def retry_sos_event(data_file, payload, config=None):
     )
     event_snapshot = copy.deepcopy(event)
     new_logs = copy.deepcopy((state.get("notification_logs") or [])[notification_log_start:])
+    new_permanent_deliveries = copy.deepcopy(
+        (state.get("push_delivery_records") or [])[permanent_delivery_start:]
+    )
     new_usage = copy.deepcopy((state.get("line_message_usage") or [])[usage_start:])
 
     def finish_retry(latest):
@@ -10214,6 +10230,7 @@ def retry_sos_event(data_file, payload, config=None):
         logs = list(latest.get("notification_logs") or [])
         logs.extend(new_logs)
         latest["notification_logs"] = logs[-100:]
+        _merge_permanent_delivery_rows(latest, new_permanent_deliveries)
         ledger = list(latest.get("line_message_usage") or [])
         known = {str(row.get("key") or "") for row in ledger if isinstance(row, dict)}
         for row in new_usage:
@@ -10592,6 +10609,7 @@ def trigger_sos(data_file, payload, config=None):
     state = load_state(data_file)
     profile = (state.get("users") or {}).get(line_user_id) or profile
     notification_log_start = len(state.get("notification_logs") or [])
+    permanent_delivery_start = len(state.get("push_delivery_records") or [])
     usage_start = len(state.get("line_message_usage") or [])
     # Rebuild the emergency fan-out from the post-claim authoritative snapshot.
     # A guardian may have been unbound, or a group disabled, between the first
@@ -11021,6 +11039,9 @@ def trigger_sos(data_file, payload, config=None):
     delivery_logs = copy.deepcopy(
         (state.get("notification_logs") or [])[notification_log_start:]
     )
+    permanent_deliveries = copy.deepcopy(
+        (state.get("push_delivery_records") or [])[permanent_delivery_start:]
+    )
     delivery_usage = copy.deepcopy(
         (state.get("line_message_usage") or [])[usage_start:]
     )
@@ -11044,6 +11065,7 @@ def trigger_sos(data_file, payload, config=None):
             logs = list(latest.get("notification_logs") or [])
             logs.extend(copy.deepcopy(delivery_logs))
             latest["notification_logs"] = logs[-100:]
+        _merge_permanent_delivery_rows(latest, permanent_deliveries)
         if delivery_usage:
             ledger = list(latest.get("line_message_usage") or [])
             known_keys = {
@@ -13849,7 +13871,19 @@ def line_message_budget_status(state, config=None, now=None):
         if not str(item.get("created_at") or "")
         or str(item.get("created_at") or "").startswith(month_key)
     ]
-    used = len(monthly_logs)
+    campaign_units = [
+        item
+        for item in (state.get("push_delivery_records") or [])
+        if item.get("source") == "campaign"
+        and item.get("status") in {"sending", "sent"}
+        and str(
+            item.get("sent_at")
+            or item.get("attempt_started_at")
+            or item.get("created_at")
+            or ""
+        ).startswith(month_key)
+    ]
+    used = len(monthly_logs) + len(campaign_units)
     usage_percent = round(used / message_limit * 100, 1)
     hard_stop_active = usage_percent >= hard_stop_percent
     if used >= message_limit:
@@ -15064,6 +15098,26 @@ def line_push_message(token, line_user_id, message, *, retry_key=None):
             exc.headers,
             None,
         ) from exc
+
+
+def _merge_permanent_delivery_rows(state, rows):
+    """Merge delivery snapshots back after external I/O without losing concurrent writes."""
+    ledger = list(state.get("push_delivery_records") or [])
+    known_ids = {
+        str(row.get("id") or "")
+        for row in ledger
+        if isinstance(row, dict) and str(row.get("id") or "")
+    }
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        record_id = str(row.get("id") or "")
+        if record_id and record_id in known_ids:
+            continue
+        ledger.append(copy.deepcopy(row))
+        if record_id:
+            known_ids.add(record_id)
+    state["push_delivery_records"] = ledger
 
 
 def append_notification_log(
@@ -17441,7 +17495,15 @@ def _send_push_campaign_message(config, target, message, retry_key):
 
 def send_due_push_campaigns(config, now=None):
     """Claim and deliver due campaigns without holding a database lock during LINE I/O."""
-    clock = now or current_app_time(config)
+    injected_clock = config.get("PUSH_CAMPAIGN_CLOCK")
+
+    def clock_now():
+        if callable(injected_clock):
+            return injected_clock()
+        if now is not None:
+            return now
+        return current_app_time(config)
+
     worker_id = f"push-{uuid.uuid4()}"
     summary = {
         "claimed": 0,
@@ -17451,13 +17513,28 @@ def send_due_push_campaigns(config, now=None):
         "cancelled": 0,
         "sent": 0,
         "failed": 0,
+        "blocked": 0,
+        "block_reason": "",
     }
     while True:
+        operation_clock = clock_now()
+        budget_state = load_state(config["DATA_FILE"])
+        if not line_non_emergency_push_allowed(
+            budget_state, config, operation_clock
+        ):
+            summary["blocked"] = mutate_state_atomically(
+                config["DATA_FILE"],
+                lambda state: mark_due_campaigns_budget_blocked(
+                    state, operation_clock
+                ),
+            )
+            summary["block_reason"] = "line_non_emergency_budget_hard_stop"
+            break
         claim = mutate_state_atomically(
             config["DATA_FILE"],
             lambda state: claim_due_campaign(
                 state,
-                clock,
+                operation_clock,
                 worker_id=worker_id,
                 audience_classifier=push_audience_code,
             ),
@@ -17473,16 +17550,46 @@ def send_due_push_campaigns(config, now=None):
             continue
         campaign_id = claim["campaign_id"]
         summary["claimed"] += 1
+        campaign_budget_blocked = False
         while True:
-            delivery = mutate_state_atomically(
-                config["DATA_FILE"],
-                lambda state: claim_next_delivery(
+            operation_clock = clock_now()
+
+            def claim_delivery_with_budget(state):
+                has_pending_delivery = any(
+                    row.get("source") == "campaign"
+                    and row.get("campaign_id") == campaign_id
+                    and row.get("status") in {"pending", "retry"}
+                    and int(row.get("attempts") or 0) < MAX_DELIVERY_ATTEMPTS
+                    for row in (state.get("push_delivery_records") or [])
+                )
+                if not has_pending_delivery:
+                    return None
+                if not line_non_emergency_push_allowed(
+                    state, config, operation_clock
+                ):
+                    blocked_count = mark_due_campaigns_budget_blocked(
+                        state, operation_clock
+                    )
+                    return {
+                        "budget_blocked": True,
+                        "blocked_count": blocked_count,
+                    }
+                return claim_next_delivery(
                     state,
                     campaign_id,
                     worker_id=worker_id,
-                    now=clock,
-                ),
+                    now=operation_clock,
+                )
+
+            delivery = mutate_state_atomically(
+                config["DATA_FILE"],
+                claim_delivery_with_budget,
             )
+            if isinstance(delivery, dict) and delivery.get("budget_blocked"):
+                summary["blocked"] = int(delivery.get("blocked_count") or 1)
+                summary["block_reason"] = "line_non_emergency_budget_hard_stop"
+                campaign_budget_blocked = True
+                break
             if delivery is None:
                 break
             state = load_state(config["DATA_FILE"])
@@ -17509,7 +17616,7 @@ def send_due_push_campaigns(config, now=None):
                         campaign_id,
                         delivery["id"],
                         worker_id=worker_id,
-                        now=clock,
+                        now=clock_now(),
                         success=True,
                     ),
                 )
@@ -17530,7 +17637,7 @@ def send_due_push_campaigns(config, now=None):
                         campaign_id,
                         delivery["id"],
                         worker_id=worker_id,
-                        now=clock,
+                        now=clock_now(),
                         success=False,
                         transient=failure["transient"],
                         failure_reason_zh=failure["reason_zh"],
@@ -17540,13 +17647,15 @@ def send_due_push_campaigns(config, now=None):
                 )
                 if settled["status"] == "failed":
                     summary["failed"] += 1
+        if campaign_budget_blocked:
+            break
         finished = mutate_state_atomically(
             config["DATA_FILE"],
             lambda state: finalize_claimed_campaign(
                 state,
                 campaign_id,
                 worker_id=worker_id,
-                now=clock,
+                now=clock_now(),
             ),
         )
         summary[finished["status"]] += 1
