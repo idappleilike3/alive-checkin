@@ -61,16 +61,17 @@ class BotKeywordHandlerTests(unittest.TestCase):
     def test_welcome_flex_uses_two_consistent_cross_platform_ctas(self):
         flex = welcome_flex("小明")
         blob = str(flex)
-        self.assertIn("👋 小明 您好，歡迎加入「每日平安」", blob)
-        self.assertIn("每天 10 秒，報個平安", blob)
-        self.assertIn("平常不打擾，有事才通知核心守護人", blob)
-        self.assertIn("① 新增 1 位核心守護人", blob)
-        self.assertIn("② 設定每日提醒時間", blob)
-        self.assertIn("14 天新會員安心體驗", blob)
+        self.assertIn("小明，歡迎加入每日平安", blob)
+        self.assertIn("每天只要 10 秒，讓關心你的人知道你平安", blob)
+        self.assertIn("平常不打擾，需要時及時守護", blob)
+        self.assertIn("① 填寫基本資料", blob)
+        self.assertIn("② 設定每日提醒", blob)
+        self.assertIn("③ 邀請核心守護人", blob)
+        self.assertIn("免費體驗，不會自動收費", blob)
         self.assertNotIn("7 天", blob)
         self.assertNotIn("永久免費", blob)
         self.assertIn("daily-peace-logo.png", blob)
-        self.assertIn("welcome-heart-banner.png", blob)
+        self.assertIn("welcome-family-checkin.png", blob)
         self.assertIn("open=onboarding", blob)
         self.assertIn("open=help", blob)
         self.assertNotIn("版本 W", blob)
@@ -80,21 +81,26 @@ class BotKeywordHandlerTests(unittest.TestCase):
         self.assertIn("了解每日平安", blob)
         self.assertNotIn("接受守護邀請", blob)
         self.assertNotIn("需要幫忙", blob)
+        def walk(node):
+            if isinstance(node, dict):
+                yield node
+                for value in node.values():
+                    yield from walk(value)
+            elif isinstance(node, list):
+                for value in node:
+                    yield from walk(value)
+
         labels = [
             item["action"]["label"]
-            for item in (flex.get("footer") or {}).get("contents") or []
+            for item in walk(flex)
             if item.get("type") == "button"
         ]
         self.assertEqual(
             labels,
-            ["開始免費體驗 14 天", "了解每日平安"],
+            ["開始 14 天安心體驗", "了解每日平安"],
         )
-        headline = next(
-            item
-            for item in flex["body"]["contents"][0]["contents"]
-            if item.get("text") == "每天 10 秒，報個平安"
-        )
-        self.assertEqual(headline["size"], "4xl")
+        self.assertNotIn("你平安。", blob)
+        self.assertNotIn("及時守護。", blob)
         self.assertEqual(
             pricing_direct_url(),
             "https://alive-checkin.onrender.com/liff/pricing.html",
@@ -135,18 +141,18 @@ class BotKeywordHandlerTests(unittest.TestCase):
 
         self.assertEqual(
             welcome_greeting_text("阿美"),
-            "👋 阿美 您好，歡迎加入「每日平安」",
+            "阿美，歡迎加入每日平安",
         )
         self.assertEqual(
             welcome_greeting_text(None),
-            "👋 您好，歡迎加入「每日平安」",
+            "歡迎加入每日平安",
         )
         self.assertEqual(
             welcome_greeting_text("您"),
-            "👋 您好，歡迎加入「每日平安」",
+            "歡迎加入每日平安",
         )
-        self.assertNotIn("您 您好", welcome_flex(None)["header"]["contents"][1]["contents"][0]["text"])
-        self.assertIn("阿美", welcome_flex("阿美")["header"]["contents"][1]["contents"][0]["text"])
+        self.assertNotIn("您 您好", str(welcome_flex(None)))
+        self.assertIn("阿美", str(welcome_flex("阿美")))
 
     def test_resolve_welcome_display_name_prefers_hint_and_profile(self):
         import app as app_mod

@@ -1159,21 +1159,21 @@ _WELCOME_PLACEHOLDER_NAMES = frozenset(
 
 
 def welcome_greeting_text(display_name: str | None = None) -> str:
-    """歡迎標題：有真實暱稱就寫名；否則不寫「您」，避免看起來像沒寫誰。"""
+    """歡迎標題：有真實暱稱就寫名，使用自然、長輩友善的稱呼。"""
     name = (display_name or "").strip()
     if name and name not in _WELCOME_PLACEHOLDER_NAMES:
-        return f"👋 您好，{name}，歡迎加入「每日平安」"
-    return "👋 您好，歡迎加入「每日平安」"
+        return f"{name}，歡迎加入每日平安"
+    return "歡迎加入每日平安"
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友歡迎 Flex（粉白風格，對齊設計稿）：真實暱稱問候 + 兩顆 CTA。
+    """加好友歡迎 Flex：平衡圖文、長輩友善、兩顆明確 CTA。
 
     結構對齊長輩友善設計稿：
-    - Header：左上 Logo + 旁側問候文字（含暱稱）／每日平安
-    - Hero：白卡視覺（心＋大字＋手機「我平安」），無第二個 Logo
-    - Body：三步驟垂直排列、14 天新會員安心體驗、119／110 免責
-    - Footer：開始免費體驗 14 天 + 了解每日平安
+    - Header：原始 Logo + 品牌名、個人化歡迎詞、兩句無句號價值說明
+    - Hero：媽媽按綠色「我平安」，女兒在 LINE 收到平安通知
+    - Body：主 CTA 提前、三步驟依真實流程垂直排列
+    - Footer：次 CTA + 119／110 免責
 
     iPhone 與 Android 都由同一個 Flex payload 產生，避免兩個平台內容不一致。
     守護邀請由免費體驗設定流程引導，不在首次歡迎卡重複顯示。
@@ -1182,14 +1182,13 @@ def welcome_flex(display_name: str | None = None):
     setup_uri = liff_entry_url(open_action="onboarding")
     help_uri = liff_entry_url(open_action="help")
     base = (os.environ.get("APP_PUBLIC_URL") or PUBLIC_BASE).rstrip("/")
-    # cache-bust so LINE clients refresh logo after transparent PNG / layout updates
-    logo_uri = f"{base}/assets/daily-peace-logo.png?v=W260727welcome"
-    heart_uri = f"{base}/assets/welcome-heart-banner.png?v=W260727elderly1"
-    pink_bg = "#FFF5F8"
-    pink_soft = "#FFE4EC"
-    pink_accent = "#DB2777"
-    text_dark = "#831843"
-    yellow_bg = "#FFF7D6"
+    logo_uri = f"{base}/assets/daily-peace-logo.png?v=W260802original"
+    story_uri = f"{base}/assets/welcome-family-checkin.png?v=W260802green"
+    cream_bg = "#FFF9F2"
+    coral = "#F2554B"
+    coral_soft = "#FFF0EC"
+    text_dark = "#25272A"
+    olive = "#66754A"
     step_bg = "#FFFFFF"
 
     return {
@@ -1197,56 +1196,101 @@ def welcome_flex(display_name: str | None = None):
         "size": "mega",
         "header": {
             "type": "box",
-            "layout": "horizontal",
-            "spacing": "md",
+            "layout": "vertical",
+            "spacing": "sm",
             "paddingAll": "lg",
-            "backgroundColor": pink_bg,
-            "alignItems": "center",
+            "backgroundColor": cream_bg,
             "contents": [
                 {
-                    "type": "image",
-                    "url": logo_uri,
-                    "size": "xs",
-                    "aspectMode": "fit",
-                    "aspectRatio": "1:1",
-                    "flex": 0,
-                },
-                {
                     "type": "box",
-                    "layout": "vertical",
-                    "spacing": "xs",
-                    "flex": 1,
+                    "layout": "horizontal",
+                    "spacing": "sm",
+                    "alignItems": "center",
                     "contents": [
                         {
+                            "type": "image",
+                            "url": logo_uri,
+                            "size": "xxs",
+                            "aspectMode": "fit",
+                            "aspectRatio": "1:1",
+                            "flex": 0,
+                        },
+                        {
                             "type": "text",
-                            "text": greeting,
+                            "text": "每日平安",
                             "weight": "bold",
-                            "size": "xxl",
+                            "size": "xl",
                             "color": text_dark,
                             "wrap": True,
                             "align": "start",
                         },
                     ],
                 },
+                {
+                    "type": "text",
+                    "text": greeting,
+                    "weight": "bold",
+                    "size": "xxl",
+                    "color": coral,
+                    "wrap": True,
+                    "align": "start",
+                },
+                {
+                    "type": "text",
+                    "text": "每天只要 10 秒，讓關心你的人知道你平安",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": text_dark,
+                    "wrap": True,
+                    "align": "start",
+                },
+                {
+                    "type": "text",
+                    "text": "平常不打擾，需要時及時守護",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": text_dark,
+                    "wrap": True,
+                    "align": "start",
+                },
             ],
         },
         "hero": {
             "type": "image",
-            "url": heart_uri,
+            "url": story_uri,
             "size": "full",
-            "aspectMode": "fit",
-            "aspectRatio": "20:9",
+            "aspectMode": "cover",
+            "aspectRatio": "216:125",
         },
         "body": {
             "type": "box",
             "layout": "vertical",
             "spacing": "lg",
             "paddingAll": "xl",
-            "backgroundColor": pink_bg,
+            "backgroundColor": cream_bg,
             "contents": [
                 {
+                    "type": "button",
+                    "action": {
+                        "type": "uri",
+                        "label": "開始 14 天安心體驗",
+                        "uri": setup_uri,
+                    },
+                    "style": "primary",
+                    "color": coral,
+                    "height": "md",
+                },
+                {
                     "type": "text",
-                    "text": "📋 開始使用前，只要完成三個步驟：",
+                    "text": "免費體驗，不會自動收費",
+                    "size": "md",
+                    "color": text_dark,
+                    "wrap": True,
+                    "align": "start",
+                },
+                {
+                    "type": "text",
+                    "text": "簡單三步驟，開始每日平安",
                     "weight": "bold",
                     "size": "xl",
                     "color": text_dark,
@@ -1267,15 +1311,15 @@ def welcome_flex(display_name: str | None = None):
                             "contents": [
                                 {
                                     "type": "text",
-                                    "text": "① 填寫自己的姓名與基本資料",
+                                    "text": "① 填寫基本資料",
                                     "weight": "bold",
                                     "size": "xl",
-                                    "color": pink_accent,
+                                    "color": coral,
                                     "wrap": True,
                                 },
                                 {
                                     "type": "text",
-                                    "text": "先完成自己的資料與基本設定",
+                                    "text": "讓守護人知道是誰在報平安",
                                     "size": "xl",
                                     "color": GRAY,
                                     "wrap": True,
@@ -1292,15 +1336,15 @@ def welcome_flex(display_name: str | None = None):
                             "contents": [
                                 {
                                     "type": "text",
-                                    "text": "② 邀請我的核心守護人",
+                                    "text": "② 設定每日提醒",
                                     "weight": "bold",
                                     "size": "xl",
-                                    "color": pink_accent,
+                                    "color": coral,
                                     "wrap": True,
                                 },
                                 {
                                     "type": "text",
-                                    "text": "對方接受後，才會收到你的重要通知",
+                                    "text": "到時間提醒你按下「我平安」",
                                     "size": "xl",
                                     "color": GRAY,
                                     "wrap": True,
@@ -1317,55 +1361,20 @@ def welcome_flex(display_name: str | None = None):
                             "contents": [
                                 {
                                     "type": "text",
-                                    "text": "③ 設定每日提醒時間",
+                                    "text": "③ 邀請核心守護人",
                                     "weight": "bold",
                                     "size": "xl",
-                                    "color": pink_accent,
+                                    "color": coral,
                                     "wrap": True,
                                 },
                                 {
                                     "type": "text",
-                                    "text": "系統會在你設定的時間提醒你報平安",
+                                    "text": "對方接受後，安心連結就完成了",
                                     "size": "xl",
                                     "color": GRAY,
                                     "wrap": True,
                                 },
                             ],
-                        },
-                    ],
-                },
-                {
-                    "type": "box",
-                    "layout": "vertical",
-                    "spacing": "xs",
-                    "paddingAll": "md",
-                    "backgroundColor": yellow_bg,
-                    "cornerRadius": "xl",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": "🎁 14 天新會員安心體驗",
-                            "weight": "bold",
-                            "size": "xl",
-                            "color": pink_accent,
-                            "wrap": True,
-                        },
-                    ],
-                },
-                {
-                    "type": "box",
-                    "layout": "vertical",
-                    "paddingAll": "md",
-                    "backgroundColor": pink_soft,
-                    "cornerRadius": "xl",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": "🚨 緊急狀況請直接撥打 119 或 110，本服務無法取代緊急救援。",
-                            "weight": "bold",
-                            "size": "lg",
-                            "color": RED_WARN,
-                            "wrap": True,
                         },
                     ],
                 },
@@ -1376,19 +1385,8 @@ def welcome_flex(display_name: str | None = None):
             "layout": "vertical",
             "spacing": "sm",
             "paddingAll": "lg",
-            "backgroundColor": pink_bg,
+            "backgroundColor": cream_bg,
             "contents": [
-                {
-                    "type": "button",
-                    "action": {
-                        "type": "uri",
-                        "label": "開始免費體驗 14 天",
-                        "uri": setup_uri,
-                    },
-                    "style": "primary",
-                    "color": GREEN_DARK,
-                    "height": "md",
-                },
                 {
                     "type": "button",
                     "action": {
@@ -1397,8 +1395,24 @@ def welcome_flex(display_name: str | None = None):
                         "uri": help_uri,
                     },
                     "style": "secondary",
-                    "color": GREEN_DARK,
+                    "color": coral,
                     "height": "md",
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "paddingAll": "md",
+                    "backgroundColor": coral_soft,
+                    "cornerRadius": "xl",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "緊急情況請直接撥打 119 或 110；每日平安不能取代緊急救援服務",
+                            "size": "md",
+                            "color": olive,
+                            "wrap": True,
+                        },
+                    ],
                 },
             ],
         },
