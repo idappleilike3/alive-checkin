@@ -2603,7 +2603,10 @@ def membership_access_active(profile, now=None):
         return bool(started_at and now < started_at + timedelta(days=PUBLIC_TRIAL_DAYS))
     if plan.startswith("paid_"):
         paid_until = parse_datetime(profile.get("paid_until"))
-        return paid_until is None or now < paid_until
+        if paid_until is None:
+            return True
+        comparable_now, comparable_paid_until = _comparable_datetimes(now, paid_until)
+        return comparable_now < comparable_paid_until
     return False
 
 
@@ -2626,13 +2629,21 @@ def beta_access_active(profile, now=None):
 def effective_entitlement_plan(profile, now=None):
     """Active public/transition trials receive the paid 199 monthly rights."""
     now = now or current_app_time({})
-    if str(profile.get("plan") or "") == "trial" and membership_access_active(profile, now):
-        return "paid_199"
+    if str(profile.get("plan") or "") == "trial":
+        return "paid_199" if membership_access_active(profile, now) else "free"
     if beta_access_active(profile, now):
         return BETA_COHORT_PLAN.get(str(profile.get("beta_cohort") or ""), "paid_399")
     if str(profile.get("membership_source") or "") == "beta":
         return "free"
-    return str(profile.get("plan") or "free")
+    plan = str(profile.get("plan") or "free")
+    if plan.startswith("paid_") and not membership_access_active(profile, now):
+        return "free"
+    return plan
+
+
+def sos_delivery_mode(profile, now=None):
+    """Return the server-authoritative SOS delivery mode for current rights."""
+    return "web_only" if effective_entitlement_plan(profile, now) == "free" else "immediate"
 
 
 def push_audience_code(profile, now=None):
@@ -4071,6 +4082,8 @@ def build_status(profile, state=None, now=None):
             else "尚未報平安"
         )
         detail["latest_sos_status"] = ""
+        detail["latest_sos_message"] = ""
+        detail["latest_sos_created_at"] = ""
         if state is not None and peer_id:
             peer_events = [
                 event
@@ -4096,6 +4109,9 @@ def build_status(profile, state=None, now=None):
                 detail["latest_sos_status"] = str(
                     peer_events[0].get("status") or "sent"
                 )
+                if peer_events[0].get("delivery_mode") == "web_only":
+                    detail["latest_sos_message"] = str(peer_events[0].get("message") or "")
+                    detail["latest_sos_created_at"] = str(peer_events[0].get("created_at") or "")
         guarding_details.append(detail)
 
     return {
@@ -10397,6 +10413,102 @@ def _claim_sos_delivery(
     return {"claimed": True}
 
 
+def _create_web_only_sos_alert(data_file, profile, payload, now_dt):
+    """Persist a guardian-visible alert without calling any delivery provider."""
+    import uuid
+
+    line_user_id = str(profile.get("line_user_id") or "").strip()
+    selected_ids = payload.get("guardian_line_user_ids")
+    if selected_ids is not None and not isinstance(selected_ids, list):
+        return {"error": "guardian_line_user_ids must be a list"}, 400
+    selected_set = {
+        str(value).strip() for value in (selected_ids or []) if str(value).strip()
+    } or None
+    guardians = ranked_sos_guardians(
+        profile, line_user_id, selected_ids=selected_set, limit=5
+    )
+    event_id = f"sos-{uuid.uuid4().hex[:10]}"
+    created_at = now_dt.isoformat(timespec="seconds")
+    owner_name = str(profile.get("display_name") or "家人").strip()
+    alert_message = f"您的家人 {owner_name} 剛剛發出了求救訊號。"
+    deliveries = [
+        {
+            "kind": "guardian",
+            "target": get_contact_line_id(contact),
+            "display_name": str(contact.get("name") or "核心守護人"),
+            "status": "web_pending",
+            "response_status": "waiting",
+        }
+        for contact in guardians
+        if get_contact_line_id(contact)
+    ]
+    has_bound_guardian = bool(deliveries)
+    event = {
+        "event_id": event_id,
+        "owner_line_user_id": line_user_id,
+        "owner_display_name": owner_name,
+        "status": "web_pending" if has_bound_guardian else "web_unassigned",
+        "delivery_mode": "web_only",
+        "created_at": created_at,
+        "sent_at": None,
+        "deliveries": deliveries,
+        "message": alert_message,
+        "location_attached": False,
+    }
+    pending = {
+        "stage": event["status"],
+        "tap_count": 3,
+        "first_tap_at": created_at,
+        "last_tap_at": created_at,
+        "sent_at": None,
+        "event_id": event_id,
+        "delivery_mode": "web_only",
+    }
+
+    def persist_web_alert(state):
+        current_profile = (state.get("users") or {}).get(line_user_id)
+        if current_profile is None:
+            return
+        current_profile["last_sos_event_id"] = event_id
+        state.setdefault("sos_events", {})[event_id] = copy.deepcopy(event)
+        state.setdefault("sos_pending", {})[line_user_id] = copy.deepcopy(pending)
+
+    mutate_state_atomically(data_file, persist_web_alert)
+    if has_bound_guardian:
+        user_message = (
+            "求救警報已顯示給守護人。守護人需要主動打開每日平安網頁，"
+            "才會看到此訊息。如需即時推播通知，請升級為付費方案。"
+        )
+    else:
+        user_message = (
+            "目前尚未綁定守護人，這次警報無人可以查看。請先邀請守護人；"
+            "如需即時推播通知，請升級為付費方案。"
+        )
+    phone_contacts = collect_phone_only_contacts(profile.get("contacts") or [])
+    return {
+        "sent": 0,
+        "failed": 0,
+        "delivery_mode": "web_only",
+        "web_alert_created": True,
+        "has_bound_guardian": has_bound_guardian,
+        "message": user_message,
+        "guardians": [
+            {"name": row["display_name"], "status": "web_pending"}
+            for row in deliveries
+        ],
+        "groups": [],
+        "results": [],
+        "location_attached": False,
+        "phone_only_count": len(phone_contacts),
+        "phone_contacts": phone_contacts[:5],
+        "event_id": event_id,
+        "sent_at": created_at,
+        "cancel_available": True,
+        "emergency_numbers_available": True,
+        "emergency_numbers": ["119", "110"],
+    }, 200
+
+
 def trigger_sos(data_file, payload, config=None):
     """
     🔴 P0 FIX v0.5:加 3 層防護
@@ -10505,6 +10617,31 @@ def trigger_sos(data_file, payload, config=None):
                 }, 429
         except (ValueError, TypeError):
             pass
+
+    if sos_delivery_mode(profile, now_dt) == "web_only":
+        claim = mutate_state_atomically(
+            data_file,
+            lambda current_state: _claim_sos_delivery(
+                current_state,
+                line_user_id,
+                now_dt,
+                daily_limit=SOS_DAILY_LIMIT,
+                cooldown_sec=SOS_COOLDOWN_SEC,
+                long_confirm=bool(payload.get("long_confirm")),
+                reason=str(payload.get("reason") or ""),
+            ),
+        )
+        if not claim.get("claimed"):
+            if claim.get("reason") == "daily_limit":
+                return {"error": "daily SOS limit reached", "limit": SOS_DAILY_LIMIT}, 429
+            if claim.get("reason") == "long_confirmation_required":
+                return {"error": "long confirmation required", "requires_reason": True}, 428
+            return {
+                "error": f"SOS cooldown active, wait {int(claim.get('wait_sec') or 1)}s",
+                "cooldown_remaining_sec": int(claim.get("wait_sec") or 1),
+            }, 429
+        latest_profile = (load_state(data_file).get("users") or {}).get(line_user_id) or profile
+        return _create_web_only_sos_alert(data_file, latest_profile, payload, now_dt)
 
     token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     if not token:
