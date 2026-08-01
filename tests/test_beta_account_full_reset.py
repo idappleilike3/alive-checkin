@@ -47,13 +47,14 @@ class BetaAccountFullResetTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_candidate_summary_is_masked_and_versioned(self):
+    def test_candidate_summary_identifies_person_with_full_uid_plan_and_version(self):
         candidates = app.list_beta_reset_candidates(self.state, {self.uid})
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["cohort"], "B799")
+        self.assertEqual(candidates[0]["candidate_id"], self.uid)
+        self.assertEqual(candidates[0]["plan"], "799")
         self.assertEqual(candidates[0]["account_state_version"], "old-version")
-        self.assertNotEqual(candidates[0]["masked_line_user_id"], self.uid)
-        self.assertNotIn("line_user_id", candidates[0])
+        self.assertNotIn("masked_line_user_id", candidates[0])
 
     def test_test_account_whitelist_accepts_common_render_formats(self):
         config = {
