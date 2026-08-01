@@ -2090,10 +2090,21 @@
     let betaResetCandidates = [];
 
     async function loadBetaResetCandidates() {
-      const response = await adminFetch("/api/admin/beta-reset-candidates");
-      const data = await response.json().catch(() => ({}));
       const select = $("betaResetCandidate");
       const button = $("betaResetButton");
+      let response;
+      let data;
+      try {
+        response = await adminFetch("/api/admin/beta-reset-candidates");
+        data = await response.json().catch(() => ({}));
+      } catch (error) {
+        betaResetCandidates = [];
+        select.innerHTML = '<option value="">候選帳號載入失敗，請重新整理</option>';
+        select.disabled = true;
+        button.disabled = true;
+        $("betaResetMessage").textContent = "候選帳號載入失敗，請重新整理後再試。";
+        return;
+      }
       betaResetCandidates = response.ok ? (data.candidates || []) : [];
       if (!response.ok || data.can_reset !== true) {
         select.innerHTML = '<option value="">只有最高管理員可以重置封測帳號</option>';
@@ -2105,9 +2116,13 @@
       select.disabled = false;
       select.innerHTML = betaResetCandidates.length
         ? '<option value="">請選擇帳號</option>' + betaResetCandidates.map((row) => `<option value="${escapeHtml(row.candidate_id)}">${escapeHtml(row.display_name)}｜${escapeHtml(row.masked_line_user_id)}｜${escapeHtml(row.cohort)}｜${escapeHtml(row.status)}</option>`).join("")
-        : '<option value="">目前沒有可重置的 21 天封測測試帳號</option>';
+        : `<option value="">${data.whitelist_configured === false ? "尚未設定測試帳號白名單" : "白名單內目前沒有符合資格的 21 天封測帳號"}</option>`;
       button.disabled = betaResetCandidates.length === 0;
-      $("betaResetMessage").textContent = betaResetCandidates.length ? "" : "目前沒有可重置的 21 天封測測試帳號";
+      $("betaResetMessage").textContent = betaResetCandidates.length
+        ? "請先從下拉選單選擇一個帳號，再按重置。"
+        : (data.whitelist_configured === false
+          ? "尚未設定測試帳號白名單，請先設定 TEST_LINE_USER_IDS。"
+          : "目前沒有可重置的 21 天封測測試帳號；白名單內目前沒有符合資格的 21 天封測帳號。");
     }
 
     async function resetTestAccount(lineUserId, displayName, accountStateVersion = "") {
@@ -2453,10 +2468,12 @@
         setAuthStatus(authErrorText(data, res.status), "is-err");
         return;
       }
-      await loadBetaMembers();
-      await loadBetaResetCandidates();
-      await loadLineAcceptance();
-      await loadLaunchReadiness();
+      await Promise.allSettled([
+        loadBetaResetCandidates(),
+        loadBetaMembers(),
+        loadLineAcceptance(),
+        loadLaunchReadiness(),
+      ]);
       $("totalUsers").textContent = data.total_users;
       $("checkedToday").textContent = data.checked_today;
       $("warningUsers").textContent = data.warning_users;
