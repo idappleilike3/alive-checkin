@@ -144,7 +144,11 @@ class AdminResetTestAccountTests(unittest.TestCase):
         self.assertIsNone(registered["trial_end"])
         self.assertTrue(registered["beta_reset_pending"])
 
-    def test_reset_rejects_non_whitelisted_member(self):
+    def test_reset_rejects_non_whitelisted_non_beta_member(self):
+        state = alive_app.load_state(self.data_file)
+        state["users"]["U-test"]["beta_cohort"] = ""
+        alive_app.save_state(self.data_file, state)
+
         result, code = alive_app.admin_reset_test_account(
             self.data_file,
             "U-test",
@@ -152,7 +156,7 @@ class AdminResetTestAccountTests(unittest.TestCase):
         )
 
         self.assertEqual(code, 403)
-        self.assertEqual(result["error"], "not_a_test_account")
+        self.assertEqual(result["error"], "not_beta_reset_candidate")
         self.assertEqual(
             alive_app.load_state(self.data_file)["users"]["U-test"]["plan"],
             "paid_799_year",
