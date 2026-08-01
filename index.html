@@ -4021,7 +4021,6 @@
             <span class="mvp-btn-desc">需要幫助點這裡</span>
           </span>
         </button>
-        <p class="sos-disclaimer">免費會員的 SOS 警報將顯示於守護人的網頁內；如需即時推播通知，請升級為付費方案。</p>
       </div>
       <div class="mvp-reward-card" id="mvpRewardInviteCard" aria-label="綁定守護人獎勵">
         <div>
@@ -4087,7 +4086,6 @@
         <h3>SOS 緊急求助</h3>
         <p class="helper">此區與上方「安全守護」分開。點擊後會再要求連按確認，才會通知已綁定的守護人。</p>
         <button class="mvp-action sos-safe" id="mvpGuardSosBtn" type="button">開啟 SOS（需確認）</button>
-        <p class="sos-disclaimer">免費會員的 SOS 警報將顯示於守護人的網頁內；如需即時推播通知，請升級為付費方案。</p>
       </div>
     </section>
 
@@ -7429,15 +7427,7 @@
         const sos = row?.latest_sos_status
           ? `・最近 SOS：${escapeHtml(row.latest_sos_status)}`
           : "";
-        const sosCreatedAt = row?.latest_sos_created_at
-          ? new Date(row.latest_sos_created_at).toLocaleString("zh-TW", {
-              month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit"
-            })
-          : "";
-        const pendingAlert = row?.latest_sos_message
-          ? `<div class="sos-plan-status"><strong>🚨 待處理警報</strong><p>${escapeHtml(row.latest_sos_message)}${sosCreatedAt ? `（${escapeHtml(sosCreatedAt)}）` : ""}</p></div>`
-          : "";
-        return `<div class="member-data-row"><span>${name}<small>每日報平安：${escapeHtml(reminderTimes)}・今日 ${escapeHtml(row?.today_status || "尚未報平安")}${sos}</small>${pendingAlert}</span><strong>已完成守護${accepted ? `・${escapeHtml(accepted)}` : ""}</strong></div>`;
+        return `<div class="member-data-row"><span>${name}<small>每日報平安：${escapeHtml(reminderTimes)}・今日 ${escapeHtml(row?.today_status || "尚未報平安")}${sos}</small></span><strong>已完成守護${accepted ? `・${escapeHtml(accepted)}` : ""}</strong></div>`;
       }).join("");
     }
 
@@ -10547,9 +10537,6 @@
     }
 
     function formatSosResultFeedback(result, locationMeta) {
-      if (result && result.delivery_mode === "web_only") {
-        return String(result.message || "求救警報已建立；守護人需要主動打開每日平安網頁才能看到。");
-      }
       const sent = Number(result && result.sent) || 0;
       const failed = Number(result && result.failed) || 0;
       const phoneOnly = Number(result && result.phone_only_count) || 0;
