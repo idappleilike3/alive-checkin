@@ -5,9 +5,18 @@ import fs from "node:fs";
 const html = fs.readFileSync(new URL("../admin.html", import.meta.url), "utf8");
 
 test("member management has dedicated 21-day reset panel", () => {
-  for (const copy of ["重置 21 天封測帳號", "重置選取帳號", "目前沒有可重置的 21 天封測測試帳號"]) {
+  for (const copy of ["重置 21 天封測帳號", "選擇要重置的人員（姓名／完整 LINE UID）", "重置選取帳號", "目前沒有可重置的 21 天封測測試帳號"]) {
     assert.ok(html.includes(copy), copy);
   }
+});
+
+test("candidate options show the person\'s full UID, cohort, plan and status", () => {
+  assert.match(html, /row\.display_name/);
+  assert.match(html, /row\.candidate_id/);
+  assert.match(html, /row\.cohort/);
+  assert.match(html, /row\.plan/);
+  assert.match(html, /row\.status/);
+  assert.ok(!html.includes("row.masked_line_user_id"));
 });
 
 test("reset candidates load independently and explain an empty whitelist", () => {
