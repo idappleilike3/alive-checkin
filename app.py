@@ -411,6 +411,7 @@ PLAN_LIMITS = {
         "emergency_contact_limit": 35,
         "friend_location_limit": 0,
         "daily_reminders": 3,
+        "default_daily_reminders": 2,
         "channels": ["line"],
         "location_mode": "full_guard",
         "core_guardian_alert_limit": 10,
@@ -428,6 +429,7 @@ PLAN_LIMITS = {
         "emergency_contact_limit": 50,
         "friend_location_limit": 0,
         "daily_reminders": 3,
+        "default_daily_reminders": 2,
         "channels": ["line"],
         "location_mode": "full_guard",
         "core_guardian_alert_limit": 15,
@@ -651,7 +653,7 @@ def line_auto_reply_text(text, status=None):
             "Q：未報平安多久會通知？\n"
             "A：可在會員中心選 24／36／48／72 小時（預設 48 小時）。滿設定時數才再提醒本人；15 分鐘仍未回報，之後依第一、第二、第三順位逐步通知守護人。\n\n"
             "Q：核心守護人跟緊急聯絡人差在哪？\n"
-            "A：核心＝可收 LINE 通知；緊急聯絡人＝電話備援，不會自動推播／簡訊。\n\n"
+            "A：核心＝可收 LINE 通知；緊急聯絡人＝電話備援，不會自動收到系統通知。\n\n"
             "Q：守護人一定要註冊嗎？\n"
             "A：不用，對方加入官方帳號並點邀請同意即可。\n\n"
             f"完整問與答：{faq_url}\n"
@@ -660,8 +662,8 @@ def line_auto_reply_text(text, status=None):
     if any(keyword in text for keyword in SUPPORT_KEYWORDS):
         faq_url = line_liff_url("faq")
         return (
-            "客服在這裡。請直接在此 LINE 留言你的問題，我們會協助你設定簽到、守護人與方案。\n\n"
-            "📩 已收到的問題會在 1–3 個工作天內回覆。\n\n"
+            "需要客服協助時，請到會員中心填寫問題，或寄到 alivecheckin.tw@gmail.com。\n\n"
+            "📩 我們會在 1–3 個工作天內回覆，並以 Email 寄到你的信箱。\n\n"
             f"也可以先看問與答：{faq_url}\n\n"
             "提醒：若是立即危險或醫療緊急狀況，請先撥打 119。"
         )
@@ -1986,8 +1988,17 @@ def reminder_times_for_profile(profile):
             return normalized
     single = str(profile.get("reminder_time") or "").strip()
     if REMINDER_TIME_PATTERN.match(single):
-        return normalize_reminder_times([single], max_count) or default_reminder_times_for_count(min(max_count, 2))
-    return default_reminder_times_for_count(min(max_count, 2))
+        return normalize_reminder_times([single], max_count) or default_reminder_times_for_count(default_daily_reminder_count(profile))
+    return default_reminder_times_for_count(default_daily_reminder_count(profile))
+
+
+def default_daily_reminder_count(profile):
+    rules = plan_rules(profile)
+    max_count = max(1, min(3, int(rules.get("daily_reminders") or 1)))
+    configured = rules.get("default_daily_reminders")
+    if configured is None:
+        configured = min(max_count, 2)
+    return max(1, min(max_count, int(configured or 1)))
 
 
 def apply_reminder_times_to_profile(profile, times=None, single=None):
@@ -2000,7 +2011,7 @@ def apply_reminder_times_to_profile(profile, times=None, single=None):
     else:
         normalized = []
     if not normalized:
-        normalized = default_reminder_times_for_count(min(max_count, 2))
+        normalized = default_reminder_times_for_count(default_daily_reminder_count(profile))
     profile["reminder_times"] = normalized
     profile["reminder_time"] = normalized[0]
     return normalized
@@ -2344,11 +2355,12 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
         "reminder_time": times[0] if times else "12:00",
         "reminder_times": times,
         "daily_reminders": daily_reminders,
+        "default_daily_reminders": default_daily_reminder_count(profile) if profile else 1,
         "daily_checkin_reminder_enabled": bool(
             profile.get("daily_checkin_reminder_enabled", True)
         ),
         # 首次綁定不強迫 799 填滿 3 次；399／799 未選時皆預設 12:00、18:00。
-        "default_reminder_times": default_reminder_times_for_count(min(daily_reminders, 2)),
+        "default_reminder_times": default_reminder_times_for_count(default_daily_reminder_count(profile) if profile else 1),
         "grace_hours": normalize_grace_hours(profile.get("grace_hours")),
         "overdue_wait_minutes": normalize_overdue_wait_minutes(
             profile.get("overdue_wait_minutes")
@@ -4140,6 +4152,7 @@ def build_status(profile, state=None, now=None):
         "contact_limit": plan_rules(profile)["contact_limit"],
         "emergency_contact_limit": int(plan_rules(profile).get("emergency_contact_limit") or 2),
         "daily_reminders": plan_rules(profile)["daily_reminders"],
+        "default_daily_reminders": default_daily_reminder_count(profile),
         "channels": plan_rules(profile)["channels"],
         "location_mode": plan_rules(profile).get("location_mode", "snapshot_24h"),
         "friend_location_limit": plan_rules(profile).get("friend_location_limit", 0),
@@ -7463,6 +7476,15 @@ def bind_emergency_contact(
         pending_invite["accepted_at"] = accepted_at
         pending_invite["invitee_line_user_id"] = contact_line_user_id
 
+    bound_contact = next(
+        (row for row in contacts if get_contact_line_id(row) == contact_line_user_id),
+        None,
+    )
+    if bound_contact is not None and pending_invite:
+        bound_contact["accepted_invite_id"] = pending_invite.get("id") or ""
+        bound_contact["invited_at"] = pending_invite.get("created_at") or ""
+        bound_contact["accepted_at"] = pending_invite.get("accepted_at") or bound_contact.get("accepted_at") or accepted_at
+
     # 反向邀請完成時，本次只建立新的單向關係；不修改另一方向的核心順位。
     mutual_core_applied = False
     if is_reverse_invite and mutual_core:
@@ -7490,6 +7512,9 @@ def bind_emergency_contact(
     if not reward:
         reward = {
             "created_at": accepted_at,
+            "invited_at": (pending_invite or {}).get("created_at") or "",
+            "accepted_at": (pending_invite or {}).get("accepted_at") or accepted_at,
+            "accepted_invite_id": (pending_invite or {}).get("id") or "",
             "inviter_line_user_id": inviter_id,
             "contact_line_user_id": contact_line_user_id,
             "inviter_display_name": inviter.get("display_name") or "",
@@ -7502,6 +7527,10 @@ def bind_emergency_contact(
     else:
         reward["inviter_display_name"] = inviter.get("display_name") or reward.get("inviter_display_name") or ""
         reward["contact_display_name"] = contact_display_name or reward.get("contact_display_name") or ""
+        if pending_invite:
+            reward["invited_at"] = reward.get("invited_at") or pending_invite.get("created_at") or ""
+            reward["accepted_at"] = reward.get("accepted_at") or pending_invite.get("accepted_at") or accepted_at
+            reward["accepted_invite_id"] = reward.get("accepted_invite_id") or pending_invite.get("id") or ""
 
     invite_reward_applied = False
     if not was_duplicate:
@@ -8786,6 +8815,14 @@ def safety_guard_snapshot(profile, now=None):
     location = profile.get("location") or {}
     active = _location_session_active(location, now)
     today = now.strftime("%Y-%m-%d")
+    daily_limit = int(plan_rules(profile).get("safety_guard_daily_limit") or 0)
+    stored_usage_date = profile.get("safety_guard_usage_date") or profile.get("safety_guard_trial_usage_date")
+    stored_usage_count = int(
+        profile.get("safety_guard_usage_count")
+        if profile.get("safety_guard_usage_count") is not None
+        else profile.get("safety_guard_trial_usage_count") or 0
+    )
+    daily_used = stored_usage_count if stored_usage_date == today else 0
     last_check_in = profile.get("last_check_in")
     is_today_checked = profile_is_today_checked(profile, now=now)
     if is_today_checked:
@@ -8812,6 +8849,9 @@ def safety_guard_snapshot(profile, now=None):
         "is_today_checked": is_today_checked,
         "last_check_in": last_check_in,
         "today": today,
+        "daily_limit": daily_limit,
+        "daily_used": daily_used,
+        "daily_remaining": max(0, daily_limit - daily_used),
     }
 
 
@@ -8983,7 +9023,7 @@ def update_location(data_file, payload, config=None):
     if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
         return {"error": "invalid location"}, 400
 
-    now = datetime.now()
+    now = current_app_time(config or {})
     state = load_state(data_file)
     profile = get_profile(state, line_user_id)
     existing = dict(profile.get("location") or {})
@@ -9065,6 +9105,8 @@ def update_location(data_file, payload, config=None):
                 else f"今天已使用安全守護 {daily_limit} 次，明天可再使用"
             ),
             "daily_limit": daily_limit,
+            "daily_used": usage_count,
+            "daily_remaining": 0,
         }, 429
 
     allowed_hours = allowed_safety_guard_hours(profile)
@@ -9094,12 +9136,12 @@ def update_location(data_file, payload, config=None):
     selected_guardian_ids = payload.get("guardian_line_user_ids")
     if selected_guardian_ids is not None and not isinstance(selected_guardian_ids, list):
         return {"error": "guardian_line_user_ids must be a list"}, 400
-    started_at = (
-        existing.get("started_at")
-        if was_active
-        else now.isoformat(timespec="seconds")
-    )
-    if until_stop:
+    started_at = existing.get("started_at") if was_active else now.isoformat(timespec="seconds")
+    if was_active:
+        expires_at = existing.get("expires_at") or ""
+        duration_hours = existing.get("duration_hours") or duration_hours
+        until_stop = bool(existing.get("until_stop"))
+    elif until_stop:
         expires_at = ""
     else:
         expires_at = (now + timedelta(hours=duration_hours)).isoformat(timespec="seconds")
@@ -9114,23 +9156,34 @@ def update_location(data_file, payload, config=None):
         "ended_at": "",
         "until_stop": until_stop,
         "duration_hours": duration_hours,
-        "guardian_line_user_ids": [],
+        "guardian_line_user_ids": list(existing.get("guardian_line_user_ids") or []) if was_active else [],
         "sharing": True,
         "active": True,
         "mode": "safety_guard",
     }
-    # Notify guardians when starting (or restarting) a timed session — not on silent refresh.
-    guardian_notify = notify_safety_guard_started(
-        state,
-        profile,
-        line_user_id,
-        duration_hours,
-        config=config,
-        selected_guardian_ids=selected_guardian_ids,
-    )
-    profile["location"]["guardian_line_user_ids"] = list(
-        guardian_notify.get("selected_target_ids") or []
-    )
+    # 同一個進行中的工作階段只更新位置，不重複計次，也不再次通知守護人。
+    if was_active:
+        guardian_notify = {
+            "sent": 0,
+            "failed": 0,
+            "target_count": len(profile["location"]["guardian_line_user_ids"]),
+            "no_guardians": False,
+            "reason_code": "active_session_updated",
+            "message": "已更新目前位置，本次不重複通知守護人",
+            "selected_target_ids": list(profile["location"]["guardian_line_user_ids"]),
+        }
+    else:
+        guardian_notify = notify_safety_guard_started(
+            state,
+            profile,
+            line_user_id,
+            duration_hours,
+            config=config,
+            selected_guardian_ids=selected_guardian_ids,
+        )
+        profile["location"]["guardian_line_user_ids"] = list(
+            guardian_notify.get("selected_target_ids") or []
+        )
     if not was_active:
         profile["safety_guard_usage_date"] = usage_date
         profile["safety_guard_usage_count"] = usage_count + 1
@@ -10595,7 +10648,7 @@ def trigger_sos(data_file, payload, config=None):
         city = str(location.get("city") or "").strip()
         place = f"（{city}）" if city else ""
         location_text = (
-            f"\n目前位置{place}："
+            f"\n目前位置{place}：\n"
             f"https://www.google.com/maps?q={location['latitude']},{location['longitude']}"
         )
     import uuid
@@ -11485,7 +11538,137 @@ def admin_set_core_guardian(data_file, payload):
     return status, 200
 
 
-def create_support_ticket(data_file, payload):
+def member_refundable_orders(data_file, line_user_id, now=None):
+    """Return only this member's paid, unused orders still inside the 7-day window."""
+    owner_id = str(line_user_id or "").strip()
+    if not owner_id:
+        return {"error": "missing line_user_id"}, 400
+    now = now or current_app_time({})
+    state = load_state(data_file)
+    open_refunds = {
+        str(ticket.get("refund_order_id") or "")
+        for ticket in state.get("support_tickets", [])
+        if ticket.get("request_type") == "refund"
+        and str(ticket.get("line_user_id") or "") == owner_id
+        and str(ticket.get("status") or "").lower() not in {"resolved", "closed", "已結案"}
+    }
+    eligible = []
+    for order in state.get("orders", []):
+        if str(order.get("line_user_id") or "") != owner_id:
+            continue
+        if str(order.get("status") or "").lower() not in {"paid", "partially_refunded"}:
+            continue
+        if order.get("activated_at") or order.get("service_activated_at"):
+            continue
+        paid_at = parse_datetime(str(order.get("paid_at") or order.get("updated_at") or order.get("created_at") or ""))
+        if not paid_at or paid_at > now or now - paid_at > timedelta(days=7):
+            continue
+        order_id = str(order.get("order_id") or "")
+        if not order_id or order_id in open_refunds:
+            continue
+        eligible.append({
+            "order_id": order_id,
+            "plan": order.get("plan"),
+            "amount": order.get("amount"),
+            "currency": order.get("currency") or "TWD",
+            "paid_at": order.get("paid_at"),
+            "refund_deadline": (paid_at + timedelta(days=7)).isoformat(timespec="seconds"),
+        })
+    return {"orders": eligible}, 200
+
+
+def create_member_refund_request(data_file, payload, now=None, config=None):
+    """Create a manual-review refund ticket; this function never refunds money."""
+    owner_id = str(payload.get("line_user_id") or "").strip()
+    order_id = str(payload.get("order_id") or "").strip()
+    email = str(payload.get("email") or "").strip()
+    reason = str(payload.get("reason") or "").strip()
+    if not owner_id or not order_id or not reason:
+        return {"error": "missing_required_fields"}, 400
+    if not payload.get("unused_confirmed"):
+        return {"error": "unused_confirmation_required"}, 400
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return {"error": "valid_email_required"}, 400
+
+    now = now or current_app_time(config or {})
+    eligible, _ = member_refundable_orders(data_file, owner_id, now=now)
+    selected = next((row for row in eligible.get("orders", []) if row.get("order_id") == order_id), None)
+    if not selected:
+        state = load_state(data_file)
+        duplicate = next(
+            (
+                ticket for ticket in state.get("support_tickets", [])
+                if ticket.get("request_type") == "refund"
+                and str(ticket.get("line_user_id") or "") == owner_id
+                and str(ticket.get("refund_order_id") or "") == order_id
+                and str(ticket.get("status") or "").lower() not in {"resolved", "closed", "已結案"}
+            ),
+            None,
+        )
+        if duplicate:
+            return {"error": "refund_request_already_open", "ticket_id": duplicate.get("id")}, 409
+        return {"error": "refund_order_not_eligible"}, 404
+
+    state = load_state(data_file)
+    profile = get_profile(state, owner_id)
+    ticket = {
+        "id": f"AC-{now.strftime('%Y%m%d')}-{secrets.token_hex(3).upper()}",
+        "created_at": now.isoformat(timespec="seconds"),
+        "updated_at": now.isoformat(timespec="seconds"),
+        "line_user_id": owner_id,
+        "display_name": profile.get("display_name") or "LINE 使用者",
+        "email": email,
+        "reply_channel": "email",
+        "category": "會員與付款",
+        "subject": f"退款申請｜{order_id}",
+        "message": reason[:1000],
+        "status": "submitted",
+        "plan": profile.get("plan", "trial"),
+        "last_check_in": profile.get("last_check_in"),
+        "reply": "",
+        "replied_at": "",
+        "delivery_log": [],
+        "request_type": "refund",
+        "refund_order_id": order_id,
+        "refund_amount": selected.get("amount"),
+        "refund_paid_at": selected.get("paid_at"),
+        "refund_unused_confirmed": True,
+        "refund_review": "manual_required",
+    }
+    state.setdefault("support_tickets", []).append(ticket)
+    state["support_tickets"] = state["support_tickets"][-200:]
+    save_state(data_file, state)
+
+    cfg = config or {}
+    sender = cfg.get("SUPPORT_EMAIL_SENDER") or send_support_email
+    admin_email = str(cfg.get("SUPPORT_ADMIN_EMAIL") or os.environ.get("SUPPORT_ADMIN_EMAIL") or "alivecheckin.tw@gmail.com").strip()
+    messages = [
+        (
+            email,
+            f"每日平安已收到退款申請 {ticket['id']}",
+            f"我們已收到你的退款申請。\n工單編號：{ticket['id']}\n訂單編號：{order_id}\n客服會在 1～3 個工作天內以 Email 回覆。\n此信僅代表收件，不代表退款已核准。",
+            "member_confirmation",
+        ),
+        (
+            admin_email,
+            f"新退款申請 {ticket['id']}",
+            f"新退款申請\n工單編號：{ticket['id']}\n訂單編號：{order_id}\n請登入客服後台人工審核。",
+            "admin_notice",
+        ),
+    ]
+    for target, subject, body, kind in messages:
+        delivery = {"channel": "email", "kind": kind, "target": target, "created_at": now.isoformat(timespec="seconds")}
+        try:
+            result = sender(target, subject, body, cfg)
+            delivery.update({"status": "sent", "provider": result.get("provider", "email") if isinstance(result, dict) else "email"})
+        except Exception as exc:
+            delivery.update({"status": "failed", "error": str(exc)[:200]})
+        ticket["delivery_log"].append(delivery)
+    save_state(data_file, state)
+    return {"ticket": ticket, "manual_review": True}, 201
+
+
+def create_support_ticket(data_file, payload, config=None):
     line_user_id = str(payload.get("line_user_id") or "").strip()
     message = str(payload.get("message") or "").strip()
     if not line_user_id or not message:
@@ -11523,6 +11706,24 @@ def create_support_ticket(data_file, payload):
     tickets.append(ticket)
     state["support_tickets"] = tickets[-200:]
     save_state(data_file, state)
+    if config is not None:
+        cfg = config or {}
+        sender = cfg.get("SUPPORT_EMAIL_SENDER") or send_support_email
+        admin_email = str(cfg.get("SUPPORT_ADMIN_EMAIL") or os.environ.get("SUPPORT_ADMIN_EMAIL") or "alivecheckin.tw@gmail.com").strip()
+        notices = [
+            (admin_email, f"新客服工單 {ticket['id']}", f"新客服工單\n工單編號：{ticket['id']}\n問題分類：{ticket['category']}\n建立時間：{ticket['created_at']}\n請登入客服後台查看。", "admin_notice"),
+        ]
+        if email:
+            notices.insert(0, (email, f"每日平安已收到問題 {ticket['id']}", f"我們已收到你的問題。\n工單編號：{ticket['id']}\n問題分類：{ticket['category']}\n客服會在 1～3 個工作天內以 Email 回覆。", "member_confirmation"))
+        for target, subject, body, kind in notices:
+            delivery = {"channel": "email", "kind": kind, "target": target, "created_at": ticket["created_at"]}
+            try:
+                result = sender(target, subject, body, cfg)
+                delivery.update({"status": "sent", "provider": result.get("provider", "email") if isinstance(result, dict) else "email"})
+            except Exception as exc:
+                delivery.update({"status": "failed", "error": str(exc)[:200]})
+            ticket["delivery_log"].append(delivery)
+        save_state(data_file, state)
     return {"ticket": ticket}, 201
 
 
@@ -11621,6 +11822,11 @@ def admin_reply_support_ticket(data_file, payload, config=None):
             return {"error": "invalid reply_channel"}, 400
     except Exception:
         delivery["target"] = str(ticket.get("email") or ticket.get("line_user_id") or "")
+        # 工單維持待處理，讓後台仍能重試；另記錄本次寄送失敗。
+        ticket["status"] = ticket.get("status") or "submitted"
+        ticket["delivery_failed_at"] = now
+        ticket["reply_draft"] = message[:1000]
+        ticket["updated_at"] = now
         ticket.setdefault("delivery_log", []).append(delivery)
         save_state(data_file, state)
         return {"error": "support_delivery_failed", "ticket": ticket}, 502
@@ -11633,6 +11839,7 @@ def admin_reply_support_ticket(data_file, payload, config=None):
     )
     ticket["reply_channel"] = reply_channel
     ticket["reply"] = message[:1000]
+    ticket["reply_draft"] = ""
     ticket["replied_at"] = now
     append_notification_log(state, "support_reply", target, "sent", message, json.dumps(result, ensure_ascii=False))
     save_state(data_file, state)
@@ -14219,6 +14426,25 @@ def admin_summary(data_file, config=None, now=None):
 
     users = []
     invite_edges = []
+    accepted_invites = [
+        row for row in (state.get("guardian_invites") or [])
+        if isinstance(row, dict) and row.get("status") == "accepted"
+    ]
+    invites_by_id = {
+        str(row.get("id") or ""): row for row in accepted_invites if row.get("id")
+    }
+
+    def accepted_invite_for(inviter_id, guardian_id, record=None):
+        record = record or {}
+        invite_id = str(record.get("accepted_invite_id") or record.get("invite_id") or "")
+        if invite_id and invite_id in invites_by_id:
+            return invites_by_id[invite_id]
+        matches = [
+            row for row in accepted_invites
+            if str(row.get("inviter_line_user_id") or "") == str(inviter_id or "")
+            and str(row.get("invitee_line_user_id") or "") == str(guardian_id or "")
+        ]
+        return matches[0] if len(matches) == 1 else None
     for user in state.get("users", {}).values():
         status = build_status(user, state, now=status_now)
         status["is_test_account"] = str(
@@ -14247,6 +14473,9 @@ def admin_summary(data_file, config=None, now=None):
                 continue
             if guardian_id == inviter_id:
                 continue
+            matched_invite = accepted_invite_for(inviter_id, guardian_id, contact)
+            invited_at = str(contact.get("invited_at") or (matched_invite or {}).get("created_at") or "").strip()
+            accepted_at = str(contact.get("accepted_at") or (matched_invite or {}).get("accepted_at") or "").strip()
             invite_edges.append(
                 {
                     "inviter_line_user_id": inviter_id,
@@ -14254,7 +14483,8 @@ def admin_summary(data_file, config=None, now=None):
                     "guardian_line_user_id": guardian_id,
                     "guardian_display_name": contact.get("name") or "",
                     "binding_status": contact.get("binding_status") or "",
-                    "accepted_at": contact.get("accepted_at") or contact.get("updated_at") or "",
+                    "invited_at": invited_at or "舊資料未記錄",
+                    "accepted_at": accepted_at or "舊資料未記錄",
                 }
             )
     users.sort(key=lambda item: (not item["is_overdue"], item.get("display_name") or ""))
@@ -14433,6 +14663,18 @@ def admin_summary(data_file, config=None, now=None):
     line_usage = monthly_line_message_usage(
         state, status_now.strftime("%Y-%m"), quota, status_now
     )
+    contact_rewards = []
+    for reward in reversed(state.get("contact_rewards", [])[-20:]):
+        if not isinstance(reward, dict):
+            continue
+        row = dict(reward)
+        matched_invite = accepted_invite_for(
+            row.get("inviter_line_user_id"), row.get("contact_line_user_id"), row
+        )
+        row["invited_at"] = str(row.get("invited_at") or (matched_invite or {}).get("created_at") or "").strip() or "舊資料未記錄"
+        row["accepted_at"] = str(row.get("accepted_at") or (matched_invite or {}).get("accepted_at") or "").strip() or "舊資料未記錄"
+        contact_rewards.append(row)
+
     return {
         "total_users": len(users),
         "overdue_users": sum(1 for user in users if user["is_overdue"]),
@@ -14453,7 +14695,7 @@ def admin_summary(data_file, config=None, now=None):
         "pending_order_count": sum(1 for order in orders if order.get("status") == "pending"),
         "county_stats": county_stats,
         "users": users,
-        "contact_rewards": list(reversed(state.get("contact_rewards", [])[-20:])),
+        "contact_rewards": contact_rewards,
         "notification_logs": _admin_notification_logs(state, users_by_id),
         "daily_push_member_stats": daily_push_member_stats[:500],
         "line_message_usage": line_usage,
@@ -19002,7 +19244,7 @@ def create_app(config=None):
                 )
                 reply_text = (
                     "你的問題已經記錄下來。\n\n"
-                    "📩 客服會在 1–3 個工作天內透過 LINE 官方帳號回覆。\n\n"
+                    "📩 客服會在 1～3 個工作天內以 Email 回覆。\n\n"
                     f"也可以先看常見問題：{line_liff_url('faq')}\n\n"
                     "若是立即危險，請先撥打 119。"
                 )
@@ -20326,7 +20568,29 @@ def create_app(config=None):
         if err:
             return jsonify(err[0]), err[1]
         payload["line_user_id"] = line_user_id
-        data, code = create_support_ticket(app.config["DATA_FILE"], payload)
+        data, code = create_support_ticket(app.config["DATA_FILE"], payload, app.config)
+        return jsonify(data), code
+
+    @app.get("/api/refund/eligible-orders")
+    def member_refundable_orders_api():
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = member_refundable_orders(
+            app.config["DATA_FILE"], line_user_id, now=current_app_time(app.config)
+        )
+        return jsonify(data), code
+
+    @app.post("/api/refund/requests")
+    def member_refund_request_create_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        payload["line_user_id"] = line_user_id
+        data, code = create_member_refund_request(
+            app.config["DATA_FILE"], payload, now=current_app_time(app.config), config=app.config
+        )
         return jsonify(data), code
 
     @app.get("/api/admin/backups")
@@ -20855,6 +21119,16 @@ class MiniClient:
                 self.app.config["DATA_FILE"], line_user_id
             )
             return MiniResponse(body, code)
+        if route == "/api/refund/eligible-orders":
+            line_user_id, err = authenticated_line_user(
+                {}, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            body, code = member_refundable_orders(
+                self.app.config["DATA_FILE"], line_user_id, now=current_app_time(self.app.config)
+            )
+            return MiniResponse(body, code)
         if route == "/api/admin/backups":
             if not admin_allowed(self.app.config, params.get("password", "")):
                 return MiniResponse({"error": "unauthorized"}, 401)
@@ -21206,7 +21480,18 @@ class MiniClient:
                 return MiniResponse(err[0], err[1])
             payload["line_user_id"] = line_user_id
             body, code = create_support_ticket(
-                self.app.config["DATA_FILE"], payload
+                self.app.config["DATA_FILE"], payload, self.app.config
+            )
+            return MiniResponse(body, code)
+        if route == "/api/refund/requests":
+            line_user_id, err = authenticated_line_user(
+                payload, args=params, headers=headers, config=self.app.config
+            )
+            if err:
+                return MiniResponse(err[0], err[1])
+            payload["line_user_id"] = line_user_id
+            body, code = create_member_refund_request(
+                self.app.config["DATA_FILE"], payload, now=current_app_time(self.app.config), config=self.app.config
             )
             return MiniResponse(body, code)
         return MiniResponse({"error": "not found"}, 404)

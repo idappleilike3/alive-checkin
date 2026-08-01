@@ -3802,7 +3802,8 @@
       padding: 8px 10px;
       cursor: pointer;
     }
-    #memberSupportForm label {
+    #memberSupportForm label,
+    #memberRefundForm label {
       display: grid;
       gap: 6px;
       color: var(--text);
@@ -3811,7 +3812,10 @@
     }
     #memberSupportForm input,
     #memberSupportForm select,
-    #memberSupportForm textarea {
+    #memberSupportForm textarea,
+    #memberRefundForm input,
+    #memberRefundForm select,
+    #memberRefundForm textarea {
       width: 100%;
       min-height: 48px;
       padding: 11px 12px;
@@ -3821,7 +3825,8 @@
       background: var(--input);
       font-size: 16px;
     }
-    #memberSupportForm textarea {
+    #memberSupportForm textarea,
+    #memberRefundForm textarea {
       min-height: 132px;
       line-height: 1.55;
       resize: vertical;
@@ -4524,7 +4529,7 @@
             <span class="member-relation-label">電話備援</span>
             <h3>緊急聯絡人</h3>
             <div class="member-role-bind-intro" id="memberEmergencyBindIntro" aria-label="緊急聯絡人說明">
-              <p><strong>用途</strong>：電話備援，緊急時可手動撥打（不會自動群發簡訊／推播）。</p>
+              <p><strong>用途</strong>：電話備援，緊急時可手動撥打（不會自動群發通知）。</p>
               <p id="memberEmergencyPlanTip"><strong>體驗期建議</strong>：2 位（爸媽，或配偶＋好友）。可先填姓名與電話。</p>
             </div>
             <div class="member-quota-line" id="memberEmergencyQuotaLine">緊急聯絡人 0/2</div>
@@ -4647,9 +4652,22 @@
             <span class="member-subsection-chevron" aria-hidden="true">⌄</span>
           </button>
           <div class="member-collapsible-panel" id="memberSupportPanel" hidden>
-            <p class="helper">請直接寫下想詢問的內容。送出後，客服會在 1–3 個工作天內透過「每日平安」LINE 官方帳號回覆，不會傳到守護群。</p>
+            <p class="helper">請直接寫下想詢問的內容，或寄到 <a href="mailto:alivecheckin.tw@gmail.com">alivecheckin.tw@gmail.com</a>。客服會在 1～3 個工作天內以 Email 回覆，不提供即時聊天。</p>
             <form id="memberSupportForm" style="display:grid;gap:10px;margin-top:12px;">
-              <label>我想詢問
+              <label>Email
+                <input id="memberSupportEmail" type="email" autocomplete="email" required placeholder="name@example.com">
+              </label>
+              <label>問題分類
+                <select id="memberSupportCategory" required>
+                  <option>帳號與登入</option><option>簽到設定</option><option>守護人綁定</option>
+                  <option>未收到通知</option><option>SOS 緊急求助</option><option>定位與隱私</option>
+                  <option>會員與付款</option><option>系統異常</option><option>其他問題</option>
+                </select>
+              </label>
+              <label>問題主旨
+                <input id="memberSupportSubject" maxlength="120" required placeholder="請簡短說明遇到的問題">
+              </label>
+              <label>問題內容
                 <textarea id="memberSupportMessage" maxlength="1000" required rows="6" placeholder="請直接輸入你的問題，例如：我要怎麼修改提醒時間？"></textarea>
               </label>
               <div class="member-advanced-note">
@@ -4658,6 +4676,26 @@
               <button class="action-btn primary" id="memberSupportSubmitBtn" type="submit">送出問題</button>
               <div class="helper" id="memberSupportFeedback" role="status"></div>
             </form>
+            <hr style="border:0;border-top:1px solid var(--line);margin:22px 0;">
+            <h3>退款申請</h3>
+            <p class="helper">付費後 7 日內且尚未啟用服務，可送出退款申請。送出後由客服人工審核，不代表退款已核准。</p>
+            <form id="memberRefundForm" style="display:grid;gap:10px;margin-top:12px;">
+              <label>可申請的訂單
+                <select id="memberRefundOrder" required><option value="">正在檢查訂單</option></select>
+              </label>
+              <label>聯絡 Email
+                <input id="memberRefundEmail" type="email" autocomplete="email" required placeholder="name@example.com">
+              </label>
+              <label>退款原因
+                <textarea id="memberRefundReason" maxlength="1000" required rows="4" placeholder="請告訴我們申請退款的原因"></textarea>
+              </label>
+              <label style="display:flex;grid-template-columns:auto 1fr;align-items:flex-start;gap:10px;">
+                <input id="memberRefundUnused" type="checkbox" required style="width:22px;min-height:22px;margin-top:2px;">
+                <span>我確認這筆訂單尚未啟用服務，並同意由客服人工審核。</span>
+              </label>
+              <button class="action-btn" id="memberRefundSubmitBtn" type="submit">送出退款申請</button>
+              <div class="helper" id="memberRefundFeedback" role="status"></div>
+            </form>
             <h3 style="margin-top:20px;">我的客服紀錄</h3>
             <div class="member-data-list" id="memberSupportList">
               <div class="member-data-row"><span>客服紀錄</span><strong>載入中</strong></div>
@@ -4665,10 +4703,6 @@
           </div>
         </div>
 
-        <div class="member-data-section">
-          <h3>隱私權申請</h3>
-          <div class="helper">需要查詢、更正、匯出、解除守護關係或刪除帳號時，請寄信至 <a href="mailto:alivecheckin.tw@gmail.com">alivecheckin.tw@gmail.com</a>。客服完成 LINE 身分確認後才會處理，避免他人冒用你的帳號。</div>
-        </div>
       </div>
     </section>
 
@@ -4798,6 +4832,7 @@
         <div class="settings-title">開啟安全守護</div>
         <p class="helper">開始前請先選擇時長。安全守護開啟後，只要 LINE 頁面保持開啟，位置會自動持續更新；鎖屏或切到背景後不保證更新。</p>
         <div class="safety-guard-status" id="safetyGuardStatus" data-active="false">目前未開啟安全守護</div>
+        <p class="helper" id="safetyGuardQuota">今日使用次數載入中</p>
         <div class="mvp-guard-feedback" id="safetyGuardFeedback" role="status" aria-live="polite" hidden></div>
         <div class="safety-guard-duration" id="safetyGuardDuration" role="radiogroup" aria-label="安全守護時段">
           <label hidden><input type="radio" name="safetyGuardDuration" value="0.25"> 15 分鐘</label>
@@ -4952,7 +4987,7 @@
           <span>每年重複</span>
         </label>
       </div>
-      <div class="helper" style="margin-top:6px;"><strong>純文字備忘只儲存，不會推播 LINE。</strong>到設定日期與時間後，進入「每日平安」網頁時提醒一次；未設定時間就只儲存文字。</div>
+      <div class="helper" style="margin-top:6px;"><strong>純文字備忘只儲存，不會推播 LINE。</strong>設定日期與時間後，進入「每日平安」網頁時提醒一次；未登入或關閉網頁時不會主動送達。</div>
       <a class="google-calendar-link" id="googleCalendarLink" href="#" target="_blank" rel="noopener">加入 Google 日曆</a>
       <div class="actions">
         <button class="action-btn" id="deleteCalendarNoteBtn" type="button">清除記事</button>
@@ -6039,6 +6074,33 @@
       return data;
     }
 
+    async function apiGetRefundableOrders() {
+      const res = await fetch(
+        await withAuthQuery(`/api/refund/eligible-orders?line_user_id=${encodeURIComponent(lineUserId)}`),
+        { headers: await authHeaders() }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "refund orders failed");
+      return data;
+    }
+
+    async function apiCreateRefundRequest(payload) {
+      const res = await fetch("/api/refund/requests", {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ ...payload, line_user_id: lineUserId })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const error = new Error(data.error || "refund request failed");
+        error.code = data.error || "";
+        error.ticketId = data.ticket_id || "";
+        throw error;
+      }
+      await Promise.all([loadMemberSupportTickets(), loadRefundableOrders()]);
+      return data;
+    }
+
     function renderMemberSupportTickets(tickets) {
       const list = document.getElementById("memberSupportList");
       if (!list) return;
@@ -6071,28 +6133,82 @@
       }
     }
 
+    async function loadRefundableOrders() {
+      const select = $("memberRefundOrder");
+      const button = $("memberRefundSubmitBtn");
+      if (!select || !lineUserId) return;
+      try {
+        const data = await apiGetRefundableOrders();
+        const orders = data.orders || [];
+        select.innerHTML = orders.length
+          ? `<option value="">請選擇訂單</option>${orders.map((order) => `<option value="${escapeHtml(order.order_id || "")}">${escapeHtml(order.order_id || "")}｜NT$${escapeHtml(String(order.amount || 0))}｜付款日 ${escapeHtml(String(order.paid_at || "").slice(0, 10))}</option>`).join("")}`
+          : '<option value="">目前沒有符合申請條件的訂單</option>';
+        if (button) button.disabled = !orders.length;
+      } catch (_error) {
+        select.innerHTML = '<option value="">訂單暫時無法載入</option>';
+        if (button) button.disabled = true;
+      }
+    }
+
     async function submitMemberSupportTicket(event) {
       event.preventDefault();
       const feedback = $("memberSupportFeedback");
       const button = $("memberSupportSubmitBtn");
       const message = $("memberSupportMessage").value.trim();
-      if (!message) {
-        feedback.textContent = "請先輸入想詢問的問題";
+      const email = $("memberSupportEmail").value.trim();
+      const category = $("memberSupportCategory").value;
+      const subject = $("memberSupportSubject").value.trim();
+      if (!message || !email || !subject) {
+        feedback.textContent = "請完整填寫 Email、主旨與問題內容";
         return;
       }
       button.disabled = true;
       feedback.textContent = "正在送出";
       try {
         const data = await apiCreateSupportTicket({
-          category: "一般詢問",
-          subject: message.slice(0, 60),
+          category,
+          subject,
           message,
-          reply_channel: "line"
+          email,
+          reply_channel: "email"
         });
-        feedback.textContent = `已收到你的問題（編號：${data.ticket.id}），客服會在 1–3 個工作天內透過 LINE 官方帳號回覆。`;
+        feedback.textContent = `已收到你的問題（編號：${data.ticket.id}），客服會在 1～3 個工作天內以 Email 回覆。`;
         $("memberSupportMessage").value = "";
+        $("memberSupportSubject").value = "";
       } catch (_error) {
         feedback.textContent = "送出失敗，請稍後再試";
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function submitMemberRefundRequest(event) {
+      event.preventDefault();
+      const feedback = $("memberRefundFeedback");
+      const button = $("memberRefundSubmitBtn");
+      const orderId = $("memberRefundOrder").value;
+      const email = $("memberRefundEmail").value.trim();
+      const reason = $("memberRefundReason").value.trim();
+      if (!orderId || !email || !reason || !$("memberRefundUnused").checked) {
+        feedback.textContent = "請選擇訂單、填寫 Email 與原因，並勾選未啟用確認";
+        return;
+      }
+      button.disabled = true;
+      feedback.textContent = "正在送出退款申請";
+      try {
+        const data = await apiCreateRefundRequest({
+          order_id: orderId,
+          email,
+          reason,
+          unused_confirmed: true
+        });
+        feedback.textContent = `已收到退款申請（工單：${data.ticket.id}），客服會在 1～3 個工作天內以 Email 回覆。`;
+        $("memberRefundReason").value = "";
+        $("memberRefundUnused").checked = false;
+      } catch (error) {
+        feedback.textContent = error.code === "refund_request_already_open"
+          ? `這筆訂單已有待處理申請${error.ticketId ? `（工單：${error.ticketId}）` : ""}`
+          : "送出失敗，請確認訂單資格或稍後再試";
       } finally {
         button.disabled = false;
       }
@@ -7551,6 +7667,9 @@
       $("memberUpgradeBtn").hidden = isPaid;
       renderSosAccess();
       loadMemberSupportTickets().catch(() => {});
+      loadRefundableOrders().catch(() => {});
+      if ($("memberSupportEmail") && !$("memberSupportEmail").value) $("memberSupportEmail").value = status.contact_email || "";
+      if ($("memberRefundEmail") && !$("memberRefundEmail").value) $("memberRefundEmail").value = status.contact_email || "";
       const guardianGroupIds = status.guardian_group_ids || [];
       const guardianGroups = status.guardian_groups || [];
       const groupById = Object.fromEntries(guardianGroups.map((group) => [group.group_id, group]));
@@ -8661,7 +8780,7 @@
       const host = mvpPanel && !mvpPanel.hidden
         ? document.getElementById("mvpSafetyGuardTargets")
         : document.getElementById("safetyGuardTargets");
-      return (host || document).querySelector('input[name="safetyGuardTargetMode"]:checked')?.value || "all";
+      return (host || document).querySelector('input[name="safetyGuardTargetMode"]:checked')?.value || "";
     }
 
     function selectedSafetyGuardGuardianIds() {
@@ -8681,23 +8800,35 @@
 
     function renderSafetyGuardTargetPickers() {
       const contacts = safetyGuardTargetCandidates();
-      const choices = contacts.map((contact, index) => {
+      const choices = contacts.map((contact) => {
         const lineId = contactPeerLineId(contact);
         const name = contactPeerDisplayName(contact);
-        return `<label class="guardian-target-choice"><input type="checkbox" name="safetyGuardGuardian" value="${escapeHtml(lineId)}" ${index === 0 ? "checked" : ""}> ${escapeHtml(name)}</label>`;
+        return `<label class="guardian-target-choice"><input type="checkbox" name="safetyGuardGuardian" value="${escapeHtml(lineId)}"> ${escapeHtml(name)}</label>`;
       }).join("");
       const html = `
         <div class="settings-title">分享給誰</div>
         <div role="radiogroup" aria-label="核心守護人選擇方式">
           <label><input type="radio" name="safetyGuardTargetMode" value="one"> 指定 1 位核心守護人</label>
           <label><input type="radio" name="safetyGuardTargetMode" value="many"> 勾選多位核心守護人</label>
-          <label><input type="radio" name="safetyGuardTargetMode" value="all" checked> 全部核心守護人</label>
+          <label><input type="radio" name="safetyGuardTargetMode" value="all"> 全部核心守護人</label>
         </div>
         <div class="guardian-target-list">${choices || '<span class="helper">尚未綁定核心守護人</span>'}</div>`;
       ["mvpSafetyGuardTargets", "safetyGuardTargets"].forEach((id) => {
         const host = document.getElementById(id);
         if (host) host.innerHTML = html;
       });
+    }
+
+    function confirmSafetyGuardShare(guardianLineUserIds, duration) {
+      const chosen = new Set(guardianLineUserIds || []);
+      const names = safetyGuardTargetCandidates()
+        .filter((contact) => chosen.has(contactPeerLineId(contact)))
+        .map(contactPeerDisplayName)
+        .filter(Boolean);
+      const targetText = names.length ? names.join("、") : `${chosen.size} 位核心守護人`;
+      return window.confirm(
+        `確認開啟安全守護（${safetyGuardDurationLabel(duration)}）？\n\n這次會分享目前位置並通知：${targetText}`
+      );
     }
 
     function selectedSosGuardianIds() {
@@ -8851,6 +8982,7 @@
       const mvpStart = $("mvpGuardStartBtn");
       const mvpStop = $("mvpGuardStopBtn");
       const cardTitle = document.querySelector("#safetyGuardCard > .settings-title");
+      const quotaEl = $("safetyGuardQuota");
       if (statusEl) {
         statusEl.dataset.active = active ? "true" : "false";
         statusEl.textContent = formatSafetyGuardStatus(guard);
@@ -8863,6 +8995,14 @@
       if (mvpStart) mvpStart.hidden = active;
       if (mvpStop) mvpStop.hidden = !active;
       if (cardTitle) cardTitle.textContent = active ? "安全守護進行中" : "開啟安全守護";
+      if (quotaEl) {
+        const limit = Number(guard && guard.daily_limit) || 0;
+        const used = Math.max(0, Number(guard && guard.daily_used) || 0);
+        const remaining = Math.max(0, Number(guard && guard.daily_remaining) || 0);
+        quotaEl.textContent = limit > 0
+          ? `今日已使用 ${used} 次，剩餘 ${remaining} 次（每日上限 ${limit} 次）`
+          : "目前方案未開放安全守護定位";
+      }
       if (active && guard && guard.duration_hours) {
         safetyGuardDurationInputs().forEach((input) => {
           if (String(input.value) === String(guard.duration_hours) && !input.disabled) {
@@ -9087,6 +9227,9 @@
       const failed = Number(notify.failed) || 0;
       const targets = Number(notify.target_count);
       const serverMsg = String(notify.message || "").trim();
+      if (notify.reason_code === "active_session_updated") {
+        return `安全守護仍在進行中${place}。\n已更新目前位置，本次不重複計次或通知守護人。`;
+      }
       if (notify.no_guardians || notify.reason_code === "emergency_only" || notify.reason_code === "no_guardians") {
         return `${base}\n已通知 0 位守護人。${serverMsg || "尚未綁定可通知的守護人，請先一鍵邀請。"}`;
       }
@@ -9281,6 +9424,7 @@
         setBusy(true, "正在取得定位…");
         const guardianLineUserIds = selectedSafetyGuardGuardianIds();
         if (!guardianLineUserIds.length) throw new Error("請至少選擇 1 位核心守護人。");
+        if (!confirmSafetyGuardShare(guardianLineUserIds, duration)) return false;
         setSafetyGuardFeedback(`正在開啟安全守護（${safetyGuardDurationLabel(duration)}）…請允許位置權限`, "info");
         const position = await getCurrentPositionPromise({ timeout: 12000, maximumAge: 60000 }, 15000);
         setBusy(true, "開啟中…");
@@ -12455,6 +12599,8 @@
     if (saveDailyReminderBtn) saveDailyReminderBtn.addEventListener("click", saveMemberDailyReminder);
     const memberSupportForm = $("memberSupportForm");
     if (memberSupportForm) memberSupportForm.addEventListener("submit", submitMemberSupportTicket);
+    const memberRefundForm = $("memberRefundForm");
+    if (memberRefundForm) memberRefundForm.addEventListener("submit", submitMemberRefundRequest);
     const smartReminderCategory = $("smartReminderCategory");
     if (smartReminderCategory) {
       smartReminderCategory.addEventListener("change", () => {

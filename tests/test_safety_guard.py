@@ -331,6 +331,50 @@ class SafetyGuardTests(unittest.TestCase):
                 )
                 self.assertEqual(denied.get("daily_limit"), daily_limit)
 
+    def test_active_session_update_does_not_count_or_notify_again(self):
+        sent = []
+
+        def fake_sender(_token, target, _message):
+            sent.append(target)
+            return {"ok": True}
+
+        fixed_now = datetime(2026, 8, 1, 23, 55)
+        state = alive_app.load_state(self.data_file)
+        owner = alive_app.get_profile(state, "U-active")
+        owner["plan"] = "paid_399"
+        _add_bound_guardian(owner, "U-family")
+        alive_app.save_state(self.data_file, state)
+        config = {"CRON_NOW": fixed_now, "LINE_CHANNEL_ACCESS_TOKEN": "token", "LINE_PUSH_SENDER": fake_sender}
+
+        first, first_code = alive_app.update_location(
+            self.data_file,
+            {"line_user_id": "U-active", "latitude": 25.0, "longitude": 121.5, "duration": 1},
+            config,
+        )
+        second, second_code = alive_app.update_location(
+            self.data_file,
+            {"line_user_id": "U-active", "latitude": 25.01, "longitude": 121.51, "duration": 1},
+            config,
+        )
+        self.assertEqual((first_code, second_code), (200, 200))
+        self.assertEqual(sent, ["U-family"])
+        self.assertEqual(first["safety_guard"]["daily_used"], 1)
+        self.assertEqual(second["safety_guard"]["daily_used"], 1)
+        self.assertEqual(second["safety_guard"]["daily_remaining"], 2)
+        self.assertEqual(second["guardian_notify"]["reason_code"], "active_session_updated")
+
+    def test_snapshot_resets_daily_quota_by_taipei_calendar_day(self):
+        profile = {
+            **alive_app.DEFAULT_PROFILE,
+            "plan": "paid_799",
+            "safety_guard_usage_date": "2026-07-31",
+            "safety_guard_usage_count": 5,
+        }
+        snap = alive_app.safety_guard_snapshot(profile, datetime(2026, 8, 1, 0, 5))
+        self.assertEqual(snap["daily_limit"], 5)
+        self.assertEqual(snap["daily_used"], 0)
+        self.assertEqual(snap["daily_remaining"], 5)
+
     def test_expired_trial_cannot_start_safety_guard(self):
         state = alive_app.load_state(self.data_file)
         owner = alive_app.get_profile(state, "u_expired_trial")
