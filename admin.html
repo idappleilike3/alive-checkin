@@ -1320,7 +1320,7 @@
               ).join("")}
             </select>
             <button type="button" class="beta-cohort-save" data-line-user-id="${escapeHtml(row.line_user_id)}" ${row.revoked ? "disabled" : ""}>儲存封測組別</button>
-            <button type="button" class="secondary beta-revoke" data-line-user-id="${escapeHtml(row.line_user_id)}" ${row.revoked ? "disabled" : ""}>移除</button>
+            <button type="button" class="secondary beta-revoke" data-line-user-id="${escapeHtml(row.line_user_id)}" ${row.revoked ? "disabled" : ""}>只移除封測資格（保留帳號與守護關係）</button>
             <small id="beta-row-status-${escapeHtml(row.line_user_id)}" role="status" aria-live="polite"></small>
           </td>
         </tr>
@@ -1433,6 +1433,7 @@
     }
 
     async function revokeBetaMember(lineUserId) {
+      if (!window.confirm("這只會移除 21 天封測資格。這不會刪除會員帳號、簽到或守護關係。確定繼續嗎？")) return;
       const response = await adminFetch(`/api/admin/beta-members/${encodeURIComponent(lineUserId)}`, { method: "DELETE" });
       const data = await response.json().catch(() => ({}));
       $("betaStatus").textContent = response.ok ? "已移除封測資格，會員資料與守護關係仍保留。" : authErrorText(data, response.status);

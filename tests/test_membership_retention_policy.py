@@ -188,6 +188,8 @@ class MembershipRetentionPolicyTests(unittest.TestCase):
             "users": {
                 "U-owner": {
                     "line_user_id": "U-owner",
+                    "guarding_for": ["U-guardian"],
+                    "guarding_details": [{"line_user_id": "U-guardian"}],
                     "contacts": [{
                         "line_user_id": "U-guardian",
                         "binding_status": "accepted",
@@ -195,6 +197,8 @@ class MembershipRetentionPolicyTests(unittest.TestCase):
                 },
                 "U-guardian": {
                     "line_user_id": "U-guardian",
+                    "guarding_for": ["U-owner"],
+                    "guarding_details": [{"line_user_id": "U-owner"}],
                     "contacts": [{
                         "line_user_id": "U-owner",
                         "binding_status": "accepted",
@@ -214,6 +218,10 @@ class MembershipRetentionPolicyTests(unittest.TestCase):
         self.assertTrue(second["idempotent"])
         self.assertEqual(state["users"]["U-owner"]["contacts"], [])
         self.assertEqual(state["users"]["U-guardian"]["contacts"], [])
+        self.assertEqual(state["users"]["U-owner"]["guarding_for"], [])
+        self.assertEqual(state["users"]["U-owner"]["guarding_details"], [])
+        self.assertEqual(state["users"]["U-guardian"]["guarding_for"], [])
+        self.assertEqual(state["users"]["U-guardian"]["guarding_details"], [])
         self.assertEqual(len(state["privacy_requests"]), 1)
 
     def test_privacy_unlink_preserves_separate_emergency_contact(self):

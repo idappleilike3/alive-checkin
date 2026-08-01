@@ -1242,6 +1242,25 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(contact.get("contact_role"), "guardian")
         self.assertEqual(contact.get("relationship"), "守護人")
 
+    def test_status_hides_orphan_guarding_detail_after_relationship_removed(self):
+        state = app_module.load_state(self.data_file)
+        owner = app_module.get_profile(state, "U-owner")
+        guardian = app_module.get_profile(state, "U-guardian")
+        owner["contacts"] = []
+        guardian["guarding_for"] = ["U-owner"]
+        guardian["guarding_details"] = [
+            {
+                "line_user_id": "U-owner",
+                "display_name": "JENNIE",
+                "accepted_at": "2026-07-31T10:00:00",
+            }
+        ]
+
+        status = app_module.build_status(guardian, state)
+
+        self.assertEqual(status["guarding_details"], [])
+        self.assertEqual(status["guarding_for"], [])
+
 
     def test_duplicate_bind_returns_already_bound_not_limit_error(self):
         pushed = []
