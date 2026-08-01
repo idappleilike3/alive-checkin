@@ -5396,7 +5396,10 @@
       };
       if (publicOpenPages[action]) {
         const section = sectionAction ? `#${encodeURIComponent(sectionAction)}` : "";
-        location.replace(publicOpenPages[action] + section);
+        const expirySource = action === "pricing" && getAppParam("from") === "expiry_reminder"
+          ? "?from=expiry_reminder"
+          : "";
+        location.replace(publicOpenPages[action] + expirySource + section);
         return { handled: true, redirected: true };
       }
       if (action === "sos") {

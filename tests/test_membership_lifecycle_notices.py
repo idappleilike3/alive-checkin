@@ -24,11 +24,59 @@ class MembershipLifecycleNoticeTests(unittest.TestCase):
         buttons = flex["contents"]["footer"]["contents"]
         labels = [button["action"]["label"] for button in buttons]
 
-        self.assertEqual(
-            labels,
-            ["升級方案", "不再提醒"],
-        )
+        self.assertEqual(labels, ["繼續安心守護", "不再提醒"])
         self.assertNotIn("查看方案", str(flex))
+
+    def test_expiry_flex_personalizes_warm_card_and_keeps_two_clear_actions(self):
+        flex = app_module.build_expiry_remind_flex(
+            {
+                "display_name": "Jennie",
+                "plan": "paid_399_year",
+                "membership_source": "paid",
+                "paid_until": (
+                    self.now + timedelta(days=7)
+                ).isoformat(timespec="seconds"),
+            },
+            now=self.now,
+        )
+
+        serialized = str(flex)
+        self.assertIn("Jennie，謝謝您這段時間的支持", serialized)
+        self.assertIn("399 安心版(年)", serialized)
+        self.assertIn("歡迎分享使用感受與建議", serialized)
+        self.assertIn("8 天", serialized)
+        footer = flex["contents"]["footer"]["contents"]
+        self.assertEqual(footer[0]["action"]["label"], "繼續安心守護")
+        self.assertIn("from=expiry_reminder", footer[0]["action"]["uri"])
+        self.assertEqual(footer[1]["action"]["label"], "不再提醒")
+
+    def test_expiry_flex_uses_safe_greeting_when_nickname_is_placeholder(self):
+        flex = app_module.build_expiry_remind_flex(
+            {
+                "display_name": "LINE 使用者",
+                "plan": "trial",
+                "trial_started_at": "2026-07-20T10:00:00",
+            },
+            now=self.now,
+        )
+
+        serialized = str(flex)
+        self.assertIn("您好，謝謝您這段時間的支持", serialized)
+        self.assertNotIn("LINE 使用者，", serialized)
+
+    def test_expiry_opt_out_reply_is_warm_and_reversible(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_file = Path(temp_dir) / "state.json"
+            app_module.save_state(
+                data_file,
+                {"users": {"U-owner": {"line_user_id": "U-owner"}}},
+            )
+
+            reply = app_module.handle_expiry_opt_out_postback(data_file, "U-owner")
+
+            self.assertIn("謝謝您告訴我們", reply)
+            self.assertIn("不會再提醒方案到期", reply)
+            self.assertIn("隨時回來", reply)
 
     def test_trial_beta_and_paid_notice_schedules(self):
         self.assertEqual(
@@ -121,12 +169,12 @@ class MembershipLifecycleNoticeTests(unittest.TestCase):
         self.assertNotIn("7 天考慮期", str(trial_flex))
         self.assertEqual(
             trial_flex["contents"]["footer"]["contents"][0]["action"]["label"],
-            "升級方案",
+            "繼續安心守護",
         )
         self.assertIn("將在 8 天後到期", str(paid_flex))
         self.assertEqual(
             paid_flex["contents"]["footer"]["contents"][0]["action"]["label"],
-            "續訂方案",
+            "繼續安心守護",
         )
 
     def test_countdown_copy_for_three_one_and_zero_days_left(self):
@@ -210,7 +258,7 @@ class MembershipLifecycleNoticeTests(unittest.TestCase):
             self.assertEqual(second["sent"], 0)
             self.assertEqual(len(sent), 1)
             self.assertEqual(sent[0][1]["type"], "flex")
-            self.assertIn("續訂方案", str(sent[0][1]))
+            self.assertIn("繼續安心守護", str(sent[0][1]))
 
 
 if __name__ == "__main__":

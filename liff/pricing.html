@@ -38,6 +38,47 @@
   .logo { font-size: 42px; }
   h1 { margin: 8px 0 6px; font-size: 26px; }
   .header p { margin: 0; color: var(--muted); }
+  .expiry-welcome {
+    display: none;
+    grid-template-columns: auto 1fr;
+    gap: 12px;
+    align-items: center;
+    margin: 0 0 18px;
+    padding: 15px 16px;
+    border: 1px solid rgba(46, 204, 113, 0.65);
+    border-radius: 18px;
+    background: linear-gradient(135deg, rgba(46, 204, 113, 0.2), rgba(15, 118, 110, 0.18));
+    box-shadow: 0 16px 40px rgba(5, 150, 105, 0.16);
+  }
+  .expiry-welcome.is-visible { display: grid; animation: expiryWelcomeIn 680ms cubic-bezier(.2,.8,.2,1) both; }
+  .expiry-welcome-heart { font-size: 34px; animation: expiryHeartBeat 1.5s ease-in-out 2; transform-origin: center; }
+  .expiry-welcome strong { display: block; color: #dcfce7; font-size: 17px; }
+  .expiry-welcome span { display: block; margin-top: 3px; color: #cbd5e1; line-height: 1.55; }
+  body.expiry-entry .plan-card { animation: expiryCardGlow 760ms ease-out both; }
+  body.expiry-entry .plan-card:nth-child(2) { animation-delay: 70ms; }
+  body.expiry-entry .plan-card:nth-child(3) { animation-delay: 120ms; }
+  body.expiry-entry .plan-card:nth-child(4) { animation-delay: 170ms; }
+  body.expiry-entry .plan-card:nth-child(5) { animation-delay: 220ms; }
+  body.expiry-entry .plan-card:nth-child(6) { animation-delay: 270ms; }
+  body.expiry-entry .plan-card:nth-child(7) { animation-delay: 320ms; }
+  @keyframes expiryWelcomeIn {
+    from { opacity: 0; transform: translateY(-10px) scale(.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes expiryHeartBeat {
+    0%, 100% { transform: scale(1); }
+    35% { transform: scale(1.16); }
+    60% { transform: scale(.96); }
+  }
+  @keyframes expiryCardGlow {
+    from { opacity: .55; transform: translateY(10px); box-shadow: 0 0 0 rgba(46,204,113,0); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .expiry-welcome.is-visible,
+    .expiry-welcome-heart,
+    body.expiry-entry .plan-card { animation: none; }
+  }
   .trial-callout {
     display: grid;
     grid-template-columns: auto 1fr;
@@ -219,6 +260,14 @@
     <p>陪您守護家人，也守護自己</p>
   </header>
 
+  <aside class="expiry-welcome" id="expiryWelcome" role="status" aria-live="polite">
+    <div class="expiry-welcome-heart" aria-hidden="true">💛</div>
+    <div>
+      <strong>歡迎回來，方案內容都為您保留好了</strong>
+      <span>慢慢比較就好，點選方案前不會直接扣款。</span>
+    </div>
+  </aside>
+
   <section class="trial-callout" aria-labelledby="trialCalloutTitle">
     <div class="trial-callout-icon" aria-hidden="true">🎁</div>
     <div>
@@ -398,6 +447,12 @@
 </div>
 
 <script>
+  var expiryEntry = new URLSearchParams(window.location.search).get('from') === 'expiry_reminder';
+  if (expiryEntry) {
+    document.body.classList.add('expiry-entry');
+    document.getElementById('expiryWelcome').classList.add('is-visible');
+  }
+
   var liffIdPromise = fetch('/api/config').then(function(r) {
     if (!r.ok) throw new Error('config failed: ' + r.status);
     return r.json();
