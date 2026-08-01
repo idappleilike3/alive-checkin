@@ -500,6 +500,7 @@ class CalendarNotesTests(unittest.TestCase):
         self.assertIn('id="calendarNoteWebReminderTime" type="time"', page)
         self.assertIn('id="calendarNoteWebReminderYearly" type="checkbox"', page)
         self.assertIn("進入「每日平安」網頁時提醒一次", page)
+        self.assertIn("未登入或關閉網頁時不會主動送達", page)
         self.assertIn("checkDueWebCalendarNotes", page)
 
     def test_saved_web_reminders_have_an_explicit_edit_entry(self):

@@ -60,6 +60,19 @@ class ReminderTimesTests(unittest.TestCase):
             ["12:00", "18:00"],
         )
 
+    def test_799_defaults_to_two_reminders_but_allows_three(self):
+        for plan in ("paid_799", "paid_799_year"):
+            with self.subTest(plan=plan):
+                rules = alive_app.plan_rules({"plan": plan})
+                self.assertEqual(rules["daily_reminders"], 3)
+                self.assertEqual(rules["default_daily_reminders"], 2)
+                self.assertEqual(alive_app.default_daily_reminder_count({"plan": plan}), 2)
+                self.assertEqual(alive_app.reminder_times_for_profile({"plan": plan}), ["12:00", "18:00"])
+
+    def test_799_keeps_three_saved_custom_times(self):
+        profile = {"plan": "paid_799", "reminder_times": ["08:00", "13:00", "20:30"]}
+        self.assertEqual(alive_app.reminder_times_for_profile(profile), ["08:00", "13:00", "20:30"])
+
     def test_profile_keeps_custom_times_within_limit(self):
         profile = {"plan": "paid_799", "reminder_times": ["10:30", "15:00", "21:15", "23:00"]}
         self.assertEqual(alive_app.reminder_times_for_profile(profile), ["10:30", "15:00", "21:15"])

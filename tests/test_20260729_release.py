@@ -439,11 +439,11 @@ class Release20260729Tests(unittest.TestCase):
         self.assertIn('card.hidden = !enabled || location.hash !== "#history";', index)
         self.assertIn("799 守護版可點日期新增、查看或修改備忘提醒", index)
         self.assertNotIn("LINE 私訊（主動推播，計入訊息量）", admin)
-        self.assertIn("LINE Official Account Manager", admin)
-        self.assertIn("1–3 個工作天內", index)
+        self.assertNotIn("LINE Official Account Manager", admin)
+        self.assertIn("1～3 個工作天內", index)
         self.assertIn("常見問題與解答", index)
-        self.assertNotIn('id="memberSupportCategory"', index)
-        self.assertNotIn('id="memberSupportEmail"', index)
+        self.assertIn('id="memberSupportCategory"', index)
+        self.assertIn('id="memberSupportEmail"', index)
         self.assertNotIn('id="memberSupportReplyChannel"', index)
 
 

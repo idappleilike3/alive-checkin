@@ -1130,7 +1130,7 @@
 
     <section class="panel section-heading" id="support" data-admin-page="support" style="margin-top: 16px;">
       <h2 style="margin: 0 0 8px;">客服訊息</h2>
-      <p class="note">使用者的自由提問會出現在這裡。請到 LINE Official Account Manager 的聊天室人工回覆；網站後台不再提供 LINE 私訊推播，避免占用主動推播額度。</p>
+      <p class="note">客服採非即時人工回覆。請在工單下方輸入內容，確認後系統會寄到會員 Email，預計 1～3 個工作天內處理。</p>
       <div class="support-list" id="supportList">
         <div class="support-item">尚未載入客服訊息</div>
       </div>
@@ -2600,11 +2600,13 @@
           <div class="reward-item">
             <div>
               <strong>邀請人</strong><br>
-              <small>${reward.inviter_display_name || ""} ${reward.inviter_line_user_id || "-"}</small>
+              <small>${reward.inviter_display_name || ""} ${reward.inviter_line_user_id || "-"}</small><br>
+              <small>邀請日期：${reward.invited_at || "舊資料未記錄"}</small>
             </div>
             <div>
               <strong>綁定聯絡人</strong><br>
-              <small>${reward.contact_display_name || ""} ${reward.contact_line_user_id || "-"}</small>
+              <small>${reward.contact_display_name || ""} ${reward.contact_line_user_id || "-"}</small><br>
+              <small>審核日期：${reward.accepted_at || "舊資料未記錄"}</small>
             </div>
             <span class="badge ok">${reward.status || "available"}</span>
           </div>
@@ -2616,11 +2618,13 @@
             <div class="reward-item">
               <div>
                 <strong>邀請人（被守護）</strong><br>
-                <small>${edge.inviter_display_name || ""} ${edge.inviter_line_user_id || "-"}</small>
+                <small>${edge.inviter_display_name || ""} ${edge.inviter_line_user_id || "-"}</small><br>
+                <small>邀請日期：${edge.invited_at || "舊資料未記錄"}</small>
               </div>
               <div>
                 <strong>守護人（LINE 已綁）</strong><br>
-                <small>${edge.guardian_display_name || ""} ${edge.guardian_line_user_id || "-"}</small>
+                <small>${edge.guardian_display_name || ""} ${edge.guardian_line_user_id || "-"}</small><br>
+                <small>審核日期：${edge.accepted_at || "舊資料未記錄"}</small>
               </div>
               <span class="badge ${edge.binding_status === "accepted" ? "ok" : "warn"}">${edge.binding_status || "-"}</span>
             </div>
@@ -2641,10 +2645,14 @@
             </div>
             <div>${ticket.category || "其他"}｜${ticket.subject || "客服工單"}</div>
             <div>${ticket.message || ""}</div>
+            ${ticket.request_type === "refund" ? `<div class="support-meta"><strong>退款申請</strong><span>訂單：${ticket.refund_order_id || "-"}</span><span>金額：NT$${ticket.refund_amount || 0}</span><span>僅供人工審核，不會自動退款</span></div>` : ""}
             ${ticket.reply ? `<small>已回覆：${ticket.reply}</small>` : ""}
-            <div class="support-meta" style="margin-top:8px;">
-              <span>請至 LINE Official Account Manager 聊天室回覆</span>
-              <span>預計 1–3 個工作天內處理</span>
+            <label style="display:grid;gap:6px;margin-top:10px;">Email 回覆內容
+              <textarea id="supportReply-${ticket.id}" rows="4" placeholder="輸入回覆內容；送出前請再次確認">${escapeHtml(ticket.reply_draft || "")}</textarea>
+            </label>
+            <div class="toolbar">
+              <button type="button" onclick="replySupportTicket('${ticket.id}')">確認並寄出 Email</button>
+              <span>${ticket.email || "此工單沒有 Email"}</span>
             </div>
           </div>
         `).join("")
@@ -2655,6 +2663,25 @@
       await loadTestCenter();
       if (getAdminPage() === "push-management") await loadPushManagement();
       setAuthStatus(`資料已載入（已綁守護人 ${data.bound_guardian_total || 0}、邀請關係 ${(data.invite_edges || []).length}）。`, "is-ok");
+    }
+
+    async function replySupportTicket(ticketId) {
+      const field = document.getElementById(`supportReply-${ticketId}`);
+      const message = field ? field.value.trim() : "";
+      if (!message) {
+        $("message").textContent = "請先輸入客服回覆內容。";
+        return;
+      }
+      const res = await adminFetch("/api/admin/support-reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticket_id: ticketId, message, reply_channel: "email" })
+      });
+      const data = await res.json().catch(() => ({}));
+      $("message").textContent = res.ok
+        ? "客服回覆已保存並寄出 Email。"
+        : (data.error === "support_delivery_failed" ? "回覆已保存，但 Email 寄送失敗，請檢查寄信設定後重試。" : (data.error || "客服回覆失敗。"));
+      await refresh();
     }
 
     async function refreshBackups() {

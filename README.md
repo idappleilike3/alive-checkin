@@ -223,7 +223,7 @@ Provider user ID、access token、ID token 或其他登入憑證。
 - `POST /api/cron/checkin-reminders`：排程推播每日簽到提醒
 - `POST /api/cron/data-cleanup`：排程清理過期暫存資料
 
-Email 通知需要另外接 SMTP 或寄信服務，這版先保留欄位和 API。LINE 推播已先接好後端流程。
+客服與退款申請會先保存工單，再透過 SMTP 寄出會員收件確認及管理員通知。Render Environment 需設定 `SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_USE_TLS`、`SUPPORT_FROM_EMAIL` 與 `SUPPORT_ADMIN_EMAIL`；若寄送失敗，工單與重試紀錄仍會保留在後台。
 ## LINE 圖文選單 6 格
 
 新版圖文選單已改成這 6 格，第二格正式改為「綁定守護人」：
