@@ -3617,6 +3617,19 @@ def process_verified_privacy_request(
                     and resolve_contact_role(row) == "guardian"
                 )
             ]
+            profile["guarding_for"] = [
+                value for value in (profile.get("guarding_for") or [])
+                if str(value or "").strip() != peer_id
+            ]
+            profile["guarding_details"] = [
+                row for row in (profile.get("guarding_details") or [])
+                if str(
+                    (row or {}).get("line_user_id")
+                    or (row or {}).get("line_id")
+                    or (row or {}).get("user_id")
+                    or ""
+                ).strip() != peer_id
+            ]
     elif request_type == "delete_account":
         state["users"].pop(line_user_id, None)
         for profile in state["users"].values():
@@ -3927,11 +3940,48 @@ def build_status(profile, state=None, now=None):
             )
 
     guarding_details = []
+    active_guarding_for = []
+    raw_guarding_for = [
+        str(value or "").strip()
+        for value in (profile.get("guarding_for") or [])
+        if str(value or "").strip()
+    ]
+
+    def is_active_guarding_peer(peer_id):
+        if state is None:
+            return True
+        peer = (state.get("users") or {}).get(peer_id)
+        if not isinstance(peer, dict):
+            return False
+        return any(
+            get_contact_line_id(contact) == owner_id
+            and resolve_contact_role(contact) == "guardian"
+            and (
+                contact_is_bound_guardian(contact, peer_id)
+                or bool(contact.get("bound"))
+            )
+            for contact in (peer.get("contacts") or [])
+            if isinstance(contact, dict)
+        )
+
+    for peer_id in raw_guarding_for:
+        if peer_id not in active_guarding_for and is_active_guarding_peer(peer_id):
+            active_guarding_for.append(peer_id)
+
     for raw_detail in profile.get("guarding_details") or []:
         if not isinstance(raw_detail, dict):
             continue
         detail = dict(raw_detail)
-        peer_id = str(detail.get("line_user_id") or "").strip()
+        peer_id = str(
+            detail.get("line_user_id")
+            or detail.get("line_id")
+            or detail.get("user_id")
+            or ""
+        ).strip()
+        if not peer_id or not is_active_guarding_peer(peer_id):
+            continue
+        if peer_id not in active_guarding_for:
+            active_guarding_for.append(peer_id)
         peer = ((state or {}).get("users") or {}).get(peer_id) or {}
         peer_times = reminder_times_for_profile(peer) if peer else []
         detail["reminder_times"] = peer_times
@@ -4054,7 +4104,7 @@ def build_status(profile, state=None, now=None):
         "profile_contact_count": sum(
             1 for c in (profile.get("contacts") or []) if contact_is_profile_complete(c)
         ),
-        "guarding_for": list(profile.get("guarding_for") or []),
+        "guarding_for": active_guarding_for,
         "guarding_details": guarding_details,
         "invited_by": str(profile.get("invited_by") or "").strip(),
         "contact_capacity_reminder_enabled": bool(profile.get("contact_capacity_reminder_enabled", False)),
