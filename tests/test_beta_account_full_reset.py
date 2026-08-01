@@ -55,6 +55,15 @@ class BetaAccountFullResetTests(unittest.TestCase):
         self.assertNotEqual(candidates[0]["masked_line_user_id"], self.uid)
         self.assertNotIn("line_user_id", candidates[0])
 
+    def test_test_account_whitelist_accepts_common_render_formats(self):
+        config = {
+            "TEST_LINE_USER_IDS": "U-one\nU-two； U-three;U-four, U-five"
+        }
+        self.assertEqual(
+            app._test_line_user_ids(config),
+            ["U-one", "U-two", "U-three", "U-four", "U-five"],
+        )
+
     def test_reset_is_atomic_and_preserves_orders_and_existing_audit(self):
         result, status = app.admin_reset_test_account(
             self.data_file,
