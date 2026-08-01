@@ -22,7 +22,11 @@ function createHarness(fetchImpl) {
     "adminPassword", "logoutBtn", "refreshBtn", "contactRemindBtn", "remindBtn",
     "renewalRemindBtn", "birthdayRemindBtn", "createBackupBtn", "richMenuDeployBtn",
     "authStatus", "message", "usersBody", "migrationConfigured", "migrationTotals",
-    "migrationLastAttempt", "migrationFailure", "migrationCounts"
+    "migrationLastAttempt", "migrationFailure", "migrationCounts", "pushCampaignId",
+    "pushCampaignName", "pushContentType", "pushCampaignText", "pushTemplateKey",
+    "pushTemplateVariables", "pushExplicitMembers", "pushScheduledAt", "pushEditorTitle",
+    "pushCampaignMeta", "pushVersionHistory", "betaResetButton", "betaResetCandidate",
+    "betaResetStatus", "betaResetEmpty"
   ];
   for (const id of ids) {
     const element = {
@@ -30,6 +34,7 @@ function createHarness(fetchImpl) {
       disabled: false,
       hidden: id === "adminShell",
       listeners: {},
+      innerHTML: "",
       textContent: "",
       value: "",
       addEventListener(type, listener) { this.listeners[type] = listener; }
