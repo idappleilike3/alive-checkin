@@ -34,6 +34,20 @@ APPROVED_PUSH_TEMPLATES = {
     "beta_day2_private_note",
 }
 
+AUDIENCE_CODES = {
+    "trial",
+    "paid_199",
+    "paid_199_year",
+    "paid_399",
+    "paid_399_year",
+    "paid_799",
+    "paid_799_year",
+    "A",
+    "B399",
+    "B799",
+    "G799",
+}
+
 _VERSION_FIELDS = (
     "name",
     "content_type",
@@ -244,17 +258,95 @@ def update_campaign(
     return campaign
 
 
-def prepare_campaign(state: dict, campaign_id: str, actor: str, now: datetime) -> dict:
+def _line_reachable(profile: dict, line_user_id: str) -> bool:
+    if not line_user_id:
+        return False
+    return not any(
+        bool(profile.get(key))
+        for key in ("line_blocked", "blocked", "is_blocked", "line_unfollowed")
+    )
+
+
+def resolve_recipients(
+    state: dict,
+    campaign: dict,
+    now: datetime,
+    audience_classifier,
+) -> list[dict]:
+    """依實際執行時間解析收件人；方案與明確指定名單取聯集後以完整 UID 去重。"""
+    ensure_push_state(state)
+    if not callable(audience_classifier):
+        raise CampaignValidationError("audience classifier is required")
+    canonical = _campaign(state, campaign.get("id") if isinstance(campaign, dict) else campaign)
+    version = _current_version(state, canonical)
+    selected_codes = set(version.get("plan_audiences") or [])
+    explicit_ids = set(version.get("explicit_member_ids") or [])
+    recipients = {}
+    for state_key, profile in (state.get("users") or {}).items():
+        if not isinstance(profile, dict):
+            continue
+        line_user_id = str(profile.get("line_user_id") or state_key or "").strip()
+        if not _line_reachable(profile, line_user_id):
+            continue
+        audience_code = audience_classifier(profile, now=now)
+        by_plan = bool(audience_code and audience_code in selected_codes)
+        by_explicit = line_user_id in explicit_ids
+        if not by_plan and not by_explicit:
+            continue
+        recipients[line_user_id] = {
+            "line_user_id": line_user_id,
+            "display_name": str(profile.get("display_name") or "未取得暱稱"),
+            "audience_code": audience_code if by_plan else "explicit",
+            "plan": str(profile.get("plan") or "free"),
+            "membership_source": str(profile.get("membership_source") or ""),
+            "beta_cohort": str(profile.get("beta_cohort") or ""),
+            "gift_code": str(profile.get("gift_code") or ""),
+            "matched_by_plan": by_plan,
+            "matched_explicitly": by_explicit,
+        }
+    return [recipients[key] for key in sorted(recipients)]
+
+
+def prepare_campaign(
+    state: dict,
+    campaign_id: str,
+    actor: str,
+    now: datetime,
+    audience_classifier=None,
+) -> dict:
     campaign = _campaign(state, campaign_id)
     if campaign["status"] not in {"draft", "pending_schedule"}:
         raise CampaignConflictError("campaign cannot be prepared from this state")
     version = _current_version(state, campaign)
     if not version["plan_audiences"] and not version["explicit_member_ids"]:
         raise CampaignValidationError("at least one audience is required")
+    unknown_codes = sorted(set(version["plan_audiences"]) - AUDIENCE_CODES)
+    if unknown_codes:
+        raise CampaignValidationError("unknown audience code")
+    preview_counts = {}
+    preview_recipient_count = 0
+    if audience_classifier is not None:
+        recipients = resolve_recipients(state, campaign, now, audience_classifier)
+        preview_recipient_count = len(recipients)
+        for recipient in recipients:
+            code = recipient["audience_code"]
+            preview_counts[code] = preview_counts.get(code, 0) + 1
     campaign["status"] = "pending_schedule"
+    campaign["previewed_at"] = _iso(now)
+    campaign["preview_recipient_count"] = preview_recipient_count
+    campaign["preview_counts"] = preview_counts
     campaign["updated_by"] = str(actor or "")
     campaign["updated_at"] = _iso(now)
-    _append_event(state, campaign, "prepared", actor, now, version=version["version"])
+    _append_event(
+        state,
+        campaign,
+        "prepared",
+        actor,
+        now,
+        version=version["version"],
+        preview_recipient_count=preview_recipient_count,
+        preview_counts=preview_counts,
+    )
     return campaign
 
 

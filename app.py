@@ -2597,6 +2597,39 @@ def effective_entitlement_plan(profile, now=None):
     return str(profile.get("plan") or "free")
 
 
+def push_audience_code(profile, now=None):
+    """回傳會員在指定時間唯一且可用的推播受眾代碼。"""
+    if not isinstance(profile, dict):
+        return None
+    now = now or current_app_time({})
+    source = str(profile.get("membership_source") or "")
+    if source == "beta":
+        if not beta_access_active(profile, now):
+            return None
+        cohort = str(profile.get("beta_cohort") or "").upper()
+        return cohort if cohort in {"A", "B399", "B799"} else None
+    if source == "gift":
+        if str(profile.get("gift_code") or "").upper() != "G799":
+            return None
+        started = parse_datetime(profile.get("gift_started_at"))
+        ends = parse_datetime(profile.get("gift_ends_at"))
+        if not started or not ends:
+            return None
+        comparable_now, comparable_start = _comparable_datetimes(now, started)
+        comparable_now, comparable_end = _comparable_datetimes(comparable_now, ends)
+        return "G799" if comparable_start <= comparable_now < comparable_end else None
+    plan = str(profile.get("plan") or "free")
+    if plan == "trial":
+        return "trial" if membership_access_active(profile, now) else None
+    if not plan.startswith("paid_"):
+        return None
+    if profile.get("expiry_review_required"):
+        return None
+    if str(profile.get("payment_status") or "") != "active":
+        return None
+    return plan if membership_access_active(profile, now) else None
+
+
 def plan_rules_for_effective_entitlement(profile, now=None):
     rules = copy.deepcopy(
         PLAN_LIMITS.get(effective_entitlement_plan(profile, now), PLAN_LIMITS["free"])
