@@ -288,6 +288,10 @@ DEFAULT_STATE = {
     **DEFAULT_PROFILE,
     "users": {},
     "notification_logs": [],
+    "push_campaigns": [],
+    "push_campaign_versions": [],
+    "push_delivery_records": [],
+    "push_campaign_events": [],
     "line_message_usage": [],
     "friend_invites": {},
     "contact_rewards": [],
@@ -893,6 +897,10 @@ def _hydrate_state(saved, revision=None):
     state["history"] = sorted(set(state.get("history") or []))
     state["users"] = state.get("users") or {}
     state["notification_logs"] = state.get("notification_logs") or []
+    state["push_campaigns"] = state.get("push_campaigns") or []
+    state["push_campaign_versions"] = state.get("push_campaign_versions") or []
+    state["push_delivery_records"] = state.get("push_delivery_records") or []
+    state["push_campaign_events"] = state.get("push_campaign_events") or []
     state["friend_invites"] = state.get("friend_invites") or {}
     state["contact_rewards"] = state.get("contact_rewards") or []
     state["support_tickets"] = state.get("support_tickets") or []
