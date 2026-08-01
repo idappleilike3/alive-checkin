@@ -978,6 +978,40 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn("关系", onboarding)
         self.assertIn(".onboarding-submit", page)
 
+    def test_web_onboarding_requires_member_location_and_explains_optional_guardian_phone(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        onboarding = page[
+            page.index('id="onboardingModal"') : page.index(
+                '<section class="status-box" aria-label="簽到狀態">'
+            )
+        ]
+
+        self.assertIn('id="obCity"', onboarding)
+        self.assertIn('id="obDistrict"', onboarding)
+        self.assertIn('縣市（必選）', onboarding)
+        self.assertIn('鄉鎮市區（必選）', onboarding)
+        self.assertIn('守護人的聯絡電話（選填）', onboarding)
+        self.assertIn('緊急狀況或聯絡不上本人時可使用', onboarding)
+        self.assertNotIn('可後補', onboarding)
+        self.assertIn('/api/profile/location', page)
+        self.assertIn('請選擇縣市與鄉鎮市區', page)
+
+    def test_guardian_phone_help_is_consistent_across_registration_surfaces(self):
+        surfaces = {
+            name: (ROOT / name).read_text(encoding="utf-8")
+            for name in (
+                "index.html",
+                "trial-14.html",
+                "beta-register.html",
+                "liff/onboarding.html",
+                "liff/member.html",
+            )
+        }
+        for name, content in surfaces.items():
+            with self.subTest(surface=name):
+                self.assertIn("緊急狀況或聯絡不上本人時可使用", content)
+                self.assertNotIn("可後補", content)
+
     def test_active_surfaces_use_one_14_day_experience_not_permanent_free(self):
         surfaces = "\n".join(
             path.read_text(encoding="utf-8")
