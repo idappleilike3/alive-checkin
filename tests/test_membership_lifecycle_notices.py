@@ -26,7 +26,7 @@ class MembershipLifecycleNoticeTests(unittest.TestCase):
 
         self.assertEqual(
             labels,
-            ["升級後繼續每日問候", "不再提醒我"],
+            ["升級方案", "不再提醒"],
         )
         self.assertNotIn("查看方案", str(flex))
 
@@ -36,12 +36,12 @@ class MembershipLifecycleNoticeTests(unittest.TestCase):
                 {
                     "plan": "trial",
                     "trial_started_at": (
-                        self.now - timedelta(days=12)
+                        self.now - timedelta(days=11)
                     ).isoformat(timespec="seconds"),
                 },
                 now=self.now,
             ),
-            [12],
+            [11],
         )
         self.assertEqual(
             app_module.membership_notice_milestones(
@@ -57,7 +57,7 @@ class MembershipLifecycleNoticeTests(unittest.TestCase):
                 },
                 now=self.now,
             ),
-            [20],
+            [1],
         )
         self.assertEqual(
             app_module.membership_notice_milestones(
@@ -73,6 +73,81 @@ class MembershipLifecycleNoticeTests(unittest.TestCase):
             ),
             [3],
         )
+
+    def test_all_expiring_memberships_use_four_countdown_milestones(self):
+        cases = [
+            ({"plan": "trial", "trial_started_at": "2026-07-20T10:00:00"}, [7]),
+            ({
+                "plan": "paid_799",
+                "membership_source": "beta",
+                "beta_started_at": "2026-07-19T10:00:00",
+                "beta_ends_at": "2026-08-03T10:00:00",
+            }, [7]),
+            ({
+                "plan": "paid_399",
+                "membership_source": "paid",
+                "paid_until": "2026-08-03T10:00:00",
+            }, [7]),
+            ({
+                "plan": "paid_799_year",
+                "membership_source": "gift",
+                "paid_until": "2026-08-03T10:00:00",
+            }, [7]),
+        ]
+
+        for profile, expected in cases:
+            with self.subTest(profile=profile):
+                self.assertEqual(
+                    app_module.membership_notice_milestones(profile, now=self.now),
+                    expected,
+                )
+
+    def test_countdown_copy_counts_today_and_uses_plan_specific_action(self):
+        trial = {
+            "plan": "trial",
+            "trial_started_at": "2026-07-20T10:00:00",
+        }
+        paid = {
+            "plan": "paid_399",
+            "membership_source": "paid",
+            "paid_until": "2026-08-03T10:00:00",
+        }
+
+        trial_flex = app_module.build_expiry_remind_flex(trial, now=self.now)
+        paid_flex = app_module.build_expiry_remind_flex(paid, now=self.now)
+
+        self.assertIn("將在 8 天後到期", str(trial_flex))
+        self.assertIn("提前通知，方便家人一起決定", str(trial_flex))
+        self.assertNotIn("7 天考慮期", str(trial_flex))
+        self.assertEqual(
+            trial_flex["contents"]["footer"]["contents"][0]["action"]["label"],
+            "升級方案",
+        )
+        self.assertIn("將在 8 天後到期", str(paid_flex))
+        self.assertEqual(
+            paid_flex["contents"]["footer"]["contents"][0]["action"]["label"],
+            "續訂方案",
+        )
+
+    def test_countdown_copy_for_three_one_and_zero_days_left(self):
+        expected = {
+            3: "將在 4 天後到期",
+            1: "明天是最後一天",
+            0: "今天到期",
+        }
+        for days_left, copy in expected.items():
+            profile = {
+                "plan": "paid_799",
+                "membership_source": "paid",
+                "paid_until": (
+                    self.now + timedelta(days=days_left)
+                ).isoformat(timespec="seconds"),
+            }
+            with self.subTest(days_left=days_left):
+                self.assertIn(
+                    copy,
+                    str(app_module.build_expiry_remind_flex(profile, now=self.now)),
+                )
 
     def test_renewal_restores_original_daily_greeting_choice_and_settings(self):
         profile = {
@@ -135,7 +210,7 @@ class MembershipLifecycleNoticeTests(unittest.TestCase):
             self.assertEqual(second["sent"], 0)
             self.assertEqual(len(sent), 1)
             self.assertEqual(sent[0][1]["type"], "flex")
-            self.assertIn("升級後繼續每日問候", str(sent[0][1]))
+            self.assertIn("續訂方案", str(sent[0][1]))
 
 
 if __name__ == "__main__":
