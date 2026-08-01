@@ -13,28 +13,32 @@ EXPECTED_HOME = "https://liff.line.me/2010848330-UAiqPPYD#home"
 
 w = g.welcome_flex()
 ws = json.dumps(w, ensure_ascii=False)
-assert "👋 您好，歡迎加入「每日平安」" in ws
-assert "welcome-heart-banner.png" in ws
-assert "① 新增 1 位核心守護人" in ws
-assert "② 設定每日提醒時間" in ws
-assert "14 天新會員安心體驗" in ws
+assert "歡迎加入每日平安" in ws
+assert "welcome-family-checkin.png?v=W260802welcomeFinal" in ws
+assert "daily-peace-logo.png?v=W260802welcomeFinal" in ws
+assert "每天只要 10 秒，讓關心你的人知道你平安" in ws
+assert "平常不打擾，需要時及時守護" in ws
+assert "① 填寫基本資料" in ws
+assert "② 設定每日提醒" in ws
+assert "③ 邀請核心守護人" in ws
+assert "免費體驗，不會自動收費" in ws
 assert "7 天" not in ws
 assert "永久免費" not in ws
-assert "🚨 緊急狀況請直接撥打 119 或 110" in ws
-assert "免費體驗 14 天" in ws
+assert "緊急情況請直接撥打 119 或 110" in ws
+assert "開始 14 天安心體驗" in ws
 assert "了解每日平安" in ws
 assert EXPECTED_BIND in ws
 assert "code=" not in ws and "state=" not in ws
-# Two clear CTAs; no unrelated actions.
+# Two clear CTAs; the primary action is placed before the three setup steps.
 assert len(w["footer"]["contents"]) == 2
 assert "我的會員" not in ws
 assert "首次引導" not in ws
 
-assert w["footer"]["contents"][0]["action"]["uri"] == EXPECTED_BIND
-assert w["footer"]["contents"][1]["action"]["uri"] == g.liff_entry_url(open_action="help")
+assert w["body"]["contents"][0]["action"]["uri"] == EXPECTED_BIND
+assert w["footer"]["contents"][0]["action"]["uri"] == g.liff_entry_url(open_action="help")
 
 w2 = g.welcome_flex("小明")
-assert "👋 您好，小明，歡迎加入「每日平安」" in json.dumps(w2, ensure_ascii=False)
+assert "小明，歡迎加入每日平安" in json.dumps(w2, ensure_ascii=False)
 
 
 def walk(node):
@@ -114,12 +118,13 @@ assert "requireLineMembership" in index_src
 # page-load path must not auto-open share picker for returning users
 init_app = index_src[index_src.rindex("async function initApp()") : index_src.index("// ===== D01")]
 assert "await shareContactInvite();" not in init_app
-gate = init_app[init_app.index("if (setupDone) {") : init_app.index("} else {", init_app.index("if (setupDone) {"))]
+gate_start = init_app.index("if (homeReady && !inviteeMode) {")
+gate = init_app[gate_start : init_app.index("if (inviteeMode) {", gate_start)]
 assert "shareContactInvite" not in gate
 assert "clearShareFirstLocalFlags" in gate
 
-print("welcome CTA:", w["footer"]["contents"][0]["action"]["label"])
-print("welcome CTA uri:", w["footer"]["contents"][0]["action"]["uri"])
+print("welcome CTA:", w["body"]["contents"][0]["action"]["label"])
+print("welcome CTA uri:", w["body"]["contents"][0]["action"]["uri"])
 print("welcome footer buttons:", len(w["footer"]["contents"]))
 print("intro primary label:", intro["footer"]["contents"][0]["action"]["label"])
 print("bind confirm ok")

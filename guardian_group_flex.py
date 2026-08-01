@@ -1182,8 +1182,10 @@ def welcome_flex(display_name: str | None = None):
     setup_uri = liff_entry_url(open_action="onboarding")
     help_uri = liff_entry_url(open_action="help")
     base = (os.environ.get("APP_PUBLIC_URL") or PUBLIC_BASE).rstrip("/")
-    logo_uri = f"{base}/assets/daily-peace-logo.png?v=W260802original"
-    story_uri = f"{base}/assets/welcome-family-checkin.png?v=W260802green"
+    # 2026-08-02 final approved welcome artwork.  Keep a unique version on
+    # both images because LINE clients cache Flex image URLs aggressively.
+    logo_uri = f"{base}/assets/daily-peace-logo.png?v=W260802welcomeFinal"
+    story_uri = f"{base}/assets/welcome-family-checkin.png?v=W260802welcomeFinal"
     cream_bg = "#FFF9F2"
     coral = "#F2554B"
     coral_soft = "#FFF0EC"

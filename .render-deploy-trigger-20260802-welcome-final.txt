@@ -1,0 +1,4 @@
+2026-08-02 welcome-final
+
+Force Render to deploy the approved welcome card and give LINE clients new
+versioned image URLs.  The approved card content and layout remain unchanged.
