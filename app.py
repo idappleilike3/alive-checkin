@@ -141,10 +141,24 @@ from push_delivery import (
     record_push_failure,
 )
 from push_management import (
+    APPROVED_PUSH_TEMPLATES,
+    AUDIENCE_CODES,
+    CAMPAIGN_STATUS_LABELS_ZH,
+    CampaignConflictError,
+    CampaignNotFoundError,
+    CampaignValidationError,
+    cancel_campaign,
     claim_due_campaign,
     claim_next_delivery,
+    create_campaign,
     finalize_claimed_campaign,
+    get_campaign_detail,
+    list_campaigns,
+    list_delivery_records,
+    prepare_campaign,
+    schedule_campaign,
     settle_delivery_attempt,
+    update_campaign,
 )
 
 
@@ -17992,6 +18006,21 @@ def create_app(config=None):
                 return jsonify({"error": "forbidden", "required_permission": permission}), 403
         return None
 
+    def _super_admin_mutation_guard():
+        denied = _admin_guard(write=True)
+        if denied:
+            return denied
+        role = str(session.get("admin_role") or "viewer")
+        if role != "super_admin":
+            append_admin_audit(
+                app.config["DATA_FILE"],
+                "push_campaign.permission_denied",
+                "failed",
+                {"role": role, "required_role": "super_admin"},
+            )
+            return jsonify({"error": "forbidden", "required_role": "super_admin"}), 403
+        return None
+
     def _admin_mutation_response(action, data, code=200):
         append_admin_audit(
             app.config["DATA_FILE"],
@@ -20437,6 +20466,187 @@ def create_app(config=None):
         if denied:
             return denied
         return jsonify(admin_summary(app.config["DATA_FILE"], app.config))
+
+    def _push_campaign_error_response(exc):
+        if isinstance(exc, CampaignNotFoundError):
+            return jsonify({"error": "campaign_not_found"}), 404
+        if isinstance(exc, CampaignConflictError):
+            return jsonify({"error": "campaign_conflict", "detail": str(exc)}), 409
+        return jsonify({"error": "invalid_campaign", "detail": str(exc)}), 400
+
+    @app.get("/api/admin/push-options")
+    def admin_push_options_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        return jsonify(
+            {
+                "audience_codes": sorted(AUDIENCE_CODES),
+                "templates": sorted(APPROVED_PUSH_TEMPLATES),
+                "status_labels": CAMPAIGN_STATUS_LABELS_ZH,
+                "can_mutate": str(session.get("admin_role") or "") == "super_admin",
+            }
+        )
+
+    @app.get("/api/admin/push-campaigns")
+    def admin_push_campaigns_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        state = load_state(app.config["DATA_FILE"])
+        return jsonify(
+            {
+                "campaigns": list_campaigns(
+                    state,
+                    status=request.args.get("status", ""),
+                    query=request.args.get("query", ""),
+                )
+            }
+        )
+
+    @app.post("/api/admin/push-campaigns")
+    def admin_push_campaign_create_api():
+        denied = _super_admin_mutation_guard()
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        now = current_app_time(app.config)
+        try:
+            campaign = mutate_state_atomically(
+                app.config["DATA_FILE"],
+                lambda state: create_campaign(
+                    state, payload, actor="super_admin", now=now
+                ),
+            )
+        except (CampaignValidationError, CampaignConflictError, CampaignNotFoundError) as exc:
+            return _push_campaign_error_response(exc)
+        return _admin_mutation_response(
+            "push_campaign.create", {"campaign": campaign}, 201
+        )
+
+    @app.get("/api/admin/push-campaigns/<campaign_id>")
+    def admin_push_campaign_detail_api(campaign_id):
+        denied = _admin_guard()
+        if denied:
+            return denied
+        try:
+            detail = get_campaign_detail(load_state(app.config["DATA_FILE"]), campaign_id)
+        except CampaignNotFoundError as exc:
+            return _push_campaign_error_response(exc)
+        return jsonify(detail)
+
+    @app.post("/api/admin/push-campaigns/<campaign_id>/edit")
+    def admin_push_campaign_edit_api(campaign_id):
+        denied = _super_admin_mutation_guard()
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        now = current_app_time(app.config)
+        try:
+            campaign = mutate_state_atomically(
+                app.config["DATA_FILE"],
+                lambda state: update_campaign(
+                    state, campaign_id, payload, actor="super_admin", now=now
+                ),
+            )
+        except (CampaignValidationError, CampaignConflictError, CampaignNotFoundError) as exc:
+            return _push_campaign_error_response(exc)
+        return _admin_mutation_response("push_campaign.edit", {"campaign": campaign})
+
+    @app.post("/api/admin/push-campaigns/<campaign_id>/prepare")
+    def admin_push_campaign_prepare_api(campaign_id):
+        denied = _super_admin_mutation_guard()
+        if denied:
+            return denied
+        now = current_app_time(app.config)
+        try:
+            campaign = mutate_state_atomically(
+                app.config["DATA_FILE"],
+                lambda state: prepare_campaign(
+                    state,
+                    campaign_id,
+                    actor="super_admin",
+                    now=now,
+                    audience_classifier=push_audience_code,
+                ),
+            )
+        except (CampaignValidationError, CampaignConflictError, CampaignNotFoundError) as exc:
+            return _push_campaign_error_response(exc)
+        return _admin_mutation_response("push_campaign.prepare", {"campaign": campaign})
+
+    @app.post("/api/admin/push-campaigns/<campaign_id>/schedule")
+    def admin_push_campaign_schedule_api(campaign_id):
+        denied = _super_admin_mutation_guard()
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        scheduled_at = parse_datetime(payload.get("scheduled_at"))
+        now = current_app_time(app.config)
+        try:
+            campaign = mutate_state_atomically(
+                app.config["DATA_FILE"],
+                lambda state: schedule_campaign(
+                    state,
+                    campaign_id,
+                    scheduled_at=scheduled_at,
+                    actor="super_admin",
+                    now=now,
+                ),
+            )
+        except (CampaignValidationError, CampaignConflictError, CampaignNotFoundError) as exc:
+            return _push_campaign_error_response(exc)
+        return _admin_mutation_response("push_campaign.schedule", {"campaign": campaign})
+
+    @app.post("/api/admin/push-campaigns/<campaign_id>/cancel")
+    def admin_push_campaign_cancel_api(campaign_id):
+        denied = _super_admin_mutation_guard()
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        now = current_app_time(app.config)
+        try:
+            campaign = mutate_state_atomically(
+                app.config["DATA_FILE"],
+                lambda state: cancel_campaign(
+                    state,
+                    campaign_id,
+                    reason_zh=payload.get("reason_zh"),
+                    actor="super_admin",
+                    now=now,
+                ),
+            )
+        except (CampaignValidationError, CampaignConflictError, CampaignNotFoundError) as exc:
+            return _push_campaign_error_response(exc)
+        return _admin_mutation_response("push_campaign.cancel", {"campaign": campaign})
+
+    @app.get("/api/admin/push-deliveries")
+    def admin_push_deliveries_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        try:
+            offset = int(request.args.get("offset", 0))
+            limit = int(request.args.get("limit", 50))
+        except (TypeError, ValueError):
+            return jsonify({"error": "invalid_pagination"}), 400
+        state = load_state(app.config["DATA_FILE"])
+        return jsonify(
+            list_delivery_records(
+                state,
+                campaign_id=request.args.get("campaign_id", ""),
+                source=request.args.get("source", ""),
+                kind=request.args.get("kind", ""),
+                status=request.args.get("status", ""),
+                audience_code=request.args.get("audience_code", ""),
+                plan=request.args.get("plan", ""),
+                member=request.args.get("member", ""),
+                line_user_id=request.args.get("line_user_id", ""),
+                date_from=request.args.get("date_from", ""),
+                date_to=request.args.get("date_to", ""),
+                offset=offset,
+                limit=limit,
+            )
+        )
 
     @app.get("/api/admin/test-center")
     def admin_test_center_api():

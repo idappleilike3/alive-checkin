@@ -119,6 +119,113 @@ def ensure_push_state(state: dict) -> dict:
     return state
 
 
+def list_campaigns(state: dict, *, status: str = "", query: str = "") -> list[dict]:
+    ensure_push_state(state)
+    wanted_status = str(status or "").strip()
+    needle = str(query or "").strip().casefold()
+    rows = []
+    for campaign in state["push_campaigns"]:
+        if wanted_status and campaign.get("status") != wanted_status:
+            continue
+        if needle and needle not in str(campaign.get("name") or "").casefold():
+            continue
+        rows.append(copy.deepcopy(campaign))
+    return sorted(rows, key=lambda row: str(row.get("created_at") or ""), reverse=True)
+
+
+def get_campaign_detail(state: dict, campaign_id: str) -> dict:
+    campaign = _campaign(state, campaign_id)
+    versions = sorted(
+        (
+            copy.deepcopy(row)
+            for row in state["push_campaign_versions"]
+            if row.get("campaign_id") == campaign["id"]
+        ),
+        key=lambda row: int(row.get("version") or 0),
+    )
+    events = sorted(
+        (
+            copy.deepcopy(row)
+            for row in state["push_campaign_events"]
+            if row.get("campaign_id") == campaign["id"]
+        ),
+        key=lambda row: str(row.get("created_at") or ""),
+    )
+    return {
+        "campaign": copy.deepcopy(campaign),
+        "versions": versions,
+        "events": events,
+        "delivery_count": len(_campaign_delivery_rows(state, campaign["id"])),
+    }
+
+
+def list_delivery_records(
+    state: dict,
+    *,
+    campaign_id: str = "",
+    source: str = "",
+    kind: str = "",
+    status: str = "",
+    audience_code: str = "",
+    plan: str = "",
+    member: str = "",
+    line_user_id: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    offset: int = 0,
+    limit: int = 50,
+) -> dict:
+    ensure_push_state(state)
+    exact_filters = {
+        "campaign_id": str(campaign_id or "").strip(),
+        "source": str(source or "").strip(),
+        "kind": str(kind or "").strip(),
+        "status": str(status or "").strip(),
+        "audience_code": str(audience_code or "").strip(),
+        "plan": str(plan or "").strip(),
+        "line_user_id": str(line_user_id or "").strip(),
+    }
+    member_needle = str(member or "").strip().casefold()
+    from_text = str(date_from or "").strip()
+    to_text = str(date_to or "").strip()
+    rows = []
+    for stored in state["push_delivery_records"]:
+        if any(value and str(stored.get(key) or "") != value for key, value in exact_filters.items()):
+            continue
+        if member_needle and member_needle not in str(stored.get("recipient_display_name") or "").casefold():
+            continue
+        occurred_at = str(
+            stored.get("sent_at")
+            or stored.get("failed_at")
+            or stored.get("scheduled_at")
+            or stored.get("created_at")
+            or ""
+        )
+        if from_text and occurred_at < from_text:
+            continue
+        if to_text and occurred_at > to_text:
+            continue
+        rows.append(copy.deepcopy(stored))
+    rows.sort(
+        key=lambda row: str(
+            row.get("sent_at")
+            or row.get("failed_at")
+            or row.get("scheduled_at")
+            or row.get("created_at")
+            or ""
+        ),
+        reverse=True,
+    )
+    safe_offset = max(0, int(offset or 0))
+    safe_limit = min(200, max(1, int(limit or 50)))
+    return {
+        "deliveries": rows[safe_offset : safe_offset + safe_limit],
+        "total": len(rows),
+        "offset": safe_offset,
+        "limit": safe_limit,
+    }
+
+
 def _campaign(state: dict, campaign_id: str) -> dict:
     ensure_push_state(state)
     for item in state["push_campaigns"]:
