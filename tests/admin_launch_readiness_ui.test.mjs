@@ -53,12 +53,13 @@ test("daily member push summary exposes the latest LINE failure reason", () => {
 });
 
 
-test("LINE push failures are translated to clear Traditional Chinese", () => {
+test("LINE push failures show server-translated Traditional Chinese guidance", () => {
   assert.match(html, /function linePushFailureText\(detail\)/);
   assert.match(html, /收件人的 LINE ID 無效或已失效/);
   assert.match(html, /LINE 無法將訊息傳送給收件人/);
   assert.match(html, /LINE 推播額度或發送頻率已達限制/);
-  assert.match(html, /linePushFailureText\(row\.latest_failure_detail\)/);
+  assert.match(html, /row\.latest_failure_reason_zh/);
+  assert.match(html, /row\.latest_failure_action_zh/);
   assert.doesNotMatch(
     html,
     /最近失敗：\$\{escapeHtml\(row\.latest_failure_detail\)\}/,

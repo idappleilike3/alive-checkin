@@ -1010,6 +1010,17 @@
 
       <div data-admin-page="members">
       <h2 class="section-heading" id="members" style="margin:20px 0 8px;">會員管理</h2>
+      <section class="release-status" aria-labelledby="betaResetTitle" style="margin-bottom:16px;">
+        <h3 id="betaResetTitle">重置 21 天封測帳號</h3>
+        <p class="note">重置後可重新封測；保留 LINE UID、付款訂單與稽核紀錄，清除簽到、提醒、守護、群組、SOS 與定位資料。</p>
+        <div class="toolbar">
+          <label>選擇封測帳號
+            <select id="betaResetCandidate"><option value="">正在載入候選帳號…</option></select>
+          </label>
+          <button id="betaResetButton" type="button" class="danger">重置選取帳號</button>
+        </div>
+        <p id="betaResetMessage" class="auth-status" role="status" aria-live="polite"></p>
+      </section>
       <div class="table-wrap member-table-wrap">
         <table class="member-table">
           <thead>
@@ -2076,8 +2087,33 @@
       await updatePlan(lineUserId, selectElement.value, selectElement, previousPlan);
     }
 
-    async function resetTestAccount(lineUserId, displayName) {
+    let betaResetCandidates = [];
+
+    async function loadBetaResetCandidates() {
+      const response = await adminFetch("/api/admin/beta-reset-candidates");
+      const data = await response.json().catch(() => ({}));
+      const select = $("betaResetCandidate");
+      const button = $("betaResetButton");
+      betaResetCandidates = response.ok ? (data.candidates || []) : [];
+      if (!response.ok || data.can_reset !== true) {
+        select.innerHTML = '<option value="">只有最高管理員可以重置封測帳號</option>';
+        select.disabled = true;
+        button.disabled = true;
+        $("betaResetMessage").textContent = data.message || "只有最高管理員可以重置封測帳號";
+        return;
+      }
+      select.disabled = false;
+      select.innerHTML = betaResetCandidates.length
+        ? '<option value="">請選擇帳號</option>' + betaResetCandidates.map((row) => `<option value="${escapeHtml(row.candidate_id)}">${escapeHtml(row.display_name)}｜${escapeHtml(row.masked_line_user_id)}｜${escapeHtml(row.cohort)}｜${escapeHtml(row.status)}</option>`).join("")
+        : '<option value="">目前沒有可重置的 21 天封測測試帳號</option>';
+      button.disabled = betaResetCandidates.length === 0;
+      $("betaResetMessage").textContent = betaResetCandidates.length ? "" : "目前沒有可重置的 21 天封測測試帳號";
+    }
+
+    async function resetTestAccount(lineUserId, displayName, accountStateVersion = "") {
       if (!canManageMembers()) return;
+      const candidate = betaResetCandidates.find((row) => row.candidate_id === lineUserId);
+      const version = accountStateVersion || (candidate && candidate.account_state_version) || "";
       const confirmed = window.confirm(
         `確定要重設測試帳號「${displayName || lineUserId}」嗎？\n\n` +
         "會清除會員設定、14／21 天資格、提醒、守護綁定、報平安及 SOS 測試資料。\n" +
@@ -2097,13 +2133,13 @@
           {
             method: "POST",
             headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({confirm: true})
+            body: JSON.stringify({confirm: true, account_state_version: version})
           }
         );
         const data = await response.json();
         if (!response.ok) throw new Error(adminMutationErrorText(data, response.status));
         showPlanSaveToast(
-          `✓ ${displayName || lineUserId} 已重設，可從 14 天分享卡重新測試；帳務與稽核已保留。`,
+          `✓ ${displayName || lineUserId} 已重置，可重新使用 21 天封測連結綁定；帳務與稽核已保留。`,
           "success"
         );
         await refresh();
@@ -2418,6 +2454,7 @@
         return;
       }
       await loadBetaMembers();
+      await loadBetaResetCandidates();
       await loadLineAcceptance();
       await loadLaunchReadiness();
       $("totalUsers").textContent = data.total_users;
@@ -2930,6 +2967,22 @@
     $("birthdayRemindBtn").addEventListener("click", sendBirthdayReminders);
     $("createBackupBtn").addEventListener("click", createBackup);
     $("richMenuDeployBtn").addEventListener("click", deployRichMenu);
+    $("betaResetButton").addEventListener("click", async () => {
+      const selected = betaResetCandidates.find((row) => row.candidate_id === $("betaResetCandidate").value);
+      if (!selected) {
+        $("betaResetMessage").textContent = "請先選擇要重置的封測帳號。";
+        return;
+      }
+      const button = $("betaResetButton");
+      button.disabled = true;
+      button.textContent = "重置中…";
+      try {
+        await resetTestAccount(selected.candidate_id, selected.display_name, selected.account_state_version);
+      } finally {
+        button.textContent = "重置選取帳號";
+        await loadBetaResetCandidates();
+      }
+    });
     const adminNavToggle = $("adminNavToggle");
     const adminNavBackdrop = $("adminNavBackdrop");
     if (adminNavToggle) adminNavToggle.addEventListener("click", () => toggleAdminNav());

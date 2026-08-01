@@ -18,34 +18,27 @@ function functionBody(name) {
   assert.fail(`could not parse ${name}`);
 }
 
-test("logged-out visitors see public actions instead of being auto-redirected", () => {
+test("logged-out visitors continue through the explicit LIFF login flow", () => {
   const init = functionBody("init");
-  assert.match(init, /renderPublicEntry\(\{ liffReady: true, liffId \}\)/);
-  assert.doesNotMatch(init, /if \(!liff\.isLoggedIn\(\)\) \{\s*liff\.login\(\)/);
+  assert.match(init, /if \(!liff\.isLoggedIn\(\)\) \{\s*liff\.login\(\{ redirectUri: buildOnboardingLoginRedirect\(\) \}\)/);
 });
 
-test("public entry provides a clear opt-in LINE login action", () => {
+test("public entry provides one clear LINE login action", () => {
   const render = functionBody("renderPublicEntry");
   assert.match(render, /開始 14 天安心體驗/);
-  assert.match(render, /startTrialLoginBtn/);
+  assert.match(render, /liff\.login\(\{ redirectUri: buildOnboardingLoginRedirect\(\) \}\)/);
   assert.match(render, /不會讀取你的聊天內容/);
-  assert.match(render, /startTrialLoginBtn/);
 });
 
-test("public entry remains useful when LIFF initialization fails", () => {
+test("LIFF initialization failures return to the same public entry", () => {
   const init = functionBody("init");
-  const render = functionBody("renderPublicEntry");
   assert.match(init, /catch \(err\) \{\s*renderPublicEntry/);
   assert.doesNotMatch(html, /LIFF 初始化失敗/);
-  assert.match(render, /https:\/\/liff\.line\.me\//);
 });
 
-test("desktop and mobile visitors can navigate without logging in", () => {
-  assert.match(html, /id="onboardingFooterActions"/);
+test("onboarding retains the three public navigation destinations", () => {
   assert.match(html, /href="\/">返回首頁/);
-  assert.match(html, /href="\/trial-14\.html">查看體驗與方案/);
-  assert.match(html, /href="\/faq\.html">常見問題/);
-  assert.match(html, /@media \(max-width: 520px\)/);
-  assert.match(html, /\.public-entry-links \{\s*grid-template-columns: 1fr/);
-  assert.match(html, /min-height: 54px/);
+  assert.match(html, /href="\/pricing\.html">查看體驗與方案/);
+  assert.match(html, /href="\/faq\.html">常見問答/);
+  assert.match(html, /@media\s*\(max-width:\s*520px\)/);
 });

@@ -110,7 +110,8 @@ class AdminResetTestAccountTests(unittest.TestCase):
         self.assertEqual(profile["membership_source"], "")
 
         self.assertEqual(state["orders"][0]["order_id"], "ORDER-1")
-        self.assertEqual(state["admin_audit_logs"], [{"action": "existing.audit"}])
+        self.assertEqual(state["admin_audit_logs"][0], {"action": "existing.audit"})
+        self.assertEqual(state["admin_audit_logs"][-1]["action"], "beta_account_full_reset")
         self.assertEqual(
             state["account_migration_audit"], [{"event_id": "migration-1"}]
         )
@@ -139,9 +140,9 @@ class AdminResetTestAccountTests(unittest.TestCase):
         self.assertEqual(registration_code, 200)
         self.assertEqual(registration["plan"], "trial")
         registered = alive_app.load_state(self.data_file)["users"]["U-test"]
-        self.assertTrue(registered["trial_started_at"])
-        self.assertTrue(registered["trial_end"])
-        self.assertNotIn("test_reset_pending", registered)
+        self.assertIsNone(registered["trial_started_at"])
+        self.assertIsNone(registered["trial_end"])
+        self.assertTrue(registered["beta_reset_pending"])
 
     def test_reset_rejects_non_whitelisted_member(self):
         result, code = alive_app.admin_reset_test_account(
@@ -253,7 +254,7 @@ class AdminResetTestAccountTests(unittest.TestCase):
         )
         response = client.post(
             "/api/admin/test-accounts/U-test/reset",
-            json={"confirm": True},
+            json={"confirm": True, "account_state_version": "legacy"},
             headers={"X-CSRF-Token": login["csrf_token"]},
         )
         self.assertEqual(response.status_code, 200)

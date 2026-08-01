@@ -914,6 +914,7 @@ test("friendship return rechecks and runs registration migration and member boot
     lineGuideGuardian: { dataset: {} },
   };
   const source = [
+    functionSource("requestedAppAction"),
     functionSource("resolveLineEntryGate"),
     functionSource("setSetupGuideState"),
     functionSource("setLineSetupGuideState"),

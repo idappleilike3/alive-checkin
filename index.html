@@ -5768,6 +5768,10 @@
         throw new Error(friendlyApiFailure(res.status, text));
       }
       const status = await res.json();
+      const cached = readCachedMemberStatus(lineUserId);
+      const cachedVersion = String((cached && cached.account_state_version) || "");
+      const serverVersion = String(status.account_state_version || "legacy");
+      if (cachedVersion && cachedVersion !== serverVersion) clearAccountStateCache(lineUserId);
       writeCachedMemberStatus(lineUserId, status);
       return status;
     }
@@ -5785,6 +5789,7 @@
         billing_cycle: status.billing_cycle || "",
         payment_status: status.payment_status || "",
         paid_until: status.paid_until || "",
+        account_state_version: status.account_state_version || "legacy",
         is_today_checked: status.is_today_checked === true,
         checkin_date: status.is_today_checked === true ? getToday() : ""
       };
@@ -5834,11 +5839,20 @@
       return true;
     }
 
+    function clearAccountStateCache(userId) {
+      const id = String(userId || "").trim();
+      try {
+        Object.keys(localStorage).forEach((key) => {
+          if ((id && key.includes(id)) || /checkin|guardian_prompt|member_role_intro/i.test(key)) {
+            localStorage.removeItem(key);
+          }
+        });
+      } catch (_) {}
+    }
+
     function renderCachedCheckinStatus(userId) {
       const status = readCachedMemberStatus(userId);
-      if (!status || status.is_today_checked !== true || status.checkin_date !== getToday()) {
-        return false;
-      }
+      if (!status || status.is_today_checked !== true || status.checkin_date !== getToday()) return false;
       syncCheckBtn({ is_today_checked: true });
       if ($("dailyStatus")) $("dailyStatus").textContent = "今日已簽到";
       return true;
@@ -6627,8 +6641,8 @@
       return {
         trial: "14 天安心體驗",
         free: "未訂閱",
-        paid_199: "199 平安版",
-        paid_199_year: "199 平安版年費",
+        paid_199: "199 活著價",
+        paid_199_year: "199 活著價年費",
         paid_399: "399 安心版",
         paid_399_year: "399 安心版年費",
         paid_799: "799 守護版",
@@ -6847,7 +6861,7 @@
         paid_799: { cycle: "799 守護版｜月費進階", contacts: 10, emergencies: 35, detail: "核心 10／緊急 35、早中晚與多階段、安全守護 1／3／6／8（每日 5 次）、日期提醒、1 個守護群。" },
         paid_799_year: { cycle: "799 守護版｜年費進階", contacts: 15, emergencies: 50, detail: "核心 15／緊急 50、付 10 個月送 2 個月、安全守護每日 5 次、早中晚與多階段、3 個守護群、日期提醒。" },
         free: { cycle: "未訂閱", contacts: 1, emergencies: 2, detail: "一般提醒已暫停；仍可查看資料、求助電話與基礎 SOS。" },
-        trial: { cycle: "14 天免費體驗｜199 平安版", contacts: 2, emergencies: 4, detail: "完整體驗 199 平安版月方案：核心守護人 2 位、緊急聯絡人 4 位、每日 1 次提醒與 15 分鐘安全守護。" }
+        trial: { cycle: "14 天免費體驗｜199 活著版", contacts: 2, emergencies: 4, detail: "完整體驗 199 活著版月方案：核心守護人 2 位、緊急聯絡人 4 位、每日 1 次提醒與 15 分鐘安全守護。" }
       }[plan] || { cycle: "尚未選擇方案", contacts: 1, emergencies: 2, detail: "請先選擇適合你的守護方案。" };
     }
 
@@ -9659,7 +9673,6 @@
         // 先顯示上次已驗證的方案摘要；正式資料在背景載入後立即覆蓋。
         renderCachedMemberStatus(lineUserId);
         // 同一天已由後端確認報平安時，先立即顯示完成狀態；跨日快取不採用。
-        renderCachedCheckinStatus(lineUserId);
         // 第一次登入沒有快取時，也立刻預讀狀態；與註冊請求並行，縮短首頁等待。
         startMemberStatusPrefetch();
 
