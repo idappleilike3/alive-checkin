@@ -6229,10 +6229,33 @@ def delete_single_contact(data_file, line_user_id, contact_id):
             return
 
         peer_id = get_contact_line_id(removed)
+        peer = (state.get("users") or {}).get(peer_id) if peer_id else None
+        legacy_reciprocal_evidence = bool(
+            isinstance(peer, dict)
+            and (
+                line_user_id in {
+                    str(value or "").strip()
+                    for value in (peer.get("guarding_for") or [])
+                }
+                or any(
+                    get_contact_line_id(contact) == line_user_id
+                    and resolve_contact_role(contact) == "guardian"
+                    and (
+                        contact_is_bound_guardian(contact, peer_id)
+                        or contact.get("bound") is True
+                    )
+                    for contact in (peer.get("contacts") or [])
+                )
+            )
+        )
         is_reciprocal_guardian = bool(
             peer_id
             and resolve_contact_role(removed) == "guardian"
-            and contact_is_bound_guardian(removed, line_user_id)
+            and (
+                contact_is_bound_guardian(removed, line_user_id)
+                or removed.get("bound") is True
+                or legacy_reciprocal_evidence
+            )
         )
         profile["contacts"] = [
             contact
@@ -6266,7 +6289,6 @@ def delete_single_contact(data_file, line_user_id, contact_id):
                 for row in (profile.get("guarding_details") or [])
                 if str((row or {}).get("line_user_id") or "") != peer_id
             ]
-            peer = (state.get("users") or {}).get(peer_id)
             if isinstance(peer, dict):
                 peer["contacts"] = [
                     contact
@@ -11097,10 +11119,12 @@ def _test_reset_row_matches_user(row, line_user_id):
         return False
     identity_keys = (
         "line_user_id",
+        "line_id",
         "owner_line_user_id",
         "inviter_line_user_id",
         "invitee_line_user_id",
         "guardian_line_user_id",
+        "contact_line_user_id",
         "target_line_user_id",
         "user_id",
     )
@@ -11229,6 +11253,108 @@ def admin_reset_test_account(data_file, line_user_id, allowed_test_user_ids):
         "audit_preserved": True,
         "message": "測試帳號已重設；LINE UID、付款訂單與後台稽核紀錄已保留。",
     }, 200
+
+
+def admin_delete_test_account(data_file, line_user_id, allowed_test_user_ids):
+    """Delete a whitelisted test member and all non-audit relationship data."""
+    line_user_id = str(line_user_id or "").strip()
+    allowed = {
+        str(value or "").strip()
+        for value in (allowed_test_user_ids or [])
+        if str(value or "").strip()
+    }
+    if not line_user_id:
+        return {"ok": False, "error": "missing_line_user_id"}, 400
+    if line_user_id not in allowed:
+        return {"ok": False, "error": "not_a_test_account"}, 403
+
+    def remove_test_member(state):
+        existing = (state.get("users") or {}).get(line_user_id)
+        if not isinstance(existing, dict):
+            return {"ok": False, "error": "member_not_found"}, 404
+
+        state.setdefault("users", {}).pop(line_user_id, None)
+        for profile in (state.get("users") or {}).values():
+            if not isinstance(profile, dict):
+                continue
+            contacts = profile.get("contacts")
+            if isinstance(contacts, list):
+                profile["contacts"] = [
+                    item for item in contacts
+                    if not _test_reset_row_matches_user(item, line_user_id)
+                ]
+            for key in ("friends", "guarding_for"):
+                values = profile.get(key)
+                if isinstance(values, list):
+                    profile[key] = [
+                        value for value in values
+                        if str(value or "").strip() != line_user_id
+                    ]
+            details = profile.get("guarding_details")
+            if isinstance(details, list):
+                profile["guarding_details"] = [
+                    item for item in details
+                    if not _test_reset_row_matches_user(item, line_user_id)
+                ]
+
+        for key in (
+            "guardian_invites",
+            "beta_program_members",
+            "beta_feedback_reports",
+            "notification_logs",
+            "contact_rewards",
+        ):
+            rows = state.get(key)
+            if isinstance(rows, list):
+                state[key] = [
+                    row for row in rows
+                    if not _test_reset_row_matches_user(row, line_user_id)
+                ]
+
+        for key in ("sos_pending", "location_grants", "location_grant_index"):
+            values = state.get(key)
+            if isinstance(values, dict):
+                values.pop(line_user_id, None)
+                state[key] = {
+                    item_key: item
+                    for item_key, item in values.items()
+                    if not _test_reset_row_matches_user(item, line_user_id)
+                }
+        events = state.get("sos_events")
+        if isinstance(events, dict):
+            state["sos_events"] = {
+                event_id: event
+                for event_id, event in events.items()
+                if not _test_reset_row_matches_user(event, line_user_id)
+            }
+
+        groups = state.get("guardian_groups")
+        if isinstance(groups, dict):
+            retained_groups = {}
+            for group_id, group in groups.items():
+                if _test_reset_row_matches_user(group, line_user_id):
+                    continue
+                _remove_user_from_group_members(group, line_user_id)
+                retained_groups[group_id] = group
+            state["guardian_groups"] = retained_groups
+
+        removed_at = iso_now()
+        for order in state.get("orders") or []:
+            if str(order.get("line_user_id") or "").strip() == line_user_id:
+                order["line_user_id"] = "deleted-test-user"
+                order["display_name"] = "已刪除測試會員"
+                order["personal_data_removed_at"] = removed_at
+
+        return {
+            "ok": True,
+            "deleted": True,
+            "line_user_id": line_user_id,
+            "billing_preserved": True,
+            "audit_preserved": True,
+            "message": "測試帳號、簽到與守護關係已刪除；帳務與後台稽核紀錄已保留。",
+        }, 200
+
+    return mutate_state_atomically(data_file, remove_test_member)
 
 
 def admin_set_core_guardian(data_file, payload):
@@ -20046,6 +20172,18 @@ def create_app(config=None):
             allowed_test_user_ids=_test_line_user_ids(app.config),
         )
         return _admin_mutation_response("test_account.reset", data, code)
+
+    @app.delete("/api/admin/test-accounts/<line_user_id>")
+    def admin_test_account_delete_api(line_user_id):
+        denied = _admin_guard(write=True, permission="member.manage")
+        if denied:
+            return denied
+        data, code = admin_delete_test_account(
+            app.config["DATA_FILE"],
+            line_user_id,
+            allowed_test_user_ids=_test_line_user_ids(app.config),
+        )
+        return _admin_mutation_response("test_account.delete", data, code)
 
     @app.get("/api/admin/launch-readiness")
     def admin_launch_readiness_api():
