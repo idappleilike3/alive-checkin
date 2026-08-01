@@ -1834,6 +1834,9 @@ _PROFILE_PERSIST_KEYS = (
     "beta_reset_pending",
     "beta_reset_origin_cohort",
     "account_state_version",
+    "location",
+    "location_source",
+    "location_updated_at",
 )
 
 
@@ -2502,6 +2505,46 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
         "allowed_grace_hours": list(ALLOWED_GRACE_HOURS),
         "plan": profile.get("plan", "trial"),
         "display_name": profile.get("display_name", ""),
+        "user_location": {
+            "city": str((profile.get("location") or {}).get("city") or "").strip(),
+            "district": str((profile.get("location") or {}).get("district") or "").strip(),
+        },
+        "location_configured": bool(
+            str((profile.get("location") or {}).get("city") or "").strip()
+            and str((profile.get("location") or {}).get("district") or "").strip()
+        ),
+    }, 200
+
+
+def update_member_location(data_file, line_user_id, payload, *, source="member"):
+    """Save a coarse Taiwan location without collecting an address or GPS."""
+    line_user_id = str(line_user_id or "").strip()
+    city = str((payload or {}).get("city") or "").strip()
+    district = str((payload or {}).get("district") or "").strip()
+    if not line_user_id:
+        return {"ok": False, "error": "missing line_user_id"}, 400
+    if not city or not district:
+        return {
+            "ok": False,
+            "error": "location_required",
+            "message": "請選擇縣市與鄉鎮市區",
+        }, 400
+    if len(city) > 12 or len(district) > 20:
+        return {"ok": False, "error": "invalid_location"}, 400
+    source = "admin" if source == "admin" else "member"
+    state = load_state(data_file)
+    profile = (state.get("users") or {}).get(line_user_id)
+    if not isinstance(profile, dict):
+        return {"ok": False, "error": "user not registered"}, 404
+    profile["location"] = {"city": city, "district": district}
+    profile["location_source"] = source
+    profile["location_updated_at"] = datetime.now().isoformat(timespec="seconds")
+    save_state(data_file, state)
+    return {
+        "ok": True,
+        "user_location": dict(profile["location"]),
+        "location_source": source,
+        "location_updated_at": profile["location_updated_at"],
     }, 200
 
 
@@ -4217,6 +4260,12 @@ def build_status(profile, state=None, now=None):
         "line_user_id": profile.get("line_user_id"),
         "display_name": profile.get("display_name", ""),
         "picture_url": profile.get("picture_url", ""),
+        "user_location": {
+            "city": str((profile.get("location") or {}).get("city") or "").strip(),
+            "district": str((profile.get("location") or {}).get("district") or "").strip(),
+        },
+        "weather": copy.deepcopy(profile.get("weather") or {}),
+        "daily_blessing": checkin_blessing_text(now),
         "is_onboarding_completed": bool(profile.get("is_onboarding_completed")),
         "onboarding_reminder_configured": bool(
             profile.get("onboarding_reminder_configured")
@@ -19079,6 +19128,17 @@ def create_app(config=None):
         data, code = register_line_user(app.config["DATA_FILE"], payload)
         return jsonify(data), code
 
+    @app.post("/api/profile/location")
+    def member_location_api():
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = update_member_location(
+            app.config["DATA_FILE"], line_user_id, payload, source="member"
+        )
+        return jsonify(data), code
+
     @app.post("/api/beta/claim")
     def beta_claim_api():
         payload = request.get_json(silent=True) or {}
@@ -22014,6 +22074,20 @@ def create_app(config=None):
             return denied
         data, code = admin_update_user_plan(app.config["DATA_FILE"], request.get_json(silent=True) or {})
         return _admin_mutation_response("user_plan.update", data, code)
+
+    @app.post("/api/admin/member-location")
+    def admin_member_location_api():
+        denied = _admin_guard(write=True, permission="member.manage")
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        data, code = update_member_location(
+            app.config["DATA_FILE"],
+            payload.get("line_user_id"),
+            payload,
+            source="admin",
+        )
+        return _admin_mutation_response("member_location.update", data, code)
 
     @app.post("/api/admin/set-core-guardian")
     def admin_set_core_guardian_api():

@@ -237,20 +237,39 @@
     .countdown-block.is-overdue .countdown { color: #fff; }
     .countdown-label { font-size: 13px; color: var(--muted); text-align: center; }
     .countdown-block.is-overdue .countdown-label { color: rgba(255, 255, 255, 0.92); }
+    .checkin-card {
+      margin: 8px 0 12px;
+      padding: 14px 14px 13px;
+      border: 2px solid #22c55e;
+      border-radius: 20px;
+      background: linear-gradient(135deg, #f0fdf4, #ffffff);
+      box-shadow: 0 10px 26px rgba(34, 197, 94, 0.14);
+    }
+    .checkin-card-header { display: grid; gap: 4px; text-align: center; }
+    .checkin-greeting { color: var(--text); font-size: 20px; font-weight: 900; line-height: 1.25; }
+    .checkin-weather { color: var(--muted); font-size: 15px; font-weight: 750; line-height: 1.35; }
+    .checkin-weather[hidden] { display: none; }
+    .checkin-card-meta { margin-top: 4px; color: var(--muted); font-size: 14px; font-weight: 800; line-height: 1.35; }
+    .daily-blessing { margin-top: 6px; color: var(--text); font-size: 15px; font-weight: 750; line-height: 1.4; }
+    body.cute .checkin-card {
+      border-color: #f9a8d4;
+      background: linear-gradient(135deg, #fff1f2, #fce7f3);
+      box-shadow: 0 10px 26px rgba(219, 39, 119, 0.14);
+    }
     .check-btn {
-      width: 184px;
-      height: 184px;
+      width: 104px;
+      height: 104px;
       border: 0;
       border-radius: 50%;
       color: #fff;
       cursor: pointer;
-      margin: 8px auto 20px;
+      margin: 0;
       display: flex;
       flex-direction: column;
       justify-content: center;
       align-items: center;
-      gap: 4px;
-      font-size: 25px;
+      gap: 3px;
+      font-size: 20px;
       font-weight: 850;
       line-height: 1.2;
       background: var(--button);
@@ -263,13 +282,13 @@
       position: relative;
       display: grid;
       place-items: center;
-      margin-bottom: 2px;
+      margin: 10px 0 7px;
     }
     .check-wrap::before {
       content: "";
       position: absolute;
-      width: 214px;
-      height: 214px;
+      width: 124px;
+      height: 124px;
       border-radius: 50%;
       background: conic-gradient(from 180deg, transparent, var(--ring), transparent 72%);
       opacity: 0.72;
@@ -278,14 +297,16 @@
     .check-btn::after {
       content: "♡";
       position: absolute;
-      right: 28px;
-      top: 26px;
-      font-size: 18px;
+      right: 16px;
+      top: 14px;
+      font-size: 14px;
       opacity: 0.72;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .check-btn:active { transform: scale(0.94); }
-    .check-btn .sub { font-size: 13px; font-weight: 500; opacity: 0.9; }
+    .check-btn .icon { font-size: 18px; line-height: 1; }
+    .check-btn .label { font-size: 20px; font-weight: 900; line-height: 1.1; }
+    .check-btn .sub { font-size: 16px; font-weight: 800; opacity: 0.96; }
     .check-btn.warning { background: #f59e0b; box-shadow: 0 12px 30px rgba(245, 158, 11, 0.32); }
     .check-btn.danger {
       color: #fff !important;
@@ -725,8 +746,8 @@
     }
     /* 可愛風格：簽到按鈕強制粉色（含已簽到），勿被綠色覆蓋 */
     body.cute .check-btn:not(.danger):not(.warning) {
-      background: var(--button);
-      box-shadow: var(--button-shadow);
+      background: linear-gradient(135deg, #fb7185, #db2777);
+      box-shadow: 0 8px 24px rgba(219, 39, 119, 0.32);
     }
     body.cute .check-btn.checked:not(.danger):not(.warning) {
       background: var(--checked);
@@ -2856,7 +2877,7 @@
         border-radius: 22px;
         padding: 18px 12px calc(240px + env(safe-area-inset-bottom, 0px));
       }
-      .check-btn { width: 168px; height: 168px; font-size: 23px; }
+      .check-btn { width: 104px; height: 104px; font-size: 20px; }
       .setting-row { grid-template-columns: 1fr; }
       .plan-strip, .contact-grid { grid-template-columns: 1fr; }
       .member-avatar,
@@ -3982,12 +4003,25 @@
       <p class="mvp-slogan">每天 10 秒，報個平安</p>
       <h1 class="mvp-welcome">平常不打擾，有事才通知守護人</h1>
       <p class="mvp-welcome-sub">不是監控，是讓重要的人知道你平安</p>
-      <div class="check-wrap">
-        <button class="check-btn" id="checkBtn" type="button" disabled aria-busy="true">
-          我平安
-          <span class="sub">點一下回報</span>
-        </button>
-      </div>
+      <section class="checkin-card" id="checkinCard" aria-label="每日平安簽到">
+        <div class="checkin-card-header">
+          <p class="checkin-greeting" id="checkinGreeting">您好</p>
+          <p class="checkin-weather" id="checkinWeather" hidden>
+            <span id="checkinWeatherIcon" aria-hidden="true"></span>
+            <span id="checkinWeatherLoc"></span>
+            <span id="checkinWeatherText"></span>
+          </p>
+        </div>
+        <div class="check-wrap">
+          <button class="check-btn" id="checkBtn" type="button" disabled aria-busy="true" aria-label="報平安">
+            <span class="icon" aria-hidden="true">🌿</span>
+            <span class="label">我平安</span>
+            <span class="sub">點我一下</span>
+          </button>
+        </div>
+        <p class="checkin-card-meta" id="checkinCardMeta">萌芽・連續 0 天</p>
+        <p class="daily-blessing" id="checkinDailyBlessing">每天留一句平安，讓牽掛變成安心。</p>
+      </section>
       <div class="countdown-block" id="countdownBlock" hidden>
         <div class="countdown" id="countdownDisplay">--:--:--</div>
         <div class="countdown-label" id="countdownLabel">下一次安心確認倒數</div>
@@ -10733,8 +10767,59 @@
       return streak;
     }
 
+    function homeGreetingForHour(hour) {
+      const h = Number(hour);
+      if (h >= 5 && h < 11) return "早安";
+      if (h >= 11 && h < 18) return "午安";
+      return "晚安";
+    }
+
+    function taipeiHour(now = new Date()) {
+      const value = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Asia/Taipei", hour: "2-digit", hourCycle: "h23"
+      }).format(now);
+      return Number(value);
+    }
+
+    function renderWeatherLocation(data) {
+      const manual = (data && data.user_location) || {};
+      const resolved = (data && data.weather && data.weather.resolved_location) || {};
+      const locationData = manual.city ? manual : resolved;
+      return [locationData.city, locationData.district].filter(Boolean).join(" ");
+    }
+
+    function renderHomeCheckinCard(data) {
+      const name = String((data && data.display_name) || lineDisplayName || "您好").trim();
+      const greeting = homeGreetingForHour(taipeiHour());
+      const greetingNode = $("checkinGreeting");
+      if (greetingNode) greetingNode.textContent = `${greeting}，${name}`;
+
+      const weather = (data && data.weather) || {};
+      const weatherRow = $("checkinWeather");
+      const locationLabel = renderWeatherLocation(data);
+      const condition = String(weather.condition || weather.description || "").trim();
+      const temperature = String(weather.temperature_range || weather.temperature || "").trim();
+      if (weatherRow) {
+        const hasWeather = Boolean(locationLabel && (condition || temperature));
+        weatherRow.hidden = !hasWeather;
+        if (hasWeather) {
+          $("checkinWeatherIcon").textContent = weather.icon || "🌤️";
+          $("checkinWeatherLoc").textContent = locationLabel;
+          $("checkinWeatherText").textContent = [condition, temperature].filter(Boolean).join("　");
+        }
+      }
+
+      const streak = Number.isFinite(Number(data && data.streak_days))
+        ? Number(data.streak_days) : calculateStreak((data && data.history) || []);
+      const meta = $("checkinCardMeta");
+      if (meta) meta.textContent = `${streak >= 30 ? "茁壯" : streak >= 7 ? "成長" : "萌芽"}・連續 ${streak} 天`;
+      const blessing = $("checkinDailyBlessing");
+      if (blessing && data && data.daily_blessing) blessing.textContent = data.daily_blessing;
+    }
+
     function renderStatus(data) {
       currentStatusData = data;
+      renderHomeCheckinCard(data);
       historyData = data.history || [];
       $("dailyStatus").textContent = data.is_today_checked ? "今日已簽到" : "今日未簽到";
       $("lastDate").textContent = formatDate(data.last_check_in);
@@ -10875,9 +10960,9 @@
       renderStatus(await apiGetStatus());
     }
 
-    const CHECK_BTN_IDLE_HTML = '我平安<span class="sub">回報今天平安</span>';
-    const CHECK_BTN_DONE_HTML = '今日已平安<span class="sub">✅ 今天已完成平安回報</span>';
-    const CHECK_BTN_LOADING_HTML = '回報中…<span class="sub">請稍候</span>';
+    const CHECK_BTN_IDLE_HTML = '<span class="icon" aria-hidden="true">🌿</span><span class="label">我平安</span><span class="sub">點我一下</span>';
+    const CHECK_BTN_DONE_HTML = '<span class="icon" aria-hidden="true">✅</span><span class="label">今日平安</span><span class="sub">已完成回報</span>';
+    const CHECK_BTN_LOADING_HTML = '<span class="icon" aria-hidden="true">🌿</span><span class="label">回報中…</span><span class="sub">請稍候</span>';
 
     function syncCheckBtn(data) {
       const checkBtn = $("checkBtn");
