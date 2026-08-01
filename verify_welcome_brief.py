@@ -13,32 +13,26 @@ EXPECTED_HOME = "https://liff.line.me/2010848330-UAiqPPYD#home"
 
 w = g.welcome_flex()
 ws = json.dumps(w, ensure_ascii=False)
-assert "歡迎加入每日平安" in ws
-assert "welcome-family-checkin.png?v=W260802welcomeFinal" in ws
-assert "daily-peace-logo.png?v=W260802welcomeFinal" in ws
-assert "每天只要 10 秒，讓關心你的人知道你平安" in ws
-assert "平常不打擾，需要時及時守護" in ws
-assert "① 填寫基本資料" in ws
-assert "② 設定每日提醒" in ws
-assert "③ 邀請核心守護人" in ws
-assert "免費體驗，不會自動收費" in ws
-assert "7 天" not in ws
-assert "永久免費" not in ws
-assert "緊急情況請直接撥打 119 或 110" in ws
+assert "welcome-approved-full-20260802.png?v=W260802fullV1" in ws
+assert "welcome-family-checkin.png" not in ws
+assert "daily-peace-logo.png" not in ws
+assert w["hero"]["aspectRatio"] == "865:1818"
+assert w["hero"]["aspectMode"] == "fit"
 assert "開始 14 天安心體驗" in ws
 assert "了解每日平安" in ws
 assert EXPECTED_BIND in ws
 assert "code=" not in ws and "state=" not in ws
-# Two clear CTAs; the primary action is placed before the three setup steps.
+# The approved original artwork stays intact; two clear CTAs remain below it.
 assert len(w["footer"]["contents"]) == 2
 assert "我的會員" not in ws
 assert "首次引導" not in ws
 
-assert w["body"]["contents"][0]["action"]["uri"] == EXPECTED_BIND
-assert w["footer"]["contents"][0]["action"]["uri"] == g.liff_entry_url(open_action="help")
+assert w["hero"]["action"]["uri"] == EXPECTED_BIND
+assert w["footer"]["contents"][0]["action"]["uri"] == EXPECTED_BIND
+assert w["footer"]["contents"][1]["action"]["uri"] == g.liff_entry_url(open_action="help")
 
 w2 = g.welcome_flex("小明")
-assert "小明，歡迎加入每日平安" in json.dumps(w2, ensure_ascii=False)
+assert w2 == w
 
 
 def walk(node):
@@ -123,8 +117,9 @@ gate = init_app[gate_start : init_app.index("if (inviteeMode) {", gate_start)]
 assert "shareContactInvite" not in gate
 assert "clearShareFirstLocalFlags" in gate
 
-print("welcome CTA:", w["body"]["contents"][0]["action"]["label"])
-print("welcome CTA uri:", w["body"]["contents"][0]["action"]["uri"])
+print("welcome artwork:", w["hero"]["url"])
+print("welcome CTA:", w["footer"]["contents"][0]["action"]["label"])
+print("welcome CTA uri:", w["footer"]["contents"][0]["action"]["uri"])
 print("welcome footer buttons:", len(w["footer"]["contents"]))
 print("intro primary label:", intro["footer"]["contents"][0]["action"]["label"])
 print("bind confirm ok")

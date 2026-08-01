@@ -58,20 +58,14 @@ class BotKeywordHandlerTests(unittest.TestCase):
         self.assertIn("share-invite.html", blob)
         self.assertNotIn("no bound", blob.lower())
 
-    def test_welcome_flex_uses_two_consistent_cross_platform_ctas(self):
+    def test_welcome_flex_uses_approved_full_length_artwork_and_two_ctas(self):
         flex = welcome_flex("小明")
         blob = str(flex)
-        self.assertIn("小明，歡迎加入每日平安", blob)
-        self.assertIn("每天只要 10 秒，讓關心你的人知道你平安", blob)
-        self.assertIn("平常不打擾，需要時及時守護", blob)
-        self.assertIn("① 填寫基本資料", blob)
-        self.assertIn("② 設定每日提醒", blob)
-        self.assertIn("③ 邀請核心守護人", blob)
-        self.assertIn("免費體驗，不會自動收費", blob)
-        self.assertNotIn("7 天", blob)
-        self.assertNotIn("永久免費", blob)
-        self.assertIn("daily-peace-logo.png", blob)
-        self.assertIn("welcome-family-checkin.png", blob)
+        self.assertIn("welcome-approved-full-20260802.png?v=W260802fullV1", blob)
+        self.assertNotIn("welcome-family-checkin.png", blob)
+        self.assertNotIn("daily-peace-logo.png", blob)
+        self.assertEqual(flex["hero"]["aspectRatio"], "865:1818")
+        self.assertEqual(flex["hero"]["aspectMode"], "fit")
         self.assertIn("open=onboarding", blob)
         self.assertIn("open=help", blob)
         self.assertNotIn("版本 W", blob)
@@ -99,8 +93,6 @@ class BotKeywordHandlerTests(unittest.TestCase):
             labels,
             ["開始 14 天安心體驗", "了解每日平安"],
         )
-        self.assertNotIn("你平安。", blob)
-        self.assertNotIn("及時守護。", blob)
         self.assertEqual(
             pricing_direct_url(),
             "https://alive-checkin.onrender.com/liff/pricing.html",
@@ -152,7 +144,8 @@ class BotKeywordHandlerTests(unittest.TestCase):
             "歡迎加入每日平安",
         )
         self.assertNotIn("您 您好", str(welcome_flex(None)))
-        self.assertIn("阿美", str(welcome_flex("阿美")))
+        # 定案圖是單一靜態素材；不要再疊一套動態文字版面。
+        self.assertEqual(welcome_flex(None), welcome_flex("阿美"))
 
     def test_resolve_welcome_display_name_prefers_hint_and_profile(self):
         import app as app_mod

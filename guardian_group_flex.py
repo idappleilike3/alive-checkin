@@ -1167,228 +1167,32 @@ def welcome_greeting_text(display_name: str | None = None) -> str:
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友歡迎 Flex：平衡圖文、長輩友善、兩顆明確 CTA。
-
-    結構對齊長輩友善設計稿：
-    - Header：原始 Logo + 品牌名、個人化歡迎詞、兩句無句號價值說明
-    - Hero：媽媽按綠色「我平安」，女兒在 LINE 收到平安通知
-    - Body：主 CTA 提前、三步驟依真實流程垂直排列
-    - Footer：次 CTA + 119／110 免責
-
-    iPhone 與 Android 都由同一個 Flex payload 產生，避免兩個平台內容不一致。
-    守護邀請由免費體驗設定流程引導，不在首次歡迎卡重複顯示。
-    """
-    greeting = welcome_greeting_text(display_name)
+    """加好友／「歡迎詞」共用的定案完整長版歡迎圖與兩顆 CTA。"""
     setup_uri = liff_entry_url(open_action="onboarding")
     help_uri = liff_entry_url(open_action="help")
     base = (os.environ.get("APP_PUBLIC_URL") or PUBLIC_BASE).rstrip("/")
-    # 2026-08-02 final approved welcome artwork.  Keep a unique version on
-    # both images because LINE clients cache Flex image URLs aggressively.
-    logo_uri = f"{base}/assets/daily-peace-logo.png?v=W260802welcomeFinal"
-    story_uri = f"{base}/assets/welcome-family-checkin.png?v=W260802welcomeFinal"
-    cream_bg = "#FFF9F2"
+    artwork_uri = f"{base}/assets/welcome-approved-full-20260802.png?v=W260802fullV1"
     coral = "#F2554B"
-    coral_soft = "#FFF0EC"
-    text_dark = "#25272A"
-    olive = "#66754A"
-    step_bg = "#FFFFFF"
 
     return {
         "type": "bubble",
         "size": "mega",
-        "header": {
-            "type": "box",
-            "layout": "vertical",
-            "spacing": "sm",
-            "paddingAll": "lg",
-            "backgroundColor": cream_bg,
-            "contents": [
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "spacing": "sm",
-                    "alignItems": "center",
-                    "contents": [
-                        {
-                            "type": "image",
-                            "url": logo_uri,
-                            "size": "xxs",
-                            "aspectMode": "fit",
-                            "aspectRatio": "1:1",
-                            "flex": 0,
-                        },
-                        {
-                            "type": "text",
-                            "text": "每日平安",
-                            "weight": "bold",
-                            "size": "xl",
-                            "color": text_dark,
-                            "wrap": True,
-                            "align": "start",
-                        },
-                    ],
-                },
-                {
-                    "type": "text",
-                    "text": greeting,
-                    "weight": "bold",
-                    "size": "xxl",
-                    "color": coral,
-                    "wrap": True,
-                    "align": "start",
-                },
-                {
-                    "type": "text",
-                    "text": "每天只要 10 秒，讓關心你的人知道你平安",
-                    "weight": "bold",
-                    "size": "lg",
-                    "color": text_dark,
-                    "wrap": True,
-                    "align": "start",
-                },
-                {
-                    "type": "text",
-                    "text": "平常不打擾，需要時及時守護",
-                    "weight": "bold",
-                    "size": "lg",
-                    "color": text_dark,
-                    "wrap": True,
-                    "align": "start",
-                },
-            ],
-        },
         "hero": {
             "type": "image",
-            "url": story_uri,
+            "url": artwork_uri,
             "size": "full",
-            "aspectMode": "cover",
-            "aspectRatio": "216:125",
-        },
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "spacing": "lg",
-            "paddingAll": "xl",
-            "backgroundColor": cream_bg,
-            "contents": [
-                {
-                    "type": "button",
-                    "action": {
-                        "type": "uri",
-                        "label": "開始 14 天安心體驗",
-                        "uri": setup_uri,
-                    },
-                    "style": "primary",
-                    "color": coral,
-                    "height": "md",
-                },
-                {
-                    "type": "text",
-                    "text": "免費體驗，不會自動收費",
-                    "size": "md",
-                    "color": text_dark,
-                    "wrap": True,
-                    "align": "start",
-                },
-                {
-                    "type": "text",
-                    "text": "簡單三步驟，開始每日平安",
-                    "weight": "bold",
-                    "size": "xl",
-                    "color": text_dark,
-                    "wrap": True,
-                },
-                {
-                    "type": "box",
-                    "layout": "vertical",
-                    "spacing": "lg",
-                    "contents": [
-                        {
-                            "type": "box",
-                            "layout": "vertical",
-                            "spacing": "sm",
-                            "paddingAll": "md",
-                            "backgroundColor": step_bg,
-                            "cornerRadius": "xl",
-                            "contents": [
-                                {
-                                    "type": "text",
-                                    "text": "① 填寫基本資料",
-                                    "weight": "bold",
-                                    "size": "xl",
-                                    "color": coral,
-                                    "wrap": True,
-                                },
-                                {
-                                    "type": "text",
-                                    "text": "讓守護人知道是誰在報平安",
-                                    "size": "xl",
-                                    "color": GRAY,
-                                    "wrap": True,
-                                },
-                            ],
-                        },
-                        {
-                            "type": "box",
-                            "layout": "vertical",
-                            "spacing": "sm",
-                            "paddingAll": "md",
-                            "backgroundColor": step_bg,
-                            "cornerRadius": "xl",
-                            "contents": [
-                                {
-                                    "type": "text",
-                                    "text": "② 設定每日提醒",
-                                    "weight": "bold",
-                                    "size": "xl",
-                                    "color": coral,
-                                    "wrap": True,
-                                },
-                                {
-                                    "type": "text",
-                                    "text": "到時間提醒你按下「我平安」",
-                                    "size": "xl",
-                                    "color": GRAY,
-                                    "wrap": True,
-                                },
-                            ],
-                        },
-                        {
-                            "type": "box",
-                            "layout": "vertical",
-                            "spacing": "sm",
-                            "paddingAll": "md",
-                            "backgroundColor": step_bg,
-                            "cornerRadius": "xl",
-                            "contents": [
-                                {
-                                    "type": "text",
-                                    "text": "③ 邀請核心守護人",
-                                    "weight": "bold",
-                                    "size": "xl",
-                                    "color": coral,
-                                    "wrap": True,
-                                },
-                                {
-                                    "type": "text",
-                                    "text": "對方接受後，安心連結就完成了",
-                                    "size": "xl",
-                                    "color": GRAY,
-                                    "wrap": True,
-                                },
-                            ],
-                        },
-                    ],
-                },
-            ],
+            "aspectMode": "fit",
+            "aspectRatio": "865:1818",
+            "action": {"type": "uri", "label": "開始 14 天安心體驗", "uri": setup_uri},
         },
         "footer": {
             "type": "box",
             "layout": "vertical",
             "spacing": "sm",
             "paddingAll": "lg",
-            "backgroundColor": cream_bg,
+            "backgroundColor": "#FFF9F2",
             "contents": [
+                _uri_button("開始 14 天安心體驗", setup_uri, style="primary", color=coral, height="md"),
                 {
                     "type": "button",
                     "action": {
@@ -1399,22 +1203,6 @@ def welcome_flex(display_name: str | None = None):
                     "style": "secondary",
                     "color": coral,
                     "height": "md",
-                },
-                {
-                    "type": "box",
-                    "layout": "vertical",
-                    "paddingAll": "md",
-                    "backgroundColor": coral_soft,
-                    "cornerRadius": "xl",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": "緊急情況請直接撥打 119 或 110；每日平安不能取代緊急救援服務",
-                            "size": "md",
-                            "color": olive,
-                            "wrap": True,
-                        },
-                    ],
                 },
             ],
         },
