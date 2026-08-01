@@ -19035,10 +19035,6 @@ def create_app(config=None):
     def faq():
         return send_from_directory(app.static_folder, "faq.html")
 
-    @app.get("/ai-platform")
-    def ai_platform():
-        return send_from_directory(app.static_folder, "ai-platform.html")
-
     @app.get("/help")
     def help_page():
         return send_from_directory(app.static_folder, "help.html")
@@ -22277,7 +22273,7 @@ class MiniClient:
             if path_obj.exists():
                 return MiniResponse(path_obj.read_text(encoding="utf-8"))
             return MiniResponse({"error": "not found"}, 404)
-        if route in ("/terms", "/privacy", "/faq", "/ai-platform"):
+        if route in ("/terms", "/privacy"):
             return MiniResponse({"ok": True})
         if route == "/liff/migrate.html":
             return MiniResponse({"ok": True})
@@ -22975,8 +22971,6 @@ class MiniApp:
                     file_name = "privacy.html"
                 if route == "/faq":
                     file_name = "faq.html"
-                if route == "/ai-platform":
-                    file_name = "ai-platform.html"
                 file_path = static_root / file_name
                 if not file_path.exists() or not file_path.is_file():
                     handler.send_response(404)
