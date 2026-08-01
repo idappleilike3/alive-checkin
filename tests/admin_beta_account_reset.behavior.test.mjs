@@ -10,6 +10,13 @@ test("member management has dedicated 21-day reset panel", () => {
   }
 });
 
+test("reset candidates load independently and explain an empty whitelist", () => {
+  assert.match(html, /loadBetaResetCandidates\(\)/);
+  assert.match(html, /Promise\.allSettled/);
+  assert.ok(html.includes("尚未設定測試帳號白名單"));
+  assert.ok(html.includes("白名單內目前沒有符合資格的 21 天封測帳號"));
+});
+
 test("reset request carries confirmation and candidate version", () => {
   assert.match(html, /account_state_version:\s*version/);
   assert.match(html, /confirm:\s*true/);
