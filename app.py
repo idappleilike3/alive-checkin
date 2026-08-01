@@ -11646,8 +11646,6 @@ def _has_active_paid_entitlement(profile):
 
 
 def _beta_reset_candidate(state, line_user_id, allowed):
-    if line_user_id not in allowed:
-        return None
     profile = (state.get("users") or {}).get(line_user_id)
     tombstone = (state.get("test_account_tombstones") or {}).get(line_user_id)
     if isinstance(profile, dict) and profile.get("beta_reset_pending"):
@@ -11656,6 +11654,8 @@ def _beta_reset_candidate(state, line_user_id, allowed):
     if cohort not in BETA_COHORT_PLAN:
         cohort = str((tombstone or {}).get("last_beta_cohort") or "").upper()
     if cohort not in BETA_COHORT_PLAN:
+        if line_user_id not in allowed:
+            return None
         if not isinstance(profile, dict) or _has_active_paid_entitlement(profile):
             return None
         cohort = ""
@@ -11702,9 +11702,6 @@ def admin_reset_test_account(
     }
     if not line_user_id:
         return {"ok": False, "error": "missing_line_user_id"}, 400
-    if line_user_id not in allowed:
-        return {"ok": False, "error": "not_a_test_account"}, 403
-
     def reset(state):
         candidate = _beta_reset_candidate(state, line_user_id, allowed)
         if not candidate:
