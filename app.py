@@ -140,6 +140,12 @@ from push_delivery import (
     push_attempt_allowed,
     record_push_failure,
 )
+from push_management import (
+    claim_due_campaign,
+    claim_next_delivery,
+    finalize_claimed_campaign,
+    settle_delivery_attempt,
+)
 
 
 DEFAULT_LIFF_ID = "2010848330-UAiqPPYD"
@@ -17333,6 +17339,186 @@ def send_profile_completion_reminders(config):
     return {"sent": sent, "skipped": skipped, "results": results}, 200
 
 
+def _push_campaign_failure_zh(exc):
+    failure = classify_push_exception(exc)
+    if failure.kind == "permanent":
+        return {
+            "transient": False,
+            "reason_zh": "LINE 收件人已封鎖官方帳號或帳號無法接收訊息。",
+            "action_zh": "請確認會員仍為官方帳號好友，並重新核對完整 LINE UID。",
+        }
+    if failure.kind == "system":
+        return {
+            "transient": False,
+            "reason_zh": "LINE 頻道授權失效或權限不足。",
+            "action_zh": "請由系統管理員檢查 Channel Access Token 與 Messaging API 權限。",
+        }
+    if failure.kind == "message":
+        return {
+            "transient": False,
+            "reason_zh": "LINE 拒絕此收件人或訊息內容。",
+            "action_zh": "請檢查完整 LINE UID、好友狀態與推播模板內容。",
+        }
+    if failure.kind == "rate_limited":
+        return {
+            "transient": True,
+            "reason_zh": "LINE 發送頻率暫時超過限制。",
+            "action_zh": "系統會使用相同重試鍵自動重試，請稍後查看結果。",
+        }
+    return {
+        "transient": True,
+        "reason_zh": "LINE 服務暫時無法連線或回應逾時。",
+        "action_zh": "系統會使用相同重試鍵自動重試，若仍失敗請檢查網路與 LINE 狀態。",
+    }
+
+
+def _push_campaign_version(state, campaign_id, version_number):
+    return next(
+        (
+            row
+            for row in state.get("push_campaign_versions") or []
+            if row.get("campaign_id") == campaign_id
+            and int(row.get("version") or 0) == int(version_number or 0)
+        ),
+        {},
+    )
+
+
+def _push_campaign_message(version, profile):
+    if str(version.get("content_type") or "text") == "text":
+        return str(version.get("text") or "")
+    template_key = str(version.get("template_key") or "")
+    if template_key == "day7_pin_reminder":
+        return build_day7_pin_reminder_flex()
+    if template_key == "beta_day2_private_note":
+        return build_beta_feedback_flex(profile or {}, 2)
+    raise ValueError("approved push template is unavailable")
+
+
+def _send_push_campaign_message(config, target, message, retry_key):
+    token = str(config.get("LINE_CHANNEL_ACCESS_TOKEN") or "").strip()
+    if not token:
+        raise PermissionError("LINE_CHANNEL_ACCESS_TOKEN is not set")
+    injected = config.get("PUSH_CAMPAIGN_SENDER")
+    if injected:
+        return injected(token, target, message, retry_key)
+    return line_push_message(token, target, message, retry_key=retry_key)
+
+
+def send_due_push_campaigns(config, now=None):
+    """Claim and deliver due campaigns without holding a database lock during LINE I/O."""
+    clock = now or current_app_time(config)
+    worker_id = f"push-{uuid.uuid4()}"
+    summary = {
+        "claimed": 0,
+        "completed": 0,
+        "partially_failed": 0,
+        "fully_failed": 0,
+        "cancelled": 0,
+        "sent": 0,
+        "failed": 0,
+    }
+    while True:
+        claim = mutate_state_atomically(
+            config["DATA_FILE"],
+            lambda state: claim_due_campaign(
+                state,
+                clock,
+                worker_id=worker_id,
+                audience_classifier=push_audience_code,
+            ),
+        )
+        if claim is None:
+            break
+        action = claim.get("action")
+        if action == "cancelled":
+            summary["cancelled"] += 1
+            continue
+        if action == "empty_audience":
+            summary["fully_failed"] += 1
+            continue
+        campaign_id = claim["campaign_id"]
+        summary["claimed"] += 1
+        while True:
+            delivery = mutate_state_atomically(
+                config["DATA_FILE"],
+                lambda state: claim_next_delivery(
+                    state,
+                    campaign_id,
+                    worker_id=worker_id,
+                    now=clock,
+                ),
+            )
+            if delivery is None:
+                break
+            state = load_state(config["DATA_FILE"])
+            version = _push_campaign_version(
+                state,
+                campaign_id,
+                delivery.get("campaign_version"),
+            )
+            profile = (state.get("users") or {}).get(delivery["line_user_id"]) or {}
+            try:
+                message = _push_campaign_message(version, profile)
+                result = _send_push_campaign_message(
+                    config,
+                    delivery["line_user_id"],
+                    message,
+                    delivery["retry_key"],
+                )
+                if isinstance(result, dict) and result.get("ok") is False:
+                    raise RuntimeError(str(result))
+                mutate_state_atomically(
+                    config["DATA_FILE"],
+                    lambda saved_state: settle_delivery_attempt(
+                        saved_state,
+                        campaign_id,
+                        delivery["id"],
+                        worker_id=worker_id,
+                        now=clock,
+                        success=True,
+                    ),
+                )
+                summary["sent"] += 1
+            except Exception as exc:
+                if isinstance(exc, PermissionError):
+                    failure = {
+                        "transient": False,
+                        "reason_zh": "尚未設定 LINE Channel Access Token，無法發送。",
+                        "action_zh": "請由系統管理員完成 Render 的 LINE_CHANNEL_ACCESS_TOKEN 設定。",
+                    }
+                else:
+                    failure = _push_campaign_failure_zh(exc)
+                settled = mutate_state_atomically(
+                    config["DATA_FILE"],
+                    lambda saved_state: settle_delivery_attempt(
+                        saved_state,
+                        campaign_id,
+                        delivery["id"],
+                        worker_id=worker_id,
+                        now=clock,
+                        success=False,
+                        transient=failure["transient"],
+                        failure_reason_zh=failure["reason_zh"],
+                        failure_action_zh=failure["action_zh"],
+                        technical_detail=str(exc)[:1000],
+                    ),
+                )
+                if settled["status"] == "failed":
+                    summary["failed"] += 1
+        finished = mutate_state_atomically(
+            config["DATA_FILE"],
+            lambda state: finalize_claimed_campaign(
+                state,
+                campaign_id,
+                worker_id=worker_id,
+                now=clock,
+            ),
+        )
+        summary[finished["status"]] += 1
+    return summary, 200
+
+
 def run_cron_tick(config):
     now = current_app_time(config)
     results = {}
@@ -17361,6 +17547,7 @@ def run_cron_tick(config):
     }
 
     always = {
+        "push_campaigns": send_due_push_campaigns,
         "checkin_reminders": send_checkin_reminders,
         "binding_notification_retries": retry_pending_bind_notifications,
         "profile_completion_reminders": send_profile_completion_reminders,

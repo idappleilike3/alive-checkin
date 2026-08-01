@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import copy
-from datetime import datetime
-from uuid import uuid4
+from datetime import datetime, timedelta
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 
 CAMPAIGN_STATUSES = {
@@ -48,6 +48,13 @@ AUDIENCE_CODES = {
     "G799",
 }
 
+MAX_DELIVERY_ATTEMPTS = 3
+CAMPAIGN_LEASE_DURATION = timedelta(minutes=5)
+DELIVERY_LEASE_DURATION = timedelta(minutes=2)
+LATE_SEND_WINDOW = timedelta(hours=24)
+LATE_CANCELLATION_REASON_ZH = "已超過預定發送時間 24 小時，系統自動取消。"
+EMPTY_AUDIENCE_REASON_ZH = "發送當下沒有符合資格的收件人。"
+
 _VERSION_FIELDS = (
     "name",
     "content_type",
@@ -79,6 +86,23 @@ def _iso(value: datetime) -> str:
     if not isinstance(value, datetime):
         raise CampaignValidationError("now must be a datetime")
     return value.isoformat(timespec="seconds")
+
+
+def _parse_datetime(value) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value or ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _comparable(left: datetime, right: datetime) -> tuple[datetime, datetime]:
+    if left.tzinfo is None and right.tzinfo is not None:
+        right = right.replace(tzinfo=None)
+    elif left.tzinfo is not None and right.tzinfo is None:
+        left = left.replace(tzinfo=None)
+    return left, right
 
 
 def _new_id() -> str:
@@ -445,3 +469,254 @@ def cancel_campaign(
     campaign["updated_at"] = _iso(now)
     _append_event(state, campaign, "cancelled", actor, now, reason_zh=reason[:500])
     return campaign
+
+
+def _stable_retry_key(campaign_id: str, version: int, line_user_id: str) -> str:
+    return str(uuid5(NAMESPACE_URL, f"daily-peace:campaign:{campaign_id}:{version}:{line_user_id}"))
+
+
+def _lease_active(campaign: dict, now: datetime) -> bool:
+    expires_at = _parse_datetime(campaign.get("lease_expires_at"))
+    if not expires_at:
+        return False
+    comparable_expiry, comparable_now = _comparable(expires_at, now)
+    return comparable_expiry > comparable_now
+
+
+def _campaign_delivery_rows(state: dict, campaign_id: str) -> list[dict]:
+    return [
+        row
+        for row in state.get("push_delivery_records") or []
+        if row.get("campaign_id") == campaign_id and row.get("source") == "campaign"
+    ]
+
+
+def claim_due_campaign(
+    state: dict,
+    now: datetime,
+    *,
+    worker_id: str,
+    audience_classifier,
+) -> dict | None:
+    """Claim one due campaign and freeze its send-time recipient snapshots."""
+    ensure_push_state(state)
+    candidates = sorted(
+        (
+            row
+            for row in state["push_campaigns"]
+            if row.get("status") in {"scheduled", "sending"}
+        ),
+        key=lambda row: str(row.get("scheduled_at") or ""),
+    )
+    for campaign in candidates:
+        scheduled_at = _parse_datetime(campaign.get("scheduled_at"))
+        if not scheduled_at:
+            continue
+        comparable_now, comparable_scheduled = _comparable(now, scheduled_at)
+        if campaign["status"] == "scheduled":
+            if comparable_now < comparable_scheduled:
+                continue
+            if comparable_now - comparable_scheduled > LATE_SEND_WINDOW:
+                campaign.update(
+                    {
+                        "status": "cancelled",
+                        "cancelled_at": _iso(now),
+                        "cancelled_by": "system",
+                        "cancellation_reason_zh": LATE_CANCELLATION_REASON_ZH,
+                        "updated_at": _iso(now),
+                    }
+                )
+                _append_event(
+                    state,
+                    campaign,
+                    "cancelled_late",
+                    "system",
+                    now,
+                    reason_zh=LATE_CANCELLATION_REASON_ZH,
+                )
+                return {"action": "cancelled", "campaign_id": campaign["id"]}
+            recipients = resolve_recipients(
+                state, campaign, now, audience_classifier
+            )
+            if not recipients:
+                campaign.update(
+                    {
+                        "status": "fully_failed",
+                        "sent_count": 0,
+                        "failed_count": 0,
+                        "completed_at": _iso(now),
+                        "updated_at": _iso(now),
+                    }
+                )
+                _append_event(
+                    state,
+                    campaign,
+                    "empty_audience",
+                    "system",
+                    now,
+                    reason_zh=EMPTY_AUDIENCE_REASON_ZH,
+                )
+                return {"action": "empty_audience", "campaign_id": campaign["id"]}
+            version = _current_version(state, campaign)
+            if not _campaign_delivery_rows(state, campaign["id"]):
+                for recipient in recipients:
+                    state["push_delivery_records"].append(
+                        {
+                            "id": _new_id(),
+                            "source": "campaign",
+                            "kind": "campaign",
+                            "campaign_id": campaign["id"],
+                            "campaign_version_id": version["id"],
+                            "campaign_version": version["version"],
+                            "recipient_display_name": recipient["display_name"],
+                            "line_user_id": recipient["line_user_id"],
+                            "audience_code": recipient["audience_code"],
+                            "plan": recipient["plan"],
+                            "membership_source": recipient["membership_source"],
+                            "beta_cohort": recipient["beta_cohort"],
+                            "gift_code": recipient["gift_code"],
+                            "scheduled_at": campaign["scheduled_at"],
+                            "status": "pending",
+                            "attempts": 0,
+                            "retry_key": _stable_retry_key(
+                                campaign["id"],
+                                version["version"],
+                                recipient["line_user_id"],
+                            ),
+                            "created_at": _iso(now),
+                            "failure_reason_zh": "",
+                            "failure_action_zh": "",
+                            "technical_detail": "",
+                        }
+                    )
+            campaign["status"] = "sending"
+            campaign["sending_started_at"] = campaign.get("sending_started_at") or _iso(now)
+            recovered = False
+        else:
+            if _lease_active(campaign, now):
+                continue
+            recovered = True
+            for delivery in _campaign_delivery_rows(state, campaign["id"]):
+                if delivery.get("status") == "sending":
+                    delivery["status"] = "retry"
+                    delivery["delivery_lease_expires_at"] = ""
+        campaign["worker_id"] = str(worker_id)
+        campaign["lease_expires_at"] = _iso(now + CAMPAIGN_LEASE_DURATION)
+        campaign["updated_at"] = _iso(now)
+        _append_event(
+            state,
+            campaign,
+            "claimed",
+            "system",
+            now,
+            worker_id=str(worker_id),
+            recovered=recovered,
+        )
+        return {
+            "action": "claimed",
+            "campaign_id": campaign["id"],
+            "version": campaign["current_version"],
+            "recovered": recovered,
+        }
+    return None
+
+
+def claim_next_delivery(
+    state: dict,
+    campaign_id: str,
+    *,
+    worker_id: str,
+    now: datetime,
+) -> dict | None:
+    campaign = _campaign(state, campaign_id)
+    if campaign.get("status") != "sending" or campaign.get("worker_id") != str(worker_id):
+        return None
+    for delivery in _campaign_delivery_rows(state, campaign_id):
+        if delivery.get("status") not in {"pending", "retry"}:
+            continue
+        if int(delivery.get("attempts") or 0) >= MAX_DELIVERY_ATTEMPTS:
+            continue
+        delivery["status"] = "sending"
+        delivery["attempt_started_at"] = _iso(now)
+        delivery["delivery_worker_id"] = str(worker_id)
+        delivery["delivery_lease_expires_at"] = _iso(now + DELIVERY_LEASE_DURATION)
+        campaign["lease_expires_at"] = _iso(now + CAMPAIGN_LEASE_DURATION)
+        return copy.deepcopy(delivery)
+    return None
+
+
+def settle_delivery_attempt(
+    state: dict,
+    campaign_id: str,
+    delivery_id: str,
+    *,
+    worker_id: str,
+    now: datetime,
+    success: bool,
+    transient: bool = False,
+    failure_reason_zh: str = "",
+    failure_action_zh: str = "",
+    technical_detail: str = "",
+) -> dict:
+    campaign = _campaign(state, campaign_id)
+    delivery = next(
+        (
+            row
+            for row in _campaign_delivery_rows(state, campaign_id)
+            if row.get("id") == delivery_id
+        ),
+        None,
+    )
+    if not delivery:
+        raise CampaignNotFoundError("delivery not found")
+    if delivery.get("delivery_worker_id") != str(worker_id):
+        raise CampaignConflictError("delivery is owned by another worker")
+    attempts = int(delivery.get("attempts") or 0) + 1
+    delivery["attempts"] = attempts
+    delivery["last_attempt_at"] = _iso(now)
+    delivery["delivery_lease_expires_at"] = ""
+    if success:
+        delivery["status"] = "sent"
+        delivery["sent_at"] = _iso(now)
+        delivery["failure_reason_zh"] = ""
+        delivery["failure_action_zh"] = ""
+        delivery["technical_detail"] = ""
+    elif transient and attempts < MAX_DELIVERY_ATTEMPTS:
+        delivery["status"] = "retry"
+        delivery["failure_reason_zh"] = str(failure_reason_zh or "")[:500]
+        delivery["failure_action_zh"] = str(failure_action_zh or "")[:500]
+        delivery["technical_detail"] = str(technical_detail or "")[:1000]
+    else:
+        delivery["status"] = "failed"
+        delivery["failed_at"] = _iso(now)
+        delivery["failure_reason_zh"] = str(failure_reason_zh or "LINE 推播失敗。")[:500]
+        delivery["failure_action_zh"] = str(failure_action_zh or "請由系統管理員檢查。")[:500]
+        delivery["technical_detail"] = str(technical_detail or "")[:1000]
+    campaign["lease_expires_at"] = _iso(now + CAMPAIGN_LEASE_DURATION)
+    return copy.deepcopy(delivery)
+
+
+def finalize_claimed_campaign(
+    state: dict,
+    campaign_id: str,
+    *,
+    worker_id: str,
+    now: datetime,
+) -> dict:
+    campaign = _campaign(state, campaign_id)
+    if campaign.get("worker_id") != str(worker_id):
+        raise CampaignConflictError("campaign is owned by another worker")
+    deliveries = _campaign_delivery_rows(state, campaign_id)
+    if any(row.get("status") in {"pending", "retry", "sending"} for row in deliveries):
+        raise CampaignConflictError("campaign still has pending deliveries")
+    sent_count = sum(1 for row in deliveries if row.get("status") == "sent")
+    failed_count = sum(1 for row in deliveries if row.get("status") == "failed")
+    campaign.pop("worker_id", None)
+    campaign.pop("lease_expires_at", None)
+    return finalize_campaign(
+        state,
+        campaign_id,
+        sent_count=sent_count,
+        failed_count=failed_count,
+        now=now,
+    )
