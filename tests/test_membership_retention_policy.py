@@ -326,7 +326,7 @@ class MembershipRetentionPolicyTests(unittest.TestCase):
         self.assertEqual(state["orders"][0]["line_user_id"], "deleted-user")
         self.assertEqual(state["orders"][0]["display_name"], "已刪除會員")
 
-    def test_trial_milestones_send_once_on_days_7_12_and_14(self):
+    def test_trial_expiry_milestone_sends_only_the_due_day_without_backfill(self):
         with TemporaryDirectory() as temp_dir:
             data_file = Path(temp_dir) / "data.json"
             started = self.now - timedelta(days=14)
@@ -357,11 +357,11 @@ class MembershipRetentionPolicyTests(unittest.TestCase):
             )
 
             self.assertEqual((first_code, second_code), (200, 200))
-            self.assertEqual(first["sent"], 3)
+            self.assertEqual(first["sent"], 1)
             self.assertEqual(second["sent"], 0)
-            self.assertEqual(len(sent), 3)
+            self.assertEqual(len(sent), 1)
             saved = app_module.load_state(data_file)["users"]["U-owner"]
-            self.assertEqual(saved["trial_notice_days_sent"], [7, 12, 14])
+            self.assertEqual(saved["trial_notice_days_sent"], [14])
             self.assertNotIn("trial_milestone_notices_sent", saved)
 
     def test_trial_milestones_skip_non_trial_and_not_yet_due(self):
@@ -465,17 +465,17 @@ class MembershipRetentionPolicyTests(unittest.TestCase):
             self.assertEqual((first_code, second_code), (200, 200))
             self.assertEqual(
                 first["tasks"]["trial_milestone_notices"]["result"]["sent"],
-                3,
+                1,
             )
             self.assertEqual(
                 second["tasks"]["trial_milestone_notices"]["result"]["sent"],
                 0,
             )
-            self.assertEqual(len(sent), 3)
+            self.assertEqual(len(sent), 1)
             saved = app_module.load_state(data_file)["users"]["U-owner"]
             self.assertEqual(saved["plan"], "free")
             self.assertTrue(saved["membership_paused"])
-            self.assertEqual(saved["trial_notice_days_sent"], [7, 12, 14])
+            self.assertEqual(saved["trial_notice_days_sent"], [14])
 
 
 if __name__ == "__main__":
