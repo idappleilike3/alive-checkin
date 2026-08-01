@@ -1014,7 +1014,7 @@
         <h3 id="betaResetTitle">重置 21 天封測帳號</h3>
         <p class="note">重置後可重新封測；保留 LINE UID、付款訂單與稽核紀錄，清除簽到、提醒、守護、群組、SOS 與定位資料。</p>
         <div class="toolbar">
-          <label>選擇封測帳號
+          <label>選擇要重置的人員（姓名／完整 LINE UID）
             <select id="betaResetCandidate"><option value="">正在載入候選帳號…</option></select>
           </label>
           <button id="betaResetButton" type="button" class="danger">重置選取帳號</button>
@@ -2115,7 +2115,7 @@
       }
       select.disabled = false;
       select.innerHTML = betaResetCandidates.length
-        ? '<option value="">請選擇帳號</option>' + betaResetCandidates.map((row) => `<option value="${escapeHtml(row.candidate_id)}">${escapeHtml(row.display_name)}｜${escapeHtml(row.masked_line_user_id)}｜${escapeHtml(row.cohort)}｜${escapeHtml(row.status)}</option>`).join("")
+        ? '<option value="">請選擇人員</option>' + betaResetCandidates.map((row) => `<option value="${escapeHtml(row.candidate_id)}">${escapeHtml(row.display_name)}｜UID：${escapeHtml(row.candidate_id)}｜班別：${escapeHtml(row.cohort)}｜方案：${escapeHtml(row.plan)}｜${escapeHtml(row.status)}</option>`).join("")
         : `<option value="">${data.whitelist_configured === false ? "尚未設定測試帳號白名單" : "白名單內目前沒有符合資格的 21 天封測帳號"}</option>`;
       button.disabled = betaResetCandidates.length === 0;
       $("betaResetMessage").textContent = betaResetCandidates.length
