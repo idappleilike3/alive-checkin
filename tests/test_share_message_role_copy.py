@@ -14,7 +14,7 @@ class ShareMessageRoleCopyTests(unittest.TestCase):
         self.assertIn("平常不打擾，只有需要時才通知你", page)
         self.assertIn("點開連結，確認是否願意守護我", page)
         self.assertIn("不會自動互相綁定", page)
-        self.assertNotIn("14 天免費體驗｜199 活著版", page)
+        self.assertNotIn("14 天免費體驗｜199 平安版", page)
 
     def test_trial_share_message_invites_recipient_to_start_own_checkins(self):
         share_page = (ROOT / "liff" / "share-trial.html").read_text(encoding="utf-8")

@@ -16,12 +16,12 @@
 
   const addTrial199Badge = () => {
     const text = document.body.innerText || "";
-    if (!text.includes("14 天") || text.includes("目前體驗方案：199 活著版")) return;
+    if (!text.includes("14 天") || text.includes("目前體驗方案：199 平安版")) return;
     const host = document.querySelector(".trial-activation, .beginner-story-copy, .member-plan-summary, main, .app");
     if (!host) return;
     const badge = document.createElement("div");
     badge.className = "trial-199-badge";
-    badge.innerHTML = "<strong>目前體驗方案：199 活著版</strong><span>14 天免費體驗｜不需刷卡｜不會自動扣款</span>";
+    badge.innerHTML = "<strong>目前體驗方案：199 平安版</strong><span>14 天免費體驗｜不需刷卡｜不會自動扣款</span>";
     host.prepend(badge);
   };
 

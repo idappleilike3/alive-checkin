@@ -14,7 +14,7 @@ class TrialPeaceExperienceTest(unittest.TestCase):
         html = _read("trial-14.html")
 
         self.assertIn("14 天安心體驗", html)
-        self.assertNotIn("199 活著版", html)
+        self.assertNotIn("199 平安版", html)
         self.assertNotIn("NT$", html)
         self.assertNotIn("月費", html)
         self.assertNotIn("年費", html)
@@ -54,7 +54,7 @@ class TrialPeaceExperienceTest(unittest.TestCase):
     def test_onboarding_experience_copy_does_not_name_the_199_plan(self):
         html = _read("liff/onboarding.html")
 
-        self.assertNotIn("14 天免費體驗｜199 活著版", html)
+        self.assertNotIn("14 天免費體驗｜199 平安版", html)
         self.assertIn("14 天安心體驗", html)
 
 

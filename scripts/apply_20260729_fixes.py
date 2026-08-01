@@ -39,7 +39,7 @@ def verify() -> None:
     )
     require(
         "index.html",
-        "14 天免費體驗｜199 活著版",
+        "14 天免費體驗｜199 平安版",
         'id="calendarNoteQuickCard"',
         "toggleSmartReminder",
         "toggleMemberContactTab",
@@ -50,8 +50,8 @@ def verify() -> None:
         'id="emergencyDataBlock"',
         "toggleSmartReminder",
     )
-    require("liff/onboarding.html", "14 天免費體驗｜199 活著版")
-    require("trial-14.html", "14 天免費體驗｜199 活著版")
+    require("liff/onboarding.html", "14 天免費體驗｜199 平安版")
+    require("trial-14.html", "14 天免費體驗｜199 平安版")
     require("beta-register.html", "每日 2 次私訊預警，最多 7 位核心守護人")
     require(
         "faq.html",

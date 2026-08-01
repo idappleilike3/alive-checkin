@@ -71,7 +71,7 @@ def test_share_page_prepares_the_invite_before_waiting_for_profile():
 def test_invitee_page_shows_the_optional_14_day_199_trial():
     html = (ROOT / "invite.html").read_text(encoding="utf-8")
 
-    assert "14 天免費體驗｜199 活著版" in html
+    assert "14 天免費體驗｜199 平安版" in html
     assert "2 位核心守護人" in html
     assert "4 位緊急聯絡人" in html
     assert "每日 1 次 LINE 預警" in html
