@@ -5925,51 +5925,116 @@ def membership_activation_time(profile):
     return paid_until - timedelta(days=duration_days) if paid_until else None
 
 
-def build_day7_pin_reminder_flex():
-    """Build the warm one-time reminder explaining how to pin the LINE OA."""
+def _week_one_card_variant(profile):
+    """Return the visual and copy variant for a member's current entitlement."""
+    profile = profile or {}
+    plan = str(profile.get("plan") or "trial")
+    if str(profile.get("membership_source") or "") == "beta":
+        return {
+            "label": "21 天安心守護封測", "color": "#8B6BCB", "soft": "#F4EFFB",
+            "icon": "✨", "title": "謝謝您陪我們完成第一週",
+            "copy": "您的每一次使用與建議，都在幫助每日平安變得更貼近家人的需要。",
+            "primary": "🛡️ 繼續安心守護", "path": "/liff/member.html?from=week_one_beta",
+        }
+    family = "trial" if plan == "trial" else plan.split("_")[1] if plan.startswith("paid_") else "trial"
+    variants = {
+        "trial": {
+            "label": "14 天安心體驗", "color": "#F7B84B", "soft": "#FFF7E5",
+            "icon": "🌷", "title": "您已經使用一週了",
+            "copy": "謝謝您讓每日平安陪伴您和家人這 7 天。每天輕輕按一下，就是給家人最安心的問候。",
+            "primary": "💚 今天也要報平安", "path": "/?from=week_one_trial",
+        },
+        "199": {
+            "label": "199 平安版", "color": "#4FAF83", "soft": "#EAF7F1",
+            "icon": "🌿", "title": "安心守護滿一週了",
+            "copy": "謝謝您持續用每天 10 秒，讓重要的人知道您平安。今天也記得送出一份安心問候喔！",
+            "primary": "💚 我今天平安", "path": "/?from=week_one_199",
+        },
+        "399": {
+            "label": "399 安心版", "color": "#E59B45", "soft": "#FFF3E4",
+            "icon": "💛", "title": "這一週辛苦了",
+            "copy": "每天的一次回應，不只是紀錄，更是讓守護人放心的溫暖訊息。謝謝您持續陪伴家人。",
+            "primary": "💚 傳送今日平安", "path": "/?from=week_one_399",
+        },
+        "799": {
+            "label": "799 守護版", "color": "#4776C6", "soft": "#EDF3FC",
+            "icon": "🏡", "title": "您的安心守護已持續一週",
+            "copy": "守護群、日期提醒與安全守護都為您準備好了，讓家人的關心更完整，平常也不互相打擾。",
+            "primary": "✨ 繼續守護家人", "path": "/liff/member.html?from=week_one_799",
+        },
+    }
+    return variants.get(family, variants["trial"])
+
+
+def build_day7_pin_reminder_flex(profile=None):
+    """Build the personalized, plan-aware week-one LINE Flex card."""
+    profile = profile or {}
+    variant = _week_one_card_variant(profile)
+    nickname = str(
+        profile.get("display_name") or profile.get("nickname") or profile.get("name") or ""
+    ).strip() or "您好"
+    public_url = (os.environ.get("APP_PUBLIC_URL") or "https://alive-checkin.onrender.com").rstrip("/")
     return {
         "type": "flex",
-        "altText": "使用一週的小提醒：請將每日平安官方 LINE 置頂",
+        "altText": f"{nickname}，{variant['label']}使用一週的小提醒",
         "contents": {
             "type": "bubble",
             "size": "mega",
             "header": {
                 "type": "box",
                 "layout": "vertical",
-                "backgroundColor": "#168C65",
+                "backgroundColor": variant["color"],
+                "paddingAll": "20px",
                 "contents": [
                     {
                         "type": "text",
-                        "text": "🌿 使用一週的小提醒",
+                        "text": f"{variant['icon']} 使用一週的小提醒",
                         "color": "#FFFFFF",
                         "weight": "bold",
                         "size": "xl",
-                    }
+                    },
+                    {
+                        "type": "text", "text": variant["label"], "color": "#FFFFFF",
+                        "size": "sm", "margin": "sm", "weight": "bold",
+                    },
                 ],
             },
             "body": {
                 "type": "box",
                 "layout": "vertical",
+                "backgroundColor": variant["soft"],
+                "paddingAll": "20px",
                 "contents": [
                     {
                         "type": "text",
-                        "text": (
-                            "使用一週了，還習慣嗎？建議把「每日平安」官方帳號置頂，"
-                            "才不會錯過報平安提醒與守護通知喔！"
-                        ),
+                        "text": f"{nickname}，{variant['title']}",
                         "wrap": True,
-                        "color": "#33443F",
+                        "weight": "bold", "size": "lg", "color": "#27352F",
                     },
                     {
                         "type": "text",
-                        "text": (
-                            "置頂方式：在 LINE 聊天列表長按「每日平安」，"
-                            "選擇「釘選」。"
-                        ),
+                        "text": variant["copy"],
                         "wrap": True,
-                        "margin": "lg",
-                        "size": "sm",
-                        "color": "#52625D",
+                        "margin": "md", "size": "md", "color": "#46554F",
+                    },
+                    {
+                        "type": "text",
+                        "text": "也歡迎告訴我們您的使用感受，讓每日平安做得更貼心 💛",
+                        "wrap": True, "margin": "lg", "size": "sm", "color": "#68736F",
+                    },
+                ],
+            },
+            "footer": {
+                "type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "16px",
+                "contents": [
+                    {
+                        "type": "button", "style": "primary", "height": "sm",
+                        "color": variant["color"],
+                        "action": {"type": "uri", "label": variant["primary"], "uri": public_url + variant["path"]},
+                    },
+                    {
+                        "type": "button", "style": "secondary", "height": "sm",
+                        "action": {"type": "uri", "label": "💬 提供建議", "uri": public_url + "/help.html?from=week_one"},
                     },
                 ],
             },
@@ -6000,12 +6065,14 @@ def _day7_pin_membership_is_active(profile, clock):
 
 
 def send_day7_pin_reminders(config, now=None):
-    """Send one pin reminder for post-launch memberships reaching day seven."""
+    """Send one personalized Flex card to memberships reaching week one."""
+    if config.get("LEGACY_DAY7_PIN_REMINDER_ENABLED") is False:
+        return {"sent": 0, "failed": 0, "skipped": 0, "reason": "legacy_scheduler_retired"}, 200
     clock = now or current_app_time(config)
     state = load_state(config["DATA_FILE"])
-    enabled_at = parse_datetime(state.get("day7_pin_reminder_enabled_at"))
+    enabled_at = parse_datetime(state.get("day7_flex_reminder_enabled_at"))
     if not enabled_at:
-        state["day7_pin_reminder_enabled_at"] = clock.isoformat(timespec="seconds")
+        state["day7_flex_reminder_enabled_at"] = clock.isoformat(timespec="seconds")
         save_state(config["DATA_FILE"], state)
         return {
             "sent": 0,
@@ -6049,7 +6116,7 @@ def send_day7_pin_reminders(config, now=None):
         if qualification_key in completed:
             skipped += 1
             continue
-        message = build_day7_pin_reminder_flex()
+        message = build_day7_pin_reminder_flex(profile)
         retry_key = _line_retry_key(
             f"day7-pin-reminder:{target}:{qualification_key}"
         )
@@ -6092,6 +6159,29 @@ def send_day7_pin_reminders(config, now=None):
         "skipped": skipped,
         "results": results,
     }, 200
+
+
+def remove_retired_push_uids(data_file, config):
+    """Remove explicitly retired deployment-test recipients from saved state."""
+    raw = config.get("RETIRED_LINE_USER_IDS") or "U_deploy_smoke_ax"
+    retired = {
+        value.strip()
+        for value in re.split(r"[,;；\s]+", str(raw))
+        if value.strip()
+    }
+
+    def mutate(state):
+        users = state.get("users") or {}
+        removed = 0
+        for key, profile in list(users.items()):
+            target = str((profile or {}).get("line_user_id") or key).strip()
+            if key in retired or target in retired:
+                users.pop(key, None)
+                removed += 1
+        state["users"] = users
+        return {"removed": removed}
+
+    return mutate_state_atomically(data_file, mutate)
 
 
 def send_renewal_reminders(config):
@@ -18275,6 +18365,11 @@ def run_cron_tick(config):
     results = {}
     slot = now.strftime("%H:%M")
 
+    results["retired_push_uids"] = {
+        "status": 200,
+        "result": remove_retired_push_uids(config["DATA_FILE"], config),
+    }
+
     migration_data, migration_code = migrate_existing_free_members(config)
     results["membership_transition_migration"] = {
         "status": migration_code,
@@ -18713,6 +18808,10 @@ def create_app(config=None):
             "R2_BACKUP_ENCRYPTION_KEY", ""
         ),
         TEST_LINE_USER_IDS=os.environ.get("TEST_LINE_USER_IDS", ""),
+        RETIRED_LINE_USER_IDS=os.environ.get(
+            "RETIRED_LINE_USER_IDS", "U_deploy_smoke_ax"
+        ),
+        LEGACY_DAY7_PIN_REMINDER_ENABLED=True,
     )
     if config:
         app.config.update(config)
