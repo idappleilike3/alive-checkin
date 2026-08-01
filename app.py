@@ -1562,47 +1562,66 @@ def build_expiry_remind_flex(profile, now=None):
     now = now or current_app_time({})
     info = membership_expiry_info(profile, now) or {}
     label = info.get("label") or "方案"
+    if str(profile.get("membership_source") or "") != "beta":
+        catalog_label = (PAYMENT_PRODUCTS.get(str(profile.get("plan") or "")) or {}).get(
+            "display_name"
+        )
+        if catalog_label:
+            label = catalog_label
     days = info.get("days_left")
     is_upgrade = (
         str(profile.get("plan") or "") == "trial"
         or str(profile.get("membership_source") or "") == "beta"
     )
     action_word = "升級" if is_upgrade else "續訂"
+    nickname = str(profile.get("display_name") or profile.get("name") or "").strip()
+    greeting_name = "" if not nickname or is_placeholder_display_name(nickname) else nickname[:20]
+    greeting = (
+        f"{greeting_name}，謝謝您這段時間的支持"
+        if greeting_name
+        else "您好，謝謝您這段時間的支持"
+    )
     if isinstance(days, int) and days < 0:
-        title = f"您的{label}已到期"
+        title = f"您的「{label}」已到期"
+        countdown = "已到期"
         body = (
             f"{action_word}後，每日問候與守護服務可繼續使用，"
             "原有守護設定仍會保留。"
         )
     elif days == 0:
-        title = f"您的{label}今天到期"
+        title = f"您的「{label}」今天到期"
+        countdown = "今天到期"
         body = (
             f"今天是方案最後一天。{action_word}後，"
             "每日問候與守護服務將持續不中斷。"
         )
     elif days == 1:
-        title = f"您的{label}即將到期"
+        title = f"您的「{label}」即將到期"
+        countdown = "明天最後一天"
         body = (
             f"明天是最後一天。{action_word}後繼續享有每日問候與安全守護。"
         )
     elif days == 3:
-        title = f"您的{label}即將到期"
+        title = f"您的「{label}」即將到期"
+        countdown = "還有 4 天"
         body = (
-            f"將在 4 天後到期。{action_word}後可保留你的連續報到天數與守護設定。"
+            f"將在 4 天後到期。{action_word}後可保留您的連續報到天數與守護設定。"
         )
     elif days == 7:
-        title = f"您的{label}即將到期"
+        title = f"您的「{label}」即將到期"
+        countdown = "還有 8 天"
         body = (
             f"將在 8 天後到期。{action_word}後，每日問候與守護服務將持續不中斷。"
             "提前通知，方便家人一起決定。"
         )
     else:
-        title = f"您的{label}即將到期"
+        title = f"您的「{label}」即將到期"
+        countdown = f"還有 {max(1, int(days or 0) + 1)} 天"
         body = (
             f"將在 {max(1, int(days or 0) + 1)} 天後到期。"
             f"{action_word}後，每日問候與守護服務將持續不中斷。"
         )
-    pricing_uri = pricing_direct_url()
+    pricing_uri = f"{pricing_direct_url()}&from=expiry_reminder"
     return {
         "type": "flex",
         "altText": title,
@@ -1612,22 +1631,31 @@ def build_expiry_remind_flex(profile, now=None):
             "header": {
                 "type": "box",
                 "layout": "vertical",
-                "backgroundColor": "#0F766E",
-                "paddingAll": "lg",
+                "backgroundColor": "#FFF7ED",
+                "paddingAll": "xl",
+                "spacing": "sm",
                 "contents": [
                     {
                         "type": "text",
-                        "text": "方案提醒",
-                        "color": "#FFFFFF",
+                        "text": "💛 方案提醒",
+                        "color": "#A16207",
                         "size": "sm",
+                        "weight": "bold",
                         "wrap": True,
                     },
                     {
                         "type": "text",
-                        "text": title,
-                        "color": "#FFFFFF",
+                        "text": greeting,
+                        "color": "#334155",
                         "size": "lg",
                         "weight": "bold",
+                        "wrap": True,
+                    },
+                    {
+                        "type": "text",
+                        "text": label,
+                        "color": "#64748B",
+                        "size": "sm",
                         "wrap": True,
                     },
                 ],
@@ -1636,15 +1664,54 @@ def build_expiry_remind_flex(profile, now=None):
                 "type": "box",
                 "layout": "vertical",
                 "spacing": "md",
-                "paddingAll": "lg",
+                "paddingAll": "xl",
                 "contents": [
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "backgroundColor": "#ECFDF5",
+                        "cornerRadius": "xl",
+                        "paddingAll": "lg",
+                        "contents": [
+                            {
+                                "type": "text",
+                                "text": countdown,
+                                "size": "xxl",
+                                "weight": "bold",
+                                "align": "center",
+                                "color": "#047857",
+                                "wrap": True,
+                            },
+                            {
+                                "type": "text",
+                                "text": title,
+                                "size": "sm",
+                                "align": "center",
+                                "color": "#475569",
+                                "wrap": True,
+                                "margin": "sm",
+                            },
+                        ],
+                    },
                     {
                         "type": "text",
                         "text": body,
                         "size": "md",
                         "color": "#334155",
                         "wrap": True,
-                    }
+                    },
+                    {
+                        "type": "separator",
+                        "color": "#E2E8F0",
+                        "margin": "sm",
+                    },
+                    {
+                        "type": "text",
+                        "text": "💬 您的每一個感受都很重要，也歡迎分享使用感受與建議，讓我們做得更貼心。",
+                        "size": "sm",
+                        "color": "#64748B",
+                        "wrap": True,
+                    },
                 ],
             },
             "footer": {
@@ -1657,11 +1724,11 @@ def build_expiry_remind_flex(profile, now=None):
                         "type": "button",
                         "action": {
                             "type": "uri",
-                            "label": f"{action_word}方案",
+                            "label": "繼續安心守護",
                             "uri": pricing_uri,
                         },
                         "style": "primary",
-                        "color": "#0F766E",
+                        "color": "#059669",
                         "height": "md",
                     },
                     {
@@ -1670,7 +1737,7 @@ def build_expiry_remind_flex(profile, now=None):
                             "type": "postback",
                             "label": "不再提醒",
                             "data": "action=expiry_opt_out",
-                            "displayText": "不再提醒我方案到期",
+                            "displayText": "謝謝提醒，先不用再提醒我方案到期",
                         },
                         "style": "secondary",
                         "height": "md",
@@ -1692,7 +1759,11 @@ def handle_expiry_opt_out_postback(data_file, line_user_id):
     profile = get_profile(state, line_user_id)
     profile["expiry_remind_opt_out"] = True
     save_state(data_file, state)
-    return "好的，之後不會再提醒方案到期。若要續用，隨時點「查看方案」即可。"
+    return (
+        "💛 謝謝您告訴我們，之後不會再提醒方案到期。\n\n"
+        "原有的平安紀錄與守護設定會依服務規則保留；如果之後想繼續使用，"
+        "隨時回來查看方案就可以。也謝謝您曾讓每日平安陪伴您與家人。"
+    )
 
 
 def maybe_attach_expiry_remind(messages, profile, *, now=None, state=None, data_file=None):
@@ -5881,13 +5952,6 @@ def _day7_pin_membership_is_active(profile, clock):
 
 def send_day7_pin_reminders(config, now=None):
     """Send one pin reminder for post-launch memberships reaching day seven."""
-    if not config.get("LEGACY_DAY7_PIN_REMINDER_ENABLED", False):
-        return {
-            "sent": 0,
-            "failed": 0,
-            "skipped": 0,
-            "reason": "legacy_scheduler_retired",
-        }, 200
     clock = now or current_app_time(config)
     state = load_state(config["DATA_FILE"])
     enabled_at = parse_datetime(state.get("day7_pin_reminder_enabled_at"))
@@ -5979,31 +6043,6 @@ def send_day7_pin_reminders(config, now=None):
         "skipped": skipped,
         "results": results,
     }, 200
-
-
-def remove_retired_push_uids(data_file, config):
-    """Remove explicitly retired/test LINE recipients from production state."""
-    raw = config.get("RETIRED_LINE_USER_IDS") or "U_deploy_smoke_ax"
-    retired = {
-        value.strip()
-        for value in re.split(r"[,;；\s]+", str(raw))
-        if value.strip()
-    }
-    if not retired:
-        return {"removed": 0}
-
-    def mutate(state):
-        users = state.get("users") or {}
-        removed = 0
-        for key, profile in list(users.items()):
-            target = str((profile or {}).get("line_user_id") or key).strip()
-            if key in retired or target in retired:
-                users.pop(key, None)
-                removed += 1
-        state["users"] = users
-        return {"removed": removed}
-
-    return mutate_state_atomically(data_file, mutate)
 
 
 def send_renewal_reminders(config):
@@ -18187,11 +18226,6 @@ def run_cron_tick(config):
     results = {}
     slot = now.strftime("%H:%M")
 
-    results["retired_push_uids"] = {
-        "status": 200,
-        "result": remove_retired_push_uids(config["DATA_FILE"], config),
-    }
-
     migration_data, migration_code = migrate_existing_free_members(config)
     results["membership_transition_migration"] = {
         "status": migration_code,
@@ -18630,10 +18664,6 @@ def create_app(config=None):
             "R2_BACKUP_ENCRYPTION_KEY", ""
         ),
         TEST_LINE_USER_IDS=os.environ.get("TEST_LINE_USER_IDS", ""),
-        RETIRED_LINE_USER_IDS=os.environ.get(
-            "RETIRED_LINE_USER_IDS", "U_deploy_smoke_ax"
-        ),
-        LEGACY_DAY7_PIN_REMINDER_ENABLED=False,
     )
     if config:
         app.config.update(config)
