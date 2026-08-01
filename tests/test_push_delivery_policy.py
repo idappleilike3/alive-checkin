@@ -303,6 +303,7 @@ class PushDeliveryPolicyTests(unittest.TestCase):
             self.assertEqual(
                 list(result["tasks"]),
                 [
+                    "retired_push_uids",
                     "membership_transition_migration",
                     "trial_milestone_notices",
                     "day7_pin_reminders",
