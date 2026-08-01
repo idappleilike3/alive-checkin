@@ -50,6 +50,26 @@ class MembershipLifecycleNoticeTests(unittest.TestCase):
         self.assertIn("from=expiry_reminder", footer[0]["action"]["uri"])
         self.assertEqual(footer[1]["action"]["label"], "不再提醒")
 
+    def test_expiry_flex_header_uses_official_logo_beside_daily_peace_name(self):
+        flex = app_module.build_expiry_remind_flex(
+            {
+                "display_name": "Jennie",
+                "plan": "trial",
+                "trial_started_at": "2026-07-20T10:00:00",
+            },
+            now=self.now,
+        )
+
+        brand = flex["contents"]["header"]["contents"][0]
+        self.assertEqual(brand["type"], "box")
+        self.assertEqual(brand["layout"], "horizontal")
+        self.assertEqual(brand["contents"][0]["type"], "image")
+        self.assertEqual(
+            brand["contents"][0]["url"],
+            app_module.public_page_url("assets/daily-peace-logo.png"),
+        )
+        self.assertEqual(brand["contents"][1]["text"], "每日平安")
+
     def test_expiry_flex_uses_safe_greeting_when_nickname_is_placeholder(self):
         flex = app_module.build_expiry_remind_flex(
             {

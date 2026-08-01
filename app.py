@@ -1636,12 +1636,28 @@ def build_expiry_remind_flex(profile, now=None):
                 "spacing": "sm",
                 "contents": [
                     {
-                        "type": "text",
-                        "text": "💛 方案提醒",
-                        "color": "#A16207",
-                        "size": "sm",
-                        "weight": "bold",
-                        "wrap": True,
+                        "type": "box",
+                        "layout": "horizontal",
+                        "alignItems": "center",
+                        "contents": [
+                            {
+                                "type": "image",
+                                "url": public_page_url("assets/daily-peace-logo.png"),
+                                "size": "xs",
+                                "aspectMode": "fit",
+                                "aspectRatio": "1:1",
+                                "flex": 0,
+                            },
+                            {
+                                "type": "text",
+                                "text": "每日平安",
+                                "color": "#334155",
+                                "size": "md",
+                                "weight": "bold",
+                                "margin": "sm",
+                                "gravity": "center",
+                            },
+                        ],
                     },
                     {
                         "type": "text",
