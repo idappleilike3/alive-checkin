@@ -135,6 +135,8 @@ try:
 except Exception:  # pragma: no cover
     holidays_tw = None
 
+from daily_care import build_daily_care_context
+
 from push_delivery import (
     classify_push_exception,
     push_attempt_allowed,
@@ -16944,7 +16946,7 @@ def reminder_time_in_window(reminder_time, now, late_minutes=4):
     return timedelta(0) <= delta <= timedelta(minutes=int(late_minutes), seconds=59)
 
 
-def build_daily_checkin_flex(now, target_time=""):
+def build_daily_checkin_flex(now, target_time="", profile=None):
     """Daily check-in Flex: greeting + optional holiday blessing + quote + postback.
 
     Keeps classic green (#00B900) header; 「我平安」 uses postback action=checkin.
@@ -16973,38 +16975,48 @@ def build_daily_checkin_flex(now, target_time=""):
         if liff_entry_url
         else "https://liff.line.me/2010848330-UAiqPPYD?open=sos"
     )
+    holiday_name = str(copy.get("holiday_name") or "").strip()
+    holiday_blessing = str(copy.get("holiday_blessing") or "").strip()
+    care_profile = dict(profile or {})
+    care_profile["streak_days"] = compute_streak_days(care_profile.get("history") or [], now.strftime("%Y-%m-%d"))
+    care = build_daily_care_context(care_profile, now)
+    if care["content_kind"] != "milestone" and holiday_name and holiday_blessing:
+        care["care_title"] = f"🎉 {holiday_name}"
+        care["care_summary"] = holiday_blessing
+        care["content_kind"] = "holiday"
     body_contents = [
         {
             "type": "text",
-            "text": copy["greeting"],
+            "text": f"{care['greeting']}，今天一切都好嗎？",
             "size": "xl",
             "weight": "bold",
             "color": "#1a1a1a",
             "wrap": True,
         },
+        {
+            "type": "text",
+            "text": f"🌤️ {care['weather_line']}",
+            "size": "md",
+            "weight": "bold",
+            "color": "#334155",
+            "wrap": True,
+        },
+        {
+            "type": "text",
+            "text": care["care_title"],
+            "size": "md",
+            "weight": "bold",
+            "color": "#B45309",
+            "wrap": True,
+        },
+        {
+            "type": "text",
+            "text": care["care_summary"],
+            "size": "md",
+            "color": "#475569",
+            "wrap": True,
+        },
     ]
-    holiday_name = str(copy.get("holiday_name") or "").strip()
-    holiday_blessing = str(copy.get("holiday_blessing") or "").strip()
-    if holiday_name and holiday_blessing:
-        body_contents.append(
-            {
-                "type": "text",
-                "text": f"🎉 {holiday_name}",
-                "size": "md",
-                "weight": "bold",
-                "color": "#B45309",
-                "wrap": True,
-            }
-        )
-        body_contents.append(
-            {
-                "type": "text",
-                "text": holiday_blessing,
-                "size": "md",
-                "color": "#92400E",
-                "wrap": True,
-            }
-        )
     body_contents.append(
         {
             "type": "text",
@@ -17034,6 +17046,14 @@ def build_daily_checkin_flex(now, target_time=""):
         "contents": {
             "type": "bubble",
             "size": "mega",
+            "hero": {
+                "type": "image",
+                "url": care["hero_url"],
+                "size": "full",
+                "aspectRatio": "16:9",
+                "aspectMode": "cover",
+                "animated": False,
+            },
             "header": {
                 "type": "box",
                 "layout": "vertical",
@@ -17077,16 +17097,26 @@ def build_daily_checkin_flex(now, target_time=""):
                 "backgroundColor": "#FAFAFA",
                 "contents": [
                     {
-                        "type": "button",
+                        "type": "box",
+                        "layout": "vertical",
+                        "backgroundColor": "#16A34A",
+                        "cornerRadius": "md",
+                        "paddingAll": "md",
                         "action": {
                             "type": "postback",
                             "label": "✅ 我平安",
                             "data": "action=checkin",
                             "displayText": "我平安",
                         },
-                        "style": "primary",
-                        "color": "#16A34A",
-                        "height": "md",
+                        "margin": "md",
+                        "contents": [{
+                            "type": "text",
+                            "text": "✅ 我平安",
+                            "size": "xl",
+                            "weight": "bold",
+                            "color": "#FFFFFF",
+                            "align": "center",
+                        }],
                     },
                     {
                         "type": "button",
@@ -17100,6 +17130,17 @@ def build_daily_checkin_flex(now, target_time=""):
                         "action": {"type": "uri", "label": "需要幫忙", "uri": sos_uri},
                         "style": "primary",
                         "color": "#DC2626",
+                        "height": "md",
+                    },
+                    {
+                        "type": "button",
+                        "action": {
+                            "type": "uri",
+                            "label": "🔔 查看今日安心提醒",
+                            "uri": "https://alive-checkin.onrender.com/daily-care.html",
+                        },
+                        "style": "primary",
+                        "color": "#7C3AED",
                         "height": "md",
                     },
                 ],
@@ -17204,7 +17245,7 @@ def send_checkin_reminders(config):
         if not push_attempt_allowed(user, delivery_key):
             skipped += 1
             continue
-        message = build_daily_checkin_flex(now, target_time=target_time)
+        message = build_daily_checkin_flex(now, target_time=target_time, profile=user)
         try:
             result = sender(token, line_user_id, message)
             _clear_push_delivery_failure(user, delivery_key)
@@ -17302,7 +17343,6 @@ def broadcast_checkin_reminders(config, *, pause_every=20, pause_seconds=1.0):
     if not line_non_emergency_push_allowed(state, config, now):
         return line_budget_blocked_response(state, config, now)
     today = now.strftime("%Y-%m-%d")
-    message = build_daily_checkin_flex(now, target_time="")
     sent = 0
     skipped = 0
     blocked = 0
@@ -17319,6 +17359,7 @@ def broadcast_checkin_reminders(config, *, pause_every=20, pause_seconds=1.0):
             skipped += 1
             continue
         times = reminder_times_for_profile(user)
+        message = build_daily_checkin_flex(now, target_time="", profile=user)
         try:
             result = sender(token, line_user_id, message)
             _mark_checkin_reminder_slots(user, today, times, times)
@@ -18993,6 +19034,10 @@ def create_app(config=None):
         """Public 14-day trial introduction and guided registration."""
         return send_from_directory(app.static_folder, "trial-14.html")
 
+    @app.get("/daily-care.html")
+    def daily_care_page():
+        return send_from_directory(app.static_folder, "daily-care.html")
+
     @app.get("/guardian-guide")
     def guardian_guide():
         """Detailed guardian notice linked from the concise invite landing."""
@@ -19232,6 +19277,29 @@ def create_app(config=None):
             "registered": bool(profile),
             "home_ready": bool(profile and member_access_state(profile)["home_ready"]),
         }), 200
+
+    @app.get("/api/daily-care")
+    def daily_care_api():
+        line_user_id, err = _authenticated_line_user({}, use_args=True)
+        if err:
+            return jsonify(err[0]), err[1]
+        state = load_state(app.config["DATA_FILE"])
+        profile = (state.get("users") or {}).get(line_user_id)
+        if not isinstance(profile, dict):
+            return jsonify({"ok": False, "error": "member_not_found"}), 404
+        now = current_app_time(app.config)
+        care_profile = dict(profile)
+        care_profile["streak_days"] = compute_streak_days(
+            care_profile.get("history") or [], now.strftime("%Y-%m-%d")
+        )
+        context = build_daily_care_context(care_profile, now)
+        if context["content_kind"] != "milestone" and holidays_tw is not None:
+            holiday = holidays_tw.holiday_for(now)
+            if holiday:
+                context["care_title"] = f"🎉 {holiday.get('name', '節日祝福')}"
+                context["care_summary"] = str(holiday.get("blessing") or context["care_summary"])
+                context["content_kind"] = "holiday"
+        return jsonify({"ok": True, **context}), 200
 
     @app.post("/api/line/register")
     def line_register():

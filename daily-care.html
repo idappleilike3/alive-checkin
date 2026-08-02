@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>今日安心提醒｜每日平安</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif;color:#17352b;background:#f3faf5}*{box-sizing:border-box}
+    body{margin:0}.wrap{max-width:680px;margin:auto;padding:24px 18px 48px}.brand{display:flex;align-items:center;gap:12px;font-size:24px;font-weight:900}.brand img{width:48px;height:48px;object-fit:contain}
+    h1{font-size:34px;line-height:1.25;margin:26px 0 8px}.lead{font-size:20px;color:#47655b}.card{background:#fff;border-radius:24px;padding:22px;margin-top:18px;box-shadow:0 10px 30px #14532d16}
+    h2{font-size:24px;margin:0 0 12px}.big{font-size:21px;line-height:1.7}.meta{color:#64748b;font-size:16px}.btn{display:block;text-align:center;text-decoration:none;border-radius:16px;padding:17px;margin-top:16px;font-size:21px;font-weight:900;background:#16a34a;color:#fff}.secondary{background:#fff;color:#166534;border:2px solid #16a34a}
+  </style>
+</head>
+<body><main class="wrap">
+  <div class="brand"><img src="/assets/daily-peace-logo.png" alt="每日平安 Logo"><span>每日平安</span></div>
+  <h1 id="greeting">今日安心提醒</h1><p class="lead">每天一则，陪你安心过日子。</p>
+  <section class="card"><h2>🌤️ 所在地區天氣</h2><div class="big" id="weather">正在讀取天氣資料…</div></section>
+  <section class="card"><h2 id="careTitle">📰 今日安心資訊</h2><div class="big" id="careSummary">正在讀取今日資訊…</div><p class="meta" id="source"></p><a class="btn secondary" id="sourceLink" href="#" target="_blank" rel="noopener">查看完整資訊</a></section>
+  <section class="card"><h2>💛 今日的一句话</h2><div class="big">谢谢认真生活的自己，今天也要平安顺心。</div></section>
+  <a class="btn" href="/">返回每日平安卡</a>
+</main><script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script><script>
+(async()=>{try{await liff.init({liffId:'2010848330-UAiqPPYD'});if(!liff.isLoggedIn()){liff.login({redirectUri:location.href});return;}const token=String(liff.getIDToken()||'');const r=await fetch('/api/daily-care',{headers:{Authorization:'Bearer '+token,'X-Line-Id-Token':token}});const d=await r.json();if(!r.ok)throw new Error(d.error||'load_failed');document.querySelector('#greeting').textContent=d.greeting+'，今日安心提醒';document.querySelector('#weather').textContent=d.weather_line;document.querySelector('#careTitle').textContent=d.care_title;document.querySelector('#careSummary').textContent=d.care_summary;document.querySelector('#source').textContent='來源：'+d.source_name+'｜更新：'+d.updated_at;document.querySelector('#sourceLink').href=d.source_url;}catch(e){document.querySelector('#weather').textContent='資料暫時無法讀取，請從每日平安 LINE 重新開啟。';document.querySelector('#careSummary').textContent='稍後再回來看看，今天也請照顧好自己。';document.querySelector('#sourceLink').hidden=true;}})();
+  </script></body></html>
