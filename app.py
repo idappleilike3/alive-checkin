@@ -12958,6 +12958,27 @@ def account_migration_ticket_status(
     return safe_status
 
 
+def admin_create_line_rebind_link(data_file, old_line_user_id, config, now=None):
+    """Issue an operator-controlled, one-time current-LIFF migration link."""
+    data, code = create_account_migration_ticket(
+        data_file,
+        old_line_user_id,
+        config,
+        now=now,
+    )
+    if code >= 400:
+        return data, code
+    liff_id = str(config.get("LIFF_ID") or DEFAULT_LIFF_ID).strip()
+    query = urllib.parse.urlencode({
+        "migration_code": data.pop("migration_code"),
+        "open": "member",
+    })
+    data.update({
+        "status": "pending",
+        "rebind_url": f"https://liff.line.me/{liff_id}?{query}",
+    })
+    return data, code
+
 _MIGRATION_PROFILE_LIST_KEYS = {
     "contacts": ("id", "accepted_invite_id", "invite_id"),
     "contacts_archived": ("id", "accepted_invite_id", "invite_id"),
@@ -22033,6 +22054,18 @@ def create_app(config=None):
             app.config["DATA_FILE"], line_user_id
         )
         return _admin_mutation_response("beta.revoke", data, code)
+
+    @app.post("/api/admin/members/<line_user_id>/line-rebind")
+    def admin_member_line_rebind_api(line_user_id):
+        denied = _admin_guard(write=True, permission="member.manage")
+        if denied:
+            return denied
+        data, code = admin_create_line_rebind_link(
+            app.config["DATA_FILE"],
+            line_user_id,
+            app.config,
+        )
+        return _admin_mutation_response("member.line_rebind.issue", data, code)
 
     @app.post("/api/admin/test-accounts/<line_user_id>/reset")
     def admin_test_account_reset_api(line_user_id):
