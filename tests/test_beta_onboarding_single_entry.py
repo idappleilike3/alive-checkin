@@ -46,6 +46,18 @@ class BetaOnboardingSingleEntryTests(unittest.TestCase):
         self.assertIn("async function authHeaders()", html)
         self.assertIn('headers: await authHeaders()', html)
 
+    def test_first_beta_registration_finishes_before_member_status_prefetch(self):
+        """首次封測建檔不得與 /api/status 的自動建檔同時寫入。"""
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        initializer = html[
+            html.index("async function initializeLiff()"):
+            html.index("async function initApp()")
+        ]
+
+        register_done = initializer.index("if (!registrationResponse.ok)")
+        prefetch = initializer.index("startMemberStatusPrefetch()")
+        self.assertLess(register_done, prefetch)
+
 
     def test_onboarding_reports_existing_members_even_if_local_page_state_was_reset(self):
         html = (ROOT / "liff" / "onboarding.html").read_text(encoding="utf-8")

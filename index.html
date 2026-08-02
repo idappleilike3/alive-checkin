@@ -9729,9 +9729,6 @@
         // 先顯示上次已驗證的方案摘要；正式資料在背景載入後立即覆蓋。
         renderCachedMemberStatus(lineUserId);
         // 同一天已由後端確認報平安時，先立即顯示完成狀態；跨日快取不採用。
-        // 第一次登入沒有快取時，也立刻預讀狀態；與註冊請求並行，縮短首頁等待。
-        startMemberStatusPrefetch();
-
         const betaCohort = String(getAppParam("beta_cohort") || "").trim().toUpperCase();
         const inviteFrom = String(getAppParam("invite_from") || "").trim();
         const registrationResponse = await fetch("/api/line/register", {
@@ -9752,6 +9749,10 @@
           }
           return false;
         }
+        // 首次註冊（尤其 B399／B799 封測）完成後才讀會員狀態。
+        // /api/status 會在查無會員時自動建檔；若與 /api/line/register 平行執行，
+        // 兩個首次寫入可能互相覆蓋，導致下一步儲存地區時出現 user not registered。
+        startMemberStatusPrefetch();
         try {
           sessionStorage.removeItem("alive_line_auth_refresh_v1");
         } catch (_) {}
