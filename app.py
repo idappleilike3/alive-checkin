@@ -16706,6 +16706,123 @@ def _finish_guardian_group_summary(
     )
 
 
+def build_missing_guardian_flex(profile=None):
+    """Warm LINE Flex card inviting a member to bind their first guardian."""
+    member_name = str((profile or {}).get("display_name") or "你").strip() or "你"
+    invite_uri = (
+        share_invite_liff_url()
+        if share_invite_liff_url
+        else "https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html"
+    )
+    return {
+        "type": "flex",
+        "altText": "每日平安｜邀請一位信任的守護人",
+        "contents": {
+            "type": "bubble",
+            "size": "mega",
+            "hero": {
+                "type": "image",
+                "url": "https://alive-checkin.onrender.com/assets/guardian-story-mother-daughter.webp",
+                "size": "full",
+                "aspectRatio": "20:13",
+                "aspectMode": "cover",
+            },
+            "header": {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#EAF7EE",
+                "paddingAll": "xl",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": "每日平安",
+                        "size": "md",
+                        "weight": "bold",
+                        "color": "#15803D",
+                    },
+                    {
+                        "type": "text",
+                        "text": "💚 讓牽掛，有一個安心的去處",
+                        "size": "xl",
+                        "weight": "bold",
+                        "color": "#14532D",
+                        "wrap": True,
+                        "margin": "md",
+                    },
+                ],
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "lg",
+                "paddingAll": "xl",
+                "backgroundColor": "#FFFCF5",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": f"{member_name}，目前還沒有完成守護人綁定。",
+                        "size": "lg",
+                        "weight": "bold",
+                        "color": "#3F3A32",
+                        "wrap": True,
+                    },
+                    {
+                        "type": "text",
+                        "text": "邀請至少 1 位信任的親友，緊急或聯絡不上你時，系統才知道第一時間該通知誰。",
+                        "size": "md",
+                        "color": "#57534E",
+                        "wrap": True,
+                    },
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "backgroundColor": "#FFF3D6",
+                        "cornerRadius": "lg",
+                        "paddingAll": "lg",
+                        "contents": [{
+                            "type": "text",
+                            "text": "守護不是打擾，而是替彼此多留一份安心。",
+                            "size": "md",
+                            "weight": "bold",
+                            "color": "#92400E",
+                            "wrap": True,
+                        }],
+                    },
+                ],
+            },
+            "footer": {
+                "type": "box",
+                "layout": "vertical",
+                "paddingAll": "xl",
+                "spacing": "sm",
+                "backgroundColor": "#FFFCF5",
+                "contents": [
+                    {
+                        "type": "button",
+                        "action": {
+                            "type": "uri",
+                            "label": "💚 一鍵邀請守護人",
+                            "uri": invite_uri,
+                        },
+                        "style": "primary",
+                        "color": "#16A34A",
+                        "height": "md",
+                    },
+                    {
+                        "type": "text",
+                        "text": "對方親自同意後才會完成綁定",
+                        "size": "sm",
+                        "color": "#78716C",
+                        "align": "center",
+                        "wrap": True,
+                        "margin": "md",
+                    },
+                ],
+            },
+        },
+    }
+
+
 def send_missing_contact_reminders(config):
     token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     if not token:
@@ -16782,10 +16899,7 @@ def send_missing_contact_reminders(config):
             f"\n一鍵邀請守護人：{share_invite_liff_url() if share_invite_liff_url else 'https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html'}"
         )
         if contact_count == 0:
-            message = (
-                "你目前還沒有綁定守護人（緊急聯絡人）。請至少邀請 1 位信任的親友完成 LINE 綁定，"
-                f"緊急時系統才知道要聯絡誰。{link_text}"
-            )
+            message = build_missing_guardian_flex(user)
         else:
             message = (
                 f"你的方案可綁定 {contact_limit} 位守護人，目前已完成 {contact_count}/{contact_limit} 位。"

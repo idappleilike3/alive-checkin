@@ -55,7 +55,7 @@ class DailyPushFlexTests(unittest.TestCase):
         self.assertEqual(flex["type"], "flex")
         body_texts = [c.get("text", "") for c in flex["contents"]["body"]["contents"]]
         joined = "\n".join(body_texts)
-        self.assertIn("今天一切都好嗎", joined)
+        self.assertIn("今天一切都還好嗎", joined)
         self.assertIn("✨", joined)
         self.assertNotIn("中秋", joined)  # ordinary day
         footer = flex["contents"]["footer"]["contents"]
