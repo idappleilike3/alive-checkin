@@ -22055,6 +22055,17 @@ def create_app(config=None):
         )
         return _admin_mutation_response("beta.revoke", data, code)
 
+    @app.get("/api/admin/members/<line_user_id>/line-rebind")
+    def admin_member_line_rebind_status_api(line_user_id):
+        denied = _admin_guard(permission="member.manage")
+        if denied:
+            return denied
+        return jsonify(account_migration_ticket_status(
+            app.config["DATA_FILE"],
+            line_user_id,
+            app.config,
+        ))
+
     @app.post("/api/admin/members/<line_user_id>/line-rebind")
     def admin_member_line_rebind_api(line_user_id):
         denied = _admin_guard(write=True, permission="member.manage")
