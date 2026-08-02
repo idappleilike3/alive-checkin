@@ -1170,7 +1170,7 @@ def welcome_flex(display_name: str | None = None):
     """加好友／「歡迎詞」共用的定案完整長版歡迎圖。"""
     setup_uri = liff_entry_url(open_action="onboarding")
     base = (os.environ.get("APP_PUBLIC_URL") or PUBLIC_BASE).rstrip("/")
-    artwork_uri = f"{base}/assets/welcome-approved-full-20260802-help-large.png?v=W260802fullV2"
+    artwork_uri = f"{base}/assets/welcome-approved-full-20260802-help-large.jpg?v=W260802fullV3"
 
     return {
         "type": "bubble",

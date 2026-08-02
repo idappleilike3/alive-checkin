@@ -605,7 +605,7 @@ class ProductRulesTests(unittest.TestCase):
 
         bubble = welcome_flex_module.welcome_flex()
         self.assertNotIn("footer", bubble)
-        self.assertIn("welcome-approved-full-20260802-help-large.png", bubble["hero"]["url"])
+        self.assertIn("welcome-approved-full-20260802-help-large.jpg", bubble["hero"]["url"])
         self.assertEqual(bubble["hero"]["action"]["label"], "開始 14 天安心體驗")
 
     def test_welcome_flex_is_left_aligned_large_and_vertical(self):

@@ -63,7 +63,7 @@ class BotKeywordHandlerTests(unittest.TestCase):
     def test_welcome_flex_uses_enlarged_help_artwork_without_duplicate_footer(self):
         flex = welcome_flex("小明")
         blob = str(flex)
-        self.assertIn("welcome-approved-full-20260802-help-large.png?v=W260802fullV2", blob)
+        self.assertIn("welcome-approved-full-20260802-help-large.jpg?v=W260802fullV3", blob)
         self.assertNotIn("welcome-family-checkin.png", blob)
         self.assertNotIn("daily-peace-logo.png", blob)
         self.assertEqual(flex["hero"]["aspectRatio"], "865:1818")

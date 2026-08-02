@@ -64,7 +64,7 @@ class TrialGuardianCopyAndMemberGateTests(unittest.TestCase):
         production = json.dumps(
             guardian_group_flex.welcome_flex(), ensure_ascii=False
         )
-        self.assertIn("welcome-approved-full-20260802-help-large.png", production)
+        self.assertIn("welcome-approved-full-20260802-help-large.jpg", production)
         self.assertIn("開始 14 天安心體驗", production)
         self.assertNotIn('"footer"', production)
 

@@ -13,7 +13,7 @@ EXPECTED_HOME = "https://liff.line.me/2010848330-UAiqPPYD#home"
 
 w = g.welcome_flex()
 ws = json.dumps(w, ensure_ascii=False)
-assert "welcome-approved-full-20260802-help-large.png?v=W260802fullV2" in ws
+assert "welcome-approved-full-20260802-help-large.jpg?v=W260802fullV3" in ws
 assert "welcome-family-checkin.png" not in ws
 assert "daily-peace-logo.png" not in ws
 assert w["hero"]["aspectRatio"] == "865:1818"
