@@ -10,6 +10,13 @@ DEFAULT_CARE = {
 }
 
 
+HERO_ASSETS = {
+    "morning": ("morning-01", "morning-02"),
+    "afternoon": ("afternoon-01", "afternoon-02"),
+    "evening": ("evening-01", "evening-02"),
+}
+
+
 def _greeting(hour):
     if hour < 11:
         return "早安"
@@ -54,7 +61,8 @@ def build_daily_care_context(profile, now):
         care_summary = DEFAULT_CARE["summary"]
         content_kind = "daily"
     hero_period = _hero_period(now.hour)
-    hero_asset = "morning-warm" if hero_period == "morning" else hero_period
+    hero_pool = HERO_ASSETS[hero_period]
+    hero_asset = hero_pool[now.date().toordinal() % len(hero_pool)]
     return {
         "greeting": _greeting(now.hour),
         "hero_period": hero_period,

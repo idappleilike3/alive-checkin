@@ -24,19 +24,24 @@ class DailyCareContextTests(unittest.TestCase):
         self.assertEqual(context["weather_line"], "臺中市｜晴時多雲｜26～32°C｜降雨機率 30%")
         self.assertTrue(30 <= len(context["care_summary"]) <= 50)
 
-    def test_time_period_selects_matching_ui_ux_hero(self):
-        cases = ((8, "morning", "morning-warm"), (13, "afternoon", "afternoon"), (20, "evening", "evening"))
-        for hour, period, asset_name in cases:
+    def test_time_period_selects_matching_ui_ux_hero_pool(self):
+        cases = ((8, "morning"), (13, "afternoon"), (20, "evening"))
+        for hour, period in cases:
             with self.subTest(period=period):
                 context = build_daily_care_context({}, datetime(2026, 8, 2, hour))
                 self.assertEqual(context["hero_period"], period)
-                self.assertTrue(context["hero_url"].endswith(f"/{asset_name}.webp"))
-                self.assertTrue(Path(f"assets/daily-care/{asset_name}.webp").is_file())
+                asset_name = context["hero_url"].rsplit("/", 1)[-1]
+                self.assertTrue(asset_name.startswith(f"{period}-"))
+                self.assertTrue(Path(f"assets/daily-care/{asset_name}").is_file())
 
-    def test_morning_uses_approved_warm_hand_drawn_card_art(self):
-        context = build_daily_care_context({}, datetime(2026, 8, 2, 8))
-        self.assertTrue(context["hero_url"].endswith("/morning-warm.webp"))
-        self.assertTrue(Path("assets/daily-care/morning-warm.webp").is_file())
+    def test_consecutive_dates_rotate_each_period_without_crossing_pools(self):
+        for hour, period in ((8, "morning"), (13, "afternoon"), (20, "evening")):
+            first = build_daily_care_context({}, datetime(2026, 8, 2, hour))
+            second = build_daily_care_context({}, datetime(2026, 8, 3, hour))
+            with self.subTest(period=period):
+                self.assertNotEqual(first["hero_url"], second["hero_url"])
+                self.assertIn(f"/{period}-", first["hero_url"])
+                self.assertIn(f"/{period}-", second["hero_url"])
 
     def test_day_100_replaces_daily_information(self):
         context = build_daily_care_context({"streak_days": 100}, datetime(2026, 8, 2, 13))
@@ -58,7 +63,7 @@ class DailyCareContextTests(unittest.TestCase):
         self.assertEqual(footer[0]["contents"][0]["size"], "xl")
         self.assertEqual(footer[1]["height"], "md")
         self.assertIn("查看今日安心提醒", footer[3]["action"]["label"])
-        self.assertEqual(flex["contents"]["hero"]["url"], "https://alive-checkin.onrender.com/assets/daily-care/morning-warm.webp")
+        self.assertIn("/assets/daily-care/morning-", flex["contents"]["hero"]["url"])
         self.assertEqual(flex["contents"]["hero"]["aspectRatio"], "20:13")
         self.assertEqual(
             flex["contents"]["body"]["contents"][0]["text"],
