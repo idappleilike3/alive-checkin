@@ -54,10 +54,11 @@ def build_daily_care_context(profile, now):
         care_summary = DEFAULT_CARE["summary"]
         content_kind = "daily"
     hero_period = _hero_period(now.hour)
+    hero_asset = "morning-warm" if hero_period == "morning" else hero_period
     return {
         "greeting": _greeting(now.hour),
         "hero_period": hero_period,
-        "hero_url": f"https://alive-checkin.onrender.com/assets/daily-care/{hero_period}.webp",
+        "hero_url": f"https://alive-checkin.onrender.com/assets/daily-care/{hero_asset}.webp",
         "weather_status": weather_status,
         "weather_line": weather_line,
         "care_title": care_title,
