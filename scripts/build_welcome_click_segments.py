@@ -26,15 +26,17 @@ def main() -> None:
     finished.paste(help_button, (0, 1570))
 
     segments = {
-        "welcome-card-top-20260802.png": (0, 910),
+        "welcome-card-top-20260802.jpg": (0, 910),
         "welcome-card-trial-20260802.png": (910, 1110),
         "welcome-card-steps-20260802.png": (1110, 1570),
         "welcome-card-help-20260802.png": (1570, 1755),
     }
     for filename, (top, bottom) in segments.items():
-        finished.crop((0, top, 865, bottom)).save(
-            ASSETS / filename, format="PNG", optimize=True
-        )
+        segment = finished.crop((0, top, 865, bottom))
+        if filename.endswith(".jpg"):
+            segment.save(ASSETS / filename, format="JPEG", quality=92, optimize=True)
+        else:
+            segment.save(ASSETS / filename, format="PNG", optimize=True)
 
 
 if __name__ == "__main__":

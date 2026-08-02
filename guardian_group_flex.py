@@ -1194,7 +1194,7 @@ def welcome_flex(display_name: str | None = None):
             "paddingAll": "0px",
             "spacing": "none",
             "contents": [
-                artwork("welcome-card-top-20260802.png", 910),
+                artwork("welcome-card-top-20260802.jpg", 910),
                 artwork(
                     "welcome-card-trial-20260802.png",
                     200,

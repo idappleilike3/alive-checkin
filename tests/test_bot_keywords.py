@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageStat
 
 import guardian_group_flex
 import sos_flow
@@ -63,7 +63,7 @@ class BotKeywordHandlerTests(unittest.TestCase):
     def test_welcome_flex_has_independent_trial_and_help_click_areas(self):
         flex = welcome_flex("小明")
         blob = str(flex)
-        self.assertIn("welcome-card-top-20260802.png?v=W260802fullV4", blob)
+        self.assertIn("welcome-card-top-20260802.jpg?v=W260802fullV4", blob)
         self.assertIn("welcome-card-trial-20260802.png?v=W260802fullV4", blob)
         self.assertIn("welcome-card-steps-20260802.png?v=W260802fullV4", blob)
         self.assertIn("welcome-card-help-20260802.png?v=W260802fullV4", blob)
@@ -107,20 +107,30 @@ class BotKeywordHandlerTests(unittest.TestCase):
     def test_welcome_segments_remove_disclaimer_and_preserve_upper_artwork(self):
         original = Image.open(ROOT / "assets" / "welcome-approved-full-20260802-help-large.jpg").convert("RGB")
         paths = [
-            ROOT / "assets" / "welcome-card-top-20260802.png",
+            ROOT / "assets" / "welcome-card-top-20260802.jpg",
             ROOT / "assets" / "welcome-card-trial-20260802.png",
             ROOT / "assets" / "welcome-card-steps-20260802.png",
             ROOT / "assets" / "welcome-card-help-20260802.png",
         ]
         segments = [Image.open(path).convert("RGB") for path in paths]
         self.assertTrue(all(image.width == 865 for image in segments))
+        self.assertTrue(all(path.stat().st_size < 786_444 for path in paths))
         rebuilt = Image.new("RGB", (865, sum(image.height for image in segments)))
         y = 0
         for image in segments:
             rebuilt.paste(image, (0, y))
             y += image.height
         self.assertEqual(rebuilt.height, 1755)
-        self.assertIsNone(ImageChops.difference(original.crop((0, 0, 865, 1570)), rebuilt.crop((0, 0, 865, 1570))).getbbox())
+        top_difference = ImageChops.difference(
+            original.crop((0, 0, 865, 910)), rebuilt.crop((0, 0, 865, 910))
+        )
+        self.assertLess(max(ImageStat.Stat(top_difference).rms), 5)
+        self.assertIsNone(
+            ImageChops.difference(
+                original.crop((0, 910, 865, 1570)),
+                rebuilt.crop((0, 910, 865, 1570)),
+            ).getbbox()
+        )
 
     def test_static_welcome_asset_matches_cross_platform_welcome_buttons(self):
         asset = json.loads(

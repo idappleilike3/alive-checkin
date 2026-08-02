@@ -13,7 +13,8 @@ EXPECTED_HOME = "https://liff.line.me/2010848330-UAiqPPYD#home"
 
 w = g.welcome_flex()
 ws = json.dumps(w, ensure_ascii=False)
-for asset in ("top", "trial", "steps", "help"):
+assert "welcome-card-top-20260802.jpg?v=W260802fullV4" in ws
+for asset in ("trial", "steps", "help"):
     assert f"welcome-card-{asset}-20260802.png?v=W260802fullV4" in ws
 assert "welcome-family-checkin.png" not in ws
 assert "daily-peace-logo.png" not in ws
