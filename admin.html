@@ -2559,6 +2559,8 @@
                 <button type="button" class="gift-save-button info" data-action="grant-g799" data-line-user-id="${escapeHtml(user.line_user_id)}" style="margin-top:6px;" ${canManageMembers() ? "" : "disabled"}>設定 G799 贈送資格</button>
               </details>
               ${user.is_test_account ? `<button type="button" class="secondary" data-action="reset-test-account" data-line-user-id="${escapeHtml(user.line_user_id)}" data-display-name="${escapeHtml(user.display_name || "")}" style="margin-top:6px;" ${canManageMembers() ? "" : "disabled"}>重設測試帳號</button><button type="button" class="danger" data-action="delete-test-account" data-line-user-id="${escapeHtml(user.line_user_id)}" data-display-name="${escapeHtml(user.display_name || "")}" style="margin-top:6px;" ${canManageMembers() ? "" : "disabled"}>刪除測試帳號</button><small style="display:block;margin-top:5px;color:#76520b;">重設會保留 LINE UID；刪除會清除帳號與測試資料，帳務及稽核仍保留</small>` : ""}
+              <button type="button" class="info" data-action="line-rebind" data-line-user-id="${escapeHtml(user.line_user_id)}" data-display-name="${escapeHtml(user.display_name || "")}" style="margin-top:6px;width:100%;" ${canManageMembers() ? "" : "disabled"}>更新／重新綁定 LINE 身分</button>
+              <small id="line-rebind-status-${escapeHtml(user.line_user_id)}" role="status" aria-live="polite" style="display:block;margin-top:5px;color:#334155;">產生限時一次性連結；不會清除方案、守護關係或平安紀錄。</small>
               ${canManageMembers() ? "" : `<small style="display:block;margin-top:6px;color:#991b1b;font-weight:800;">目前角色「${adminRoleLabel()}」無修改權限，請用超級管理員或營運客服帳號登入。</small>`}
               <small id="plan-status-${user.line_user_id}" role="status" aria-live="polite" style="display:block;margin-top:6px;"></small>
             </td>
@@ -3031,6 +3033,47 @@
       if (status) status.textContent = response.ok ? "✓ 所在地已更新" : `✗ ${authErrorText(data, response.status)}`;
     }
 
+    async function issueLineRebind(lineUserId, displayName) {
+      if (!canManageMembers()) return;
+      const button = document.querySelector(
+        `[data-action="line-rebind"][data-line-user-id="${CSS.escape(lineUserId)}"]`
+      );
+      const status = $(`line-rebind-status-${lineUserId}`);
+      if (button) {
+        button.disabled = true;
+        button.textContent = "正在產生安全連結…";
+      }
+      if (status) status.textContent = "正在建立限時、只能使用一次的 LINE 重新綁定連結…";
+      try {
+        const response = await adminFetch(
+          `/api/admin/members/${encodeURIComponent(lineUserId)}/line-rebind`,
+          {method: "POST"}
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(adminMutationErrorText(data, response.status));
+        let copied = false;
+        try {
+          await navigator.clipboard.writeText(data.rebind_url);
+          copied = true;
+        } catch (_error) {
+          window.prompt(`請複製並傳給「${displayName || "這位會員"}」：`, data.rebind_url);
+        }
+        const minutes = Math.max(1, Math.ceil(Number(data.expires_in || 0) / 60));
+        const message = `✓ LINE 重新綁定連結已產生，有效約 ${minutes} 分鐘${copied ? "，並已複製" : ""}。請讓本人從目前的每日平安官方 LINE 開啟；原資格與紀錄會保留。`;
+        if (status) status.textContent = message;
+        showPlanSaveToast(message, "success");
+      } catch (error) {
+        const message = `✗ 連結產生失敗：${error.message || "請稍後再試"}`;
+        if (status) status.textContent = message;
+        showPlanSaveToast(message, "error");
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = "更新／重新綁定 LINE 身分";
+        }
+      }
+    }
+
     $("usersBody").addEventListener("click", (event) => {
       const button = event.target.closest("[data-action]");
       if (!button) return;
@@ -3044,6 +3087,8 @@
         resetTestAccount(button.dataset.lineUserId, button.dataset.displayName);
       } else if (button.dataset.action === "delete-test-account") {
         deleteTestAccount(button.dataset.lineUserId, button.dataset.displayName);
+      } else if (button.dataset.action === "line-rebind") {
+        issueLineRebind(button.dataset.lineUserId, button.dataset.displayName);
       }
     });
     let autoRefreshAdminBusy = false;
