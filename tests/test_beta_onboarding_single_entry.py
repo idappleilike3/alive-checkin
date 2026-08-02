@@ -9,9 +9,27 @@ class BetaOnboardingSingleEntryTests(unittest.TestCase):
     def test_beta_cta_uses_the_same_dedicated_onboarding_entry_for_both_plans(self):
         html = (ROOT / "beta-register.html").read_text(encoding="utf-8")
 
-        self.assertIn("2010848330-UAiqPPYD/liff/onboarding.html?", html)
+        self.assertIn("2010848330-UAiqPPYD?", html)
         self.assertIn("beta_cohort=${cohort}", html)
-        self.assertNotIn("2010848330-UAiqPPYD?beta_cohort=${cohort}", html)
+        self.assertNotIn("2010848330-UAiqPPYD/liff/onboarding.html", html)
+
+    def test_public_trial_and_beta_share_the_registered_liff_endpoint(self):
+        beta = (ROOT / "beta-register.html").read_text(encoding="utf-8")
+        trial = (ROOT / "trial-14.html").read_text(encoding="utf-8")
+
+        registered_entry = "https://liff.line.me/2010848330-UAiqPPYD?open=onboarding"
+        self.assertIn(registered_entry, trial)
+        self.assertIn("https://liff.line.me/2010848330-UAiqPPYD?", beta)
+        self.assertNotIn("/liff/onboarding.html?open=onboarding", trial)
+        self.assertNotIn("/liff/onboarding.html?beta_cohort=", beta)
+
+    def test_legacy_onboarding_subpage_forwards_to_registered_liff_endpoint(self):
+        onboarding = (ROOT / "liff" / "onboarding.html").read_text(encoding="utf-8")
+
+        self.assertIn("function forwardLegacyOnboardingEntry()", onboarding)
+        self.assertIn("https://liff.line.me/2010848330-UAiqPPYD", onboarding)
+        self.assertIn('params.set("open", "onboarding")', onboarding)
+        self.assertIn("location.replace(canonical.toString())", onboarding)
 
 
     def test_onboarding_does_not_enable_external_browser_auto_login(self):
