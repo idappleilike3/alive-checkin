@@ -17154,6 +17154,67 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
         alt_parts.append(holiday_name)
     if target_time:
         alt_parts.append(target_time)
+    footer_contents = [
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "backgroundColor": "#16A34A",
+                        "cornerRadius": "md",
+                        "paddingAll": "md",
+                        "action": {
+                            "type": "postback",
+                            "label": "✅ 我平安",
+                            "data": "action=checkin",
+                            "displayText": "我平安",
+                        },
+                        "margin": "md",
+                        "contents": [{
+                            "type": "text",
+                            "text": "✅ 我平安",
+                            "size": "xl",
+                            "weight": "bold",
+                            "color": "#FFFFFF",
+                            "align": "center",
+                        }],
+                    },
+                    {
+                        "type": "button",
+                        "action": {"type": "uri", "label": "🛡️ 安全守護", "uri": guard_uri},
+                        "style": "primary",
+                        "color": "#2563EB",
+                        "height": "md",
+                    },
+                    {
+                        "type": "button",
+                        "action": {"type": "uri", "label": "需要幫忙", "uri": sos_uri},
+                        "style": "primary",
+                        "color": "#DC2626",
+                        "height": "md",
+                    },
+                    {
+                        "type": "button",
+                        "action": {
+                            "type": "uri",
+                            "label": "🔔 查看今日安心提醒",
+                            "uri": "https://alive-checkin.onrender.com/daily-care.html",
+                        },
+                        "style": "primary",
+                        "color": "#7C3AED",
+                        "height": "md",
+                    },
+                ]
+    if care.get("milestone_day"):
+        footer_contents.append({
+            "type": "button",
+            "action": {
+                "type": "uri",
+                "label": "✨ 查看我的平安成就",
+                "uri": care["achievement_url"],
+            },
+            "style": "primary",
+            "color": "#D97706",
+            "height": "md",
+        })
     return {
         "type": "flex",
         "altText": " ".join(alt_parts)[:400],
@@ -17209,58 +17270,107 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
                 "spacing": "sm",
                 "paddingAll": "lg",
                 "backgroundColor": "#FAFAFA",
-                "contents": [
-                    {
-                        "type": "box",
-                        "layout": "vertical",
-                        "backgroundColor": "#16A34A",
-                        "cornerRadius": "md",
-                        "paddingAll": "md",
-                        "action": {
-                            "type": "postback",
-                            "label": "✅ 我平安",
-                            "data": "action=checkin",
-                            "displayText": "我平安",
-                        },
-                        "margin": "md",
-                        "contents": [{
-                            "type": "text",
-                            "text": "✅ 我平安",
-                            "size": "xl",
-                            "weight": "bold",
-                            "color": "#FFFFFF",
-                            "align": "center",
-                        }],
-                    },
-                    {
-                        "type": "button",
-                        "action": {"type": "uri", "label": "🛡️ 安全守護", "uri": guard_uri},
-                        "style": "primary",
-                        "color": "#2563EB",
-                        "height": "md",
-                    },
-                    {
-                        "type": "button",
-                        "action": {"type": "uri", "label": "需要幫忙", "uri": sos_uri},
-                        "style": "primary",
-                        "color": "#DC2626",
-                        "height": "md",
-                    },
-                    {
-                        "type": "button",
-                        "action": {
-                            "type": "uri",
-                            "label": "🔔 查看今日安心提醒",
-                            "uri": "https://alive-checkin.onrender.com/daily-care.html",
-                        },
-                        "style": "primary",
-                        "color": "#7C3AED",
-                        "height": "md",
-                    },
-                ],
+                "contents": footer_contents,
             },
         },
     }
+
+
+def send_due_streak_milestone_videos(config):
+    """Send day 100/365 member videos; record completion only after success."""
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+        "LINE_CHANNEL_ACCESS_TOKEN", ""
+    )
+    if not token:
+        return {"sent": 0, "failed": 0, "missing_media": 0,
+                "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
+    state = load_state(config["DATA_FILE"])
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    now = current_app_time(config)
+    today = now.strftime("%Y-%m-%d")
+    sent = failed = missing_media = skipped = 0
+    results = []
+    for profile in (state.get("users") or {}).values():
+        uid = str(profile.get("line_user_id") or "").strip()
+        if not uid or profile.get("line_push_blocked"):
+            skipped += 1
+            continue
+        day = compute_streak_days(profile.get("history") or [], today)
+        pending = {
+            int(value) for value in (profile.get("streak_milestone_videos_pending") or [])
+            if str(value).isdigit() and int(value) in (100, 365)
+        }
+        if day in (100, 365):
+            pending.add(day)
+        if not pending:
+            continue
+        day = min(pending)
+        profile["streak_milestone_videos_pending"] = sorted(pending)
+        completed = set(profile.get("streak_milestone_videos_sent") or [])
+        key = f"{uid}:{day}"
+        if key in completed:
+            skipped += 1
+            continue
+        url = str(
+            config.get(f"MILESTONE_VIDEO_{day}_URL")
+            or os.environ.get(f"MILESTONE_VIDEO_{day}_URL", "")
+        ).strip()
+        if not url:
+            missing_media += 1
+            results.append({"line_user_id": uid, "milestone_day": day,
+                            "status": "missing_media"})
+            continue
+        preview = str(
+            config.get(f"MILESTONE_VIDEO_{day}_PREVIEW_URL")
+            or os.environ.get(f"MILESTONE_VIDEO_{day}_PREVIEW_URL", "")
+            or "https://alive-checkin.onrender.com/assets/daily-care/jennie-sample-20260802.webp"
+        ).strip()
+        message = {
+            "type": "video",
+            "originalContentUrl": url,
+            "previewImageUrl": preview,
+            "trackingId": f"streak-{day}",
+        }
+        try:
+            result = sender(token, uid, message)
+            if isinstance(result, dict) and result.get("ok") is False:
+                raise RuntimeError(str(result))
+            completed.add(key)
+            profile["streak_milestone_videos_sent"] = sorted(completed)
+            pending.discard(day)
+            if pending:
+                profile["streak_milestone_videos_pending"] = sorted(pending)
+            else:
+                profile.pop("streak_milestone_videos_pending", None)
+            profile["streak_milestone_video_last_sent_at"] = now.isoformat(
+                timespec="seconds"
+            )
+            _clear_push_delivery_failure(profile, f"streak-video:{day}")
+            append_notification_log(
+                state, "streak_milestone_video", uid, "sent", message,
+                json.dumps(result, ensure_ascii=False),
+                metadata={"milestone_day": day},
+            )
+            record_line_message_usage(
+                state, category="checkin", owner_line_user_id=uid,
+                recipient_count=1, event_id=f"streak-video:{uid}:{day}",
+                sent_at=now,
+            )
+            sent += 1
+            results.append({"line_user_id": uid, "milestone_day": day,
+                            "status": "sent"})
+        except Exception as exc:
+            record_push_failure(profile, f"streak-video:{day}", exc, now)
+            append_notification_log(
+                state, "streak_milestone_video", uid, "failed", message,
+                str(exc), metadata={"milestone_day": day},
+            )
+            failed += 1
+            results.append({"line_user_id": uid, "milestone_day": day,
+                            "status": "failed", "error": str(exc)})
+    save_state(config["DATA_FILE"], state)
+    return {"sent": sent, "failed": failed, "missing_media": missing_media,
+            "skipped": skipped, "results": results}, 200
 
 
 def _mark_line_push_blocked(user, exc):
@@ -18566,6 +18676,7 @@ def run_cron_tick(config):
     always = {
         "push_campaigns": send_due_push_campaigns,
         "checkin_reminders": send_checkin_reminders,
+        "streak_milestone_videos": send_due_streak_milestone_videos,
         "binding_notification_retries": retry_pending_bind_notifications,
         "profile_completion_reminders": send_profile_completion_reminders,
         "overdue_alerts": send_due_reminders,

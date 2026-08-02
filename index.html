@@ -10826,9 +10826,39 @@
       if (blessing && data && data.daily_blessing) blessing.textContent = data.daily_blessing;
     }
 
+    function showMilestoneCelebration() {
+      if (window.__milestoneCelebrationShown) return;
+      const milestone = Number(new URLSearchParams(window.location.search).get("milestone"));
+      if (![1, 7, 30, 60, 100, 180, 365].includes(milestone)) return;
+      window.__milestoneCelebrationShown = true;
+      const overlay = document.createElement("div");
+      overlay.id = "milestoneCelebration";
+      overlay.setAttribute("role", "dialog");
+      overlay.setAttribute("aria-label", `連續平安 ${milestone} 天成就`);
+      overlay.innerHTML = `<div class="milestone-celebration-card">
+        <div class="milestone-sparkles" aria-hidden="true">✨ 🎉 ✨</div>
+        <strong>連續平安 ${milestone} 天</strong>
+        <p>謝謝你每天回應平安，讓關心你的人多一份安心。</p>
+        <button type="button">收下這份祝福 ❤️</button>
+      </div>`;
+      const style = document.createElement("style");
+      style.textContent = `
+        #milestoneCelebration{position:fixed;inset:0;z-index:9999;display:grid;place-items:center;padding:24px;background:rgba(20,30,25,.55);animation:milestoneFade .35s ease both}
+        .milestone-celebration-card{width:min(420px,100%);padding:32px 24px;text-align:center;border-radius:28px;background:linear-gradient(145deg,#fffdf5,#fff0d6);box-shadow:0 24px 70px rgba(70,45,10,.28);animation:milestoneRise .7s cubic-bezier(.2,.8,.2,1) both}
+        .milestone-celebration-card strong{display:block;font-size:28px;color:#8a4b08}.milestone-celebration-card p{font-size:18px;line-height:1.7;color:#554433}
+        .milestone-celebration-card button{border:0;border-radius:16px;padding:14px 20px;background:#16a34a;color:white;font-size:18px;font-weight:800;cursor:pointer}.milestone-sparkles{font-size:34px;animation:milestoneGlow 1.1s ease-in-out infinite alternate}
+        @keyframes milestoneFade{from{opacity:0}to{opacity:1}}@keyframes milestoneRise{from{transform:translateY(28px) scale(.92);opacity:0}to{transform:none;opacity:1}}@keyframes milestoneGlow{to{transform:scale(1.12);filter:drop-shadow(0 0 12px #ffc94a)}}
+        @media(prefers-reduced-motion:reduce){#milestoneCelebration,.milestone-celebration-card,.milestone-sparkles{animation:none}}
+      `;
+      document.head.appendChild(style);
+      document.body.appendChild(overlay);
+      overlay.querySelector("button").addEventListener("click", () => overlay.remove());
+    }
+
     function renderStatus(data) {
       currentStatusData = data;
       renderHomeCheckinCard(data);
+      showMilestoneCelebration();
       historyData = data.history || [];
       $("dailyStatus").textContent = data.is_today_checked ? "今日已簽到" : "今日未簽到";
       $("lastDate").textContent = formatDate(data.last_check_in);
