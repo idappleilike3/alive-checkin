@@ -13,20 +13,19 @@ EXPECTED_HOME = "https://liff.line.me/2010848330-UAiqPPYD#home"
 
 w = g.welcome_flex()
 ws = json.dumps(w, ensure_ascii=False)
-assert "welcome-approved-full-20260802-help-large.jpg?v=W260802fullV3" in ws
+for asset in ("top", "trial", "steps", "help"):
+    assert f"welcome-card-{asset}-20260802.png?v=W260802fullV4" in ws
 assert "welcome-family-checkin.png" not in ws
 assert "daily-peace-logo.png" not in ws
-assert w["hero"]["aspectRatio"] == "865:1818"
-assert w["hero"]["aspectMode"] == "fit"
 assert "開始 14 天安心體驗" in ws
+assert "先了解每日平安" in ws
 assert EXPECTED_BIND in ws
+assert "open=help" in ws
 assert "code=" not in ws and "state=" not in ws
-# The artwork already contains both visual CTAs; no duplicate Flex footer remains.
+# Both artwork CTAs have independent image actions; no duplicate footer remains.
 assert "footer" not in w
 assert "我的會員" not in ws
 assert "首次引導" not in ws
-
-assert w["hero"]["action"]["uri"] == EXPECTED_BIND
 
 w2 = g.welcome_flex("小明")
 assert w2 == w
@@ -40,6 +39,11 @@ def walk(node):
     elif isinstance(node, list):
         for value in node:
             yield from walk(value)
+
+
+actions = [node["action"] for node in walk(w) if node.get("type") == "image" and node.get("action")]
+assert actions[0]["uri"] == EXPECTED_BIND
+assert actions[1]["uri"].endswith("?open=help")
 
 
 # 主標只在上方圖框出現一次，避免老人看到重複內容；圖框下方直接進入設定說明。
@@ -114,9 +118,8 @@ gate = init_app[gate_start : init_app.index("if (inviteeMode) {", gate_start)]
 assert "shareContactInvite" not in gate
 assert "clearShareFirstLocalFlags" in gate
 
-print("welcome artwork:", w["hero"]["url"])
-print("welcome hero CTA:", w["hero"]["action"]["label"])
-print("welcome hero CTA uri:", w["hero"]["action"]["uri"])
+print("welcome artwork segments: 4")
+print("welcome CTA labels:", [action["label"] for action in actions])
 print("welcome footer buttons: 0")
 print("intro primary label:", intro["footer"]["contents"][0]["action"]["label"])
 print("bind confirm ok")

@@ -605,8 +605,10 @@ class ProductRulesTests(unittest.TestCase):
 
         bubble = welcome_flex_module.welcome_flex()
         self.assertNotIn("footer", bubble)
-        self.assertIn("welcome-approved-full-20260802-help-large.jpg", bubble["hero"]["url"])
-        self.assertEqual(bubble["hero"]["action"]["label"], "開始 14 天安心體驗")
+        images = bubble["body"]["contents"]
+        self.assertEqual(len(images), 4)
+        self.assertEqual(images[1]["action"]["label"], "開始 14 天安心體驗")
+        self.assertEqual(images[3]["action"]["label"], "先了解每日平安")
 
     def test_welcome_flex_is_left_aligned_large_and_vertical(self):
         import guardian_group_flex as welcome_flex_module
@@ -624,8 +626,7 @@ class ProductRulesTests(unittest.TestCase):
         nodes = list(walk(bubble))
         texts = [node for node in nodes if node.get("type") == "text"]
         self.assertEqual(texts, [])
-        self.assertEqual(bubble["hero"]["aspectRatio"], "865:1818")
-        self.assertEqual(bubble["hero"]["aspectMode"], "fit")
+        self.assertTrue(all(node["aspectMode"] == "fit" for node in bubble["body"]["contents"]))
 
     def test_public_liff_actions_redirect_to_standalone_pages(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")

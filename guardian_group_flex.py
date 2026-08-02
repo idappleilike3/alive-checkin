@@ -1167,20 +1167,45 @@ def welcome_greeting_text(display_name: str | None = None) -> str:
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友／「歡迎詞」共用的定案完整長版歡迎圖。"""
+    """加好友／「歡迎詞」共用歡迎卡，兩顆圖中按鈕各自可點。"""
     setup_uri = liff_entry_url(open_action="onboarding")
+    help_uri = liff_entry_url(open_action="help")
     base = (os.environ.get("APP_PUBLIC_URL") or PUBLIC_BASE).rstrip("/")
-    artwork_uri = f"{base}/assets/welcome-approved-full-20260802-help-large.jpg?v=W260802fullV3"
+    version = "W260802fullV4"
+
+    def artwork(name: str, height: int, action=None):
+        image = {
+            "type": "image",
+            "url": f"{base}/assets/{name}?v={version}",
+            "size": "full",
+            "aspectMode": "fit",
+            "aspectRatio": f"865:{height}",
+        }
+        if action:
+            image["action"] = action
+        return image
 
     return {
         "type": "bubble",
         "size": "mega",
-        "hero": {
-            "type": "image",
-            "url": artwork_uri,
-            "size": "full",
-            "aspectMode": "fit",
-            "aspectRatio": "865:1818",
-            "action": {"type": "uri", "label": "開始 14 天安心體驗", "uri": setup_uri},
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "0px",
+            "spacing": "none",
+            "contents": [
+                artwork("welcome-card-top-20260802.png", 910),
+                artwork(
+                    "welcome-card-trial-20260802.png",
+                    200,
+                    {"type": "uri", "label": "開始 14 天安心體驗", "uri": setup_uri},
+                ),
+                artwork("welcome-card-steps-20260802.png", 460),
+                artwork(
+                    "welcome-card-help-20260802.png",
+                    185,
+                    {"type": "uri", "label": "先了解每日平安", "uri": help_uri},
+                ),
+            ],
         },
     }

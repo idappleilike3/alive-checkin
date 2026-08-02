@@ -60,17 +60,20 @@ class BotKeywordHandlerTests(unittest.TestCase):
         self.assertIn("share-invite.html", blob)
         self.assertNotIn("no bound", blob.lower())
 
-    def test_welcome_flex_uses_enlarged_help_artwork_without_duplicate_footer(self):
+    def test_welcome_flex_has_independent_trial_and_help_click_areas(self):
         flex = welcome_flex("小明")
         blob = str(flex)
-        self.assertIn("welcome-approved-full-20260802-help-large.jpg?v=W260802fullV3", blob)
+        self.assertIn("welcome-card-top-20260802.png?v=W260802fullV4", blob)
+        self.assertIn("welcome-card-trial-20260802.png?v=W260802fullV4", blob)
+        self.assertIn("welcome-card-steps-20260802.png?v=W260802fullV4", blob)
+        self.assertIn("welcome-card-help-20260802.png?v=W260802fullV4", blob)
         self.assertNotIn("welcome-family-checkin.png", blob)
         self.assertNotIn("daily-peace-logo.png", blob)
-        self.assertEqual(flex["hero"]["aspectRatio"], "865:1818")
-        self.assertEqual(flex["hero"]["aspectMode"], "fit")
         self.assertIn("open=onboarding", blob)
+        self.assertIn("open=help", blob)
         self.assertNotIn("footer", flex)
-        self.assertNotIn("open=help", blob)
+        self.assertNotIn("緊急情況請直接撥打", blob)
+        self.assertNotIn("不能取代緊急救援", blob)
         self.assertNotIn("版本 W", blob)
         self.assertNotIn("W250723", blob)
         self.assertNotIn("BOT", blob)
@@ -89,9 +92,9 @@ class BotKeywordHandlerTests(unittest.TestCase):
         labels = [
             item["action"]["label"]
             for item in walk(flex)
-            if item.get("type") == "button"
+            if item.get("type") == "image" and item.get("action")
         ]
-        self.assertEqual(labels, [])
+        self.assertEqual(labels, ["開始 14 天安心體驗", "先了解每日平安"])
         self.assertEqual(
             pricing_direct_url(),
             "https://alive-checkin.onrender.com/liff/pricing.html",
@@ -101,19 +104,23 @@ class BotKeywordHandlerTests(unittest.TestCase):
             "https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html",
         )
 
-    def test_enlarged_help_artwork_preserves_everything_outside_button_area(self):
-        original = Image.open(ROOT / "assets" / "welcome-approved-full-20260802.png").convert("RGB")
-        enlarged = Image.open(
-            ROOT / "assets" / "welcome-approved-full-20260802-help-large.png"
-        ).convert("RGB")
-        self.assertEqual(enlarged.size, original.size)
-
-        changed = ImageChops.difference(original, enlarged)
-        self.assertIsNotNone(changed.getbbox())
-        allowed_button_area = (20, 1580, 845, 1705)
-        outside = changed.copy()
-        outside.paste((0, 0, 0), allowed_button_area)
-        self.assertIsNone(outside.getbbox())
+    def test_welcome_segments_remove_disclaimer_and_preserve_upper_artwork(self):
+        original = Image.open(ROOT / "assets" / "welcome-approved-full-20260802-help-large.jpg").convert("RGB")
+        paths = [
+            ROOT / "assets" / "welcome-card-top-20260802.png",
+            ROOT / "assets" / "welcome-card-trial-20260802.png",
+            ROOT / "assets" / "welcome-card-steps-20260802.png",
+            ROOT / "assets" / "welcome-card-help-20260802.png",
+        ]
+        segments = [Image.open(path).convert("RGB") for path in paths]
+        self.assertTrue(all(image.width == 865 for image in segments))
+        rebuilt = Image.new("RGB", (865, sum(image.height for image in segments)))
+        y = 0
+        for image in segments:
+            rebuilt.paste(image, (0, y))
+            y += image.height
+        self.assertEqual(rebuilt.height, 1755)
+        self.assertIsNone(ImageChops.difference(original.crop((0, 0, 865, 1570)), rebuilt.crop((0, 0, 865, 1570))).getbbox())
 
     def test_static_welcome_asset_matches_cross_platform_welcome_buttons(self):
         asset = json.loads(
