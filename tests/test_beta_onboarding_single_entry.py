@@ -58,6 +58,21 @@ class BetaOnboardingSingleEntryTests(unittest.TestCase):
         prefetch = initializer.index("startMemberStatusPrefetch()")
         self.assertLess(register_done, prefetch)
 
+    def test_public_trial_uses_the_same_registration_before_status_order(self):
+        """14 天入口沒有 beta 參數，也必須先完成共用註冊再讀會員狀態。"""
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        initializer = html[
+            html.index("async function initializeLiff()"):
+            html.index("async function initApp()")
+        ]
+
+        self.assertIn('const betaCohort = String(getAppParam("beta_cohort") || "")', initializer)
+        self.assertIn('fetch("/api/line/register"', initializer)
+        self.assertLess(
+            initializer.index("if (!registrationResponse.ok)"),
+            initializer.index("startMemberStatusPrefetch()"),
+        )
+
 
     def test_onboarding_reports_existing_members_even_if_local_page_state_was_reset(self):
         html = (ROOT / "liff" / "onboarding.html").read_text(encoding="utf-8")
