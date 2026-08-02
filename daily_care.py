@@ -16,6 +16,8 @@ HERO_ASSETS = {
     "evening": ("evening-01", "evening-02"),
 }
 
+STREAK_MILESTONES = (1, 7, 30, 60, 100, 180, 365)
+
 
 def _greeting(hour):
     if hour < 11:
@@ -52,7 +54,7 @@ def build_daily_care_context(profile, now):
         weather_status = "unavailable"
         weather_line = f"{city}｜天氣資料暫時無法更新"
     streak_days = int(profile.get("streak_days") or 0)
-    if streak_days in (100, 365):
+    if streak_days in STREAK_MILESTONES:
         care_title = f"🎉 平安第 {streak_days} 天"
         care_summary = f"謝謝你持續完成每日平安，這 {streak_days} 天的每一次回應，都讓關心你的人多一份安心。"
         content_kind = "milestone"
@@ -60,6 +62,7 @@ def build_daily_care_context(profile, now):
         care_title = DEFAULT_CARE["title"]
         care_summary = DEFAULT_CARE["summary"]
         content_kind = "daily"
+    milestone_day = streak_days if streak_days in STREAK_MILESTONES else None
     hero_period = _hero_period(now.hour)
     hero_pool = HERO_ASSETS[hero_period]
     hero_asset = hero_pool[now.date().toordinal() % len(hero_pool)]
@@ -72,6 +75,11 @@ def build_daily_care_context(profile, now):
         "care_title": care_title,
         "care_summary": care_summary,
         "content_kind": content_kind,
+        "milestone_day": milestone_day,
+        "achievement_url": (
+            f"https://alive-checkin.onrender.com/?milestone={milestone_day}"
+            if milestone_day else ""
+        ),
         "source_name": DEFAULT_CARE["source_name"],
         "source_url": DEFAULT_CARE["source_url"],
         "updated_at": now.isoformat(timespec="minutes"),

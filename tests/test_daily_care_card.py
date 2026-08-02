@@ -53,6 +53,27 @@ class DailyCareContextTests(unittest.TestCase):
         self.assertEqual(context["content_kind"], "milestone")
         self.assertIn("365", context["care_title"])
 
+    def test_all_upgrade_days_link_to_web_celebration(self):
+        for day in (1, 7, 30, 60, 100, 180, 365):
+            with self.subTest(day=day):
+                context = build_daily_care_context(
+                    {"streak_days": day}, datetime(2026, 8, 2, 13)
+                )
+                self.assertEqual(context["content_kind"], "milestone")
+                self.assertEqual(context["milestone_day"], day)
+                self.assertIn(f"milestone={day}", context["achievement_url"])
+
+    def test_milestone_flex_adds_real_achievement_button(self):
+        history = ["2026-08-02"]
+        flex = app.build_daily_checkin_flex(
+            datetime(2026, 8, 2, 13), profile={"history": history}
+        )
+        buttons = flex["contents"]["footer"]["contents"]
+        achievement = buttons[-1]
+        self.assertEqual(achievement["action"]["type"], "uri")
+        self.assertIn("查看我的平安成就", achievement["action"]["label"])
+        self.assertIn("milestone=1", achievement["action"]["uri"])
+
     def test_flex_has_four_large_buttons_and_larger_checkin(self):
         profile = {"city": "臺中市", "district": "西屯區"}
         flex = app.build_daily_checkin_flex(datetime(2026, 8, 2, 9), profile=profile)

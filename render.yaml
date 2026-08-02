@@ -55,6 +55,10 @@ services:
         generateValue: true
       - key: CRON_SECRET
         sync: false
+      - key: MILESTONE_VIDEO_100_URL
+        sync: false
+      - key: MILESTONE_VIDEO_365_URL
+        sync: false
       - key: ECPAY_MERCHANT_ID
         sync: false
       - key: ECPAY_HASH_KEY
