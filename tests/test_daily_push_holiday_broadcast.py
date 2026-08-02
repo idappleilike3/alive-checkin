@@ -137,6 +137,44 @@ class DailyPushFlexTests(unittest.TestCase):
         self.assertGreaterEqual(bc.get("sent", 0), 1)
         self.assertIn("U_skip", sent)
 
+    def test_targeted_repush_only_sends_active_requested_members(self):
+        sent = []
+
+        def fake_sender(token, to, message):
+            sent.append(to)
+            return {"ok": True}
+
+        state = app.load_state(self.data_file)
+        baby = app.get_profile(state, "U_baby")
+        baby.update({
+            "plan": "paid_399_year",
+            "membership_source": "beta",
+            "beta_started_at": "2026-08-01T00:00:00",
+            "beta_ends_at": "2026-08-22T00:00:00",
+        })
+        soft = app.get_profile(state, "U_soft")
+        soft.update({"plan": "trial", "trial_started_at": "2026-08-01T00:00:00"})
+        retired = app.get_profile(state, "U_jennie")
+        retired.update({"plan": "trial", "membership_started_at": "2026-08-01T00:00:00"})
+        app.save_state(self.data_file, state)
+
+        data, code = app.send_targeted_checkin_repush(
+            {
+                "DATA_FILE": self.data_file,
+                "LINE_CHANNEL_ACCESS_TOKEN": "x",
+                "LINE_PUSH_SENDER": fake_sender,
+                "CRON_NOW": datetime(2026, 8, 2, 12, 30, 0),
+                "APP_TIMEZONE": "Asia/Taipei",
+                "RETIRED_LINE_USER_IDS": "U_jennie",
+            },
+            ["U_baby", "U_soft", "U_jennie"],
+        )
+
+        self.assertEqual(code, 200)
+        self.assertEqual(sent, ["U_baby", "U_soft"])
+        self.assertEqual(data["sent"], 2)
+        self.assertEqual(data["skipped_retired"], ["U_jennie"])
+
 
 class CheckinPostbackStillLive(unittest.TestCase):
     def setUp(self):

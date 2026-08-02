@@ -6181,7 +6181,9 @@ def send_day7_pin_reminders(config, now=None):
 
 def remove_retired_push_uids(data_file, config):
     """Remove explicitly retired deployment-test recipients from saved state."""
-    raw = config.get("RETIRED_LINE_USER_IDS") or "U_deploy_smoke_ax"
+    raw = config.get("RETIRED_LINE_USER_IDS") or (
+        "U_deploy_smoke_ax,Ua723c8919f544d515422f143d1710b74"
+    )
     retired = {
         value.strip()
         for value in re.split(r"[,;；\s]+", str(raw))
@@ -17620,6 +17622,89 @@ def broadcast_checkin_reminders(config, *, pause_every=20, pause_seconds=1.0):
     }, 200
 
 
+def send_targeted_checkin_repush(config, line_user_ids):
+    """Safely re-send today's Flex to explicitly selected active members only."""
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+        "LINE_CHANNEL_ACCESS_TOKEN", ""
+    )
+    if not token:
+        return {"sent": 0, "failed": 0, "error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
+    requested = list(dict.fromkeys(
+        str(value or "").strip() for value in (line_user_ids or [])
+        if str(value or "").strip()
+    ))[:10]
+    retired = {
+        value.strip()
+        for value in re.split(
+            r"[,;；\s]+", str(
+                config.get("RETIRED_LINE_USER_IDS")
+                or "U_deploy_smoke_ax,Ua723c8919f544d515422f143d1710b74"
+            )
+        )
+        if value.strip()
+    }
+    state = load_state(config["DATA_FILE"])
+    users = state.get("users") or {}
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    now = current_app_time(config)
+    today = now.strftime("%Y-%m-%d")
+    sent = failed = 0
+    skipped_retired = []
+    skipped_inactive = []
+    not_found = []
+    results = []
+    for uid in requested:
+        if uid in retired:
+            skipped_retired.append(uid)
+            continue
+        profile = users.get(uid)
+        if not isinstance(profile, dict):
+            profile = next(
+                (row for row in users.values() if str((row or {}).get("line_user_id") or "").strip() == uid),
+                None,
+            )
+        if not isinstance(profile, dict):
+            not_found.append(uid)
+            continue
+        if profile.get("membership_paused") or not membership_access_active(profile, now):
+            skipped_inactive.append(uid)
+            continue
+        message = build_daily_checkin_flex(now, target_time="", profile=profile)
+        try:
+            result = sender(token, uid, message)
+            profile["line_push_blocked"] = False
+            profile.pop("line_push_blocked_at", None)
+            times = reminder_times_for_profile(profile) or ["12:00"]
+            _mark_checkin_reminder_slots(profile, today, times, times)
+            append_notification_log(
+                state, "checkin_targeted_repush", uid, "sent", message,
+                json.dumps(result, ensure_ascii=False),
+            )
+            sent += 1
+            results.append({"line_user_id": uid, "status": "sent"})
+        except Exception as exc:
+            failure = _record_scheduled_push_failure(
+                state, profile, f"checkin-repush:{today}:{uid}",
+                "checkin_targeted_repush", uid, message, exc, now,
+            )
+            failed += 1
+            results.append({
+                "line_user_id": uid,
+                "status": "failed",
+                "failure_kind": failure.get("kind"),
+                "technical_detail": str(exc)[:1000],
+            })
+    save_state(config["DATA_FILE"], state)
+    return {
+        "sent": sent,
+        "failed": failed,
+        "skipped_retired": skipped_retired,
+        "skipped_inactive": skipped_inactive,
+        "not_found": not_found,
+        "results": results,
+    }, 200
+
+
 def send_birthday_reminders(config):
     token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     if not token:
@@ -19091,7 +19176,8 @@ def create_app(config=None):
         ),
         TEST_LINE_USER_IDS=os.environ.get("TEST_LINE_USER_IDS", ""),
         RETIRED_LINE_USER_IDS=os.environ.get(
-            "RETIRED_LINE_USER_IDS", "U_deploy_smoke_ax"
+            "RETIRED_LINE_USER_IDS",
+            "U_deploy_smoke_ax,Ua723c8919f544d515422f143d1710b74",
         ),
         LEGACY_DAY7_PIN_REMINDER_ENABLED=True,
     )
@@ -22246,6 +22332,18 @@ def create_app(config=None):
         if not cron_allowed(app.config, secret):
             return jsonify({"error": "unauthorized"}), 401
         data, code = broadcast_checkin_reminders(app.config)
+        return jsonify(data), code
+
+    @app.route("/api/cron/checkin-targeted-repush", methods=["POST"])
+    def cron_checkin_targeted_repush_api():
+        """Re-send only to explicitly named active members; never broadcast."""
+        secret = request.headers.get("X-Cron-Secret", "")
+        if not cron_allowed(app.config, secret):
+            return jsonify({"error": "unauthorized"}), 401
+        payload = request.get_json(silent=True) or {}
+        data, code = send_targeted_checkin_repush(
+            app.config, payload.get("line_user_ids") or []
+        )
         return jsonify(data), code
 
     @app.route("/api/cron/overdue-alerts", methods=["GET", "POST"])
