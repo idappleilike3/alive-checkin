@@ -58,6 +58,7 @@ class AdminLineRebindTests(unittest.TestCase):
 
     def test_admin_route_is_permission_and_csrf_guarded(self):
         source = Path("app.py").read_text(encoding="utf-8")
+        self.assertIn('@app.get("/api/admin/members/<line_user_id>/line-rebind")', source)
         route = source.split('@app.post("/api/admin/members/<line_user_id>/line-rebind")', 1)[1]
         route = route.split("@app.", 1)[0]
         self.assertIn('_admin_guard(write=True, permission="member.manage")', route)
