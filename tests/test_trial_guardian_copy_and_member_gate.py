@@ -64,9 +64,9 @@ class TrialGuardianCopyAndMemberGateTests(unittest.TestCase):
         production = json.dumps(
             guardian_group_flex.welcome_flex(), ensure_ascii=False
         )
-        self.assertIn("welcome-approved-full-20260802.png", production)
+        self.assertIn("welcome-approved-full-20260802-help-large.png", production)
         self.assertIn("開始 14 天安心體驗", production)
-        self.assertIn("了解每日平安", production)
+        self.assertNotIn('"footer"', production)
 
     def test_faq_separates_trial_sharing_from_guardian_invitation(self):
         html = (ROOT / "faq.html").read_text(encoding="utf-8")

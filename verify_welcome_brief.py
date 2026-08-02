@@ -13,23 +13,20 @@ EXPECTED_HOME = "https://liff.line.me/2010848330-UAiqPPYD#home"
 
 w = g.welcome_flex()
 ws = json.dumps(w, ensure_ascii=False)
-assert "welcome-approved-full-20260802.png?v=W260802fullV1" in ws
+assert "welcome-approved-full-20260802-help-large.png?v=W260802fullV2" in ws
 assert "welcome-family-checkin.png" not in ws
 assert "daily-peace-logo.png" not in ws
 assert w["hero"]["aspectRatio"] == "865:1818"
 assert w["hero"]["aspectMode"] == "fit"
 assert "開始 14 天安心體驗" in ws
-assert "了解每日平安" in ws
 assert EXPECTED_BIND in ws
 assert "code=" not in ws and "state=" not in ws
-# The approved original artwork stays intact; two clear CTAs remain below it.
-assert len(w["footer"]["contents"]) == 2
+# The artwork already contains both visual CTAs; no duplicate Flex footer remains.
+assert "footer" not in w
 assert "我的會員" not in ws
 assert "首次引導" not in ws
 
 assert w["hero"]["action"]["uri"] == EXPECTED_BIND
-assert w["footer"]["contents"][0]["action"]["uri"] == EXPECTED_BIND
-assert w["footer"]["contents"][1]["action"]["uri"] == g.liff_entry_url(open_action="help")
 
 w2 = g.welcome_flex("小明")
 assert w2 == w
@@ -118,9 +115,9 @@ assert "shareContactInvite" not in gate
 assert "clearShareFirstLocalFlags" in gate
 
 print("welcome artwork:", w["hero"]["url"])
-print("welcome CTA:", w["footer"]["contents"][0]["action"]["label"])
-print("welcome CTA uri:", w["footer"]["contents"][0]["action"]["uri"])
-print("welcome footer buttons:", len(w["footer"]["contents"]))
+print("welcome hero CTA:", w["hero"]["action"]["label"])
+print("welcome hero CTA uri:", w["hero"]["action"]["uri"])
+print("welcome footer buttons: 0")
 print("intro primary label:", intro["footer"]["contents"][0]["action"]["label"])
 print("bind confirm ok")
 print("ALL OK")

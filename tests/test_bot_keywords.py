@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from PIL import Image, ImageChops
+
 import guardian_group_flex
 import sos_flow
 from guardian_group_flex import pricing_direct_url, share_invite_liff_url, welcome_flex
@@ -58,21 +60,21 @@ class BotKeywordHandlerTests(unittest.TestCase):
         self.assertIn("share-invite.html", blob)
         self.assertNotIn("no bound", blob.lower())
 
-    def test_welcome_flex_uses_approved_full_length_artwork_and_two_ctas(self):
+    def test_welcome_flex_uses_enlarged_help_artwork_without_duplicate_footer(self):
         flex = welcome_flex("小明")
         blob = str(flex)
-        self.assertIn("welcome-approved-full-20260802.png?v=W260802fullV1", blob)
+        self.assertIn("welcome-approved-full-20260802-help-large.png?v=W260802fullV2", blob)
         self.assertNotIn("welcome-family-checkin.png", blob)
         self.assertNotIn("daily-peace-logo.png", blob)
         self.assertEqual(flex["hero"]["aspectRatio"], "865:1818")
         self.assertEqual(flex["hero"]["aspectMode"], "fit")
         self.assertIn("open=onboarding", blob)
-        self.assertIn("open=help", blob)
+        self.assertNotIn("footer", flex)
+        self.assertNotIn("open=help", blob)
         self.assertNotIn("版本 W", blob)
         self.assertNotIn("W250723", blob)
         self.assertNotIn("BOT", blob)
         self.assertNotIn("一鍵守護邀請", blob)
-        self.assertIn("了解每日平安", blob)
         self.assertNotIn("接受守護邀請", blob)
         self.assertNotIn("需要幫忙", blob)
         def walk(node):
@@ -89,10 +91,7 @@ class BotKeywordHandlerTests(unittest.TestCase):
             for item in walk(flex)
             if item.get("type") == "button"
         ]
-        self.assertEqual(
-            labels,
-            ["開始 14 天安心體驗", "了解每日平安"],
-        )
+        self.assertEqual(labels, [])
         self.assertEqual(
             pricing_direct_url(),
             "https://alive-checkin.onrender.com/liff/pricing.html",
@@ -101,6 +100,20 @@ class BotKeywordHandlerTests(unittest.TestCase):
             share_invite_liff_url(),
             "https://liff.line.me/2010848330-UAiqPPYD/liff/share-invite.html",
         )
+
+    def test_enlarged_help_artwork_preserves_everything_outside_button_area(self):
+        original = Image.open(ROOT / "assets" / "welcome-approved-full-20260802.png").convert("RGB")
+        enlarged = Image.open(
+            ROOT / "assets" / "welcome-approved-full-20260802-help-large.png"
+        ).convert("RGB")
+        self.assertEqual(enlarged.size, original.size)
+
+        changed = ImageChops.difference(original, enlarged)
+        self.assertIsNotNone(changed.getbbox())
+        allowed_button_area = (20, 1580, 845, 1705)
+        outside = changed.copy()
+        outside.paste((0, 0, 0), allowed_button_area)
+        self.assertIsNone(outside.getbbox())
 
     def test_static_welcome_asset_matches_cross_platform_welcome_buttons(self):
         asset = json.loads(

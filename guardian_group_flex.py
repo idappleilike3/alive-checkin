@@ -1167,12 +1167,10 @@ def welcome_greeting_text(display_name: str | None = None) -> str:
 
 
 def welcome_flex(display_name: str | None = None):
-    """加好友／「歡迎詞」共用的定案完整長版歡迎圖與兩顆 CTA。"""
+    """加好友／「歡迎詞」共用的定案完整長版歡迎圖。"""
     setup_uri = liff_entry_url(open_action="onboarding")
-    help_uri = liff_entry_url(open_action="help")
     base = (os.environ.get("APP_PUBLIC_URL") or PUBLIC_BASE).rstrip("/")
-    artwork_uri = f"{base}/assets/welcome-approved-full-20260802.png?v=W260802fullV1"
-    coral = "#F2554B"
+    artwork_uri = f"{base}/assets/welcome-approved-full-20260802-help-large.png?v=W260802fullV2"
 
     return {
         "type": "bubble",
@@ -1184,26 +1182,5 @@ def welcome_flex(display_name: str | None = None):
             "aspectMode": "fit",
             "aspectRatio": "865:1818",
             "action": {"type": "uri", "label": "開始 14 天安心體驗", "uri": setup_uri},
-        },
-        "footer": {
-            "type": "box",
-            "layout": "vertical",
-            "spacing": "sm",
-            "paddingAll": "lg",
-            "backgroundColor": "#FFF9F2",
-            "contents": [
-                _uri_button("開始 14 天安心體驗", setup_uri, style="primary", color=coral, height="md"),
-                {
-                    "type": "button",
-                    "action": {
-                        "type": "uri",
-                        "label": "了解每日平安",
-                        "uri": help_uri,
-                    },
-                    "style": "secondary",
-                    "color": coral,
-                    "height": "md",
-                },
-            ],
         },
     }

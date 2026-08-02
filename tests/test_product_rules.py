@@ -600,37 +600,13 @@ class ProductRulesTests(unittest.TestCase):
         self.assertNotIn('"type": "message", "label": "SOS 求救"', rich_menu)
         self.assertNotIn('"label": "連按SOS"', rich_menu)
 
-    def test_welcome_help_button_opens_help_and_faq(self):
-        flex = (ROOT / "guardian_group_flex.py").read_text(encoding="utf-8")
+    def test_welcome_artwork_has_no_duplicate_footer_buttons(self):
+        import guardian_group_flex as welcome_flex_module
 
-        self.assertIn('"label": "開始 14 天安心體驗"', flex)
-        self.assertIn('"label": "了解每日平安"', flex)
-        self.assertIn("share_invite_liff_url()", flex)
-        self.assertIn("open_action=\"onboarding\"", flex)
-        self.assertIn("daily-peace-logo.png", flex)
-        self.assertIn("歡迎加入每日平安", flex)
-        self.assertIn("免費體驗，不會自動收費", flex)
-        self.assertNotIn("完成設定即可享 7 天免費安心體驗", flex)
-        self.assertNotIn("永久免費", flex)
-        self.assertIn("緊急情況請直接撥打 119 或 110", flex)
-        self.assertNotIn("welcome_version", flex)
-        self.assertNotIn("版本 W", flex)
-        self.assertNotIn("W250723", flex)
-        self.assertNotIn('"label": "立即升級守護"', flex)
-        self.assertNotIn('"label": "回到首頁"', flex)
-        welcome_fn = flex.split("def welcome_flex", 1)[1].split("\ndef ", 1)[0]
-        self.assertNotIn("立即升級守護", welcome_fn)
-        self.assertNotIn('"label": "常見問題"', welcome_fn)
-        self.assertNotIn('"label": "接受守護邀請"', welcome_fn)
-        self.assertNotIn('"label": "需要幫忙"', welcome_fn)
-        self.assertIn('"label": "開始 14 天安心體驗"', welcome_fn)
-        self.assertIn('"label": "了解每日平安"', welcome_fn)
-        self.assertIn("help_uri", welcome_fn)
-        self.assertIn("setup_uri", welcome_fn)
-        # Header: logo top-left + greeting text beside (horizontal row)
-        self.assertIn('"alignItems": "center"', welcome_fn)
-        self.assertIn('"size": "xxs"', welcome_fn)
-        self.assertNotIn('"justifyContent": "center"', welcome_fn)
+        bubble = welcome_flex_module.welcome_flex()
+        self.assertNotIn("footer", bubble)
+        self.assertIn("welcome-approved-full-20260802-help-large.png", bubble["hero"]["url"])
+        self.assertEqual(bubble["hero"]["action"]["label"], "開始 14 天安心體驗")
 
     def test_welcome_flex_is_left_aligned_large_and_vertical(self):
         import guardian_group_flex as welcome_flex_module
@@ -647,38 +623,9 @@ class ProductRulesTests(unittest.TestCase):
         bubble = welcome_flex_module.welcome_flex()
         nodes = list(walk(bubble))
         texts = [node for node in nodes if node.get("type") == "text"]
-        blob = " ".join(str(node.get("text") or "") for node in texts)
-        self.assertIn("每天只要 10 秒，讓關心你的人知道你平安", blob)
-        self.assertIn("平常不打擾，需要時及時守護", blob)
-        self.assertNotIn("你平安。", blob)
-        self.assertNotIn("及時守護。", blob)
-        self.assertIn("核心守護人", blob)
-        self.assertNotIn("新增 1 位守護人", blob)
-        for node in texts:
-            self.assertNotEqual(node.get("align"), "end")
-            self.assertNotEqual(node.get("align"), "center")
-            self.assertTrue(node.get("wrap", False))
-            self.assertNotIn("\n", str(node.get("text") or ""))
-
-        def direct_text(box):
-            return " ".join(
-                str(item.get("text") or "")
-                for item in box.get("contents") or []
-                if isinstance(item, dict)
-            )
-
-        step_boxes = [
-            node
-            for node in nodes
-            if node.get("type") == "box"
-            and (
-                "① 填寫基本資料" in direct_text(node)
-                or "② 設定每日提醒" in direct_text(node)
-                or "③ 邀請核心守護人" in direct_text(node)
-            )
-        ]
-        self.assertEqual(len(step_boxes), 3)
-        self.assertTrue(all(node.get("layout") == "vertical" for node in step_boxes))
+        self.assertEqual(texts, [])
+        self.assertEqual(bubble["hero"]["aspectRatio"], "865:1818")
+        self.assertEqual(bubble["hero"]["aspectMode"], "fit")
 
     def test_public_liff_actions_redirect_to_standalone_pages(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
