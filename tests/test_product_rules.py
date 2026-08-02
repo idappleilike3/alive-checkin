@@ -104,7 +104,7 @@ class ProductRulesTests(unittest.TestCase):
         # core_guardian_alert_limit, emergency_contact_limit
         expected = {
             "paid_199": (6, 1, 0, 0, 2, 4),
-            "paid_199_year": (13, 2, 0, 0, 3, 10),
+            "paid_199_year": (13, 1, 0, 0, 3, 10),
             "paid_399": (20, 2, 0, 0, 5, 15),
             "paid_399_year": (32, 2, 0, 0, 7, 25),
             "paid_799": (45, 3, 0, 1, 10, 35),
@@ -133,17 +133,17 @@ class ProductRulesTests(unittest.TestCase):
         pricing = (ROOT / "liff" / "pricing.html").read_text(encoding="utf-8")
         member = (ROOT / "liff" / "member.html").read_text(encoding="utf-8")
         help_page = (ROOT / "help.html").read_text(encoding="utf-8")
-        self.assertIn("399 月費／年費：每日可選 1～2 次", pricing)
-        self.assertIn("799 月費／年費：每日可選 1～3 次", pricing)
-        self.assertIn("預設 12:00、18:00", pricing)
+        self.assertIn("399 月費／年費：預設 1 次、可選 1～2 次", pricing)
+        self.assertIn("799 月費／年費：預設 2 次、可選 1～3 次", pricing)
+        self.assertIn("預設時段依序為 12:00、18:00、22:00", pricing)
         self.assertIn("完成今日簽到後，當天剩餘提醒自動停止", pricing)
         self.assertNotIn("邀請成功每位 +7 天", pricing)
         self.assertNotIn("方案到期後資料保留 30 天", pricing)
         self.assertIn('class="guardian-row contact-card', member)
         self.assertIn("data-contact-toggle", member)
         self.assertIn('aria-expanded="false"', member)
-        self.assertIn("399 月費／年費每日可選 1～2 次", help_page)
-        self.assertIn("799 月費／年費每日可選 1～3 次", help_page)
+        self.assertIn("399 月費／年費預設 1 次、可選 1～2 次", help_page)
+        self.assertIn("799 月費／年費預設 2 次、可選 1～3 次", help_page)
         self.assertIn("當天剩餘提醒就會自動停止", help_page)
 
     def test_removed_reminder_settings_do_not_hide_guardian_or_location_tools(self):

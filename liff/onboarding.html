@@ -60,7 +60,7 @@ forwardLegacyOnboardingEntry();
 <div class="step"><strong>② 約定每天的想念時刻</strong><small>選一個你方便的時間，讓平安問候準時抵達。這不是鬧鐘，是你和在乎的人之間無聲的約定。</small></div>
 <div class="step"><strong>③ 向在乎的人，發出第一道守護之光</strong><small>系統會先產生你的專屬連結，再讓你選擇 LINE 好友分享。</small><div class="step-note">按鈕文字：邀請他／她守護你 💌<br>不會自動互相綁定；這次邀請只代表「對方守護你」。</div></div>
 <div class="step completion-step"><strong>④ ✨ 連結完成，守護正式開始</strong><small>對方完成加入 LINE、填寫資料並接受邀請後，安心連結才會建立。從這一刻起，你的平安，成了他／她心上最踏實的牽掛。</small><div class="step-note">明天開始，你會在約定時間收到提醒，只需一鍵，就能讓愛流動。</div></div></section>
-<div id="loading" class="card loading"><div>載入中...</div></div>
+<div id="loading" class="card loading" role="status" aria-live="polite"><div class="icon-big">⏳</div><strong>系統正在建立會員資料</strong><div>正在確認 LINE 身分與方案，請稍候，不需要重複點擊。</div></div>
 <div id="content" style="display:none;"><p hidden>1 加入官方 LINE｜2 設定提醒｜3 分享邀請｜4 完成綁定｜等待對方登入並接受</p><div id="step-content"></div></div><nav class="trial-footer-actions" aria-label="頁面導覽">
 <a href="/">返回首頁</a>
 <a href="/pricing.html">查看體驗與方案</a>
@@ -88,6 +88,7 @@ let state = {
   reminderConfigured: false,
   reminderTimes: null,
   dailyReminders: 1,
+  defaultDailyReminders: 1,
   defaultReminderTimes: ["12:00"],
   graceHours: 48,
   userLocation: { city: "", district: "" },
@@ -143,7 +144,55 @@ function defaultTimesForCount(count) {
 }
 
 function onboardingDefaultReminderCount() {
-  return Math.min(Math.max(1, Number(state.dailyReminders) || 1), 2);
+  const maximum = Math.max(1, Math.min(3, Number(state.dailyReminders) || 1));
+  return Math.max(1, Math.min(maximum, Number(state.defaultDailyReminders) || 1));
+}
+
+function onboardingErrorMessage(data) {
+  const error = String((data && (data.message || data.error)) || "").trim();
+  const messages = {
+    "user not registered": "會員資料仍在建立中，系統會自動重試；若仍未完成，請重新開啟本頁。",
+    "missing line_user_id": "無法取得 LINE 身分，請關閉後從每日平安官方 LINE 重新開啟。",
+    "invalid id_token": "LINE 登入已過期，請關閉後從每日平安官方 LINE 重新開啟。",
+    "missing id_token": "LINE 登入已過期，請關閉後從每日平安官方 LINE 重新開啟。",
+  };
+  return messages[error] || (error && !/[A-Za-z_]/.test(error) ? error : "目前無法儲存，請稍後再試。");
+}
+
+async function registerCurrentMember() {
+  const response = await fetch(`${API_BASE}/api/line/register`, {
+    method: "POST",
+    headers: await authHeaders(),
+    body: JSON.stringify({
+      line_user_id: state.lineUserId,
+      display_name: state.displayName,
+      picture_url: state.pictureUrl,
+      beta_cohort: selectedBetaCohort(),
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(onboardingErrorMessage(data));
+  return data;
+}
+
+async function isMissingMemberResponse(response) {
+  if (!response || response.status !== 404) return false;
+  const data = await response.json().catch(() => ({}));
+  return String(data.error || "").toLowerCase() === "user not registered";
+}
+
+async function saveWithRegistrationRecovery(url, payload) {
+  const send = async () => fetch(`${API_BASE}${url}`, {
+    method: "POST",
+    headers: await authHeaders(),
+    body: JSON.stringify({...payload, line_user_id: state.lineUserId}),
+  });
+  let response = await send();
+  if (await isMissingMemberResponse(response)) {
+    await registerCurrentMember();
+    response = await send();
+  }
+  return response;
 }
 
 async function resolveLiffId() {
@@ -325,20 +374,7 @@ async function init() {
     }
 
     if (state.lineUserId) {
-      const registrationRes = await fetch(`${API_BASE}/api/line/register`, {
-        method: "POST",
-        headers: await authHeaders(),
-        body: JSON.stringify({
-          line_user_id: state.lineUserId,
-          display_name: state.displayName,
-          picture_url: state.pictureUrl,
-          beta_cohort: selectedBetaCohort()
-        })
-      });
-      const registration = await registrationRes.json().catch(() => ({}));
-      if (!registrationRes.ok) {
-        throw new Error(registration.message || "目前無法建立會員，請稍後再試");
-      }
+      const registration = await registerCurrentMember();
       if (registration.existing_user === true) {
         renderCompletedMemberEntry();
         const heading = document.querySelector("#loading h2");
@@ -359,6 +395,7 @@ async function init() {
         state.bindingStatus = data.binding_status || "waiting_for_invite";
         state.reminderConfigured = data.onboarding_reminder_configured === true;
         state.dailyReminders = Number(data.daily_reminders) || 1;
+        state.defaultDailyReminders = Number(data.default_daily_reminders) || 1;
         state.defaultReminderTimes = data.default_reminder_times || defaultTimesForCount(state.dailyReminders);
         state.graceHours = Number(data.grace_hours) || 48;
         state.userLocation = data.user_location || state.userLocation;
@@ -458,6 +495,7 @@ function renderStep() {
 
   if (state.currentStep === 2) {
     const count = onboardingDefaultReminderCount();
+    const maximumCount = Math.max(1, Math.min(3, Number(state.dailyReminders) || 1));
     const defaults = (state.defaultReminderTimes || defaultTimesForCount(count)).slice(0, count);
     const locationSelects = locationOptions(state.userLocation.city, state.userLocation.district);
     content.innerHTML = `
@@ -477,7 +515,7 @@ function renderStep() {
         <select id="onboardingCity" required>${locationSelects.cities}</select>
         <label for="onboardingDistrict">鄉鎮市區（必選）</label>
         <select id="onboardingDistrict" required>${locationSelects.districts}</select>
-        <p style="color:#666;margin:12px 0;line-height:1.7;"><strong>約定每天的想念時刻</strong><br>選一個你方便的時間，讓平安問候準時抵達。這不是鬧鐘，是你和在乎的人之間無聲的約定。依目前方案可設定 ${count} 次每日提醒。</p>
+        <p style="color:#666;margin:12px 0;line-height:1.7;"><strong>約定每天的想念時刻</strong><br>選一個你方便的時間，讓平安問候準時抵達。這不是鬧鐘，是你和在乎的人之間無聲的約定。目前預設 ${count} 次；之後可到「我的會員」修改次數與時間${maximumCount > count ? `，最多 ${maximumCount} 次` : ""}。</p>
         ${renderReminderSlots(defaults)}
         <label for="graceHours">忘記多久通知守護人</label>
         <select id="graceHours">
@@ -584,18 +622,13 @@ async function saveReminder() {
       btn.textContent = "儲存體驗設定，前往邀請守護人";
       return;
     }
-    const res = await fetch(`${API_BASE}/api/onboarding/reminder`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        line_user_id: state.lineUserId,
+    const res = await saveWithRegistrationRecovery("/api/onboarding/reminder", {
         reminder_times: times,
         reminder_time: times[0],
         grace_hours: Number(document.getElementById("graceHours")?.value || 48)
-      })
     });
+    const data = await res.json().catch(() => ({}));
     if (res.ok) {
-      const data = await res.json();
       state.reminderTimes = data.reminder_times || times;
       state.reminderConfigured = data.onboarding_reminder_configured === true;
       state.completedSteps.profile_and_reminder = state.reminderConfigured;
@@ -604,12 +637,12 @@ async function saveReminder() {
       renderStep();
       showStepReminderOnce(state.currentStep);
     } else {
-      alert("儲存失敗,請稍後再試");
+      alert(onboardingErrorMessage(data));
       btn.disabled = false;
       btn.textContent = "✓ 完成設定";
     }
   } catch (err) {
-    alert("網路錯誤:" + err.message);
+    alert(err.message || "網路連線暫時異常，請稍後再試。");
     btn.disabled = false;
     btn.textContent = "✓ 完成設定";
   }
@@ -622,13 +655,10 @@ async function saveOnboardingLocation() {
     alert("請先選擇縣市與鄉鎮市區");
     return false;
   }
-  const response = await fetch(`${API_BASE}/api/profile/location`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ line_user_id: state.lineUserId, city, district })
-  });
+  const response = await saveWithRegistrationRecovery("/api/profile/location", {city, district});
   if (!response.ok) {
-    alert("所在地區儲存失敗，請稍後再試");
+    const data = await response.json().catch(() => ({}));
+    alert(onboardingErrorMessage(data));
     return false;
   }
   state.userLocation = { city, district };

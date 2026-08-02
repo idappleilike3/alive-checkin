@@ -46,7 +46,7 @@ class ReminderTimesTests(unittest.TestCase):
     def test_plan_limits_drive_reminder_count(self):
         self.assertEqual(alive_app.plan_rules({"plan": "trial"})["daily_reminders"], 1)
         self.assertEqual(alive_app.plan_rules({"plan": "paid_199"})["daily_reminders"], 1)
-        self.assertEqual(alive_app.plan_rules({"plan": "paid_199_year"})["daily_reminders"], 2)
+        self.assertEqual(alive_app.plan_rules({"plan": "paid_199_year"})["daily_reminders"], 1)
         self.assertEqual(alive_app.plan_rules({"plan": "paid_399"})["daily_reminders"], 2)
         self.assertEqual(alive_app.plan_rules({"plan": "paid_399_year"})["daily_reminders"], 2)
         self.assertEqual(alive_app.plan_rules({"plan": "paid_799"})["daily_reminders"], 3)
@@ -54,11 +54,36 @@ class ReminderTimesTests(unittest.TestCase):
 
     def test_profile_falls_back_to_defaults(self):
         profile = {"plan": "paid_399"}
-        self.assertEqual(alive_app.reminder_times_for_profile(profile), ["12:00", "18:00"])
+        self.assertEqual(alive_app.reminder_times_for_profile(profile), ["12:00"])
         self.assertEqual(
             alive_app.reminder_times_for_profile({"plan": "paid_799"}),
             ["12:00", "18:00"],
         )
+
+    def test_plan_defaults_and_member_center_limits_are_distinct(self):
+        expected = {
+            "paid_199": (1, 1),
+            "paid_199_year": (1, 1),
+            "paid_399": (1, 2),
+            "paid_399_year": (1, 2),
+            "paid_799": (2, 3),
+            "paid_799_year": (2, 3),
+        }
+        for plan, (default_count, maximum_count) in expected.items():
+            with self.subTest(plan=plan):
+                profile = {"plan": plan}
+                self.assertEqual(
+                    alive_app.default_daily_reminder_count(profile),
+                    default_count,
+                )
+                self.assertEqual(
+                    alive_app.plan_rules(profile)["daily_reminders"],
+                    maximum_count,
+                )
+                self.assertEqual(
+                    len(alive_app.reminder_times_for_profile(profile)),
+                    default_count,
+                )
 
     def test_799_defaults_to_two_reminders_but_allows_three(self):
         for plan in ("paid_799", "paid_799_year"):
@@ -72,6 +97,17 @@ class ReminderTimesTests(unittest.TestCase):
     def test_799_keeps_three_saved_custom_times(self):
         profile = {"plan": "paid_799", "reminder_times": ["08:00", "13:00", "20:30"]}
         self.assertEqual(alive_app.reminder_times_for_profile(profile), ["08:00", "13:00", "20:30"])
+
+    def test_new_beta_members_receive_their_cohort_plan_defaults(self):
+        for cohort, expected in (("B399", ["12:00"]), ("B799", ["12:00", "18:00"])):
+            with self.subTest(cohort=cohort), tempfile.TemporaryDirectory() as tmp:
+                data_file = str(Path(tmp) / "state.json")
+                result, code = alive_app.register_line_user(
+                    data_file,
+                    {"line_user_id": f"U-{cohort}", "beta_cohort": cohort},
+                )
+                self.assertEqual(code, 200)
+                self.assertEqual(result["reminder_times"], expected)
 
     def test_profile_keeps_custom_times_within_limit(self):
         profile = {"plan": "paid_799", "reminder_times": ["10:30", "15:00", "21:15", "23:00"]}

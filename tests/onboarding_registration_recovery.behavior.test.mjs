@@ -1,0 +1,87 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import test from "node:test";
+import vm from "node:vm";
+
+const html = fs.readFileSync(new URL("../liff/onboarding.html", import.meta.url), "utf8");
+const mainHtml = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
+
+function functionSource(name) {
+  const pattern = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`);
+  const match = pattern.exec(html);
+  assert.ok(match, `missing function: ${name}`);
+  const start = match.index;
+  const brace = html.indexOf("{", start);
+  let depth = 0;
+  for (let index = brace; index < html.length; index += 1) {
+    if (html[index] === "{") depth += 1;
+    if (html[index] === "}") {
+      depth -= 1;
+      if (depth === 0) return html.slice(start, index + 1);
+    }
+  }
+  throw new Error(`unterminated function: ${name}`);
+}
+
+function expose(names, context = {}) {
+  const source = names.map(functionSource).join("\n");
+  const sandbox = vm.createContext({Promise, console, ...context});
+  new vm.Script(`${source}\n${names.map((name) => `this.${name} = ${name};`).join("\n")}`).runInContext(sandbox);
+  return sandbox;
+}
+
+test("399 and 799 onboarding use their configured default counts instead of the maximum", () => {
+  const sandbox = expose(["onboardingDefaultReminderCount"], {
+    state: {dailyReminders: 2, defaultDailyReminders: 1},
+  });
+  assert.equal(sandbox.onboardingDefaultReminderCount(), 1);
+
+  sandbox.state = {dailyReminders: 3, defaultDailyReminders: 2};
+  assert.equal(sandbox.onboardingDefaultReminderCount(), 2);
+});
+
+test("an authenticated onboarding save retries registration once after member-not-found", async () => {
+  const requests = [];
+  const responses = [
+    {ok: false, status: 404, json: async () => ({error: "user not registered"})},
+    {ok: true, status: 200, json: async () => ({ok: true})},
+  ];
+  const sandbox = expose(
+    ["isMissingMemberResponse", "saveWithRegistrationRecovery"],
+    {
+      fetch: async (url) => {
+        requests.push(url);
+        return responses.shift();
+      },
+      authHeaders: async () => ({"Content-Type": "application/json"}),
+      registerCurrentMember: async () => requests.push("register"),
+      API_BASE: "",
+      state: {lineUserId: "U-test"},
+    },
+  );
+
+  const response = await sandbox.saveWithRegistrationRecovery("/api/profile/location", {city: "台北市"});
+  assert.equal(response.ok, true);
+  assert.deepEqual(requests, ["/api/profile/location", "register", "/api/profile/location"]);
+});
+
+test("member-not-found is always presented in Chinese", () => {
+  const sandbox = expose(["onboardingErrorMessage"]);
+  assert.equal(
+    sandbox.onboardingErrorMessage({error: "user not registered"}),
+    "會員資料仍在建立中，系統會自動重試；若仍未完成，請重新開啟本頁。",
+  );
+});
+
+test("the canonical LIFF page shows member setup progress while registration is running", () => {
+  assert.match(mainHtml, /id="lineEntryLoadingStep"/);
+  assert.match(mainHtml, /系統正在建立會員資料/);
+  assert.match(mainHtml, /showLineEntryLoadingGate\(\)/);
+});
+
+test("canonical onboarding mutations share one registration recovery path", () => {
+  assert.match(mainHtml, /async function apiMemberMutationWithRegistrationRecovery/);
+  for (const endpoint of ["/api/profile/location", "/api/contacts/add", "/api/onboarding/complete"]) {
+    assert.match(mainHtml, new RegExp(`apiMemberMutationWithRegistrationRecovery\\(.[^\\n]*${endpoint.replaceAll("/", "\\/")}`));
+  }
+});

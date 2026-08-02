@@ -393,7 +393,7 @@ class Release20260729Tests(unittest.TestCase):
         self.assertIn("點擊展開", member)
         self.assertIn("點擊收合", member)
 
-    def test_399_and_799_onboarding_fall_back_to_two_default_times(self):
+    def test_onboarding_uses_each_plan_default_without_reducing_member_center_limit(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         onboarding = (ROOT / "liff" / "onboarding.html").read_text(encoding="utf-8")
         profile = {
@@ -417,7 +417,8 @@ class Release20260729Tests(unittest.TestCase):
         self.assertEqual(payload["daily_reminders"], 3)
         self.assertEqual(payload["default_reminder_times"], ["12:00", "18:00"])
         self.assertIn("onboardingDefaultReminderCount", page)
-        self.assertIn("399／799 預設每日 2 次", page)
+        self.assertIn("399 預設每日 1 次", page)
+        self.assertIn("799 預設每日 2 次", page)
         self.assertIn("之後可到「我的會員」修改次數與時間", onboarding)
 
     def test_beta_199_and_member_collapsible_history_support_and_calendar(self):

@@ -3995,6 +3995,11 @@
             <button id="lineEntryLoginBtn" type="button">使用 LINE 一鍵登入</button>
           </div>
         </div>
+        <div id="lineEntryLoadingStep" hidden role="status">
+          <div style="font-size:48px;margin-bottom:10px;" aria-hidden="true">⏳</div>
+          <h2>系統正在建立會員資料</h2>
+          <p>正在確認 LINE 身分與方案，完成後會自動顯示填寫資料。請稍候，不需要重複點擊。</p>
+        </div>
       </div>
     </section>
 
@@ -6903,9 +6908,9 @@
     function memberPlanBenefits(plan) {
       return {
         paid_199: { cycle: "199 平安版｜月費方案", contacts: 2, emergencies: 4, detail: "核心 2／緊急 4、LINE 預警 1 次／日、安全守護 15 分鐘（每日 2 次）、SOS、月曆。" },
-        paid_199_year: { cycle: "199 平安版｜年費方案", contacts: 3, emergencies: 10, detail: "核心 3／緊急 10、LINE 預警 2 次／日、安全守護 15 分鐘（每日 2 次）、SOS、月曆。" },
-        paid_399: { cycle: "399 安心版｜月費方案", contacts: 5, emergencies: 15, detail: "核心 5／緊急 15、LINE 預警 2 次／日、安全守護 1／3 小時（每日 3 次）、SOS、月曆。" },
-        paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 7, emergencies: 25, detail: "核心 7／緊急 25、LINE 預警 2 次／日、安全守護 1／3 小時（每日 3 次）、SOS、月曆。" },
+        paid_199_year: { cycle: "199 平安版｜年費方案", contacts: 3, emergencies: 10, detail: "核心 3／緊急 10、LINE 提醒 1 次／日、安全守護 15 分鐘（每日 2 次）、SOS、月曆。" },
+        paid_399: { cycle: "399 安心版｜月費方案", contacts: 5, emergencies: 15, detail: "核心 5／緊急 15、LINE 提醒預設 1 次（最多 2 次）／日、安全守護 1／3 小時（每日 3 次）、SOS、月曆。" },
+        paid_399_year: { cycle: "399 安心版｜年費方案", contacts: 7, emergencies: 25, detail: "核心 7／緊急 25、LINE 提醒預設 1 次（最多 2 次）／日、安全守護 1／3 小時（每日 3 次）、SOS、月曆。" },
         paid_799: { cycle: "799 守護版｜月費進階", contacts: 10, emergencies: 35, detail: "核心 10／緊急 35、早中晚與多階段、安全守護 1／3／6／8（每日 5 次）、日期提醒、1 個守護群。" },
         paid_799_year: { cycle: "799 守護版｜年費進階", contacts: 15, emergencies: 50, detail: "核心 15／緊急 50、付 10 個月送 2 個月、安全守護每日 5 次、早中晚與多階段、3 個守護群、日期提醒。" },
         free: { cycle: "未訂閱", contacts: 1, emergencies: 2, detail: "一般提醒已暫停；仍可查看資料、求助電話與基礎 SOS。" },
@@ -9611,10 +9616,25 @@
       if (!gate) return;
       const friendStep = $("lineEntryFriendStep");
       const loginStep = $("lineEntryLoginStep");
+      const loadingStep = $("lineEntryLoadingStep");
       const isFriendStep = step === "friend";
       if (friendStep) friendStep.hidden = !isFriendStep;
       if (loginStep) loginStep.hidden = isFriendStep;
+      if (loadingStep) loadingStep.hidden = true;
       setLineSetupGuideState(step);
+      gate.hidden = false;
+      document.body.classList.add("line-entry-gated");
+    }
+
+    function showLineEntryLoadingGate() {
+      const gate = $("lineEntryGate");
+      if (!gate) return;
+      const friendStep = $("lineEntryFriendStep");
+      const loginStep = $("lineEntryLoginStep");
+      const loadingStep = $("lineEntryLoadingStep");
+      if (friendStep) friendStep.hidden = true;
+      if (loginStep) loginStep.hidden = true;
+      if (loadingStep) loadingStep.hidden = false;
       gate.hidden = false;
       document.body.classList.add("line-entry-gated");
     }
@@ -11179,34 +11199,55 @@
 
     let guardianList = []; // local cache for edit/delete
 
+    async function apiMemberMutationWithRegistrationRecovery(url, options) {
+      const send = async () => {
+        const response = await fetch(url, {
+          ...(options || {}),
+          headers: await authHeaders(),
+        });
+        const data = await response.json().catch(() => ({}));
+        return { status: response.status, data };
+      };
+      let result = await send();
+      if (
+        result.status === 404
+        && String((result.data && result.data.error) || "").toLowerCase() === "user not registered"
+      ) {
+        const betaCohort = String(getAppParam("beta_cohort") || "").trim().toUpperCase();
+        const registration = await fetch("/api/line/register", {
+          method: "POST",
+          headers: await authHeaders(),
+          body: JSON.stringify({
+            line_user_id: lineUserId,
+            display_name: lineDisplayName,
+            picture_url: linePictureUrl || "",
+            beta_cohort: betaCohort === "B399" || betaCohort === "B799" ? betaCohort : "",
+          }),
+        });
+        if (registration.ok) result = await send();
+      }
+      return result;
+    }
+
     async function apiAddGuardian(payload) {
-      const res = await fetch("/api/contacts/add", {
+      return apiMemberMutationWithRegistrationRecovery("/api/contacts/add", {
         method: "POST",
-        headers: await authHeaders(),
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
-      return { status: res.status, data };
     }
 
     async function apiSaveProfileLocation(city, district) {
-      const res = await fetch("/api/profile/location", {
+      return apiMemberMutationWithRegistrationRecovery("/api/profile/location", {
         method: "POST",
-        headers: await authHeaders(),
         body: JSON.stringify({ line_user_id: lineUserId, city, district })
       });
-      const data = await res.json();
-      return { status: res.status, data };
     }
 
     async function apiUpdateGuardian(contactId, payload) {
-      const res = await fetch(`/api/contacts/${encodeURIComponent(contactId)}`, {
+      return apiMemberMutationWithRegistrationRecovery(`/api/contacts/${encodeURIComponent(contactId)}`, {
         method: "PUT",
-        headers: await authHeaders(),
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
-      return { status: res.status, data };
     }
 
     async function apiDeleteGuardian(contactId, lineUserId) {
@@ -11243,13 +11284,10 @@
         payload.reminder_time = reminderTimes;
         payload.reminder_times = [reminderTimes];
       }
-      const res = await fetch(`/api/onboarding/complete`, {
+      return apiMemberMutationWithRegistrationRecovery("/api/onboarding/complete", {
         method: "POST",
-        headers: await authHeaders(),
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
-      return { status: res.status, data };
     }
 
     const DEFAULT_REMINDER_TIMES_BY_COUNT = {
@@ -11273,7 +11311,9 @@
     }
 
     function onboardingDefaultReminderCount(status) {
-      return Math.min(planDailyReminderCount(status), 2);
+      const maximum = planDailyReminderCount(status);
+      const configured = Number(status && status.default_daily_reminders) || 1;
+      return Math.max(1, Math.min(maximum, configured));
     }
 
     const WEB_ONBOARDING_DISTRICTS = {
@@ -11407,7 +11447,9 @@
       $("onboardingReminderHint").textContent =
         count === 1
           ? "預設中午 12:00。之後可到「我的會員」修改時間。"
-          : `399／799 預設每日 2 次：中午 12:00、晚上 18:00。之後可到「我的會員」修改次數與時間${maxCount > 2 ? "（799 最多可設 3 次）" : ""}。`;
+          : maxCount > 2
+            ? "799 預設每日 2 次：中午 12:00、晚上 18:00。之後可到「我的會員」設定最多 3 次。"
+            : "399 預設每日 1 次：中午 12:00。之後可到「我的會員」設定最多 2 次。";
       // Scroll overlay to top so step-2 reminder controls below the fold are reachable
       const modal = $("onboardingModal");
       if (modal) {
@@ -12941,6 +12983,9 @@
       memberBootstrapState.guardianRequired = false;
       memberBootstrapState.error = null;
       setMemberInteractionLocked(true);
+      if (requestedAppAction() === "onboarding" || getAppParam("beta_cohort")) {
+        showLineEntryLoadingGate();
+      }
       // 導覽與基本操作不依賴 LINE 身分；先綁定再套用 deep link，畫面不必等網路。
       bindTabEvents();
       bindSosFab();

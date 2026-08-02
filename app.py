@@ -217,7 +217,7 @@ DEFAULT_PROFILE = {
     "grace_hours": DEFAULT_GRACE_HOURS,
     "overdue_wait_minutes": DEFAULT_OVERDUE_WAIT_MINUTES,
     "reminder_time": "12:00",
-    "reminder_times": ["12:00", "18:00"],
+    "reminder_times": ["12:00"],
     "checkin_mode": "manual",
     "auto_checkin_on_open": False,
     "warning_cancel_minutes": DEFAULT_WARNING_CANCEL_MINUTES,
@@ -390,7 +390,8 @@ PLAN_LIMITS = {
         "contact_limit": 13,
         "emergency_contact_limit": 10,
         "friend_location_limit": 0,
-        "daily_reminders": 2,
+        "daily_reminders": 1,
+        "default_daily_reminders": 1,
         "channels": ["line"],
         "location_mode": "snapshot_24h",
         "core_guardian_alert_limit": 3,
@@ -407,6 +408,7 @@ PLAN_LIMITS = {
         "emergency_contact_limit": 15,
         "friend_location_limit": 0,
         "daily_reminders": 2,
+        "default_daily_reminders": 1,
         "channels": ["line"],
         "location_mode": "realtime",
         "core_guardian_alert_limit": 5,
@@ -423,6 +425,7 @@ PLAN_LIMITS = {
         "emergency_contact_limit": 25,
         "friend_location_limit": 0,
         "daily_reminders": 2,
+        "default_daily_reminders": 1,
         "channels": ["line"],
         "location_mode": "realtime",
         "core_guardian_alert_limit": 7,
@@ -2540,7 +2543,7 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
         "daily_checkin_reminder_enabled": bool(
             profile.get("daily_checkin_reminder_enabled", True)
         ),
-        # 首次綁定不強迫 799 填滿 3 次；399／799 未選時皆預設 12:00、18:00。
+        # 首次綁定依方案預設：199／399 一次；799 兩次。會員中心仍可調到方案上限。
         "default_reminder_times": default_reminder_times_for_count(default_daily_reminder_count(profile) if profile else 1),
         "grace_hours": normalize_grace_hours(profile.get("grace_hours")),
         "overdue_wait_minutes": normalize_overdue_wait_minutes(
@@ -4728,6 +4731,11 @@ def register_line_user(data_file, payload):
                 "error": reason,
                 "message": messages.get(reason, "無法加入封測"),
             }, 409
+        if not user.get("onboarding_reminder_configured"):
+            user["reminder_times"] = default_reminder_times_for_count(
+                default_daily_reminder_count(user)
+            )
+            user["reminder_time"] = user["reminder_times"][0]
         if beta_reset_pending:
             user["beta_reset_pending"] = False
             user["reminder_time"] = ""
