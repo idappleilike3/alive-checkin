@@ -96,6 +96,14 @@ class ReminderTimesTests(unittest.TestCase):
                         "reminder_time": "12:00",
                         "checkin_reminder_sent_dates": [],
                         "checkin_reminder_sent_slots": {},
+                        "contacts": [{
+                            "id": "guardian-1",
+                            "contact_role": "guardian",
+                            "line_user_id": "U-guardian",
+                            "binding_status": "accepted",
+                            "consent_status": "accepted",
+                            "notify_methods": ["line"],
+                        }],
                     }
                 }
             }

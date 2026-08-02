@@ -40,6 +40,7 @@ class MissingGuardianFlexTests(unittest.TestCase):
                 "plan": "paid_399_year",
                 "payment_status": "active",
                 "paid_until": (now + timedelta(days=365)).isoformat(),
+                "membership_started_at": (now - timedelta(days=2)).isoformat(),
                 "contacts": [],
             }
             app.save_state(data_file, {"users": {"U-jennie": profile}})
