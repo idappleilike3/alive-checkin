@@ -25,18 +25,28 @@ class DailyCareContextTests(unittest.TestCase):
         self.assertTrue(30 <= len(context["care_summary"]) <= 50)
 
     def test_time_period_selects_matching_ui_ux_hero(self):
-        cases = ((8, "morning"), (13, "afternoon"), (20, "evening"))
-        for hour, period in cases:
+        cases = ((8, "morning", "morning-warm"), (13, "afternoon", "afternoon"), (20, "evening", "evening"))
+        for hour, period, asset_name in cases:
             with self.subTest(period=period):
                 context = build_daily_care_context({}, datetime(2026, 8, 2, hour))
                 self.assertEqual(context["hero_period"], period)
-                self.assertTrue(context["hero_url"].endswith(f"/{period}.webp"))
-                self.assertTrue(Path(f"assets/daily-care/{period}.webp").is_file())
+                self.assertTrue(context["hero_url"].endswith(f"/{asset_name}.webp"))
+                self.assertTrue(Path(f"assets/daily-care/{asset_name}.webp").is_file())
+
+    def test_morning_uses_approved_warm_hand_drawn_card_art(self):
+        context = build_daily_care_context({}, datetime(2026, 8, 2, 8))
+        self.assertTrue(context["hero_url"].endswith("/morning-warm.webp"))
+        self.assertTrue(Path("assets/daily-care/morning-warm.webp").is_file())
 
     def test_day_100_replaces_daily_information(self):
         context = build_daily_care_context({"streak_days": 100}, datetime(2026, 8, 2, 13))
         self.assertEqual(context["content_kind"], "milestone")
         self.assertIn("100", context["care_title"])
+
+    def test_day_365_replaces_daily_information(self):
+        context = build_daily_care_context({"streak_days": 365}, datetime(2026, 8, 2, 13))
+        self.assertEqual(context["content_kind"], "milestone")
+        self.assertIn("365", context["care_title"])
 
     def test_flex_has_four_large_buttons_and_larger_checkin(self):
         profile = {"city": "臺中市", "district": "西屯區"}
@@ -48,8 +58,12 @@ class DailyCareContextTests(unittest.TestCase):
         self.assertEqual(footer[0]["contents"][0]["size"], "xl")
         self.assertEqual(footer[1]["height"], "md")
         self.assertIn("查看今日安心提醒", footer[3]["action"]["label"])
-        self.assertEqual(flex["contents"]["hero"]["url"], "https://alive-checkin.onrender.com/assets/daily-care/morning.webp")
-        self.assertEqual(flex["contents"]["hero"]["aspectRatio"], "16:9")
+        self.assertEqual(flex["contents"]["hero"]["url"], "https://alive-checkin.onrender.com/assets/daily-care/morning-warm.webp")
+        self.assertEqual(flex["contents"]["hero"]["aspectRatio"], "20:13")
+        self.assertEqual(
+            flex["contents"]["body"]["contents"][0]["text"],
+            "早安，今天一切都還好嗎？",
+        )
 
     def test_detail_page_uses_liff_identity_and_has_required_sections(self):
         html = Path("daily-care.html").read_text(encoding="utf-8")

@@ -16987,7 +16987,7 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
     body_contents = [
         {
             "type": "text",
-            "text": f"{care['greeting']}，今天一切都好嗎？",
+            "text": f"{care['greeting']}，今天一切都還好嗎？",
             "size": "xl",
             "weight": "bold",
             "color": "#1a1a1a",
@@ -17050,7 +17050,7 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
                 "type": "image",
                 "url": care["hero_url"],
                 "size": "full",
-                "aspectRatio": "16:9",
+                "aspectRatio": "20:13" if care["hero_period"] == "morning" else "16:9",
                 "aspectMode": "cover",
                 "animated": False,
             },
