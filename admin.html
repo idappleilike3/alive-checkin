@@ -112,6 +112,31 @@
     }
     .integration-card strong { display: block; margin-bottom: 6px; font-size: 17px; }
     .integration-card p { margin: 0; color: #52606d; line-height: 1.55; }
+    .card-editor-shell { margin: 16px 0 22px; border: 2px solid #b7e4d0; border-radius: 20px; overflow: hidden; background: #f6fffb; }
+    .card-editor-head { padding: 18px; background: linear-gradient(135deg,#0f766e,#168c65); color:#fff; }
+    .card-editor-head h3,.card-editor-head p { margin:0; color:#fff; }
+    .card-editor-head p { margin-top:6px; opacity:.92; }
+    .card-editor-tabs { display:flex; gap:8px; padding:12px 16px 0; }
+    .card-editor-tabs button { background:#dff7ec; color:#075f48; box-shadow:none; }
+    .card-editor-tabs button[aria-selected="true"] { background:#0f766e; color:#fff; }
+    .card-editor-panel { padding:18px; }
+    .card-editor-grid { display:grid; grid-template-columns:minmax(280px,1fr) minmax(280px,.9fr); gap:18px; align-items:start; }
+    .card-form { display:grid; gap:12px; }
+    .card-form label { display:grid; gap:6px; font-weight:850; color:#134e4a; }
+    .card-form input,.card-form select,.card-form textarea { width:100%; background:#fff; }
+    .step-box { padding:14px; border:1px solid #b7e4d0; border-radius:14px; background:#fff; }
+    .step-box h4 { margin:0 0 6px; color:#075f48; font-size:18px; }
+    .step-box p { margin:0 0 10px; color:#52606d; }
+    .line-card-preview { max-width:390px; margin:auto; border-radius:22px; overflow:hidden; background:#fff; box-shadow:0 18px 42px #0f3d2e24; border:1px solid #d6e9df; }
+    .line-card-preview .hero { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#e5f5ed; }
+    .line-card-brand { display:flex; align-items:center; gap:9px; padding:12px 15px; background:#00b900; color:#fff; font-size:20px; font-weight:900; }
+    .line-card-brand img { width:38px; height:38px; object-fit:contain; }
+    .line-card-body { padding:16px; line-height:1.6; }
+    .line-card-actions { display:grid; gap:8px; padding:0 14px 16px; }
+    .line-card-actions span { padding:11px; border-radius:10px; color:#fff; background:#168c65; text-align:center; font-weight:850; }
+    button:disabled { cursor:not-allowed; opacity:.48; box-shadow:none; }
+    .group-send-zone { margin-top:20px; padding:16px; border:2px dashed #f59e0b; border-radius:14px; background:#fffbeb; }
+    @media (max-width: 760px) { .card-editor-grid { grid-template-columns:1fr; } .card-editor-tabs { flex-direction:column; } }
     .login-panel { max-width: 440px; margin: 10vh auto 0; }
     .login-panel form { display: grid; gap: 12px; }
     .login-panel label { font-weight: 800; color: #14532d; }
@@ -620,17 +645,60 @@
       <h2 style="margin:0 0 6px;">推播管理中心</h2>
       <p class="note">儲存與修改都不會發送；完成排程後，系統才會在預定時間依會員當下方案判斷收件資格。</p>
       <p id="pushManagementAccessNote" class="note"></p>
-      <div class="integration-card" style="margin-bottom:16px;">
-        <strong>新版個人化每日平安圖片卡</strong>
-        <p>先預覽符合資格會員，再確認發送；不會推給已封鎖、失效或待重新註冊的帳號。</p>
-        <div class="toolbar" style="margin-top:12px;margin-bottom:8px;">
-          <button id="personalizedPreviewBtn" type="button" class="info">全部會員新版圖片卡測試</button>
-          <button id="personalizedSendAllBtn" type="button" hidden>確認發送給全部符合資格會員</button>
-          <select id="personalizedMemberSelect" aria-label="指定會員"><option value="">請先預覽會員</option></select>
-          <button id="personalizedSingleBtn" type="button" class="secondary">指定單一會員立即發</button>
+      <div class="card-editor-shell">
+        <div class="card-editor-head"><h3>圖文卡設定與預覽</h3><p>先設定、再看會員實際畫面；只有最後的確認發送會通知 LINE。</p></div>
+        <div class="card-editor-tabs" role="tablist">
+          <button id="cardSettingsTab" type="button" aria-selected="true">圖文卡設定</button>
+          <button id="memberSendTab" type="button" aria-selected="false">會員預覽與發送</button>
+          <button id="holidayGeneratorTab" type="button" aria-selected="false">節日背景生成器</button>
         </div>
-        <div id="personalizedPushPreview" class="log-list"><div class="log-item"><span>尚未預覽收件名單</span></div></div>
-        <p id="personalizedPushMessage" class="note" role="status"></p>
+        <div id="cardSettingsPanel" class="card-editor-panel card-editor-grid">
+          <div class="card-form">
+            <label>選擇範本<select id="cardTemplateSelect"><option value="daily-peace-default">每日平安預設卡</option></select></label>
+            <label>範本名稱<input id="cardTemplateName" value="每日平安預設卡" maxlength="60"></label>
+            <label>祝福文字<textarea id="cardBlessing" rows="3">每一天的平安，都是給家人最好的禮物。</textarea></label>
+            <label>主圖 HTTPS 網址<input id="cardHeroUrl" type="url" value="https://alive-checkin.onrender.com/assets/daily-care/morning-warm.webp"></label>
+            <label>按鈕 1 文字<input id="cardButton1Label" value="✅ 我平安" maxlength="20"></label>
+            <label>按鈕 2 文字<input id="cardButton2Label" value="🛡️ 安全守護" maxlength="20"></label>
+            <label>按鈕 2 HTTPS 連結<input id="cardButton2Uri" type="url" value="https://alive-checkin.onrender.com/liff/checkin.html?open=guard"></label>
+            <label>按鈕 3 文字<input id="cardButton3Label" value="需要幫忙" maxlength="20"></label>
+            <label>按鈕 3 HTTPS 連結<input id="cardButton3Uri" type="url" value="https://alive-checkin.onrender.com/liff/sos.html"></label>
+            <label>按鈕 4 文字<input id="cardButton4Label" value="🔔 今日安心提醒" maxlength="20"></label>
+            <label>按鈕 4 HTTPS 連結<input id="cardButton4Uri" type="url" value="https://alive-checkin.onrender.com/daily-care.html"></label>
+            <p class="note">Logo 固定使用每日平安原圖，不會被修改。</p>
+            <button id="saveCardTemplateBtn" type="button">另存新範本</button>
+            <p id="cardTemplateMessage" class="note" role="status"></p>
+          </div>
+          <div class="line-card-preview" aria-label="LINE 圖文卡預覽">
+            <img id="cardPreviewHero" class="hero" src="/assets/daily-care/morning-warm.webp" alt="圖文卡主視覺">
+            <div class="line-card-brand"><img src="/assets/daily-peace-logo.png" alt="每日平安 Logo"><span>每日平安</span></div>
+            <div class="line-card-body"><strong id="cardPreviewName">會員暱稱，今天一切都好嗎？</strong><p id="cardPreviewBlessing">每一天的平安，都是給家人最好的禮物。</p><small>等級、連續天數與進度會依會員自動帶入</small></div>
+            <div class="line-card-actions"><span>✅ 我平安</span><span>🛡️ 安全守護</span><span>需要幫忙</span><span>🔔 今日安心提醒</span></div>
+          </div>
+        </div>
+        <div id="memberSendPanel" class="card-editor-panel" hidden>
+          <div class="card-editor-grid"><div class="card-form">
+            <div class="step-box"><h4>步驟 1｜載入可推播會員</h4><p>只會載入有效會員，不會發送。</p><button id="personalizedPreviewBtn" type="button" class="info">載入可推播會員</button></div>
+            <div class="step-box"><h4>步驟 2｜選擇會員</h4><p>載入後再從下方選一位。</p><select id="personalizedMemberSelect" aria-label="選擇會員" disabled><option value="">請先按「載入可推播會員」</option></select></div>
+            <div class="step-box"><h4>步驟 3｜預覽這位會員的圖片卡</h4><p>預覽不會推播，確認畫面後才能發送。</p><button id="personalizedCardPreviewBtn" type="button" disabled>預覽這位會員的圖片卡</button><button id="personalizedSingleBtn" type="button" class="secondary" disabled>指定單一會員立即發（確認後）</button></div>
+          </div><div id="personalizedCardPreview" class="line-card-preview"><div class="line-card-body">尚未選擇會員</div></div></div>
+          <div id="personalizedPushPreview" class="log-list"><div class="log-item"><span>尚未載入會員名單</span></div></div>
+          <p id="personalizedPushMessage" class="note" role="status"></p>
+          <div class="group-send-zone"><h4>全部會員新版圖片卡測試（較少使用）</h4><p>先完成上方「載入可推播會員」，確認名單與人數後才會出現群發按鈕。</p><button id="personalizedSendAllBtn" type="button" hidden>確認發送給全部符合資格會員</button></div>
+        </div>
+        <div id="holidayGeneratorPanel" class="card-editor-panel card-editor-grid" hidden>
+          <div class="card-form">
+            <label>使用節日範本<select id="holidaySelect"><option value="">正在載入節日…</option></select></label>
+            <label>氣氛<input id="holidayMood" placeholder="例如：溫暖、有儀式感"></label>
+            <label>畫面元素<textarea id="holidayElements" rows="3" placeholder="例如：爸爸、家人、祝福蛋糕"></textarea></label>
+            <label>想再修改的地方<textarea id="holidayNotes" rows="3" placeholder="例如：人物縮小、顏色再溫暖"></textarea></label>
+            <button id="holidayPromptBtn" type="button" class="info">幫我自動生成腳本</button>
+            <textarea id="holidayPromptPreview" rows="6" readonly aria-label="圖片生成腳本"></textarea>
+            <button id="holidayGenerateBtn" type="button">生成背景預覽</button>
+            <p id="holidayMessage" class="note" role="status">生成後只會預覽，不會儲存、排程或推播。</p>
+          </div>
+          <div class="line-card-preview"><img id="holidayPreviewImage" class="hero" src="/assets/daily-care/morning-warm.webp" alt="節日背景預覽"><div class="line-card-brand"><img src="/assets/daily-peace-logo.png" alt="每日平安 Logo"><span>每日平安</span></div><div class="line-card-body"><strong>完整卡片會由系統加入會員資料與祝福文字</strong></div></div>
+        </div>
       </div>
       <div class="stats" id="pushStatusSummary">
         <div class="stat"><strong data-push-status-count="draft">0</strong><span>草稿</span></div>
@@ -2981,6 +3049,36 @@
     });
 
     let personalizedPushMembers = [];
+    let personalizedCardWasPreviewed = false;
+    const cardPanels = {cardSettingsTab: "cardSettingsPanel", memberSendTab: "memberSendPanel", holidayGeneratorTab: "holidayGeneratorPanel"};
+    Object.entries(cardPanels).forEach(([tabId, panelId]) => $(tabId).addEventListener("click", () => {
+      Object.entries(cardPanels).forEach(([otherTab, otherPanel]) => {
+        $(otherTab).setAttribute("aria-selected", String(otherTab === tabId));
+        $(otherPanel).hidden = otherPanel !== panelId;
+      });
+    }));
+    function updateLocalCardPreview() {
+      $("cardPreviewHero").src = $("cardHeroUrl").value.trim() || "/assets/daily-care/morning-warm.webp";
+      $("cardPreviewBlessing").textContent = $("cardBlessing").value.trim() || "請輸入祝福文字";
+    }
+    $("cardHeroUrl").addEventListener("input", updateLocalCardPreview);
+    $("cardBlessing").addEventListener("input", updateLocalCardPreview);
+    async function loadCardTemplates() {
+      const response = await adminFetch("/api/admin/card-templates");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(authErrorText(data, response.status));
+      $("cardTemplateSelect").innerHTML = (data.templates || []).map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}</option>`).join("");
+    }
+    $("saveCardTemplateBtn").addEventListener("click", async () => {
+      const payload = {name: $("cardTemplateName").value, blessing: $("cardBlessing").value, hero_url: $("cardHeroUrl").value, buttons: [
+        {label:$("cardButton1Label").value, action:"checkin"}, {label:$("cardButton2Label").value, uri:$("cardButton2Uri").value},
+        {label:$("cardButton3Label").value, uri:$("cardButton3Uri").value}, {label:$("cardButton4Label").value, uri:$("cardButton4Uri").value}
+      ]};
+      const response = await adminFetch("/api/admin/card-templates", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+      const data = await response.json().catch(() => ({}));
+      $("cardTemplateMessage").textContent = response.ok ? "範本已儲存，尚未推播。" : (data.message || authErrorText(data, response.status));
+      if (response.ok) await loadCardTemplates();
+    });
     async function previewPersonalizedPush() {
       const response = await adminFetch("/api/admin/personalized-checkin-push/preview");
       const data = await response.json().catch(() => ({}));
@@ -2993,12 +3091,15 @@
         ? personalizedPushMembers.map((member) => `<div class="log-item"><span>${escapeHtml(member.display_name)}</span><span>${escapeHtml(member.masked_line_user_id)}</span><span>${escapeHtml(member.plan)}</span></div>`).join("")
         : '<div class="log-item"><span>目前沒有符合資格的會員</span></div>';
       $("personalizedPushMessage").textContent = `符合資格共 ${data.eligible_count || 0} 人，尚未發送`;
+      $("personalizedMemberSelect").disabled = !personalizedPushMembers.length;
+      $("personalizedCardPreviewBtn").disabled = true;
+      $("personalizedSingleBtn").disabled = true;
+      personalizedCardWasPreviewed = false;
       $("personalizedSendAllBtn").hidden = !personalizedPushMembers.length;
       return data;
     }
     async function sendPersonalizedPush(mode, lineUserId = "") {
-      const preview = await previewPersonalizedPush();
-      const target = mode === "all" ? `全部 ${preview.eligible_count || 0} 人` : $("personalizedMemberSelect").selectedOptions[0]?.textContent;
+      const target = mode === "all" ? `全部 ${personalizedPushMembers.length} 人` : $("personalizedMemberSelect").selectedOptions[0]?.textContent;
       if (!target || (mode === "single" && !lineUserId)) {
         $("personalizedPushMessage").textContent = "請先選擇要發送的會員";
         return;
@@ -3006,7 +3107,7 @@
       if (!window.confirm(`確認將新版個人化每日平安圖片卡發送給${target}？`)) return;
       const response = await adminFetch("/api/admin/personalized-checkin-push/send", {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({mode, line_user_id: lineUserId, confirmed: true})
+        body: JSON.stringify({mode, line_user_id: lineUserId, template_id: $("cardTemplateSelect").value, confirmed: true})
       });
       const data = await response.json().catch(() => ({}));
       $("personalizedPushMessage").textContent = response.ok
@@ -3016,8 +3117,26 @@
     $("personalizedPreviewBtn").addEventListener("click", () => previewPersonalizedPush().catch((error) => {
       $("personalizedPushMessage").textContent = `預覽失敗：${error.message}`;
     }));
+    $("personalizedMemberSelect").addEventListener("change", () => {
+      const selected = Boolean($("personalizedMemberSelect").value);
+      $("personalizedCardPreviewBtn").disabled = !selected;
+      $("personalizedSingleBtn").disabled = true;
+      personalizedCardWasPreviewed = false;
+    });
+    $("personalizedCardPreviewBtn").addEventListener("click", async () => {
+      const response = await adminFetch("/api/admin/personalized-checkin-push/card-preview", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({line_user_id:$("personalizedMemberSelect").value, template_id:$("cardTemplateSelect").value})});
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { $("personalizedPushMessage").textContent = data.message || authErrorText(data, response.status); return; }
+      const hero = data.message?.contents?.hero?.url || "/assets/daily-care/morning-warm.webp";
+      const blessing = data.template?.blessing || "";
+      $("personalizedCardPreview").innerHTML = `<img class="hero" src="${escapeHtml(hero)}" alt="會員圖文卡主圖"><div class="line-card-brand"><img src="/assets/daily-peace-logo.png" alt="每日平安 Logo"><span>每日平安</span></div><div class="line-card-body"><strong>${escapeHtml(data.member.display_name)}，今天一切都好嗎？</strong><p>${escapeHtml(blessing)}</p><small>${escapeHtml(data.member.masked_line_user_id)}</small></div>`;
+      personalizedCardWasPreviewed = true;
+      $("personalizedSingleBtn").disabled = false;
+      $("personalizedPushMessage").textContent = "預覽完成，尚未發送。確認內容正確後再按發送。";
+    });
     $("personalizedSingleBtn").addEventListener("click", () => {
       const uid = $("personalizedMemberSelect").value;
+      if (!personalizedCardWasPreviewed) return;
       sendPersonalizedPush("single", uid).catch((error) => {
         $("personalizedPushMessage").textContent = `發送失敗：${error.message}`;
       });
@@ -3025,6 +3144,38 @@
     $("personalizedSendAllBtn").addEventListener("click", () => sendPersonalizedPush("all").catch((error) => {
       $("personalizedPushMessage").textContent = `發送失敗：${error.message}`;
     }));
+    async function loadHolidayCatalog() {
+      const response = await adminFetch("/api/admin/holiday-card/catalog");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(authErrorText(data, response.status));
+      $("holidaySelect").innerHTML = '<option value="">自訂節日</option>' + (data.holidays || []).map((row) => `<option value="${escapeHtml(row.name)}" data-mood="${escapeHtml(row.mood)}" data-elements="${escapeHtml(row.elements)}">${escapeHtml(row.name)}｜${escapeHtml(row.date_label)}</option>`).join("");
+    }
+    $("holidaySelect").addEventListener("change", () => {
+      const option = $("holidaySelect").selectedOptions[0];
+      if (!option?.value) return;
+      $("holidayMood").value = option.dataset.mood || "";
+      $("holidayElements").value = option.dataset.elements || "";
+    });
+    async function holidayPayloadRequest(path) {
+      const payload = {holiday:$("holidaySelect").value || "自訂節日", mood:$("holidayMood").value, elements:$("holidayElements").value, notes:$("holidayNotes").value};
+      const response = await adminFetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+      const data = await response.json().catch(() => ({}));
+      return {response, data};
+    }
+    $("holidayPromptBtn").addEventListener("click", async () => {
+      const {response,data} = await holidayPayloadRequest("/api/admin/holiday-card/prompt");
+      $("holidayPromptPreview").value = data.prompt || "";
+      $("holidayMessage").textContent = response.ok ? "腳本已整理完成，可以修改需求或生成背景。" : authErrorText(data,response.status);
+    });
+    $("holidayGenerateBtn").addEventListener("click", async () => {
+      $("holidayMessage").textContent = "圖片生成中，通常需要 30～90 秒…";
+      const {response,data} = await holidayPayloadRequest("/api/admin/holiday-card/generate");
+      $("holidayPromptPreview").value = data.prompt || $("holidayPromptPreview").value;
+      if (response.ok) $("holidayPreviewImage").src = data.image_url;
+      $("holidayMessage").textContent = data.message || authErrorText(data,response.status);
+    });
+    loadCardTemplates().catch((error) => { $("cardTemplateMessage").textContent = `範本載入失敗：${error.message}`; });
+    loadHolidayCatalog().catch((error) => { $("holidayMessage").textContent = `節日載入失敗：${error.message}`; });
 
     const lineAcceptanceForm = $("lineAcceptanceForm");
     if (lineAcceptanceForm) {
