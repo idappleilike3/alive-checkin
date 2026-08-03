@@ -2699,6 +2699,25 @@
       background: var(--panel);
       color: var(--text);
     }
+    .invite-profile-fields select {
+      width: 100%;
+      min-height: 50px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      color: var(--text);
+      font-size: 16px;
+    }
+    .invite-profile-fields .locked-inviter {
+      min-height: 46px;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--soft);
+      color: var(--text);
+      font-weight: 900;
+    }
     .warning-modal {
       border: 0;
       background: linear-gradient(145deg, #991b1b, #ef4444);
@@ -4996,10 +5015,13 @@
       <p id="inviteAcceptBody">成為核心守護人免費。你將收到對方的報平安、逾時未報平安、SOS 與安全守護通知；定位只在對方主動求助或啟用安全守護時通知，也可隨時解除綁定。</p>
       <p><strong>這次只會由您守護邀請人，不會自動互相綁定。</strong></p>
       <div class="invite-profile-fields">
+        <label>邀請你的人（系統帶入）
+          <output id="inviteGuardianInviterName" class="locked-inviter">邀請人</output>
+        </label>
         <label>你的姓名（本人） <span class="onboarding-required">必填</span>
           <input id="inviteGuardianName" type="text" maxlength="40" autocomplete="name" required>
         </label>
-        <label>你是邀請人的誰？ <span class="onboarding-required">必選</span>
+        <label class="invite-relationship-field">你是邀請人的誰？ <span class="onboarding-required">必選</span>
           <select id="inviteGuardianRelationship" required>
             <option value="">請選擇關係</option>
             <option value="爸爸">爸爸</option>
@@ -5016,8 +5038,8 @@
           </select>
           <input id="inviteGuardianRelationshipOther" class="relationship-other" type="text" maxlength="20" placeholder="選擇「其他」後請自行填寫" hidden>
         </label>
-        <label>你的聯絡電話（選填）
-          <input id="inviteGuardianPhone" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" placeholder="可不填，或填 0912345678">
+        <label>你的聯絡電話 <span class="onboarding-required">必填</span>
+          <input id="inviteGuardianPhone" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" placeholder="例如：0912345678" required>
         </label>
         <p class="onboarding-note">請填你本人的資料，不是邀請人的資料。緊急狀況或聯絡不上本人時可使用；填寫後邀請人可以看到。</p>
       </div>
@@ -5281,7 +5303,9 @@
       const source = params || readAppParams();
       const invite = {
         invite_from: String(source.get ? source.get("invite_from") : source.invite_from || "").trim(),
-        invite_token: String(source.get ? source.get("invite_token") : source.invite_token || "").trim()
+        invite_token: String(source.get ? source.get("invite_token") : source.invite_token || "").trim(),
+        inviter_name: String(source.get ? source.get("inviter_name") : source.inviter_name || "").trim(),
+        inviter_relationship: String(source.get ? source.get("inviter_relationship") : source.inviter_relationship || "").trim()
       };
       if (!invite.invite_from) return invite;
       try { sessionStorage.setItem(PENDING_GUARDIAN_INVITE_KEY, JSON.stringify(invite)); } catch (_) {}
@@ -8705,6 +8729,9 @@
       const titleEl = $("inviteAcceptTitle");
       const bodyEl = $("inviteAcceptBody");
       const btn = $("acceptGuardianInviteBtn");
+      const inviterName = String(getAppParam("inviter_name") || "邀請人").trim() || "邀請人";
+      const inviteGuardianInviterName = $("inviteGuardianInviterName");
+      if (inviteGuardianInviterName) inviteGuardianInviterName.textContent = inviterName;
       if (titleEl) titleEl.textContent = "您收到一位親友的守護邀請";
       if (bodyEl) {
         bodyEl.textContent = "請填寫您的資料，確認後才會完成核心守護綁定。成為核心守護人免費；你將收到邀請人的報平安、逾時、SOS 與安全守護通知。這次只會由您守護邀請人，不會自動互相綁定。";
@@ -8733,6 +8760,11 @@
       try {
         if (lineUserId) {
           const preview = await apiInviteBindPreview(inviteFrom);
+          const verifiedInviterName = String(preview?.inviter_display_name || "").trim();
+          const inviteGuardianInviterName = $("inviteGuardianInviterName");
+          if (verifiedInviterName && inviteGuardianInviterName) {
+            inviteGuardianInviterName.textContent = verifiedInviterName;
+          }
           if (preview && preview.is_reverse_invite) {
             const name = String(preview.inviter_display_name || "親友").trim() || "親友";
             const titleEl = $("inviteAcceptTitle");
@@ -8794,8 +8826,8 @@
       const guardianName = String($("inviteGuardianName")?.value || lineDisplayName || "").trim();
       const guardianRelationship = readRelationship("inviteGuardianRelationship", "inviteGuardianRelationshipOther");
       const guardianPhone = String($("inviteGuardianPhone")?.value || "").trim();
-      if (!guardianName || !guardianRelationship) {
-        alert("請先填寫你的姓名，並選擇你是邀請人的誰。聯絡電話可以不填。");
+      if (!guardianName || !guardianRelationship || !guardianPhone) {
+        alert("請填寫你的姓名、關係與聯絡電話，完成後才能接受守護邀請。");
         if (btn) {
           btn.disabled = false;
           btn.textContent = "同意成為守護人";

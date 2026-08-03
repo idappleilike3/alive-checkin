@@ -28,17 +28,16 @@ class InviteEmotionalGuardianV2Tests(unittest.TestCase):
     def test_invite_has_the_four_step安心_journey_and_primary_consent(self):
         html = page()
         for text in (
-            "開啟安心頻道",
-            "確認你的身分",
-            "讓他知道是你",
-            "完成守護約定",
-            "點我，開啟守護連線 💚",
-            "我願意守護 ❤️",
+            "先加入每日平安官方 LINE",
+            "返回原本的守護邀請",
+            "填寫你的守護資料",
+            "親自同意成為守護人",
+            "加入每日平安官方 LINE",
+            "我已加入，返回這份邀請繼續",
         ):
             self.assertIn(text, html)
-        self.assertIn("請填寫你希望被稱呼的名字", html)
-        self.assertIn("邀請人是你的...？", html)
-        self.assertIn("留下聯絡電話（以備萬一，讓我們能緊急找到你）", html)
+        self.assertIn("姓名、與邀請人的關係及必填聯絡電話", html)
+        self.assertIn("系統會保留這筆邀請", html)
 
     def test_invite_keeps_own_trial_secondary_and_removes_distracting_demo(self):
         html = page()
@@ -57,6 +56,8 @@ class InviteEmotionalGuardianV2Tests(unittest.TestCase):
         self.assertIn('q.set("return_to", "guardian_binding")', html)
         self.assertIn("複製 LINE 連結", html)
         self.assertIn("查看完整守護說明", html)
+        self.assertIn('href="https://lin.ee/nRc3yxi"', html)
+        self.assertIn('id="continueGuardianCta"', html)
 
     def test_logged_in_invite_relationship_is_a_ranked_select_with_other_input(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")

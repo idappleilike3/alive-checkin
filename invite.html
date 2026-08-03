@@ -41,6 +41,7 @@
     .actions{display:grid;gap:11px;margin-top:20px}
     .btn{display:grid;place-items:center;width:100%;min-height:62px;padding:15px 16px;border:0;border-radius:15px;background:var(--line);color:#fff;font-size:clamp(1.08rem,4.5vw,1.28rem);font-weight:900;line-height:1.4;text-align:center;text-decoration:none;box-shadow:0 10px 24px rgba(6,199,85,.25)}
     .btn:active{transform:scale(.99);background:var(--line-dark)}
+    .btn.secondary{border:2px solid var(--line);background:#fff;color:var(--forest);box-shadow:none}
     .helper{margin:0;color:var(--muted);font-size:.82rem;line-height:1.55;text-align:center}
     .fallback{margin-top:14px;padding-top:14px;border-top:1px solid var(--border);text-align:center}
     .fallback a,.fallback button,.guide{color:var(--forest);font:inherit;font-weight:750;text-underline-offset:3px}
@@ -99,31 +100,32 @@
 
         <section class="guide-card" aria-labelledby="bindingGuideTitle">
           <h2 id="bindingGuideTitle">照著 4 步驟完成守護綁定</h2>
-          <p class="guide-intro">不用先離開頁面找官方帳號。點一次邀請按鈕後，系統會在同一個 LINE 流程帶你完成。</p>
+          <p class="guide-intro">系統會保留這筆邀請與邀請人資料；加入官方 LINE 後，請返回這一頁繼續，不會回到首頁或要求重填。</p>
           <div class="steps" aria-label="守護綁定四步驟">
             <article class="step">
               <span class="step-number">1</span>
-              <div><strong>點擊接受守護邀請</strong><p>從這個專屬邀請頁開啟每日平安 LINE 內網。</p></div>
+              <div><strong>先加入每日平安官方 LINE</strong><p>加入後才能收到報平安、逾時與 SOS 等守護通知。</p></div>
             </article>
             <article class="step">
               <span class="step-number">2</span>
-              <div><strong>確認加入每日平安官方 LINE</strong><p>尚未加入者會在 LIFF 內看到官方加好友視窗；已加入者會自動略過。</p></div>
+              <div><strong>返回原本的守護邀請</strong><p>加入完成後回到這一頁，按「我已加入，返回這份邀請繼續」。</p></div>
             </article>
             <article class="step">
               <span class="step-number">3</span>
-              <div><strong>LINE 一鍵登入並填寫本人資料</strong><p>填寫你的姓名，以及你是邀請人的誰。聯絡電話可不填；若填寫，邀請人可看到，僅供緊急聯絡使用。</p></div>
+              <div><strong>填寫你的守護資料</strong><p>填寫姓名、與邀請人的關係及必填聯絡電話；邀請人姓名由系統帶入，不能修改。</p></div>
             </article>
             <article class="step">
               <span class="step-number">4</span>
-              <div><strong>親自同意，完成守護綁定</strong><p>對方完成加入、登入、填寫資料並確認接受後，才算正式綁定成功。</p></div>
+              <div><strong>親自同意成為守護人</strong><p>確認接受後才正式成為對方的守護人，之後再由你選擇是否啟用 14 天安心體驗並邀請對方反向守護。</p></div>
             </article>
           </div>
-          <p class="relationship-note"><strong>守護關係是單向的：</strong>接受後是「你守護邀請人」，不會自動變成雙向綁定。聯絡電話可不填；若要互相守護，雙方都必須各自發出並親自接受一次邀請。</p>
+          <p class="relationship-note"><strong>守護關係是單向的：</strong>接受後是「你守護邀請人」，不會自動變成雙向綁定。聯絡電話為必填，僅供緊急狀況或聯絡不上本人時使用；若要互相守護，雙方都必須各自發出並親自接受一次邀請。</p>
         </section>
 
         <div class="actions">
-          <a class="btn" id="acceptGuardianCta" href="#" aria-describedby="lineOpenHelp">我願意守護邀請人 ❤️</a>
-          <p class="helper" id="lineOpenHelp">點擊後將引導你完成 LINE 官方確認，接著在同一流程填寫資料。</p>
+          <a class="btn" id="joinOfficialLineCta" href="https://lin.ee/nRc3yxi" target="_blank" rel="noopener">加入每日平安官方 LINE</a>
+          <a class="btn secondary" id="continueGuardianCta" href="#" aria-describedby="lineOpenHelp">我已加入，返回這份邀請繼續</a>
+          <p class="helper" id="lineOpenHelp">加入官方 LINE 後請回到這一頁，再按上方第二顆按鈕；系統會自動帶回原邀請與邀請人資料。</p>
         </div>
 
         <div class="fallback">
@@ -151,7 +153,7 @@
       var inviterCardTitleEl = document.getElementById("inviterCardTitle");
       var inviterCardRoleEl = document.getElementById("inviterCardRole");
       var statusEl = document.getElementById("status");
-      var openBtn = document.getElementById("acceptGuardianCta");
+      var openBtn = document.getElementById("continueGuardianCta");
       var altBtn = document.getElementById("openLiffAlt");
       var copyBtn = document.getElementById("copyLink");
       var entryLoading = document.getElementById("entryLoading");
@@ -166,7 +168,7 @@
       var displayRelationship = inviterRelationship || "重要的人";
       inviterCardTitleEl.textContent = "💌 來自 " + displayName + " 的守護邀請";
       inviterCardRoleEl.textContent = "你的身份：" + displayName + " 的" + displayRelationship;
-      openBtn.textContent = "我願意守護 " + displayName + " ❤️";
+      openBtn.textContent = "我已加入，返回守護 " + displayName + " 的邀請";
 
       function getLiffId() { return window.__INVITE_LIFF_ID__ || DEFAULT_LIFF_ID; }
       function buildQuery() {

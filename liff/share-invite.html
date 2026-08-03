@@ -515,9 +515,9 @@
       const safeId = sanitizeUserId(inviterId);
       if (!safeId) throw new Error("missing_inviter_id");
       const inviteToken = activeInviteToken || await createGuardianInvite();
-      // 分享卡直接進 LIFF，避免先經 Render /invite 與 /api/config 的額外跳轉。
-      // Render 冷啟動時，舊流程會讓受邀者長時間看到載入畫面甚至空白頁。
-      const inviteUrl = new URL(`https://liff.line.me/${LIFF_ID}`);
+      // 受邀者必須先看守護故事與加入官方 LINE 的說明，再由故事頁帶回
+      // 同一筆 LIFF 邀請；不可直接跳過說明進入接受表單。
+      const inviteUrl = new URL("/invite", appPublicOrigin());
       inviteUrl.searchParams.set("invite_from", safeId);
       inviteUrl.searchParams.set("invite_token", inviteToken);
       if (inviterName) inviteUrl.searchParams.set("inviter_name", inviterName);

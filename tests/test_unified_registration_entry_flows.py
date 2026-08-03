@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class UnifiedRegistrationEntryFlowTests(unittest.TestCase):
-    def test_guardian_can_accept_invitation_without_optional_phone(self):
+    def test_guardian_invitation_requires_phone(self):
         with tempfile.TemporaryDirectory() as tmp:
             data_file = str(Path(tmp) / "state.json")
             state = app.load_state(data_file)
@@ -44,11 +44,9 @@ class UnifiedRegistrationEntryFlowTests(unittest.TestCase):
                     },
                 )
 
-            self.assertEqual(status, 200)
-            self.assertTrue(result["bound"])
-            saved = app.load_state(data_file)["users"]["U-owner"]["contacts"]
-            guardian = next(row for row in saved if row.get("line_user_id") == "U-guardian")
-            self.assertEqual(guardian["phone"], "")
+            self.assertEqual(status, 400)
+            self.assertEqual(result["code"], "guardian_profile_required")
+            self.assertEqual(result["required_fields"], ["name", "relationship", "phone"])
 
     def test_all_entry_pages_keep_their_registration_context(self):
         onboarding = (ROOT / "liff" / "onboarding.html").read_text(encoding="utf-8")
@@ -67,10 +65,11 @@ class UnifiedRegistrationEntryFlowTests(unittest.TestCase):
 
         self.assertIn("你的姓名（本人）", member)
         self.assertIn("你是邀請人的誰？", member)
-        self.assertIn("你的聯絡電話（選填）", member)
+        self.assertIn("你的聯絡電話", member)
         self.assertIn("填寫後邀請人可以看到", member)
-        self.assertNotIn('id="inviteGuardianPhone" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" placeholder="例如：0912345678" required', member)
-        self.assertIn("聯絡電話可不填", invite)
+        self.assertIn('id="inviteGuardianPhone" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" placeholder="例如：0912345678" required', member)
+        self.assertNotIn("聯絡電話可不填", invite)
+        self.assertIn("聯絡電話為必填", invite)
 
     def test_onboarding_shows_the_entry_plan_without_changing_it(self):
         member = (ROOT / "index.html").read_text(encoding="utf-8")

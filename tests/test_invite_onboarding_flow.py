@@ -70,8 +70,29 @@ class InviteOnboardingFlowTests(unittest.TestCase):
         self.assertIn("rememberPendingGuardianInvite", html)
         self.assertIn("restorePendingGuardianInvite", html)
         self.assertIn("clearPendingGuardianInvite", html)
+        self.assertIn('inviter_name: String(source.get ? source.get("inviter_name")', html)
+        self.assertIn('inviter_relationship: String(source.get ? source.get("inviter_relationship")', html)
         self.assertIn("showInviteGuardianProfileForm", html)
         self.assertIn("請填寫您的資料，確認後才會完成核心守護綁定", html)
+
+    def test_invitation_profile_locks_inviter_and_requires_recipient_phone(self):
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        form = html.split('id="inviteAcceptPrompt"', 1)[1].split(
+            'id="guardianBindSuccessPrompt"', 1
+        )[0]
+        self.assertIn('id="inviteGuardianInviterName"', form)
+        self.assertIn("邀請你的人（系統帶入）", form)
+        self.assertIn('id="inviteGuardianPhone"', form)
+        self.assertIn('autocomplete="tel"', form)
+        self.assertIn("必填", form)
+        self.assertIn('class="invite-relationship-field"', form)
+        self.assertIn(
+            'inviteGuardianInviterName.textContent = inviterName', html
+        )
+        self.assertIn(
+            'inviteGuardianInviterName.textContent = verifiedInviterName', html
+        )
+        self.assertIn("請填寫你的姓名、關係與聯絡電話", html)
 
     def test_acceptance_recommends_trial_without_auto_activation_or_reverse_binding(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")

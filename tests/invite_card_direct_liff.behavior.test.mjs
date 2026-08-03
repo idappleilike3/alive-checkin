@@ -11,12 +11,8 @@ const homePage = fs.readFileSync(
   "utf8",
 );
 
-test("guardian invitation card opens LIFF directly without the extra Render landing hop", () => {
+test("guardian invitation card opens the story page before LIFF acceptance", () => {
   assert.match(
-    sharePage,
-    /new URL\(`https:\/\/liff\.line\.me\/\$\{LIFF_ID\}`\)/,
-  );
-  assert.doesNotMatch(
     sharePage,
     /const inviteUrl = new URL\("\/invite", appPublicOrigin\(\)\)/,
   );
