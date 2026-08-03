@@ -1,0 +1,42 @@
+name: Apply full card template 2026-08-03
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-full-card-template-20260803.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply approved full-card patch
+        run: python scripts/apply_full_card_template_20260803.py
+      - name: Verify syntax and focused behavior
+        run: |
+          python -m py_compile app.py
+          python -m unittest tests.test_admin_personalized_card_editor tests.test_admin_holiday_background_generator tests.test_admin_personalized_card_api tests.test_daily_care_card tests.test_daily_push_holiday_broadcast
+          node tests/admin_personalized_card_editor.behavior.test.mjs
+          git diff --check
+      - name: Commit and deploy main
+        run: |
+          if git diff --quiet; then
+            echo "Patch already present"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.py admin.html tests/test_admin_personalized_card_editor.py tests/test_admin_holiday_background_generator.py tests/test_daily_care_card.py tests/admin_personalized_card_editor.behavior.test.mjs
+          git commit -m "同步滿版圖文卡與祝福樣式設定"
+          git pull --rebase origin main
+          git push origin HEAD:main
