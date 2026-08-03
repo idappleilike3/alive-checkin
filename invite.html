@@ -37,6 +37,9 @@
     .step-number{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;background:var(--forest);color:#fff;font-size:1rem;font-weight:900}
     .step strong{display:block;margin:1px 0 3px;color:var(--ink);font-size:.98rem;line-height:1.45}
     .step p{margin:0;color:var(--muted);font-size:.86rem;line-height:1.55}
+    .step[data-state="done"]{border-color:#8dd7a5;background:#effbf3}
+    .step[data-state="done"] .step-number{background:var(--line);font-size:0}
+    .step[data-state="done"] .step-number::after{content:"✓";font-size:1.15rem}
     .relationship-note{margin:14px 0 0;padding:14px;border-left:4px solid var(--line);border-radius:11px;background:#eaf8ee;color:#31583e;font-size:.88rem;font-weight:700;line-height:1.65}
     .actions{display:grid;gap:11px;margin-top:20px}
     .btn{display:grid;place-items:center;width:100%;min-height:62px;padding:15px 16px;border:0;border-radius:15px;background:var(--line);color:#fff;font-size:clamp(1.08rem,4.5vw,1.28rem);font-weight:900;line-height:1.4;text-align:center;text-decoration:none;box-shadow:0 10px 24px rgba(6,199,85,.25)}
@@ -102,11 +105,11 @@
           <h2 id="bindingGuideTitle">照著 4 步驟完成守護綁定</h2>
           <p class="guide-intro">系統會保留這筆邀請與邀請人資料；加入官方 LINE 後，請返回這一頁繼續，不會回到首頁或要求重填。</p>
           <div class="steps" aria-label="守護綁定四步驟">
-            <article class="step">
+            <article class="step" id="joinLineStep" data-state="upcoming">
               <span class="step-number">1</span>
               <div><strong>先加入每日平安官方 LINE</strong><p>加入後才能收到報平安、逾時與 SOS 等守護通知。</p></div>
             </article>
-            <article class="step">
+            <article class="step" id="returnInviteStep" data-state="upcoming">
               <span class="step-number">2</span>
               <div><strong>返回原本的守護邀請</strong><p>加入完成後回到這一頁，按「我已加入，返回這份邀請繼續」。</p></div>
             </article>
@@ -156,6 +159,9 @@
       var openBtn = document.getElementById("continueGuardianCta");
       var altBtn = document.getElementById("openLiffAlt");
       var copyBtn = document.getElementById("copyLink");
+      var joinLineBtn = document.getElementById("joinOfficialLineCta");
+      var joinLineStep = document.getElementById("joinLineStep");
+      var returnInviteStep = document.getElementById("returnInviteStep");
       var entryLoading = document.getElementById("entryLoading");
       window.addEventListener("load", function () {
         if (entryLoading) entryLoading.hidden = true;
@@ -166,6 +172,14 @@
 
       var displayName = inviterName || "邀請人";
       var displayRelationship = inviterRelationship || "重要的人";
+      var progressKey = "alive_guardian_invite_joined_" + (inviteToken || inviteFrom || friendInvite || "current");
+      function hasOpenedOfficialLine() {
+        try { return sessionStorage.getItem(progressKey) === "1"; } catch (_) { return false; }
+      }
+      function renderProgress() {
+        if (joinLineStep) joinLineStep.dataset.state = hasOpenedOfficialLine() ? "done" : "upcoming";
+        if (returnInviteStep) returnInviteStep.dataset.state = hasOpenedOfficialLine() ? "done" : "upcoming";
+      }
       inviterCardTitleEl.textContent = "💌 來自 " + displayName + " 的守護邀請";
       inviterCardRoleEl.textContent = "你的身份：" + displayName + " 的" + displayRelationship;
       openBtn.textContent = "我已加入，返回守護 " + displayName + " 的邀請";
@@ -212,6 +226,10 @@
         }, 1800);
       }
       openBtn.addEventListener("click", function (event) { event.preventDefault(); openLine(primaryUrl); });
+      joinLineBtn.addEventListener("click", function () {
+        try { sessionStorage.setItem(progressKey, "1"); } catch (_) {}
+        renderProgress();
+      });
       altBtn.addEventListener("click", function (event) { event.preventDefault(); openLine(secondaryUrl); });
       copyBtn.addEventListener("click", async function () {
         var text = "請用 LINE 點開下面連結\n\n" + primaryUrl;
@@ -229,6 +247,7 @@
         } catch (_) { setStatus(primaryUrl); }
       });
       refreshUrls();
+      renderProgress();
       fetch("/api/config")
         .then(function (res) { return res.ok ? res.json() : null; })
         .then(function (cfg) {
@@ -240,10 +259,9 @@
         .catch(function () {})
         .finally(function () {
           if (isLineInAppBrowser()) {
-            setStatus("偵測到 LINE，正在開啟守護確認…");
-            location.replace(buildLiffUrl());
+            setStatus("你已在 LINE 內開啟。請先看完介紹並加入官方 LINE，再按「我已加入」繼續填寫資料。");
           } else {
-            setStatus("點擊主按鈕後，系統會接續完成 LINE 官方確認與資料填寫。");
+            setStatus("請先加入每日平安官方 LINE；返回後按「我已加入」繼續填寫資料。");
           }
         });
     })();

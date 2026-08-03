@@ -96,12 +96,12 @@ def liff_entry_url(*, open_action: str | None = None, fragment: str = "", **quer
 
 
 def guardian_invite_bind_url(invite_from: str) -> str:
-    """受邀者綁定連結：強制進 LINE App，避免 liff.line.me/? 造成閘道 400。"""
+    """受邀者入口：先看公開守護介紹，再由本人進 LINE 完成綁定。"""
     safe = "".join(ch for ch in str(invite_from or "").strip() if ch.isalnum() or ch in "_-")
-    lid = get_liff_id()
+    base = (os.environ.get("APP_PUBLIC_URL") or PUBLIC_BASE).rstrip("/")
     if not safe:
-        return f"https://line.me/R/app/{lid}?open=onboarding"
-    return f"https://line.me/R/app/{lid}?invite_from={quote(safe, safe='')}"
+        return f"{base}/invite?open=onboarding"
+    return f"{base}/invite?invite_from={quote(safe, safe='')}"
 
 
 def guardian_invite_share_text(invite_from: str, *, nickname: str = "") -> str:
