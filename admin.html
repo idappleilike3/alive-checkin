@@ -681,6 +681,34 @@
     .badge.ok { color: #c6ecd6; background: #254937; }
     .badge.warn { color: #f0d7a8; background: #4b3c25; }
     .badge.bad { color: #f0c2c5; background: #512f36; }
+    .essential-service-monitor { margin: 20px 0; }
+    .essential-service-summary { margin: 0 0 12px; color: var(--admin-muted); line-height: 1.6; }
+    .essential-service-warning {
+      margin: 0 0 16px;
+      padding: 14px 16px;
+      border: 2px solid #8b5e22;
+      border-radius: 14px;
+      background: #3f3320;
+      color: #ffe8b6;
+    }
+    .essential-service-warning.is-critical {
+      border-color: #ef4444;
+      background: #7f1d1d;
+      color: #fee2e2;
+      box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.22);
+    }
+    .essential-service-warning h3 { margin: 0 0 6px; font-size: 18px; }
+    .essential-service-warning p { margin: 0; line-height: 1.55; }
+    .essential-service-warning-list { display: grid; gap: 8px; margin-top: 10px; }
+    .essential-service-warning-item {
+      padding: 10px;
+      border: 1px solid currentColor;
+      border-radius: 10px;
+      background: rgba(15, 23, 42, 0.28);
+      line-height: 1.55;
+    }
+    .essential-service-payment { color: #b7e8ff; font-weight: 850; }
+    .essential-service-payment:hover { color: #fff; }
     .plan-reference .tier-199, .plan-reference .tier-399,
     .plan-reference .tier-799, .plan-reference .hot-plan {
       background: color-mix(in srgb, var(--tier-color, var(--admin-success)) 12%, var(--admin-surface));
@@ -786,6 +814,32 @@
         <div class="integration-card"><strong>損益平衡會員數</strong><p id="financeBreakEven">199：0 人｜399：0 人｜799：0 人</p></div>
         <div class="integration-card"><strong>稅額拆分</strong><p id="financeTaxDetail">銷項稅 NT$0｜可扣抵進項稅 NT$0</p></div>
       </div>
+      <section class="essential-service-monitor" aria-labelledby="financeEssentialServicesTitle">
+        <h3 id="financeEssentialServicesTitle">必要服務監控</h3>
+        <p id="financeEssentialServiceSummary" class="essential-service-summary">正在載入必要服務預算與付款期限…</p>
+        <div class="table-wrap"><table><thead><tr><th>服務／供應商／分類</th><th>原幣金額／週期</th><th>月預算</th><th>年預算</th><th>期限／續費／剩餘</th><th>付款狀態</th><th>優先度／風險</th><th>提醒節點</th><th>付款</th><th data-finance-manage>操作</th></tr></thead><tbody id="financeEssentialServicesBody"><tr><td colspan="10">尚未載入必要服務</td></tr></tbody></table></div>
+        <form id="financeEssentialServiceForm" class="integration-grid" data-finance-manage style="margin-top:14px;">
+          <input id="financeServiceId" type="hidden">
+          <label>供應商<input id="financeServiceVendor" maxlength="100" required placeholder="例如 Render"></label>
+          <label>服務名稱<input id="financeServiceName" maxlength="100" required placeholder="例如 正式資料庫"></label>
+          <label>付款網址（僅 HTTPS，不要填入帳密）<input id="financeServicePaymentUrl" type="url" maxlength="500" required placeholder="https://billing.example.com"></label>
+          <label>付款狀態<select id="financeServiceStatus"><option value="pending">待處理</option><option value="due_soon">即將到期</option><option value="paid">已付款</option><option value="overdue">已逾期</option><option value="pausable">可暫停</option></select></label>
+          <label>優先度<select id="financeServicePriority"><option value="critical">關鍵</option><option value="required">必要</option><option value="optional">可選</option></select></label>
+          <label>分類<select id="financeServiceCategory"><option value="hosting">主機</option><option value="database">資料庫</option><option value="line">LINE</option><option value="payment">金流</option><option value="domain">網域</option><option value="security">資安</option><option value="backup">備份</option><option value="marketing">行銷</option><option value="support">客服</option><option value="email">Email</option><option value="accounting">會計</option><option value="other">其他</option></select></label>
+          <label>計費週期<select id="financeServiceBillingCycle"><option value="monthly">月繳</option><option value="yearly">年繳</option><option value="one_time">一次性</option></select></label>
+          <label>原幣幣別<input id="financeServiceCurrency" maxlength="3" pattern="[A-Za-z]{3}" required placeholder="USD"></label>
+          <label>原幣金額<input id="financeServiceOriginalAmount" type="number" min="0" max="100000000" step="0.01" required></label>
+          <label>月預算（NT$）<input id="financeServiceMonthlyTwd" type="number" min="0" max="100000000" step="0.01" required></label>
+          <label>年預算（NT$，月預算 × 12）<input id="financeServiceAnnualTwd" type="number" readonly></label>
+          <label>付款期限<input id="financeServiceDeadline" type="date" required></label>
+          <label>下次續費日<input id="financeServiceNextRenewalOn" type="date" required></label>
+          <fieldset id="financeServiceReminderDays"><legend>提醒節點</legend><label><input type="checkbox" name="financeServiceReminderDay" value="30" checked> 30 天</label><label><input type="checkbox" name="financeServiceReminderDay" value="14" checked> 14 天</label><label><input type="checkbox" name="financeServiceReminderDay" value="7" checked> 7 天</label><label><input type="checkbox" name="financeServiceReminderDay" value="3" checked> 3 天</label><label><input type="checkbox" name="financeServiceReminderDay" value="1" checked> 1 天</label></fieldset>
+          <label>風險說明<textarea id="financeServiceRisk" maxlength="500" rows="2" placeholder="例如期限前需確認方案"></textarea></label>
+          <label>備註<textarea id="financeServiceNote" maxlength="500" rows="2" placeholder="不存放帳密或付款憑證"></textarea></label>
+          <button id="financeServiceSave" type="submit">儲存必要服務</button>
+          <button id="financeServiceCancel" type="button" class="secondary">取消編輯</button>
+        </form>
+      </section>
       <details class="integration-card" style="margin-bottom:16px;">
         <summary><strong>金流費率與營業稅設定</strong></summary>
         <div class="integration-grid" style="margin-top:12px;">
@@ -1290,6 +1344,7 @@
       </div>
 
       <div data-admin-page="members">
+      <section id="membersEssentialServiceWarning" class="essential-service-warning" role="alert" aria-live="assertive" hidden></section>
       <h2 class="section-heading" id="members" style="margin:20px 0 8px;">會員管理</h2>
       <section class="release-status" aria-labelledby="betaResetTitle" style="margin-bottom:16px;">
         <h3 id="betaResetTitle">重置 21 天封測帳號</h3>
@@ -1543,6 +1598,7 @@
       adminPermissions = Array.isArray(permissions) ? permissions : [];
       const badge = $("adminRoleBadge");
       if (badge) badge.textContent = adminRoleLabel();
+      applyFinanceServiceAccess();
       if ($("pushManagementAccessNote")) applyPushManagementAccess();
     }
 
@@ -1561,6 +1617,18 @@
 
     function canManageFinance() {
       return adminPermissions.includes("finance.manage");
+    }
+
+    function applyFinanceServiceAccess() {
+      const canManage = canManageFinance();
+      document.querySelectorAll("[data-finance-manage]").forEach((control) => {
+        control.hidden = !canManage;
+        if ("disabled" in control) control.disabled = !canManage;
+      });
+      document.querySelectorAll("#financeEssentialServicesBody [data-finance-edit]").forEach((control) => {
+        control.hidden = !canManage;
+        control.disabled = !canManage;
+      });
     }
 
     const pushStatusLabels = {
@@ -2783,17 +2851,296 @@
       return `NT$${Number(value || 0).toLocaleString("zh-TW", {maximumFractionDigits: 2})}`;
     }
 
+    const ESSENTIAL_SERVICE_REMINDER_NODES = [30, 14, 7, 3, 1];
+    let financeEssentialServiceItems = new Map();
+
+    function formatUsdMoney(value) {
+      return `US$${Number(value || 0).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    }
+
+    function localCalendarDate(value = new Date()) {
+      const year = value.getFullYear();
+      const month = String(value.getMonth() + 1).padStart(2, "0");
+      const day = String(value.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function financeServiceCategoryLabel(category) {
+      return {hosting: "主機", database: "資料庫", line: "LINE", payment: "金流", domain: "網域", security: "資安", backup: "備份", marketing: "行銷", support: "客服", email: "Email", accounting: "會計", other: "其他"}[category] || "其他";
+    }
+
+    function financeServiceOriginalAmount(service) {
+      const currency = String(service.currency || "USD").toUpperCase();
+      const amount = service.original_amount ?? service.monthly_usd ?? 0;
+      const formatted = currency === "USD" ? formatUsdMoney(amount)
+        : (currency === "TWD" ? financeMoney(amount) : `${currency} ${Number(amount).toLocaleString("en-US", {maximumFractionDigits: 2})}`);
+      const cycle = {monthly: "月", yearly: "年", one_time: "次"}[service.billing_cycle] || "月";
+      return `${formatted}／${cycle}`;
+    }
+
+    function financeServiceStatusLabel(status) {
+      return {
+        pending: "待處理", due_soon: "即將到期", paid: "已付款", overdue: "已逾期", pausable: "可暫停"
+      }[status] || "未設定";
+    }
+
+    function financeServicePriorityLabel(priority) {
+      return {critical: "關鍵", required: "必要", optional: "可選"}[priority] || "未設定";
+    }
+
+    function financeServiceReminderLabel(service) {
+      if (Array.isArray(service.reminder_history) && service.reminder_history.length) {
+        const unique = new Map();
+        for (const node of service.reminder_history) unique.set(Number(node.days_before_deadline), node);
+        return [...unique.values()].map((node) => {
+          const day = Number(node.days_before_deadline);
+          if (node.status === "due") return `今天：${day} 天提醒`;
+          return `${day} 天：${{missed: "已錯過", upcoming: "未到", suppressed: "已停止"}[node.status] || "未到"}`;
+        }).join("｜");
+      }
+      const configured = ESSENTIAL_SERVICE_REMINDER_NODES.filter((day) => (service.reminder_days || []).map(Number).includes(day));
+      if (!configured.length) return "未設定提醒";
+      const daysRemaining = Number(service.days_remaining);
+      if (!Number.isFinite(daysRemaining)) return `節點：${configured.join("／")} 天`;
+      const today = configured.find((day) => day === daysRemaining);
+      if (today) return `今天：${today} 天提醒`;
+      const mostRecent = configured.filter((day) => day >= daysRemaining).at(-1);
+      const next = configured.find((day) => day < daysRemaining);
+      const parts = [];
+      if (mostRecent) parts.push(`最近：${mostRecent} 天`);
+      if (next) parts.push(`下個：${next} 天`);
+      return parts.length ? parts.join("｜") : `節點：${configured.join("／")} 天`;
+    }
+
+    function isEssentialServiceDue(service) {
+      if (service.status === "paid") return false;
+      const daysRemaining = Number(service.days_remaining);
+      return service.status === "overdue" || service.status === "due_soon" ||
+        (Number.isFinite(daysRemaining) && daysRemaining <= ESSENTIAL_SERVICE_REMINDER_NODES[0]);
+    }
+
+    function createSafePaymentLink(value) {
+      let url;
+      try {
+        url = new URL(String(value || ""));
+      } catch (_) {
+        return null;
+      }
+      if (url.protocol !== "https:" || url.username || url.password) return null;
+      const link = document.createElement("a");
+      link.href = url.href;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.className = "essential-service-payment";
+      link.textContent = "前往付款";
+      return link;
+    }
+
+    function financeServiceCell(value) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      return cell;
+    }
+
+    function renderFinanceEssentialServices(essentialServices) {
+      const summary = $("financeEssentialServiceSummary");
+      const body = $("financeEssentialServicesBody");
+      const services = Array.isArray(essentialServices?.items)
+        ? essentialServices.items : (Array.isArray(essentialServices?.services) ? essentialServices.services : []);
+      financeEssentialServiceItems = new Map(services.map((service) => [String(service.id || ""), service]));
+      if (summary) {
+        summary.textContent = `必要服務 ${services.length} 項｜原始月費 ${formatUsdMoney(essentialServices?.total_monthly_usd)}／月｜月預算 ${financeMoney(essentialServices?.total_monthly_twd)}｜年預算 ${financeMoney(essentialServices?.total_annual_twd)}`;
+      }
+      if (!body) return;
+      body.replaceChildren();
+      if (!services.length) {
+        const row = document.createElement("tr");
+        const cell = document.createElement("td");
+        cell.colSpan = 10;
+        cell.textContent = "尚未設定必要服務";
+        row.append(cell);
+        body.append(row);
+        return;
+      }
+      for (const service of services) {
+        const row = document.createElement("tr");
+        row.append(financeServiceCell(`${service.vendor || "未設定供應商"}／${service.name || "未命名服務"}／${financeServiceCategoryLabel(service.category)}`));
+        row.append(financeServiceCell(financeServiceOriginalAmount(service)));
+        row.append(financeServiceCell(`${financeMoney(service.monthly_twd)}／月`));
+        row.append(financeServiceCell(`${financeMoney(service.annual_twd)}／年`));
+        row.append(financeServiceCell(`期限 ${service.deadline || "未設定"}｜續費 ${service.next_renewal_on || service.deadline || "未設定"}｜${Number.isFinite(Number(service.days_remaining)) ? `${Number(service.days_remaining)} 天` : "剩餘日未提供"}`));
+        row.append(financeServiceCell(financeServiceStatusLabel(service.status)));
+        const risk = [financeServicePriorityLabel(service.priority), service.risk || "未填寫風險說明"];
+        if (service.vendor === "Render") risk.push("現在不扣款，接近期限再加值");
+        row.append(financeServiceCell(risk.join("｜")));
+        row.append(financeServiceCell(financeServiceReminderLabel(service)));
+        const paymentCell = document.createElement("td");
+        const paymentLink = createSafePaymentLink(service.payment_url);
+        if (paymentLink) paymentCell.append(paymentLink);
+        else paymentCell.textContent = "付款網址無效";
+        row.append(paymentCell);
+        const actionCell = document.createElement("td");
+        actionCell.dataset.financeManage = "";
+        const editButton = document.createElement("button");
+        editButton.type = "button";
+        editButton.dataset.financeEdit = String(service.id || "");
+        editButton.textContent = "編輯";
+        actionCell.append(editButton);
+        row.append(actionCell);
+        body.append(row);
+      }
+      applyFinanceServiceAccess();
+    }
+
+    function renderMembersEssentialServiceWarning(essentialServices) {
+      const warning = $("membersEssentialServiceWarning");
+      if (!warning || getAdminPage() !== "members" || !canManageFinance()) {
+        if (warning) warning.hidden = true;
+        return;
+      }
+      const services = Array.isArray(essentialServices?.items)
+        ? essentialServices.items : (Array.isArray(essentialServices?.services) ? essentialServices.services : []);
+      const activeServices = services.filter(isEssentialServiceDue);
+      if (!activeServices.length) {
+        warning.hidden = true;
+        return;
+      }
+      const hasCritical = activeServices.some((service) => service.priority === "critical");
+      warning.hidden = false;
+      warning.classList.toggle("is-critical", hasCritical);
+      warning.replaceChildren();
+      const title = document.createElement("h3");
+      title.textContent = hasCritical ? "重要：關鍵必要服務即將到期" : "必要服務付款提醒";
+      const description = document.createElement("p");
+      description.textContent = "請確認付款或暫停安排；提醒會在有效期限視窗內持續顯示。";
+      const list = document.createElement("div");
+      list.className = "essential-service-warning-list";
+      for (const service of activeServices) {
+        const item = document.createElement("div");
+        item.className = "essential-service-warning-item";
+        const remaining = Number.isFinite(Number(service.days_remaining)) ? `${Number(service.days_remaining)} 天` : "剩餘日未提供";
+        item.textContent = `${service.vendor || "未設定供應商"}／${service.name || "未命名服務"}｜${financeServiceStatusLabel(service.status)}｜剩餘 ${remaining}｜${financeServiceReminderLabel(service)}`;
+        list.append(item);
+      }
+      warning.append(title, description, list);
+    }
+
+    function resetFinanceEssentialServiceForm() {
+      const form = $("financeEssentialServiceForm");
+      if (!form) return;
+      form.reset();
+      $("financeServiceId").value = "";
+      $("financeServiceStatus").value = "pending";
+      $("financeServicePriority").value = "critical";
+      $("financeServiceCategory").value = "other";
+      $("financeServiceBillingCycle").value = "monthly";
+      $("financeServiceCurrency").value = "TWD";
+      document.querySelectorAll('input[name="financeServiceReminderDay"]').forEach((input) => { input.checked = true; });
+      $("financeServiceDeadline").value = localCalendarDate();
+      $("financeServiceNextRenewalOn").value = localCalendarDate();
+      $("financeServiceAnnualTwd").value = "";
+      $("financeServiceSave").textContent = "儲存必要服務";
+    }
+
+    function editFinanceEssentialService(serviceId) {
+      if (!canManageFinance()) return;
+      const service = financeEssentialServiceItems.get(String(serviceId || ""));
+      if (!service) return;
+      $("financeServiceId").value = service.id || "";
+      $("financeServiceVendor").value = service.vendor || "";
+      $("financeServiceName").value = service.name || "";
+      $("financeServicePaymentUrl").value = service.payment_url || "";
+      $("financeServiceStatus").value = service.status || "pending";
+      $("financeServicePriority").value = service.priority || "critical";
+      $("financeServiceCategory").value = service.category || "other";
+      $("financeServiceBillingCycle").value = service.billing_cycle || "monthly";
+      $("financeServiceCurrency").value = service.currency || "TWD";
+      $("financeServiceOriginalAmount").value = service.original_amount ?? service.monthly_usd ?? "";
+      $("financeServiceMonthlyTwd").value = Number(service.monthly_twd || 0);
+      $("financeServiceAnnualTwd").value = Number(service.annual_twd || 0);
+      $("financeServiceDeadline").value = service.deadline || "";
+      $("financeServiceNextRenewalOn").value = service.next_renewal_on || service.deadline || "";
+      $("financeServiceRisk").value = service.risk || "";
+      $("financeServiceNote").value = service.note || "";
+      const days = (service.reminder_days || []).map(Number);
+      document.querySelectorAll('input[name="financeServiceReminderDay"]').forEach((input) => { input.checked = days.includes(Number(input.value)); });
+      $("financeServiceSave").textContent = "更新必要服務";
+      $("financeEssentialServiceForm").scrollIntoView({behavior: "smooth", block: "center"});
+    }
+
+    function financeEssentialServicePayload() {
+      const payload = {
+        vendor: $("financeServiceVendor").value.trim(),
+        name: $("financeServiceName").value.trim(),
+        payment_url: $("financeServicePaymentUrl").value.trim(),
+        status: $("financeServiceStatus").value,
+        priority: $("financeServicePriority").value,
+        category: $("financeServiceCategory").value,
+        billing_cycle: $("financeServiceBillingCycle").value,
+        currency: $("financeServiceCurrency").value.trim().toUpperCase(),
+        original_amount: $("financeServiceOriginalAmount").value.trim(),
+        monthly_twd: $("financeServiceMonthlyTwd").value.trim(),
+        deadline: $("financeServiceDeadline").value,
+        next_renewal_on: $("financeServiceNextRenewalOn").value,
+        reminder_days: [...document.querySelectorAll('input[name="financeServiceReminderDay"]:checked')].map((input) => Number(input.value)),
+      };
+      const risk = $("financeServiceRisk").value.trim();
+      const note = $("financeServiceNote").value.trim();
+      const isUpdate = Boolean($("financeServiceId").value);
+      if (risk || isUpdate) payload.risk = risk;
+      if (note || isUpdate) payload.note = note;
+      return payload;
+    }
+
+    async function saveFinanceEssentialService(event) {
+      event.preventDefault();
+      const message = $("financeSaveMessage");
+      if (!canManageFinance()) {
+        message.textContent = "目前角色沒有必要服務修改權限。";
+        return;
+      }
+      const serviceId = $("financeServiceId").value;
+      message.textContent = "正在儲存必要服務資料，請稍候…";
+      let response;
+      let data;
+      let saved = false;
+      try {
+        response = await adminFetch(serviceId
+          ? `/api/admin/finance/services/${encodeURIComponent(serviceId)}`
+          : "/api/admin/finance/services", {
+          method: serviceId ? "PUT" : "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(financeEssentialServicePayload()),
+        });
+        data = await response.json();
+        if (!response.ok) {
+          message.textContent = data.message || "必要服務儲存失敗，請檢查欄位內容。";
+          return;
+        }
+        saved = true;
+        message.textContent = serviceId ? "✓ 必要服務已更新。" : "✓ 必要服務已新增。";
+        resetFinanceEssentialServiceForm();
+        await loadFinanceDashboard();
+      } catch (_) {
+        message.textContent = saved
+          ? "必要服務已儲存，但重新載入失敗，請稍後再試。"
+          : "必要服務儲存失敗，請稍後再試。";
+        return;
+      }
+    }
+
     async function loadFinanceDashboard() {
       const message = $("financeAccessMessage");
       if (!canManageFinance()) {
         if (message) message.textContent = "目前登入角色沒有財務資料權限；請改用超級管理員或財務人員帳號。";
         return;
       }
-      const month = $("financeMonth").value || new Date().toISOString().slice(0, 7);
+      const month = $("financeMonth").value || localCalendarDate().slice(0, 7);
       const response = await adminFetch(`/api/admin/finance/dashboard?month=${encodeURIComponent(month)}`);
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         if (message) message.textContent = data.message || "財務資料載入失敗。";
+        renderMembersEssentialServiceWarning({items: []});
         return;
       }
       if (message) message.textContent = `已計算 ${data.month}；現金流與月分攤損益分開顯示。`;
@@ -2813,6 +3160,8 @@
       $("financeEcpayFixed").value = data.settings?.gateway_fees?.ecpay?.fixed ?? 0;
       $("financeNewebpayPercent").value = data.settings?.gateway_fees?.newebpay?.percent ?? 2.8;
       $("financeNewebpayFixed").value = data.settings?.gateway_fees?.newebpay?.fixed ?? 0;
+      renderFinanceEssentialServices(data.essential_services);
+      renderMembersEssentialServiceWarning(data.essential_services);
     }
 
     function securityStatusPresentation(status) {
@@ -2895,7 +3244,7 @@
       }
       message.textContent = "✓ 支出資料已儲存，損益已重新計算。";
       $("financeExpenseForm").reset();
-      $("financeExpenseDate").value = new Date().toISOString().slice(0, 10);
+      $("financeExpenseDate").value = localCalendarDate();
       await loadFinanceDashboard();
     }
 
@@ -3684,11 +4033,18 @@
         issueLineRebind(button.dataset.lineUserId, button.dataset.displayName);
       }
     });
-    if ($("financeMonth")) $("financeMonth").value = new Date().toISOString().slice(0, 7);
-    if ($("financeExpenseDate")) $("financeExpenseDate").value = new Date().toISOString().slice(0, 10);
+    if ($("financeMonth")) $("financeMonth").value = localCalendarDate().slice(0, 7);
+    if ($("financeExpenseDate")) $("financeExpenseDate").value = localCalendarDate();
+    if ($("financeEssentialServiceForm")) resetFinanceEssentialServiceForm();
     if ($("financeReload")) $("financeReload").addEventListener("click", loadFinanceDashboard);
     if ($("financeSettingsSave")) $("financeSettingsSave").addEventListener("click", saveFinanceSettings);
     if ($("financeExpenseForm")) $("financeExpenseForm").addEventListener("submit", saveFinanceExpense);
+    if ($("financeEssentialServiceForm")) $("financeEssentialServiceForm").addEventListener("submit", saveFinanceEssentialService);
+    if ($("financeServiceCancel")) $("financeServiceCancel").addEventListener("click", resetFinanceEssentialServiceForm);
+    if ($("financeEssentialServicesBody")) $("financeEssentialServicesBody").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-finance-edit]");
+      if (button) editFinanceEssentialService(button.dataset.financeEdit);
+    });
     let autoRefreshAdminBusy = false;
     async function autoRefreshAdmin() {
       const hasUnsavedPlan = document.querySelector('.plan-select[data-dirty="true"]');
