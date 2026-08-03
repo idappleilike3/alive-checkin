@@ -1,0 +1,3 @@
+Render redeploy trigger for full card template
+GitHub main commit: c270df644a8d7c8fa18ae62709cdd70dbf81fd9f
+Triggered at: 2026-08-03T14:00:00+08:00
