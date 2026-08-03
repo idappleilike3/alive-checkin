@@ -12327,7 +12327,7 @@
       const source = String(saved.membership_source || "").trim().toLowerCase();
       const cohort = String(saved.beta_cohort || "").trim().toUpperCase();
       const requestedCohort = String(entryCohort || "").trim().toUpperCase();
-      const activeCohort = source === "beta" && ["A", "B399", "B799"].includes(cohort)
+      const activeCohort = ["A", "B399", "B799"].includes(cohort)
         ? cohort
         : (["B399", "B799"].includes(requestedCohort) ? requestedCohort : "");
       if (["A", "B799"].includes(activeCohort)) return "799 守護版｜21 天封測";
