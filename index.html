@@ -4311,12 +4311,13 @@
             <p class="first-entry-guide-title">還沒綁定守護人，請完成以下設定</p>
             <div class="first-entry-step" id="onboardingGuideJoin" data-step="1" data-state="upcoming">加入「每日平安」官方 LINE</div>
             <div class="first-entry-step" id="onboardingGuideLogin" data-step="2" data-state="upcoming">系統自動確認 LINE 身分</div>
-            <div class="first-entry-step" id="onboardingGuideProfile" data-step="3" data-state="upcoming">填寫守護資料並發送邀請</div>
-            <div class="first-entry-step" id="onboardingGuideGuardian" data-step="4" data-state="upcoming">核心守護人接受邀請，完成綁定</div>
+            <div class="first-entry-step" id="onboardingGuideProfile" data-step="3" data-state="upcoming">填寫資料與提醒設定</div>
+            <div class="first-entry-step" id="onboardingGuideInvite" data-step="4" data-state="upcoming">一鍵分享邀請守護人</div>
+            <div class="first-entry-step" id="onboardingGuideGuardian" data-step="5" data-state="upcoming">守護人接受邀請，完成綁定</div>
           </div>
           <p class="onboarding-note" id="onboardingEntryPlan">本次註冊：14 天安心體驗</p>
           <p class="onboarding-intro" id="onboardingIntro">先填寫資料與提醒設定，完成後再一鍵分享給你信任的守護人。</p>
-          <p class="onboarding-step" id="onboardingStepLabel">步驟 2／4　填寫資料與提醒設定</p>
+          <p class="onboarding-step" id="onboardingStepLabel">步驟 3／5　填寫資料與提醒設定</p>
 
           <div class="onboarding-form" id="onboardingGuardianStep">
             <div class="onboarding-fields">
@@ -4398,6 +4399,7 @@
 
           <div class="onboarding-form" id="onboardingShareStep" hidden>
             <p class="onboarding-note"><strong id="onboardingGuardianQuotaText">一鍵分享邀請最少 1 位守護人</strong>。分享後，請主動聯繫守護人，請對方點擊你的專屬連結、加入每日平安、登入並填寫資料；對方親自同意後，雙方資料才會同步並完成綁定。</p>
+            <p class="onboarding-note" id="onboardingBindingStatus" role="status" aria-live="polite"></p>
             <button class="onboarding-submit" id="onboardingShareBtn" type="button">一鍵分享邀請守護人</button>
             <div id="onboardingShareFallback" class="share-invite-fallback" hidden>
               <p class="onboarding-note">請改用上方一鍵分享，開啟 LINE 好友選擇</p>
@@ -11448,6 +11450,7 @@
         Join: states && states.join,
         Login: states && states.login,
         Profile: states && states.profile,
+        Invite: states && states.invite,
         Guardian: states && states.guardian,
       };
       Object.entries(keys).forEach(([suffix, value]) => {
@@ -11456,22 +11459,31 @@
       });
     }
 
-    function showOnboardingShareStep() {
+    function showOnboardingShareStep(inviteSent = false) {
       const shareStep = $("onboardingShareStep");
       const guardianStep = $("onboardingGuardianStep");
       const reminderStep = $("onboardingReminderStep");
       if (shareStep) shareStep.hidden = false;
       if (guardianStep) guardianStep.hidden = true;
       if (reminderStep) reminderStep.hidden = true;
-      $("onboardingTitle").textContent = "最後一步：邀請核心守護人";
+      $("onboardingTitle").textContent = inviteSent ? "等待守護人完成綁定" : "邀請核心守護人";
       setSetupGuideState("onboarding", {
         join: "done",
         login: "done",
         profile: "done",
-        guardian: "upcoming",
+        invite: inviteSent ? "done" : "current",
+        guardian: inviteSent ? "current" : "upcoming",
       });
-      $("onboardingIntro").textContent = "資料與提醒已完成。請一鍵分享邀請核心守護人，等對方加入每日平安、登入、填寫資料並接受後，才會完成綁定。";
-      $("onboardingStepLabel").textContent = "步驟 3／4　一鍵分享邀請守護人";
+      $("onboardingIntro").textContent = inviteSent
+        ? "邀請已送出。請等待守護人加入每日平安、登入、填寫資料並接受；完成後才算正式綁定。"
+        : "資料與提醒已完成。請一鍵分享邀請核心守護人，等對方加入每日平安、登入、填寫資料並接受後，才會完成綁定。";
+      $("onboardingStepLabel").textContent = inviteSent
+        ? "步驟 5／5　等待守護人完成綁定"
+        : "步驟 4／5　一鍵分享邀請守護人";
+      const bindingStatus = $("onboardingBindingStatus");
+      if (bindingStatus) bindingStatus.textContent = inviteSent
+        ? "✓ 第 4 步已完成：邀請已送出；第 5 步會在守護人接受後自動打勾。"
+        : "第 4 步：請將專屬邀請分享給最少 1 位守護人。";
       const shareStatus = typeof currentStatusData === "undefined" ? {} : (currentStatusData || {});
       const guardianLimit = typeof planCoreGuardianLimit === "function"
         ? planCoreGuardianLimit(shareStatus)
@@ -11493,11 +11505,12 @@
         join: "done",
         login: "done",
         profile: "current",
+        invite: "upcoming",
         guardian: "upcoming",
       });
       $("onboardingTitle").textContent = "填寫資料與守護關係";
       $("onboardingIntro").textContent = "LINE 姓名會自動帶入。請填寫預計邀請的守護人姓名與雙方關係；守護人電話為選填，緊急狀況或聯絡不上本人時可使用。";
-      $("onboardingStepLabel").textContent = "步驟 2／4　填寫資料與提醒設定";
+      $("onboardingStepLabel").textContent = "步驟 3／5　填寫資料與提醒設定";
       const onboardingStatus = typeof currentStatusData === "undefined" ? {} : (currentStatusData || {});
       const maxCount = typeof planDailyReminderCount === "function"
         ? planDailyReminderCount(onboardingStatus)
@@ -11903,7 +11916,17 @@
       const canDismiss = !guardianRequired && contacts.length > 0;
       setOnboardingCloseVisible(canDismiss);
 
-      showOnboardingGuardianStep();
+      const onboardingState = await fetchOnboardingState();
+      const serverProgress = onboardingState.ok ? (onboardingState.data || {}) : {};
+      if (onboardingState.ok) {
+        currentStatusData = { ...(currentStatusData || {}), ...serverProgress };
+      }
+      const completed = serverProgress.completed_steps || {};
+      if (completed.profile_and_reminder) {
+        showOnboardingShareStep(completed.guardian_invite_sent === true);
+      } else {
+        showOnboardingGuardianStep();
+      }
       modal.hidden = false;
       // LIFF/iOS keyboard: keep focused fields/buttons reachable by scrolling the fixed overlay
       if (modal.dataset.scrollBound !== "true") {
@@ -11987,7 +12010,7 @@
         return;
       }
       saveBtn.disabled = true;
-      saveBtn.textContent = "正在新增守護人...";
+      saveBtn.textContent = "正在儲存資料，請稍候…";
       try {
         const locationResult = await apiSaveProfileLocation(city, district);
         if (locationResult.status !== 200 || locationResult.data.ok === false) {

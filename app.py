@@ -2509,11 +2509,11 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
         "guardian_bound": bool(access["home_ready"]),
     }
     if not completed_steps["profile_and_reminder"]:
-        current_step = 2
-    elif not completed_steps["guardian_invite_sent"]:
         current_step = 3
-    else:
+    elif not completed_steps["guardian_invite_sent"]:
         current_step = 4
+    else:
+        current_step = 5
     binding_status = (
         "bound"
         if completed_steps["guardian_bound"]

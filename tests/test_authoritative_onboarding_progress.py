@@ -39,7 +39,7 @@ class AuthoritativeOnboardingProgressTest(unittest.TestCase):
                 "guardian_bound": False,
             },
         )
-        self.assertEqual(payload["current_step"], 2)
+        self.assertEqual(payload["current_step"], 3)
         self.assertEqual(payload["binding_status"], "waiting_for_invite")
 
     def test_pending_invite_is_waiting_not_completed(self):
@@ -57,7 +57,7 @@ class AuthoritativeOnboardingProgressTest(unittest.TestCase):
 
         self.assertEqual(payload["completed_steps"]["guardian_invite_sent"], True)
         self.assertEqual(payload["completed_steps"]["guardian_bound"], False)
-        self.assertEqual(payload["current_step"], 4)
+        self.assertEqual(payload["current_step"], 5)
         self.assertEqual(payload["binding_status"], "waiting_for_guardian")
 
     def test_four_entry_pages_keep_step_four_waiting_copy(self):

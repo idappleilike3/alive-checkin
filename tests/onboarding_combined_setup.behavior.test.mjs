@@ -50,6 +50,32 @@ test("saving combined setup stores reminders without completing guardian binding
   assert.match(html, /對方.*填寫資料.*親自同意後.*完成綁定/);
 });
 
+test("onboarding renders five distinct steps and resumes from saved server progress", () => {
+  assert.match(html, /id="onboardingGuideProfile"[^>]*>填寫資料與提醒設定</);
+  assert.match(html, /id="onboardingGuideInvite"[^>]*>一鍵分享邀請守護人</);
+  assert.match(html, /id="onboardingGuideGuardian"[^>]*>守護人接受邀請，完成綁定</);
+  assert.match(functionBody("showOnboardingGuardianStep"), /步驟 3／5/);
+  assert.match(functionBody("showOnboardingShareStep"), /步驟 4／5/);
+  const show = functionBody("showOnboarding");
+  assert.match(show, /await fetchOnboardingState\(\)/);
+  assert.match(show, /profile_and_reminder/);
+  assert.match(show, /guardian_invite_sent/);
+  assert.match(show, /showOnboardingShareStep/);
+});
+
+test("existing members still load authoritative onboarding progress before choosing a page", () => {
+  const onboarding = readFileSync(new URL("../liff/onboarding.html", import.meta.url), "utf8");
+  assert.doesNotMatch(onboarding, /if \(registration\.existing_user === true\) \{\s*renderCompletedMemberEntry\(\);/);
+  assert.match(onboarding, /registration\.existing_user === true/);
+  assert.match(onboarding, /api\/onboarding\/state/);
+});
+
+test("saving immediately shows a clear wait message and prevents repeat submission", () => {
+  const save = functionBody("saveOnboardingGuardian");
+  assert.match(save, /正在儲存資料，請稍候/);
+  assert.match(save, /saveBtn\.disabled = true/);
+});
+
 test("trial beta and one-tap sharing explain the shared first-guardian flow", () => {
   const trial = readFileSync(new URL("../trial-14.html", import.meta.url), "utf8");
   const beta = readFileSync(new URL("../beta-register.html", import.meta.url), "utf8");
@@ -60,4 +86,7 @@ test("trial beta and one-tap sharing explain the shared first-guardian flow", ()
   assert.match(share, /第 1 位/);
   assert.match(share, /主要守護人/);
   assert.match(share, /會員中心.*再新增一位守護人/);
+  assert.match(share, /第 4 步已完成/);
+  assert.match(share, /點開邀請連結.*LINE 登入.*填寫本人資料.*確認接受/);
+  assert.match(share, /第 5 步.*自動打勾/);
 });

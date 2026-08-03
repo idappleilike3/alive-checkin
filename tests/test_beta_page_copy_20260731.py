@@ -12,7 +12,7 @@ class BetaPageCopyTests(unittest.TestCase):
 
     def test_shared_intro_and_feature_heading_use_approved_copy(self):
         self.assertIn(
-            "每天10秒，讓家人知道你平安。先加入官方LINE，再依照四個步驟完成設定",
+            "399／799 免費 21 天封測，不需付款、不會自動扣款；依照五個步驟完成設定",
             self.page,
         )
         self.assertIn("本次體驗，你可以使用：", self.page)
@@ -66,7 +66,7 @@ class BetaPageCopyTests(unittest.TestCase):
         preview_at = self.page.index('aria-label="完成設定後的操作畫面"')
 
         self.assertEqual(
-            self.page.count("每天10秒，讓家人知道你平安。先加入官方LINE，再依照四個步驟完成設定"),
+            self.page.count("399／799 免費 21 天封測，不需付款、不會自動扣款；依照五個步驟完成設定"),
             1,
         )
         self.assertLess(lead_at, benefits_at)
@@ -76,10 +76,11 @@ class BetaPageCopyTests(unittest.TestCase):
 
     def test_four_setup_steps_use_the_approved_one_line_copy(self):
         expected_steps = (
-            "① 填寫資料 — 姓名、關係、緊急聯絡電話（選填）",
-            "② 設定提醒 — 選擇每天想收到報平安提醒的時間",
-            "③ 邀請守護人 — 分享專屬連結給在乎的人",
-            "④ 完成綁定 — 對方接受後，安心連結就建立了",
+            "① 加入「每日平安」官方 LINE",
+            "② 完成 LINE 登入",
+            "③ 填寫資料與提醒時間設定",
+            "④ 一鍵分享邀請守護人",
+            "⑤ 守護人接受邀請",
         )
 
         for step in expected_steps:

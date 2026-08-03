@@ -48,19 +48,20 @@ def test_beta_page_hides_prices_and_ends_with_faq_then_pricing_link():
     assert html.index('class="faq"') < html.index('class="pricing-link"')
 
 
-def test_beta_page_uses_four_step_line_first_flow():
+def test_beta_page_uses_five_step_line_first_flow():
     html = (ROOT / "beta-register.html").read_text(encoding="utf-8")
 
     expected = [
-        "① 加入「每日平安」官方LINE",
-        "② 回到此頁，用LINE登入",
-        "③ 一鍵邀請守護人",
-        "④ 設定提醒時間，開始安心練習",
+        "① 加入「每日平安」官方 LINE",
+        "② 完成 LINE 登入",
+        "③ 填寫資料與提醒時間設定",
+        "④ 一鍵分享邀請守護人",
+        "⑤ 守護人接受邀請",
     ]
     positions = [html.index(item) for item in expected]
     assert positions == sorted(positions)
     assert "加入後，才能收到報平安通知與守護人綁定邀請" in html
-    assert "分享連結，對方接受後即完成綁定" in html
+    assert "⑤ 守護人接受邀請" in html
 
 
 def test_general_14_day_onboarding_uses_same_story_comic():
@@ -69,9 +70,9 @@ def test_general_14_day_onboarding_uses_same_story_comic():
     assert 'src="assets/daily-peace-story-comic.png"' in html
     assert "女兒收到通知，知道媽媽平安，就能放心" in html
     assert "先加入「每日平安」官方帳號好友" in html
-    assert "步驟 2／4　填寫資料與提醒設定" in html
-    assert "步驟 3／4　一鍵分享邀請守護人" in html
-    assert "緊急聯絡候補（選填）" in html
+    assert "步驟 3／5　填寫資料與提醒設定" in html
+    assert "步驟 4／5　一鍵分享邀請守護人" in html
+    assert "填寫另一位緊急聯絡人（選填）" in html
 
 
 def test_trial_and_beta_follow_the_same_registration_order():
@@ -80,7 +81,7 @@ def test_trial_and_beta_follow_the_same_registration_order():
 
     for beta_step, member_step in [
         ("官方 LINE", "官方 LINE"),
-        ("LINE登入", "LINE 登入"),
+        ("LINE 登入", "LINE 登入"),
         ("守護人", "守護人"),
         ("提醒時間", "提醒時間"),
     ]:
