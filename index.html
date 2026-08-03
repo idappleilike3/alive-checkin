@@ -5605,7 +5605,7 @@
       "home", "checkin", "guard", "safety", "sos", "member", "profile",
       "guardians", "history", "status", "pricing", "plans", "plan",
       "help", "faq", "terms", "privacy", "onboarding", "bind",
-      "share-invite", "invite", "onboarding/invite"
+      "share-invite", "invite", "onboarding/invite", "daily-care", "achievement"
     ]);
 
     function sanitizeLoginContinuationParams(source = {}) {
@@ -5632,6 +5632,10 @@
         && !/^U[0-9a-f]{32}$/i.test(migrationCode)
       ) {
         out.migration_code = migrationCode;
+      }
+      const milestone = String(read("milestone") || "").trim();
+      if (/^(1|3|7|14|21|30|60|90|100|180|270|365)$/.test(milestone)) {
+        out.milestone = milestone;
       }
       return out;
     }
@@ -8443,6 +8447,16 @@
         openSosFlow();
         return;
       }
+      if (action === "daily-care") {
+        showTab("home");
+        openDailyCarePanel();
+        return;
+      }
+      if (action === "achievement") {
+        showTab("home");
+        showMilestoneCelebration();
+        return;
+      }
       if (action === "checkin" || action === "home") {
         showTab("home");
         return;
@@ -10974,6 +10988,43 @@
       overlay.querySelector("button").addEventListener("click", () => overlay.remove());
     }
 
+    async function openDailyCarePanel() {
+      let overlay = $("dailyCarePanel");
+      if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "dailyCarePanel";
+        overlay.className = "modal-backdrop";
+        overlay.innerHTML = `<section class="guardian-modal" role="dialog" aria-modal="true" aria-label="今日安心提醒" style="text-align:left;max-width:520px">
+          <button type="button" id="dailyCareClose" class="onboarding-close-btn" aria-label="關閉">×</button>
+          <h2 id="dailyCareGreeting">今日安心提醒</h2>
+          <div class="today-reminder-card"><strong>🌤️ 所在地區天氣</strong><span id="dailyCareWeather">正在讀取…</span></div>
+          <div class="today-reminder-card"><strong>📝 我的今日提醒</strong><span id="dailyCareReminders">正在讀取…</span></div>
+          <div class="today-reminder-card"><strong>🏅 我的平安成就</strong><span id="dailyCareAchievement">正在讀取…</span></div>
+          <div class="today-reminder-card"><strong id="dailyCareNewsTitle">📰 政府與生活重要消息</strong><span id="dailyCareNews">正在讀取…</span></div>
+          <div class="today-reminder-card"><strong>💛 今日祝福語</strong><span id="dailyCareBlessing">正在讀取…</span></div>
+        </section>`;
+        document.body.appendChild(overlay);
+        $("dailyCareClose").addEventListener("click", () => overlay.remove());
+      }
+      try {
+        const response = await fetch("/api/daily-care", { headers: await authHeaders() });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "load_failed");
+        $("dailyCareGreeting").textContent = `${data.greeting}，今日安心提醒`;
+        $("dailyCareWeather").textContent = data.weather_line;
+        const reminders = Array.isArray(data.today_reminders) ? data.today_reminders : [];
+        $("dailyCareReminders").textContent = reminders.length
+          ? reminders.map((item) => item.text).filter(Boolean).join("\n")
+          : "今天沒有其他提醒，安心過好每一天";
+        $("dailyCareAchievement").textContent = `${data.level_progress_text}｜${data.reward_icon || "🏅"} ${data.game_badge_name}`;
+        $("dailyCareNewsTitle").textContent = `📰 ${data.news_title}`;
+        $("dailyCareNews").textContent = data.news_summary;
+        $("dailyCareBlessing").textContent = data.blessing_text;
+      } catch (_) {
+        $("dailyCareWeather").textContent = "資料暫時無法讀取，請稍後再試";
+      }
+    }
+
     function renderStatus(data) {
       currentStatusData = data;
       renderHomeCheckinCard(data);
@@ -12403,6 +12454,8 @@
         );
         const isCheckinOpen = openAction === "checkin" || location.hash === "#home";
         const isGuardOpen = openAction === "guard";
+        const isDailyCareOpen = openAction === "daily-care";
+        const isAchievementOpen = openAction === "achievement";
         const forceOnboarding = openAction === "onboarding" || openAction === "bind" || isOnboardingInvite;
         const inviteeMode = isInviteeDeepLink();
         const guardianRequired = (
@@ -12458,7 +12511,7 @@
           // Only the server-confirmed bound LINE guardian unlocks member routes.
           clearShareFirstLocalFlags();
           const preservesRequestedScreen = [
-            "member", "guardians", "history", "sos", "guard", "checkin"
+            "member", "guardians", "history", "sos", "guard", "checkin", "daily-care", "achievement"
           ].includes(openAction);
           if (!preservesRequestedScreen && typeof showTab === "function") showTab("home");
         } else {
@@ -12484,6 +12537,12 @@
           }
         } else if (openAction === "call" || openAction === "family") {
           openMvpCallPanel();
+        } else if (isDailyCareOpen) {
+          showTab("home");
+          await openDailyCarePanel();
+        } else if (isAchievementOpen) {
+          showTab("home");
+          showMilestoneCelebration();
         } else if (isCheckinOpen && typeof showTab === "function") {
           showTab("home");
           if (openAction === "checkin" && homeReady) {
