@@ -106,3 +106,11 @@ test("reopening onboarding authenticates the authoritative progress lookup", asy
   assert.equal(requests.length, 1);
   assert.equal(requests[0].options.headers.Authorization, "Bearer verified-id-token");
 });
+
+test("an existing member is sent to member-center editing instead of the registration form", () => {
+  assert.match(html, /registration\.existing_user === true/);
+  assert.match(html, /member\.html\?setup_reminder=1/);
+  const memberHtml = fs.readFileSync(new URL("../liff/member.html", import.meta.url), "utf8");
+  assert.match(memberHtml, /你已經是會員/);
+  assert.match(memberHtml, /前往修改會員資料/);
+});

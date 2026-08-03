@@ -4555,6 +4555,12 @@
           <button class="member-upgrade-btn" id="memberUpgradeBtn" type="button">立即升級 <span aria-hidden="true">→</span></button>
         </div>
 
+        <div class="member-data-section" id="registeredMemberSetupReminder" hidden>
+          <h3>會員資料可在這裡更新</h3>
+          <p class="helper">你已經註冊過，不需要重新填寫註冊資料。若稱呼、地區、提醒時間或守護資料需要更新，請直接在會員中心修改。</p>
+          <button class="action-btn primary" id="registeredMemberEditBtn" type="button">前往修改會員資料</button>
+        </div>
+
         <div class="member-role-intro" id="memberRoleIntro" hidden>
           <div class="member-role-intro-head">
             <div>
@@ -5168,6 +5174,8 @@
     let historyData = [];
     let useLocalMode = location.protocol === "file:";
     let lineUserId = "";
+    // 本次 LINE 註冊前，後端是否已存在會員；所有入口共用此判斷。
+    let lineRegistrationWasExisting = false;
     // Dev mode: 允許用 URL ?line_user_id=XXX 模擬使用者
     // 只在 localhost / 127.0.0.1 / 明確 DEV_MODE 才生效
     // 正式網址一律忽略 query parameter 的 line_user_id
@@ -9820,6 +9828,7 @@
           }
           return false;
         }
+        lineRegistrationWasExisting = registrationResult.existing_user === true;
         // 首次註冊（尤其 B399／B799 封測）完成後才讀會員狀態。
         // /api/status 會在查無會員時自動建檔；若與 /api/line/register 平行執行，
         // 兩個首次寫入可能互相覆蓋，導致下一步儲存地區時出現 user not registered。
@@ -10297,6 +10306,24 @@
     function setMemberCenterExpanded(expanded) {
       $("memberCenterDetails").hidden = !expanded;
       $("memberCenterToggleBtn").setAttribute("aria-expanded", String(expanded));
+    }
+
+    function showRegisteredMemberSetupReminder() {
+      const reminder = $("registeredMemberSetupReminder");
+      if (reminder) reminder.hidden = false;
+      setMemberCenterExpanded(true);
+      const editButton = $("registeredMemberEditBtn");
+      if (editButton && editButton.dataset.bound !== "true") {
+        editButton.dataset.bound = "true";
+        editButton.addEventListener("click", () => {
+          if (typeof showTab === "function") showTab("member");
+          setMemberCenterExpanded(true);
+          const target = $("memberGuardianDirectionSection") || $("memberCenterDetails");
+          if (target && typeof target.scrollIntoView === "function") {
+            target.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        });
+      }
     }
 
     function csvEscape(value) {
@@ -12420,6 +12447,10 @@
             location.replace(buildShareInvitePageUrl("home"));
             return;
           }
+        } else if (guardianRequired && lineRegistrationWasExisting) {
+          // 已註冊會員只在會員中心顯示待辦，不得重跑首次註冊表單。
+          if (typeof showTab === "function") showTab("member");
+          showRegisteredMemberSetupReminder();
         } else if (guardianRequired) {
           await showOnboarding();
           return true;

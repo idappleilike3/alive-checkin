@@ -298,6 +298,11 @@
 </style>
 </head>
 <body>
+<div class="card" id="existingMemberReminder" hidden>
+  <h1>✅ 你已經是會員</h1>
+  <p>不需要重新註冊或重填首次設定。若資料需要更新，請直接在下方會員中心修改。</p>
+  <button class="btn btn-primary" type="button" id="existingMemberEditBtn">前往修改會員資料</button>
+</div>
 <div class="card">
   <h1>⭐ 我的會員</h1>
   <p>查看訂閱、管理守護人、設定提醒時間</p>
@@ -661,6 +666,10 @@ async function resolveLiffId() {
 
 async function init() {
   try {
+    if (new URLSearchParams(location.search).get("setup_reminder") === "1") {
+      const reminder = document.getElementById("existingMemberReminder");
+      if (reminder) reminder.hidden = false;
+    }
     const liffId = await resolveLiffId();
     await liff.init({ liffId });
     if (!liff.isLoggedIn()) {
@@ -1256,6 +1265,9 @@ const saveReminderBtn = document.getElementById("saveBtn");
 if (saveReminderBtn) saveReminderBtn.addEventListener("click", saveReminder);
 document.getElementById("memberCity")?.addEventListener("change", (event) => renderMemberDistricts(event.target.value));
 document.getElementById("saveMemberLocationBtn")?.addEventListener("click", saveMemberLocation);
+document.getElementById("existingMemberEditBtn")?.addEventListener("click", () => {
+  document.getElementById("memberLocationCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
+});
 
 async function saveReminder() {
   const btn = document.getElementById("saveBtn");

@@ -517,6 +517,7 @@ test("server guardian_required shows onboarding and blocks home, check-in, guard
     const events = [];
     const sandbox = expose(initSource, ["initApp"], {
       lineUserId: "U-member",
+      lineRegistrationWasExisting: false,
       pendingMigratedMemberData: null,
       location: { hash: "" },
       bindTabEvents() {},
@@ -596,6 +597,53 @@ test("guardian_required keeps member controls locked after bootstrap data arrive
   assert.ok(locks.every((locked) => locked === true));
 });
 
+test("registered B399 member with unfinished guardian setup opens member center instead of registration form", async () => {
+  const events = [];
+  const sandbox = expose(functionSource("initApp"), ["initApp"], {
+    lineUserId: "U-baby",
+    lineRegistrationWasExisting: true,
+    memberBootstrapState: { inFlight: null },
+    pendingMigratedMemberData: null,
+    location: { hash: "" },
+    bindTabEvents() {},
+    loadInitialMemberData: async () => ({
+      status: {
+        guardian_required: true,
+        home_ready: false,
+        plan: "paid_399_year",
+        beta_cohort: "B399",
+      },
+      contacts: [],
+      onboarding: {
+        guardianRequired: true,
+        homeReady: false,
+        done: false,
+        hasGuardian: false,
+        data: { guardian_required: true, home_ready: false },
+      },
+    }),
+    requestedAppAction: () => "onboarding",
+    isInviteeDeepLink: () => false,
+    syncInviteUiForBoundState() {},
+    clearShareFirstLocalFlags() {},
+    closeGuardianPrompt() {},
+    closeInviteAcceptPrompt() {},
+    showRegisteredMemberSetupReminder: () => events.push("member-reminder"),
+    showOnboarding: async () => events.push("onboarding"),
+    showTab: (tab) => events.push(`tab:${tab}`),
+    bindGuardianEvents() {},
+    bindMemberEvents() {},
+    bindSmartReminderEvents() {},
+    bindCalendarEvents() {},
+    maybeShowGuardianComplete: async () => {},
+    $: () => null,
+    showMemberBootstrapError: (error) => { throw error; },
+  });
+
+  await sandbox.initApp();
+  assert.deepEqual(events, ["tab:member", "member-reminder"]);
+});
+
 test("guardian-required onboarding cannot be dismissed by an unbound contact", async () => {
   const closeVisibility = [];
   const steps = [];
@@ -615,6 +663,7 @@ test("guardian-required onboarding cannot be dismissed by an unbound contact", a
     showOnboardingShareStep: () => steps.push("share"),
     showOnboardingGuardianStep: () => steps.push("profile"),
     showOnboardingReminderStep: () => steps.push("reminder"),
+    fetchOnboardingState: async () => ({ ok: true, data: { completed_steps: {} } }),
     $: (id) => elements[id] || null,
   });
 

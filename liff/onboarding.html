@@ -415,6 +415,13 @@ async function init() {
           ? (stored || (data.reminder_time ? [data.reminder_time] : null))
           : null;
       }
+
+      // 任何入口只允許「首次出現的新帳號」進入註冊表單。
+      // 已存在會員即使尚未綁定守護人，也改到會員中心顯示待辦提醒。
+      if (registration.existing_user === true) {
+        location.replace("./member.html?setup_reminder=1");
+        return;
+      }
     }
 
     // 提醒與守護人都完成後，首次設定才算完成。
