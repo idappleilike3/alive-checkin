@@ -61,6 +61,15 @@ class CalendarNotesTests(unittest.TestCase):
                 "payment_status": "active",
                 "paid_until": "2099-01-01T00:00:00",
             },
+            "U-beta-399": {
+                "line_user_id": "U-beta-399",
+                "plan": "paid_399",
+                "payment_status": "beta",
+                "membership_source": "beta",
+                "beta_cohort": "B399",
+                "beta_started_at": "2026-07-27T09:00:00",
+                "beta_ends_at": "2099-01-01T00:00:00",
+            },
             "U-beta-799": {
                 "line_user_id": "U-beta-799",
                 "plan": "paid_799",
@@ -114,6 +123,17 @@ class CalendarNotesTests(unittest.TestCase):
         )
         self.assertEqual(allowed_399_year_code, 200)
         self.assertTrue(allowed_399_year["ok"])
+
+        beta_399_allowed, beta_399_allowed_code = save_calendar_note(
+            self.data_file,
+            {
+                "line_user_id": "U-beta-399",
+                "date": "2026-07-27",
+                "content": "21 天 399 封測備忘錄",
+            },
+        )
+        self.assertEqual(beta_399_allowed_code, 200)
+        self.assertTrue(beta_399_allowed["ok"])
 
         beta_allowed, beta_allowed_code = save_calendar_note(
             self.data_file,
