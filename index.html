@@ -3961,12 +3961,45 @@
       margin-top: 2px;
     }
 
-</style>
+    :root { --peace-helper-bottom: calc(100px + env(safe-area-inset-bottom, 0px)); }
+    .peace-helper { position:fixed; right:16px; bottom:var(--peace-helper-bottom); z-index:88; display:grid; justify-items:end; gap:8px; max-width:min(330px,calc(100vw - 32px)); }
+    .peace-helper-launcher { width:60px; height:60px; border:3px solid #fff; border-radius:50%; background:linear-gradient(145deg,#dcfce7,#86efac); box-shadow:0 10px 28px rgba(20,83,45,.3); cursor:grab; touch-action:none; font-size:34px; animation:peaceHelperWave 2.6s ease-in-out infinite; }
+    .peace-helper-panel { width:min(330px,calc(100vw - 32px)); padding:14px; border:1px solid #86efac; border-radius:22px 22px 6px 22px; background:#fffef8; color:#18392a; box-shadow:0 18px 48px rgba(20,50,35,.24); text-align:left; }
+    .peace-helper-panel[hidden] { display:none; }
+    .peace-helper-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:9px; }
+    .peace-helper-head strong { font-size:18px; }
+    .peace-helper-mute { min-height:42px; padding:7px 11px; border:1px solid #86efac; border-radius:12px; background:#f0fdf4; color:#166534; font-weight:800; cursor:pointer; }
+    .peace-helper-message { margin:0 0 10px; font-size:17px; line-height:1.55; font-weight:700; }
+    .peace-helper-questions { display:grid; gap:7px; }
+    .peace-helper-questions button { min-height:44px; padding:9px 12px; border:1px solid #bbf7d0; border-radius:12px; background:#f0fdf4; color:#14532d; text-align:left; font-weight:800; cursor:pointer; }
+    body.sos-open .peace-helper { bottom:auto; top:88px; transform:scale(.88); transform-origin:right top; }
+    @keyframes peaceHelperWave { 0%,100%{transform:rotate(0)} 10%{transform:rotate(-8deg)} 20%{transform:rotate(8deg)} 30%{transform:rotate(0)} }
+    @media (min-width:760px) { .peace-helper { right:24px; bottom:32px; } }
+    @media (prefers-reduced-motion:reduce) { .peace-helper-launcher { animation:none; } }
+  </style>
 </head>
 <body class="classic mvp-focus-home">
   <main class="app">
 
     <!-- D01: 底部導覽列(放這裡確保在 script 之前就 parse) -->
+    <aside class="peace-helper" id="peaceHelper" aria-label="每日平安小幫手">
+      <section class="peace-helper-panel" id="peaceHelperPanel" aria-live="polite" hidden>
+        <div class="peace-helper-head">
+          <strong>小平安來幫忙</strong>
+          <button class="peace-helper-mute" id="peaceHelperMute" type="button">🔊 語音開啟</button>
+        </div>
+        <p class="peace-helper-message" id="peaceHelperMessage">您好，我可以帶你一步一步操作。</p>
+        <div class="peace-helper-questions" id="peaceHelperQuestions">
+          <button type="button" data-answer="每天打開每日平安，按一下綠色的「我平安」就完成了。">怎麼報平安？</button>
+          <button type="button" data-answer="到會員中心的核心守護人區，按「一鍵分享邀請」，對方同意後就完成綁定。">怎麼邀請守護人？</button>
+          <button type="button" data-answer="我會依伺服器裡已生效的資格，顯示你的 14 天體驗、21 天封測或付費方案。">我的方案是什麼？</button>
+          <button type="button" data-answer="請確認已加入官方 LINE、沒有封鎖，並把「每日平安」置頂及開啟通知。">為什麼收不到提醒？</button>
+          <button type="button" data-answer="在 LINE 聊天列表長按「每日平安」，選擇置頂；再到聊天設定確認通知已開啟。">如何把 LINE 置頂？</button>
+        </div>
+      </section>
+      <button class="peace-helper-launcher" id="peaceHelperLauncher" type="button" aria-expanded="false" aria-controls="peaceHelperPanel" aria-label="開啟每日平安小幫手">🤖</button>
+    </aside>
+
     <nav class="bottom-nav" id="bottomNav" aria-label="主導覽">
       <a href="#home" class="nav-item active" data-tab="home"><span class="nav-icon">🏠</span><span class="nav-label">首頁</span></a>
       <a href="#guardians" class="nav-item" data-tab="guardians"><span class="nav-icon">👥</span><span class="nav-label">守護群教學</span></a>
@@ -5798,11 +5831,113 @@
       return label.startsWith("下次") ? label : `下次提醒 ${label}`;
     }
 
+    const PEACE_HELPER_MUTED_KEY = "peace_helper_muted";
+    const PEACE_HELPER_POSITION_KEY = "peace_helper_position";
+    function peaceHelperIsMuted() {
+      return localStorage.getItem(PEACE_HELPER_MUTED_KEY) === "true";
+    }
+
+    function speakPeaceHelper(message) {
+      if (peaceHelperIsMuted() || !message || !("speechSynthesis" in window)) return;
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(String(message));
+      utterance.lang = "zh-TW";
+      utterance.rate = 0.9;
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function setPeaceHelperMessage(message, speak = true) {
+      const panel = $("peaceHelperPanel");
+      const text = $("peaceHelperMessage");
+      const launcher = $("peaceHelperLauncher");
+      if (!panel || !text) return;
+      text.textContent = message;
+      panel.hidden = false;
+      if (launcher) launcher.setAttribute("aria-expanded", "true");
+      if (speak) speakPeaceHelper(message);
+    }
+
+    function bindPeaceHelper() {
+      const launcher = $("peaceHelperLauncher");
+      const panel = $("peaceHelperPanel");
+      const mute = $("peaceHelperMute");
+      if (!launcher || !panel || !mute || launcher.dataset.bound === "true") return;
+      launcher.dataset.bound = "true";
+      const renderMute = () => { mute.textContent = peaceHelperIsMuted() ? "🔇 已靜音" : "🔊 語音開啟"; };
+      renderMute();
+      try {
+        const saved = JSON.parse(localStorage.getItem(PEACE_HELPER_POSITION_KEY) || "null");
+        if (saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)) {
+          const maxLeft = Math.max(8, window.innerWidth - launcher.offsetWidth - 8);
+          const maxTop = Math.max(8, window.innerHeight - launcher.offsetHeight - 88);
+          $("peaceHelper").style.left = `${Math.min(maxLeft, Math.max(8, saved.left))}px`;
+          $("peaceHelper").style.top = `${Math.min(maxTop, Math.max(8, saved.top))}px`;
+          $("peaceHelper").style.right = "auto";
+          $("peaceHelper").style.bottom = "auto";
+        }
+      } catch (_) {}
+      let drag = null;
+      launcher.addEventListener("pointerdown", (event) => {
+        const rect = $("peaceHelper").getBoundingClientRect();
+        drag = { pointerId:event.pointerId, dx:event.clientX - rect.left, dy:event.clientY - rect.top, moved:false };
+        launcher.setPointerCapture(event.pointerId);
+      });
+      launcher.addEventListener("pointermove", (event) => {
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        const left = Math.min(window.innerWidth - launcher.offsetWidth - 8, Math.max(8, event.clientX - drag.dx));
+        const top = Math.min(window.innerHeight - launcher.offsetHeight - 88, Math.max(8, event.clientY - drag.dy));
+        drag.moved = drag.moved || Math.abs(event.movementX) + Math.abs(event.movementY) > 3;
+        const helper = $("peaceHelper");
+        helper.style.left = `${left}px`; helper.style.top = `${top}px`;
+        helper.style.right = "auto"; helper.style.bottom = "auto";
+      });
+      launcher.addEventListener("pointerup", (event) => {
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        const rect = $("peaceHelper").getBoundingClientRect();
+        localStorage.setItem(PEACE_HELPER_POSITION_KEY, JSON.stringify({ left:rect.left, top:rect.top }));
+        launcher.dataset.justDragged = drag.moved ? "true" : "false";
+        drag = null;
+      });
+      launcher.addEventListener("click", () => {
+        if (launcher.dataset.justDragged === "true") { launcher.dataset.justDragged = "false"; return; }
+        panel.hidden = !panel.hidden;
+        launcher.setAttribute("aria-expanded", String(!panel.hidden));
+        if (!panel.hidden) speakPeaceHelper($("peaceHelperMessage").textContent);
+      });
+      mute.addEventListener("click", () => {
+        const muted = !peaceHelperIsMuted();
+        localStorage.setItem(PEACE_HELPER_MUTED_KEY, String(muted));
+        if (muted && "speechSynthesis" in window) window.speechSynthesis.cancel();
+        renderMute();
+        if (!muted) speakPeaceHelper($("peaceHelperMessage").textContent);
+      });
+      $("peaceHelperQuestions").addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-answer]");
+        if (button) setPeaceHelperMessage(button.dataset.answer || "", true);
+      });
+      const sosModal = $("sosConfirmModal");
+      if (sosModal && "MutationObserver" in window) {
+        const syncSos = () => document.body.classList.toggle("sos-open", !sosModal.hidden);
+        new MutationObserver(syncSos).observe(sosModal, { attributes:true, attributeFilter:["hidden"] });
+        syncSos();
+      }
+    }
+
+    function announceOnboardingCompletion(data) {
+      if (!data || !data.is_onboarding_completed || data.is_today_checked) return;
+      const key = `peace_helper_onboarding_${lineUserId || "local"}`;
+      if (sessionStorage.getItem(key) === "shown") return;
+      sessionStorage.setItem(key, "shown");
+      setPeaceHelperMessage("恭喜你完成綁定，請點一下「我平安」。完成後我會告訴你明天的提醒時間。", true);
+    }
+
     function showCheckinSuccessMessage(data) {
       const next = formatNextReminderMessage(data);
       const duplicate = Boolean(data && (data.already_checked_today || data.is_duplicate));
       const base = duplicate ? "✅ 今天已完成平安回報，不用再點一次" : "✅ 今天已完成平安回報";
       showInlineSuccess(next ? `${base}｜${next}` : base);
+      const spokenNext = next || "明天會依你設定的時間提醒";
+      setPeaceHelperMessage(`${base}。${spokenNext}。請把「每日平安」官方 LINE 置頂，並開啟通知。`, true);
       const nextBanner = $("mvpNextReminderBanner");
       if (nextBanner) {
         if (next) {
@@ -5959,6 +6094,8 @@
       if (!userId || !status || typeof status !== "object") return;
       const snapshot = {
         plan: status.plan || "trial",
+        membership_source: status.membership_source || "",
+        beta_cohort: status.beta_cohort || "",
         trial_days_left: status.trial_days_left,
         plan_expires_text: status.plan_expires_text || "",
         billing_cycle: status.billing_cycle || "",
@@ -5994,7 +6131,7 @@
       const plan = status.plan || "trial";
       const planView = planPresentation(plan, status.trial_days_left);
       if ($("planStateLabel")) {
-        $("planStateLabel").textContent = plan === "trial" ? "14 天安心體驗" : planLabel(plan);
+        $("planStateLabel").textContent = memberPlanLabel(status);
       }
       if ($("planDetailText")) $("planDetailText").textContent = planView.detail;
       if ($("planStrip")) $("planStrip").dataset.planTone = planView.tone;
@@ -6823,6 +6960,15 @@
         paid_799: "799 守護版",
         paid_799_year: "799 守護版年費"
       }[plan] || "試用中";
+    }
+
+    function memberPlanLabel(data) {
+      const source = String((data && data.membership_source) || "").toLowerCase();
+      const cohort = String((data && data.beta_cohort) || "").toUpperCase();
+      if (source === "beta" || cohort === "B399" || cohort === "B799") {
+        return cohort === "B799" ? "799 方案｜21 天封測" : "399 方案｜21 天封測";
+      }
+      return planLabel((data && data.plan) || "trial");
     }
 
     function planPresentation(plan, trialDaysLeft) {
@@ -7654,7 +7800,7 @@
       }
       $("memberDisplayName").textContent = displayName;
       $("memberAvatar").textContent = displayName.trim().slice(0, 1) || "我";
-      $("memberPlanText").textContent = planLabel(memberPlan);
+      $("memberPlanText").textContent = memberPlanLabel(status);
       $("memberExpiryText").textContent = status.paid_until
         ? `使用期限 ${status.paid_until}`
         : memberPlan === "trial"
@@ -7691,7 +7837,7 @@
           emergencyTip.innerHTML = `<strong>方案名額</strong>：最多 ${emergencyLimit} 位電話備援。可先填姓名與電話。`;
         }
       }
-      $("memberBillingPlan").textContent = planLabel(memberPlan);
+      $("memberBillingPlan").textContent = memberPlanLabel(status);
       $("memberBillingCycle").textContent = {
         monthly: "月繳",
         yearly: "年繳",
@@ -11114,6 +11260,7 @@
 
     function renderStatus(data) {
       currentStatusData = data;
+      bindPeaceHelper();
       renderHomeCheckinCard(data);
       showMilestoneCelebration();
       historyData = data.history || [];
@@ -11233,9 +11380,7 @@
       }
 
       const planView = planPresentation(data.plan, data.trial_days_left);
-      $("planStateLabel").textContent = data.plan === "trial"
-        ? "14 天安心體驗"
-        : planLabel(data.plan);
+      $("planStateLabel").textContent = memberPlanLabel(data);
       $("planDetailText").textContent = planView.detail;
       $("planStrip").dataset.planTone = planView.tone;
       $("contactLimit").textContent = String(data.core_guardian_alert_limit || data.contact_limit || 1);
@@ -11249,6 +11394,7 @@
       renderDailyAlmanac(data);
       renderCalendar(currentYear, currentMonth, historyData);
       renderMemberCenter();
+      announceOnboardingCompletion(data);
     }
 
     async function refreshStatus() {
