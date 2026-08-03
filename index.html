@@ -11618,6 +11618,43 @@
       });
     }
 
+    function contactMutationErrorMessage(data, fallback = "緊急聯絡人儲存失敗，請稍後再試") {
+      const fields = Array.isArray(data && data.fields) ? data.fields : [];
+      const labels = {
+        name_required: "請填寫姓名",
+        relationship_required: "請填寫與聯絡人的關係",
+        phone_or_email_required: "請填寫電話",
+        phone_format_invalid: "電話格式不正確，請輸入台灣手機或市話",
+        email_format_invalid: "Email 格式不正確",
+        duplicate_contact: "這位緊急聯絡人已經新增過了",
+      };
+      const translated = fields.map((field) => labels[field]).filter(Boolean);
+      if (translated.length) return translated.join("；");
+      const raw = String((data && (data.message || data.error)) || "").trim();
+      if (!raw || raw === "validation_failed") return fallback;
+      return raw;
+    }
+
+    async function apiUpsertEmergencyContact(payload) {
+      const normalizedPhone = String(payload.phone || "").replace(/\D/g, "");
+      let existingContacts = Array.isArray(contactData) ? contactData : [];
+      try {
+        const current = await apiGetContacts(lineUserId);
+        if (current.status === 200 && current.data) {
+          existingContacts = current.data.contacts || existingContacts;
+        }
+      } catch (_) {}
+      const existing = existingContacts.find((contact) => {
+        if (contactRoleOf(contact) !== "emergency") return false;
+        const contactPhone = String(contact.phone || "").replace(/\D/g, "");
+        return (normalizedPhone && contactPhone === normalizedPhone)
+          || (String(contact.name || "").trim() === String(payload.name || "").trim());
+      });
+      return existing && existing.id
+        ? apiUpdateGuardian(existing.id, payload)
+        : apiAddGuardian(payload);
+    }
+
     async function apiSaveProfileLocation(city, district) {
       return apiMemberMutationWithRegistrationRecovery("/api/profile/location", {
         method: "POST",
@@ -12467,9 +12504,9 @@
           });
         }
         for (const emergencyPayload of emergencyPayloads) {
-          const emergencyResult = await apiAddGuardian(emergencyPayload);
+          const emergencyResult = await apiUpsertEmergencyContact(emergencyPayload);
           if (emergencyResult.status !== 200 || emergencyResult.data.ok === false) {
-            throw new Error((emergencyResult.data && (emergencyResult.data.message || emergencyResult.data.error)) || "緊急聯絡人儲存失敗");
+            throw new Error(contactMutationErrorMessage(emergencyResult.data));
           }
           if (Array.isArray(emergencyResult.data.contacts)) contactData = emergencyResult.data.contacts;
         }
@@ -13056,7 +13093,9 @@
           if (currentStatusData) currentStatusData.contacts = contacts;
         }
       } catch (_) { /* keep cached */ }
-      const withPhone = (contacts || []).filter((c) => String(c.phone || c.mobile || "").trim());
+      const withPhone = (contacts || [])
+        .filter((c) => contactRoleOf(c) === "emergency" && String(c.phone || c.mobile || "").trim())
+        .sort((a, b) => (Number(a.priority) || 999) - (Number(b.priority) || 999));
       if (!withPhone.length) {
         listEl.innerHTML = "";
         if (formEl) formEl.hidden = false;
@@ -13097,11 +13136,12 @@
           name,
           relationship,
           phone,
-          is_primary: !((currentStatusData && currentStatusData.contacts) || []).length,
-          notify_methods: ["line"],
+          is_primary: false,
+          contact_role: "emergency",
+          notify_methods: [],
         });
         if (addRes.status !== 200 || (addRes.data && addRes.data.ok === false)) {
-          throw new Error((addRes.data && (addRes.data.message || addRes.data.error)) || "儲存失敗");
+          throw new Error(contactMutationErrorMessage(addRes.data));
         }
         await refreshStatus();
         $("mvpContactName").value = "";

@@ -9,6 +9,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ContactDualRoleTests(unittest.TestCase):
+    def test_emergency_contact_accepts_taiwan_landline(self):
+        ok, errors, cleaned = app.validate_contact_payload({
+            "name": "媽媽",
+            "relationship": "母親",
+            "phone": "02-2345-6789",
+            "contact_role": "emergency",
+        })
+
+        self.assertTrue(ok, errors)
+        self.assertEqual(cleaned["phone"], "02-2345-6789")
+
     def test_first_setup_saves_reminder_before_guardian_acceptance(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
         save_start = page.index("async function saveOnboardingGuardian()")

@@ -35,6 +35,19 @@ test("setup provides a separate optional emergency contact", () => {
 
   const save = functionBody("saveOnboardingGuardian");
   assert.match(save, /contact_role:\s*"emergency"/);
+  assert.match(save, /apiUpsertEmergencyContact/);
+});
+
+test("contact-family form saves a phone backup instead of consuming guardian quota", () => {
+  const save = functionBody("saveMvpContact");
+  assert.match(save, /contact_role:\s*"emergency"/);
+  assert.match(save, /contactMutationErrorMessage/);
+});
+
+test("contact-family panel lists emergency contacts by priority", () => {
+  const render = functionBody("renderMvpContactList");
+  assert.match(render, /contactRoleOf\(c\)\s*===\s*"emergency"/);
+  assert.match(render, /priority/);
 });
 
 test("saving combined setup stores reminders without completing guardian binding, then reveals one-tap invite", () => {
