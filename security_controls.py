@@ -12,8 +12,14 @@ SENSITIVE_KEYS = {
 }
 
 
-def _flag(config, name):
-    return str(config.get(name) or "").strip().lower() in {"1", "true", "yes", "on", "passed"}
+EVIDENCE_SOURCES = {
+    "automated_test",
+    "formal_http_probe",
+    "dependency_scan",
+    "render_postgres_setting",
+    "backup_restore_drill",
+    "incident_response_drill",
+}
 
 
 def _mask_phone(value):
@@ -63,13 +69,39 @@ def apply_security_headers(response, *, is_https, path="/"):
     return response
 
 
-def _item(number, name, passed, evidence, blocking="operation"):
+def _valid_checked_at(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    return text
+
+
+def _item(config, number, name, default_evidence, remediation, *, prerequisite=True, blocking="operation"):
+    prefix = f"SECURITY_CHECK_{number:02d}"
+    requested_status = str(config.get(f"{prefix}_STATUS") or "").strip().lower()
+    source = str(config.get(f"{prefix}_SOURCE") or "").strip()
+    checked_at = _valid_checked_at(config.get(f"{prefix}_CHECKED_AT"))
+    evidence = str(config.get(f"{prefix}_EVIDENCE") or "").strip()
+    evidence_complete = source in EVIDENCE_SOURCES and bool(checked_at and evidence)
+    if requested_status == "failed" and evidence_complete:
+        status = "failed"
+    elif requested_status == "passed" and evidence_complete and prerequisite:
+        status = "passed"
+    else:
+        status = "not_checked"
     return {
         "number": number,
         "name": name,
-        "status": "passed" if passed else "not_checked",
-        "evidence": evidence,
+        "status": status,
+        "checked_at": checked_at or None,
+        "evidence_source": source if source in EVIDENCE_SOURCES else None,
+        "evidence": evidence or default_evidence,
         "blocking": blocking,
+        "remediation": "" if status == "passed" else remediation,
     }
 
 
@@ -81,22 +113,18 @@ def security_readiness(config, now=None):
         len(str(config.get("LINE_CHANNEL_SECRET") or "").encode()) >= 16,
         len(str(config.get("CRON_SECRET") or "").encode()) >= 32,
     ])
-    secret_ready = required_secrets and _flag(config, "SECRETS_SCAN_PASSED")
-    database_ready = bool(str(config.get("DATABASE_URL") or "").strip()) and _flag(config, "DATABASE_LEAST_PRIVILEGE_CONFIRMED")
-    dependency_ready = _flag(config, "DEPENDENCY_AUDIT_PASSED")
-    monitoring_ready = _flag(config, "SECURITY_MONITORING_ENABLED")
-    recovery_ready = bool(str(config.get("BACKUP_RESTORE_TESTED_AT") or "").strip()) and _flag(config, "INCIDENT_RUNBOOK_CONFIRMED")
+    database_ready = bool(str(config.get("DATABASE_URL") or "").strip())
     items = [
-        _item(1, "機密與供應鏈", secret_ready, "環境機密完整且機密掃描證據已確認"),
-        _item(2, "輸入、輸出與檔案安全", True, "後端欄位驗證、文字輸出與安全 URL 控制已啟用"),
-        _item(3, "身分驗證與工作階段", required_secrets, "LINE／排程／管理員驗證採 fail-closed"),
-        _item(4, "物件授權與隱私", True, "會員與管理 API 由伺服器端主體及角色授權"),
-        _item(5, "資料庫與資料保護", database_ready, "需確認正式資料庫最小權限"),
-        _item(6, "瀏覽器、網路與 API 防護", True, "CSP、HSTS、nosniff、同源及不快取標頭已啟用"),
-        _item(7, "頻率限制與濫用防護", True, "登入、推播、搬家與高風險操作限制已啟用", "test"),
-        _item(8, "日誌、稽核與偵測", monitoring_ready, "需確認正式異常監控與警示", "test"),
-        _item(9, "備份、復原與事故應變", recovery_ready, "需有備份還原日期及事故手冊確認", "test"),
-        _item(10, "驗證與上線門檻", dependency_ready, "需有依賴弱點掃描通過證據", "test"),
+        _item(config, 1, "機密與供應鏈", "尚無具日期的機密與供應鏈掃描證據", "執行機密掃描並記錄不含機密值的結果、來源與日期", prerequisite=required_secrets),
+        _item(config, 2, "輸入、輸出與檔案安全", "尚無具日期的負向測試證據", "執行 XSS、危險 URL、路徑與邊界負向測試並保存結果"),
+        _item(config, 3, "身分驗證與工作階段", "尚無具日期的驗證與工作階段測試證據", "完成未登入、逾時、CSRF、Cookie 與 fail-closed 測試", prerequisite=required_secrets),
+        _item(config, 4, "物件授權與隱私", "尚無具日期的越權測試證據", "完成角色及跨會員、訂單與守護關係越權測試"),
+        _item(config, 5, "資料庫與資料保護", "尚無正式資料庫最小權限與加密證據", "由資料庫平台確認最小權限、傳輸加密及備份加密", prerequisite=database_ready),
+        _item(config, 6, "瀏覽器、網路與 API 防護", "尚無正式 HTTPS 與安全標頭探針證據", "對正式站執行 HTTPS、安全標頭、no-store 及未授權探針"),
+        _item(config, 7, "頻率限制與濫用防護", "尚無具日期的濫用限制負向測試證據", "完成登入、推播、SOS、邀請、重綁及高成本通道限制測試", blocking="test"),
+        _item(config, 8, "日誌、稽核與偵測", "尚無正式告警收件證據", "以不含會員敏感資料的測試事件確認告警可收件", blocking="test"),
+        _item(config, 9, "備份、復原與事故應變", "尚無備份還原與事故演練證據", "完成隔離還原、筆數核對、復原時間及事故手冊演練", blocking="test"),
+        _item(config, 10, "驗證與上線門檻", "尚無具日期的依賴掃描及發布驗證證據", "完成固定版本依賴掃描、回歸、啟動與健康探針", blocking="test"),
     ]
     operation_allowed = all(row["status"] == "passed" for row in items[:6])
     test_allowed = operation_allowed and all(row["status"] == "passed" for row in items[6:])

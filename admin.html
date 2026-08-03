@@ -11,6 +11,17 @@
       --admin-note-size: 15px;
       --admin-control-height: 48px;
       --admin-sidebar-width: 280px;
+      --admin-bg: #111827;
+      --admin-surface: #1b2535;
+      --admin-surface-elevated: #243244;
+      --admin-input-bg: #151f2d;
+      --admin-border: #3a4a60;
+      --admin-text: #e7e2d8;
+      --admin-muted: #b3bdc9;
+      --admin-focus: #78c7a3;
+      --admin-success: #70c799;
+      --admin-warning: #d8ad63;
+      --admin-danger: #df858b;
     }
     * { box-sizing: border-box; }
     body {
@@ -553,9 +564,116 @@
       .release-row { grid-template-columns: 1fr auto; }
       .release-row span:not(.badge) { grid-column: 1 / -1; }
     }
+
+    /* Fixed eye-comfort admin theme. The LINE preview itself stays light to
+       match what members receive; all editing controls around it are dark. */
+    :root { color-scheme: dark; }
+    body {
+      color: var(--admin-text);
+      background:
+        radial-gradient(circle at 12% 8%, rgba(62, 113, 97, 0.2), transparent 34%),
+        radial-gradient(circle at 92% 16%, rgba(114, 69, 85, 0.16), transparent 32%),
+        var(--admin-bg);
+    }
+    .admin-nav {
+      background: #152436;
+      border: 1px solid var(--admin-border);
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.32);
+    }
+    .admin-nav-title, .admin-nav summary { color: var(--admin-text); }
+    .admin-nav details[open] > summary { background: var(--admin-surface-elevated); }
+    .admin-subnav { border-left-color: var(--admin-border); }
+    .admin-nav a { color: #c4dfd1; }
+    .admin-nav a:hover, .admin-nav a:focus-visible, .admin-nav a[aria-current="page"] {
+      color: #10241b;
+      background: var(--admin-focus);
+      outline-color: #a3ddc0;
+    }
+    .panel, .integration-card, .stat, .support-item, .reward-item, .log-item,
+    .plan-reference, .contact-details-list, .step-box, .card-editor-shell,
+    .card-editor-panel, .member-table-wrap, details.integration-card {
+      color: var(--admin-text);
+      background: var(--admin-surface);
+      border-color: var(--admin-border);
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.2);
+    }
+    .integration-card p, .subtitle, .stat span, .release-row span:not(.badge),
+    .support-meta, .log-item small, .note, th, .auth-hint, .step-box p {
+      color: var(--admin-muted);
+    }
+    table, thead, tbody, tr, th, td { background: transparent; }
+    th, td, .release-row, .release-status, .contact-details-list > div + div {
+      border-color: var(--admin-border);
+    }
+    th { color: #c8d0da; background: var(--admin-surface-elevated); }
+    tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.025); }
+    input, select, textarea {
+      color: var(--admin-text);
+      background: var(--admin-input-bg);
+      border-color: var(--admin-border);
+      caret-color: var(--admin-focus);
+    }
+    input::placeholder, textarea::placeholder { color: #8e9baa; opacity: 1; }
+    input[type="checkbox"] { accent-color: var(--admin-success); }
+    input:disabled, select:disabled, textarea:disabled, button:disabled,
+    :disabled {
+      color: #8f99a6;
+      background-color: #202a38;
+      opacity: 0.72;
+    }
+    input:focus-visible, select:focus-visible, textarea:focus-visible,
+    button:focus-visible, summary:focus-visible, a:focus-visible,
+    :focus-visible {
+      outline: 3px solid var(--admin-focus);
+      outline-offset: 2px;
+    }
+    input:-webkit-autofill, input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus, textarea:-webkit-autofill,
+    select:-webkit-autofill, :-webkit-autofill {
+      -webkit-text-fill-color: var(--admin-text);
+      box-shadow: 0 0 0 1000px var(--admin-input-bg) inset;
+      transition: background-color 9999s ease-out;
+    }
+    .login-panel label, .auth-bar label, .card-form label, .step-box h4,
+    .contact-details summary { color: #a9d8bf; }
+    .auth-bar, .auth-status, .auth-status.is-ok {
+      color: #bfe8cf;
+      background: #1a342b;
+      border-color: #477d65;
+    }
+    .auth-status.is-loading { color: #bdd5f4; background: #1d3049; border-color: #47698e; }
+    .auth-status.is-err, .plan-save-toast[data-kind="error"] {
+      color: #f0c2c5;
+      background: #41262d;
+      border-color: #94545d;
+    }
+    .auth-hint code { color: #d9e8c3; background: #2e3b29; }
+    .card-editor-head { background: linear-gradient(135deg, #174c46, #206049); }
+    .card-editor-tabs button { color: #bfe8d7; background: #243b36; }
+    .card-editor-tabs button[aria-selected="true"] { color: #f0ebe1; background: #286958; }
+    .card-form input, .card-form select, .card-form textarea { background: var(--admin-input-bg); }
+    .group-send-zone { background: #332d20; border-color: #9b753b; }
+    .plan-save-toast {
+      color: #c8ecd7;
+      background: #1b382c;
+      border-color: #4c8c6b;
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.4);
+    }
+    .badge { color: #d4dae2; background: #354153; }
+    .badge.ok { color: #c6ecd6; background: #254937; }
+    .badge.warn { color: #f0d7a8; background: #4b3c25; }
+    .badge.bad { color: #f0c2c5; background: #512f36; }
+    .plan-reference .tier-199, .plan-reference .tier-399,
+    .plan-reference .tier-799, .plan-reference .hot-plan {
+      background: color-mix(in srgb, var(--tier-color, var(--admin-success)) 12%, var(--admin-surface));
+    }
+    .plan-reference table { background: var(--admin-surface); }
+    .admin-nav-backdrop { background: rgba(4, 9, 16, 0.78); }
+    .line-card-preview { background: #fff; color: #172033; }
+    .line-card-preview .line-card-body { background: #fff; color: #172033; }
   </style>
 </head>
-<body>
+<body data-admin-theme="eye-comfort-dark">
   <section class="panel login-panel" id="loginPanel">
     <form id="adminLoginForm">
       <h1>每日平安管理後台</h1>
@@ -2640,6 +2758,24 @@
       $("financeNewebpayFixed").value = data.settings?.gateway_fees?.newebpay?.fixed ?? 0;
     }
 
+    function securityStatusPresentation(status) {
+      return {
+        passed: {label: "通過", badge: "ok"},
+        failed: {label: "未通過", badge: "bad"},
+        not_checked: {label: "未檢查", badge: "warn"},
+      }[status] || {label: "未檢查", badge: "warn"};
+    }
+
+    function securityItemMarkup(item) {
+      const state = securityStatusPresentation(item.status);
+      const checkedAt = item.checked_at ? escapeHtml(item.checked_at) : "尚未產生";
+      const source = item.evidence_source ? escapeHtml(item.evidence_source) : "尚未提供";
+      const remediation = item.status === "passed" || !item.remediation
+        ? ""
+        : `<br><small><strong>下一步：</strong>${escapeHtml(item.remediation)}</small>`;
+      return `<div class="log-item security-evidence-item"><div><strong>${Number(item.number)}. ${escapeHtml(item.name || "-")}</strong><br><small>${escapeHtml(item.evidence || "-")}</small><br><small>證據來源：${source}｜檢查時間：${checkedAt}</small>${remediation}</div><span class="badge ${state.badge}">${state.label}</span></div>`;
+    }
+
     async function loadSecurityReadiness() {
       if (!adminPermissions.includes("system.manage")) return;
       const response = await adminFetch("/api/admin/security-readiness");
@@ -2652,7 +2788,7 @@
       };
       const summary = labels[data.overall] || labels.blocked_public_operation;
       $("securityOverall").innerHTML = `<strong><span class="badge ${summary[2]}">${summary[0]}</span></strong><p>${summary[1]}</p><small>證據產生時間：${escapeHtml(data.generated_at || "-")}</small>`;
-      $("securityReadinessItems").innerHTML = (data.items || []).map((item) => `<div class="log-item"><div><strong>${Number(item.number)}. ${escapeHtml(item.name || "-")}</strong><br><small>${escapeHtml(item.evidence || "-")}</small></div><span class="badge ${item.status === "passed" ? "ok" : "bad"}">${item.status === "passed" ? "通過" : "未檢查"}</span></div>`).join("");
+      $("securityReadinessItems").innerHTML = (data.items || []).map(securityItemMarkup).join("");
     }
 
     async function saveFinanceSettings() {
