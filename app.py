@@ -1,5 +1,5 @@
-Warning: truncated output (original token count: 245173)
-Total output lines: 23809
+Warning: truncated output (original token count: 245189)
+Total output lines: 23811
 
 import copy
 import base64
@@ -2774,6 +2774,8 @@ def _comparable_datetimes(left, right):
 def membership_access_active(profile, now=None):
     """會員權益是否有效；free 僅代表未訂閱，SOS 安全政策另行判斷。"""
     if not isinstance(profile, dict):
+        return False
+    if profile.get("beta_reset_pending"):
         return False
     now = now or current_app_time({})
     if profile.get("membership_source") == "beta":
@@ -9927,7 +9929,7 @@ def _sos_public_snapshot(event):
         "reminder_round": int(event.get("reminder_round") or 0),
         "escalation_stopped": bool(event.get("escalation_stopped")),
         "primary_responder": next(
-            (row["name"] for row in recipients if row.get("role…45173 tokens truncated…_uri,
+…45189 tokens truncated…_uri,
         "invite_text": invite_text,
         "invite_type": invite_type,
         "invite_uri_ok": invite_ok,
