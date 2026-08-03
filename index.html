@@ -3192,6 +3192,22 @@
       font-weight: 750;
       line-height: 1.6;
     }
+    .guardian-group-upgrade-gate {
+      display: grid;
+      gap: 10px;
+      padding: 18px 16px;
+      border: 1px solid #f4c978;
+      border-radius: 16px;
+      background: linear-gradient(135deg, #fffaf0, #fff3d6);
+      color: #713f12;
+      text-align: left;
+    }
+    .guardian-group-upgrade-gate strong { font-size: 18px; }
+    .guardian-group-upgrade-gate p { margin: 0; line-height: 1.65; }
+    .guardian-group-upgrade-gate .guardian-group-line-btn {
+      width: 100%;
+      text-align: center;
+    }
     .guardian-group-link-row {
       display: grid;
       grid-template-columns: 1fr;
@@ -4530,6 +4546,12 @@
           <button class="action-btn primary" id="coreGuardianShareBtn" type="button">核心守護一鍵分享</button>
         </div>
       </div>
+      <div class="guardian-group-upgrade-gate" id="guardianGroupUpgradeGate" hidden>
+        <strong>守護群是 799 家庭守護方案專屬功能</strong>
+        <p>你目前的方案尚未包含 LINE 守護群設定。如有家庭群組共同守護的需要，請先升級 799 方案，升級後即可查看並使用完整設定。</p>
+        <a class="guardian-group-line-btn" href="/liff/pricing.html">升級 799 方案</a>
+      </div>
+      <div id="guardianGroupSetupContent" hidden>
       <div class="settings-title">LINE 守護群設定</div>
       <div class="guardian-group-guide-intro">不用填群組代碼。請先在 LINE 建立家人群組，再把「每日平安」官方帳號邀進群。升級 799 並綁定後，方案本人會自動成為守護群管理員，不必再走管理員設定。完成後由本人點選或輸入綁定指令即可啟用。</div>
       <div class="guardian-group-bind-status" id="guardianGroupBindStatusCard" data-bound="false">目前狀態：載入中…</div>
@@ -4555,6 +4577,7 @@
         <a class="guardian-group-line-btn" href="https://line.me/R/ti/p/%40042kwqib" target="_blank" rel="noopener">先加入每日平安官方帳號</a>
       </div>
       <div class="guardian-group-plan-note">守護群限有效方案使用：799 月費最多 1 群，799 年費最多 3 群。每個 LINE 群組同一時間只能加入一個官方帳號。</div>
+      </div>
     </section>
 
     <section class="settings" aria-label="會員個人中心">
@@ -7835,7 +7858,10 @@
       const guardianGroupIds = status.guardian_group_ids || [];
       const guardianGroups = status.guardian_groups || [];
       const groupById = Object.fromEntries(guardianGroups.map((group) => [group.group_id, group]));
-      $("guardianGroupsSection").hidden = !(status.guardian_group_limit > 0);
+      const hasGuardianGroupAccess = Number(status.guardian_group_limit || 0) > 0;
+      $("guardianGroupUpgradeGate").hidden = hasGuardianGroupAccess;
+      $("guardianGroupSetupContent").hidden = !hasGuardianGroupAccess;
+      $("guardianGroupsSection").hidden = !hasGuardianGroupAccess;
       const roster = status.today_safety_roster || null;
       const rosterHtml = roster ? (() => {
         const unchecked = (roster.unchecked || []).map((x) => escapeHtml(x.name || "")).filter(Boolean);

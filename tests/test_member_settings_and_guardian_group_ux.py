@@ -43,6 +43,21 @@ class MemberSettingsAndGuardianGroupUxTests(unittest.TestCase):
         self.assertIn("建立／綁定守護群", page)
         self.assertNotIn('data-group-id="__default__"', page)
 
+    def test_non_799_members_see_upgrade_gate_instead_of_group_setup(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="guardianGroupUpgradeGate"', page)
+        self.assertIn('id="guardianGroupSetupContent"', page)
+        self.assertIn("守護群是 799 家庭守護方案專屬功能", page)
+        self.assertIn("升級 799 方案", page)
+        self.assertIn('href="/liff/pricing.html"', page)
+        self.assertIn(
+            'const hasGuardianGroupAccess = Number(status.guardian_group_limit || 0) > 0;',
+            page,
+        )
+        self.assertIn('$("guardianGroupUpgradeGate").hidden = hasGuardianGroupAccess;', page)
+        self.assertIn('$("guardianGroupSetupContent").hidden = !hasGuardianGroupAccess;', page)
+
     def test_home_names_core_guardian_status_without_guardian_circle_jargon(self):
         page = (ROOT / "index.html").read_text(encoding="utf-8")
 

@@ -95,6 +95,25 @@ class GuardianGroupSettingsTests(unittest.TestCase):
             },
         )
 
+    def test_non_799_member_is_told_to_upgrade_before_viewing_settings(self):
+        state = app.load_state(self.data_file)
+        state["users"]["U-399"] = {
+            "line_user_id": "U-399",
+            "plan": "paid_399",
+            "payment_status": "active",
+        }
+        app.save_state(self.data_file, state)
+
+        result, code = app.guardian_group_settings_for_user(
+            self.data_file, "U-399"
+        )
+
+        self.assertEqual(code, 403)
+        self.assertEqual(result["error"], "guardian group plan required")
+        self.assertTrue(result["upgrade_required"])
+        self.assertEqual(result["required_plan"], "799")
+        self.assertIn("799", result["message"])
+
     def test_guardian_group_defaults_are_available_to_monthly_yearly_and_beta_799(self):
         state = app.load_state(self.data_file)
         now = datetime.now()

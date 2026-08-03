@@ -8536,6 +8536,15 @@ def guardian_group_settings_for_user(data_file, line_user_id):
     profile = (state.get("users") or {}).get(str(line_user_id or "").strip())
     if not profile:
         return {"error": "user not registered"}, 404
+    group_limit = int(plan_rules(profile).get("guardian_group_limit") or 0)
+    if group_limit <= 0:
+        return {
+            "error": "guardian group plan required",
+            "message": "守護群是 799 家庭守護方案專屬功能，如有需要請先升級 799 方案。",
+            "upgrade_required": True,
+            "required_plan": "799",
+            "guardian_group_limit": 0,
+        }, 403
     groups = []
     for group in owned_active_guardian_groups(state, profile):
         groups.append({
@@ -8551,9 +8560,7 @@ def guardian_group_settings_for_user(data_file, line_user_id):
     return {
         "ok": True,
         "plan": profile.get("plan") or "trial",
-        "guardian_group_limit": int(
-            plan_rules(profile).get("guardian_group_limit") or 0
-        ),
+        "guardian_group_limit": group_limit,
         "guardian_group_count": len(groups),
         "groups": groups,
         "default_preferences": normalize_guardian_group_preferences(
