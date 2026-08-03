@@ -613,6 +613,7 @@
           <div class="admin-subnav">
             <a href="/admin?page=beta-program" data-admin-link="beta-program">封測管理</a>
             <a href="/admin?page=orders" data-admin-link="orders">方案與訂單</a>
+            <a href="/admin?page=finance" data-admin-link="finance">財務與必要支出</a>
           </div>
         </details>
         <details data-admin-group="system">
@@ -620,12 +621,69 @@
           <div class="admin-subnav">
             <a href="/admin?page=support" data-admin-link="support">客服與隱私</a>
             <a href="/admin?page=test-center" data-admin-link="test-center">測試中心</a>
+            <a href="/admin?page=security" data-admin-link="security">資安上線狀態</a>
             <a href="/admin?page=seo" data-admin-link="seo">SEO 管理</a>
             <a href="/admin?page=system" data-admin-link="system">系統設定</a>
           </div>
         </details>
       </nav>
       <div class="admin-content">
+
+    <section class="panel section-heading" id="finance" data-admin-page="finance" style="margin-bottom:16px;">
+      <h2 style="margin:0 0 6px;">財務與必要支出</h2>
+      <p class="note">本月現金實收與年費 12 個月分攤分開呈現，不會重複算成同一筆獲利。只有超級管理員與財務人員可查看或修改。</p>
+      <div class="toolbar">
+        <label>報表月份 <input id="financeMonth" type="month"></label>
+        <button id="financeReload" type="button">重新計算</button>
+      </div>
+      <p id="financeAccessMessage" class="note" role="status"></p>
+      <div class="stats">
+        <div class="stat"><strong id="financeCashGross">NT$0</strong><span>本月現金實收</span></div>
+        <div class="stat"><strong id="financeCashNet">NT$0</strong><span>扣退款後實收</span></div>
+        <div class="stat"><strong id="financeAccrual">NT$0</strong><span>年費 12 個月分攤＋月費收入</span></div>
+        <div class="stat"><strong id="financeExpenses">NT$0</strong><span>本月必要支出</span></div>
+        <div class="stat"><strong id="financeGatewayFees">NT$0</strong><span>金流手續費</span></div>
+        <div class="stat"><strong id="financeTax">NT$0</strong><span>預估應繳營業稅</span></div>
+        <div class="stat"><strong id="financeProfit">NT$0</strong><span>本月現金淨利</span></div>
+      </div>
+      <div class="integration-grid" style="margin-bottom:16px;">
+        <div class="integration-card"><strong>損益平衡會員數</strong><p id="financeBreakEven">199：0 人｜399：0 人｜799：0 人</p></div>
+        <div class="integration-card"><strong>稅額拆分</strong><p id="financeTaxDetail">銷項稅 NT$0｜可扣抵進項稅 NT$0</p></div>
+      </div>
+      <details class="integration-card" style="margin-bottom:16px;">
+        <summary><strong>金流費率與營業稅設定</strong></summary>
+        <div class="integration-grid" style="margin-top:12px;">
+          <label>綠界費率 %<input id="financeEcpayPercent" type="number" min="0" max="20" step="0.01" value="2.75"></label>
+          <label>綠界每筆固定費<input id="financeEcpayFixed" type="number" min="0" max="1000" step="1" value="0"></label>
+          <label>藍新費率 %<input id="financeNewebpayPercent" type="number" min="0" max="20" step="0.01" value="2.8"></label>
+          <label>藍新每筆固定費<input id="financeNewebpayFixed" type="number" min="0" max="1000" step="1" value="0"></label>
+          <label><input id="financeTaxEnabled" type="checkbox" checked> 啟用 5% 營業稅拆分</label>
+          <button id="financeSettingsSave" type="button">儲存財務設定</button>
+        </div>
+      </details>
+      <h3>新增必要支出</h3>
+      <form id="financeExpenseForm" class="integration-grid">
+        <label>費用名稱<input id="financeExpenseName" maxlength="100" required placeholder="例如 Render 正式主機"></label>
+        <label>分類<select id="financeExpenseCategory"><option value="hosting">主機</option><option value="database">資料庫</option><option value="line">LINE</option><option value="payment">金流</option><option value="domain">網域</option><option value="security">資安</option><option value="backup">備份</option><option value="marketing">行銷</option><option value="support">客服</option><option value="accounting">會計</option><option value="other">其他</option></select></label>
+        <label>費用類型<select id="financeExpenseType"><option value="fixed">固定費</option><option value="usage">依用量</option><option value="one_time">一次性</option></select></label>
+        <label>含稅金額<input id="financeExpenseAmount" type="number" min="0" max="100000000" step="1" required></label>
+        <label>發生日<input id="financeExpenseDate" type="date" required></label>
+        <label><input id="financeTaxInvoice" type="checkbox"> 有統編發票</label>
+        <label><input id="financeInputDeductible" type="checkbox"> 可扣抵進項稅</label>
+        <button type="submit">儲存支出</button>
+      </form>
+      <p id="financeSaveMessage" class="note" role="status" aria-live="polite"></p>
+      <h3>本月支出明細</h3>
+      <div class="table-wrap"><table><thead><tr><th>日期</th><th>費用</th><th>分類</th><th>類型</th><th>金額</th><th>進項稅</th></tr></thead><tbody id="financeExpensesBody"><tr><td colspan="6">尚未載入</td></tr></tbody></table></div>
+    </section>
+
+    <section class="panel section-heading" id="security" data-admin-page="security" style="margin-bottom:16px;">
+      <h2 style="margin:0 0 6px;">資安上線狀態</h2>
+      <p class="note">狀態由伺服器設定與驗收證據自動判斷，不能用手動勾選改成通過。</p>
+      <div id="securityOverall" class="integration-card"><strong>正在檢查…</strong><p>尚未取得資安證據。</p></div>
+      <div id="securityReadinessItems" class="log-list"></div>
+      <p class="note">第 1～6 項任一未通過：<strong>禁止正式公開營運</strong>。第 7～10 項未達基本門檻：禁止公開測試。</p>
+    </section>
 
     <section class="panel section-heading" id="incidents" data-admin-page="incidents" style="margin-bottom:16px;">
       <h2 style="margin:0 0 6px;">緊急事件中心</h2>
@@ -1262,8 +1320,8 @@
     const ADMIN_PAGES = new Set([
       "operations", "members", "guardian-operations", "incidents",
       "push-management",
-      "beta-program", "orders", "support", "analytics", "line-cost",
-      "test-center", "seo", "system"
+      "beta-program", "orders", "finance", "support", "analytics", "line-cost",
+      "test-center", "security", "seo", "system"
     ]);
     const EMBEDDED_ADMIN_PAGES = new Set(["operations", "members", "beta-program", "orders", "system"]);
     const ADMIN_PAGE_TITLES = {
@@ -1274,10 +1332,12 @@
       "push-management": "推播管理",
       "beta-program": "封測管理",
       orders: "方案與訂單",
+      finance: "財務與必要支出",
       support: "客服與隱私",
       analytics: "流量分析",
       "line-cost": "LINE 訊息用量",
       "test-center": "測試中心",
+      security: "資安上線狀態",
       seo: "SEO 管理",
       system: "系統設定"
     };
@@ -1353,6 +1413,10 @@
 
     function canManageMembers() {
       return adminPermissions.includes("member.manage");
+    }
+
+    function canManageFinance() {
+      return adminPermissions.includes("finance.manage");
     }
 
     const pushStatusLabels = {
@@ -2540,6 +2604,108 @@
       if (res.ok) await loadOperationsControls();
     }
 
+    function financeMoney(value) {
+      return `NT$${Number(value || 0).toLocaleString("zh-TW", {maximumFractionDigits: 2})}`;
+    }
+
+    async function loadFinanceDashboard() {
+      const message = $("financeAccessMessage");
+      if (!canManageFinance()) {
+        if (message) message.textContent = "目前登入角色沒有財務資料權限；請改用超級管理員或財務人員帳號。";
+        return;
+      }
+      const month = $("financeMonth").value || new Date().toISOString().slice(0, 7);
+      const response = await adminFetch(`/api/admin/finance/dashboard?month=${encodeURIComponent(month)}`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (message) message.textContent = data.message || "財務資料載入失敗。";
+        return;
+      }
+      if (message) message.textContent = `已計算 ${data.month}；現金流與月分攤損益分開顯示。`;
+      $("financeCashGross").textContent = financeMoney(data.cash?.gross_collected);
+      $("financeCashNet").textContent = financeMoney(data.cash?.net_collected);
+      $("financeAccrual").textContent = financeMoney(data.accrual?.recognized_gross);
+      $("financeExpenses").textContent = financeMoney(data.expenses?.gross);
+      $("financeGatewayFees").textContent = financeMoney(data.cash?.gateway_fees);
+      $("financeTax").textContent = financeMoney(data.tax?.estimated_payable);
+      $("financeProfit").textContent = financeMoney(data.cash?.profit);
+      $("financeBreakEven").textContent = `199：${Number(data.break_even_members?.["199"] || 0)} 人｜399：${Number(data.break_even_members?.["399"] || 0)} 人｜799：${Number(data.break_even_members?.["799"] || 0)} 人`;
+      $("financeTaxDetail").textContent = `銷項稅 ${financeMoney(data.tax?.output_tax)}｜可扣抵進項稅 ${financeMoney(data.tax?.input_tax_credit)}`;
+      const rows = data.expenses?.items || [];
+      $("financeExpensesBody").innerHTML = rows.length ? rows.map((row) => `<tr><td>${escapeHtml(row.incurred_on || "-")}</td><td>${escapeHtml(row.name || "-")}</td><td>${escapeHtml(row.category || "-")}</td><td>${escapeHtml(row.expense_type || "-")}</td><td>${financeMoney(row.amount)}</td><td>${row.input_tax_deductible ? "可扣抵" : "不可扣抵"}</td></tr>`).join("") : '<tr><td colspan="6">本月尚未記錄支出</td></tr>';
+      $("financeTaxEnabled").checked = data.settings?.tax_enabled !== false;
+      $("financeEcpayPercent").value = data.settings?.gateway_fees?.ecpay?.percent ?? 2.75;
+      $("financeEcpayFixed").value = data.settings?.gateway_fees?.ecpay?.fixed ?? 0;
+      $("financeNewebpayPercent").value = data.settings?.gateway_fees?.newebpay?.percent ?? 2.8;
+      $("financeNewebpayFixed").value = data.settings?.gateway_fees?.newebpay?.fixed ?? 0;
+    }
+
+    async function loadSecurityReadiness() {
+      if (!adminPermissions.includes("system.manage")) return;
+      const response = await adminFetch("/api/admin/security-readiness");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) return;
+      const labels = {
+        ready: ["全部門檻通過", "可依正式發布流程進行驗收。", "ok"],
+        blocked_public_test: ["禁止公開測試", "第 7～10 項仍缺少正式證據。", "warn"],
+        blocked_public_operation: ["禁止正式公開營運", "第 1～6 項仍有未檢查或不通過項目。", "bad"],
+      };
+      const summary = labels[data.overall] || labels.blocked_public_operation;
+      $("securityOverall").innerHTML = `<strong><span class="badge ${summary[2]}">${summary[0]}</span></strong><p>${summary[1]}</p><small>證據產生時間：${escapeHtml(data.generated_at || "-")}</small>`;
+      $("securityReadinessItems").innerHTML = (data.items || []).map((item) => `<div class="log-item"><div><strong>${Number(item.number)}. ${escapeHtml(item.name || "-")}</strong><br><small>${escapeHtml(item.evidence || "-")}</small></div><span class="badge ${item.status === "passed" ? "ok" : "bad"}">${item.status === "passed" ? "通過" : "未檢查"}</span></div>`).join("");
+    }
+
+    async function saveFinanceSettings() {
+      const message = $("financeSaveMessage");
+      const response = await adminFetch("/api/admin/finance/settings", {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          tax_enabled: $("financeTaxEnabled").checked,
+          tax_rate_percent: 5,
+          gateway_fees: {
+            ecpay: {percent: Number($("financeEcpayPercent").value), fixed: Number($("financeEcpayFixed").value)},
+            newebpay: {percent: Number($("financeNewebpayPercent").value), fixed: Number($("financeNewebpayFixed").value)},
+          },
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      message.textContent = response.ok ? "✓ 金流費率與稅務設定已儲存。" : (data.message || "財務設定儲存失敗。");
+      if (response.ok) await loadFinanceDashboard();
+    }
+
+    async function saveFinanceExpense(event) {
+      event.preventDefault();
+      const message = $("financeSaveMessage");
+      if (!canManageFinance()) {
+        message.textContent = "目前角色沒有財務修改權限。";
+        return;
+      }
+      message.textContent = "正在儲存支出資料，請稍候…";
+      const response = await adminFetch("/api/admin/finance/expenses", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          name: $("financeExpenseName").value.trim(),
+          category: $("financeExpenseCategory").value,
+          expense_type: $("financeExpenseType").value,
+          amount: Number($("financeExpenseAmount").value),
+          incurred_on: $("financeExpenseDate").value,
+          has_tax_invoice: $("financeTaxInvoice").checked,
+          input_tax_deductible: $("financeInputDeductible").checked,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        message.textContent = data.message || "支出儲存失敗。";
+        return;
+      }
+      message.textContent = "✓ 支出資料已儲存，損益已重新計算。";
+      $("financeExpenseForm").reset();
+      $("financeExpenseDate").value = new Date().toISOString().slice(0, 10);
+      await loadFinanceDashboard();
+    }
+
     async function refresh() {
       setAuthStatus("正在載入後台資料…", "is-loading");
       const res = await adminFetch("/api/admin/summary");
@@ -2553,6 +2719,8 @@
         loadBetaMembers(),
         loadLineAcceptance(),
         loadLaunchReadiness(),
+        ...(canManageFinance() ? [loadFinanceDashboard()] : []),
+        ...(adminPermissions.includes("system.manage") ? [loadSecurityReadiness()] : []),
       ]);
       $("totalUsers").textContent = data.total_users;
       $("checkedToday").textContent = data.checked_today;
@@ -3051,7 +3219,7 @@
     let personalizedPushMembers = [];
     let personalizedCardWasPreviewed = false;
     const cardPanels = {cardSettingsTab: "cardSettingsPanel", memberSendTab: "memberSendPanel", holidayGeneratorTab: "holidayGeneratorPanel"};
-    Object.entries(cardPanels).forEach(([tabId, panelId]) => $(tabId).addEventListener("click", () => {
+    Object.entries(cardPanels).forEach(([tabId, panelId]) => $(tabId)?.addEventListener("click", () => {
       Object.entries(cardPanels).forEach(([otherTab, otherPanel]) => {
         $(otherTab).setAttribute("aria-selected", String(otherTab === tabId));
         $(otherPanel).hidden = otherPanel !== panelId;
@@ -3061,15 +3229,15 @@
       $("cardPreviewHero").src = $("cardHeroUrl").value.trim() || "/assets/daily-care/morning-warm.webp";
       $("cardPreviewBlessing").textContent = $("cardBlessing").value.trim() || "請輸入祝福文字";
     }
-    $("cardHeroUrl").addEventListener("input", updateLocalCardPreview);
-    $("cardBlessing").addEventListener("input", updateLocalCardPreview);
+    $("cardHeroUrl")?.addEventListener("input", updateLocalCardPreview);
+    $("cardBlessing")?.addEventListener("input", updateLocalCardPreview);
     async function loadCardTemplates() {
       const response = await adminFetch("/api/admin/card-templates");
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(authErrorText(data, response.status));
       $("cardTemplateSelect").innerHTML = (data.templates || []).map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}</option>`).join("");
     }
-    $("saveCardTemplateBtn").addEventListener("click", async () => {
+    $("saveCardTemplateBtn")?.addEventListener("click", async () => {
       const payload = {name: $("cardTemplateName").value, blessing: $("cardBlessing").value, hero_url: $("cardHeroUrl").value, buttons: [
         {label:$("cardButton1Label").value, action:"checkin"}, {label:$("cardButton2Label").value, uri:$("cardButton2Uri").value},
         {label:$("cardButton3Label").value, uri:$("cardButton3Uri").value}, {label:$("cardButton4Label").value, uri:$("cardButton4Uri").value}
@@ -3114,16 +3282,16 @@
         ? `發送完成：成功 ${data.sent || 0} 人，失敗 ${data.failed || 0} 人`
         : `發送失敗：${authErrorText(data, response.status)}`;
     }
-    $("personalizedPreviewBtn").addEventListener("click", () => previewPersonalizedPush().catch((error) => {
+    if ($("personalizedPreviewBtn")) $("personalizedPreviewBtn").addEventListener("click", () => previewPersonalizedPush().catch((error) => {
       $("personalizedPushMessage").textContent = `預覽失敗：${error.message}`;
     }));
-    $("personalizedMemberSelect").addEventListener("change", () => {
+    if ($("personalizedMemberSelect")) $("personalizedMemberSelect").addEventListener("change", () => {
       const selected = Boolean($("personalizedMemberSelect").value);
       $("personalizedCardPreviewBtn").disabled = !selected;
       $("personalizedSingleBtn").disabled = true;
       personalizedCardWasPreviewed = false;
     });
-    $("personalizedCardPreviewBtn").addEventListener("click", async () => {
+    if ($("personalizedCardPreviewBtn")) $("personalizedCardPreviewBtn").addEventListener("click", async () => {
       const response = await adminFetch("/api/admin/personalized-checkin-push/card-preview", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({line_user_id:$("personalizedMemberSelect").value, template_id:$("cardTemplateSelect").value})});
       const data = await response.json().catch(() => ({}));
       if (!response.ok) { $("personalizedPushMessage").textContent = data.message || authErrorText(data, response.status); return; }
@@ -3134,14 +3302,14 @@
       $("personalizedSingleBtn").disabled = false;
       $("personalizedPushMessage").textContent = "預覽完成，尚未發送。確認內容正確後再按發送。";
     });
-    $("personalizedSingleBtn").addEventListener("click", () => {
+    if ($("personalizedSingleBtn")) $("personalizedSingleBtn").addEventListener("click", () => {
       const uid = $("personalizedMemberSelect").value;
       if (!personalizedCardWasPreviewed) return;
       sendPersonalizedPush("single", uid).catch((error) => {
         $("personalizedPushMessage").textContent = `發送失敗：${error.message}`;
       });
     });
-    $("personalizedSendAllBtn").addEventListener("click", () => sendPersonalizedPush("all").catch((error) => {
+    if ($("personalizedSendAllBtn")) $("personalizedSendAllBtn").addEventListener("click", () => sendPersonalizedPush("all").catch((error) => {
       $("personalizedPushMessage").textContent = `發送失敗：${error.message}`;
     }));
     async function loadHolidayCatalog() {
@@ -3150,7 +3318,7 @@
       if (!response.ok) throw new Error(authErrorText(data, response.status));
       $("holidaySelect").innerHTML = '<option value="">自訂節日</option>' + (data.holidays || []).map((row) => `<option value="${escapeHtml(row.name)}" data-mood="${escapeHtml(row.mood)}" data-elements="${escapeHtml(row.elements)}">${escapeHtml(row.name)}｜${escapeHtml(row.date_label)}</option>`).join("");
     }
-    $("holidaySelect").addEventListener("change", () => {
+    $("holidaySelect")?.addEventListener("change", () => {
       const option = $("holidaySelect").selectedOptions[0];
       if (!option?.value) return;
       $("holidayMood").value = option.dataset.mood || "";
@@ -3162,20 +3330,20 @@
       const data = await response.json().catch(() => ({}));
       return {response, data};
     }
-    $("holidayPromptBtn").addEventListener("click", async () => {
+    $("holidayPromptBtn")?.addEventListener("click", async () => {
       const {response,data} = await holidayPayloadRequest("/api/admin/holiday-card/prompt");
       $("holidayPromptPreview").value = data.prompt || "";
       $("holidayMessage").textContent = response.ok ? "腳本已整理完成，可以修改需求或生成背景。" : authErrorText(data,response.status);
     });
-    $("holidayGenerateBtn").addEventListener("click", async () => {
+    $("holidayGenerateBtn")?.addEventListener("click", async () => {
       $("holidayMessage").textContent = "圖片生成中，通常需要 30～90 秒…";
       const {response,data} = await holidayPayloadRequest("/api/admin/holiday-card/generate");
       $("holidayPromptPreview").value = data.prompt || $("holidayPromptPreview").value;
       if (response.ok) $("holidayPreviewImage").src = data.image_url;
       $("holidayMessage").textContent = data.message || authErrorText(data,response.status);
     });
-    loadCardTemplates().catch((error) => { $("cardTemplateMessage").textContent = `範本載入失敗：${error.message}`; });
-    loadHolidayCatalog().catch((error) => { $("holidayMessage").textContent = `節日載入失敗：${error.message}`; });
+    if ($("cardTemplateSelect")) loadCardTemplates().catch((error) => { $("cardTemplateMessage").textContent = `範本載入失敗：${error.message}`; });
+    if ($("holidaySelect")) loadHolidayCatalog().catch((error) => { $("holidayMessage").textContent = `節日載入失敗：${error.message}`; });
 
     const lineAcceptanceForm = $("lineAcceptanceForm");
     if (lineAcceptanceForm) {
@@ -3300,6 +3468,11 @@
         issueLineRebind(button.dataset.lineUserId, button.dataset.displayName);
       }
     });
+    if ($("financeMonth")) $("financeMonth").value = new Date().toISOString().slice(0, 7);
+    if ($("financeExpenseDate")) $("financeExpenseDate").value = new Date().toISOString().slice(0, 10);
+    if ($("financeReload")) $("financeReload").addEventListener("click", loadFinanceDashboard);
+    if ($("financeSettingsSave")) $("financeSettingsSave").addEventListener("click", saveFinanceSettings);
+    if ($("financeExpenseForm")) $("financeExpenseForm").addEventListener("submit", saveFinanceExpense);
     let autoRefreshAdminBusy = false;
     async function autoRefreshAdmin() {
       const hasUnsavedPlan = document.querySelector('.plan-select[data-dirty="true"]');

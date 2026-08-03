@@ -609,6 +609,7 @@ test("guardian-required onboarding cannot be dismissed by an unbound contact", a
   const sandbox = expose(functionSource("showOnboarding"), ["showOnboarding"], {
     currentStatusData: { guardian_required: true },
     currentGuardianContacts: () => [{ name: "阿媽", binding_status: "unbound" }],
+    fetchOnboardingState: async () => ({ guardianRequired: true, homeReady: false, data: {} }),
     setRelationshipValue() {},
     setOnboardingCloseVisible: (visible) => closeVisibility.push(visible),
     showOnboardingShareStep: () => steps.push("share"),

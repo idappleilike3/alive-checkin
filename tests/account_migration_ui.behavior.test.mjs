@@ -455,6 +455,7 @@ test("bootstrap redeems migration before applying a redirecting destination", as
     bindMvpHome() {},
     bindGuardianCompletePrompt() {},
     bindGuardianEvents() {},
+    requestedAppAction: () => "",
     getAppParam: (key) => key === "migration_code" ? "single-use-code" : (
       key === "open" ? "plans" : ""
     ),
@@ -579,6 +580,7 @@ test("bootstrap without migration keeps the fast route and skips redemption", as
     bindMvpHome() {},
     bindGuardianCompletePrompt() {},
     bindGuardianEvents() {},
+    requestedAppAction: () => "",
     getAppParam: () => "",
     applyInitialDeepLinkRoute: () => {
       events.push("route");
