@@ -12268,6 +12268,12 @@
       }
     }
 
+    function memberOnboardingGateDecision(guardianRequired, existingMember, inviteeMode) {
+      if (inviteeMode) return "invitee";
+      if (guardianRequired) return "onboarding";
+      return "unlocked";
+    }
+
     function setMemberInteractionLocked(locked) {
       const ids = [
         "checkBtn", "mvpSafeBtn", "mvpGuardStartBtn", "sosHoldButton",
@@ -12305,6 +12311,7 @@
         showLineLoginRequired(readSafeDeepLinkParams());
         return false;
       }
+
       if (memberBootstrapState.guardianRequired) {
         showMemberBootstrapPending("請先完成至少 1 位核心守護人的 LINE 綁定。");
         return false;
@@ -12472,6 +12479,11 @@
         const hasGuardians = homeReady;
         const setupDone = homeReady;
         const wantsInviteShare = wantsShareInvite;
+        const memberGateDecision = memberOnboardingGateDecision(
+          guardianRequired,
+          lineRegistrationWasExisting,
+          inviteeMode,
+        );
         syncInviteUiForBoundState(homeReady);
         if (homeReady && !inviteeMode) {
           clearShareFirstLocalFlags();
@@ -12500,11 +12512,9 @@
             location.replace(buildShareInvitePageUrl("home"));
             return;
           }
-        } else if (guardianRequired && lineRegistrationWasExisting) {
-          // 已註冊會員只在會員中心顯示待辦，不得重跑首次註冊表單。
-          if (typeof showTab === "function") showTab("member");
-          showRegisteredMemberSetupReminder();
-        } else if (guardianRequired) {
+        } else if (memberGateDecision === "onboarding") {
+          // 分享返回後依後端進度呈現第 4／5 步；已儲存資料不會要求重填。
+          // 只有守護人正式接受、home_ready=true 後，才解除其他會員功能。
           await showOnboarding();
           return true;
         } else if (homeReady || hasGuardians || setupDone) {

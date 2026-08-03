@@ -107,10 +107,46 @@ test("reopening onboarding authenticates the authoritative progress lookup", asy
   assert.equal(requests[0].options.headers.Authorization, "Bearer verified-id-token");
 });
 
-test("an existing member is sent to member-center editing instead of the registration form", () => {
-  assert.match(html, /registration\.existing_user === true/);
-  assert.match(html, /member\.html\?setup_reminder=1/);
-  const memberHtml = fs.readFileSync(new URL("../liff/member.html", import.meta.url), "utf8");
-  assert.match(memberHtml, /你已經是會員/);
-  assert.match(memberHtml, /前往修改會員資料/);
+test("an existing member with a pending invite returns to step five", () => {
+  const sandbox = expose(["onboardingEntryDecision"]);
+  assert.equal(sandbox.onboardingEntryDecision(
+    {existing_user: true},
+    {home_ready: false, completed_steps: {guardian_invite_sent: true, guardian_bound: false}},
+  ), "onboarding");
+});
+
+test("only a server-confirmed bound guardian unlocks an existing member", () => {
+  const sandbox = expose(["onboardingEntryDecision"]);
+  assert.equal(sandbox.onboardingEntryDecision(
+    {existing_user: true},
+    {home_ready: true, completed_steps: {guardian_invite_sent: true, guardian_bound: true}},
+  ), "complete");
+});
+
+test("the main app keeps an unbound existing member inside onboarding", () => {
+  const sandbox = (() => {
+    const sourceHtml = mainHtml;
+    function mainFunctionSource(name) {
+      const pattern = new RegExp(`function\\s+${name}\\s*\\(`);
+      const match = pattern.exec(sourceHtml);
+      assert.ok(match, `missing function: ${name}`);
+      const start = match.index;
+      const brace = sourceHtml.indexOf("{", start);
+      let depth = 0;
+      for (let index = brace; index < sourceHtml.length; index += 1) {
+        if (sourceHtml[index] === "{") depth += 1;
+        if (sourceHtml[index] === "}") {
+          depth -= 1;
+          if (depth === 0) return sourceHtml.slice(start, index + 1);
+        }
+      }
+      throw new Error(`unterminated function: ${name}`);
+    }
+    const context = vm.createContext({});
+    const name = "memberOnboardingGateDecision";
+    new vm.Script(`${mainFunctionSource(name)}\nthis.${name} = ${name};`).runInContext(context);
+    return context;
+  })();
+  assert.equal(sandbox.memberOnboardingGateDecision(true, true, false), "onboarding");
+  assert.equal(sandbox.memberOnboardingGateDecision(false, true, false), "unlocked");
 });

@@ -60,6 +60,36 @@ class AuthoritativeOnboardingProgressTest(unittest.TestCase):
         self.assertEqual(payload["current_step"], 5)
         self.assertEqual(payload["binding_status"], "waiting_for_guardian")
 
+    def test_trial_and_both_beta_plans_share_the_same_waiting_step(self):
+        plan_cases = (
+            ("trial", "", "trial"),
+            ("beta_399", "B399", "paid_399"),
+            ("beta_799", "B799", "paid_799"),
+        )
+        for label, cohort, plan in plan_cases:
+            with self.subTest(plan=label):
+                state = app_module.load_state(self.data_file)
+                profile = state["users"]["U-owner"]
+                profile["onboarding_reminder_configured"] = True
+                profile["beta_cohort"] = cohort
+                profile["plan"] = plan
+                profile["contacts"] = []
+                state["guardian_invites"] = [{
+                    "inviter_line_user_id": "U-owner",
+                    "status": "pending",
+                }]
+                app_module.save_state(self.data_file, state)
+
+                payload, status = app_module.onboarding_status_payload(
+                    self.data_file, "U-owner"
+                )
+
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["current_step"], 5)
+                self.assertTrue(payload["completed_steps"]["guardian_invite_sent"])
+                self.assertFalse(payload["completed_steps"]["guardian_bound"])
+                self.assertFalse(payload["home_ready"])
+
     def test_four_entry_pages_keep_step_four_waiting_copy(self):
         pages = (
             "liff/onboarding.html",

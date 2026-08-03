@@ -219,6 +219,13 @@ async function fetchOnboardingProgress() {
   return data;
 }
 
+function onboardingEntryDecision(registration, progress) {
+  const completed = (progress && progress.completed_steps) || {};
+  const guardianBound = progress?.home_ready === true || completed.guardian_bound === true;
+  if (guardianBound) return "complete";
+  return "onboarding";
+}
+
 function buildOnboardingLoginRedirect() {
   const safe = new URL(location.pathname, location.origin);
   const params = new URLSearchParams(location.search);
@@ -450,12 +457,9 @@ async function init() {
           : null;
       }
 
-      // 任何入口只允許「首次出現的新帳號」進入註冊表單。
-      // 已存在會員即使尚未綁定守護人，也改到會員中心顯示待辦提醒。
-      if (registration.existing_user === true) {
-        location.replace("./member.html?setup_reminder=1");
-        return;
-      }
+      // 是否完成首次設定只能依後端確認的守護人綁定狀態判斷。
+      // 已註冊不等於已綁定；分享返回後保留既有資料並呈現第 5 步等待畫面。
+      state.entryDecision = onboardingEntryDecision(registration, data);
     }
 
     // 提醒與守護人都完成後，首次設定才算完成。
