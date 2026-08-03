@@ -396,6 +396,49 @@ class MembershipRetentionPolicyTests(unittest.TestCase):
             self.assertEqual(result["sent"], 0)
             self.assertEqual(sent, [])
 
+    def test_trial_milestone_stops_after_three_failed_delivery_attempts(self):
+        with TemporaryDirectory() as temp_dir:
+            data_file = Path(temp_dir) / "data.json"
+            started = self.now - timedelta(days=7)
+            app_module.save_state(data_file, {
+                "users": {
+                    "U-owner": {
+                        "line_user_id": "U-owner",
+                        "plan": "trial",
+                        "trial_started_at": started.isoformat(timespec="seconds"),
+                    }
+                }
+            })
+            attempts = []
+
+            def failing_sender(*args):
+                attempts.append(args)
+                raise TimeoutError("LINE timeout")
+
+            config = {
+                "DATA_FILE": data_file,
+                "LINE_CHANNEL_ACCESS_TOKEN": "token",
+                "LINE_PUSH_SENDER": failing_sender,
+            }
+
+            results = [
+                app_module.send_trial_milestone_notices(
+                    config, now=self.now
+                )[0]
+                for _ in range(5)
+            ]
+
+            self.assertEqual(len(attempts), 3)
+            self.assertEqual([result["sent"] for result in results], [0] * 5)
+            saved = app_module.load_state(data_file)["users"]["U-owner"]
+            retry_key = (
+                f"trial-milestone:U-owner:"
+                f"{started.isoformat(timespec='seconds')}:7"
+            )
+            self.assertEqual(
+                saved["push_delivery_attempts"][retry_key]["count"], 3
+            )
+
     def test_parallel_trial_milestone_ticks_claim_each_node_once(self):
         with TemporaryDirectory() as temp_dir:
             data_file = Path(temp_dir) / "data.json"

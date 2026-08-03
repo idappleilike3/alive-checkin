@@ -5785,6 +5785,12 @@ def _claim_trial_milestone_notices(state, clock):
         for day in (7, 11, 13, 14):
             if elapsed_days != day or day in completed:
                 continue
+            delivery_key = (
+                f"trial-milestone:{target}:"
+                f"{started.isoformat(timespec='seconds')}:{day}"
+            )
+            if not push_attempt_allowed(profile, delivery_key):
+                continue
             existing = active_claims.get(str(day)) or {}
             claimed_at = parse_datetime(existing.get("claimed_at"))
             if claimed_at and claimed_at > lease_cutoff:
@@ -5799,13 +5805,14 @@ def _claim_trial_milestone_notices(state, clock):
                 "day": day,
                 "trial_started_at": started.isoformat(timespec="seconds"),
                 "claim_token": claim_token,
+                "delivery_key": delivery_key,
             })
         profile["trial_notice_claims"] = active_claims
     return claims
 
 
 def _finish_trial_milestone_notice(
-    state, claim, message, status, detail=""
+    state, claim, message, status, detail="", failure=None, failed_at=None
 ):
     profile = (state.get("users") or {}).get(claim["line_user_id"])
     if not isinstance(profile, dict):
@@ -5818,12 +5825,18 @@ def _finish_trial_milestone_notice(
     active_claims.pop(day_key, None)
     profile["trial_notice_claims"] = active_claims
     if status == "sent":
+        _clear_push_delivery_failure(profile, claim["delivery_key"])
         completed = {
             int(day) for day in (profile.get("trial_notice_days_sent") or [])
             if str(day).isdigit()
         }
         completed.add(int(claim["day"]))
         profile["trial_notice_days_sent"] = sorted(completed)
+    elif failure is not None:
+        failure_result = record_push_failure(
+            profile, claim["delivery_key"], failure, failed_at
+        )
+        status = failure_result["status"]
     append_notification_log(
         state,
         "trial_milestone",
@@ -5977,12 +5990,14 @@ def send_trial_milestone_notices(config, now=None):
         )
         status = "sent"
         detail = ""
+        failure = None
         try:
             _send_line_with_retry_key(sender, token, target, message, retry_key)
             sent += 1
         except Exception as exc:
             status = "failed"
             detail = str(exc)[:400]
+            failure = exc
             skipped += 1
         mutate_state_atomically(
             config["DATA_FILE"],
@@ -5994,6 +6009,8 @@ def send_trial_milestone_notices(config, now=None):
                     message.get("altText") or "14 天體驗提醒",
                     current_status,
                     current_detail,
+                    failure,
+                    clock,
                 ),
         )
         results.append({
@@ -13703,6 +13720,48 @@ def reindex_account_references(
                 record["migration_event_id"] = event_id
                 reindexed_records += 1
         state[index_key] = index
+
+    # Campaign audience snapshots and queued delivery rows can outlive the
+    # member profile key. Move only future work to the verified replacement
+    # identity; completed rows remain immutable audit history.
+    for version in state.get("push_campaign_versions") or []:
+        if not isinstance(version, dict):
+            continue
+        explicit_ids = version.get("explicit_member_ids")
+        if not isinstance(explicit_ids, list) or source_id not in explicit_ids:
+            continue
+        version["explicit_member_ids"] = list(dict.fromkeys(
+            target_id if str(member_id or "") == source_id else member_id
+            for member_id in explicit_ids
+        ))
+        version["migration_event_id"] = event_id
+        reindexed_records += 1
+
+    for delivery in state.get("push_delivery_records") or []:
+        if not isinstance(delivery, dict):
+            continue
+        if str(delivery.get("line_user_id") or "") != source_id:
+            continue
+        if str(delivery.get("status") or "") not in {"pending", "retry", "sending"}:
+            continue
+        delivery["line_user_id"] = target_id
+        delivery["status"] = "pending"
+        delivery["attempts"] = 0
+        delivery["retry_key"] = _line_retry_key(
+            f"account-migration:{event_id}:{delivery.get('id', '')}:{target_id}"
+        )
+        for key in (
+            "attempt_started_at",
+            "last_attempt_at",
+            "delivery_worker_id",
+            "delivery_lease_expires_at",
+            "failure_reason_zh",
+            "failure_action_zh",
+            "technical_detail",
+        ):
+            delivery.pop(key, None)
+        delivery["migration_event_id"] = event_id
+        reindexed_records += 1
 
     return {"ok": True, "reindexed_records": reindexed_records}
 

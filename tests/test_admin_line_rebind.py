@@ -92,6 +92,49 @@ class AdminLineRebindTests(unittest.TestCase):
             "disabled",
         )
 
+    def test_rebind_moves_only_future_push_targets_to_new_uid(self):
+        state = alive_app.load_state(self.data_file)
+        state["push_campaign_versions"] = [{
+            "id": "version-1",
+            "explicit_member_ids": ["U-old-rourou", "U-other"],
+        }]
+        state["push_delivery_records"] = [
+            {"id": "pending", "status": "pending", "line_user_id": "U-old-rourou"},
+            {"id": "retry", "status": "retry", "line_user_id": "U-old-rourou"},
+            {"id": "sent", "status": "sent", "line_user_id": "U-old-rourou"},
+            {"id": "failed", "status": "failed", "line_user_id": "U-old-rourou"},
+        ]
+        alive_app.save_state(self.data_file, state)
+        body, code = alive_app.admin_create_line_rebind_link(
+            self.data_file,
+            "U-old-rourou",
+            self.config,
+        )
+        self.assertEqual(code, 200)
+        migration_code = body["rebind_url"].split("migration_code=", 1)[1].split("&", 1)[0]
+
+        result, redeem_code = alive_app.redeem_account_migration_ticket(
+            self.data_file,
+            migration_code,
+            "U-new-rourou",
+            self.config,
+        )
+
+        self.assertEqual(redeem_code, 200)
+        self.assertEqual(result["status"], "migrated")
+        rebound = alive_app.load_state(self.data_file)
+        self.assertEqual(
+            rebound["push_campaign_versions"][0]["explicit_member_ids"],
+            ["U-new-rourou", "U-other"],
+        )
+        deliveries = {
+            row["id"]: row for row in rebound["push_delivery_records"]
+        }
+        self.assertEqual(deliveries["pending"]["line_user_id"], "U-new-rourou")
+        self.assertEqual(deliveries["retry"]["line_user_id"], "U-new-rourou")
+        self.assertEqual(deliveries["sent"]["line_user_id"], "U-old-rourou")
+        self.assertEqual(deliveries["failed"]["line_user_id"], "U-old-rourou")
+
     def test_admin_page_has_member_rebind_action(self):
         page = Path("admin.html").read_text(encoding="utf-8")
         self.assertIn("更新／重新綁定 LINE 身分", page)
