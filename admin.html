@@ -620,6 +620,18 @@
       <h2 style="margin:0 0 6px;">推播管理中心</h2>
       <p class="note">儲存與修改都不會發送；完成排程後，系統才會在預定時間依會員當下方案判斷收件資格。</p>
       <p id="pushManagementAccessNote" class="note"></p>
+      <div class="integration-card" style="margin-bottom:16px;">
+        <strong>新版個人化每日平安圖片卡</strong>
+        <p>先預覽符合資格會員，再確認發送；不會推給已封鎖、失效或待重新註冊的帳號。</p>
+        <div class="toolbar" style="margin-top:12px;margin-bottom:8px;">
+          <button id="personalizedPreviewBtn" type="button" class="info">全部會員新版圖片卡測試</button>
+          <button id="personalizedSendAllBtn" type="button" hidden>確認發送給全部符合資格會員</button>
+          <select id="personalizedMemberSelect" aria-label="指定會員"><option value="">請先預覽會員</option></select>
+          <button id="personalizedSingleBtn" type="button" class="secondary">指定單一會員立即發</button>
+        </div>
+        <div id="personalizedPushPreview" class="log-list"><div class="log-item"><span>尚未預覽收件名單</span></div></div>
+        <p id="personalizedPushMessage" class="note" role="status"></p>
+      </div>
       <div class="stats" id="pushStatusSummary">
         <div class="stat"><strong data-push-status-count="draft">0</strong><span>草稿</span></div>
         <div class="stat"><strong data-push-status-count="pending_schedule">0</strong><span>待排程</span></div>
@@ -2967,6 +2979,52 @@
         }
       });
     });
+
+    let personalizedPushMembers = [];
+    async function previewPersonalizedPush() {
+      const response = await adminFetch("/api/admin/personalized-checkin-push/preview");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(authErrorText(data, response.status));
+      personalizedPushMembers = data.members || [];
+      $("personalizedMemberSelect").innerHTML = '<option value="">請選擇會員</option>' + personalizedPushMembers.map((member) =>
+        `<option value="${escapeHtml(member.line_user_id)}">${escapeHtml(member.display_name)}｜${escapeHtml(member.masked_line_user_id)}</option>`
+      ).join("");
+      $("personalizedPushPreview").innerHTML = personalizedPushMembers.length
+        ? personalizedPushMembers.map((member) => `<div class="log-item"><span>${escapeHtml(member.display_name)}</span><span>${escapeHtml(member.masked_line_user_id)}</span><span>${escapeHtml(member.plan)}</span></div>`).join("")
+        : '<div class="log-item"><span>目前沒有符合資格的會員</span></div>';
+      $("personalizedPushMessage").textContent = `符合資格共 ${data.eligible_count || 0} 人，尚未發送`;
+      $("personalizedSendAllBtn").hidden = !personalizedPushMembers.length;
+      return data;
+    }
+    async function sendPersonalizedPush(mode, lineUserId = "") {
+      const preview = await previewPersonalizedPush();
+      const target = mode === "all" ? `全部 ${preview.eligible_count || 0} 人` : $("personalizedMemberSelect").selectedOptions[0]?.textContent;
+      if (!target || (mode === "single" && !lineUserId)) {
+        $("personalizedPushMessage").textContent = "請先選擇要發送的會員";
+        return;
+      }
+      if (!window.confirm(`確認將新版個人化每日平安圖片卡發送給${target}？`)) return;
+      const response = await adminFetch("/api/admin/personalized-checkin-push/send", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({mode, line_user_id: lineUserId, confirmed: true})
+      });
+      const data = await response.json().catch(() => ({}));
+      $("personalizedPushMessage").textContent = response.ok
+        ? `發送完成：成功 ${data.sent || 0} 人，失敗 ${data.failed || 0} 人`
+        : `發送失敗：${authErrorText(data, response.status)}`;
+    }
+    $("personalizedPreviewBtn").addEventListener("click", () => previewPersonalizedPush().catch((error) => {
+      $("personalizedPushMessage").textContent = `預覽失敗：${error.message}`;
+    }));
+    $("personalizedSingleBtn").addEventListener("click", () => {
+      const uid = $("personalizedMemberSelect").value;
+      sendPersonalizedPush("single", uid).catch((error) => {
+        $("personalizedPushMessage").textContent = `發送失敗：${error.message}`;
+      });
+    });
+    $("personalizedSendAllBtn").addEventListener("click", () => sendPersonalizedPush("all").catch((error) => {
+      $("personalizedPushMessage").textContent = `發送失敗：${error.message}`;
+    }));
 
     const lineAcceptanceForm = $("lineAcceptanceForm");
     if (lineAcceptanceForm) {
