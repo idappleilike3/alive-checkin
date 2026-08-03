@@ -30,7 +30,7 @@ services:
       - key: AUTO_SYNC_RICH_MENU
         value: "1"
       - key: DEPLOY_VERSION
-        value: W260729release1
+        value: W260804-new-ui
       # Prefer Postgres kv_store when DATABASE_URL is set (survives Free redeploys).
       # Persistent Disk (/var/data) still preferred on Starter+.
       - key: DATABASE_URL
