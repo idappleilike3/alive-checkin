@@ -3510,7 +3510,7 @@
       $("holidayMessage").textContent = data.message || authErrorText(data,response.status);
     });
     if ($("cardTemplateSelect")) loadCardTemplates().catch((error) => { $("cardTemplateMessage").textContent = `範本載入失敗：${error.message}`; });
-    updateLocalCardPreview();
+    if ($("cardTemplateSelect")) updateLocalCardPreview();
     if ($("holidaySelect")) loadHolidayCatalog().catch((error) => { $("holidayMessage").textContent = `節日載入失敗：${error.message}`; });
 
     const lineAcceptanceForm = $("lineAcceptanceForm");
