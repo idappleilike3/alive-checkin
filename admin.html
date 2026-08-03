@@ -139,16 +139,27 @@
     .step-box h4 { margin:0 0 6px; color:#075f48; font-size:18px; }
     .step-box p { margin:0 0 10px; color:#52606d; }
     .line-card-preview { max-width:390px; margin:auto; border-radius:22px; overflow:hidden; background:#fff; box-shadow:0 18px 42px #0f3d2e24; border:1px solid #d6e9df; }
-    .line-card-preview .hero { width:100%; aspect-ratio:4 / 5; object-fit:cover; display:block; background:#e5f5ed; }
+    .line-card-preview .hero { width:100%; height:auto; object-fit:contain; display:block; background:#fff8e8; }
     .line-card-brand { display:flex; align-items:center; gap:9px; padding:12px 15px; background:#00b900; color:#fff; font-size:20px; font-weight:900; }
     .line-card-brand img { width:38px; height:38px; object-fit:contain; }
     .line-card-body { padding:16px; line-height:1.6; }
     .line-card-actions { display:grid; gap:8px; padding:0 14px 16px; }
-    .line-card-actions span { padding:14px; border-radius:12px; color:#fff; text-align:center; font-size:18px; font-weight:900; }
-    .line-card-actions span:nth-child(1) { background:#16A34A; }
-    .line-card-actions span:nth-child(2) { background:#2563EB; }
-    .line-card-actions span:nth-child(3) { background:#DC2626; }
-    .line-card-actions span:nth-child(4) { background:#D4A017; color:#271B00; }
+    .line-card-actions .line-card-action { min-height:62px; display:flex; align-items:center; justify-content:center; gap:14px; padding:12px 16px; border-radius:18px; color:#fff; text-align:center; font-size:20px; font-weight:900; }
+    .line-card-actions .line-card-action:nth-child(1) { background:linear-gradient(135deg,#079447,#16A34A); }
+    .line-card-actions .line-card-action:nth-child(2) { background:linear-gradient(135deg,#2370cf,#2563EB); }
+    .line-card-actions .line-card-action:nth-child(3) { background:linear-gradient(135deg,#ef2f28,#DC2626); }
+    .line-card-actions .line-card-action:nth-child(4) { background:linear-gradient(135deg,#f3c448,#D4A017); color:#271B00; }
+    .line-card-actions .line-card-action:nth-child(5) { background:linear-gradient(135deg,#c88113,#A96508); }
+    .card-action-icon { width:42px; height:42px; flex:0 0 42px; display:grid; place-items:center; position:relative; font-size:17px; font-weight:950; line-height:1; }
+    .card-action-logo { object-fit:contain; }
+    .card-action-shield { background:#fff; color:#2563EB; clip-path:polygon(50% 0,90% 15%,84% 70%,50% 100%,16% 70%,10% 15%); }
+    .card-action-shield::after { content:"✓"; font-size:25px; }
+    .card-action-sos { width:48px; flex-basis:48px; border-radius:13px; background:#fff; color:#DC2626; }
+    .card-action-sos::after { content:"SOS"; }
+    .card-action-sos::before { content:""; position:absolute; right:3px; bottom:-5px; border-width:7px 0 0 9px; border-style:solid; border-color:transparent transparent transparent #fff; }
+    .card-action-bell::after { content:"🔔"; font-size:34px; filter:grayscale(1) brightness(.25); }
+    .card-action-guardian { border-radius:50%; background:#fff3bd; color:#A96508; }
+    .card-action-guardian::after { content:"♥"; font-size:26px; }
     .blessing-rounded { font-family:"Noto Sans TC",system-ui,sans-serif; }
     .blessing-system { font-family:system-ui,sans-serif; }
     .blessing-serif { font-family:"Noto Serif TC",serif; }
@@ -846,22 +857,24 @@
             <label>祝福語對齊<select id="cardBlessingAlign"><option value="start">靠左</option><option value="center" selected>置中</option><option value="end">靠右</option></select></label>
             <label>祝福語位置<select id="cardBlessingPosition"><option value="top">問候文字下方</option><option value="bottom">卡片資訊下方</option></select></label>
             <label>主圖 HTTPS 網址<input id="cardHeroUrl" type="url" value="https://alive-checkin.onrender.com/assets/daily-care/morning-warm.webp"></label>
-            <label>按鈕 1 文字<input id="cardButton1Label" value="✅ 我平安" maxlength="20"></label>
-            <label>按鈕 2 文字<input id="cardButton2Label" value="🛡️ 安全守護" maxlength="20"></label>
+            <label>按鈕 1 文字<input id="cardButton1Label" value="我平安" maxlength="20"></label>
+            <label>按鈕 2 文字<input id="cardButton2Label" value="安全守護" maxlength="20"></label>
             <label>按鈕 2 HTTPS 連結<input id="cardButton2Uri" type="url" value="https://alive-checkin.onrender.com/liff/checkin.html?open=guard"></label>
             <label>按鈕 3 文字<input id="cardButton3Label" value="需要幫忙" maxlength="20"></label>
             <label>按鈕 3 HTTPS 連結<input id="cardButton3Uri" type="url" value="https://alive-checkin.onrender.com/liff/sos.html"></label>
-            <label>按鈕 4 文字<input id="cardButton4Label" value="🔔 今日安心提醒" maxlength="20"></label>
+            <label>按鈕 4 文字<input id="cardButton4Label" value="查看今日安心提醒" maxlength="20"></label>
             <label>按鈕 4 HTTPS 連結<input id="cardButton4Uri" type="url" value="https://alive-checkin.onrender.com/daily-care.html"></label>
+            <label>按鈕 5 文字<input id="cardButton5Label" value="邀請親友成為守護人" maxlength="20"></label>
+            <label>按鈕 5 HTTPS 連結<input id="cardButton5Uri" type="url" value="https://alive-checkin.onrender.com/liff/share-invite.html"></label>
             <p class="note">Logo 固定使用每日平安原圖，不會被修改。</p>
             <button id="saveCardTemplateBtn" type="button">另存新範本</button>
             <p id="cardTemplateMessage" class="note" role="status"></p>
           </div>
           <div class="line-card-preview" aria-label="LINE 圖文卡預覽">
-            <img id="cardPreviewHero" class="hero" src="/assets/daily-care/morning-warm.webp" alt="圖文卡主視覺">
             <div class="line-card-brand"><img src="/assets/daily-peace-logo.png" alt="每日平安 Logo"><span>每日平安</span></div>
+            <img id="cardPreviewHero" class="hero" src="/assets/daily-care/morning-warm.webp" alt="圖文卡主視覺">
             <div class="line-card-body"><strong id="cardPreviewName">會員暱稱，今天一切都好嗎？</strong><p id="cardPreviewBlessing">每一天的平安，都是給家人最好的禮物。</p><small>等級、連續天數與進度會依會員自動帶入</small></div>
-            <div class="line-card-actions"><span>✅ 我平安</span><span>🛡️ 安全守護</span><span>需要幫忙</span><span>🔔 今日安心提醒</span></div>
+            <div class="line-card-actions"><span class="line-card-action"><img class="card-action-icon card-action-logo" src="/assets/daily-peace-logo.png" alt=""><b data-card-action-label="1">我平安</b></span><span class="line-card-action"><i class="card-action-icon card-action-shield" aria-hidden="true"></i><b data-card-action-label="2">安全守護</b></span><span class="line-card-action"><i class="card-action-icon card-action-sos" aria-hidden="true"></i><b data-card-action-label="3">需要幫忙</b></span><span class="line-card-action"><i class="card-action-icon card-action-bell" aria-hidden="true"></i><b data-card-action-label="4">查看今日安心提醒</b></span><span class="line-card-action"><i class="card-action-icon card-action-guardian" aria-hidden="true"></i><b data-card-action-label="5">邀請親友成為守護人</b></span></div>
           </div>
         </div>
         <div id="memberSendPanel" class="card-editor-panel" hidden>
@@ -3390,8 +3403,16 @@
       blessing.style.fontWeight = "900";
       blessing.style.textAlign = ({start:"left",center:"center",end:"right"})[$("cardBlessingAlign").value] || "center";
       $("cardBlessingSizeValue").textContent = `${$("cardBlessingSize").value} px`;
+      [1,2,3,4,5].forEach((index) => {
+        const label = document.querySelector(`[data-card-action-label="${index}"]`);
+        if (label) label.textContent = $(`cardButton${index}Label`).value.trim();
+      });
     }
-    ["cardHeroUrl","cardBlessing","cardBlessingFont","cardBlessingColor","cardBlessingSize","cardBlessingAlign","cardBlessingPosition"].forEach((id) => $(id)?.addEventListener("input", updateLocalCardPreview));
+    ["cardHeroUrl","cardBlessing","cardBlessingFont","cardBlessingColor","cardBlessingSize","cardBlessingAlign","cardBlessingPosition","cardButton1Label","cardButton2Label","cardButton3Label","cardButton4Label","cardButton5Label"].forEach((id) => $(id)?.addEventListener("input", updateLocalCardPreview));
+    function cardActionIcon(index) {
+      if (index === 0) return '<img class="card-action-icon card-action-logo" src="/assets/daily-peace-logo.png" alt="">';
+      return `<i class="card-action-icon card-action-${["shield","sos","bell","guardian"][index - 1]}" aria-hidden="true"></i>`;
+    }
     async function loadCardTemplates() {
       const response = await adminFetch("/api/admin/card-templates");
       const data = await response.json().catch(() => ({}));
@@ -3405,7 +3426,8 @@
         position: $("cardBlessingPosition").value
       }, buttons: [
         {label:$("cardButton1Label").value, action:"checkin"}, {label:$("cardButton2Label").value, uri:$("cardButton2Uri").value},
-        {label:$("cardButton3Label").value, uri:$("cardButton3Uri").value}, {label:$("cardButton4Label").value, uri:$("cardButton4Uri").value}
+        {label:$("cardButton3Label").value, uri:$("cardButton3Uri").value}, {label:$("cardButton4Label").value, uri:$("cardButton4Uri").value},
+        {label:$("cardButton5Label").value, uri:$("cardButton5Uri").value}
       ]};
       const response = await adminFetch("/api/admin/card-templates", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
       const data = await response.json().catch(() => ({}));
@@ -3464,7 +3486,7 @@
       const blessing = data.template?.blessing || "";
       const style = data.template?.blessing_style || {};
       const buttons = data.message?.contents?.footer?.contents || [];
-      $("personalizedCardPreview").innerHTML = `<img class="hero" src="${escapeHtml(hero)}" alt="會員圖文卡主圖"><div class="line-card-brand"><img src="/assets/daily-peace-logo.png" alt="每日平安 Logo"><span>每日平安</span></div><div class="line-card-body"><strong>${escapeHtml(data.member.display_name)}，今天一切都好嗎？</strong><p class="blessing-${escapeHtml(style.font_family || "rounded")}" style="color:${escapeHtml(style.color || "#166534")};font-size:${Number(style.size || 34)}px;font-weight:900;text-align:${({start:"left",center:"center",end:"right"})[style.align] || "center"}">${escapeHtml(blessing)}</p><small>${escapeHtml(data.member.masked_line_user_id)}</small></div><div class="line-card-actions">${buttons.map((button) => `<span>${escapeHtml(button.action?.label || "")}</span>`).join("")}</div>`;
+      $("personalizedCardPreview").innerHTML = `<div class="line-card-brand"><img src="/assets/daily-peace-logo.png" alt="每日平安 Logo"><span>每日平安</span></div><img class="hero" src="${escapeHtml(hero)}" alt="會員圖文卡主圖"><div class="line-card-body"><strong>${escapeHtml(data.member.display_name)}，今天一切都好嗎？</strong><p class="blessing-${escapeHtml(style.font_family || "rounded")}" style="color:${escapeHtml(style.color || "#166534")};font-size:${Number(style.size || 34)}px;font-weight:900;text-align:${({start:"left",center:"center",end:"right"})[style.align] || "center"}">${escapeHtml(blessing)}</p><small>${escapeHtml(data.member.masked_line_user_id)}</small></div><div class="line-card-actions">${buttons.map((button, index) => `<span class="line-card-action">${cardActionIcon(index)}<b>${escapeHtml(button.action?.label || "")}</b></span>`).join("")}</div>`;
       personalizedCardWasPreviewed = true;
       $("personalizedSingleBtn").disabled = false;
       $("personalizedPushMessage").textContent = "預覽完成，尚未發送。確認內容正確後再按發送。";

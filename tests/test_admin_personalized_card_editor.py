@@ -29,6 +29,9 @@ class AdminPersonalizedCardEditorTests(unittest.TestCase):
         self.assertEqual(templates[0]["id"], "daily-peace-default")
         self.assertTrue(templates[0]["system"])
         self.assertEqual(templates[0]["logo_url"], alive_app.DAILY_PEACE_LOGO_URL)
+        self.assertEqual(len(templates[0]["buttons"]), 5)
+        self.assertEqual(templates[0]["buttons"][4]["label"], "邀請親友成為守護人")
+        self.assertTrue(templates[0]["buttons"][4]["uri"].endswith("/liff/share-invite.html"))
 
     def test_template_rejects_non_https_image_and_button_urls(self):
         with self.assertRaisesRegex(ValueError, "HTTPS"):
@@ -79,7 +82,7 @@ class AdminPersonalizedCardEditorTests(unittest.TestCase):
         self.assertIn("寶寶", result["message"]["contents"]["body"]["contents"][0]["text"])
         self.assertEqual(result["message"]["contents"]["hero"]["aspectRatio"], "4:5")
         colors = [row.get("color") for row in result["message"]["contents"]["footer"]["contents"]]
-        self.assertEqual(colors[:4], ["#16A34A", "#2563EB", "#DC2626", "#D4A017"])
+        self.assertEqual(colors[:5], ["#16A34A", "#2563EB", "#DC2626", "#D4A017", "#A96508"])
 
     def test_confirmed_send_uses_selected_custom_template(self):
         template = alive_app.save_card_template(self.data_file, {

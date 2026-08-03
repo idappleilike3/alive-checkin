@@ -194,10 +194,11 @@ DEFAULT_CARD_TEMPLATE = {
         "position": "top",
     },
     "buttons": [
-        {"label": "✅ 我平安", "action": "checkin"},
-        {"label": "🛡️ 安全守護", "uri": "https://alive-checkin.onrender.com/liff/checkin.html?open=guard"},
+        {"label": "我平安", "action": "checkin"},
+        {"label": "安全守護", "uri": "https://alive-checkin.onrender.com/liff/checkin.html?open=guard"},
         {"label": "需要幫忙", "uri": "https://alive-checkin.onrender.com/liff/sos.html"},
-        {"label": "🔔 今日安心提醒", "uri": "https://alive-checkin.onrender.com/daily-care.html"},
+        {"label": "查看今日安心提醒", "uri": "https://alive-checkin.onrender.com/daily-care.html"},
+        {"label": "邀請親友成為守護人", "uri": "https://alive-checkin.onrender.com/liff/share-invite.html"},
     ],
 }
 
@@ -17988,7 +17989,7 @@ def _normalize_card_template(payload, *, template_id=None):
     if position not in {"top", "bottom"}:
         position = "top"
     buttons = []
-    for raw in list(payload.get("buttons") or [])[:4]:
+    for raw in list(payload.get("buttons") or [])[:5]:
         label = str((raw or {}).get("label") or "").strip()[:20]
         if not label:
             continue
@@ -18060,7 +18061,7 @@ def _apply_card_template(message, template, profile):
         body.append(blessing_node)
     else:
         body.insert(1, blessing_node)
-    colors = ["#16A34A", "#2563EB", "#DC2626", "#D4A017"]
+    colors = ["#16A34A", "#2563EB", "#DC2626", "#D4A017", "#A96508"]
     rendered_buttons = []
     for index, button in enumerate(template.get("buttons") or []):
         if button.get("action") == "checkin":
