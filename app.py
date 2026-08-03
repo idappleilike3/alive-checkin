@@ -170,6 +170,22 @@ from push_management import (
 DEFAULT_LIFF_ID = "2010848330-UAiqPPYD"
 DEFAULT_LEGACY_LIFF_ID = "2010674803-rK98c0lo"
 DEFAULT_LINE_LOGIN_CHANNEL_ID = "2010848330"
+DAILY_PEACE_LOGO_URL = "https://alive-checkin.onrender.com/assets/daily-peace-logo.png"
+
+DEFAULT_CARD_TEMPLATE = {
+    "id": "daily-peace-default",
+    "name": "每日平安預設卡",
+    "system": True,
+    "blessing": "每一天的平安，都是給家人最好的禮物。",
+    "hero_url": "https://alive-checkin.onrender.com/assets/daily-care/morning-warm.webp",
+    "logo_url": DAILY_PEACE_LOGO_URL,
+    "buttons": [
+        {"label": "✅ 我平安", "action": "checkin"},
+        {"label": "🛡️ 安全守護", "uri": "https://alive-checkin.onrender.com/liff/checkin.html?open=guard"},
+        {"label": "需要幫忙", "uri": "https://alive-checkin.onrender.com/liff/sos.html"},
+        {"label": "🔔 今日安心提醒", "uri": "https://alive-checkin.onrender.com/daily-care.html"},
+    ],
+}
 
 
 # 逾時未報平安：會員可選 24／36／48／72 小時，預設 48 小時。
@@ -17833,8 +17849,169 @@ def personalized_checkin_push_preview(data_file, now=None):
     }
 
 
+def _validated_https_url(value, field_name):
+    value = str(value or "").strip()
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError(f"{field_name}只接受 HTTPS 網址")
+    return value
+
+
+def _normalize_card_template(payload, *, template_id=None):
+    name = str(payload.get("name") or "").strip()[:60]
+    blessing = str(payload.get("blessing") or "").strip()[:300]
+    if not name:
+        raise ValueError("請輸入範本名稱")
+    if not blessing:
+        raise ValueError("請輸入祝福文字")
+    buttons = []
+    for raw in list(payload.get("buttons") or [])[:4]:
+        label = str((raw or {}).get("label") or "").strip()[:20]
+        if not label:
+            continue
+        if (raw or {}).get("action") == "checkin":
+            buttons.append({"label": label, "action": "checkin"})
+        else:
+            buttons.append({"label": label, "uri": _validated_https_url((raw or {}).get("uri"), "按鈕連結")})
+    if not buttons:
+        raise ValueError("至少保留一個圖文卡按鈕")
+    return {
+        "id": template_id or f"card-{uuid.uuid4().hex[:12]}",
+        "name": name,
+        "system": False,
+        "blessing": blessing,
+        "hero_url": _validated_https_url(payload.get("hero_url"), "主圖"),
+        "logo_url": DAILY_PEACE_LOGO_URL,
+        "buttons": buttons,
+        "updated_at": datetime.now(ZoneInfo("Asia/Taipei")).isoformat(timespec="seconds"),
+    }
+
+
+def list_card_templates(state):
+    custom = [row for row in list((state or {}).get("personalized_card_templates") or []) if isinstance(row, dict)]
+    return [copy.deepcopy(DEFAULT_CARD_TEMPLATE)] + custom
+
+
+def save_card_template(data_file, payload):
+    state = load_state(data_file)
+    requested_id = str(payload.get("id") or "").strip()
+    if requested_id == DEFAULT_CARD_TEMPLATE["id"]:
+        raise ValueError("系統預設範本不可覆寫，請另存新範本")
+    template = _normalize_card_template(payload, template_id=requested_id or None)
+    rows = list(state.get("personalized_card_templates") or [])
+    rows = [row for row in rows if str((row or {}).get("id")) != template["id"]]
+    rows.append(template)
+    state["personalized_card_templates"] = rows[-100:]
+    save_state(data_file, state)
+    return template
+
+
+def _card_template_by_id(state, template_id):
+    wanted = str(template_id or DEFAULT_CARD_TEMPLATE["id"])
+    return next((row for row in list_card_templates(state) if row.get("id") == wanted), None)
+
+
+def _apply_card_template(message, template, profile):
+    result = copy.deepcopy(message)
+    contents = result["contents"]
+    contents["hero"]["url"] = template["hero_url"]
+    body = contents["body"]["contents"]
+    display_name = str(profile.get("display_name") or "你")
+    body[0]["text"] = f"{display_name}，今天一切都好嗎？"
+    body.insert(1, {"type": "text", "text": template["blessing"], "size": "md", "color": "#166534", "wrap": True})
+    colors = ["#16A34A", "#2563EB", "#DC2626", "#7C3AED"]
+    rendered_buttons = []
+    for index, button in enumerate(template.get("buttons") or []):
+        if button.get("action") == "checkin":
+            action = {"type": "postback", "label": button["label"], "data": "action=checkin", "displayText": "我平安"}
+        else:
+            action = {"type": "uri", "label": button["label"], "uri": button["uri"]}
+        rendered_buttons.append({"type": "button", "action": action, "style": "primary", "color": colors[index % len(colors)], "height": "md"})
+    contents["footer"]["contents"] = rendered_buttons
+    return result
+
+
+def preview_personalized_card(data_file, line_user_id, template_id, now=None):
+    state = load_state(data_file)
+    eligible = dict(_eligible_personalized_checkin_members(state, now=now))
+    profile = eligible.get(str(line_user_id or "").strip())
+    if not profile:
+        raise LookupError("此會員目前沒有可推播資格")
+    template = _card_template_by_id(state, template_id)
+    if not template:
+        raise LookupError("找不到指定的圖文卡範本")
+    current = now or current_app_time({})
+    message = _apply_card_template(build_daily_checkin_flex(current, profile=profile), template, profile)
+    return {
+        "member": {"display_name": str(profile.get("display_name") or "LINE 使用者"), "masked_line_user_id": _mask_line_user_id(line_user_id)},
+        "template": template,
+        "message": message,
+    }
+
+
+def holiday_template_catalog(year=None):
+    year = int(year or datetime.now(ZoneInfo("Asia/Taipei")).year)
+    rows = [
+        ("元旦", "01-01", "清晨金色陽光、全家迎接新年", "明亮安心"),
+        ("西洋情人節", "02-14", "雙人溫暖陪伴、花束與柔光", "浪漫溫柔"),
+        ("農曆新年", "依農曆", "年節團圓、紅金燈籠與窗花", "喜氣溫暖"),
+        ("元宵節", "依農曆", "夜空燈籠、湯圓與團圓桌", "溫暖團圓"),
+        ("兒童節", "04-04", "家庭陪伴、彩色風箏與草地", "活潑安心"),
+        ("清明節", "依年度", "清朗春日、白花與安靜思念", "沉靜柔和"),
+        ("母親節", "五月第二個星期日", "母女相擁、康乃馨與晨光", "溫柔感謝"),
+        ("端午節", "依農曆", "粽葉、香包與河岸晨光", "清新安康"),
+        ("父親節", "08-08", "爸爸與家人、祝福蛋糕的儀式感", "溫暖感謝"),
+        ("七夕情人節", "依農曆", "星河、牽手陪伴與柔和燈光", "浪漫守護"),
+        ("中元節", "依農曆", "柔和燈火、平安祈福意象", "莊重安心"),
+        ("教師節", "09-28", "書本、暖光與感謝卡", "知性溫暖"),
+        ("中秋節", "依農曆", "圓月、家人團圓與月餅茶席", "團圓安心"),
+        ("國慶日", "10-10", "台灣城市晨光、節慶旗幟色彩", "明亮莊重"),
+        ("重陽節", "依農曆", "長輩與晚輩散步、秋日菊花", "敬老溫暖"),
+        ("萬聖節", "10-31", "可愛南瓜燈與家庭派對", "童趣不驚悚"),
+        ("感恩節", "十一月第四個星期四", "家人餐桌、燭光與感謝", "溫暖感恩"),
+        ("聖誕節", "12-25", "聖誕樹、禮物與居家暖光", "溫馨祝福"),
+        ("跨年", "12-31", "城市煙火、家人相伴迎新年", "希望安心"),
+    ]
+    return [{"id": f"holiday-{index+1}", "name": name, "date_label": date_label, "elements": elements, "mood": mood, "year": year} for index, (name, date_label, elements, mood) in enumerate(rows)]
+
+
+def build_holiday_image_prompt(payload):
+    holiday = str(payload.get("holiday") or "自訂節日").strip()[:40]
+    mood = str(payload.get("mood") or "溫暖安心").strip()[:80]
+    elements = str(payload.get("elements") or "家人互相陪伴").strip()[:200]
+    notes = str(payload.get("notes") or "").strip()[:300]
+    return (
+        f"為台灣 LINE 服務『每日平安』製作 {holiday} 圖文卡的橫式主視覺背景。"
+        f"氣氛：{mood}。畫面元素：{elements}。補充：{notes or '自然、真實、溫馨'}。"
+        "構圖預留上方與下方乾淨空間供系統疊加品牌與操作元件，16:9，適合手機。"
+        "只生成背景；不要任何文字、不要 Logo、不要商標、不要按鈕、不要介面截圖、不要浮水印。"
+    )
+
+
+def _openai_holiday_image(api_key, prompt):
+    body = json.dumps({"model": "dall-e-3", "prompt": prompt, "size": "1792x1024", "quality": "standard", "n": 1}).encode("utf-8")
+    req = urllib.request.Request("https://api.openai.com/v1/images/generations", data=body, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=90) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    return str(((data.get("data") or [{}])[0]).get("url") or "")
+
+
+def generate_holiday_background(config, payload):
+    prompt = build_holiday_image_prompt(payload)
+    generator = config.get("HOLIDAY_IMAGE_GENERATOR")
+    api_key = str(config.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY") or "").strip()
+    if not generator and not api_key:
+        return {"ok": False, "error": "image_api_key_missing", "message": "尚未設定圖片生成金鑰，請先在 Render 環境變數加入 OPENAI_API_KEY。", "prompt": prompt}, 503
+    try:
+        image_url = (generator or (lambda value: _openai_holiday_image(api_key, value)))(prompt)
+        image_url = _validated_https_url(image_url, "生成圖片")
+    except Exception as exc:
+        return {"ok": False, "error": "image_generation_failed", "message": "圖片生成失敗，請稍後重試或修改描述。", "detail": str(exc)[:500], "prompt": prompt}, 502
+    return {"ok": True, "image_url": image_url, "prompt": prompt, "message": "背景已生成，請先預覽；目前尚未儲存或推播。"}, 200
+
+
 def admin_send_personalized_checkin_cards(
-    config, *, mode, confirmed=False, line_user_id="", now=None
+    config, *, mode, confirmed=False, line_user_id="", template_id="daily-peace-default", now=None
 ):
     """Send the current personalized check-in card after explicit admin confirmation."""
     if confirmed is not True:
@@ -17846,6 +18023,9 @@ def admin_send_personalized_checkin_cards(
         return {"ok": False, "error": "line_token_missing"}, 503
     data_file = config["DATA_FILE"]
     state = load_state(data_file)
+    template = _card_template_by_id(state, template_id)
+    if not template:
+        return {"ok": False, "error": "template_not_found"}, 404
     current = now or current_app_time(config)
     eligible = _eligible_personalized_checkin_members(state, now=current)
     if mode == "single":
@@ -17857,7 +18037,7 @@ def admin_send_personalized_checkin_cards(
     sent = failed = 0
     results = []
     for uid, profile in eligible:
-        message = build_daily_checkin_flex(current, profile=profile)
+        message = _apply_card_template(build_daily_checkin_flex(current, profile=profile), template, profile)
         try:
             sender(token, uid, message)
             append_notification_log(state, "admin_personalized_checkin", uid, "sent", message)
@@ -21903,6 +22083,60 @@ def create_app(config=None):
             return denied
         return jsonify(personalized_checkin_push_preview(app.config["DATA_FILE"]))
 
+    @app.get("/api/admin/card-templates")
+    def admin_card_templates_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        return jsonify({"templates": list_card_templates(load_state(app.config["DATA_FILE"]))})
+
+    @app.post("/api/admin/card-templates")
+    def admin_card_template_save_api():
+        denied = _super_admin_mutation_guard()
+        if denied:
+            return denied
+        try:
+            template = save_card_template(app.config["DATA_FILE"], request.get_json(silent=True) or {})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": "invalid_template", "message": str(exc)}), 400
+        append_admin_audit(app.config["DATA_FILE"], "personalized_card_template.save", "success", {"template_id": template["id"]})
+        return jsonify({"ok": True, "template": template}), 201
+
+    @app.post("/api/admin/personalized-checkin-push/card-preview")
+    def admin_personalized_card_preview_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        payload = request.get_json(silent=True) or {}
+        try:
+            result = preview_personalized_card(app.config["DATA_FILE"], payload.get("line_user_id"), payload.get("template_id"))
+        except LookupError as exc:
+            return jsonify({"ok": False, "error": "preview_unavailable", "message": str(exc)}), 404
+        return jsonify({"ok": True, **result})
+
+    @app.get("/api/admin/holiday-card/catalog")
+    def admin_holiday_card_catalog_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        return jsonify({"holidays": holiday_template_catalog(request.args.get("year") or None)})
+
+    @app.post("/api/admin/holiday-card/prompt")
+    def admin_holiday_card_prompt_api():
+        denied = _admin_guard()
+        if denied:
+            return denied
+        return jsonify({"ok": True, "prompt": build_holiday_image_prompt(request.get_json(silent=True) or {})})
+
+    @app.post("/api/admin/holiday-card/generate")
+    def admin_holiday_card_generate_api():
+        denied = _super_admin_mutation_guard()
+        if denied:
+            return denied
+        data, code = generate_holiday_background(app.config, request.get_json(silent=True) or {})
+        append_admin_audit(app.config["DATA_FILE"], "holiday_card.generate", "success" if code < 400 else "failed", {"holiday": str((request.get_json(silent=True) or {}).get("holiday") or "")[:40], "error": data.get("error", "")})
+        return jsonify(data), code
+
     @app.post("/api/admin/personalized-checkin-push/send")
     def admin_personalized_checkin_push_send_api():
         denied = _super_admin_mutation_guard()
@@ -21914,6 +22148,7 @@ def create_app(config=None):
             mode=str(payload.get("mode") or ""),
             confirmed=payload.get("confirmed") is True,
             line_user_id=str(payload.get("line_user_id") or ""),
+            template_id=str(payload.get("template_id") or DEFAULT_CARD_TEMPLATE["id"]),
         )
         append_admin_audit(
             app.config["DATA_FILE"],
