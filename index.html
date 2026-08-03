@@ -2504,6 +2504,29 @@
       outline: 3px solid rgba(10, 143, 97, 0.18);
     }
     .onboarding-field input::placeholder { color: #718096; opacity: 1; }
+    .onboarding-check-field > span {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      line-height: 1.5;
+    }
+    .onboarding-check-field input[type="checkbox"] {
+      width: 24px;
+      min-height: 24px;
+      margin: 0;
+      padding: 0;
+      flex: 0 0 24px;
+    }
+    .onboarding-emergency-details,
+    .onboarding-reminder-inline {
+      padding: 14px;
+      border: 1px solid #c9d8e6;
+      border-radius: 12px;
+      background: #f8fbfd;
+    }
+    .onboarding-emergency-details summary { cursor: pointer; font-weight: 900; }
+    .onboarding-emergency-details[open] { display: grid; gap: 14px; }
+    .onboarding-reminder-inline { display: grid; gap: 12px; }
     .onboarding-required { color: #b42318; }
     .onboarding-note {
       margin: 0;
@@ -4333,22 +4356,38 @@
               <label class="onboarding-field" for="obEmail">電子信箱（選填）
                 <input type="email" id="obEmail" inputmode="email" placeholder="例如：name@example.com" autocomplete="email">
               </label>
-              <p class="onboarding-note">這裡填預計邀請的守護人資料，不是你的本人資料。電話不會拿來發送廣告。</p>
+              <p class="onboarding-note">這裡填預計邀請的守護人資料，不是你的本人資料。守護人電話會顯示在後台的「核心守護人／電話」欄位。</p>
+              <label class="onboarding-field onboarding-check-field" for="obEmergencySameAsGuardian">
+                <span><input type="checkbox" id="obEmergencySameAsGuardian"> 同時把這位守護人加入緊急聯絡人</span>
+                <small>勾選後會同步姓名、關係與電話；緊急時可快速撥打。LINE 通知仍須等對方接受守護邀請。</small>
+              </label>
+              <details class="onboarding-emergency-details">
+                <summary>＋ 填寫另一位緊急聯絡人（選填）</summary>
+                <label class="onboarding-field" for="obEmergencyName">緊急聯絡人姓名
+                  <input type="text" id="obEmergencyName" placeholder="例如：陳小華" autocomplete="name">
+                </label>
+                <label class="onboarding-field" for="obEmergencyRelationship">緊急聯絡人關係
+                  <input type="text" id="obEmergencyRelationship" placeholder="例如：家人、朋友">
+                </label>
+                <label class="onboarding-field" for="obEmergencyPhone">緊急聯絡人電話
+                  <input type="tel" id="obEmergencyPhone" inputmode="tel" placeholder="例如：0912 345 678" autocomplete="tel">
+                  <small>這是電話備援，緊急時可快速撥打，不會自動收到 LINE 推播。</small>
+                </label>
+              </details>
+
+              <div class="onboarding-reminder-inline" id="onboardingReminderStep">
+                <p class="onboarding-reminder-hint" id="onboardingReminderHint">依你的方案可設定每日提醒時間。不改動的話會使用預設時段。</p>
+                <div id="onboardingReminderSlots"></div>
+                <button class="onboarding-default-btn" id="onboardingUseDefaultsBtn" type="button">使用方案預設時間</button>
+                <p id="onboardingReminderError" class="inline-error" role="alert" hidden></p>
+              </div>
               <p id="onboardingError" class="inline-error" role="alert" hidden></p>
             </div>
-            <button class="onboarding-submit" id="onboardingSaveBtn" type="button">儲存資料，下一步設定提醒</button>
-          </div>
-
-          <div class="onboarding-form" id="onboardingReminderStep" hidden>
-            <p class="onboarding-reminder-hint" id="onboardingReminderHint">依你的方案可設定每日提醒時間。不改動的話會使用預設時段。</p>
-            <div id="onboardingReminderSlots"></div>
-            <button class="onboarding-default-btn" id="onboardingUseDefaultsBtn" type="button">使用方案預設時間</button>
-            <p id="onboardingReminderError" class="inline-error" role="alert" hidden></p>
-            <button class="onboarding-submit" id="onboardingReminderSaveBtn" type="button">儲存提醒，下一步分享守護人</button>
+            <button class="onboarding-submit" id="onboardingSaveBtn" type="button">儲存資料與提醒，下一步一鍵分享</button>
           </div>
 
           <div class="onboarding-form" id="onboardingShareStep" hidden>
-            <p class="onboarding-note">資料與提醒已儲存。現在請選擇 LINE 好友送出守護邀請；必須等對方加入每日平安、登入、填資料並親自同意後，才算綁定成功。</p>
+            <p class="onboarding-note"><strong id="onboardingGuardianQuotaText">一鍵分享邀請最少 1 位守護人</strong>。分享後，請主動聯繫守護人，請對方點擊你的專屬連結、加入每日平安、登入並填寫資料；對方親自同意後，雙方資料才會同步並完成綁定。</p>
             <button class="onboarding-submit" id="onboardingShareBtn" type="button">一鍵分享邀請守護人</button>
             <div id="onboardingShareFallback" class="share-invite-fallback" hidden>
               <p class="onboarding-note">請改用上方一鍵分享，開啟 LINE 好友選擇</p>
@@ -11388,6 +11427,14 @@
       });
       $("onboardingIntro").textContent = "資料與提醒已完成。請一鍵分享邀請核心守護人，等對方加入每日平安、登入、填寫資料並接受後，才會完成綁定。";
       $("onboardingStepLabel").textContent = "步驟 3／4　一鍵分享邀請守護人";
+      const shareStatus = typeof currentStatusData === "undefined" ? {} : (currentStatusData || {});
+      const guardianLimit = typeof planCoreGuardianLimit === "function"
+        ? planCoreGuardianLimit(shareStatus)
+        : Math.max(1, Number(shareStatus.core_guardian_alert_limit) || 1);
+      const quotaText = $("onboardingGuardianQuotaText");
+      if (quotaText) {
+        quotaText.textContent = `一鍵分享邀請最少 1 位守護人；你的方案最多可邀請 ${guardianLimit} 位核心守護人`;
+      }
     }
 
     function showOnboardingGuardianStep() {
@@ -11396,7 +11443,7 @@
       const reminderStep = $("onboardingReminderStep");
       if (shareStep) shareStep.hidden = true;
       if (guardianStep) guardianStep.hidden = false;
-      if (reminderStep) reminderStep.hidden = true;
+      if (reminderStep) reminderStep.hidden = false;
       setSetupGuideState("onboarding", {
         join: "done",
         login: "done",
@@ -11406,6 +11453,23 @@
       $("onboardingTitle").textContent = "填寫資料與守護關係";
       $("onboardingIntro").textContent = "LINE 姓名會自動帶入。請填寫預計邀請的守護人姓名與雙方關係；守護人電話為選填，緊急狀況或聯絡不上本人時可使用。";
       $("onboardingStepLabel").textContent = "步驟 2／4　填寫資料與提醒設定";
+      const onboardingStatus = typeof currentStatusData === "undefined" ? {} : (currentStatusData || {});
+      const maxCount = typeof planDailyReminderCount === "function"
+        ? planDailyReminderCount(onboardingStatus)
+        : Math.max(1, Number(onboardingStatus.daily_reminders) || 1);
+      const count = typeof onboardingDefaultReminderCount === "function"
+        ? onboardingDefaultReminderCount(onboardingStatus)
+        : Math.min(maxCount, Math.max(1, Number(onboardingStatus.default_daily_reminders) || 1));
+      if (typeof renderOnboardingReminderSlots === "function" && typeof defaultReminderTimesForCount === "function") {
+        renderOnboardingReminderSlots(defaultReminderTimesForCount(count));
+      }
+      if ($("onboardingReminderHint")) {
+        $("onboardingReminderHint").textContent = count === 1
+          ? "每日提醒預設中午 12:00，可直接在這裡修改。"
+          : maxCount > 2
+            ? "799 封測預設每日 2 次：中午 12:00、晚上 18:00，可直接在這裡修改。"
+            : "399 封測預設每日 1 次：中午 12:00，可直接在這裡修改。";
+      }
       setTimeout(() => { try { $("obName")?.focus(); } catch (_) {} }, 50);
     }
 
@@ -11775,6 +11839,10 @@
       setRelationshipValue("obRelationship", "obRelationshipOther", "");
       $("obPhone").value = "";
       $("obEmail").value = "";
+      if ($("obEmergencySameAsGuardian")) $("obEmergencySameAsGuardian").checked = false;
+      if ($("obEmergencyName")) $("obEmergencyName").value = "";
+      if ($("obEmergencyRelationship")) $("obEmergencyRelationship").value = "";
+      if ($("obEmergencyPhone")) $("obEmergencyPhone").value = "";
       if (typeof initializeWebOnboardingLocation === "function") initializeWebOnboardingLocation();
       const entryPlan = $("onboardingEntryPlan");
       if (entryPlan) {
@@ -11790,12 +11858,7 @@
       const canDismiss = !guardianRequired && contacts.length > 0;
       setOnboardingCloseVisible(canDismiss);
 
-      // 已有 ≥1 位守護人：不要再強制「新增守護人」，直接進提醒步驟（可按 X 關閉）
-      if (contacts.length > 0 && !guardianRequired) {
-        showOnboardingReminderStep();
-      } else {
-        showOnboardingGuardianStep();
-      }
+      showOnboardingGuardianStep();
       modal.hidden = false;
       // LIFF/iOS keyboard: keep focused fields/buttons reachable by scrolling the fixed overlay
       if (modal.dataset.scrollBound !== "true") {
@@ -11838,7 +11901,15 @@
         relationship: readRelationship("obRelationship", "obRelationshipOther"),
         phone: $("obPhone").value.trim(),
         email: $("obEmail").value.trim(),
-        is_primary: true,
+        // 首位會由後端自動設為主要守護人；後續新增不覆蓋既有第 1 順位。
+        is_primary: false,
+        contact_role: "guardian",
+      };
+      const sameAsGuardian = $("obEmergencySameAsGuardian").checked;
+      const separateEmergency = {
+        name: $("obEmergencyName").value.trim(),
+        relationship: $("obEmergencyRelationship").value.trim(),
+        phone: $("obEmergencyPhone").value.trim(),
       };
       const city = $("obCity").value.trim();
       const district = $("obDistrict").value.trim();
@@ -11855,6 +11926,19 @@
           errorEl.hidden = false;
         }
         $(missing[0]).focus();
+        return;
+      }
+      if (sameAsGuardian && !payload.phone) {
+        errorEl.textContent = "勾選同時加入緊急聯絡人時，請填寫守護人的聯絡電話";
+        errorEl.hidden = false;
+        $("obPhone").focus();
+        return;
+      }
+      const hasSeparateEmergency = Object.values(separateEmergency).some(Boolean);
+      if (hasSeparateEmergency && (!separateEmergency.name || !separateEmergency.phone)) {
+        errorEl.textContent = "另一位緊急聯絡人若要新增，姓名與電話都要填寫";
+        errorEl.hidden = false;
+        $(!separateEmergency.name ? "obEmergencyName" : "obEmergencyPhone").focus();
         return;
       }
       saveBtn.disabled = true;
@@ -11874,7 +11958,7 @@
         try {
           const existing = await apiGetContacts(lineUserId);
           if (existing.status === 200 && existing.data) {
-            contacts = existing.data.contacts || contacts;
+            contacts = (existing.data.contacts || contacts).filter((contact) => contactRoleOf(contact) === "guardian");
             contactLimit = existing.data.contact_limit || contactLimit;
           }
         } catch (_) {}
@@ -11909,10 +11993,49 @@
         const savedContacts = res.data.contacts || [];
         renderGuardians(savedContacts, res.data.contact_limit || contactLimit);
         if (Array.isArray(savedContacts)) contactData = savedContacts;
+        const emergencyPayloads = [];
+        if (sameAsGuardian) {
+          emergencyPayloads.push({
+            line_user_id: lineUserId,
+            name: payload.name,
+            relationship: payload.relationship,
+            phone: payload.phone,
+            email: payload.email,
+            is_primary: false,
+            contact_role: "emergency",
+          });
+        }
+        if (hasSeparateEmergency) {
+          emergencyPayloads.push({
+            line_user_id: lineUserId,
+            ...separateEmergency,
+            email: "",
+            is_primary: false,
+            contact_role: "emergency",
+          });
+        }
+        for (const emergencyPayload of emergencyPayloads) {
+          const emergencyResult = await apiAddGuardian(emergencyPayload);
+          if (emergencyResult.status !== 200 || emergencyResult.data.ok === false) {
+            throw new Error((emergencyResult.data && (emergencyResult.data.message || emergencyResult.data.error)) || "緊急聯絡人儲存失敗");
+          }
+          if (Array.isArray(emergencyResult.data.contacts)) contactData = emergencyResult.data.contacts;
+        }
+        const expected = onboardingDefaultReminderCount(currentStatusData || {});
+        let times = readOnboardingReminderTimes().slice(0, expected);
+        if (times.length < expected) times = defaultReminderTimesForCount(expected);
+        const onboardingResult = await apiCompleteOnboarding(lineUserId, times);
+        if (onboardingResult.status !== 200 || onboardingResult.data.ok === false) {
+          throw new Error((onboardingResult.data && (onboardingResult.data.message || onboardingResult.data.error)) || "提醒時間儲存失敗");
+        }
+        clearShareFirstLocalFlags();
+        if (currentStatusData) {
+          currentStatusData.reminder_times = onboardingResult.data.reminder_times || times;
+          currentStatusData.reminder_time = (onboardingResult.data.reminder_times || times)[0];
+        }
         if (currentStatusData) renderMemberCenter();
         setOnboardingCloseVisible(true);
-        // 表單完成後才顯示提醒時間設定(不要一進來就跳)
-        showOnboardingReminderStep();
+        showOnboardingShareStep();
       } catch (error) {
         if (errorEl) {
           errorEl.textContent = "儲存失敗：" + error.message;
@@ -11920,7 +12043,7 @@
         }
       } finally {
         saveBtn.disabled = false;
-        saveBtn.textContent = "儲存資料，下一步設定提醒";
+        saveBtn.textContent = "儲存資料與提醒，下一步一鍵分享";
       }
     }
 

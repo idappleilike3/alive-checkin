@@ -17,7 +17,7 @@ function functionBody(name) {
   assert.fail(`could not parse ${name}`);
 }
 
-test("required guardian onboarding can save guardian and advance to reminders", () => {
+test("required guardian onboarding saves combined data and advances to sharing", () => {
   const saveGuardian = functionBody("saveOnboardingGuardian");
   const interactionLock = functionBody("setMemberInteractionLocked");
 
@@ -31,7 +31,8 @@ test("required guardian onboarding can save guardian and advance to reminders", 
     /"onboardingSaveBtn"/,
     "the required onboarding guardian button must remain clickable while member features are locked",
   );
-  assert.match(saveGuardian, /showOnboardingReminderStep\(\)/);
+  assert.match(saveGuardian, /apiCompleteOnboarding/);
+  assert.match(saveGuardian, /showOnboardingShareStep\(\)/);
 });
 
 test("required guardian onboarding can save reminder settings", () => {
