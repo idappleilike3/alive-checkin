@@ -60,6 +60,40 @@ class AuthoritativeOnboardingProgressTest(unittest.TestCase):
         self.assertEqual(payload["current_step"], 5)
         self.assertEqual(payload["binding_status"], "waiting_for_guardian")
 
+    def test_accepted_invite_repairs_missing_bound_contact_and_completes_setup(self):
+        state = app_module.load_state(self.data_file)
+        owner = state["users"]["U-owner"]
+        owner["onboarding_reminder_configured"] = True
+        state["users"]["U-guardian"] = app_module.get_profile(state, "U-guardian")
+        state["users"]["U-guardian"]["display_name"] = "守護人"
+        state["guardian_invites"] = [{
+            "id": "guardian-invite-accepted",
+            "inviter_line_user_id": "U-owner",
+            "invitee_line_user_id": "U-guardian",
+            "display_name": "守護人",
+            "relationship": "家人",
+            "phone": "0912345678",
+            "status": "accepted",
+            "created_at": "2026-08-03T10:00:00",
+            "accepted_at": "2026-08-03T10:05:00",
+        }]
+        app_module.save_state(self.data_file, state)
+
+        payload, status = app_module.onboarding_status_payload(
+            self.data_file, "U-owner"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["home_ready"])
+        self.assertTrue(payload["setup_completed"])
+        self.assertTrue(payload["completed_steps"]["guardian_bound"])
+        self.assertEqual(payload["binding_status"], "bound")
+        saved_owner = app_module.load_state(self.data_file)["users"]["U-owner"]
+        self.assertTrue(
+            app_module.profile_has_bound_line_guardian(saved_owner),
+            "accepted invitation must be persisted as a notifiable bound guardian",
+        )
+
     def test_trial_and_both_beta_plans_share_the_same_waiting_step(self):
         plan_cases = (
             ("trial", "", "trial"),
@@ -73,6 +107,7 @@ class AuthoritativeOnboardingProgressTest(unittest.TestCase):
                 profile["onboarding_reminder_configured"] = True
                 profile["beta_cohort"] = cohort
                 profile["plan"] = plan
+                profile["membership_source"] = "beta" if cohort else "trial"
                 profile["contacts"] = []
                 state["guardian_invites"] = [{
                     "inviter_line_user_id": "U-owner",
@@ -89,6 +124,12 @@ class AuthoritativeOnboardingProgressTest(unittest.TestCase):
                 self.assertTrue(payload["completed_steps"]["guardian_invite_sent"])
                 self.assertFalse(payload["completed_steps"]["guardian_bound"])
                 self.assertFalse(payload["home_ready"])
+                self.assertEqual(payload["plan"], plan)
+                self.assertEqual(payload["beta_cohort"], cohort)
+                self.assertEqual(
+                    payload["membership_source"],
+                    "beta" if cohort else "trial",
+                )
 
     def test_four_entry_pages_keep_step_four_waiting_copy(self):
         pages = (

@@ -45,3 +45,21 @@ test("a failed progress lookup never falls back to a blank profile form", () => 
   assert.equal(decide({ok: false}), "unavailable");
   assert.equal(decide(null), "unavailable");
 });
+
+test("registration copy follows persisted membership after share return loses query params", () => {
+  const label = expose("onboardingRegistrationPlanCopy");
+
+  assert.equal(label({plan: "trial", membership_source: "trial"}, ""), "14 天安心體驗");
+  assert.equal(label({plan: "paid_399_year", membership_source: "beta", beta_cohort: "B399"}, ""), "399 安心版｜21 天封測");
+  assert.equal(label({plan: "paid_799_year", membership_source: "beta", beta_cohort: "B799"}, ""), "799 守護版｜21 天封測");
+  assert.equal(label({plan: "paid_799_year", membership_source: "beta", beta_cohort: "A"}, ""), "799 守護版｜21 天封測");
+  assert.equal(label({plan: "paid_399", membership_source: "paid"}, ""), "399 安心版｜月費方案");
+  assert.equal(label({plan: "paid_799_year", membership_source: "paid"}, ""), "799 家庭守護｜年費方案");
+});
+
+test("beta entry query is retained before the server has completed the claim", () => {
+  const label = expose("onboardingRegistrationPlanCopy");
+
+  assert.equal(label({plan: "trial", membership_source: "trial"}, "B799"), "799 守護版｜21 天封測");
+  assert.equal(label({}, "B399"), "399 安心版｜21 天封測");
+});

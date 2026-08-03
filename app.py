@@ -344,6 +344,7 @@ DEFAULT_STATE = {
     **DEFAULT_PROFILE,
     "users": {},
     "notification_logs": [],
+    "onboarding_events": [],
     "push_campaigns": [],
     "push_campaign_versions": [],
     "push_delivery_records": [],
@@ -958,6 +959,7 @@ def _hydrate_state(saved, revision=None):
     state["history"] = sorted(set(state.get("history") or []))
     state["users"] = state.get("users") or {}
     state["notification_logs"] = state.get("notification_logs") or []
+    state["onboarding_events"] = state.get("onboarding_events") or []
     state["push_campaigns"] = state.get("push_campaigns") or []
     state["push_campaign_versions"] = state.get("push_campaign_versions") or []
     state["push_delivery_records"] = state.get("push_delivery_records") or []
@@ -2487,6 +2489,200 @@ def contact_is_reciprocal_core_guardian(state, owner_id, contact):
     )
 
 
+def repair_accepted_guardian_invites(state, profile):
+    """Backfill a bound contact when an accepted invite missed that write.
+
+    Some older invite flows persisted the invitation as accepted before the
+    inviter contact row was written.  The accepted invitation is authoritative
+    consent, so reconstruct the missing notifiable guardian without asking the
+    invitee to bind again.
+    """
+    if not isinstance(state, dict) or not isinstance(profile, dict):
+        return False
+    owner_id = str(profile.get("line_user_id") or "").strip()
+    if not owner_id:
+        return False
+    contacts = list(profile.get("contacts") or [])
+    changed = False
+    for invite in state.get("guardian_invites") or []:
+        if (
+            not isinstance(invite, dict)
+            or str(invite.get("inviter_line_user_id") or "").strip() != owner_id
+            or str(invite.get("status") or "").strip() != "accepted"
+        ):
+            continue
+        guardian_id = str(invite.get("invitee_line_user_id") or "").strip()
+        if not guardian_id or guardian_id == owner_id:
+            continue
+        if any(contact_is_bound_guardian(row, owner_id) and get_contact_line_id(row) == guardian_id for row in contacts):
+            continue
+        name = str(
+            invite.get("invitee_display_name")
+            or invite.get("display_name")
+            or ((state.get("users") or {}).get(guardian_id) or {}).get("display_name")
+            or "LINE 守護人"
+        ).strip()
+        phone = str(invite.get("phone") or invite.get("contact_phone") or "").strip()
+        relationship = str(invite.get("relationship") or "守護人").strip()
+        candidate = next(
+            (
+                row for row in contacts
+                if isinstance(row, dict)
+                and not get_contact_line_id(row)
+                and (
+                    (phone and str(row.get("phone") or "").strip() == phone)
+                    or (name and str(row.get("name") or "").strip() == name)
+                )
+            ),
+            None,
+        )
+        if candidate is None:
+            candidate = {
+                "id": f"line-{guardian_id}",
+                "name": name,
+                "relationship": relationship,
+                "phone": phone,
+                "email": "",
+                "priority": len(contacts) + 1,
+            }
+            contacts.append(candidate)
+        candidate.update({
+            "line_id": guardian_id,
+            "line_user_id": guardian_id,
+            "binding_status": "accepted",
+            "consent_status": "accepted",
+            "accepted_at": str(invite.get("accepted_at") or candidate.get("accepted_at") or ""),
+            "accepted_invite_id": str(invite.get("id") or ""),
+            "contact_role": "guardian",
+            "notify_methods": list(dict.fromkeys([*(candidate.get("notify_methods") or []), "line"])),
+        })
+        if not any(
+            bool(row.get("is_primary")) and contact_is_bound_guardian(row, owner_id)
+            for row in contacts if isinstance(row, dict) and row is not candidate
+        ):
+            candidate["is_primary"] = True
+        changed = True
+    if changed:
+        profile["contacts"] = contacts
+    return changed
+
+
+ONBOARDING_EVENT_LIMIT = 2000
+ONBOARDING_WORKFLOW_PUSH_KINDS = {
+    "onboarding_profile", "onboarding_invite", "onboarding_binding",
+    "profile_completion", "binding_complete",
+}
+
+
+def append_onboarding_event(
+    state, line_user_id, event, *, source_page, occurred_at=None, metadata=None
+):
+    """Append one deduplicated onboarding fact without storing form values."""
+    occurred = occurred_at or current_app_time({})
+    occurred_text = (
+        occurred.isoformat(timespec="seconds")
+        if isinstance(occurred, datetime)
+        else str(occurred or "")
+    )
+    row = {
+        "line_user_id": str(line_user_id or "").strip(),
+        "event": str(event or "").strip(),
+        "source_page": str(source_page or "").strip()[:200],
+        "occurred_at": occurred_text,
+    }
+    safe_metadata = metadata if isinstance(metadata, dict) else {}
+    for key in ("plan", "membership_source", "invite_id", "invitee_line_user_id", "invitee_display_name"):
+        if safe_metadata.get(key) not in (None, ""):
+            row[key] = str(safe_metadata.get(key))[:200]
+    ledger = state.setdefault("onboarding_events", [])
+    identity = (
+        row["line_user_id"], row["event"], row["source_page"],
+        row["occurred_at"], row.get("invite_id", ""),
+    )
+    for existing in reversed(ledger[-100:]):
+        if not isinstance(existing, dict):
+            continue
+        if (
+            str(existing.get("line_user_id") or ""),
+            str(existing.get("event") or ""),
+            str(existing.get("source_page") or ""),
+            str(existing.get("occurred_at") or ""),
+            str(existing.get("invite_id") or ""),
+        ) == identity:
+            return existing
+    ledger.append(row)
+    state["onboarding_events"] = ledger[-ONBOARDING_EVENT_LIMIT:]
+    return row
+
+
+def onboarding_progress_snapshot(state, profile, now=None):
+    """Derive the canonical five-step progress from persisted business facts."""
+    state = state if isinstance(state, dict) else {}
+    profile = profile if isinstance(profile, dict) else {}
+    owner_id = str(profile.get("line_user_id") or "").strip()
+    current = now or current_app_time({})
+    events = [
+        row for row in (state.get("onboarding_events") or [])
+        if isinstance(row, dict) and str(row.get("line_user_id") or "") == owner_id
+    ]
+    event_times = {}
+    for row in events:
+        event_times.setdefault(str(row.get("event") or ""), str(row.get("occurred_at") or ""))
+    invites = [
+        row for row in (state.get("guardian_invites") or [])
+        if isinstance(row, dict)
+        and str(row.get("inviter_line_user_id") or "") == owner_id
+        and str(row.get("status") or "") in {"pending", "accepted"}
+    ]
+    live_invites = []
+    for row in invites:
+        expiry = parse_datetime(row.get("expires_at"))
+        if row.get("status") == "pending" and expiry:
+            comparable_now, comparable_expiry = _comparable_datetimes(current, expiry)
+            if comparable_expiry <= comparable_now:
+                continue
+        live_invites.append(row)
+    latest_invite = max(
+        live_invites,
+        key=lambda row: str(row.get("accepted_at") or row.get("created_at") or ""),
+        default={},
+    )
+    bound = profile_has_bound_line_guardian(profile)
+    completed = {
+        "line_joined": bool(profile),
+        "line_verified": bool(owner_id),
+        "profile_saved": bool(profile.get("onboarding_reminder_configured")),
+        "invite_sent": bool(live_invites or bound),
+        "guardian_bound": bool(bound),
+    }
+    ordered = list(completed)
+    current_step = next((index for index, key in enumerate(ordered, 1) if not completed[key]), 5)
+    if all(completed.values()):
+        current_step = 5
+    workflow_logs = [
+        row for row in (state.get("notification_logs") or [])
+        if isinstance(row, dict)
+        and str(row.get("line_user_id") or "") == owner_id
+        and str(row.get("kind") or "") in ONBOARDING_WORKFLOW_PUSH_KINDS
+    ]
+    latest_push = max(workflow_logs, key=lambda row: str(row.get("created_at") or ""), default={})
+    return {
+        "total_steps": 5,
+        "current_step": current_step,
+        "completed_steps": completed,
+        "binding_status": "bound" if bound else "waiting_for_guardian" if completed["invite_sent"] else "waiting_for_invite",
+        "line_joined_at": event_times.get("line_joined", str(profile.get("created_at") or "")),
+        "line_verified_at": event_times.get("line_verified", str(profile.get("created_at") or "")),
+        "profile_saved_at": event_times.get("profile_saved", str(profile.get("profile_completed_at") or "")),
+        "invite_sent_at": str(latest_invite.get("created_at") or event_times.get("invite_sent") or ""),
+        "guardian_bound_at": str(latest_invite.get("accepted_at") or event_times.get("guardian_bound") or ""),
+        "latest_invitee_line_user_id": str(latest_invite.get("invitee_line_user_id") or ""),
+        "latest_invitee_display_name": str(latest_invite.get("display_name") or ""),
+        "latest_source_page": str((events[-1] if events else {}).get("source_page") or ""),
+        "latest_workflow_push": dict(latest_push),
+    }
+
+
 def member_access_state(profile):
     """Return only server-authoritative readiness for a member session.
 
@@ -2517,7 +2713,9 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
     if not profile and not allow_missing_profile:
         return {"ok": False, "error": "user not registered"}, 404
     profile = profile or {}
-    if profile and ensure_onboarding_completed_flag(profile):
+    repaired_binding = bool(profile and repair_accepted_guardian_invites(state, profile))
+    if profile and (repaired_binding or ensure_onboarding_completed_flag(profile)):
+        ensure_onboarding_completed_flag(profile)
         save_state(data_file, state)
     access = member_access_state(profile)
     contacts = profile.get("contacts") or []
@@ -2605,6 +2803,8 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
         ),
         "allowed_grace_hours": list(ALLOWED_GRACE_HOURS),
         "plan": profile.get("plan", "trial"),
+        "membership_source": str(profile.get("membership_source") or ""),
+        "beta_cohort": str(profile.get("beta_cohort") or "").strip().upper(),
         "display_name": profile.get("display_name", ""),
         "user_location": {
             "city": str((profile.get("location") or {}).get("city") or "").strip(),
@@ -4747,8 +4947,17 @@ def register_line_user(data_file, payload):
         elif value not in (None, ""):
             user[key] = value
 
-    if isinstance(existing, dict) and str(user.get("plan") or "") == "free":
+    if (
+        isinstance(existing, dict)
+        and str(user.get("plan") or "") == "free"
+        and not beta_reset_pending
+    ):
         ensure_membership_trial(user, source="transition_trial")
+    elif beta_reset_pending and str(user.get("plan") or "") == "free":
+        # A reset test account may re-enter onboarding, but its free clock must
+        # remain dormant until the selected beta link is claimed and configured.
+        user["plan"] = "trial"
+        user["payment_status"] = "trial"
     own_trial_activated = False
     if activate_own_trial:
         used_source = free_eligibility_source(user)
@@ -4801,6 +5010,20 @@ def register_line_user(data_file, payload):
             user["reminder_time"] = ""
             user["reminder_times"] = []
             user["daily_checkin_reminder_enabled"] = False
+    registration_at = datetime.now().isoformat(timespec="seconds")
+    source_page = str(payload.get("source_page") or "/liff/onboarding.html")
+    event_metadata = {
+        "plan": user.get("plan"),
+        "membership_source": user.get("membership_source"),
+    }
+    append_onboarding_event(
+        state, line_user_id, "line_joined", source_page=source_page,
+        occurred_at=user.get("created_at") or registration_at, metadata=event_metadata,
+    )
+    append_onboarding_event(
+        state, line_user_id, "line_verified", source_page=source_page,
+        occurred_at=registration_at, metadata=event_metadata,
+    )
     save_state(data_file, state)
     status = build_status(user, state)
     status["beta_cohort"] = str(user.get("beta_cohort") or "")
@@ -7121,6 +7344,18 @@ def create_guardian_invite(data_file, inviter_line_user_id, payload, now=None):
     }
     state.setdefault("guardian_invites", []).append(invite)
     state["guardian_invites"] = state["guardian_invites"][-100:]
+    inviter = (state.get("users") or {}).get(inviter_id) or {}
+    append_onboarding_event(
+        state, inviter_id, "invite_sent",
+        source_page=str(payload.get("source_page") or "/liff/share-invite.html"),
+        occurred_at=invite["created_at"],
+        metadata={
+            "plan": inviter.get("plan"),
+            "membership_source": inviter.get("membership_source"),
+            "invite_id": invite["id"],
+            "invitee_display_name": display_name,
+        },
+    )
     save_state(data_file, state)
     return {"ok": True, **invite}, 201
 
@@ -7993,6 +8228,19 @@ def bind_emergency_contact(
 
     ensure_onboarding_completed_flag(inviter)
     inviter.pop("guardian_unbound_since", None)
+    if pending_invite and not was_duplicate:
+        append_onboarding_event(
+            state, inviter_id, "guardian_bound",
+            source_page="/liff/invite-accept.html",
+            occurred_at=accepted_at,
+            metadata={
+                "plan": inviter.get("plan"),
+                "membership_source": inviter.get("membership_source"),
+                "invite_id": pending_invite.get("id"),
+                "invitee_line_user_id": contact_line_user_id,
+                "invitee_display_name": contact_display_name,
+            },
+        )
 
     rewards = state.setdefault("contact_rewards", [])
     reward = next(
@@ -15380,6 +15628,9 @@ def admin_summary(data_file, config=None, now=None):
         return matches[0] if len(matches) == 1 else None
     for user in state.get("users", {}).values():
         status = build_status(user, state, now=status_now)
+        status["onboarding_progress"] = onboarding_progress_snapshot(
+            state, user, now=status_now
+        )
         status["expiry_review_required"] = bool(user.get("expiry_review_required"))
         status["gift_code"] = str(user.get("gift_code") or "")
         status["gift_started_at"] = str(user.get("gift_started_at") or "")
@@ -16069,6 +16320,11 @@ def append_notification_log(
         "status": status,
         "message": message_text,
         "detail": detail or "",
+        "message_full": (
+            json.dumps(message, ensure_ascii=False)
+            if isinstance(message, dict)
+            else str(message or "")
+        ),
     }
     if isinstance(metadata, dict):
         row.update({
@@ -16079,6 +16335,9 @@ def append_notification_log(
                 "beta_cohort",
                 "scheduled_at",
                 "sent_at",
+                "workflow_step",
+                "due_day",
+                "delivery_key",
             )
             if metadata.get(key) not in (None, "")
         })
@@ -16144,6 +16403,7 @@ LINE_MESSAGE_USAGE_CATEGORIES = {
     "sos_recipient_reminder",
     "smart_reminder",
     "guardian_summary",
+    "onboarding",
 }
 
 
@@ -18951,6 +19211,180 @@ def cleanup_expired_sos(config):
     return {"removed": len(removed)}, 200
 
 
+ONBOARDING_PROGRESS_REMINDER_DAYS = {
+    3: (1, 3, 5, 7),
+    4: (1, 3, 7),
+    5: (2, 5, 9),
+}
+
+
+def _onboarding_progress_reminder(profile, progress, now, public_url):
+    """Return today's one due workflow reminder, never overdue catch-up rows."""
+    step = int(progress.get("current_step") or 0)
+    if step not in ONBOARDING_PROGRESS_REMINDER_DAYS:
+        return None
+    anchor_fields = {
+        3: ("line_verified_at", "line_joined_at"),
+        4: ("profile_saved_at",),
+        5: ("invite_sent_at",),
+    }
+    anchor = None
+    for field in anchor_fields[step]:
+        anchor = parse_datetime(progress.get(field))
+        if anchor:
+            break
+    if anchor is None:
+        anchor = parse_datetime(profile.get("created_at"))
+    if anchor is None:
+        return None
+    comparable_now, comparable_anchor = _comparable_datetimes(now, anchor)
+    due_day = (comparable_now.date() - comparable_anchor.date()).days
+    if due_day not in ONBOARDING_PROGRESS_REMINDER_DAYS[step]:
+        return None
+    base = str(public_url or "").rstrip("/")
+    invitee = str(progress.get("latest_invitee_display_name") or "守護人").strip()
+    if step == 3:
+        kind = "onboarding_profile"
+        message = (
+            "你的方案資格已保留，但設定尚未完成。\n"
+            "請完成會員資料與提醒設定，完成後才能進入邀請守護人的步驟。\n"
+            f"繼續填寫會員資料：{base}/liff/onboarding.html"
+        )
+    elif step == 4:
+        kind = "onboarding_invite"
+        message = (
+            "會員資料已完成，還差邀請第一位守護人。\n"
+            "請使用一鍵邀請，把專屬連結分享給信任的家人或朋友。\n"
+            f"一鍵邀請守護人：{base}/liff/share-invite.html"
+        )
+    else:
+        kind = "onboarding_binding"
+        message = (
+            f"你已把守護邀請分享給「{invitee}」，目前仍等待對方完成接受。\n"
+            "請和對方確認是否已開啟連結、填寫必要資料並同意綁定。\n"
+            f"查看邀請狀態：{base}/liff/share-invite.html"
+        )
+    return {"step": step, "due_day": due_day, "kind": kind, "message": message}
+
+
+def send_onboarding_progress_reminders(config):
+    """Send one low-frequency reminder for the member's unfinished onboarding step."""
+    token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+        "LINE_CHANNEL_ACCESS_TOKEN", ""
+    )
+    if not token:
+        return {
+            "sent": 0, "failed": 0, "skipped": 0,
+            "error": "LINE_CHANNEL_ACCESS_TOKEN is not set",
+        }, 400
+    state = load_state(config["DATA_FILE"])
+    sender = config.get("LINE_PUSH_SENDER") or line_push_message
+    now = current_app_time(config)
+    earliest = str(config.get("ONBOARDING_REMINDER_TIME") or "09:00")
+    if now.strftime("%H:%M") < earliest:
+        return {"sent": 0, "failed": 0, "skipped": 0, "deferred": True}, 200
+    if not line_non_emergency_push_allowed(state, config, now):
+        return line_budget_blocked_response(state, config, now)
+    sent = failed = skipped = 0
+    results = []
+    system_error = False
+    public_url = config.get("APP_PUBLIC_URL") or os.environ.get(
+        "APP_PUBLIC_URL", "https://alive-checkin.onrender.com"
+    )
+    for profile in (state.get("users") or {}).values():
+        if not isinstance(profile, dict):
+            continue
+        line_user_id = str(profile.get("line_user_id") or "").strip()
+        if not line_user_id or profile.get("line_push_blocked"):
+            skipped += 1
+            continue
+        progress = onboarding_progress_snapshot(state, profile, now=now)
+        if progress.get("completed_steps", {}).get("guardian_bound"):
+            skipped += 1
+            continue
+        reminder = _onboarding_progress_reminder(
+            profile, progress, now, public_url
+        )
+        if not reminder:
+            skipped += 1
+            continue
+        delivery_key = (
+            f"{reminder['kind']}:{line_user_id}:"
+            f"{reminder['due_day']}:{now.strftime('%Y-%m-%d')}"
+        )
+        attempted = set(profile.get("onboarding_progress_reminder_keys") or [])
+        if delivery_key in attempted:
+            skipped += 1
+            continue
+        # One attempt per scheduled day prevents a failing UID from creating
+        # dozens of duplicate logs every minute. The next retry is the next due day.
+        attempted.add(delivery_key)
+        profile["onboarding_progress_reminder_keys"] = sorted(attempted)[-40:]
+        metadata = {
+            "plan": profile.get("plan"),
+            "membership_source": profile.get("membership_source"),
+            "beta_cohort": profile.get("beta_cohort"),
+            "scheduled_at": now.isoformat(timespec="seconds"),
+            "workflow_step": reminder["step"],
+            "due_day": reminder["due_day"],
+            "delivery_key": delivery_key,
+        }
+        try:
+            if sender is line_push_message:
+                result = sender(
+                    token, line_user_id, reminder["message"],
+                    retry_key=_line_retry_key(delivery_key),
+                )
+            else:
+                result = sender(token, line_user_id, reminder["message"])
+            metadata["sent_at"] = now.isoformat(timespec="seconds")
+            append_notification_log(
+                state, reminder["kind"], line_user_id, "sent",
+                reminder["message"], json.dumps(result, ensure_ascii=False),
+                metadata=metadata,
+            )
+            record_line_message_usage(
+                state,
+                category="onboarding",
+                owner_line_user_id=line_user_id,
+                recipient_count=1,
+                event_id=delivery_key,
+                sent_at=now,
+            )
+            sent += 1
+            results.append({
+                "line_user_id": line_user_id,
+                "step": reminder["step"],
+                "due_day": reminder["due_day"],
+                "status": "sent",
+            })
+        except Exception as exc:
+            failure = classify_push_exception(exc)
+            append_notification_log(
+                state, reminder["kind"], line_user_id, "failed",
+                reminder["message"], str(exc)[:400], metadata=metadata,
+            )
+            _mark_line_push_blocked(profile, exc)
+            failed += 1
+            results.append({
+                "line_user_id": line_user_id,
+                "step": reminder["step"],
+                "due_day": reminder["due_day"],
+                "status": "failed",
+            })
+            if failure.kind == "system":
+                system_error = True
+                break
+    save_state(config["DATA_FILE"], state)
+    return {
+        "sent": sent,
+        "failed": failed,
+        "skipped": skipped,
+        "results": results,
+        "system_error": system_error,
+    }, 200
+
+
 def send_profile_completion_reminders(config):
     """Private, retryable reminders at bind, +24h, day 3, and day 7 only."""
     token = config.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -19281,6 +19715,7 @@ def run_cron_tick(config):
         "checkin_reminders": send_checkin_reminders,
         "streak_milestone_videos": send_due_streak_milestone_videos,
         "binding_notification_retries": retry_pending_bind_notifications,
+        "onboarding_progress_reminders": send_onboarding_progress_reminders,
         "profile_completion_reminders": send_profile_completion_reminders,
         "overdue_alerts": send_due_reminders,
         "guardian_group_daily_summaries": send_guardian_group_daily_summaries,
@@ -19434,6 +19869,17 @@ def update_onboarding_reminder(data_file, line_user_id, payload):
             profile.get("overdue_wait_minutes")
         )
     profile["onboarding_reminder_configured"] = True
+    completed_at = datetime.now().isoformat(timespec="seconds")
+    profile.setdefault("profile_completed_at", completed_at)
+    append_onboarding_event(
+        state, line_user_id, "profile_saved",
+        source_page=str(payload.get("source_page") or "/liff/onboarding.html"),
+        occurred_at=completed_at,
+        metadata={
+            "plan": profile.get("plan"),
+            "membership_source": profile.get("membership_source"),
+        },
+    )
     save_state(data_file, state)
     return {
         "ok": True,

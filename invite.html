@@ -41,6 +41,11 @@
     .step[data-state="done"] .step-number{background:var(--line);font-size:0}
     .step[data-state="done"] .step-number::after{content:"✓";font-size:1.15rem}
     .relationship-note{margin:14px 0 0;padding:14px;border-left:4px solid var(--line);border-radius:11px;background:#eaf8ee;color:#31583e;font-size:.88rem;font-weight:700;line-height:1.65}
+    .profile-form{display:grid;gap:12px;margin:20px 0 0;padding:18px;border:2px solid #9fdeb3;border-radius:18px;background:#fff}
+    .profile-form h2{margin:0;color:var(--forest);font-size:1.2rem;text-align:center}
+    .profile-form label{display:grid;gap:6px;color:#31583e;font-size:.9rem;font-weight:850}
+    .profile-form input,.profile-form select{width:100%;min-height:50px;padding:11px 12px;border:1px solid #b9d7c3;border-radius:11px;background:#fff;color:var(--ink);font:inherit}
+    .profile-form .form-note{margin:0;color:var(--muted);font-size:.82rem;line-height:1.55}
     .actions{display:grid;gap:11px;margin-top:20px}
     .btn{display:grid;place-items:center;width:100%;min-height:62px;padding:15px 16px;border:0;border-radius:15px;background:var(--line);color:#fff;font-size:clamp(1.08rem,4.5vw,1.28rem);font-weight:900;line-height:1.4;text-align:center;text-decoration:none;box-shadow:0 10px 24px rgba(6,199,85,.25)}
     .btn:active{transform:scale(.99);background:var(--line-dark)}
@@ -105,17 +110,17 @@
           <h2 id="bindingGuideTitle">照著 4 步驟完成守護綁定</h2>
           <p class="guide-intro">系統會保留這筆邀請與邀請人資料；加入官方 LINE 後，請返回這一頁繼續，不會回到首頁或要求重填。</p>
           <div class="steps" aria-label="守護綁定四步驟">
-            <article class="step" id="joinLineStep" data-state="upcoming">
+            <article class="step">
               <span class="step-number">1</span>
-              <div><strong>先加入每日平安官方 LINE</strong><p>加入後才能收到報平安、逾時與 SOS 等守護通知。</p></div>
+              <div><strong>先填寫你的守護資料</strong><p>填寫姓名、與邀請人的關係及必填聯絡電話；資料會暫存，不必重新填寫。</p></div>
+            </article>
+            <article class="step" id="joinLineStep" data-state="upcoming">
+              <span class="step-number">2</span>
+              <div><strong>加入每日平安官方 LINE</strong><p>加入後才能收到報平安、逾時與 SOS 等守護通知。</p></div>
             </article>
             <article class="step" id="returnInviteStep" data-state="upcoming">
-              <span class="step-number">2</span>
-              <div><strong>返回原本的守護邀請</strong><p>加入完成後回到這一頁，按「我已加入，返回這份邀請繼續」。</p></div>
-            </article>
-            <article class="step">
               <span class="step-number">3</span>
-              <div><strong>填寫你的守護資料</strong><p>填寫姓名、與邀請人的關係及必填聯絡電話；邀請人姓名由系統帶入，不能修改。</p></div>
+              <div><strong>返回原本的守護邀請</strong><p>加入完成後回到這一頁，按「我已加入，返回這份邀請繼續」。</p></div>
             </article>
             <article class="step">
               <span class="step-number">4</span>
@@ -125,10 +130,28 @@
           <p class="relationship-note"><strong>守護關係是單向的：</strong>接受後是「你守護邀請人」，不會自動變成雙向綁定。聯絡電話為必填，僅供緊急狀況或聯絡不上本人時使用；若要互相守護，雙方都必須各自發出並親自接受一次邀請。</p>
         </section>
 
+        <form class="profile-form" id="publicGuardianProfileForm">
+          <h2>先填寫你的守護資料</h2>
+          <p class="form-note">資料會先保存在這台裝置；加入官方 LINE 並返回後會自動帶入，不必重新填寫。</p>
+          <label>你的姓名（必填）
+            <input id="publicGuardianName" type="text" autocomplete="name" required>
+          </label>
+          <label>你與邀請人的關係（必填）
+            <select id="publicGuardianRelationship" required>
+              <option value="">請選擇</option><option value="家人">家人</option><option value="伴侶">伴侶</option><option value="朋友">朋友</option><option value="同事">同事</option><option value="鄰居">鄰居</option><option value="其他">其他</option>
+            </select>
+          </label>
+          <label>聯絡電話（必填）
+            <input id="publicGuardianPhone" type="tel" inputmode="tel" autocomplete="tel" required>
+          </label>
+          <p class="form-note">聯絡電話僅供緊急狀況或聯絡不上本人時使用。</p>
+          <button class="btn" id="saveGuardianDraftAndContinue" type="submit">儲存資料，下一步加入官方 LINE</button>
+        </form>
+
         <div class="actions">
           <a class="btn" id="joinOfficialLineCta" href="https://lin.ee/nRc3yxi" target="_blank" rel="noopener">加入每日平安官方 LINE</a>
           <a class="btn secondary" id="continueGuardianCta" href="#" aria-describedby="lineOpenHelp">我已加入，返回這份邀請繼續</a>
-          <p class="helper" id="lineOpenHelp">加入官方 LINE 後請回到這一頁，再按上方第二顆按鈕；系統會自動帶回原邀請與邀請人資料。</p>
+          <p class="helper" id="lineOpenHelp">先儲存上方守護資料，再加入官方 LINE；返回後按第二顆按鈕，系統會帶回同一邀請與已填資料。</p>
         </div>
 
         <div class="fallback">
@@ -163,6 +186,10 @@
       var joinLineStep = document.getElementById("joinLineStep");
       var returnInviteStep = document.getElementById("returnInviteStep");
       var entryLoading = document.getElementById("entryLoading");
+      var profileForm = document.getElementById("publicGuardianProfileForm");
+      var publicGuardianName = document.getElementById("publicGuardianName");
+      var publicGuardianRelationship = document.getElementById("publicGuardianRelationship");
+      var publicGuardianPhone = document.getElementById("publicGuardianPhone");
       window.addEventListener("load", function () {
         if (entryLoading) entryLoading.hidden = true;
       }, { once: true });
@@ -173,6 +200,25 @@
       var displayName = inviterName || "邀請人";
       var displayRelationship = inviterRelationship || "重要的人";
       var progressKey = "alive_guardian_invite_joined_" + (inviteToken || inviteFrom || friendInvite || "current");
+      var profileDraftKey = "alive_guardian_invite_profile_" + (inviteToken || inviteFrom || friendInvite || "current");
+      function restoreGuardianDraft() {
+        try {
+          var saved = JSON.parse(localStorage.getItem(profileDraftKey) || "{}");
+          publicGuardianName.value = String(saved.name || "");
+          publicGuardianRelationship.value = String(saved.relationship || "");
+          publicGuardianPhone.value = String(saved.phone || "");
+        } catch (_) {}
+      }
+      function saveGuardianDraft() {
+        var draft = {
+          name: String(publicGuardianName.value || "").trim(),
+          relationship: String(publicGuardianRelationship.value || "").trim(),
+          phone: String(publicGuardianPhone.value || "").trim()
+        };
+        if (!draft.name || !draft.relationship || !draft.phone) return false;
+        try { localStorage.setItem(profileDraftKey, JSON.stringify(draft)); } catch (_) {}
+        return true;
+      }
       function hasOpenedOfficialLine() {
         try { return sessionStorage.getItem(progressKey) === "1"; } catch (_) { return false; }
       }
@@ -226,6 +272,15 @@
         }, 1800);
       }
       openBtn.addEventListener("click", function (event) { event.preventDefault(); openLine(primaryUrl); });
+      profileForm.addEventListener("submit", function (event) {
+        event.preventDefault();
+        if (!saveGuardianDraft()) {
+          setStatus("請先填完姓名、關係與聯絡電話。");
+          return;
+        }
+        joinLineBtn.scrollIntoView({ behavior: "smooth", block: "center" });
+        setStatus("資料已儲存。請加入官方 LINE，再返回同一份邀請繼續。");
+      });
       joinLineBtn.addEventListener("click", function () {
         try { sessionStorage.setItem(progressKey, "1"); } catch (_) {}
         renderProgress();
@@ -247,6 +302,7 @@
         } catch (_) { setStatus(primaryUrl); }
       });
       refreshUrls();
+      restoreGuardianDraft();
       renderProgress();
       fetch("/api/config")
         .then(function (res) { return res.ok ? res.json() : null; })
@@ -259,9 +315,9 @@
         .catch(function () {})
         .finally(function () {
           if (isLineInAppBrowser()) {
-            setStatus("你已在 LINE 內開啟。請先看完介紹並加入官方 LINE，再按「我已加入」繼續填寫資料。");
+            setStatus("你已在 LINE 內開啟。請先填寫並儲存守護資料，再加入官方 LINE 後繼續。");
           } else {
-            setStatus("請先加入每日平安官方 LINE；返回後按「我已加入」繼續填寫資料。");
+            setStatus("請先在此外網頁填寫守護資料；儲存後再加入官方 LINE，返回時不必重填。");
           }
         });
     })();

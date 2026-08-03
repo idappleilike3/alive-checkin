@@ -1313,6 +1313,7 @@
               <th>上次簽到</th>
               <th>最近簽到地區</th>
               <th>方案／升級狀態</th>
+              <th>首次設定 5 步驟／紀錄</th>
               <th>付款</th>
               <th>方案到期（試用／訂閱）</th>
               <th>體驗剩幾天</th>
@@ -1324,7 +1325,7 @@
             </tr>
           </thead>
           <tbody id="usersBody">
-            <tr><td colspan="15">尚未載入資料</td></tr>
+            <tr><td colspan="16">尚未載入資料</td></tr>
           </tbody>
         </table>
       </div>
@@ -2183,6 +2184,30 @@
         : user.plan;
     }
 
+    function formatOnboardingProgress(user) {
+      const progress = user.onboarding_progress || {};
+      const completed = progress.completed_steps || {};
+      const labels = [
+        ["line_joined", "1 加入 LINE", progress.line_joined_at],
+        ["line_verified", "2 LINE 身分", progress.line_verified_at],
+        ["profile_saved", "3 資料與提醒", progress.profile_saved_at],
+        ["invite_sent", "4 一鍵邀請", progress.invite_sent_at],
+        ["guardian_bound", "5 接受並綁定", progress.guardian_bound_at],
+      ];
+      const steps = labels.map(([key, label, time]) =>
+        `${completed[key] ? "✓" : "—"} ${label}${time ? `<br><small>${escapeHtml(formatDate(time))}</small>` : ""}`
+      ).join("<br>");
+      const invitee = progress.latest_invitee_display_name
+        ? `<br><small>最近邀請：${escapeHtml(progress.latest_invitee_display_name)}</small>` : "";
+      const source = progress.latest_source_page
+        ? `<br><small>最近頁面：${escapeHtml(progress.latest_source_page)}</small>` : "";
+      const latestPush = progress.latest_workflow_push || {};
+      const push = latestPush.kind
+        ? `<br><small>最後流程推播：${escapeHtml(latestPush.kind)}／${escapeHtml(latestPush.status || "")}`
+          + `${latestPush.created_at ? `／${escapeHtml(formatDate(latestPush.created_at))}` : ""}</small>` : "";
+      return `<strong>目前第 ${Number(progress.current_step) || 1}／5 步</strong><br>${steps}${invitee}${source}${push}`;
+    }
+
     const membershipModeLabels = {
       trial: "14 天安心體驗",
       free: "未訂閱",
@@ -2980,6 +3005,7 @@
               ${canManageMembers() ? "" : `<small style="display:block;margin-top:6px;color:#991b1b;font-weight:800;">目前角色「${adminRoleLabel()}」無修改權限，請用超級管理員或營運客服帳號登入。</small>`}
               <small id="plan-status-${user.line_user_id}" role="status" aria-live="polite" style="display:block;margin-top:6px;"></small>
             </td>
+            <td>${formatOnboardingProgress(user)}</td>
             <td><span class="badge ${user.payment_status === "active" ? "ok" : user.payment_status === "expired" ? "bad" : "warn"}">${paymentLabel(user.payment_status)}</span></td>
             <td><strong>${expiryText(user)}</strong></td>
             <td><strong>${trialText(user)}</strong></td>
@@ -2990,7 +3016,7 @@
             <td>${user.reminder_time}</td>
           </tr>
         `).join("")
-        : `<tr><td colspan="15">還沒有 LINE 使用者進來簽到。</td></tr>`;
+        : `<tr><td colspan="16">還沒有 LINE 使用者進來簽到。</td></tr>`;
       const selectedBetaMember = $("betaLineUserId").value;
       $("betaLineUserId").innerHTML = `<option value="">請選擇會員</option>` + (data.users || []).map((user) => {
         const lineUserId = String(user.line_user_id || "");

@@ -94,6 +94,19 @@ class InviteOnboardingFlowTests(unittest.TestCase):
         )
         self.assertIn("請填寫你的姓名、關係與聯絡電話", html)
 
+    def test_public_invite_collects_guardian_profile_before_opening_line(self):
+        html = (ROOT / "invite.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="publicGuardianName"', html)
+        self.assertIn('id="publicGuardianRelationship"', html)
+        self.assertIn('id="publicGuardianPhone"', html)
+        self.assertIn('id="saveGuardianDraftAndContinue"', html)
+        self.assertIn('alive_guardian_invite_profile_', html)
+        self.assertIn('localStorage.setItem(profileDraftKey', html)
+        home = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn('restorePublicGuardianInviteProfile', home)
+        self.assertIn('inviteGuardianPhone', home)
+
     def test_acceptance_recommends_trial_without_auto_activation_or_reverse_binding(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("這次只會由您守護邀請人，不會自動互相綁定", html)

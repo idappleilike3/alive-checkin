@@ -8764,10 +8764,27 @@
       }
       const nameInput = $("inviteGuardianName");
       if (nameInput && !nameInput.value) nameInput.value = lineDisplayName || "";
+      restorePublicGuardianInviteProfile();
       if (btn) {
         btn.disabled = false;
         btn.textContent = "同意成為守護人";
       }
+    }
+
+    function restorePublicGuardianInviteProfile() {
+      const inviteKey = String(
+        getAppParam("invite_token") || getAppParam("invite_from") || getAppParam("friend_invite") || "current"
+      ).trim();
+      try {
+        const saved = JSON.parse(localStorage.getItem(`alive_guardian_invite_profile_${inviteKey}`) || "{}");
+        const nameInput = $("inviteGuardianName");
+        const phoneInput = $("inviteGuardianPhone");
+        if (nameInput && saved.name) nameInput.value = String(saved.name);
+        if (saved.relationship) {
+          setRelationshipValue("inviteGuardianRelationship", "inviteGuardianRelationshipOther", String(saved.relationship));
+        }
+        if (phoneInput && saved.phone) phoneInput.value = String(saved.phone);
+      } catch (_) {}
     }
 
     async function maybeShowInviteAcceptPrompt() {
@@ -12064,18 +12081,33 @@
       return state.done === true;
     }
 
+    function onboardingRegistrationPlanCopy(progress, entryCohort = "") {
+      const saved = progress && typeof progress === "object" ? progress : {};
+      const source = String(saved.membership_source || "").trim().toLowerCase();
+      const cohort = String(saved.beta_cohort || "").trim().toUpperCase();
+      const requestedCohort = String(entryCohort || "").trim().toUpperCase();
+      const activeCohort = source === "beta" && ["A", "B399", "B799"].includes(cohort)
+        ? cohort
+        : (["B399", "B799"].includes(requestedCohort) ? requestedCohort : "");
+      if (["A", "B799"].includes(activeCohort)) return "799 守護版｜21 天封測";
+      if (activeCohort === "B399") return "399 安心版｜21 天封測";
+
+      const plan = String(saved.plan || "trial").trim();
+      const paidLabels = {
+        paid_199: "199 平安版｜月費方案",
+        paid_199_year: "199 平安版｜年費方案",
+        paid_399: "399 安心版｜月費方案",
+        paid_399_year: "399 安心版｜年費方案",
+        paid_799: "799 家庭守護｜月費方案",
+        paid_799_year: "799 家庭守護｜年費方案",
+      };
+      return paidLabels[plan] || "14 天安心體驗";
+    }
+
     async function showOnboarding() {
       const modal = $("onboardingModal");
       const errorEl = $("onboardingError");
       if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
-      const entryPlan = $("onboardingEntryPlan");
-      if (entryPlan) {
-        const cohort = String(getAppParam("beta_cohort") || "").trim().toUpperCase();
-        const planCopy = cohort === "B799"
-          ? "799 守護版｜21 天封測"
-          : (cohort === "B399" ? "399 安心版｜21 天封測" : "14 天安心體驗");
-        entryPlan.textContent = `本次註冊：${planCopy}。完成 LINE 登入後仍保留此資格，不會轉到其他方案。`;
-      }
 
       const contacts = currentGuardianContacts();
       const guardianRequired = currentStatusData && currentStatusData.guardian_required === true;
@@ -12086,6 +12118,14 @@
       const serverProgress = onboardingState.ok ? (onboardingState.data || {}) : {};
       if (onboardingState.ok) {
         currentStatusData = { ...(currentStatusData || {}), ...serverProgress };
+      }
+      const entryPlan = $("onboardingEntryPlan");
+      if (entryPlan) {
+        const planCopy = onboardingRegistrationPlanCopy(
+          onboardingState.ok ? serverProgress : (currentStatusData || {}),
+          getAppParam("beta_cohort"),
+        );
+        entryPlan.textContent = `本次註冊：${planCopy}。完成 LINE 登入或一鍵分享返回後，仍會保留並顯示你的實際方案。`;
       }
       const resumeView = onboardingResumeView(onboardingState.ok ? serverProgress : null);
       if (resumeView === "complete") {
