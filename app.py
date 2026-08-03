@@ -17193,7 +17193,15 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
         {
             "type": "text",
             "text": care["level_progress_text"],
-            "size": "md",
+            "size": "lg",
+            "weight": "bold",
+            "color": care["level_color"],
+            "wrap": True,
+        },
+        {
+            "type": "text",
+            "text": f"{care['reward_icon']} 遊戲勳章：{care['game_badge_name']}",
+            "size": "lg",
             "weight": "bold",
             "color": care["level_color"],
             "wrap": True,
@@ -17201,32 +17209,57 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
         {
             "type": "text",
             "text": f"🌤️ {care['weather_line']}",
-            "size": "md",
+            "size": "lg",
             "weight": "bold",
             "color": "#334155",
             "wrap": True,
         },
         {
             "type": "text",
-            "text": care["care_title"],
-            "size": "md",
+            "text": f"📰 {care['news_title']}",
+            "size": "lg",
             "weight": "bold",
             "color": "#B45309",
             "wrap": True,
         },
         {
             "type": "text",
-            "text": care["care_summary"],
-            "size": "md",
+            "text": care["news_summary"],
+            "size": "lg",
+            "weight": "bold",
             "color": "#475569",
             "wrap": True,
         },
     ]
+    if care.get("today_reminders"):
+        body_contents.extend([
+            {
+                "type": "text", "text": "📝 我的今日提醒", "size": "lg",
+                "weight": "bold", "color": "#1D4ED8", "wrap": True,
+            },
+            {
+                "type": "text",
+                "text": "\n".join(item.get("text", "") for item in care["today_reminders"] if item.get("text")),
+                "size": "lg", "weight": "bold", "color": "#334155", "wrap": True,
+            },
+        ])
+    if care.get("content_kind") in {"milestone", "holiday"}:
+        body_contents.extend([
+            {
+                "type": "text", "text": care["care_title"], "size": "lg",
+                "weight": "bold", "color": care["level_color"], "wrap": True,
+            },
+            {
+                "type": "text", "text": care["care_summary"], "size": "lg",
+                "weight": "bold", "color": "#166534", "wrap": True,
+            },
+        ])
     body_contents.append(
         {
             "type": "text",
-            "text": f"✨ {copy['positive_quote']}",
-            "size": "md",
+            "text": f"✨ {care['blessing_text'] or copy['positive_quote']}",
+            "size": "lg",
+            "weight": "bold",
             "color": "#166534",
             "wrap": True,
         }
@@ -17236,6 +17269,7 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
             "type": "text",
             "text": copy["instruction"],
             "size": "lg",
+            "weight": "bold",
             "color": "#555555",
             "wrap": True,
         }
@@ -17251,7 +17285,8 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
             {
                 "type": "text",
                 "text": "☎️ 緊急聯絡人電話尚未設定，可在會員中心選填，緊急時方便自行聯絡。",
-                "size": "sm",
+                "size": "lg",
+                "weight": "bold",
                 "color": "#78716C",
                 "wrap": True,
             }

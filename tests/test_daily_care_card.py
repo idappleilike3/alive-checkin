@@ -24,6 +24,38 @@ class DailyCareContextTests(unittest.TestCase):
         self.assertEqual(context["weather_line"], "臺中市｜晴時多雲｜26～32°C｜降雨機率 30%")
         self.assertTrue(30 <= len(context["care_summary"]) <= 50)
 
+    def test_today_detail_combines_calendar_note_and_smart_reminder(self):
+        profile = {
+            "calendar_notes": {"2026-08-03": "下午三點陪媽媽回診"},
+            "smart_reminders": [{
+                "target_name": "自己", "category": "medicine", "category_label": "吃藥",
+                "month": 8, "day": 3, "year": 2026, "remind_time": "20:00",
+                "note": "晚餐後服用", "enabled": True,
+            }],
+        }
+        context = build_daily_care_context(profile, datetime(2026, 8, 3, 9))
+        self.assertEqual(len(context["today_reminders"]), 2)
+        self.assertIn("陪媽媽回診", context["today_reminders"][0]["text"])
+        self.assertIn("20:00", context["today_reminders"][1]["text"])
+        self.assertIn("晚餐後服用", context["today_reminders"][1]["text"])
+
+    def test_government_life_news_is_separate_from_blessing_and_level(self):
+        profile = {
+            "streak_days": 7,
+            "daily_news": {
+                "title": "政府重要生活消息",
+                "summary": "今日部分地區有豪雨，外出前請留意官方警特報。",
+                "source_name": "交通部中央氣象署",
+                "source_url": "https://www.cwa.gov.tw/",
+            },
+            "daily_blessing": "今天也要平安順心。",
+        }
+        context = build_daily_care_context(profile, datetime(2026, 8, 3, 9))
+        self.assertEqual(context["news_title"], "政府重要生活消息")
+        self.assertIn("豪雨", context["news_summary"])
+        self.assertEqual(context["blessing_text"], "今天也要平安順心。")
+        self.assertIn("Lv.3", context["level_progress_text"])
+
     def test_time_period_selects_matching_ui_ux_hero_pool(self):
         cases = ((8, "morning"), (13, "afternoon"), (20, "evening"))
         for hour, period in cases:
@@ -81,6 +113,45 @@ class DailyCareContextTests(unittest.TestCase):
         self.assertEqual(context["streak_status_text"], "重新開始連續守護")
         self.assertNotIn("降級", context["streak_status_text"])
 
+    def test_all_twelve_levels_use_the_approved_upgrade_rewards(self):
+        cases = (
+            (1, "愛心動畫"), (3, "小星光"), (7, "彩帶驚喜"), (14, "新徽章"),
+            (21, "鼓勵卡"), (30, "金色獎章"), (60, "進階徽章"), (90, "星光卡"),
+            (100, "煙火＋第一支 MP4"), (180, "高級金色徽章"), (270, "年度倒數卡"),
+            (365, "年度動畫＋第二支 MP4"),
+        )
+        for day, reward in cases:
+            with self.subTest(day=day):
+                context = streak_level_context(day)
+                self.assertEqual(context["reward_name"], reward)
+
+    def test_all_twelve_levels_use_the_approved_game_badge_names(self):
+        cases = (
+            (1, "初心愛心章"), (3, "星芽徽章"), (7, "七日守護章"),
+            (14, "雙週同行章"), (21, "習慣守護章"), (30, "金色夥伴章"),
+            (60, "穩定之星章"), (90, "長久陪伴章"), (100, "百日榮耀章"),
+            (180, "黃金守護章"), (270, "典範之星章"), (365, "年度傳說勳章"),
+        )
+        for day, badge_name in cases:
+            with self.subTest(day=day):
+                context = streak_level_context(day)
+                self.assertEqual(context["game_badge_name"], badge_name)
+
+    def test_flex_and_detail_context_share_the_same_game_badge(self):
+        context = build_daily_care_context(
+            {"streak_days": 100, "highest_streak_days": 100},
+            datetime(2026, 8, 3, 9),
+        )
+        self.assertEqual(context["game_badge_name"], "百日榮耀章")
+        flex = app.build_daily_checkin_flex(
+            datetime(2026, 8, 3, 9),
+            profile={"history": ["2026-04-26", "2026-08-03"], "highest_streak_days": 100},
+        )
+        body_text = "\n".join(
+            item.get("text", "") for item in flex["contents"]["body"]["contents"]
+        )
+        self.assertIn("遊戲勳章：百日榮耀章", body_text)
+
     def test_daily_card_has_question_before_checkin_and_level_progress(self):
         context = build_daily_care_context({"streak_days": 18}, datetime(2026, 8, 2, 9))
         self.assertEqual(context["checkin_prompt"], "今天一切都還好嗎？點一下「我平安」")
@@ -117,10 +188,29 @@ class DailyCareContextTests(unittest.TestCase):
         )
         self.assertIn("Lv.1 安心啟程", flex["contents"]["body"]["contents"][1]["text"])
 
+    def test_flex_uses_same_news_reminders_and_large_bold_copy_as_detail_page(self):
+        profile = {
+            "history": ["2026-08-03"],
+            "calendar_notes": {"2026-08-03": "下午領藥"},
+            "daily_news": {"title": "政府生活消息", "summary": "外出請留意豪雨。"},
+            "daily_blessing": "今天平安順心。",
+        }
+        flex = app.build_daily_checkin_flex(datetime(2026, 8, 3, 9), profile=profile)
+        body = flex["contents"]["body"]["contents"]
+        text = "\n".join(item.get("text", "") for item in body)
+        self.assertIn("政府生活消息", text)
+        self.assertIn("下午領藥", text)
+        self.assertIn("今天平安順心", text)
+        for item in body:
+            if item.get("type") == "text":
+                self.assertEqual(item.get("weight"), "bold")
+                self.assertIn(item.get("size"), {"lg", "xl"})
+
     def test_detail_page_uses_liff_identity_and_has_required_sections(self):
         html = Path("daily-care.html").read_text(encoding="utf-8")
-        for marker in ("liff.getIDToken", "/api/daily-care", "所在地區天氣", "今日安心資訊", "返回每日平安卡"):
+        for marker in ("liff.getIDToken", "/api/daily-care", "所在地區天氣", "政府與生活重要消息", "我的今日提醒", "我的平安等級", "今日祝福語", "返回每日平安卡"):
             self.assertIn(marker, html)
+        self.assertIn("font-weight:900", html)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,13 @@ DEFAULT_CARE = {
     "source_url": "https://alive-checkin.onrender.com/daily-care.html",
 }
 
+DEFAULT_NEWS = {
+    "title": "今日政府與生活重要消息",
+    "summary": "目前沒有需要特別注意的重大生活消息；外出前仍請留意所在地天氣與官方警特報。",
+    "source_name": "交通部中央氣象署",
+    "source_url": "https://www.cwa.gov.tw/",
+}
+
 
 HERO_ASSETS = {
     "morning": ("morning-01", "morning-02"),
@@ -31,6 +38,26 @@ STREAK_LEVELS = (
     (365, "年度守護者", "#B45309"),
 )
 STREAK_MILESTONES = tuple(day for day, _name, _color in STREAK_LEVELS)
+STREAK_REWARDS = (
+    (1, "❤️", "愛心動畫"),
+    (3, "✨", "小星光"),
+    (7, "🎊", "彩帶驚喜"),
+    (14, "🏅", "新徽章"),
+    (21, "💌", "鼓勵卡"),
+    (30, "🥇", "金色獎章"),
+    (60, "🏵️", "進階徽章"),
+    (90, "🌟", "星光卡"),
+    (100, "🎆", "煙火＋第一支 MP4"),
+    (180, "🏆", "高級金色徽章"),
+    (270, "🗓️", "年度倒數卡"),
+    (365, "🎉", "年度動畫＋第二支 MP4"),
+)
+STREAK_GAME_BADGES = (
+    (1, "初心愛心章"), (3, "星芽徽章"), (7, "七日守護章"),
+    (14, "雙週同行章"), (21, "習慣守護章"), (30, "金色夥伴章"),
+    (60, "穩定之星章"), (90, "長久陪伴章"), (100, "百日榮耀章"),
+    (180, "黃金守護章"), (270, "典範之星章"), (365, "年度傳說勳章"),
+)
 
 
 def streak_level_context(streak_days, highest_streak_days=0):
@@ -55,6 +82,14 @@ def streak_level_context(streak_days, highest_streak_days=0):
         next_name = ""
         days_to_next = 0
         progress_text = f"Lv.{earned_index + 1} {name}｜連續第 {streak_days} 天｜已達最高等級"
+    reward_icon, reward_name = STREAK_REWARDS[0][1:]
+    for reward_day, icon, reward in STREAK_REWARDS:
+        if highest_streak_days >= reward_day:
+            reward_icon, reward_name = icon, reward
+    game_badge_name = STREAK_GAME_BADGES[0][1]
+    for badge_day, badge_name in STREAK_GAME_BADGES:
+        if highest_streak_days >= badge_day:
+            game_badge_name = badge_name
     return {
         "level": earned_index + 1,
         "level_name": name,
@@ -66,6 +101,9 @@ def streak_level_context(streak_days, highest_streak_days=0):
         "is_upgrade_day": streak_days in STREAK_MILESTONES,
         "progress_percent": min(100, round(streak_days / (next_day or 365) * 100)),
         "level_progress_text": progress_text,
+        "reward_icon": reward_icon,
+        "reward_name": reward_name,
+        "game_badge_name": game_badge_name,
     }
 
 
@@ -83,6 +121,39 @@ def _hero_period(hour):
     if hour < 18:
         return "afternoon"
     return "evening"
+
+
+def _calendar_note_text(note):
+    if isinstance(note, list):
+        return "\n".join(filter(None, (_calendar_note_text(item) for item in note)))
+    if isinstance(note, dict):
+        return str(note.get("content") or "").strip()
+    return str(note or "").strip()
+
+
+def _today_reminders(profile, today):
+    rows = []
+    note = (profile.get("calendar_notes") or {}).get(today.isoformat())
+    note_text = _calendar_note_text(note)
+    if note_text:
+        rows.append({"kind": "calendar", "time": "", "text": note_text})
+    for reminder in profile.get("smart_reminders") or []:
+        if not isinstance(reminder, dict) or not reminder.get("enabled", True):
+            continue
+        try:
+            month, day = int(reminder.get("month") or 0), int(reminder.get("day") or 0)
+            year = int(reminder.get("year")) if reminder.get("year") else None
+        except (TypeError, ValueError):
+            continue
+        if month != today.month or day != today.day or (year and year != today.year):
+            continue
+        remind_time = str(reminder.get("remind_time") or reminder.get("time") or "").strip()
+        label = str(reminder.get("category_label") or reminder.get("custom_title") or "提醒").strip()
+        target = str(reminder.get("target_name") or "").strip()
+        detail = str(reminder.get("note") or "").strip()
+        text = "｜".join(part for part in (remind_time, target, label, detail) if part)
+        rows.append({"kind": "smart", "time": remind_time, "text": text})
+    return rows
 
 
 def build_daily_care_context(profile, now):
@@ -120,6 +191,11 @@ def build_daily_care_context(profile, now):
     hero_period = _hero_period(now.hour)
     hero_pool = HERO_ASSETS[hero_period]
     hero_asset = hero_pool[now.date().toordinal() % len(hero_pool)]
+    news = profile.get("daily_news") if isinstance(profile.get("daily_news"), dict) else {}
+    news_title = str(news.get("title") or DEFAULT_NEWS["title"]).strip()
+    news_summary = str(news.get("summary") or DEFAULT_NEWS["summary"]).strip()
+    news_source_name = str(news.get("source_name") or DEFAULT_NEWS["source_name"]).strip()
+    news_source_url = str(news.get("source_url") or DEFAULT_NEWS["source_url"]).strip()
     return {
         "greeting": _greeting(now.hour),
         "hero_period": hero_period,
@@ -128,6 +204,16 @@ def build_daily_care_context(profile, now):
         "weather_line": weather_line,
         "care_title": care_title,
         "care_summary": care_summary,
+        "news_title": news_title,
+        "news_summary": news_summary,
+        "news_source_name": news_source_name,
+        "news_source_url": news_source_url,
+        "today_reminders": _today_reminders(profile, now.date()),
+        "blessing_text": str(
+            profile.get("daily_blessing")
+            or profile.get("positive_quote")
+            or "謝謝認真生活的自己，今天也要平安順心。"
+        ).strip(),
         "content_kind": content_kind,
         **level_context,
         "checkin_prompt": "今天一切都還好嗎？點一下「我平安」",
