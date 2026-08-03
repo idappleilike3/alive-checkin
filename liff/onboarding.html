@@ -375,9 +375,10 @@ function renderCompletedMemberEntry() {
   loading.innerHTML = `
     <div class="icon-big">✅</div>
     <h2>你已是每日平安會員</h2>
-    <p>你的資料、提醒與守護人都已完成設定，不需要重複申請 14 天體驗。</p>
+    <p>你的資料、提醒與守護人都已完成設定並保存，不需要重新填寫。</p>
     <div class="onboarding-action-group">
       <a class="btn btn-primary" href="./checkin.html">進入我的每日平安</a>
+      <a class="btn btn-secondary" href="./share-invite.html?return=/liff/onboarding.html&open=onboarding">再次一鍵邀請分享</a>
       <a class="btn btn-secondary" href="./share-trial.html">分享 14 天安心體驗給朋友</a>
       <a class="btn btn-secondary" href="./member.html">前往會員中心</a>
     </div>
@@ -657,6 +658,7 @@ function renderStep() {
         </div>
 
         <a href="./checkin.html" class="gift-cta">開始每日報平安 →</a>
+        <a href="./share-invite.html?return=/liff/onboarding.html&open=onboarding" class="gift-cta-secondary">再次一鍵邀請分享</a>
         <a href="./member.html" class="gift-cta-secondary">我的會員中心</a>
       </div>
     `;

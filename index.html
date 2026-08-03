@@ -11595,6 +11595,45 @@
       });
     }
 
+    function onboardingResumeView(progress) {
+      if (!progress || progress.ok === false) return "unavailable";
+      const completed = progress.completed_steps || {};
+      if (completed.guardian_bound === true || progress.home_ready === true) return "complete";
+      if (completed.guardian_invite_sent === true) return "waiting";
+      if (completed.profile_and_reminder === true) return "share";
+      return "profile";
+    }
+
+    function showOnboardingProgressUnavailable() {
+      const shareStep = $("onboardingShareStep");
+      const guardianStep = $("onboardingGuardianStep");
+      const reminderStep = $("onboardingReminderStep");
+      if (shareStep) shareStep.hidden = true;
+      if (guardianStep) guardianStep.hidden = true;
+      if (reminderStep) reminderStep.hidden = true;
+      $("onboardingTitle").textContent = "正在讀取你上次完成的步驟";
+      $("onboardingIntro").textContent = "目前暫時無法確認進度。你的資料沒有消失，也不需要重新填寫；請重新讀取後再繼續。";
+      $("onboardingStepLabel").innerHTML = '<button class="onboarding-submit" type="button" onclick="showOnboarding()">重新讀取目前步驟</button>';
+    }
+
+    function showOnboardingCompleteStep() {
+      showOnboardingShareStep(true);
+      setSetupGuideState("onboarding", {
+        join: "done",
+        login: "done",
+        profile: "done",
+        invite: "done",
+        guardian: "done",
+      });
+      $("onboardingTitle").textContent = "首次設定已完成";
+      $("onboardingIntro").textContent = "你的資料、提醒與守護人綁定都已保存，不需要重新填寫。下方仍可再次一鍵邀請其他守護人。";
+      $("onboardingStepLabel").textContent = "✓ 已完成所有首次設定步驟";
+      const bindingStatus = $("onboardingBindingStatus");
+      if (bindingStatus) bindingStatus.textContent = "✓ 邀請已完成，守護人已接受並完成綁定。";
+      const shareButton = $("onboardingShareBtn");
+      if (shareButton) shareButton.textContent = "再次一鍵邀請分享";
+    }
+
     function showOnboardingShareStep(inviteSent = false) {
       const shareStep = $("onboardingShareStep");
       const guardianStep = $("onboardingGuardianStep");
@@ -12029,15 +12068,6 @@
       const modal = $("onboardingModal");
       const errorEl = $("onboardingError");
       if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
-      $("obName").value = "";
-      setRelationshipValue("obRelationship", "obRelationshipOther", "");
-      $("obPhone").value = "";
-      $("obEmail").value = "";
-      if ($("obEmergencySameAsGuardian")) $("obEmergencySameAsGuardian").checked = false;
-      if ($("obEmergencyName")) $("obEmergencyName").value = "";
-      if ($("obEmergencyRelationship")) $("obEmergencyRelationship").value = "";
-      if ($("obEmergencyPhone")) $("obEmergencyPhone").value = "";
-      if (typeof initializeWebOnboardingLocation === "function") initializeWebOnboardingLocation();
       const entryPlan = $("onboardingEntryPlan");
       if (entryPlan) {
         const cohort = String(getAppParam("beta_cohort") || "").trim().toUpperCase();
@@ -12057,11 +12087,31 @@
       if (onboardingState.ok) {
         currentStatusData = { ...(currentStatusData || {}), ...serverProgress };
       }
-      const completed = serverProgress.completed_steps || {};
-      if (completed.profile_and_reminder) {
-        showOnboardingShareStep(completed.guardian_invite_sent === true);
-      } else {
+      const resumeView = onboardingResumeView(onboardingState.ok ? serverProgress : null);
+      if (resumeView === "complete") {
+        showOnboardingCompleteStep();
+      } else if (resumeView === "waiting") {
+        showOnboardingShareStep(true);
+      } else if (resumeView === "share") {
+        showOnboardingShareStep(false);
+      } else if (resumeView === "profile") {
+        const draft = serverProgress.onboarding_draft || {};
+        const guardianDraft = draft.guardian || {};
+        const locationDraft = draft.location || serverProgress.user_location || {};
+        $("obName").value = guardianDraft.name || "";
+        setRelationshipValue("obRelationship", "obRelationshipOther", guardianDraft.relationship || "");
+        $("obPhone").value = guardianDraft.phone || "";
+        $("obEmail").value = guardianDraft.email || "";
+        if ($("obEmergencySameAsGuardian")) $("obEmergencySameAsGuardian").checked = false;
+        if ($("obEmergencyName")) $("obEmergencyName").value = "";
+        if ($("obEmergencyRelationship")) $("obEmergencyRelationship").value = "";
+        if ($("obEmergencyPhone")) $("obEmergencyPhone").value = "";
+        if (typeof initializeWebOnboardingLocation === "function") {
+          initializeWebOnboardingLocation(locationDraft.city || "", locationDraft.district || "");
+        }
         showOnboardingGuardianStep();
+      } else {
+        showOnboardingProgressUnavailable();
       }
       modal.hidden = false;
       // LIFF/iOS keyboard: keep focused fields/buttons reachable by scrolling the fixed overlay

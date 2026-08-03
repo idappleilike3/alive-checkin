@@ -515,7 +515,7 @@ test("server guardian_required shows onboarding and blocks home, check-in, guard
 
   for (const openAction of ["home", "checkin", "guard", "sos"]) {
     const events = [];
-    const sandbox = expose(initSource, ["initApp"], {
+    const sandbox = expose(`${functionSource("memberOnboardingGateDecision")}\n${initSource}`, ["initApp"], {
       lineUserId: "U-member",
       lineRegistrationWasExisting: false,
       pendingMigratedMemberData: null,
@@ -597,9 +597,9 @@ test("guardian_required keeps member controls locked after bootstrap data arrive
   assert.ok(locks.every((locked) => locked === true));
 });
 
-test("registered B399 member with unfinished guardian setup opens member center instead of registration form", async () => {
+test("registered B399 member with unfinished guardian setup resumes onboarding progress", async () => {
   const events = [];
-  const sandbox = expose(functionSource("initApp"), ["initApp"], {
+  const sandbox = expose(`${functionSource("memberOnboardingGateDecision")}\n${functionSource("initApp")}`, ["initApp"], {
     lineUserId: "U-baby",
     lineRegistrationWasExisting: true,
     memberBootstrapState: { inFlight: null },
@@ -641,7 +641,7 @@ test("registered B399 member with unfinished guardian setup opens member center 
   });
 
   await sandbox.initApp();
-  assert.deepEqual(events, ["tab:member", "member-reminder"]);
+  assert.deepEqual(events, ["onboarding"]);
 });
 
 test("guardian-required onboarding cannot be dismissed by an unbound contact", async () => {
@@ -654,7 +654,7 @@ test("guardian-required onboarding cannot be dismissed by an unbound contact", a
     obPhone: { value: "" },
     obEmail: { value: "" },
   };
-  const sandbox = expose(functionSource("showOnboarding"), ["showOnboarding"], {
+  const sandbox = expose(`${functionSource("onboardingResumeView")}\n${functionSource("showOnboarding")}`, ["showOnboarding"], {
     currentStatusData: { guardian_required: true },
     currentGuardianContacts: () => [{ name: "阿媽", binding_status: "unbound" }],
     fetchOnboardingState: async () => ({ guardianRequired: true, homeReady: false, data: {} }),

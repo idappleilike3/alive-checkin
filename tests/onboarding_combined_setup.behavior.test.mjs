@@ -58,8 +58,9 @@ test("onboarding renders five distinct steps and resumes from saved server progr
   assert.match(functionBody("showOnboardingShareStep"), /步驟 4／5/);
   const show = functionBody("showOnboarding");
   assert.match(show, /await fetchOnboardingState\(\)/);
-  assert.match(show, /profile_and_reminder/);
-  assert.match(show, /guardian_invite_sent/);
+  const decision = functionBody("onboardingResumeView");
+  assert.match(decision, /profile_and_reminder/);
+  assert.match(decision, /guardian_invite_sent/);
   assert.match(show, /showOnboardingShareStep/);
 });
 

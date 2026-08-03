@@ -2529,6 +2529,14 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
     )
     daily_reminders = int(plan_rules(profile).get("daily_reminders") or 1) if profile else 1
     pending_invites = pending_guardian_invite_count(state, line_user_id)
+    saved_guardian = next(
+        (
+            contact for contact in contacts
+            if str(contact.get("contact_role") or "guardian").strip() != "emergency"
+        ),
+        {},
+    )
+    saved_location = profile.get("location") or {}
     completed_steps = {
         # 此 API 只有完成 LINE 登入並建立後端會員後才能取得。
         "line_login": bool(profile),
@@ -2561,6 +2569,18 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
         "has_guardian": has_guardian,
         "guardian_count": len(contacts),
         "pending_guardian_invite_count": pending_invites,
+        "onboarding_draft": {
+            "guardian": {
+                "name": str(saved_guardian.get("name") or "").strip(),
+                "relationship": str(saved_guardian.get("relationship") or "").strip(),
+                "phone": str(saved_guardian.get("phone") or "").strip(),
+                "email": str(saved_guardian.get("email") or "").strip(),
+            },
+            "location": {
+                "city": str(saved_location.get("city") or "").strip(),
+                "district": str(saved_location.get("district") or "").strip(),
+            },
+        },
         "completed_steps": completed_steps,
         "current_step": current_step,
         "binding_status": binding_status,

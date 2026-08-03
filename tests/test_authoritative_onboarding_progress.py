@@ -111,6 +111,35 @@ class AuthoritativeOnboardingProgressTest(unittest.TestCase):
             '<div class="gift-check">✅ 3 分享邀請</div>', text
         )
 
+    def test_partially_saved_guardian_data_is_returned_for_form_recovery(self):
+        state = app_module.load_state(self.data_file)
+        profile = state["users"]["U-owner"]
+        profile["contacts"] = [{
+            "id": "guardian-1",
+            "name": "柔柔",
+            "relationship": "女兒",
+            "phone": "0912345678",
+            "email": "guardian@example.com",
+            "contact_role": "guardian",
+        }]
+        profile["location"] = {"city": "台北市", "district": "中山區"}
+        app_module.save_state(self.data_file, state)
+
+        payload, status = app_module.onboarding_status_payload(
+            self.data_file, "U-owner"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["onboarding_draft"], {
+            "guardian": {
+                "name": "柔柔",
+                "relationship": "女兒",
+                "phone": "0912345678",
+                "email": "guardian@example.com",
+            },
+            "location": {"city": "台北市", "district": "中山區"},
+        })
+
 
 if __name__ == "__main__":
     unittest.main()
