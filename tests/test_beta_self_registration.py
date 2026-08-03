@@ -193,6 +193,14 @@ class BetaSelfRegistrationTests(unittest.TestCase):
         self.assertNotIn("799 年費守護版｜21 天封測", page)
         self.assertIn("本次體驗，你可以使用：", page)
         self.assertIn("封測期間需要做什麼？", page)
+        self.assertIn(
+            "https://line.me/R/app/2010848330-UAiqPPYD?open=onboarding&beta_cohort=${cohort}",
+            page,
+        )
+        self.assertNotIn(
+            "https://liff.line.me/2010848330-UAiqPPYD?open=onboarding&beta_cohort=${cohort}",
+            page,
+        )
         self.assertIn("beta_cohort", member)
         self.assertIn('beta_cohort: betaCohort', member)
         self.assertNotIn('fetch("/api/beta/claim"', member)

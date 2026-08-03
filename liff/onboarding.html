@@ -24,7 +24,7 @@ function forwardLegacyOnboardingEntry() {
 }
 forwardLegacyOnboardingEntry();
 </script><script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script></head><body><main><section class="card">
-<header class="trial-header"><div class="brand"><img src="/assets/daily-peace-logo.png" alt="">每日平安</div><h1>14 天安心體驗</h1></header>
+<header class="trial-header"><div class="brand"><img src="/assets/daily-peace-logo.png" alt="">每日平安</div><h1 id="onboardingPlanTitle">14 天安心體驗</h1></header>
 <div class="trial-intro"><h2>每天 10 秒，換家人一夜好眠</h2><p><strong>一個簡單的按鈕，是給在乎的人最溫柔的定心丸。</strong><br>不需反覆問候、不打擾，只讓他們知道「我今天很好」。</p></div>
 <section class="line-join-step"><h2>第一步：一次完成 LINE 身分與好友確認</h2><p class="line-meaning">按下方按鈕後，系統會取得你的 LINE UID；若尚未加入官方 LINE，會在同一流程請你親自確認，完成後直接接著填寫資料。</p><p class="line-tip">不必返回重點連結，也不會再要求按第二次「LINE 一鍵登入」。畫面會清楚標示是在填本人或守護人的資料；守護人電話為選填，緊急狀況或聯絡不上本人時可使用。</p></section>
 <div class="primary-actions"><a class="cta peace-trial-cta" href="https://liff.line.me/2010848330-UAiqPPYD?open=onboarding">加入官方 LINE 並開始填寫資料 <span class="share-icon" aria-hidden="true">↗</span></a></div>
@@ -235,6 +235,39 @@ function selectedBetaCohort() {
   return ["A", "B399", "B799"].includes(value) ? value : "";
 }
 
+function onboardingPlanPresentation(cohort) {
+  const plans = {
+    B399: {
+      title: "399 安心版｜21 天免費封測",
+      activationTitle: "🎁 399 安心版｜21 天免費封測已啟用",
+      activationDetail: `LINE 會員綁定成功｜21 天封測剩 ${state.trialDaysLeft} 天｜不需付款、不會自動扣款`,
+      publicEntryTitle: "開始 399 安心版｜21 天免費封測",
+      completionCopy: "399 安心版｜21 天免費封測",
+    },
+    B799: {
+      title: "799 守護版｜21 天免費封測",
+      activationTitle: "🎁 799 守護版｜21 天免費封測已啟用",
+      activationDetail: `LINE 會員綁定成功｜21 天封測剩 ${state.trialDaysLeft} 天｜不需付款、不會自動扣款`,
+      publicEntryTitle: "開始 799 守護版｜21 天免費封測",
+      completionCopy: "799 守護版｜21 天免費封測",
+    },
+  };
+  return plans[cohort] || {
+    title: "14 天安心體驗",
+    activationTitle: "🎁 14 天安心體驗已啟用",
+    activationDetail: `LINE 會員綁定成功｜體驗剩 ${state.trialDaysLeft} 天｜不會自動扣款`,
+    publicEntryTitle: "開始 14 天安心體驗",
+    completionCopy: "14 天安心體驗",
+  };
+}
+
+function applyOnboardingPlanCopy() {
+  const planView = onboardingPlanPresentation(selectedBetaCohort());
+  document.title = `每日平安｜${planView.title}`;
+  const heading = document.getElementById("onboardingPlanTitle");
+  if (heading) heading.textContent = planView.title;
+}
+
 async function authHeaders() {
   const idToken = (window.liff && typeof liff.getIDToken === "function")
     ? String(liff.getIDToken() || "")
@@ -347,6 +380,7 @@ function renderCompletedMemberEntry() {
 async function init() {
   let liffReady = false;
   try {
+    applyOnboardingPlanCopy();
     const liffId = await resolveLiffId();
     await liff.init({ liffId });
     liffReady = true;
@@ -445,12 +479,13 @@ async function init() {
 }
 
 function renderPublicEntry({ liffReady, liffId }) {
+  const planView = onboardingPlanPresentation(selectedBetaCohort());
   const loading = document.getElementById("loading");
   const content = document.getElementById("content");
   content.style.display = "none";
   loading.className = "card public-entry";
   loading.innerHTML = `
-    <h2>開始 14 天安心體驗</h2>
+    <h2>${planView.publicEntryTitle || "開始 14 天安心體驗"}</h2>
     <p>系統會完成 LINE 身分確認並取得 UID，接著直接填寫資料，不需要再次按一鍵登入。</p>
     <p><strong>最少邀請 1 位核心守護人</strong><br>14 天安心體驗最多 2 位；399 安心版最多 6 位；799 守護版最多 7 位。</p>
     <button class="btn btn-primary" type="button" onclick="liff.login({ redirectUri: buildOnboardingLoginRedirect() })">加入官方 LINE 並開始填寫資料</button>
@@ -510,6 +545,7 @@ function showStepReminderOnce(stepNumber) {
 
 function renderStep() {
   const content = document.getElementById("step-content");
+  const planView = onboardingPlanPresentation(selectedBetaCohort());
 
   if (state.currentStep === 3) {
     const count = onboardingDefaultReminderCount();
@@ -518,8 +554,8 @@ function renderStep() {
     const locationSelects = locationOptions(state.userLocation.city, state.userLocation.district);
     content.innerHTML = `
       <div class="trial-activation" id="trialActivationNotice" role="status">
-        <strong>🎁 14 天安心體驗已啟用</strong>
-        <span>LINE 會員綁定成功｜體驗剩 ${state.trialDaysLeft} 天｜不會自動扣款</span>
+        <strong>${planView.activationTitle}</strong>
+        <span>${planView.activationDetail}</span>
       </div>
       <div class="card">
         ${renderProgressSteps()}
@@ -612,7 +648,7 @@ function renderStep() {
         </div>
 
         <div class="gift-warning">
-          🎁 首次註冊即享一次 <strong>14 天安心體驗</strong><br>
+          🎁 本次資格：<strong>${planView.completionCopy}</strong><br>
           🚨 緊急狀況請直接撥打 119
         </div>
 
