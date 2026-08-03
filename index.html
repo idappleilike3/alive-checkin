@@ -11830,21 +11830,8 @@
     }
 
     function showOnboardingCompleteStep() {
-      showOnboardingShareStep(true);
-      setSetupGuideState("onboarding", {
-        join: "done",
-        login: "done",
-        profile: "done",
-        invite: "done",
-        guardian: "done",
-      });
-      $("onboardingTitle").textContent = "首次設定已完成";
-      $("onboardingIntro").textContent = "你的資料、提醒與守護人綁定都已保存，不需要重新填寫。下方仍可再次一鍵邀請其他守護人。";
-      $("onboardingStepLabel").textContent = "✓ 已完成所有首次設定步驟";
-      const bindingStatus = $("onboardingBindingStatus");
-      if (bindingStatus) bindingStatus.textContent = "✓ 邀請已完成，守護人已接受並完成綁定。";
-      const shareButton = $("onboardingShareBtn");
-      if (shareButton) shareButton.textContent = "再次一鍵邀請分享";
+      const modal = $("onboardingModal");
+      if (modal) modal.hidden = true;
     }
 
     function showOnboardingShareStep(inviteSent = false) {
@@ -12282,7 +12269,7 @@
       const source = String(saved.membership_source || "").trim().toLowerCase();
       const cohort = String(saved.beta_cohort || "").trim().toUpperCase();
       const requestedCohort = String(entryCohort || "").trim().toUpperCase();
-      const activeCohort = source === "beta" && ["A", "B399", "B799"].includes(cohort)
+      const activeCohort = ["A", "B399", "B799"].includes(cohort)
         ? cohort
         : (["B399", "B799"].includes(requestedCohort) ? requestedCohort : "");
       if (["A", "B799"].includes(activeCohort)) return "799 守護版｜21 天封測";
@@ -12305,10 +12292,7 @@
       const errorEl = $("onboardingError");
       if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
 
-      const contacts = currentGuardianContacts();
-      const guardianRequired = currentStatusData && currentStatusData.guardian_required === true;
-      const canDismiss = !guardianRequired && contacts.length > 0;
-      setOnboardingCloseVisible(canDismiss);
+      setOnboardingCloseVisible(true);
 
       const onboardingState = await fetchOnboardingState();
       const serverProgress = onboardingState.ok ? (onboardingState.data || {}) : {};
@@ -12325,7 +12309,8 @@
       }
       const resumeView = onboardingResumeView(onboardingState.ok ? serverProgress : null);
       if (resumeView === "complete") {
-        showOnboardingCompleteStep();
+        modal.hidden = true;
+        return;
       } else if (resumeView === "waiting") {
         showOnboardingShareStep(true);
       } else if (resumeView === "share") {

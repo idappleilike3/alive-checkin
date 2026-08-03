@@ -2721,6 +2721,36 @@ def member_access_state(profile):
     return state
 
 
+def repair_active_beta_entitlement(profile, now=None):
+    """Restore an active beta entitlement that a generic trial entry overwrote."""
+    if not isinstance(profile, dict) or profile.get("beta_revoked_at"):
+        return False
+    cohort = str(profile.get("beta_cohort") or "").strip().upper()
+    if cohort not in {"B399", "B799"}:
+        return False
+    started = parse_datetime(profile.get("beta_started_at"))
+    ends = parse_datetime(profile.get("beta_ends_at"))
+    if not started or not ends:
+        return False
+    now = now or current_app_time({})
+    comparable_now, comparable_start = _comparable_datetimes(now, started)
+    comparable_now, comparable_end = _comparable_datetimes(comparable_now, ends)
+    if not (comparable_start <= comparable_now < comparable_end):
+        return False
+    expected_plan = BETA_COHORT_PLAN[cohort]
+    changed = False
+    for key, value in (
+        ("membership_source", "beta"),
+        ("free_eligibility_source", f"beta_{cohort}"),
+        ("payment_status", "beta"),
+        ("plan", expected_plan),
+    ):
+        if profile.get(key) != value:
+            profile[key] = value
+            changed = True
+    return changed
+
+
 def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=False):
     """Build the onboarding API payload from the same authoritative gate."""
     line_user_id = str(line_user_id or "").strip()
@@ -2731,8 +2761,13 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
     if not profile and not allow_missing_profile:
         return {"ok": False, "error": "user not registered"}, 404
     profile = profile or {}
+    repaired_entitlement = repair_active_beta_entitlement(profile)
     repaired_binding = bool(profile and repair_accepted_guardian_invites(state, profile))
-    if profile and (repaired_binding or ensure_onboarding_completed_flag(profile)):
+    if profile and (
+        repaired_entitlement
+        or repaired_binding
+        or ensure_onboarding_completed_flag(profile)
+    ):
         ensure_onboarding_completed_flag(profile)
         save_state(data_file, state)
     access = member_access_state(profile)
