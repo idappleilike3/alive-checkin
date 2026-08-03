@@ -5083,6 +5083,18 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" id="guardianTrialOfferPrompt" hidden>
+    <div class="guardian-modal" role="dialog" aria-modal="true" aria-labelledby="guardianTrialOfferTitle">
+      <h2 id="guardianTrialOfferTitle">想體驗自己的每日平安嗎？</h2>
+      <p>你已經可以免費查看自己正在守護的人。若也想使用「我平安」、安全守護與邀請親友守護自己，可以選擇開始 14 天安心體驗。</p>
+      <p><strong>這不是強制步驟，也不會自動扣款。</strong>關閉後，你仍可查看正在守護的人；尚未開通或體驗到期時，自己的會員功能會維持鎖定。</p>
+      <div class="actions">
+        <button class="action-btn primary" id="startGuardianTrialOfferBtn" type="button">開始 14 天安心體驗</button>
+        <button class="action-btn" id="dismissGuardianTrialOfferBtn" type="button">暫時不用，繼續查看</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-backdrop" id="warningPrompt" hidden>
     <div class="guardian-modal warning-modal">
       <h2>預警即將送出</h2>
@@ -12422,6 +12434,71 @@
       return "unlocked";
     }
 
+    function guardianViewerAccessDecision(status) {
+      status = status || {};
+      const guardingFor = Array.isArray(status.guarding_for) ? status.guarding_for : [];
+      const guardingDetails = Array.isArray(status.guarding_details) ? status.guarding_details : [];
+      if (status.guardian_required === true && (guardingFor.length || guardingDetails.length)) {
+        return "guardian_viewer";
+      }
+      if (status.guardian_required === true) return "onboarding";
+      return "member";
+    }
+
+    function shouldOfferGuardianTrial(status) {
+      status = status || {};
+      const guardingFor = Array.isArray(status.guarding_for) ? status.guarding_for : [];
+      const guardingDetails = Array.isArray(status.guarding_details) ? status.guarding_details : [];
+      if (!guardingFor.length && !guardingDetails.length) return false;
+      const plan = String(status.plan || "free");
+      if (plan === "trial" && status.trial_active !== false) return false;
+      if (plan.startsWith("paid_") && !status.plan_expired_at) return false;
+      if (String(status.membership_source || "") === "beta" && !status.plan_expired_at) return false;
+      return true;
+    }
+
+    function dismissGuardianTrialOffer() {
+      const prompt = $("guardianTrialOfferPrompt");
+      if (prompt) prompt.hidden = true;
+      try { sessionStorage.setItem("alive_guardian_trial_offer_dismissed_v1", "1"); } catch (_) {}
+    }
+
+    function maybeShowGuardianTrialOffer(status = {}) {
+      if (!shouldOfferGuardianTrial(status)) return;
+      try {
+        if (sessionStorage.getItem("alive_guardian_trial_offer_dismissed_v1") === "1") return;
+      } catch (_) {}
+      const prompt = $("guardianTrialOfferPrompt");
+      if (prompt) prompt.hidden = false;
+    }
+
+    async function startGuardianTrialOffer() {
+      const button = $("startGuardianTrialOfferBtn");
+      if (button) {
+        button.disabled = true;
+        button.textContent = "正在開通體驗…";
+      }
+      const result = await activateOwnTrialAfterGuardianBind();
+      if (result.ok) {
+        const prompt = $("guardianTrialOfferPrompt");
+        if (prompt) prompt.hidden = true;
+        try { sessionStorage.removeItem("alive_guardian_trial_offer_dismissed_v1"); } catch (_) {}
+        await refreshStatus().catch(() => {});
+        showTab("home");
+        return;
+      }
+      if (result.already_used || result.result?.error === "free_eligibility_already_used") {
+        alert("這個帳號已經使用過 14 天安心體驗。你仍可查看正在守護的人；如需使用自己的會員功能，請選擇適合的方案。");
+        location.assign("/liff/pricing.html?from=guardian_viewer");
+        return;
+      }
+      alert("目前無法開通體驗，請稍後再試。你仍可繼續查看正在守護的人。");
+      if (button) {
+        button.disabled = false;
+        button.textContent = "開始 14 天安心體驗";
+      }
+    }
+
     function setMemberInteractionLocked(locked) {
       const ids = [
         "checkBtn", "mvpSafeBtn", "mvpGuardStartBtn", "sosHoldButton",
@@ -12627,11 +12704,14 @@
         const hasGuardians = homeReady;
         const setupDone = homeReady;
         const wantsInviteShare = wantsShareInvite;
-        const memberGateDecision = memberOnboardingGateDecision(
-          guardianRequired,
-          lineRegistrationWasExisting,
-          inviteeMode,
-        );
+        const guardianViewerDecision = guardianViewerAccessDecision(status);
+        const memberGateDecision = guardianViewerDecision === "guardian_viewer"
+          ? "guardian_viewer"
+          : memberOnboardingGateDecision(
+              guardianRequired,
+              lineRegistrationWasExisting,
+              inviteeMode,
+            );
         syncInviteUiForBoundState(homeReady);
         if (homeReady && !inviteeMode) {
           clearShareFirstLocalFlags();
@@ -12660,6 +12740,10 @@
             location.replace(buildShareInvitePageUrl("home"));
             return;
           }
+        } else if (memberGateDecision === "guardian_viewer") {
+          clearShareFirstLocalFlags();
+          if (typeof showTab === "function") showTab("member");
+          maybeShowGuardianTrialOffer(status);
         } else if (memberGateDecision === "onboarding") {
           // 分享返回後依後端進度呈現第 4／5 步；已儲存資料不會要求重填。
           // 只有守護人正式接受、home_ready=true 後，才解除其他會員功能。
@@ -13164,6 +13248,8 @@
       showTab("home");
     });
     $("guardianBindReciprocalBtn")?.addEventListener("click", startReciprocalGuardianInvite);
+    $("dismissGuardianTrialOfferBtn")?.addEventListener("click", dismissGuardianTrialOffer);
+    $("startGuardianTrialOfferBtn")?.addEventListener("click", startGuardianTrialOffer);
     $("cancelWarningBtn").addEventListener("click", hideWarningPrompt);
     $("confirmWarningBtn").addEventListener("click", hideWarningPrompt);
     $("openPrivacyExplainBtn").addEventListener("click", openPrivacyExplain);

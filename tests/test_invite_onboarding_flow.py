@@ -54,15 +54,10 @@ class InviteOnboardingFlowTests(unittest.TestCase):
             self.assertTrue(app_module.membership_access_active(guardian))
             self.assertTrue(result["own_trial_activated"])
 
-    def test_share_page_explains_official_line_and_three_steps(self):
+    def test_share_page_explains_acceptance_requires_line_login_and_profile(self):
         html = (ROOT / "liff/share-invite.html").read_text(encoding="utf-8")
-        for copy in (
-            "1. 你加入每日平安官方 LINE 並完成 LINE 登入",
-            "2. 你填寫自己的資料、與守護人的關係及緊急聯絡候補資料",
-            "3. 你選擇要邀請的 LINE 好友並一鍵分享",
-            "4. 對方加入官方 LINE、登入、填寫資料並親自同意後，綁定才生效",
-        ):
-            self.assertIn(copy, html)
+        self.assertIn("對方完成 LINE 登入、填寫資料並同意後，才會正式成為主要守護人", html)
+        self.assertIn("對方點開邀請連結、完成 LINE 登入、填寫本人資料並確認接受", html)
 
     def test_invitation_survives_line_login_and_reopens_the_profile_form(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -94,17 +89,16 @@ class InviteOnboardingFlowTests(unittest.TestCase):
         )
         self.assertIn("請填寫你的姓名、關係與聯絡電話", html)
 
-    def test_public_invite_collects_guardian_profile_before_opening_line(self):
+    def test_public_invite_defers_guardian_profile_to_authenticated_daily_peace_page(self):
         html = (ROOT / "invite.html").read_text(encoding="utf-8")
 
-        self.assertIn('id="publicGuardianName"', html)
-        self.assertIn('id="publicGuardianRelationship"', html)
-        self.assertIn('id="publicGuardianPhone"', html)
-        self.assertIn('id="saveGuardianDraftAndContinue"', html)
-        self.assertIn('alive_guardian_invite_profile_', html)
-        self.assertIn('localStorage.setItem(profileDraftKey', html)
+        self.assertNotIn('id="publicGuardianName"', html)
+        self.assertNotIn('id="publicGuardianRelationship"', html)
+        self.assertNotIn('id="publicGuardianPhone"', html)
+        self.assertNotIn('id="saveGuardianDraftAndContinue"', html)
+        self.assertIn("這個邀請頁不需要填資料", html)
+        self.assertIn("在每日平安頁面填寫姓名、關係與必填電話", html)
         home = (ROOT / "index.html").read_text(encoding="utf-8")
-        self.assertIn('restorePublicGuardianInviteProfile', home)
         self.assertIn('inviteGuardianPhone', home)
 
     def test_acceptance_recommends_trial_without_auto_activation_or_reverse_binding(self):
@@ -140,7 +134,7 @@ class InviteOnboardingFlowTests(unittest.TestCase):
         home_html = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertNotIn("acceptAndTrialCta", invite_html)
         self.assertNotIn("trial_after_guardian", invite_html)
-        self.assertIn("接受邀請只會讓你免費接收對方通知", invite_html)
+        self.assertIn("接受這份邀請，是成為對方的守護人", invite_html)
         self.assertNotIn("activate_trial: trialAfterGuardian", home_html)
         self.assertIn("activate_trial: false", home_html)
 
