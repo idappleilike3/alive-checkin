@@ -4650,6 +4650,27 @@
           <button class="action-btn primary" id="registeredMemberEditBtn" type="button">前往修改會員資料</button>
         </div>
 
+        <div class="member-data-section" id="memberProfileDetailsSection" aria-label="會員基本資料">
+          <h3>會員基本資料</h3>
+          <p class="helper">地區用於天氣與安全提醒；住址與生日可自行填寫或修改。</p>
+          <div class="onboarding-fields">
+            <label class="onboarding-field" for="memberProfileCity">縣市
+              <select id="memberProfileCity"></select>
+            </label>
+            <label class="onboarding-field" for="memberProfileDistrict">鄉鎮市區
+              <select id="memberProfileDistrict"></select>
+            </label>
+            <label class="onboarding-field" for="memberProfileAddress">住址
+              <input id="memberProfileAddress" type="text" maxlength="120" autocomplete="street-address" placeholder="例如：○○路○○號（選填）">
+            </label>
+            <label class="onboarding-field" for="memberProfileBirthday">生日
+              <input id="memberProfileBirthday" type="date" autocomplete="bday">
+            </label>
+          </div>
+          <p class="onboarding-error" id="memberProfileSaveFeedback" hidden></p>
+          <button class="action-btn primary" id="memberProfileSaveBtn" type="button" onclick="saveMemberProfileDetails()">儲存會員資料</button>
+        </div>
+
         <div class="member-role-intro" id="memberRoleIntro" hidden>
           <div class="member-role-intro-head">
             <div>
@@ -7839,6 +7860,10 @@
       const memberCompleteSetupBtn = $("memberCompleteSetupBtn");
       const memberTrialShareTitle = $("memberTrialShareTitle");
       const memberTrialShareHelp = $("memberTrialShareHelp");
+      const memberTrialShareSection = $("memberTrialShareSection");
+      if (memberTrialShareSection) memberTrialShareSection.hidden = Boolean(
+        status.is_onboarding_completed || status.home_ready || status.setup_completed
+      );
       if (memberShareTrialBtn) memberShareTrialBtn.hidden = !canShareTrial;
       if (memberCompleteSetupBtn) {
         memberCompleteSetupBtn.hidden = canShareTrial;
@@ -7866,6 +7891,7 @@
           : "尚未設定到期日";
       if ($("memberLineAccount")) $("memberLineAccount").textContent = lineUserId || status.line_user_id ? "LINE 已綁定" : "尚未綁定 LINE";
       if ($("memberContactEmail")) $("memberContactEmail").textContent = status.contact_email || "尚未填寫";
+      initializeMemberProfileFields(status);
       if ($("memberGuardianQuota")) $("memberGuardianQuota").textContent = `核心守護人 ${shownCore}/${coreLimit}`;
       const quotaLine = $("memberGuardianQuotaLine");
       if (quotaLine) quotaLine.textContent = `核心守護人 ${shownCore}/${coreLimit}`;
@@ -11713,10 +11739,10 @@
         : apiAddGuardian(payload);
     }
 
-    async function apiSaveProfileLocation(city, district) {
+    async function apiSaveProfileLocation(city, district, address = "", birthday = "") {
       return apiMemberMutationWithRegistrationRecovery("/api/profile/location", {
         method: "POST",
-        body: JSON.stringify({ line_user_id: lineUserId, city, district })
+        body: JSON.stringify({ line_user_id: lineUserId, city, district, address, birthday })
       });
     }
 
@@ -11845,6 +11871,55 @@
       renderWebOnboardingDistricts(city, district);
     }
 
+    function renderMemberProfileDistricts(city = "", selected = "") {
+      const district = $("memberProfileDistrict");
+      if (!district) return;
+      const options = city && WEB_ONBOARDING_DISTRICTS[city]
+        ? WEB_ONBOARDING_DISTRICTS[city].split(",")
+        : [];
+      district.innerHTML = `<option value="">${city ? "請選擇鄉鎮市區" : "請先選擇縣市"}</option>${options.map((name) => `<option value="${name}" ${name === selected ? "selected" : ""}>${name}</option>`).join("")}<option value="我不確定所在區域" ${selected === "我不確定所在區域" ? "selected" : ""}>我不確定所在區域</option>`;
+    }
+
+    function initializeMemberProfileFields(status = {}) {
+      const citySelect = $("memberProfileCity");
+      if (!citySelect) return;
+      const location = status.user_location || {};
+      const city = location.city || "";
+      const district = location.district || "";
+      citySelect.innerHTML = `<option value="">請選擇縣市</option>${Object.keys(WEB_ONBOARDING_DISTRICTS).map((name) => `<option value="${name}" ${name === city ? "selected" : ""}>${name}</option>`).join("")}`;
+      renderMemberProfileDistricts(city, district);
+      if ($("memberProfileAddress")) $("memberProfileAddress").value = status.address || "";
+      if ($("memberProfileBirthday")) $("memberProfileBirthday").value = status.birthday || "";
+      if (citySelect.dataset.bound !== "true") {
+        citySelect.dataset.bound = "true";
+        citySelect.addEventListener("change", () => renderMemberProfileDistricts(citySelect.value, ""));
+      }
+    }
+
+    async function saveMemberProfileDetails() {
+      const city = $("memberProfileCity")?.value.trim() || "";
+      const district = $("memberProfileDistrict")?.value.trim() || "";
+      const address = $("memberProfileAddress")?.value.trim() || "";
+      const birthday = $("memberProfileBirthday")?.value || "";
+      const feedback = $("memberProfileSaveFeedback");
+      const button = $("memberProfileSaveBtn");
+      if (!city || !district) {
+        if (feedback) { feedback.hidden = false; feedback.textContent = "請選擇縣市與鄉鎮市區"; }
+        return;
+      }
+      if (button) { button.disabled = true; button.textContent = "儲存中…"; }
+      try {
+        const saved = await apiSaveProfileLocation(city, district, address, birthday);
+        currentStatusData = { ...(currentStatusData || {}), ...saved };
+        if (feedback) { feedback.hidden = false; feedback.textContent = "✅ 會員資料已儲存"; }
+        showInlineSuccess("會員資料已儲存");
+      } catch (error) {
+        if (feedback) { feedback.hidden = false; feedback.textContent = error.message || "會員資料儲存失敗"; }
+      } finally {
+        if (button) { button.disabled = false; button.textContent = "儲存會員資料"; }
+      }
+    }
+
     function reminderSlotLabel(index, total) {
       if (total <= 1) return "每日提醒時間";
       return `第 ${index + 1} 次提醒`;
@@ -11891,7 +11966,6 @@
       if (modal) modal.hidden = true;
       if (typeof showTab === "function") showTab("home");
     }
-
     function showOnboardingShareStep(inviteSent = false) {
       const shareStep = $("onboardingShareStep");
       const guardianStep = $("onboardingGuardianStep");
@@ -12370,8 +12444,8 @@
       }
       const resumeView = onboardingResumeView(onboardingState.ok ? serverProgress : null);
       if (resumeView === "complete") {
-        showOnboardingCompleteStep();
         modal.hidden = true;
+        if (typeof showTab === "function") showTab("home");
         return;
       } else if (resumeView === "waiting") {
         showOnboardingShareStep(true);

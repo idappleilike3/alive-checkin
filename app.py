@@ -2832,6 +2832,8 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
             "city": str((profile.get("location") or {}).get("city") or "").strip(),
             "district": str((profile.get("location") or {}).get("district") or "").strip(),
         },
+        "address": str(profile.get("address") or "").strip(),
+        "birthday": str(profile.get("birthday") or "").strip(),
         "location_configured": bool(
             str((profile.get("location") or {}).get("city") or "").strip()
             and str((profile.get("location") or {}).get("district") or "").strip()
@@ -2863,10 +2865,12 @@ def acknowledge_binding_celebration(data_file, line_user_id):
 
 
 def update_member_location(data_file, line_user_id, payload, *, source="member"):
-    """Save a coarse Taiwan location without collecting an address or GPS."""
+    """Save member profile location, optional street address, and birthday."""
     line_user_id = str(line_user_id or "").strip()
     city = str((payload or {}).get("city") or "").strip()
     district = str((payload or {}).get("district") or "").strip()
+    address = str((payload or {}).get("address") or "").strip()
+    birthday = str((payload or {}).get("birthday") or "").strip()
     if not line_user_id:
         return {"ok": False, "error": "missing line_user_id"}, 400
     if not city or not district:
@@ -2877,18 +2881,31 @@ def update_member_location(data_file, line_user_id, payload, *, source="member")
         }, 400
     if len(city) > 12 or len(district) > 20:
         return {"ok": False, "error": "invalid_location"}, 400
+    if len(address) > 120:
+        return {"ok": False, "error": "invalid_address", "message": "住址請勿超過 120 個字"}, 400
+    if birthday:
+        try:
+            parsed_birthday = datetime.strptime(birthday, "%Y-%m-%d")
+        except ValueError:
+            return {"ok": False, "error": "invalid_birthday", "message": "生日格式不正確"}, 400
+        if parsed_birthday.date() > datetime.now().date():
+            return {"ok": False, "error": "invalid_birthday", "message": "生日不可晚於今天"}, 400
     source = "admin" if source == "admin" else "member"
     state = load_state(data_file)
     profile = (state.get("users") or {}).get(line_user_id)
     if not isinstance(profile, dict):
         return {"ok": False, "error": "user not registered"}, 404
     profile["location"] = {"city": city, "district": district}
+    profile["address"] = address
+    profile["birthday"] = birthday
     profile["location_source"] = source
     profile["location_updated_at"] = datetime.now().isoformat(timespec="seconds")
     save_state(data_file, state)
     return {
         "ok": True,
         "user_location": dict(profile["location"]),
+        "address": address,
+        "birthday": birthday,
         "location_source": source,
         "location_updated_at": profile["location_updated_at"],
     }, 200
@@ -4616,6 +4633,8 @@ def build_status(profile, state=None, now=None):
             "city": str((profile.get("location") or {}).get("city") or "").strip(),
             "district": str((profile.get("location") or {}).get("district") or "").strip(),
         },
+        "address": str(profile.get("address") or "").strip(),
+        "birthday": str(profile.get("birthday") or "").strip(),
         "weather": copy.deepcopy(profile.get("weather") or {}),
         "daily_blessing": checkin_blessing_text(now),
         "is_onboarding_completed": bool(profile.get("is_onboarding_completed")),
