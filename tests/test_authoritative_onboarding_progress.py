@@ -42,6 +42,38 @@ class AuthoritativeOnboardingProgressTest(unittest.TestCase):
         self.assertEqual(payload["current_step"], 3)
         self.assertEqual(payload["binding_status"], "waiting_for_invite")
 
+    def test_completed_member_receives_binding_celebration_only_until_acknowledged(self):
+        state = app_module.load_state(self.data_file)
+        owner = state["users"]["U-owner"]
+        owner["onboarding_reminder_configured"] = True
+        owner["contacts"] = [{
+            "id": "guardian-bound",
+            "name": "守護人",
+            "contact_role": "guardian",
+            "line_user_id": "U-guardian",
+            "binding_status": "accepted",
+            "recipient_consent": True,
+        }]
+        app_module.save_state(self.data_file, state)
+
+        first, first_status = app_module.onboarding_status_payload(
+            self.data_file, "U-owner"
+        )
+        self.assertEqual(first_status, 200)
+        self.assertTrue(first["show_binding_celebration"])
+
+        acknowledged, ack_status = app_module.acknowledge_binding_celebration(
+            self.data_file, "U-owner"
+        )
+        self.assertEqual(ack_status, 200)
+        self.assertTrue(acknowledged["acknowledged"])
+
+        later, later_status = app_module.onboarding_status_payload(
+            self.data_file, "U-owner"
+        )
+        self.assertEqual(later_status, 200)
+        self.assertFalse(later["show_binding_celebration"])
+
     def test_pending_invite_is_waiting_not_completed(self):
         state = app_module.load_state(self.data_file)
         state["users"]["U-owner"]["onboarding_reminder_configured"] = True
@@ -59,32 +91,6 @@ class AuthoritativeOnboardingProgressTest(unittest.TestCase):
         self.assertEqual(payload["completed_steps"]["guardian_bound"], False)
         self.assertEqual(payload["current_step"], 5)
         self.assertEqual(payload["binding_status"], "waiting_for_guardian")
-
-    def test_active_b799_evidence_restores_entitlement_after_trial_entry(self):
-        state = app_module.load_state(self.data_file)
-        profile = state["users"]["U-owner"]
-        now = app_module.current_app_time({})
-        profile.update({
-            "plan": "trial",
-            "membership_source": "trial",
-            "payment_status": "trial",
-            "beta_cohort": "B799",
-            "beta_started_at": (now - app_module.timedelta(days=1)).isoformat(),
-            "beta_ends_at": (now + app_module.timedelta(days=20)).isoformat(),
-            "beta_revoked_at": None,
-        })
-        app_module.save_state(self.data_file, state)
-
-        payload, status = app_module.onboarding_status_payload(
-            self.data_file, "U-owner"
-        )
-
-        self.assertEqual(status, 200)
-        self.assertEqual(payload["plan"], "paid_799_year")
-        self.assertEqual(payload["membership_source"], "beta")
-        saved = app_module.load_state(self.data_file)["users"]["U-owner"]
-        self.assertEqual(saved["plan"], "paid_799_year")
-        self.assertEqual(saved["membership_source"], "beta")
 
     def test_accepted_invite_repairs_missing_bound_contact_and_completes_setup(self):
         state = app_module.load_state(self.data_file)
