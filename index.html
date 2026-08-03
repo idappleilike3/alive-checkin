@@ -305,6 +305,7 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     .check-btn:active { transform: scale(0.94); }
     .check-btn .icon { font-size: 18px; line-height: 1; }
+    .check-btn-logo { width: 25px; height: 25px; object-fit: contain; }
     .check-btn .label { font-size: 20px; font-weight: 900; line-height: 1.1; }
     .check-btn .sub { font-size: 16px; font-weight: 800; opacity: 0.96; }
     .check-btn.warning { background: #f59e0b; box-shadow: 0 12px 30px rgba(245, 158, 11, 0.32); }
@@ -3395,6 +3396,15 @@
       transition: transform 0.12s ease, filter 0.12s ease;
     }
     .mvp-btn:active { transform: scale(0.98); filter: brightness(0.96); }
+    .mvp-btn.is-pressed, .check-btn.is-pressed {
+      animation: peaceButtonPress .42s cubic-bezier(.2,.8,.2,1);
+    }
+    @keyframes peaceButtonPress {
+      0% { transform: scale(1); }
+      38% { transform: scale(.94); filter: brightness(.96); }
+      72% { transform: scale(1.035); filter: brightness(1.08); }
+      100% { transform: scale(1); }
+    }
     .mvp-btn-icon { font-size: 36px; line-height: 1; text-align: center; }
     .mvp-btn-title { font-size: clamp(24px, 6.2vw, 30px); font-weight: 950; line-height: 1.2; }
     .mvp-btn-desc { margin-top: 4px; font-size: clamp(15px, 3.8vw, 17px); font-weight: 700; opacity: 0.95; }
@@ -4042,13 +4052,13 @@
         </div>
         <div class="check-wrap">
           <button class="check-btn" id="checkBtn" type="button" disabled aria-busy="true" aria-label="報平安">
-            <span class="icon" aria-hidden="true">🌿</span>
+            <img class="check-btn-logo" src="assets/daily-peace-logo.png" alt="">
             <span class="label">我平安</span>
             <span class="sub">點我一下</span>
           </button>
         </div>
-        <p class="checkin-card-meta" id="checkinCardMeta">萌芽・連續 0 天</p>
-        <p class="daily-blessing" id="checkinDailyBlessing">每天留一句平安，讓牽掛變成安心。</p>
+        <p class="checkin-card-meta" id="checkinCardMeta">Lv.1 安心啟程｜連續第 0 天</p>
+        <p class="daily-blessing" id="checkinDailyBlessing">今天一切都還好嗎？點一下「我平安」</p>
       </section>
       <div class="countdown-block" id="countdownBlock" hidden>
         <div class="countdown" id="countdownDisplay">--:--:--</div>
@@ -4056,7 +4066,7 @@
       </div>
       <div class="mvp-grid" role="group" aria-label="主要服務">
         <button class="mvp-btn safe" id="mvpSafeBtn" type="button">
-          <span class="mvp-btn-icon">✅</span>
+          <span class="mvp-btn-icon"><img class="check-btn-logo" src="assets/daily-peace-logo.png" alt=""></span>
           <span>
             <span class="mvp-btn-title">我平安</span>
             <span class="mvp-btn-desc">回報今天平安</span>
@@ -10880,16 +10890,36 @@
 
       const streak = Number.isFinite(Number(data && data.streak_days))
         ? Number(data.streak_days) : calculateStreak((data && data.history) || []);
+      const level = (data && data.streak_level) || {};
       const meta = $("checkinCardMeta");
-      if (meta) meta.textContent = `${streak >= 30 ? "茁壯" : streak >= 7 ? "成長" : "萌芽"}・連續 ${streak} 天`;
+      if (meta) {
+        meta.textContent = level.level_progress_text
+          || `Lv.${level.level || 1} ${level.level_name || "安心啟程"}｜連續第 ${streak} 天`;
+        if (level.level_color) meta.style.color = level.level_color;
+      }
       const blessing = $("checkinDailyBlessing");
-      if (blessing && data && data.daily_blessing) blessing.textContent = data.daily_blessing;
+      if (blessing) {
+        if (data && data.is_today_checked) {
+          blessing.textContent = level.is_upgrade_day
+            ? `恭喜升級為 Lv.${level.level}「${level.level_name}」！登入每日平安網頁，有一份驚喜等著你`
+            : `很棒！已連續報平安第 ${streak} 天，再繼續一天，就多一份安心`;
+        } else if (data && data.streak_restarted) {
+          blessing.textContent = "重新開始連續守護，已獲得的徽章與最高等級都會保留";
+        } else {
+          blessing.textContent = "今天一切都還好嗎？點一下「我平安」";
+        }
+      }
     }
 
     function showMilestoneCelebration() {
       if (window.__milestoneCelebrationShown) return;
       const milestone = Number(new URLSearchParams(window.location.search).get("milestone"));
-      if (![1, 7, 30, 60, 100, 180, 365].includes(milestone)) return;
+      const levels = {
+        1:[1,"安心啟程"],3:[2,"平安萌芽"],7:[3,"初心守護"],14:[4,"安心同行"],
+        21:[5,"守護習慣"],30:[6,"安心夥伴"],60:[7,"穩定守護"],90:[8,"長久陪伴"],
+        100:[9,"百日之星"],180:[10,"金色守護"],270:[11,"安心典範"],365:[12,"年度守護者"]
+      };
+      if (!levels[milestone]) return;
       window.__milestoneCelebrationShown = true;
       const overlay = document.createElement("div");
       overlay.id = "milestoneCelebration";
@@ -10897,8 +10927,8 @@
       overlay.setAttribute("aria-label", `連續平安 ${milestone} 天成就`);
       overlay.innerHTML = `<div class="milestone-celebration-card">
         <div class="milestone-sparkles" aria-hidden="true">✨ 🎉 ✨</div>
-        <strong>連續平安 ${milestone} 天</strong>
-        <p>謝謝你每天回應平安，讓關心你的人多一份安心。</p>
+        <strong>Lv.${levels[milestone][0]} ${levels[milestone][1]}</strong>
+        <p>恭喜連續報平安第 ${milestone} 天，這份守護成就屬於你</p>
         <button type="button">收下這份祝福 ❤️</button>
       </div>`;
       const style = document.createElement("style");
@@ -11059,7 +11089,7 @@
       renderStatus(await apiGetStatus());
     }
 
-    const CHECK_BTN_IDLE_HTML = '<span class="icon" aria-hidden="true">🌿</span><span class="label">我平安</span><span class="sub">點我一下</span>';
+    const CHECK_BTN_IDLE_HTML = '<img class="check-btn-logo" src="assets/daily-peace-logo.png" alt=""><span class="label">我平安</span><span class="sub">點我一下</span>';
     const CHECK_BTN_DONE_HTML = '<span class="icon" aria-hidden="true">✅</span><span class="label">今日平安</span><span class="sub">已完成回報</span>';
     const CHECK_BTN_LOADING_HTML = '<span class="icon" aria-hidden="true">🌿</span><span class="label">回報中…</span><span class="sub">請稍候</span>';
 
@@ -12577,10 +12607,20 @@
       const guardStart = $("mvpGuardStartBtn");
       const guardStop = $("mvpGuardStopBtn");
       const saveContact = $("mvpContactSaveBtn");
-      if (safeBtn) safeBtn.addEventListener("click", () => doCheckin());
-      if (guardBtn) guardBtn.addEventListener("click", openMvpGuardPanel);
-      if (callBtn) callBtn.addEventListener("click", openMvpCallPanel);
-      if (sosBtn) sosBtn.addEventListener("click", openSosFlow);
+      const withPressAnimation = (button, action) => {
+        if (!button) return;
+        button.addEventListener("click", () => {
+          button.classList.remove("is-pressed");
+          void button.offsetWidth;
+          button.classList.add("is-pressed");
+          setTimeout(() => button.classList.remove("is-pressed"), 460);
+          action();
+        });
+      };
+      withPressAnimation(safeBtn, () => doCheckin());
+      withPressAnimation(guardBtn, openMvpGuardPanel);
+      withPressAnimation(callBtn, openMvpCallPanel);
+      withPressAnimation(sosBtn, openSosFlow);
       const guardSosBtn = $("mvpGuardSosBtn");
       if (guardSosBtn) guardSosBtn.addEventListener("click", openSosFlow);
       if (guardBack) guardBack.addEventListener("click", showMvpHomeOnly);

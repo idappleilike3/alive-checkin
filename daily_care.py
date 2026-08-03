@@ -16,7 +16,57 @@ HERO_ASSETS = {
     "evening": ("evening-01", "evening-02"),
 }
 
-STREAK_MILESTONES = (1, 7, 30, 60, 100, 180, 365)
+STREAK_LEVELS = (
+    (1, "安心啟程", "#16A34A"),
+    (3, "平安萌芽", "#0D9488"),
+    (7, "初心守護", "#2563EB"),
+    (14, "安心同行", "#7C3AED"),
+    (21, "守護習慣", "#C026D3"),
+    (30, "安心夥伴", "#D97706"),
+    (60, "穩定守護", "#EA580C"),
+    (90, "長久陪伴", "#DB2777"),
+    (100, "百日之星", "#CA8A04"),
+    (180, "金色守護", "#A16207"),
+    (270, "安心典範", "#9333EA"),
+    (365, "年度守護者", "#B45309"),
+)
+STREAK_MILESTONES = tuple(day for day, _name, _color in STREAK_LEVELS)
+
+
+def streak_level_context(streak_days, highest_streak_days=0):
+    """Return the permanent earned badge and current streak progress."""
+    streak_days = max(0, int(streak_days or 0))
+    highest_streak_days = max(streak_days, int(highest_streak_days or 0))
+    earned_index = 0
+    for index, (day, _name, _color) in enumerate(STREAK_LEVELS):
+        if highest_streak_days >= day:
+            earned_index = index
+    day, name, color = STREAK_LEVELS[earned_index]
+    next_level = next((item for item in STREAK_LEVELS if item[0] > highest_streak_days), None)
+    if next_level:
+        next_day, next_name, _next_color = next_level
+        days_to_next = next_day - streak_days
+        progress_text = (
+            f"Lv.{earned_index + 1} {name}｜連續第 {streak_days} 天｜"
+            f"距離下一級「{next_name}」還差 {days_to_next} 天"
+        )
+    else:
+        next_day = None
+        next_name = ""
+        days_to_next = 0
+        progress_text = f"Lv.{earned_index + 1} {name}｜連續第 {streak_days} 天｜已達最高等級"
+    return {
+        "level": earned_index + 1,
+        "level_name": name,
+        "level_day": day,
+        "level_color": color,
+        "next_level_day": next_day,
+        "next_level_name": next_name,
+        "days_to_next_level": days_to_next,
+        "is_upgrade_day": streak_days in STREAK_MILESTONES,
+        "progress_percent": min(100, round(streak_days / (next_day or 365) * 100)),
+        "level_progress_text": progress_text,
+    }
 
 
 def _greeting(hour):
@@ -54,9 +104,13 @@ def build_daily_care_context(profile, now):
         weather_status = "unavailable"
         weather_line = f"{city}｜天氣資料暫時無法更新"
     streak_days = int(profile.get("streak_days") or 0)
+    level_context = streak_level_context(streak_days, profile.get("highest_streak_days") or 0)
     if streak_days in STREAK_MILESTONES:
-        care_title = f"🎉 平安第 {streak_days} 天"
-        care_summary = f"謝謝你持續完成每日平安，這 {streak_days} 天的每一次回應，都讓關心你的人多一份安心。"
+        care_title = (
+            f"🎉 連續第 {streak_days} 天｜升級為 "
+            f"Lv.{level_context['level']}「{level_context['level_name']}」"
+        )
+        care_summary = f"你已連續報平安 {streak_days} 天，登入每日平安網頁，有一份升級驚喜等著你"
         content_kind = "milestone"
     else:
         care_title = DEFAULT_CARE["title"]
@@ -75,6 +129,9 @@ def build_daily_care_context(profile, now):
         "care_title": care_title,
         "care_summary": care_summary,
         "content_kind": content_kind,
+        **level_context,
+        "checkin_prompt": "今天一切都還好嗎？點一下「我平安」",
+        "streak_status_text": "重新開始連續守護" if profile.get("streak_restarted") else "持續連續守護",
         "milestone_day": milestone_day,
         "achievement_url": (
             f"https://alive-checkin.onrender.com/?milestone={milestone_day}"

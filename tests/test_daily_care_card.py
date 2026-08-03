@@ -3,7 +3,7 @@ from pathlib import Path
 from datetime import datetime
 
 import app
-from daily_care import build_daily_care_context
+from daily_care import build_daily_care_context, streak_level_context
 
 
 class DailyCareContextTests(unittest.TestCase):
@@ -54,7 +54,7 @@ class DailyCareContextTests(unittest.TestCase):
         self.assertIn("365", context["care_title"])
 
     def test_all_upgrade_days_link_to_web_celebration(self):
-        for day in (1, 7, 30, 60, 100, 180, 365):
+        for day in (1, 3, 7, 14, 21, 30, 60, 90, 100, 180, 270, 365):
             with self.subTest(day=day):
                 context = build_daily_care_context(
                     {"streak_days": day}, datetime(2026, 8, 2, 13)
@@ -62,6 +62,30 @@ class DailyCareContextTests(unittest.TestCase):
                 self.assertEqual(context["content_kind"], "milestone")
                 self.assertEqual(context["milestone_day"], day)
                 self.assertIn(f"milestone={day}", context["achievement_url"])
+
+    def test_every_streak_has_level_and_next_upgrade_progress(self):
+        context = streak_level_context(18)
+        self.assertEqual(context["level"], 4)
+        self.assertEqual(context["level_name"], "安心同行")
+        self.assertEqual(context["next_level_day"], 21)
+        self.assertEqual(context["days_to_next_level"], 3)
+        self.assertFalse(context["is_upgrade_day"])
+
+    def test_restart_keeps_highest_earned_level_without_calling_it_downgrade(self):
+        context = build_daily_care_context(
+            {"streak_days": 1, "highest_streak_days": 100, "streak_restarted": True},
+            datetime(2026, 8, 2, 9),
+        )
+        self.assertEqual(context["level"], 9)
+        self.assertEqual(context["level_name"], "百日之星")
+        self.assertEqual(context["streak_status_text"], "重新開始連續守護")
+        self.assertNotIn("降級", context["streak_status_text"])
+
+    def test_daily_card_has_question_before_checkin_and_level_progress(self):
+        context = build_daily_care_context({"streak_days": 18}, datetime(2026, 8, 2, 9))
+        self.assertEqual(context["checkin_prompt"], "今天一切都還好嗎？點一下「我平安」")
+        self.assertIn("Lv.4 安心同行", context["level_progress_text"])
+        self.assertIn("還差 3 天", context["level_progress_text"])
 
     def test_milestone_flex_adds_real_achievement_button(self):
         history = ["2026-08-02"]
@@ -81,15 +105,17 @@ class DailyCareContextTests(unittest.TestCase):
         self.assertEqual(len(footer), 4)
         self.assertEqual(footer[0]["action"]["label"], "✅ 我平安")
         self.assertEqual(footer[0]["type"], "box")
-        self.assertEqual(footer[0]["contents"][0]["size"], "xl")
+        self.assertIn("daily-peace-logo.png", footer[0]["contents"][0]["url"])
+        self.assertEqual(footer[0]["contents"][1]["size"], "xl")
         self.assertEqual(footer[1]["height"], "md")
         self.assertIn("查看今日安心提醒", footer[3]["action"]["label"])
         self.assertIn("/assets/daily-care/morning-", flex["contents"]["hero"]["url"])
         self.assertEqual(flex["contents"]["hero"]["aspectRatio"], "20:13")
         self.assertEqual(
             flex["contents"]["body"]["contents"][0]["text"],
-            "早安，今天一切都還好嗎？",
+            "早安，今天一切都還好嗎？點一下「我平安」",
         )
+        self.assertIn("Lv.1 安心啟程", flex["contents"]["body"]["contents"][1]["text"])
 
     def test_detail_page_uses_liff_identity_and_has_required_sections(self):
         html = Path("daily-care.html").read_text(encoding="utf-8")

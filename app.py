@@ -135,7 +135,7 @@ try:
 except Exception:  # pragma: no cover
     holidays_tw = None
 
-from daily_care import build_daily_care_context
+from daily_care import build_daily_care_context, streak_level_context
 
 from push_delivery import (
     classify_push_exception,
@@ -4304,6 +4304,10 @@ def build_status(profile, state=None, now=None):
                     detail["latest_sos_created_at"] = str(peer_events[0].get("created_at") or "")
         guarding_details.append(detail)
 
+    streak_days = compute_streak_days(profile.get("history") or [], today)
+    level_context = streak_level_context(
+        streak_days, profile.get("highest_streak_days") or streak_days
+    )
     return {
         "ok": True,
         **access,
@@ -4320,7 +4324,10 @@ def build_status(profile, state=None, now=None):
         "onboarding_reminder_configured": bool(
             profile.get("onboarding_reminder_configured")
         ),
-        "streak_days": compute_streak_days(profile.get("history") or [], today),
+        "streak_days": streak_days,
+        "highest_streak_days": int(profile.get("highest_streak_days") or streak_days),
+        "streak_restarted": bool(profile.get("streak_restarted")),
+        "streak_level": level_context,
         "last_check_in": profile.get("last_check_in"),
         "history": sorted(set(profile.get("history") or [])),
         "checkin_records": sorted(
@@ -4947,6 +4954,12 @@ def record_checkin(data_file, payload=None, config=None):
     if today not in history:
         history.add(today)
         profile["history"] = sorted(history)
+    current_streak = compute_streak_days(profile.get("history") or [], today)
+    previous_highest = int(profile.get("highest_streak_days") or 0)
+    profile["streak_restarted"] = bool(
+        not already_checked and current_streak == 1 and previous_highest > 1
+    )
+    profile["highest_streak_days"] = max(previous_highest, current_streak)
     # Persist as Taipei-local naive ISO so [:10] matches today_string()
     checked_at = now.isoformat(timespec="seconds")
     profile["last_check_in"] = checked_at
@@ -17145,10 +17158,18 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
     body_contents = [
         {
             "type": "text",
-            "text": f"{care['greeting']}，今天一切都還好嗎？",
+            "text": f"{care['greeting']}，{care['checkin_prompt']}",
             "size": "xl",
             "weight": "bold",
             "color": "#1a1a1a",
+            "wrap": True,
+        },
+        {
+            "type": "text",
+            "text": care["level_progress_text"],
+            "size": "md",
+            "weight": "bold",
+            "color": care["level_color"],
             "wrap": True,
         },
         {
@@ -17217,7 +17238,7 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
     footer_contents = [
                     {
                         "type": "box",
-                        "layout": "vertical",
+                        "layout": "horizontal",
                         "backgroundColor": "#16A34A",
                         "cornerRadius": "md",
                         "paddingAll": "md",
@@ -17229,6 +17250,12 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
                         },
                         "margin": "md",
                         "contents": [{
+                            "type": "image",
+                            "url": "https://alive-checkin.onrender.com/assets/daily-peace-logo.png",
+                            "size": "xxs",
+                            "aspectMode": "fit",
+                            "flex": 0,
+                        }, {
                             "type": "text",
                             "text": "✅ 我平安",
                             "size": "xl",
