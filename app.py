@@ -2721,36 +2721,6 @@ def member_access_state(profile):
     return state
 
 
-def repair_active_beta_entitlement(profile, now=None):
-    """Restore an active beta entitlement that a generic trial entry overwrote."""
-    if not isinstance(profile, dict) or profile.get("beta_revoked_at"):
-        return False
-    cohort = str(profile.get("beta_cohort") or "").strip().upper()
-    if cohort not in {"B399", "B799"}:
-        return False
-    started = parse_datetime(profile.get("beta_started_at"))
-    ends = parse_datetime(profile.get("beta_ends_at"))
-    if not started or not ends:
-        return False
-    now = now or current_app_time({})
-    comparable_now, comparable_start = _comparable_datetimes(now, started)
-    comparable_now, comparable_end = _comparable_datetimes(comparable_now, ends)
-    if not (comparable_start <= comparable_now < comparable_end):
-        return False
-    expected_plan = BETA_COHORT_PLAN[cohort]
-    changed = False
-    for key, value in (
-        ("membership_source", "beta"),
-        ("free_eligibility_source", f"beta_{cohort}"),
-        ("payment_status", "beta"),
-        ("plan", expected_plan),
-    ):
-        if profile.get(key) != value:
-            profile[key] = value
-            changed = True
-    return changed
-
-
 def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=False):
     """Build the onboarding API payload from the same authoritative gate."""
     line_user_id = str(line_user_id or "").strip()
@@ -2761,13 +2731,8 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
     if not profile and not allow_missing_profile:
         return {"ok": False, "error": "user not registered"}, 404
     profile = profile or {}
-    repaired_entitlement = repair_active_beta_entitlement(profile)
     repaired_binding = bool(profile and repair_accepted_guardian_invites(state, profile))
-    if profile and (
-        repaired_entitlement
-        or repaired_binding
-        or ensure_onboarding_completed_flag(profile)
-    ):
+    if profile and (repaired_binding or ensure_onboarding_completed_flag(profile)):
         ensure_onboarding_completed_flag(profile)
         save_state(data_file, state)
     access = member_access_state(profile)
@@ -2817,6 +2782,10 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
         "line_user_id": line_user_id,
         "is_onboarding_completed": access["home_ready"],
         "setup_completed": access["home_ready"],
+        "show_binding_celebration": bool(
+            access["home_ready"]
+            and not profile.get("binding_celebration_acknowledged_at")
+        ),
         "has_guardian": has_guardian,
         "guardian_count": len(contacts),
         "pending_guardian_invite_count": pending_invites,
@@ -2867,6 +2836,29 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
             str((profile.get("location") or {}).get("city") or "").strip()
             and str((profile.get("location") or {}).get("district") or "").strip()
         ),
+    }, 200
+
+
+def acknowledge_binding_celebration(data_file, line_user_id):
+    """Permanently record that the one-time binding celebration was displayed."""
+    line_user_id = str(line_user_id or "").strip()
+    if not line_user_id:
+        return {"ok": False, "error": "missing line_user_id"}, 400
+    state = load_state(data_file)
+    profile = (state.get("users") or {}).get(line_user_id)
+    if not profile:
+        return {"ok": False, "error": "user not registered"}, 404
+    if not profile_has_bound_line_guardian(profile):
+        return {"ok": False, "error": "guardian binding not completed"}, 409
+    if not profile.get("binding_celebration_acknowledged_at"):
+        profile["binding_celebration_acknowledged_at"] = current_app_time({}).isoformat(
+            timespec="seconds"
+        )
+        save_state(data_file, state)
+    return {
+        "ok": True,
+        "acknowledged": True,
+        "acknowledged_at": profile["binding_celebration_acknowledged_at"],
     }, 200
 
 
@@ -6720,7 +6712,7 @@ def validate_contact_payload(contact, existing=None, contact_limit=10):
             digits = digits[1:]
         if digits.startswith("886"):
             digits = digits[3:]
-        if not re.match(r"^9\d{8}$", digits):
+        if not (re.match(r"^9\d{8}$", digits) or re.match(r"^[2-8]\d{7,8}$", digits)):
             errors.append("phone_format_invalid")
 
     # email format
@@ -21981,6 +21973,18 @@ def create_app(config=None):
         if err:
             return jsonify(err[0]), err[1]
         data, code = onboarding_status_payload(
+            app.config["DATA_FILE"], line_user_id
+        )
+        return jsonify(data), code
+
+    @app.post("/api/onboarding/binding-celebration/ack")
+    def onboarding_binding_celebration_ack():
+        """Acknowledge the one-time celebration only after the home UI displays it."""
+        payload = request.get_json(silent=True) or {}
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        data, code = acknowledge_binding_celebration(
             app.config["DATA_FILE"], line_user_id
         )
         return jsonify(data), code
