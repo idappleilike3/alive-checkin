@@ -19817,7 +19817,7 @@ def app_config(config):
         ),
         "public_url": config.get("APP_PUBLIC_URL") or os.environ.get("APP_PUBLIC_URL", ""),
         # Visible deploy stamp for verifying Render actually rolled the welcome Flex.
-        "deploy_version": config.get("DEPLOY_VERSION") or os.environ.get("DEPLOY_VERSION") or "W250725gh",
+        "deploy_version": config.get("DEPLOY_VERSION") or os.environ.get("DEPLOY_VERSION") or "W260804-new-ui",
         # Both token and secret are required for LINE webhook / messaging.
         "line_enabled": bool(token and secret),
         "require_liff_auth": str(
@@ -20120,7 +20120,7 @@ def create_app(config=None):
         LIFF_ID=liff_id,
         APP_PUBLIC_URL=os.environ.get("APP_PUBLIC_URL", ""),
         APP_TIMEZONE=os.environ.get("APP_TIMEZONE", "Asia/Taipei"),
-        DEPLOY_VERSION=os.environ.get("DEPLOY_VERSION", "W250725gh"),
+        DEPLOY_VERSION=os.environ.get("DEPLOY_VERSION", "W260804-new-ui"),
         GA4_PROPERTY_ID=os.environ.get("GA4_PROPERTY_ID", ""),
         GA4_SERVICE_ACCOUNT_JSON=os.environ.get("GA4_SERVICE_ACCOUNT_JSON", ""),
         GA4_MEASUREMENT_ID=os.environ.get("GA4_MEASUREMENT_ID", "G-7LT14XLHFM"),
@@ -20362,7 +20362,7 @@ def create_app(config=None):
         return jsonify({
             "ok": True,
             "persistence": persist,
-            "deploy_version": app.config.get("DEPLOY_VERSION") or "W250725gh",
+            "deploy_version": app.config.get("DEPLOY_VERSION") or "W260804-new-ui",
         })
 
     @app.get("/robots.txt")
@@ -20556,7 +20556,7 @@ def create_app(config=None):
         return jsonify({
             "service": "alive-checkin",
             "bot_name": "每日平安",
-            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W250725gh",
+            "deploy_version": os.environ.get("DEPLOY_VERSION") or "W260804-new-ui",
             "uptime_seconds": round(uptime, 1) if uptime else None,
             "users_total": len(state.get("users", {})),
             "guardian_groups_total": len(groups),
