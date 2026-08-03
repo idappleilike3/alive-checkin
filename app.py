@@ -23094,9 +23094,7 @@ def create_app(config=None):
             return denied
         month = str(request.args.get("month") or current_app_time(app.config).strftime("%Y-%m"))
         try:
-            data = persisted_finance_dashboard(
-                app.config["DATA_FILE"], month, app.config
-            )
+            data = persisted_finance_dashboard(app.config["DATA_FILE"], month, app.config)
         except FinanceValidationError as exc:
             return jsonify({"error": "invalid_finance_request", "message": str(exc)}), 400
         return jsonify(data)
