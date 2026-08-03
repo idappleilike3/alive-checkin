@@ -576,12 +576,6 @@
         const shared = await openGuardianShare(myUserId);
         if (shared) {
           markShareDone();
-          try {
-            if (window.liff && typeof liff.closeWindow === "function") {
-              liff.closeWindow();
-              return;
-            }
-          } catch (_) {}
           goNextStep();
           return;
         }

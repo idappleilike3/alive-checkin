@@ -47,3 +47,13 @@ test("guardian invitation is handled immediately after LINE identity is ready", 
     "invite prompt must not wait for the full member bootstrap",
   );
 });
+
+test("successful guardian sharing returns to onboarding instead of closing the LIFF window", () => {
+  const openShareStart = sharePage.indexOf("async function openShare()");
+  const openShareEnd = sharePage.indexOf("function onRetry", openShareStart);
+  const openShare = sharePage.slice(openShareStart, openShareEnd);
+
+  assert.ok(openShareStart >= 0, "openShare should exist");
+  assert.match(openShare, /if \(shared\)[\s\S]*goNextStep\(\)/);
+  assert.doesNotMatch(openShare, /liff\.closeWindow\(\)/);
+});

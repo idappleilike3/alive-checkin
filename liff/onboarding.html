@@ -207,6 +207,18 @@ async function resolveLiffId() {
   return LIFF_ID;
 }
 
+async function fetchOnboardingProgress() {
+  const response = await fetch(
+    `${API_BASE}/api/onboarding/state?line_user_id=${encodeURIComponent(state.lineUserId || "")}`,
+    {headers: await authHeaders()},
+  );
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(onboardingErrorMessage(data));
+  }
+  return data;
+}
+
 function buildOnboardingLoginRedirect() {
   const safe = new URL(location.pathname, location.origin);
   const params = new URLSearchParams(location.search);
@@ -382,9 +394,8 @@ async function init() {
       }
       state.trialDaysLeft = Number(registration.trial_days_left) || 14;
 
-      const res = await fetch(`${API_BASE}/api/onboarding/state?line_user_id=${state.lineUserId}`);
-      if (res.ok) {
-        const data = await res.json();
+      const data = await fetchOnboardingProgress();
+      if (data && data.ok !== false) {
         state.completedSteps = data.completed_steps || state.completedSteps;
         state.hasGuardian = state.completedSteps.guardian_bound === true;
         state.setupCompleted = data.setup_completed === true || data.is_onboarding_completed === true;

@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 245189)
-Total output lines: 23811
-
 import copy
 import base64
 import calendar
@@ -2512,11 +2509,11 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
         "guardian_bound": bool(access["home_ready"]),
     }
     if not completed_steps["profile_and_reminder"]:
-        current_step = 2
-    elif not completed_steps["guardian_invite_sent"]:
         current_step = 3
-    else:
+    elif not completed_steps["guardian_invite_sent"]:
         current_step = 4
+    else:
+        current_step = 5
     binding_status = (
         "bound"
         if completed_steps["guardian_bound"]
@@ -9929,7 +9926,4600 @@ def _sos_public_snapshot(event):
         "reminder_round": int(event.get("reminder_round") or 0),
         "escalation_stopped": bool(event.get("escalation_stopped")),
         "primary_responder": next(
-…45189 tokens truncated…_uri,
+            (row["name"] for row in recipients if row.get("role") == "primary"),
+            None,
+        ),
+        "assistants": [
+            row["name"] for row in recipients if row.get("role") == "assistant"
+        ],
+        "recipients": recipients,
+        "timeline": [
+            {
+                "action": item.get("action"),
+                "actor_name": item.get("actor_name"),
+                "at": item.get("at"),
+            }
+            for item in (event.get("timeline") or [])
+        ],
+    }
+
+
+def respond_to_sos_event(data_file, payload, config=None):
+    """Record a guardian response without treating delivery as acknowledgement."""
+    event_id = str((payload or {}).get("event_id") or "").strip()
+    actor_id = str((payload or {}).get("line_user_id") or "").strip()
+    action = str((payload or {}).get("action") or "").strip().casefold()
+    if not event_id or not actor_id or action not in SOS_RESPONSE_ACTIONS:
+        return {"ok": False, "error": "invalid_sos_response"}, 400
+    now = current_app_time(config or {})
+
+    def transition(state):
+        event = (state.get("sos_events") or {}).get(event_id)
+        if not event:
+            return {"ok": False, "error": "sos_event_not_found", "code": 404}
+        if str(event.get("status") or "").casefold() in SOS_CLOSED_STATUSES:
+            return {"ok": False, "error": "sos_event_closed", "code": 409}
+        delivery = _sos_recipient(event, actor_id)
+        if not delivery:
+            return {"ok": False, "error": "not_sos_recipient", "code": 403}
+        actor_name = str(
+            delivery.get("display_name")
+            or ((state.get("users") or {}).get(actor_id) or {}).get("display_name")
+            or "核心守護人"
+        )
+        responses = event.setdefault("guardian_responses", {})
+        previous = responses.get(actor_id) or {}
+        if previous.get("action") == action:
+            return {
+                "ok": True,
+                "code": 200,
+                "event_id": event_id,
+                "action": action,
+                "role": previous.get("role"),
+                "actor_name": actor_name,
+                "status": event.get("status"),
+                "no_responder": bool(event.get("no_responder")),
+                "idempotent": True,
+                "snapshot": _sos_public_snapshot(event),
+            }
+        role = previous.get("role")
+        effective_action = action
+        if action == "found":
+            role = role or "resolver"
+            event["status"] = "found_closed"
+            event["closed_at"] = now.isoformat(timespec="seconds")
+            event["resolved_by_id"] = actor_id
+            event["resolved_by_name"] = actor_name
+            event["escalation_stopped"] = True
+            event["no_responder"] = False
+        elif action in {"take_over", "assist", "contacted"}:
+            if not event.get("primary_responder_id"):
+                event["primary_responder_id"] = actor_id
+                role = "primary"
+            elif event.get("primary_responder_id") == actor_id:
+                role = "primary"
+            else:
+                role = "assistant"
+                assistants = list(event.get("assistant_responder_ids") or [])
+                if actor_id not in assistants:
+                    assistants.append(actor_id)
+                event["assistant_responder_ids"] = assistants
+            event["escalation_stopped"] = True
+            event["status"] = "contacted" if action == "contacted" else "responding"
+            event["no_responder"] = False
+        else:
+            role = role or ("deferred" if action == "defer" else "unable")
+        responded_at = now.isoformat(timespec="seconds")
+        responses[actor_id] = {
+            "action": effective_action,
+            "role": role,
+            "display_name": actor_name,
+            "responded_at": responded_at,
+        }
+        event.setdefault("timeline", []).append({
+            "action": effective_action,
+            "actor_id": actor_id,
+            "actor_name": actor_name,
+            "at": responded_at,
+        })
+        sent_guardians = {
+            str(row.get("target") or "")
+            for row in (event.get("deliveries") or [])
+            if row.get("kind") == "guardian"
+            and row.get("status") == "sent"
+            and row.get("target")
+        }
+        answered_without_owner = {
+            target for target in sent_guardians
+            if (responses.get(target) or {}).get("action") in {"defer", "unable"}
+        }
+        if (
+            sent_guardians
+            and answered_without_owner == sent_guardians
+            and not event.get("primary_responder_id")
+            and event.get("status") != "found_closed"
+        ):
+            event["status"] = "unassigned"
+            event["no_responder"] = True
+            event["escalation_stopped"] = False
+            event.setdefault("timeline", []).append({
+                "action": "no_responder",
+                "actor_id": "",
+                "actor_name": "系統",
+                "at": responded_at,
+            })
+        return {
+            "ok": True,
+            "code": 200,
+            "event_id": event_id,
+            "action": effective_action,
+            "role": role,
+            "actor_name": actor_name,
+            "status": event.get("status"),
+            "no_responder": bool(event.get("no_responder")),
+            "snapshot": _sos_public_snapshot(event),
+        }
+
+    result = mutate_state_atomically(data_file, transition)
+    code = int(result.pop("code", 200))
+    if code == 200:
+        cfg = config or {}
+        token = cfg.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+            "LINE_CHANNEL_ACCESS_TOKEN", ""
+        )
+        if token:
+            latest = load_state(data_file)
+            event = (latest.get("sos_events") or {}).get(event_id) or {}
+            actor = result.get("actor_name") or "守護人"
+            action_text = {
+                "take_over": "已接手，正在聯繫本人",
+                "assist": "已加入協助處理",
+                "contacted": "已確認聯繫到本人",
+                "defer": "請其他人聯繫",
+                "unable": "目前無法處理",
+                "found": "已找到本人，本次 SOS 已結束",
+            }[action]
+            if result.get("no_responder"):
+                notice = "⚠️ SOS 狀態更新：目前尚無守護人接手，請立即協助確認本人安全"
+            elif action == "found":
+                notice = f"✅ SOS 已結束：{actor}{action_text}"
+            else:
+                notice = f"🆘 SOS 狀態更新：{actor}{action_text}\n事件尚未自動結案"
+            targets = [event.get("owner_line_user_id")] + [
+                row.get("target") for row in (event.get("deliveries") or [])
+                if row.get("kind") in {"guardian", "group"}
+                and row.get("status") == "sent"
+                and row.get("target") != actor_id
+            ]
+            sender = cfg.get("LINE_PUSH_SENDER") or line_push_message
+            delivered = 0
+            for target in dict.fromkeys(target for target in targets if target):
+                try:
+                    _send_line_with_retry_key(
+                        sender, token, target, notice,
+                        _line_retry_key(f"{event_id}:response:{action}:{actor_id}:{target}"),
+                    )
+                    delivered += 1
+                except Exception:
+                    continue
+            if delivered:
+                mutate_state_atomically(
+                    data_file,
+                    lambda state: record_line_message_usage(
+                        state,
+                        category="sos",
+                        owner_line_user_id=event.get("owner_line_user_id"),
+                        recipient_count=delivered,
+                        event_id=f"{event_id}:response:{action}:{actor_id}",
+                        sent_at=now,
+                    ),
+                )
+    return result, code
+
+
+def get_sos_event_status(data_file, requester_id, event_id):
+    state = load_state(data_file)
+    event = (state.get("sos_events") or {}).get(str(event_id or ""))
+    if not event:
+        return {"ok": False, "error": "sos_event_not_found"}, 404
+    requester_id = str(requester_id or "")
+    allowed = requester_id == str(event.get("owner_line_user_id") or "")
+    allowed = allowed or _sos_recipient(event, requester_id) is not None
+    if not allowed:
+        return {"ok": False, "error": "not_sos_participant"}, 403
+    return _sos_public_snapshot(event), 200
+
+
+def close_sos_as_safe(data_file, payload, config=None):
+    event_id = str((payload or {}).get("event_id") or "").strip()
+    owner_id = str((payload or {}).get("line_user_id") or "").strip()
+    now = current_app_time(config or {})
+
+    def close(state):
+        event = (state.get("sos_events") or {}).get(event_id)
+        if not event:
+            return {"ok": False, "error": "sos_event_not_found", "code": 404}
+        if owner_id != str(event.get("owner_line_user_id") or ""):
+            return {"ok": False, "error": "not_sos_owner", "code": 403}
+        if str(event.get("status") or "").casefold() in SOS_CLOSED_STATUSES:
+            return {"ok": True, "code": 200, **_sos_public_snapshot(event)}
+        closed_at = now.isoformat(timespec="seconds")
+        event["status"] = "safe_closed"
+        event["closed_at"] = closed_at
+        event["escalation_stopped"] = True
+        event.setdefault("timeline", []).append({
+            "action": "safe_closed",
+            "actor_id": owner_id,
+            "actor_name": event.get("owner_display_name") or "本人",
+            "at": closed_at,
+        })
+        return {"ok": True, "code": 200, **_sos_public_snapshot(event)}
+
+    result = mutate_state_atomically(data_file, close)
+    code = int(result.pop("code", 200))
+    if code == 200 and result.get("status") == "safe_closed":
+        cfg = config or {}
+        token = cfg.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+            "LINE_CHANNEL_ACCESS_TOKEN", ""
+        )
+        if token:
+            state = load_state(data_file)
+            event = (state.get("sos_events") or {}).get(event_id) or {}
+            sender = cfg.get("LINE_PUSH_SENDER") or line_push_message
+            notice = (
+                f"✅【SOS 已結束】{event.get('owner_display_name') or '本人'} "
+                "已確認目前安全\n本次處理紀錄已保留"
+            )
+            for row in event.get("deliveries") or []:
+                if row.get("kind") not in {"guardian", "group"}:
+                    continue
+                if row.get("status") != "sent" or not row.get("target"):
+                    continue
+                try:
+                    _send_line_with_retry_key(
+                        sender, token, row["target"], notice,
+                        _line_retry_key(f"{event_id}:safe:{row['target']}"),
+                    )
+                except Exception:
+                    continue
+    return result, code
+
+
+def process_sos_recipient_reminders(data_file, config=None, now=None):
+    """At three minutes, remind only guardians who received the original SOS."""
+    cfg = config or {}
+    current = now or current_app_time(cfg)
+    token = cfg.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get(
+        "LINE_CHANNEL_ACCESS_TOKEN", ""
+    )
+    sender = cfg.get("LINE_PUSH_SENDER") or line_push_message
+    state = load_state(data_file)
+    sent = failed = 0
+    events_updated = 0
+    thresholds = ((1, 3),)
+    for event in (state.get("sos_events") or {}).values():
+        if event.get("escalation_stopped"):
+            continue
+        if str(event.get("status") or "").casefold() in SOS_CLOSED_STATUSES:
+            continue
+        sent_at = parse_datetime(event.get("sent_at"))
+        if not sent_at:
+            continue
+        if current.tzinfo is None and sent_at.tzinfo is not None:
+            sent_at = sent_at.replace(tzinfo=None)
+        elif current.tzinfo is not None and sent_at.tzinfo is None:
+            sent_at = sent_at.replace(tzinfo=current.tzinfo)
+        elapsed_minutes = (current - sent_at).total_seconds() / 60
+        current_round = int(event.get("reminder_round") or 0)
+        due = next(
+            (
+                (round_no, minute)
+                for round_no, minute in thresholds
+                if round_no > current_round and elapsed_minutes >= minute
+            ),
+            None,
+        )
+        if not due:
+            continue
+        round_no, minute = due
+        message = (
+            f"⚠️【SOS 再次提醒】{event.get('owner_display_name') or '你的親友'} "
+            f"在 {minute} 分鐘前發出 SOS\n"
+            "你已收到本次 SOS；若能處理請按「我來聯繫」；"
+            "若有立即危險請撥打 119／110"
+        )
+        round_units = 0
+        recipients = [
+            delivery
+            for delivery in (event.get("deliveries") or [])
+            if delivery.get("kind") == "guardian"
+            and delivery.get("status") == "sent"
+            and delivery.get("target")
+        ]
+        for delivery in recipients:
+            target = str(delivery.get("target") or "")
+            if not target:
+                continue
+            try:
+                outgoing = (
+                    build_sos_guardian_flex(message, event.get("event_id"))
+                    if sender is line_push_message else message
+                )
+                _send_line_with_retry_key(
+                    sender,
+                    token,
+                    target,
+                    outgoing,
+                    _line_retry_key(
+                        f"{event.get('event_id')}:recipient-reminder:{round_no}:{target}"
+                    ),
+                )
+                sent += 1
+                round_units += 1
+                append_notification_log(
+                    state, "sos_recipient_reminder", target, "sent",
+                    message, json.dumps({"round": round_no}, ensure_ascii=False),
+                )
+            except Exception as exc:
+                failed += 1
+                append_notification_log(
+                    state, "sos_recipient_reminder", target, "failed",
+                    message, str(exc),
+                )
+        event["reminder_round"] = round_no
+        event["last_reminded_at"] = current.isoformat(timespec="seconds")
+        event.setdefault("timeline", []).append({
+            "action": f"recipient_reminder_{round_no}",
+            "actor_name": "系統",
+            "at": event["last_reminded_at"],
+        })
+        record_line_message_usage(
+            state,
+            category="sos_recipient_reminder",
+            owner_line_user_id=event.get("owner_line_user_id"),
+            recipient_count=round_units,
+            event_id=f"{event.get('event_id')}:recipient-reminder:{round_no}",
+            sent_at=current,
+        )
+        events_updated += 1
+    if events_updated:
+        save_state(data_file, state)
+    return {
+        "sent": sent,
+        "failed": failed,
+        "events_updated": events_updated,
+    }
+
+
+def _claim_sos_event_action(state, event_id, owner_id, action, now):
+    """Lease cancel/retry so concurrent workers cannot duplicate LINE pushes."""
+    event = (state.get("sos_events") or {}).get(event_id)
+    if not event:
+        return {"claimed": False, "reason": "not_found"}
+    if event.get("owner_line_user_id") != owner_id:
+        return {"claimed": False, "reason": "forbidden"}
+    claim_key = "action_claim"
+    existing = event.get(claim_key) or {}
+    claimed_at = parse_datetime(existing.get("claimed_at"))
+    if claimed_at and now - claimed_at < timedelta(minutes=2):
+        return {"claimed": False, "reason": "busy"}
+    claim_token = uuid.uuid4().hex
+    event[claim_key] = {
+        "token": claim_token,
+        "action": action,
+        "claimed_at": now.isoformat(timespec="seconds"),
+    }
+    return {
+        "claimed": True,
+        "claim_token": claim_token,
+        "event": copy.deepcopy(event),
+    }
+
+
+def _release_sos_event_action(data_file, event_id, claim_token):
+    """Release only the lease owned by this request."""
+    def release(latest):
+        latest_event = (latest.get("sos_events") or {}).get(event_id) or {}
+        active = latest_event.get("action_claim") or {}
+        if active.get("token") == claim_token:
+            latest_event.pop("action_claim", None)
+
+    mutate_state_atomically(data_file, release)
+
+
+def cancel_sos_event(data_file, payload, config=None):
+    """Cancel a delivered SOS and notify only its successful original recipients."""
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    event_id = str(payload.get("event_id") or "").strip()
+    if not line_user_id or not event_id:
+        return {"error": "missing line_user_id or event_id"}, 400
+    now = current_app_time(config or {})
+    claim = mutate_state_atomically(
+        data_file,
+        lambda current: _claim_sos_event_action(
+            current, event_id, line_user_id, "cancel", now
+        ),
+    )
+    if not claim.get("claimed"):
+        reason = claim.get("reason")
+        if reason == "not_found":
+            return {"error": "SOS event not found"}, 404
+        if reason == "forbidden":
+            return {"error": "not SOS event owner"}, 403
+        return {"error": "SOS cancellation already in progress"}, 409
+    claim_token = claim["claim_token"]
+    state = load_state(data_file)
+    event = (state.get("sos_events") or {}).get(event_id) or claim["event"]
+    if event.get("status") == "cancelled" and not int(event.get("cancel_failed") or 0):
+        _release_sos_event_action(data_file, event_id, claim_token)
+        return {
+            "ok": True,
+            "event_id": event_id,
+            "status": "cancelled",
+            "cancel_sent": int(event.get("cancel_sent") or 0),
+            "idempotent": True,
+        }, 200
+
+    sent_at = parse_datetime(event.get("sent_at"))
+    if not sent_at or now - sent_at > timedelta(minutes=10):
+        _release_sos_event_action(data_file, event_id, claim_token)
+        return {"error": "SOS cancellation window expired"}, 409
+
+    profile = (state.get("users") or {}).get(line_user_id) or {}
+    reason = str(payload.get("reason") or "誤觸").strip()[:80]
+    message = (
+        f"✅【SOS 已取消】{profile.get('display_name') or '你的親友'} 已回報目前安全\n"
+        f"原因：{reason}\n原 SOS 紀錄仍會保留供安全查核"
+    )
+    token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
+    notification_log_start = len(state.get("notification_logs") or [])
+    permanent_delivery_start = len(state.get("push_delivery_records") or [])
+    usage_start = len(state.get("line_message_usage") or [])
+    cancel_results = []
+    cancel_sent = 0
+    cancel_failed = 0
+    previous_cancel = event.get("cancel_deliveries") or []
+    source_deliveries = previous_cancel if previous_cancel else (event.get("deliveries") or [])
+    for delivery in source_deliveries:
+        wanted_statuses = {"failed"} if previous_cancel else {"sent"}
+        if delivery.get("status") not in wanted_statuses or delivery.get("kind") == "self":
+            continue
+        target = delivery.get("target")
+        if not target:
+            continue
+        try:
+            result = _send_line_with_retry_key(
+                sender,
+                token,
+                target,
+                message,
+                _line_retry_key(f"{event_id}:cancel:{target}"),
+            )
+            cancel_results.append({
+                "kind": delivery.get("kind"),
+                "target": target,
+                "status": "sent",
+                "recipient_count": max(1, int(delivery.get("recipient_count") or 1)),
+            })
+            append_notification_log(
+                state, "sos_cancel", target, "sent", message,
+                json.dumps(result, ensure_ascii=False),
+            )
+            cancel_sent += 1
+        except Exception as exc:
+            cancel_results.append({
+                "kind": delivery.get("kind"),
+                "target": target,
+                "status": "failed",
+                "recipient_count": max(1, int(delivery.get("recipient_count") or 1)),
+            })
+            append_notification_log(state, "sos_cancel", target, "failed", message, str(exc))
+            cancel_failed += 1
+
+    combined_cancel_results = [
+        copy.deepcopy(item)
+        for item in previous_cancel
+        if item.get("status") == "sent"
+    ] + cancel_results
+    cancel_sent_total = sum(
+        1 for item in combined_cancel_results if item.get("status") == "sent"
+    )
+    cancel_failed_total = sum(
+        1 for item in combined_cancel_results if item.get("status") == "failed"
+    )
+    event["status"] = "cancelled" if cancel_failed_total == 0 else "cancel_partial"
+    event["cancelled_at"] = now.isoformat(timespec="seconds")
+    event["cancel_reason"] = reason
+    event["cancel_deliveries"] = combined_cancel_results
+    event["cancel_sent"] = cancel_sent_total
+    event["cancel_failed"] = cancel_failed_total
+    if not previous_cancel:
+        profile.setdefault("sos_false_alarm_at", []).append(now.isoformat(timespec="seconds"))
+    policy = sos_abuse_state(profile, now)
+    profile["sos_abuse_mode"] = policy["mode"]
+    profile["sos_abuse_expires_at"] = policy["expires_at"]
+    pending = (state.get("sos_pending") or {}).get(line_user_id)
+    if pending and pending.get("event_id") == event_id:
+        pending["stage"] = event["status"]
+        pending["cancelled_at"] = event["cancelled_at"]
+    cancel_units = 0
+    for item in cancel_results:
+        if item.get("status") != "sent":
+            continue
+        if item.get("kind") == "group":
+            cancel_units += max(1, int(item.get("recipient_count") or 1))
+        else:
+            cancel_units += 1
+    record_line_message_usage(
+        state,
+        category="sos_cancel",
+        owner_line_user_id=line_user_id,
+        recipient_count=cancel_units,
+        event_id=f"{event_id}:cancel:{claim_token}",
+        sent_at=now,
+    )
+    event_snapshot = copy.deepcopy(event)
+    false_alarm_at = now.isoformat(timespec="seconds") if not previous_cancel else None
+    pending_snapshot = copy.deepcopy(pending) if pending else None
+    new_logs = copy.deepcopy((state.get("notification_logs") or [])[notification_log_start:])
+    new_permanent_deliveries = copy.deepcopy(
+        (state.get("push_delivery_records") or [])[permanent_delivery_start:]
+    )
+    new_usage = copy.deepcopy((state.get("line_message_usage") or [])[usage_start:])
+
+    def finish_cancel(latest):
+        latest_event = (latest.get("sos_events") or {}).get(event_id)
+        if not latest_event:
+            return
+        active_claim = latest_event.get("action_claim") or {}
+        if active_claim.get("token") != claim_token:
+            return
+        latest.setdefault("sos_events", {})[event_id] = copy.deepcopy(event_snapshot)
+        latest["sos_events"][event_id].pop("action_claim", None)
+        latest_profile = (latest.get("users") or {}).get(line_user_id) or {}
+        if false_alarm_at:
+            false_alarms = list(latest_profile.get("sos_false_alarm_at") or [])
+            if false_alarm_at not in false_alarms:
+                false_alarms.append(false_alarm_at)
+            latest_profile["sos_false_alarm_at"] = false_alarms
+        latest_policy = sos_abuse_state(latest_profile, now)
+        latest_profile["sos_abuse_mode"] = latest_policy["mode"]
+        latest_profile["sos_abuse_expires_at"] = latest_policy["expires_at"]
+        if pending_snapshot:
+            latest.setdefault("sos_pending", {})[line_user_id] = copy.deepcopy(pending_snapshot)
+        logs = list(latest.get("notification_logs") or [])
+        logs.extend(new_logs)
+        latest["notification_logs"] = logs[-100:]
+        _merge_permanent_delivery_rows(latest, new_permanent_deliveries)
+        ledger = list(latest.get("line_message_usage") or [])
+        known = {str(row.get("key") or "") for row in ledger if isinstance(row, dict)}
+        for row in new_usage:
+            key = str(row.get("key") or "")
+            if key and key not in known:
+                ledger.append(row)
+                known.add(key)
+        latest["line_message_usage"] = ledger[-10000:]
+
+    mutate_state_atomically(data_file, finish_cancel)
+    return {
+        "ok": cancel_failed_total == 0,
+        "event_id": event_id,
+        "status": event["status"],
+        "cancel_sent": cancel_sent_total,
+        "cancel_failed": cancel_failed_total,
+        "abuse": policy,
+    }, 200 if cancel_failed_total == 0 else 502
+
+
+def retry_sos_event(data_file, payload, config=None):
+    """Retry only failed original recipients and never duplicate successful delivery."""
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    event_id = str(payload.get("event_id") or "").strip()
+    if not line_user_id or not event_id:
+        return {"error": "missing line_user_id or event_id"}, 400
+    now = current_app_time(config or {})
+    claim = mutate_state_atomically(
+        data_file,
+        lambda current: _claim_sos_event_action(
+            current, event_id, line_user_id, "retry", now
+        ),
+    )
+    if not claim.get("claimed"):
+        reason = claim.get("reason")
+        if reason == "not_found":
+            return {"error": "SOS event not found"}, 404
+        if reason == "forbidden":
+            return {"error": "not SOS event owner"}, 403
+        return {"error": "SOS retry already in progress"}, 409
+    claim_token = claim["claim_token"]
+    state = load_state(data_file)
+    event = (state.get("sos_events") or {}).get(event_id) or claim["event"]
+    if (
+        event.get("status") in {"cancelled", "cancel_partial"}
+        or event.get("cancel_deliveries")
+        or event.get("cancelled_at")
+    ):
+        def release_retry_claim(latest):
+            latest_event = (latest.get("sos_events") or {}).get(event_id) or {}
+            active = latest_event.get("action_claim") or {}
+            if active.get("token") == claim_token:
+                latest_event.pop("action_claim", None)
+
+        mutate_state_atomically(data_file, release_retry_claim)
+        return {"error": "cancelled SOS cannot be retried"}, 409
+
+    token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
+    notification_log_start = len(state.get("notification_logs") or [])
+    permanent_delivery_start = len(state.get("push_delivery_records") or [])
+    usage_start = len(state.get("line_message_usage") or [])
+    message = str(event.get("message") or "🚨【SOS 緊急求助】請立即聯絡本人並確認安全")
+    retried_sent = 0
+    retried_failed = 0
+    retried_units = 0
+    retried_guardian_or_group_sent = 0
+    retried_guardian_or_group_failed = 0
+    for delivery in event.get("deliveries") or []:
+        if delivery.get("status") not in {"failed", "pending"}:
+            continue
+        target = delivery.get("target")
+        try:
+            if delivery.get("kind") == "group":
+                group = (state.get("guardian_groups") or {}).get(target) or {}
+                push_sos_to_guardian_group(
+                    token,
+                    target,
+                    message,
+                    sender=sender,
+                    member_ids=list(group.get("member_ids_at_bind") or []),
+                    retry_key=delivery.get("retry_key")
+                    or f"{event_id}:group:{target}",
+                )
+                retried_units += max(1, int(delivery.get("recipient_count") or 1))
+            else:
+                _send_line_with_retry_key(
+                    sender,
+                    token,
+                    target,
+                    str(delivery.get("message") or message),
+                    delivery.get("retry_key")
+                    or _line_retry_key(f"{event_id}:guardian:{target}"),
+                )
+                retried_units += 1
+            delivery["status"] = "sent"
+            delivery["retried_at"] = current_app_time(config or {}).isoformat(timespec="seconds")
+            append_notification_log(state, "sos_retry", target, "sent", message, event_id)
+            retried_sent += 1
+            if delivery.get("kind") != "self":
+                retried_guardian_or_group_sent += 1
+        except Exception as exc:
+            delivery["retry_error"] = classify_line_push_error(exc)
+            append_notification_log(state, "sos_retry", target, "failed", message, str(exc))
+            retried_failed += 1
+            if delivery.get("kind") != "self":
+                retried_guardian_or_group_failed += 1
+    event["retry_count"] = int(event.get("retry_count") or 0) + 1
+    remaining = [
+        row for row in (event.get("deliveries") or [])
+        if row.get("status") in {"failed", "pending"}
+    ]
+    if retried_guardian_or_group_sent and not event.get("sent_at"):
+        event["sent_at"] = now.isoformat(timespec="seconds")
+    event["status"] = (
+        "sent"
+        if not remaining and event.get("sent_at")
+        else "partial" if event.get("sent_at") else "delivery_failed"
+    )
+    record_line_message_usage(
+        state,
+        category="sos",
+        owner_line_user_id=line_user_id,
+        recipient_count=retried_units,
+        event_id=f"{event_id}:retry:{event['retry_count']}",
+        sent_at=current_app_time(config or {}),
+    )
+    event_snapshot = copy.deepcopy(event)
+    new_logs = copy.deepcopy((state.get("notification_logs") or [])[notification_log_start:])
+    new_permanent_deliveries = copy.deepcopy(
+        (state.get("push_delivery_records") or [])[permanent_delivery_start:]
+    )
+    new_usage = copy.deepcopy((state.get("line_message_usage") or [])[usage_start:])
+
+    def finish_retry(latest):
+        latest_event = (latest.get("sos_events") or {}).get(event_id)
+        if not latest_event:
+            return
+        active_claim = latest_event.get("action_claim") or {}
+        if active_claim.get("token") != claim_token:
+            return
+        latest.setdefault("sos_events", {})[event_id] = copy.deepcopy(event_snapshot)
+        latest["sos_events"][event_id].pop("action_claim", None)
+        if event_snapshot.get("sent_at"):
+            latest.setdefault("sos_pending", {})[line_user_id] = {
+                "stage": event_snapshot.get("status") or "sent",
+                "tap_count": 3,
+                "first_tap_at": event_snapshot.get("created_at") or event_snapshot["sent_at"],
+                "last_tap_at": event_snapshot.get("sent_at"),
+                "sent_at": event_snapshot.get("sent_at"),
+                "event_id": event_id,
+            }
+        logs = list(latest.get("notification_logs") or [])
+        logs.extend(new_logs)
+        latest["notification_logs"] = logs[-100:]
+        _merge_permanent_delivery_rows(latest, new_permanent_deliveries)
+        ledger = list(latest.get("line_message_usage") or [])
+        known = {str(row.get("key") or "") for row in ledger if isinstance(row, dict)}
+        for row in new_usage:
+            key = str(row.get("key") or "")
+            if key and key not in known:
+                ledger.append(row)
+                known.add(key)
+        latest["line_message_usage"] = ledger[-10000:]
+
+    mutate_state_atomically(data_file, finish_retry)
+    return {
+        "ok": retried_failed == 0,
+        "event_id": event_id,
+        "retried_sent": retried_sent,
+        "retried_failed": retried_failed,
+        "recipient_retried_sent": retried_guardian_or_group_sent,
+        "recipient_retried_failed": retried_guardian_or_group_failed,
+        "deliveries": [
+            {
+                "kind": row.get("kind"),
+                "name": row.get("display_name") or (
+                    "本人" if row.get("kind") == "self"
+                    else "守護群" if row.get("kind") == "group"
+                    else "核心守護人"
+                ),
+                "status": row.get("status"),
+                "error_hint": row.get("retry_error") or row.get("error_hint"),
+            }
+            for row in (event.get("deliveries") or [])
+        ],
+    }, (
+        200
+        if retried_guardian_or_group_sent or (
+            not retried_guardian_or_group_failed and bool(event.get("sent_at"))
+        )
+        else 502
+    )
+
+
+def _claim_sos_delivery(
+    state,
+    line_user_id,
+    now_dt,
+    daily_limit=3,
+    cooldown_sec=300,
+    long_confirm=False,
+    reason="",
+):
+    """Atomically reserve one SOS attempt before any external notification is sent."""
+    profile = (state.get("users") or {}).get(line_user_id)
+    if not profile:
+        return {"claimed": False, "reason": "member_not_found"}
+    previous_event_id = str(profile.get("last_sos_event_id") or "").strip()
+    previous_event = (state.get("sos_events") or {}).get(previous_event_id) or {}
+    if previous_event.get("status") == "sending" and any(
+        row.get("status") == "pending"
+        for row in (previous_event.get("deliveries") or [])
+    ):
+        return {
+            "claimed": False,
+            "reason": "recover_pending",
+            "event_id": previous_event_id,
+        }
+    latest_abuse = sos_abuse_state(profile, now_dt)
+    if latest_abuse["mode"] == "observation" and (
+        not long_confirm or not str(reason or "").strip()
+    ):
+        return {
+            "claimed": False,
+            "reason": "long_confirmation_required",
+            "abuse": latest_abuse,
+        }
+    today_str = now_dt.strftime("%Y-%m-%d")
+    sos_log = profile.get("sos_daily_log") or {}
+    if sos_log.get("date") != today_str:
+        sos_log = {"date": today_str, "count": 0}
+    if int(sos_log.get("count") or 0) >= int(daily_limit):
+        return {
+            "claimed": False,
+            "reason": "daily_limit",
+            "count": int(sos_log.get("count") or 0),
+        }
+    last_sos = parse_datetime(profile.get("last_sos_at"))
+    if last_sos:
+        elapsed = (now_dt - last_sos).total_seconds()
+        if elapsed < int(cooldown_sec):
+            return {
+                "claimed": False,
+                "reason": "cooldown",
+                "wait_sec": max(1, int(int(cooldown_sec) - elapsed)),
+            }
+    profile["last_sos_at"] = now_dt.isoformat(timespec="seconds")
+    profile["sos_daily_log"] = {
+        "date": today_str,
+        "count": int(sos_log.get("count") or 0) + 1,
+    }
+    return {"claimed": True}
+
+
+def _create_web_only_sos_alert(data_file, profile, payload, now_dt):
+    """Persist a guardian-visible alert without calling any delivery provider."""
+    import uuid
+
+    line_user_id = str(profile.get("line_user_id") or "").strip()
+    selected_ids = payload.get("guardian_line_user_ids")
+    if selected_ids is not None and not isinstance(selected_ids, list):
+        return {"error": "guardian_line_user_ids must be a list"}, 400
+    selected_set = {
+        str(value).strip() for value in (selected_ids or []) if str(value).strip()
+    } or None
+    guardians = ranked_sos_guardians(
+        profile, line_user_id, selected_ids=selected_set, limit=5
+    )
+    event_id = f"sos-{uuid.uuid4().hex[:10]}"
+    created_at = now_dt.isoformat(timespec="seconds")
+    owner_name = str(profile.get("display_name") or "家人").strip()
+    alert_message = f"您的家人 {owner_name} 剛剛發出了求救訊號。"
+    deliveries = [
+        {
+            "kind": "guardian",
+            "target": get_contact_line_id(contact),
+            "display_name": str(contact.get("name") or "核心守護人"),
+            "status": "web_pending",
+            "response_status": "waiting",
+        }
+        for contact in guardians
+        if get_contact_line_id(contact)
+    ]
+    has_bound_guardian = bool(deliveries)
+    event = {
+        "event_id": event_id,
+        "owner_line_user_id": line_user_id,
+        "owner_display_name": owner_name,
+        "status": "web_pending" if has_bound_guardian else "web_unassigned",
+        "delivery_mode": "web_only",
+        "created_at": created_at,
+        "sent_at": None,
+        "deliveries": deliveries,
+        "message": alert_message,
+        "location_attached": False,
+    }
+    pending = {
+        "stage": event["status"],
+        "tap_count": 3,
+        "first_tap_at": created_at,
+        "last_tap_at": created_at,
+        "sent_at": None,
+        "event_id": event_id,
+        "delivery_mode": "web_only",
+    }
+
+    def persist_web_alert(state):
+        current_profile = (state.get("users") or {}).get(line_user_id)
+        if current_profile is None:
+            return
+        current_profile["last_sos_event_id"] = event_id
+        state.setdefault("sos_events", {})[event_id] = copy.deepcopy(event)
+        state.setdefault("sos_pending", {})[line_user_id] = copy.deepcopy(pending)
+
+    mutate_state_atomically(data_file, persist_web_alert)
+    if has_bound_guardian:
+        user_message = (
+            "求救警報已顯示給守護人。守護人需要主動打開每日平安網頁，"
+            "才會看到此訊息。如需即時推播通知，請升級為付費方案。"
+        )
+    else:
+        user_message = (
+            "目前尚未綁定守護人，這次警報無人可以查看。請先邀請守護人；"
+            "如需即時推播通知，請升級為付費方案。"
+        )
+    phone_contacts = collect_phone_only_contacts(profile.get("contacts") or [])
+    return {
+        "sent": 0,
+        "failed": 0,
+        "delivery_mode": "web_only",
+        "web_alert_created": True,
+        "has_bound_guardian": has_bound_guardian,
+        "message": user_message,
+        "guardians": [
+            {"name": row["display_name"], "status": "web_pending"}
+            for row in deliveries
+        ],
+        "groups": [],
+        "results": [],
+        "location_attached": False,
+        "phone_only_count": len(phone_contacts),
+        "phone_contacts": phone_contacts[:5],
+        "event_id": event_id,
+        "sent_at": created_at,
+        "cancel_available": True,
+        "emergency_numbers_available": True,
+        "emergency_numbers": ["119", "110"],
+    }, 200
+
+
+def trigger_sos(data_file, payload, config=None):
+    """
+    🔴 P0 FIX v0.5:加 3 層防護
+    1. 每日上限 3 次(profile.sos_daily_count 累加,>3 拒絕)
+    2. 5 分鐘冷卻(profile.last_sos_at + 300 秒內拒絕)
+    3. 過量 alert:記錄 + admin 收到告警(但不發送 SOS)
+    """
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if not line_user_id:
+        return {"error": "missing line_user_id"}, 400
+
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if not profile:
+        return {"error": "member not found"}, 404
+
+    # SOS 不依方案／價格分級：所有會員皆可用（仍受每日上限／冷卻防護）
+    rules = plan_rules(profile)
+    if not rules.get("sos_enabled", True):
+        return {"error": "sos is not available for this plan"}, 403
+
+    # === P0 FIX:3 層防護 ===
+    now_dt = current_app_time(config or {})
+    today_str = now_dt.strftime("%Y-%m-%d")
+    abuse = sos_abuse_state(profile, now_dt)
+    profile["sos_abuse_mode"] = abuse["mode"]
+    profile["sos_abuse_expires_at"] = abuse["expires_at"]
+    if abuse["mode"] == "observation" and (
+        not payload.get("long_confirm") or not str(payload.get("reason") or "").strip()
+    ):
+        return {
+            "error": "long confirmation required",
+            "abuse_mode": "observation",
+            "expires_at": abuse["expires_at"],
+            "requires_reason": True,
+            "emergency_numbers_available": True,
+            "emergency_numbers": ["119", "110"],
+        }, 428
+
+    # 防護 1:每日上限 3 次
+    SOS_DAILY_LIMIT = 3
+    sos_log = profile.get("sos_daily_log") or {}
+    if sos_log.get("date") != today_str:
+        sos_log = {"date": today_str, "count": 0}
+    if sos_log.get("count", 0) >= SOS_DAILY_LIMIT:
+        # 過量使用,記錄 + alert admin(但不發送)
+        profile.setdefault("sos_abuse_log", []).append({
+            "at": now_dt.isoformat(timespec="seconds"),
+            "reason": "daily_limit_exceeded",
+            "count_today": sos_log.get("count", 0),
+        })
+        # admin 告警(發 LINE 給 ADMIN_LINE_USER_ID)
+        admin_id = os.environ.get("ADMIN_LINE_USER_ID", "")
+        if admin_id:
+            try:
+                token_admin = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+                sender_admin = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
+                sender_admin(token_admin, admin_id, (
+                    f"🚨 [SOS 異常] 用戶 {profile.get('display_name') or line_user_id} "
+                    f"今日已按 SOS {sos_log.get('count', 0)} 次(上限 {SOS_DAILY_LIMIT})，請聯繫確認。"
+                ))
+            except Exception:
+                pass
+        def append_limit_audit(latest):
+            latest_profile = (latest.get("users") or {}).get(line_user_id)
+            if latest_profile is None:
+                return
+            latest_profile.setdefault("sos_abuse_log", []).append({
+                "at": now_dt.isoformat(timespec="seconds"),
+                "reason": "daily_limit_exceeded",
+                "count_today": sos_log.get("count", 0),
+            })
+
+        mutate_state_atomically(data_file, append_limit_audit)
+        return {
+            "error": f"daily SOS limit reached ({SOS_DAILY_LIMIT})",
+            "limit": SOS_DAILY_LIMIT,
+            "resets_at": f"{today_str}T23:59:59+08:00",
+        }, 429
+
+    # 防護 2:5 分鐘冷卻
+    SOS_COOLDOWN_SEC = 300
+    last_sos_str = profile.get("last_sos_at")
+    if last_sos_str:
+        try:
+            last_sos_dt = datetime.fromisoformat(last_sos_str)
+            elapsed = (now_dt - last_sos_dt).total_seconds()
+            pending_event = (
+                (state.get("sos_events") or {}).get(
+                    str(profile.get("last_sos_event_id") or "")
+                )
+                or {}
+            )
+            recovery_pending = (
+                pending_event.get("status") == "sending"
+                and any(
+                    row.get("status") == "pending"
+                    for row in (pending_event.get("deliveries") or [])
+                )
+            )
+            if elapsed < SOS_COOLDOWN_SEC and not recovery_pending:
+                wait_sec = int(SOS_COOLDOWN_SEC - elapsed)
+                return {
+                    "error": f"SOS cooldown active, wait {wait_sec}s",
+                    "cooldown_remaining_sec": wait_sec,
+                }, 429
+        except (ValueError, TypeError):
+            pass
+
+    if sos_delivery_mode(profile, now_dt) == "web_only":
+        claim = mutate_state_atomically(
+            data_file,
+            lambda current_state: _claim_sos_delivery(
+                current_state,
+                line_user_id,
+                now_dt,
+                daily_limit=SOS_DAILY_LIMIT,
+                cooldown_sec=SOS_COOLDOWN_SEC,
+                long_confirm=bool(payload.get("long_confirm")),
+                reason=str(payload.get("reason") or ""),
+            ),
+        )
+        if not claim.get("claimed"):
+            if claim.get("reason") == "daily_limit":
+                return {"error": "daily SOS limit reached", "limit": SOS_DAILY_LIMIT}, 429
+            if claim.get("reason") == "long_confirmation_required":
+                return {"error": "long confirmation required", "requires_reason": True}, 428
+            return {
+                "error": f"SOS cooldown active, wait {int(claim.get('wait_sec') or 1)}s",
+                "cooldown_remaining_sec": int(claim.get("wait_sec") or 1),
+            }, 429
+        latest_profile = (load_state(data_file).get("users") or {}).get(line_user_id) or profile
+        return _create_web_only_sos_alert(data_file, latest_profile, payload, now_dt)
+
+    token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not token:
+        return {"error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
+
+    limit = min(5, int(rules.get("core_guardian_alert_limit") or 1))
+    if abuse["mode"] == "restricted":
+        limit = 1
+    selected_guardian_ids = payload.get("guardian_line_user_ids")
+    if selected_guardian_ids is not None and not isinstance(selected_guardian_ids, list):
+        return {"error": "guardian_line_user_ids must be a list"}, 400
+    has_explicit_guardian_selection = bool(
+        isinstance(selected_guardian_ids, list)
+        and any(str(target or "").strip() for target in selected_guardian_ids)
+    )
+    selected_guardian_set = (
+        {
+            str(target).strip()
+            for target in selected_guardian_ids
+            if str(target).strip()
+        }
+        if has_explicit_guardian_selection
+        else None
+    )
+    guardian_delivery_limit = limit if has_explicit_guardian_selection else min(limit, 2)
+    # SOS directly consumes the accepted core-guardian relationship. A second,
+    # reciprocal invitation is not required for the guardian to receive help.
+    contacts = sorted(
+        profile.get("contacts") or [],
+        key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
+    )
+    phone_contacts = collect_phone_only_contacts(contacts)
+    eligible_line_contacts = ranked_sos_guardians(
+        profile,
+        line_user_id,
+        selected_ids=selected_guardian_set,
+        limit=limit,
+    )
+    line_contacts = eligible_line_contacts[:guardian_delivery_limit]
+
+    active_group_ids = []
+    if (
+        rules.get("guardian_group_limit")
+        and abuse["mode"] != "restricted"
+    ):
+        groups = state.get("guardian_groups", {})
+        active_group_ids = [
+            group_id for group_id in (profile.get("guardian_group_ids") or [])
+            if groups.get(group_id, {}).get("owner_line_user_id") == line_user_id
+            and groups.get(group_id, {}).get("status") == "active"
+        ][: int(rules.get("guardian_group_limit") or 0)]
+
+    # 個人守護人或守護群任一可送；兩者都沒有才拒絕（方案本身不會自動綁定對象）
+    if not line_contacts and not active_group_ids:
+        return {
+            "error": "no bound LINE guardians",
+            "sent": 0,
+            "phone_only_count": len(phone_contacts),
+            "phone_contacts": phone_contacts[:5],
+            "has_bound_guardian": profile_has_bound_line_guardian(profile),
+        }, 400
+
+    claim = mutate_state_atomically(
+        data_file,
+        lambda current_state: _claim_sos_delivery(
+            current_state,
+            line_user_id,
+            now_dt,
+            daily_limit=SOS_DAILY_LIMIT,
+            cooldown_sec=SOS_COOLDOWN_SEC,
+            long_confirm=bool(payload.get("long_confirm")),
+            reason=str(payload.get("reason") or ""),
+        ),
+    )
+    if not claim.get("claimed"):
+        if claim.get("reason") == "member_not_found":
+            return {"error": "member not found"}, 404
+        if claim.get("reason") == "daily_limit":
+            return {
+                "error": f"daily SOS limit reached ({SOS_DAILY_LIMIT})",
+                "limit": SOS_DAILY_LIMIT,
+                "resets_at": f"{today_str}T23:59:59+08:00",
+            }, 429
+        if claim.get("reason") == "recover_pending":
+            recovered, recovered_code = retry_sos_event(
+                data_file,
+                {
+                    "line_user_id": line_user_id,
+                    "event_id": claim.get("event_id"),
+                },
+                config,
+            )
+            if recovered_code == 200:
+                recovered_deliveries = recovered.get("deliveries") or []
+                guardian_rows = [
+                    {
+                        "name": row.get("name") or "核心守護人",
+                        "status": row.get("status"),
+                        "error_hint": row.get("error_hint"),
+                    }
+                    for row in recovered_deliveries
+                    if row.get("kind") == "guardian"
+                ]
+                group_rows = [
+                    {
+                        "name": row.get("name") or "守護群",
+                        "status": row.get("status"),
+                        "error_hint": row.get("error_hint"),
+                    }
+                    for row in recovered_deliveries
+                    if row.get("kind") == "group"
+                ]
+                self_rows = [
+                    row for row in recovered_deliveries
+                    if row.get("kind") == "self"
+                ]
+                recovered_sent = sum(
+                    1 for row in guardian_rows + group_rows
+                    if row.get("status") == "sent"
+                )
+                recovered_failed = sum(
+                    1 for row in guardian_rows + group_rows
+                    if row.get("status") == "failed"
+                )
+                return {
+                    "sent": recovered_sent,
+                    "failed": recovered_failed,
+                    "group_sent": sum(1 for row in group_rows if row.get("status") == "sent"),
+                    "group_failed": sum(1 for row in group_rows if row.get("status") == "failed"),
+                    "guardian_limit": len(guardian_rows),
+                    "self": {
+                        "status": self_rows[0].get("status")
+                        if self_rows else "not_sent"
+                    },
+                    "guardians": guardian_rows,
+                    "groups": group_rows,
+                    "results": guardian_rows + group_rows,
+                    "location_attached": False,
+                    "phone_only_count": 0,
+                    "phone_contacts": [],
+                    "event_id": claim.get("event_id"),
+                    "sent_at": current_app_time(config or {}).isoformat(timespec="seconds"),
+                    "location_updated_at": None,
+                    "cancel_available": recovered_sent > 0,
+                    "abuse_mode": abuse["mode"],
+                    "abuse_expires_at": abuse["expires_at"],
+                    "emergency_numbers_available": True,
+                    "emergency_numbers": ["119", "110"],
+                    "recovered": True,
+                }, 200
+            return recovered, recovered_code
+        if claim.get("reason") == "long_confirmation_required":
+            latest_abuse = claim.get("abuse") or {}
+            return {
+                "error": "long confirmation required",
+                "abuse_mode": "observation",
+                "expires_at": latest_abuse.get("expires_at"),
+                "requires_reason": True,
+                "emergency_numbers_available": True,
+                "emergency_numbers": ["119", "110"],
+            }, 428
+        return {
+            "error": f"SOS cooldown active, wait {int(claim.get('wait_sec') or 1)}s",
+            "cooldown_remaining_sec": int(claim.get("wait_sec") or 1),
+        }, 429
+
+    # Continue from the claimed revision so the final audit write cannot overwrite
+    # the reservation or conflict merely because this request made the claim.
+    state = load_state(data_file)
+    profile = (state.get("users") or {}).get(line_user_id) or profile
+    notification_log_start = len(state.get("notification_logs") or [])
+    permanent_delivery_start = len(state.get("push_delivery_records") or [])
+    usage_start = len(state.get("line_message_usage") or [])
+    # Rebuild the emergency fan-out from the post-claim authoritative snapshot.
+    # A guardian may have been unbound, or a group disabled, between the first
+    # request read and the atomic claim.
+    rules = plan_rules(profile)
+    limit = 1 if abuse["mode"] == "restricted" else min(
+        5, int(rules.get("core_guardian_alert_limit") or 1)
+    )
+    contacts = sorted(
+        profile.get("contacts") or [],
+        key=lambda item: (0 if item.get("is_primary") else 1, int(item.get("priority") or 9999)),
+    )
+    phone_contacts = collect_phone_only_contacts(contacts)
+    eligible_line_contacts = ranked_sos_guardians(
+        profile,
+        line_user_id,
+        selected_ids=selected_guardian_set,
+        limit=limit,
+    )
+    line_contacts = eligible_line_contacts[:guardian_delivery_limit]
+    active_group_ids = []
+    if (
+        rules.get("guardian_group_limit")
+        and abuse["mode"] != "restricted"
+    ):
+        groups = state.get("guardian_groups") or {}
+        active_group_ids = [
+            group_id
+            for group_id in (profile.get("guardian_group_ids") or [])
+            if groups.get(group_id, {}).get("owner_line_user_id") == line_user_id
+            and groups.get(group_id, {}).get("status") == "active"
+        ][: int(rules.get("guardian_group_limit") or 0)]
+    if not line_contacts and not active_group_ids:
+        return {
+            "error": "no bound LINE guardians",
+            "sent": 0,
+            "phone_only_count": len(phone_contacts),
+            "phone_contacts": phone_contacts[:5],
+            "has_bound_guardian": profile_has_bound_line_guardian(profile),
+        }, 400
+
+    # SOS only attaches coordinates obtained for this exact request.  A denied or
+    # timed-out lookup must never silently disclose a stale stored location.
+    location = {}
+    try:
+        req_lat = payload.get("latitude")
+        req_lng = payload.get("longitude")
+        if req_lat is not None and req_lng is not None:
+            location["latitude"] = float(req_lat)
+            location["longitude"] = float(req_lng)
+            city = str(payload.get("city") or "").strip()
+            if city:
+                location["city"] = city
+            location["updated_at"] = now_dt.isoformat(timespec="seconds")
+            stored_location = dict(profile.get("location") or {})
+            stored_location.update(location)
+            profile["location"] = stored_location
+    except (TypeError, ValueError):
+        location = {}
+
+    location_text = ""
+    if location.get("latitude") is not None and location.get("longitude") is not None:
+        city = str(location.get("city") or "").strip()
+        place = f"（{city}）" if city else ""
+        location_text = (
+            f"\n目前位置{place}：\n"
+            f"https://www.google.com/maps?q={location['latitude']},{location['longitude']}"
+        )
+    import uuid
+    sos_event_id = f"sos-{uuid.uuid4().hex[:10]}"
+    message = (
+        f"🚨【SOS 緊急求助】{profile.get('display_name') or '你的親友'} 發出緊急求助，\n"
+        f"請立即聯絡本人並確認安全。若有立即危險，請撥打 119。{location_text}\n\n"
+        "本通知不會自動聯絡警消，請依現場狀況主動求助。"
+    )
+    group_delivery_members = {}
+    group_member_getter = (config or {}).get("GROUP_MEMBER_IDS_GETTER")
+    for group_id in active_group_ids:
+        group_info = (state.get("guardian_groups") or {}).get(group_id) or {}
+        try:
+            if callable(group_member_getter):
+                current_ids = group_member_getter(token, group_id)
+            elif ((config or {}).get("LINE_PUSH_SENDER") or line_push_message) is line_push_message:
+                current_ids = get_group_member_ids(token, group_id)
+            else:
+                current_ids = list(group_info.get("member_ids_at_bind") or [])
+        except Exception:
+            current_ids = list(group_info.get("member_ids_at_bind") or [])
+        group_delivery_members[group_id] = list(dict.fromkeys(current_ids or []))
+
+    requested_units = len(line_contacts) + sum(
+        max(1, len(group_delivery_members.get(group_id) or []))
+        for group_id in active_group_ids
+    )
+    budget = line_push_budget_decision(
+        state,
+        owner_line_user_id=line_user_id,
+        requested_units=requested_units,
+        now=now_dt,
+        monthly_hard_cap=int(
+            (config or {}).get("LINE_MONTHLY_MESSAGE_HARD_CAP")
+            or os.environ.get("LINE_MONTHLY_MESSAGE_HARD_CAP")
+            or (config or {}).get("LINE_MONTHLY_MESSAGE_QUOTA")
+            or os.environ.get("LINE_MONTHLY_MESSAGE_QUOTA")
+            or 200
+        ),
+        member_daily_hard_cap=int(
+            (config or {}).get("LINE_MEMBER_DAILY_MESSAGE_HARD_CAP")
+            or os.environ.get("LINE_MEMBER_DAILY_MESSAGE_HARD_CAP")
+            or 20
+        ),
+        emergency=True,
+    )
+    remaining_budget = int(budget.get("allowed_units") or 0)
+    line_contacts = line_contacts[:remaining_budget]
+    remaining_budget -= len(line_contacts)
+    budgeted_groups = []
+    for group_id in active_group_ids:
+        group_units = max(1, len(group_delivery_members.get(group_id) or []))
+        if group_units > remaining_budget:
+            continue
+        budgeted_groups.append(group_id)
+        remaining_budget -= group_units
+    active_group_ids = budgeted_groups
+    if budget.get("reason"):
+        append_notification_log(
+            state,
+            "sos",
+            line_user_id,
+            "budget_limited",
+            "SOS 額外推播已依成本上限縮減",
+            json.dumps(budget, ensure_ascii=False),
+        )
+
+    self_confirmation = (
+        "✅ SOS 通知流程已完成\n"
+        "請留意下方通知明細；若是誤觸或目前已安全，"
+        "請在 10 分鐘內回到 SOS 畫面取消通知"
+    )
+    prepared_deliveries = [
+        {
+            "kind": "guardian",
+            "target": contact["line_id"],
+            "display_name": str(
+                contact.get("name") or contact.get("relationship") or "核心守護人"
+            ),
+            "status": "pending",
+            "retry_key": _line_retry_key(
+                f"{sos_event_id}:guardian:{contact['line_id']}"
+            ),
+        }
+        for contact in line_contacts
+    ] + [
+        {
+            "kind": "group",
+            "target": group_id,
+            "display_name": str(
+                ((state.get("guardian_groups") or {}).get(group_id) or {}).get("group_name")
+                or ((state.get("guardian_groups") or {}).get(group_id) or {}).get("name")
+                or "守護群"
+            ),
+            "recipient_count": max(1, len(group_delivery_members.get(group_id) or [])),
+            "status": "pending",
+            "retry_key": f"{sos_event_id}:group:{group_id}",
+        }
+        for group_id in active_group_ids
+    ] + [{
+        "kind": "self",
+        "target": line_user_id,
+        "display_name": "本人",
+        "recipient_count": 1,
+        "status": "pending",
+        "message": self_confirmation,
+        "retry_key": _line_retry_key(f"{sos_event_id}:self:{line_user_id}"),
+    }]
+
+    def persist_sos_outbox(latest):
+        latest_profile = (latest.get("users") or {}).get(line_user_id)
+        if latest_profile is None:
+            return
+        latest_profile["last_sos_event_id"] = sos_event_id
+        if location:
+            stored_location = dict(latest_profile.get("location") or {})
+            stored_location.update(copy.deepcopy(location))
+            latest_profile["location"] = stored_location
+        latest.setdefault("sos_events", {})[sos_event_id] = {
+            "event_id": sos_event_id,
+            "owner_line_user_id": line_user_id,
+            "owner_display_name": profile.get("display_name") or "會員",
+            "status": "sending",
+            "created_at": now_dt.isoformat(timespec="seconds"),
+            "sent_at": None,
+            "deliveries": copy.deepcopy(prepared_deliveries),
+            "message": message,
+            "location_attached": bool(location_text),
+            "abuse_mode": abuse["mode"],
+        }
+
+    mutate_state_atomically(data_file, persist_sos_outbox)
+    state = load_state(data_file)
+    profile = (state.get("users") or {}).get(line_user_id) or profile
+    notification_log_start = len(state.get("notification_logs") or [])
+    usage_start = len(state.get("line_message_usage") or [])
+
+    sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
+    sent = 0
+    sent_at = None
+    failed = 0
+    group_sent = 0
+    group_failed = 0
+    results = []
+    deliveries = []
+    guardian_results = []
+    group_results = []
+    print(
+        f"[sos] trigger user={line_user_id[:8]} line_targets={len(line_contacts)} "
+        f"groups={len(active_group_ids)} loc={bool(location_text)} phone_only={len(phone_contacts)}",
+        flush=True,
+    )
+    for contact in line_contacts:
+        target = contact["line_id"]
+        delivery_retry_key = _line_retry_key(
+            f"{sos_event_id}:guardian:{target}"
+        )
+        try:
+            guardian_message = (
+                build_sos_guardian_flex(message, sos_event_id)
+                if sender is line_push_message
+                else message
+            )
+            result = _send_line_with_retry_key(
+                sender,
+                token,
+                target,
+                guardian_message,
+                delivery_retry_key,
+            )
+            append_notification_log(state, "sos", target, "sent", message, json.dumps(result, ensure_ascii=False))
+            sent += 1
+            if sent_at is None:
+                sent_at = current_app_time(config or {}).isoformat(timespec="seconds")
+            results.append({"line_user_id": target, "status": "sent"})
+            deliveries.append({
+                "kind": "guardian",
+                "target": target,
+                "display_name": str(contact.get("name") or contact.get("relationship") or "核心守護人"),
+                "recipient_count": 1,
+                "status": "sent",
+                "retry_key": delivery_retry_key,
+            })
+            guardian_results.append({
+                "name": str(contact.get("name") or contact.get("relationship") or "核心守護人"),
+                "status": "sent",
+            })
+            print(f"[sos] push ok target={str(target)[:8]}", flush=True)
+        except Exception as exc:
+            append_notification_log(state, "sos", target, "failed", message, str(exc))
+            failed += 1
+            results.append({
+                "line_user_id": target,
+                "status": "failed",
+                "error_hint": classify_line_push_error(exc),
+            })
+            deliveries.append({
+                "kind": "guardian",
+                "target": target,
+                "display_name": str(contact.get("name") or contact.get("relationship") or "核心守護人"),
+                "recipient_count": 1,
+                "status": "failed",
+                "retry_key": delivery_retry_key,
+            })
+            guardian_results.append({
+                "name": str(contact.get("name") or contact.get("relationship") or "核心守護人"),
+                "status": "failed",
+                "error_hint": classify_line_push_error(exc),
+            })
+            print(f"[sos] push FAIL target={str(target)[:8]} err={str(exc)[:180]}", flush=True)
+
+    for group_id in active_group_ids:
+        delivery_retry_key = f"{sos_event_id}:group:{group_id}"
+        try:
+            group_info = (state.get("guardian_groups") or {}).get(group_id) or {}
+            member_ids = list(group_delivery_members.get(group_id) or [])
+            result, mention_mode, _payload = push_sos_to_guardian_group(
+                token,
+                group_id,
+                message,
+                sender=sender,
+                member_ids=member_ids,
+                retry_key=delivery_retry_key,
+            )
+            append_notification_log(
+                state,
+                "sos_guardian_group",
+                group_id,
+                "sent",
+                message,
+                json.dumps({"result": result, "mention": mention_mode}, ensure_ascii=False),
+            )
+            sent += 1
+            if sent_at is None:
+                sent_at = current_app_time(config or {}).isoformat(timespec="seconds")
+            group_sent += 1
+            results.append({
+                "group_id": group_id,
+                "status": "sent",
+                "mention": mention_mode,
+            })
+            deliveries.append({
+                "kind": "group",
+                "target": group_id,
+                "display_name": str(group_info.get("group_name") or group_info.get("name") or "守護群"),
+                "recipient_count": max(1, len(member_ids)),
+                "status": "sent",
+                "retry_key": delivery_retry_key,
+            })
+            group_results.append({
+                "name": str(group_info.get("group_name") or group_info.get("name") or "守護群"),
+                "status": "sent",
+                "mention": mention_mode,
+            })
+            print(f"[sos] group push ok group={str(group_id)[:8]} mention={mention_mode}", flush=True)
+        except Exception as exc:
+            append_notification_log(state, "sos_guardian_group", group_id, "failed", message, str(exc))
+            failed += 1
+            group_failed += 1
+            results.append({"group_id": group_id, "status": "failed"})
+            deliveries.append({
+                "kind": "group",
+                "target": group_id,
+                "display_name": str(group_info.get("group_name") or group_info.get("name") or "守護群"),
+                "recipient_count": max(1, len(group_delivery_members.get(group_id) or [])),
+                "status": "failed",
+                "retry_key": delivery_retry_key,
+            })
+            group_info = (state.get("guardian_groups") or {}).get(group_id) or {}
+            group_results.append({
+                "name": str(group_info.get("group_name") or group_info.get("name") or "守護群"),
+                "status": "failed",
+                "error_hint": classify_line_push_error(exc),
+            })
+            print(f"[sos] group push FAIL group={str(group_id)[:8]} err={str(exc)[:180]}", flush=True)
+
+    self_result = {"status": "not_sent"}
+    self_delivery = copy.deepcopy(prepared_deliveries[-1])
+    if sent:
+        confirmation = (
+            f"✅ SOS 已送出\n"
+            f"已通知 {sent} 個守護對象，失敗 {failed} 個\n"
+            f"{'已附上這次取得的位置' if location_text else '這次未附即時位置'}\n"
+            "若是誤觸或目前已安全，請在 10 分鐘內回到 SOS 畫面取消通知"
+        )
+        try:
+            result = _send_line_with_retry_key(
+                sender,
+                token,
+                line_user_id,
+                confirmation,
+                _line_retry_key(f"{sos_event_id}:self:{line_user_id}"),
+            )
+            append_notification_log(
+                state, "sos_self_confirmation", line_user_id, "sent",
+                confirmation, json.dumps(result, ensure_ascii=False),
+            )
+            self_result = {"status": "sent"}
+            self_delivery["status"] = "sent"
+        except Exception as exc:
+            append_notification_log(
+                state, "sos_self_confirmation", line_user_id, "failed",
+                confirmation, str(exc),
+            )
+            self_result = {
+                "status": "failed",
+                "error_hint": classify_line_push_error(exc),
+            }
+            self_delivery["status"] = "failed"
+            self_delivery["error_hint"] = self_result["error_hint"]
+    deliveries.append(self_delivery)
+
+    profile["last_sos_event_id"] = sos_event_id
+    state.setdefault("sos_events", {})[sos_event_id] = {
+        "event_id": sos_event_id,
+        "owner_line_user_id": line_user_id,
+        "owner_display_name": profile.get("display_name") or "會員",
+        "status": "sent" if sent else "delivery_failed",
+        "created_at": now_dt.isoformat(timespec="seconds"),
+        "sent_at": sent_at,
+        "deliveries": deliveries,
+        "message": message,
+        "location_attached": bool(location_text),
+        "abuse_mode": abuse["mode"],
+        "push_budget": budget,
+    }
+    sos_units = 0
+    for delivery in deliveries:
+        if delivery.get("status") != "sent":
+            continue
+        if delivery.get("kind") == "group":
+            sos_units += max(1, int(delivery.get("recipient_count") or 1))
+        elif delivery.get("kind") == "self":
+            continue
+        else:
+            sos_units += 1
+    if self_result.get("status") == "sent":
+        sos_units += 1
+    record_line_message_usage(
+        state,
+        category="sos",
+        owner_line_user_id=line_user_id,
+        recipient_count=sos_units,
+        event_id=sos_event_id,
+        sent_at=now_dt,
+    )
+    code = 200 if sent else 502
+    cancel_available = sent > 0
+    pending_event = None
+    if cancel_available:
+        pending_event = {
+            "stage": "sent",
+            "tap_count": 3,
+            "first_tap_at": now_dt.isoformat(timespec="seconds"),
+            "last_tap_at": now_dt.isoformat(timespec="seconds"),
+            "sent_at": sent_at,
+            "event_id": sos_event_id,
+        }
+    event_record = copy.deepcopy(state["sos_events"][sos_event_id])
+    delivery_logs = copy.deepcopy(
+        (state.get("notification_logs") or [])[notification_log_start:]
+    )
+    permanent_deliveries = copy.deepcopy(
+        (state.get("push_delivery_records") or [])[permanent_delivery_start:]
+    )
+    delivery_usage = copy.deepcopy(
+        (state.get("line_message_usage") or [])[usage_start:]
+    )
+    profile_patch = {
+        "last_sos_event_id": sos_event_id,
+    }
+    if location:
+        profile_patch["location"] = copy.deepcopy(profile.get("location") or location)
+
+    def merge_sos_delivery(latest):
+        latest_profile = (latest.get("users") or {}).get(line_user_id)
+        if latest_profile is not None:
+            latest_profile.update(copy.deepcopy(profile_patch))
+            latest_policy = sos_abuse_state(latest_profile, now_dt)
+            latest_profile["sos_abuse_mode"] = latest_policy["mode"]
+            latest_profile["sos_abuse_expires_at"] = latest_policy["expires_at"]
+        latest.setdefault("sos_events", {})[sos_event_id] = copy.deepcopy(event_record)
+        if pending_event:
+            latest.setdefault("sos_pending", {})[line_user_id] = copy.deepcopy(pending_event)
+        if delivery_logs:
+            logs = list(latest.get("notification_logs") or [])
+            logs.extend(copy.deepcopy(delivery_logs))
+            latest["notification_logs"] = logs[-100:]
+        _merge_permanent_delivery_rows(latest, permanent_deliveries)
+        if delivery_usage:
+            ledger = list(latest.get("line_message_usage") or [])
+            known_keys = {
+                str(row.get("key") or "")
+                for row in ledger
+                if isinstance(row, dict)
+            }
+            for row in delivery_usage:
+                key = str(row.get("key") or "")
+                if key and key not in known_keys:
+                    ledger.append(copy.deepcopy(row))
+                    known_keys.add(key)
+            latest["line_message_usage"] = ledger[-10000:]
+
+    mutate_state_atomically(data_file, merge_sos_delivery)
+    return {
+        "sent": sent,
+        "failed": failed,
+        "group_sent": group_sent,
+        "group_failed": group_failed,
+        "guardian_limit": limit,
+        "self": self_result,
+        "guardians": guardian_results,
+        "groups": group_results,
+        "results": [*guardian_results, *group_results],
+        "location_attached": bool(location_text),
+        "phone_only_count": len(phone_contacts),
+        "phone_contacts": phone_contacts[:5],
+        "event_id": sos_event_id,
+        "sent_at": sent_at,
+        "location_updated_at": location.get("updated_at") if location_text else None,
+        "cancel_available": cancel_available,
+        "abuse_mode": abuse["mode"],
+        "abuse_expires_at": abuse["expires_at"],
+        "emergency_numbers_available": True,
+        "emergency_numbers": ["119", "110"],
+    }, code
+
+
+def friend_locations(data_file, line_user_id):
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id)
+    now = datetime.now()
+    friends = []
+    for friend_id in profile.get("friends") or []:
+        friend = state.get("users", {}).get(friend_id)
+        if not friend:
+            continue
+        location = friend.get("location") or {}
+        if not _location_session_active(location, now):
+            continue
+        snap = safety_guard_snapshot(friend, now)
+        friends.append(
+            {
+                "line_user_id": friend_id,
+                "display_name": friend.get("display_name", "LINE 使用者"),
+                "latitude": location.get("latitude"),
+                "longitude": location.get("longitude"),
+                "city": location.get("city", ""),
+                "updated_at": location.get("updated_at"),
+                "expires_at": location.get("expires_at"),
+                "started_at": location.get("started_at"),
+                "until_stop": bool(location.get("until_stop")),
+                "safety_status": snap.get("safety_status"),
+                "is_today_checked": snap.get("is_today_checked"),
+                "mode": "safety_guard",
+            }
+        )
+    return {"friends": friends}
+
+
+def _membership_period_days(plan):
+    product = PAYMENT_PRODUCTS.get(str(plan or "")) or {}
+    return int(product.get("duration_days") or (365 if "year" in str(plan or "") else 30))
+
+
+def _entitlement_iso(value):
+    parsed = value if isinstance(value, datetime) else parse_datetime(value)
+    return parsed.isoformat(timespec="seconds") if parsed else ""
+
+
+def apply_admin_entitlement_change(profile, payload, *, effective_at, actor):
+    """套用後台資格變更；只調整權益欄位，不重設任何簽到或等級資料。"""
+    if not isinstance(profile, dict):
+        raise ValueError("invalid profile")
+    if not isinstance(effective_at, datetime):
+        raise ValueError("invalid effective_at")
+    payload = payload or {}
+    requested_plan = str(payload.get("plan") or "trial").strip()
+    beta_cohort = (
+        requested_plan.removeprefix("beta_").upper()
+        if requested_plan.startswith("beta_")
+        else ""
+    )
+    is_gift = requested_plan.upper() == "G799"
+    if requested_plan not in PLAN_LIMITS and beta_cohort not in BETA_COHORT_PLAN and not is_gift:
+        raise ValueError("unknown plan")
+
+    previous_plan = str(profile.get("plan") or "trial")
+    previous_source = str(profile.get("membership_source") or "")
+    plan = "paid_799_year" if is_gift else BETA_COHORT_PLAN.get(beta_cohort, requested_plan)
+    changed_at = effective_at.isoformat(timespec="seconds")
+
+    profile["previous_plan"] = previous_plan
+    profile["membership_changed_at"] = changed_at
+    profile["membership_changed_by"] = str(actor or "super_admin")
+    profile["plan"] = plan
+
+    if beta_cohort:
+        existing_start = _entitlement_iso(profile.get("beta_started_at"))
+        existing_end = _entitlement_iso(profile.get("beta_ends_at"))
+        if previous_source != "beta" or not existing_start or not existing_end:
+            existing_start = changed_at
+            existing_end = (effective_at + timedelta(days=BETA_TRIAL_DAYS)).isoformat(
+                timespec="seconds"
+            )
+        profile.update(
+            {
+                "membership_source": "beta",
+                "free_eligibility_source": f"beta_{beta_cohort}",
+                "free_eligibility_used_at": changed_at,
+                "payment_status": "beta",
+                "beta_cohort": beta_cohort,
+                "beta_started_at": existing_start,
+                "beta_ends_at": existing_end,
+                "beta_revoked_at": None,
+                "beta_recruitment_source": str(
+                    payload.get("source") or profile.get("beta_recruitment_source") or ""
+                ).strip()[:80],
+                "paid_until": "",
+                "next_billing_date": "",
+                "billing_cycle": "beta",
+                "expiry_review_required": False,
+                "auto_renew_enabled": False,
+            }
+        )
+        return profile
+
+    if is_gift:
+        gift_start = parse_datetime(payload.get("gift_started_at"))
+        gift_end = parse_datetime(payload.get("gift_ends_at"))
+        if not gift_start or not gift_end:
+            raise ValueError("gift start and end are required")
+        comparable_start, comparable_end = _comparable_datetimes(gift_start, gift_end)
+        if comparable_end <= comparable_start:
+            raise ValueError("gift end must be after start")
+        start_text = gift_start.isoformat(timespec="seconds")
+        end_text = gift_end.isoformat(timespec="seconds")
+        profile.update(
+            {
+                "membership_source": "gift",
+                "gift_code": "G799",
+                "gift_started_at": start_text,
+                "gift_ends_at": end_text,
+                "membership_started_at": start_text,
+                "payment_status": "active",
+                "paid_until": end_text,
+                "next_billing_date": "",
+                "billing_cycle": "gift",
+                "expiry_review_required": False,
+                "auto_renew_requested": False,
+                "auto_renew_enabled": False,
+                "auto_renew_status": "off",
+                "beta_cohort": "",
+                "beta_started_at": "",
+                "beta_ends_at": "",
+                "beta_revoked_at": None,
+            }
+        )
+        return profile
+
+    if plan.startswith("paid_"):
+        is_actual_change = (
+            previous_plan != plan
+            or previous_source != "paid"
+            or str(profile.get("payment_status") or "") != "active"
+        )
+        profile.update(
+            {
+                "membership_source": "paid",
+                "payment_status": str(payload.get("payment_status") or "active"),
+                "trial_policy_version": TRIAL_POLICY_VERSION,
+                "trial_bonus_days": 0,
+                "beta_cohort": "",
+                "beta_started_at": "",
+                "beta_ends_at": "",
+                "beta_revoked_at": None,
+                "gift_code": "",
+                "gift_started_at": "",
+                "gift_ends_at": "",
+            }
+        )
+        if is_actual_change:
+            expires_at = effective_at + timedelta(days=_membership_period_days(plan))
+            expiry_text = expires_at.isoformat(timespec="seconds")
+            profile["membership_started_at"] = changed_at
+            profile["paid_until"] = expiry_text
+            profile["next_billing_date"] = expiry_text
+        product = PAYMENT_PRODUCTS.get(plan) or {}
+        profile["billing_cycle"] = product.get("billing_cycle") or (
+            "yearly" if "year" in plan else "monthly"
+        )
+        profile["expiry_review_required"] = not bool(str(profile.get("paid_until") or ""))
+        return profile
+
+    if plan == "free":
+        profile["membership_source"] = "expired"
+        profile["payment_status"] = str(payload.get("payment_status") or "expired")
+    else:
+        profile["membership_source"] = "public_trial"
+        profile["payment_status"] = str(payload.get("payment_status") or "trial")
+    if "paid_until" in payload:
+        profile["paid_until"] = ""
+        profile["next_billing_date"] = ""
+    return profile
+
+
+def backfill_membership_expiry_reviews(state, now=None):
+    """只用可靠付款／權益時間補到期日；沒有證據時標記人工檢查。"""
+    _ = now
+    backfilled = 0
+    review_required = 0
+    orders = state.get("orders") or []
+    for line_user_id, profile in (state.get("users") or {}).items():
+        plan = str(profile.get("plan") or "")
+        if (
+            not plan.startswith("paid_")
+            or str(profile.get("membership_source") or "") != "paid"
+            or str(profile.get("payment_status") or "") != "active"
+            or str(profile.get("paid_until") or "").strip()
+        ):
+            continue
+        candidates = []
+        for order in orders:
+            if (
+                str(order.get("line_user_id") or "") == str(line_user_id)
+                and str(order.get("status") or "") in {"paid", "partially_refunded"}
+                and str(order.get("plan") or plan) == plan
+            ):
+                paid_at = parse_datetime(order.get("paid_at"))
+                if paid_at:
+                    candidates.append(paid_at)
+        changed_at = parse_datetime(profile.get("membership_changed_at"))
+        if changed_at and str(profile.get("membership_changed_by") or "").strip():
+            candidates.append(changed_at)
+        if not candidates:
+            profile["expiry_review_required"] = True
+            review_required += 1
+            continue
+        started_at = max(candidates)
+        expires_at = started_at + timedelta(days=_membership_period_days(plan))
+        profile["membership_started_at"] = started_at.isoformat(timespec="seconds")
+        profile["paid_until"] = expires_at.isoformat(timespec="seconds")
+        profile["next_billing_date"] = profile["paid_until"]
+        profile["expiry_review_required"] = False
+        backfilled += 1
+    return {"backfilled": backfilled, "review_required": review_required}
+
+
+def admin_update_user_plan(
+    data_file,
+    payload,
+    *,
+    effective_at=None,
+    actor="super_admin",
+):
+    """後台調整會員資格；以原子交易保存，絕不清空簽到或守護資料。"""
+    payload = payload or {}
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if not line_user_id:
+        return {"error": "missing line_user_id"}, 400
+    requested_plan = str(payload.get("plan") or "trial").strip()
+    beta_cohort = (
+        requested_plan.removeprefix("beta_").upper()
+        if requested_plan.startswith("beta_")
+        else ""
+    )
+    if (
+        requested_plan not in PLAN_LIMITS
+        and beta_cohort not in BETA_COHORT_PLAN
+        and requested_plan.upper() != "G799"
+    ):
+        return {"error": "unknown plan"}, 400
+    changed_at = effective_at or current_app_time({})
+
+    def mutate(state):
+        profile = get_profile(state, line_user_id)
+        preserved_contacts = list(profile.get("contacts") or [])
+        preserved_friends = list(profile.get("friends") or [])
+        preserved_groups = list(profile.get("guardian_group_ids") or [])
+
+        apply_admin_entitlement_change(
+            profile,
+            payload,
+            effective_at=changed_at,
+            actor=actor,
+        )
+
+        if profile.get("plan", "").startswith("paid_") or (
+            profile.get("plan") == "trial" and trial_days_left(profile) > 0
+        ):
+            clear_contacts_retain_window(profile)
+        admin_granted = ensure_guardian_group_admin_for_user(state, profile)
+        status = build_status(profile, state, now=changed_at)
+        status.update(
+            {
+                "preserved_contacts": len(preserved_contacts),
+                "preserved_friends": len(preserved_friends),
+                "preserved_guardian_groups": len(preserved_groups),
+                "guardian_group_admin_granted": admin_granted,
+                "membership_source": profile.get("membership_source", ""),
+                "gift_code": profile.get("gift_code", ""),
+                "gift_started_at": profile.get("gift_started_at", ""),
+                "gift_ends_at": profile.get("gift_ends_at", ""),
+                "expiry_review_required": bool(profile.get("expiry_review_required")),
+            }
+        )
+        return status
+
+    try:
+        return mutate_state_atomically(data_file, mutate), 200
+    except ValueError as exc:
+        return {"error": "invalid membership change", "detail": str(exc)}, 400
+
+
+def _test_reset_row_matches_user(row, line_user_id):
+    if not isinstance(row, dict):
+        return False
+    identity_keys = (
+        "line_user_id",
+        "line_id",
+        "owner_line_user_id",
+        "inviter_line_user_id",
+        "invitee_line_user_id",
+        "guardian_line_user_id",
+        "contact_line_user_id",
+        "target_line_user_id",
+        "user_id",
+    )
+    return any(
+        str(row.get(key) or "").strip() == line_user_id
+        for key in identity_keys
+    )
+
+
+def _remove_user_from_group_members(group, line_user_id):
+    if not isinstance(group, dict):
+        return
+    for key in ("members", "member_line_user_ids", "admins"):
+        values = group.get(key)
+        if isinstance(values, list):
+            group[key] = [
+                item for item in values
+                if (
+                    str(item.get("line_user_id") or "").strip()
+                    if isinstance(item, dict)
+                    else str(item or "").strip()
+                ) != line_user_id
+            ]
+
+
+def _mask_line_user_id(line_user_id):
+    value = str(line_user_id or "")
+    if len(value) <= 8:
+        return value[:2] + "***" + value[-2:]
+    return value[:4] + "***" + value[-4:]
+
+
+def _has_active_paid_entitlement(profile):
+    return (
+        str((profile or {}).get("membership_source") or "") == "paid"
+        and str((profile or {}).get("payment_status") or "") == "active"
+    )
+
+
+def _beta_reset_candidate(state, line_user_id, allowed):
+    profile = (state.get("users") or {}).get(line_user_id)
+    tombstone = (state.get("test_account_tombstones") or {}).get(line_user_id)
+    if isinstance(profile, dict) and profile.get("beta_reset_pending"):
+        return None
+    cohort = str((profile or {}).get("beta_cohort") or "").upper()
+    if cohort not in BETA_COHORT_PLAN:
+        cohort = str((tombstone or {}).get("last_beta_cohort") or "").upper()
+    if cohort not in BETA_COHORT_PLAN:
+        if line_user_id not in allowed:
+            return None
+        if not isinstance(profile, dict) or _has_active_paid_entitlement(profile):
+            return None
+        cohort = ""
+    version = str((profile or {}).get("account_state_version") or (tombstone or {}).get("account_state_version") or "legacy")
+    plan = "399" if cohort == "B399" else ("799" if cohort in {"A", "B799"} else "待指派")
+    return {
+        "display_name": str((profile or {}).get("display_name") or (tombstone or {}).get("display_name") or "LINE 使用者"),
+        "cohort": cohort or "待重新封測",
+        "plan": plan,
+        "status": "可重置",
+        "account_state_version": version,
+        "_line_user_id": line_user_id,
+    }
+
+
+def list_beta_reset_candidates(state, allowed_test_user_ids):
+    """Return safe summaries for resettable 21-day beta test accounts."""
+    allowed = {str(value or "").strip() for value in (allowed_test_user_ids or []) if str(value or "").strip()}
+    ids = set((state.get("users") or {}).keys()) | set((state.get("test_account_tombstones") or {}).keys())
+    rows = []
+    for line_user_id in sorted(ids):
+        row = _beta_reset_candidate(state, line_user_id, allowed)
+        if row:
+            row["candidate_id"] = line_user_id
+            row.pop("_line_user_id", None)
+            rows.append(row)
+    return rows
+
+
+def admin_reset_test_account(
+    data_file,
+    line_user_id,
+    allowed_test_user_ids,
+    *,
+    expected_version=None,
+    actor="super_admin",
+):
+    """Atomically reset an eligible beta member while retaining billing and audit records."""
+    line_user_id = str(line_user_id or "").strip()
+    allowed = {
+        str(value or "").strip()
+        for value in (allowed_test_user_ids or [])
+        if str(value or "").strip()
+    }
+    if not line_user_id:
+        return {"ok": False, "error": "missing_line_user_id"}, 400
+    def reset(state):
+        candidate = _beta_reset_candidate(state, line_user_id, allowed)
+        if not candidate:
+            raise ValueError("not_beta_reset_candidate")
+        existing = (state.get("users") or {}).get(line_user_id)
+        if not isinstance(existing, dict):
+            raise LookupError("member_not_found")
+        current_version = candidate["account_state_version"]
+        if expected_version is not None and str(expected_version) != current_version:
+            raise RuntimeError("account_state_version_conflict")
+        origin_cohort = str(existing.get("beta_cohort") or "").upper()
+        if origin_cohort not in BETA_COHORT_PLAN:
+            origin_cohort = str(((state.get("test_account_tombstones") or {}).get(line_user_id) or {}).get("last_beta_cohort") or "").upper()
+        new_version = uuid.uuid4().hex
+        fresh = copy.deepcopy(DEFAULT_PROFILE)
+        fresh.update({
+            "line_user_id": line_user_id,
+            "display_name": str(existing.get("display_name") or "LINE 使用者"),
+            "picture_url": str(existing.get("picture_url") or ""),
+            "plan": "free",
+            "membership_source": "",
+            "payment_status": "inactive",
+            "reminder_time": "",
+            "reminder_times": [],
+            "daily_checkin_reminder_enabled": False,
+            "guardian_details_reminder_enabled": False,
+            "beta_cohort": "",
+            "beta_started_at": "",
+            "beta_ends_at": "",
+            "trial_started_at": None,
+            "trial_end": None,
+            "free_eligibility_used_at": "",
+            "beta_reset_pending": True,
+            "beta_reset_origin_cohort": origin_cohort,
+            "account_state_version": new_version,
+        })
+        state.setdefault("users", {})[line_user_id] = fresh
+        for other_id, profile in (state.get("users") or {}).items():
+            if other_id == line_user_id or not isinstance(profile, dict):
+                continue
+            for key in ("contacts", "guarding_details", "emergency_contacts", "invites"):
+                if isinstance(profile.get(key), list):
+                    profile[key] = [row for row in profile[key] if not _test_reset_row_matches_user(row, line_user_id)]
+            for key in ("friends", "guarding_for", "guardian_group_ids"):
+                if isinstance(profile.get(key), list):
+                    profile[key] = [value for value in profile[key] if str(value or "").strip() != line_user_id]
+        for key in ("guardian_invites", "beta_program_members", "beta_feedback_reports", "notification_logs", "contact_rewards", "push_delivery_records"):
+            if isinstance(state.get(key), list):
+                state[key] = [row for row in state[key] if not _test_reset_row_matches_user(row, line_user_id)]
+        for key in ("sos_pending", "sos_events", "location_grants", "location_grant_index"):
+            if isinstance(state.get(key), dict):
+                state[key] = {k: row for k, row in state[key].items() if k != line_user_id and not _test_reset_row_matches_user(row, line_user_id)}
+        if isinstance(state.get("guardian_groups"), dict):
+            retained = {}
+            for group_id, group in state["guardian_groups"].items():
+                if _test_reset_row_matches_user(group, line_user_id):
+                    continue
+                _remove_user_from_group_members(group, line_user_id)
+                retained[group_id] = group
+            state["guardian_groups"] = retained
+        reset_at = current_app_time({}).isoformat(timespec="seconds")
+        state.setdefault("test_account_tombstones", {})[line_user_id] = {
+            "line_user_id": line_user_id,
+            "last_beta_cohort": origin_cohort,
+            "display_name": fresh["display_name"],
+            "reset_at": reset_at,
+            "status": "beta_reset_pending",
+            "account_state_version": new_version,
+        }
+        state.setdefault("admin_audit_logs", []).append({
+            "action": "beta_account_full_reset",
+            "status": "success",
+            "actor": str(actor or "super_admin"),
+            "line_user_id": line_user_id,
+            "original_beta_cohort": origin_cohort,
+            "created_at": reset_at,
+            "preserved": ["line_user_id", "orders", "audit", "legal_records"],
+            "cleared": ["membership", "checkins", "reminders", "guardians", "groups", "sos", "location"],
+            "account_state_version": new_version,
+        })
+        return new_version
+
+    try:
+        new_version = mutate_state_atomically(data_file, reset)
+    except LookupError:
+        return {"ok": False, "error": "member_not_found"}, 404
+    except RuntimeError as exc:
+        if str(exc) == "account_state_version_conflict":
+            return {"ok": False, "error": str(exc)}, 409
+        raise
+    except ValueError:
+        return {"ok": False, "error": "not_beta_reset_candidate"}, 403
+    return {
+        "ok": True,
+        "line_user_id": line_user_id,
+        "account_state_version": new_version,
+        "billing_preserved": True,
+        "audit_preserved": True,
+        "message": "已重置，可重新使用 21 天封測連結綁定。",
+    }, 200
+
+
+def admin_delete_test_account(data_file, line_user_id, allowed_test_user_ids):
+    """Delete a whitelisted test member and all non-audit relationship data."""
+    line_user_id = str(line_user_id or "").strip()
+    allowed = {
+        str(value or "").strip()
+        for value in (allowed_test_user_ids or [])
+        if str(value or "").strip()
+    }
+    if not line_user_id:
+        return {"ok": False, "error": "missing_line_user_id"}, 400
+    if line_user_id not in allowed:
+        return {"ok": False, "error": "not_a_test_account"}, 403
+
+    def remove_test_member(state):
+        existing = (state.get("users") or {}).get(line_user_id)
+        if not isinstance(existing, dict):
+            return {"ok": False, "error": "member_not_found"}, 404
+
+        state.setdefault("users", {}).pop(line_user_id, None)
+        for profile in (state.get("users") or {}).values():
+            if not isinstance(profile, dict):
+                continue
+            contacts = profile.get("contacts")
+            if isinstance(contacts, list):
+                profile["contacts"] = [
+                    item for item in contacts
+                    if not _test_reset_row_matches_user(item, line_user_id)
+                ]
+            for key in ("friends", "guarding_for"):
+                values = profile.get(key)
+                if isinstance(values, list):
+                    profile[key] = [
+                        value for value in values
+                        if str(value or "").strip() != line_user_id
+                    ]
+            details = profile.get("guarding_details")
+            if isinstance(details, list):
+                profile["guarding_details"] = [
+                    item for item in details
+                    if not _test_reset_row_matches_user(item, line_user_id)
+                ]
+
+        for key in (
+            "guardian_invites",
+            "beta_program_members",
+            "beta_feedback_reports",
+            "notification_logs",
+            "contact_rewards",
+        ):
+            rows = state.get(key)
+            if isinstance(rows, list):
+                state[key] = [
+                    row for row in rows
+                    if not _test_reset_row_matches_user(row, line_user_id)
+                ]
+
+        for key in ("sos_pending", "location_grants", "location_grant_index"):
+            values = state.get(key)
+            if isinstance(values, dict):
+                values.pop(line_user_id, None)
+                state[key] = {
+                    item_key: item
+                    for item_key, item in values.items()
+                    if not _test_reset_row_matches_user(item, line_user_id)
+                }
+        events = state.get("sos_events")
+        if isinstance(events, dict):
+            state["sos_events"] = {
+                event_id: event
+                for event_id, event in events.items()
+                if not _test_reset_row_matches_user(event, line_user_id)
+            }
+
+        groups = state.get("guardian_groups")
+        if isinstance(groups, dict):
+            retained_groups = {}
+            for group_id, group in groups.items():
+                if _test_reset_row_matches_user(group, line_user_id):
+                    continue
+                _remove_user_from_group_members(group, line_user_id)
+                retained_groups[group_id] = group
+            state["guardian_groups"] = retained_groups
+
+        removed_at = iso_now()
+        for order in state.get("orders") or []:
+            if str(order.get("line_user_id") or "").strip() == line_user_id:
+                order["line_user_id"] = "deleted-test-user"
+                order["display_name"] = "已刪除測試會員"
+                order["personal_data_removed_at"] = removed_at
+
+        return {
+            "ok": True,
+            "deleted": True,
+            "line_user_id": line_user_id,
+            "billing_preserved": True,
+            "audit_preserved": True,
+            "message": "測試帳號、簽到與守護關係已刪除；帳務與後台稽核紀錄已保留。",
+        }, 200
+
+    return mutate_state_atomically(data_file, remove_test_member)
+
+
+def admin_set_core_guardian(data_file, payload):
+    """後台指定／取消核心守護人（is_primary）。可同時指定多位，上限依方案 core_guardian_alert_limit。"""
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if not line_user_id:
+        return {"error": "missing line_user_id"}, 400
+    contact_id = str(payload.get("contact_id") or "").strip()
+    contact_line_id = str(
+        payload.get("contact_line_user_id") or payload.get("guardian_line_user_id") or ""
+    ).strip()
+    if not contact_id and not contact_line_id:
+        return {"error": "missing contact_id or contact_line_user_id"}, 400
+    make_core = payload.get("is_primary")
+    if make_core is None:
+        make_core = True
+    make_core = bool(make_core)
+
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if not profile:
+        return {"error": "member not found"}, 404
+    contacts = list(profile.get("contacts") or [])
+    if not contacts:
+        return {"error": "no contacts"}, 400
+
+    target_idx = None
+    for i, c in enumerate(contacts):
+        cid = str(c.get("id") or "")
+        lid = str(c.get("line_id") or c.get("line_user_id") or "")
+        if contact_id and cid == contact_id:
+            target_idx = i
+            break
+        if contact_line_id and lid == contact_line_id:
+            target_idx = i
+            break
+    if target_idx is None:
+        return {"error": "contact_not_found"}, 404
+
+    limit = int(plan_rules(profile).get("core_guardian_alert_limit") or 1)
+    now = iso_now()
+    if make_core:
+        contacts[target_idx]["is_primary"] = True
+        contacts[target_idx]["updated_at"] = now
+        # 超過方案核心人數時，依 priority 保留較前面的核心
+        core_idxs = [
+            i for i, c in enumerate(contacts)
+            if bool(c.get("is_primary"))
+        ]
+        if len(core_idxs) > limit:
+            core_idxs_sorted = sorted(
+                core_idxs,
+                key=lambda i: int(contacts[i].get("priority") or 9999),
+            )
+            keep = set(core_idxs_sorted[:limit])
+            # 確保剛指定的目標一定留下
+            if target_idx not in keep:
+                keep = set(core_idxs_sorted[: max(0, limit - 1)] + [target_idx])
+                keep = set(list(keep)[:limit])
+            for i, c in enumerate(contacts):
+                if bool(c.get("is_primary")) and i not in keep:
+                    c["is_primary"] = False
+                    c["updated_at"] = now
+    else:
+        contacts[target_idx]["is_primary"] = False
+        contacts[target_idx]["updated_at"] = now
+        # 不可全部沒有核心：若無人是核心，把順位最高者補回
+        if contacts and not any(bool(c.get("is_primary")) for c in contacts):
+            ranked = sorted(range(len(contacts)), key=lambda i: int(contacts[i].get("priority") or 9999))
+            contacts[ranked[0]]["is_primary"] = True
+            contacts[ranked[0]]["updated_at"] = now
+
+    profile["contacts"] = contacts
+    save_state(data_file, state)
+    status = build_status(profile, state)
+    status["ok"] = True
+    status["updated_contact"] = contacts[target_idx]
+    return status, 200
+
+
+def member_refundable_orders(data_file, line_user_id, now=None):
+    """Return only this member's paid, unused orders still inside the 7-day window."""
+    owner_id = str(line_user_id or "").strip()
+    if not owner_id:
+        return {"error": "missing line_user_id"}, 400
+    now = now or current_app_time({})
+    state = load_state(data_file)
+    open_refunds = {
+        str(ticket.get("refund_order_id") or "")
+        for ticket in state.get("support_tickets", [])
+        if ticket.get("request_type") == "refund"
+        and str(ticket.get("line_user_id") or "") == owner_id
+        and str(ticket.get("status") or "").lower() not in {"resolved", "closed", "已結案"}
+    }
+    eligible = []
+    for order in state.get("orders", []):
+        if str(order.get("line_user_id") or "") != owner_id:
+            continue
+        if str(order.get("status") or "").lower() not in {"paid", "partially_refunded"}:
+            continue
+        if order.get("activated_at") or order.get("service_activated_at"):
+            continue
+        paid_at = parse_datetime(str(order.get("paid_at") or order.get("updated_at") or order.get("created_at") or ""))
+        if not paid_at or paid_at > now or now - paid_at > timedelta(days=7):
+            continue
+        order_id = str(order.get("order_id") or "")
+        if not order_id or order_id in open_refunds:
+            continue
+        eligible.append({
+            "order_id": order_id,
+            "plan": order.get("plan"),
+            "amount": order.get("amount"),
+            "currency": order.get("currency") or "TWD",
+            "paid_at": order.get("paid_at"),
+            "refund_deadline": (paid_at + timedelta(days=7)).isoformat(timespec="seconds"),
+        })
+    return {"orders": eligible}, 200
+
+
+def create_member_refund_request(data_file, payload, now=None, config=None):
+    """Create a manual-review refund ticket; this function never refunds money."""
+    owner_id = str(payload.get("line_user_id") or "").strip()
+    order_id = str(payload.get("order_id") or "").strip()
+    email = str(payload.get("email") or "").strip()
+    reason = str(payload.get("reason") or "").strip()
+    if not owner_id or not order_id or not reason:
+        return {"error": "missing_required_fields"}, 400
+    if not payload.get("unused_confirmed"):
+        return {"error": "unused_confirmation_required"}, 400
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return {"error": "valid_email_required"}, 400
+
+    now = now or current_app_time(config or {})
+    eligible, _ = member_refundable_orders(data_file, owner_id, now=now)
+    selected = next((row for row in eligible.get("orders", []) if row.get("order_id") == order_id), None)
+    if not selected:
+        state = load_state(data_file)
+        duplicate = next(
+            (
+                ticket for ticket in state.get("support_tickets", [])
+                if ticket.get("request_type") == "refund"
+                and str(ticket.get("line_user_id") or "") == owner_id
+                and str(ticket.get("refund_order_id") or "") == order_id
+                and str(ticket.get("status") or "").lower() not in {"resolved", "closed", "已結案"}
+            ),
+            None,
+        )
+        if duplicate:
+            return {"error": "refund_request_already_open", "ticket_id": duplicate.get("id")}, 409
+        return {"error": "refund_order_not_eligible"}, 404
+
+    state = load_state(data_file)
+    profile = get_profile(state, owner_id)
+    ticket = {
+        "id": f"AC-{now.strftime('%Y%m%d')}-{secrets.token_hex(3).upper()}",
+        "created_at": now.isoformat(timespec="seconds"),
+        "updated_at": now.isoformat(timespec="seconds"),
+        "line_user_id": owner_id,
+        "display_name": profile.get("display_name") or "LINE 使用者",
+        "email": email,
+        "reply_channel": "email",
+        "category": "會員與付款",
+        "subject": f"退款申請｜{order_id}",
+        "message": reason[:1000],
+        "status": "submitted",
+        "plan": profile.get("plan", "trial"),
+        "last_check_in": profile.get("last_check_in"),
+        "reply": "",
+        "replied_at": "",
+        "delivery_log": [],
+        "request_type": "refund",
+        "refund_order_id": order_id,
+        "refund_amount": selected.get("amount"),
+        "refund_paid_at": selected.get("paid_at"),
+        "refund_unused_confirmed": True,
+        "refund_review": "manual_required",
+    }
+    state.setdefault("support_tickets", []).append(ticket)
+    state["support_tickets"] = state["support_tickets"][-200:]
+    save_state(data_file, state)
+
+    cfg = config or {}
+    sender = cfg.get("SUPPORT_EMAIL_SENDER") or send_support_email
+    admin_email = str(cfg.get("SUPPORT_ADMIN_EMAIL") or os.environ.get("SUPPORT_ADMIN_EMAIL") or "alivecheckin.tw@gmail.com").strip()
+    messages = [
+        (
+            email,
+            f"每日平安已收到退款申請 {ticket['id']}",
+            f"我們已收到你的退款申請。\n工單編號：{ticket['id']}\n訂單編號：{order_id}\n客服會在 1～3 個工作天內以 Email 回覆。\n此信僅代表收件，不代表退款已核准。",
+            "member_confirmation",
+        ),
+        (
+            admin_email,
+            f"新退款申請 {ticket['id']}",
+            f"新退款申請\n工單編號：{ticket['id']}\n訂單編號：{order_id}\n請登入客服後台人工審核。",
+            "admin_notice",
+        ),
+    ]
+    for target, subject, body, kind in messages:
+        delivery = {"channel": "email", "kind": kind, "target": target, "created_at": now.isoformat(timespec="seconds")}
+        try:
+            result = sender(target, subject, body, cfg)
+            delivery.update({"status": "sent", "provider": result.get("provider", "email") if isinstance(result, dict) else "email"})
+        except Exception as exc:
+            delivery.update({"status": "failed", "error": str(exc)[:200]})
+        ticket["delivery_log"].append(delivery)
+    save_state(data_file, state)
+    return {"ticket": ticket, "manual_review": True}, 201
+
+
+def create_support_ticket(data_file, payload, config=None):
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    message = str(payload.get("message") or "").strip()
+    if not line_user_id or not message:
+        return {"error": "missing line_user_id or message"}, 400
+    state = load_state(data_file)
+    profile = get_profile(state, line_user_id)
+    email = str(payload.get("email") or profile.get("contact_email") or "").strip()
+    reply_channel = str(payload.get("reply_channel") or "").strip().lower()
+    if not reply_channel:
+        reply_channel = "email" if email else "line"
+    if reply_channel not in {"email", "line"}:
+        return {"error": "invalid reply_channel"}, 400
+    if reply_channel == "email" and not re.match(
+        r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email
+    ):
+        return {"error": "valid email required"}, 400
+    ticket = {
+        "id": secrets.token_urlsafe(8),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "line_user_id": line_user_id,
+        "display_name": str(payload.get("display_name") or profile.get("display_name") or "LINE 使用者"),
+        "email": email,
+        "reply_channel": reply_channel,
+        "category": str(payload.get("category") or "其他").strip()[:40],
+        "subject": str(payload.get("subject") or "").strip()[:120],
+        "message": message[:1000],
+        "status": "submitted",
+        "plan": profile.get("plan", "trial"),
+        "last_check_in": profile.get("last_check_in"),
+        "reply": "",
+        "replied_at": "",
+        "delivery_log": [],
+    }
+    tickets = state.setdefault("support_tickets", [])
+    tickets.append(ticket)
+    state["support_tickets"] = tickets[-200:]
+    save_state(data_file, state)
+    if config is not None:
+        cfg = config or {}
+        sender = cfg.get("SUPPORT_EMAIL_SENDER") or send_support_email
+        admin_email = str(cfg.get("SUPPORT_ADMIN_EMAIL") or os.environ.get("SUPPORT_ADMIN_EMAIL") or "alivecheckin.tw@gmail.com").strip()
+        notices = [
+            (admin_email, f"新客服工單 {ticket['id']}", f"新客服工單\n工單編號：{ticket['id']}\n問題分類：{ticket['category']}\n建立時間：{ticket['created_at']}\n請登入客服後台查看。", "admin_notice"),
+        ]
+        if email:
+            notices.insert(0, (email, f"每日平安已收到問題 {ticket['id']}", f"我們已收到你的問題。\n工單編號：{ticket['id']}\n問題分類：{ticket['category']}\n客服會在 1～3 個工作天內以 Email 回覆。", "member_confirmation"))
+        for target, subject, body, kind in notices:
+            delivery = {"channel": "email", "kind": kind, "target": target, "created_at": ticket["created_at"]}
+            try:
+                result = sender(target, subject, body, cfg)
+                delivery.update({"status": "sent", "provider": result.get("provider", "email") if isinstance(result, dict) else "email"})
+            except Exception as exc:
+                delivery.update({"status": "failed", "error": str(exc)[:200]})
+            ticket["delivery_log"].append(delivery)
+        save_state(data_file, state)
+    return {"ticket": ticket}, 201
+
+
+def member_support_tickets(data_file, line_user_id):
+    owner_id = str(line_user_id or "").strip()
+    if not owner_id:
+        return {"error": "missing line_user_id"}, 400
+    state = load_state(data_file)
+    tickets = [
+        ticket
+        for ticket in reversed(state.get("support_tickets", [])[-200:])
+        if str(ticket.get("line_user_id") or "") == owner_id
+    ]
+    return {"tickets": tickets}, 200
+
+
+def send_support_email(to_email, subject, message, config=None):
+    config = config or {}
+    host = str(config.get("SMTP_HOST") or os.environ.get("SMTP_HOST") or "").strip()
+    username = str(
+        config.get("SMTP_USERNAME") or os.environ.get("SMTP_USERNAME") or ""
+    ).strip()
+    password = str(
+        config.get("SMTP_PASSWORD") or os.environ.get("SMTP_PASSWORD") or ""
+    )
+    from_email = str(
+        config.get("SUPPORT_FROM_EMAIL")
+        or os.environ.get("SUPPORT_FROM_EMAIL")
+        or username
+    ).strip()
+    if not host or not username or not password or not from_email:
+        raise RuntimeError("support_email_not_configured")
+    port = int(config.get("SMTP_PORT") or os.environ.get("SMTP_PORT") or 587)
+    use_tls = str(
+        config.get("SMTP_USE_TLS")
+        if config.get("SMTP_USE_TLS") is not None
+        else os.environ.get("SMTP_USE_TLS", "true")
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    email = EmailMessage()
+    email["From"] = from_email
+    email["To"] = to_email
+    email["Subject"] = subject
+    email.set_content(message)
+    factory = config.get("SMTP_FACTORY") or smtplib.SMTP
+    with factory(host, port, timeout=10) as smtp:
+        if use_tls:
+            smtp.starttls()
+        smtp.login(username, password)
+        smtp.send_message(email)
+    return {"sent": True, "provider": "smtp"}
+
+
+def admin_support_tickets(data_file):
+    state = load_state(data_file)
+    tickets = list(reversed(state.get("support_tickets", [])[-100:]))
+    return {"tickets": tickets}
+
+
+def admin_reply_support_ticket(data_file, payload, config=None):
+    ticket_id = str(payload.get("ticket_id") or "").strip()
+    message = str(payload.get("message") or "").strip()
+    if not ticket_id or not message:
+        return {"error": "missing ticket_id or message"}, 400
+    state = load_state(data_file)
+    ticket = next((item for item in state.get("support_tickets", []) if item.get("id") == ticket_id), None)
+    if not ticket:
+        return {"error": "ticket not found"}, 404
+    reply_channel = str(
+        payload.get("reply_channel") or ticket.get("reply_channel") or "line"
+    ).lower()
+    now = datetime.now().isoformat(timespec="seconds")
+    delivery = {"channel": reply_channel, "status": "failed", "created_at": now}
+    try:
+        if reply_channel == "email":
+            email = str(ticket.get("email") or "").strip()
+            sender = (config or {}).get("SUPPORT_EMAIL_SENDER") or send_support_email
+            if not email:
+                return {"error": "ticket email is missing"}, 400
+            result = sender(
+                email,
+                str(ticket.get("subject") or "每日平安客服回覆"),
+                message,
+                config or {},
+            )
+            target = email
+        elif reply_channel == "line":
+            target = str(ticket.get("line_user_id") or "")
+            if target.startswith(("C", "R")):
+                return {"error": "line_private_reply_required"}, 400
+            token = (config or {}).get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+            sender = (config or {}).get("LINE_PUSH_SENDER") or line_push_message
+            if not token:
+                return {"error": "LINE_CHANNEL_ACCESS_TOKEN is not set"}, 400
+            result = sender(token, target, message)
+        else:
+            return {"error": "invalid reply_channel"}, 400
+    except Exception:
+        delivery["target"] = str(ticket.get("email") or ticket.get("line_user_id") or "")
+        # 工單維持待處理，讓後台仍能重試；另記錄本次寄送失敗。
+        ticket["status"] = ticket.get("status") or "submitted"
+        ticket["delivery_failed_at"] = now
+        ticket["reply_draft"] = message[:1000]
+        ticket["updated_at"] = now
+        ticket.setdefault("delivery_log", []).append(delivery)
+        save_state(data_file, state)
+        return {"error": "support_delivery_failed", "ticket": ticket}, 502
+    delivery.update({"status": "sent", "target": target})
+    ticket.setdefault("delivery_log", []).append(delivery)
+    ticket["status"] = (
+        "resolved"
+        if str(payload.get("status") or "") == "resolved"
+        else "waiting_user"
+    )
+    ticket["reply_channel"] = reply_channel
+    ticket["reply"] = message[:1000]
+    ticket["reply_draft"] = ""
+    ticket["replied_at"] = now
+    append_notification_log(state, "support_reply", target, "sent", message, json.dumps(result, ensure_ascii=False))
+    save_state(data_file, state)
+    return {"ticket": ticket, "result": result}, 200
+
+
+def export_account_data(data_file, payload):
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if not line_user_id:
+        return {"error": "missing line_user_id"}, 400
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if profile is None:
+        return {"error": "user not found"}, 404
+
+    return {
+        "exported_at": datetime.now().isoformat(timespec="seconds"),
+        "member": profile,
+        "orders": [order for order in state.get("orders", []) if order.get("line_user_id") == line_user_id],
+        "support_tickets": [ticket for ticket in state.get("support_tickets", []) if ticket.get("line_user_id") == line_user_id],
+        "guardian_groups": [
+            group for group in state.get("guardian_groups", {}).values()
+            if group.get("owner_line_user_id") == line_user_id
+        ],
+        "contact_rewards": [
+            reward for reward in state.get("contact_rewards", [])
+            if line_user_id in {reward.get("inviter_line_user_id"), reward.get("contact_line_user_id")}
+        ],
+        "notification_logs": [
+            log for log in state.get("notification_logs", [])
+            if line_user_id in {log.get("line_user_id"), log.get("target")}
+        ],
+    }, 200
+
+
+def delete_account(data_file, payload):
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if not line_user_id:
+        return {"error": "missing line_user_id"}, 400
+    state = load_state(data_file)
+    removed = state.get("users", {}).pop(line_user_id, None)
+    if removed is None:
+        return {"deleted": False, "line_user_id": line_user_id}, 200
+
+    for profile in state.get("users", {}).values():
+        profile["friends"] = [friend_id for friend_id in (profile.get("friends") or []) if friend_id != line_user_id]
+        for contact in profile.get("contacts") or []:
+            if contact.get("line_id") == line_user_id:
+                contact["line_id"] = ""
+                contact["consent_status"] = "revoked"
+                contact["note"] = "對方已刪除平台帳號"
+
+    state["friend_invites"] = {
+        code: invite for code, invite in state.get("friend_invites", {}).items()
+        if invite.get("line_user_id") != line_user_id
+    }
+    state["guardian_groups"] = {
+        group_id: group for group_id, group in state.get("guardian_groups", {}).items()
+        if group.get("owner_line_user_id") != line_user_id
+    }
+    state["contact_rewards"] = [
+        reward for reward in state.get("contact_rewards", [])
+        if line_user_id not in {reward.get("inviter_line_user_id"), reward.get("contact_line_user_id")}
+    ]
+    state["support_tickets"] = [
+        ticket for ticket in state.get("support_tickets", []) if ticket.get("line_user_id") != line_user_id
+    ]
+    state["notification_logs"] = [
+        log for log in state.get("notification_logs", [])
+        if line_user_id not in {log.get("line_user_id"), log.get("target")}
+    ]
+    for order in state.get("orders", []):
+        if order.get("line_user_id") == line_user_id:
+            order["line_user_id"] = "deleted-user"
+            order["display_name"] = "已刪除會員"
+            order["personal_data_removed_at"] = datetime.now().isoformat(timespec="seconds")
+    save_state(data_file, state)
+    return {"deleted": bool(removed), "line_user_id": line_user_id}, 200
+
+
+def delete_personal_history(data_file, payload):
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    record_type = str(payload.get("record_type") or "checkins").strip()
+    if not line_user_id:
+        return {"error": "missing line_user_id"}, 400
+    if record_type != "checkins":
+        return {"error": "unsupported record_type"}, 400
+
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if profile is None:
+        return {"error": "user not found"}, 404
+
+    removed_count = len(profile.get("history") or [])
+    profile["history"] = []
+    profile["last_check_in"] = None
+    profile["last_warning_cancelled_at"] = None
+    save_state(data_file, state)
+    return {
+        "deleted": True,
+        "record_type": record_type,
+        "removed_count": removed_count,
+        "line_user_id": line_user_id,
+    }, 200
+
+
+def _normalize_admin_password(value):
+    """Strip whitespace / paste junk so env file CRLF and zero-width chars don't break login."""
+    text = str(value or "")
+    for ch in ("\ufeff", "\u200b", "\u200c", "\u200d", "\u2060"):
+        text = text.replace(ch, "")
+    # Normalize common unicode dashes to ASCII hyphen (copy/paste from chat)
+    for ch in ("\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\ufe58", "\ufe63", "\uff0d"):
+        text = text.replace(ch, "-")
+    return text.strip()
+
+
+def _env_flag_on(name, config=None):
+    raw = os.environ.get(name)
+    if raw is None and config is not None:
+        raw = config.get(name, "")
+    return str(raw or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def admin_open_mode(config=None):
+    """Legacy compatibility hook; secure admin never permits open mode."""
+    return False
+
+
+def admin_allowed(config, password):
+    return admin_password_matches(config, password)
+
+
+def admin_auth_error_payload(config, password):
+    """Return (payload, http_status) when auth fails; None when allowed."""
+    if not admin_security_ready(config):
+        return {"error": "admin_not_configured"}, 503
+    if not admin_allowed(config, password):
+        return {"error": "unauthorized"}, 401
+    return None
+
+
+def admin_security_ready(config):
+    password = any(
+        _normalize_admin_password(config.get(name, ""))
+        for name in (
+            "ADMIN_PASSWORD",
+            "ADMIN_OPERATIONS_PASSWORD",
+            "ADMIN_FINANCE_PASSWORD",
+            "ADMIN_VIEWER_PASSWORD",
+        )
+    )
+    session_secret = str(config.get("ADMIN_SESSION_SECRET") or "").strip()
+    return bool(password and len(session_secret) >= 32)
+
+
+def account_migration_ready(config):
+    legacy_channel = str(
+        config.get("LEGACY_LINE_LOGIN_CHANNEL_ID") or ""
+    ).strip()
+    current_channel = str(config.get("LINE_LOGIN_CHANNEL_ID") or "").strip()
+    secret = str(config.get("ACCOUNT_MIGRATION_SECRET") or "").strip()
+    return bool(
+        legacy_channel
+        and current_channel
+        and len(secret.encode("utf-8")) >= 32
+    )
+
+
+ACCOUNT_MIGRATION_TICKET_RETENTION_DAYS = 30
+ACCOUNT_MIGRATION_TICKET_MAX_PER_SOURCE = 20
+ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX = 2000
+ACCOUNT_MIGRATION_AUDIT_RETENTION_DAYS = 90
+ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX = 1000
+ACCOUNT_MIGRATION_START_WINDOW_SECONDS = 600
+ACCOUNT_MIGRATION_START_MAX_PER_WINDOW = 5
+ACCOUNT_MIGRATION_INVALID_REDEEM_WINDOW_SECONDS = 600
+ACCOUNT_MIGRATION_INVALID_REDEEM_MAX_PER_WINDOW = 30
+
+
+def _account_migration_now(now=None):
+    value = now or datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _account_migration_datetime(value):
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return _account_migration_now(parsed)
+
+
+def purge_account_migration_history(state, now=None):
+    current = _account_migration_now(now)
+    ticket_cutoff = current - timedelta(
+        days=ACCOUNT_MIGRATION_TICKET_RETENTION_DAYS
+    )
+    audit_cutoff = current - timedelta(
+        days=ACCOUNT_MIGRATION_AUDIT_RETENTION_DAYS
+    )
+    tickets = state.get("account_migration_tickets") or {}
+    active_tickets = []
+    history_tickets = []
+    for key, ticket in tickets.items():
+        if not isinstance(ticket, dict):
+            continue
+        created = _account_migration_datetime(ticket.get("created_at"))
+        expires = _account_migration_datetime(ticket.get("expires_at"))
+        status = str(ticket.get("status") or "")
+        if status == "pending" and expires and expires > current:
+            active_tickets.append((key, ticket))
+        elif created and created >= ticket_cutoff:
+            history_tickets.append((key, ticket))
+    history_tickets.sort(
+        key=lambda item: str(item[1].get("created_at") or ""),
+        reverse=True,
+    )
+    history_capacity = max(
+        0,
+        ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX - len(active_tickets),
+    )
+    # Capacity is a write/history bound, never a reason to invalidate an
+    # inherited, unused ticket that has not expired.
+    retained_tickets = active_tickets + history_tickets[:history_capacity]
+    state["account_migration_tickets"] = dict(retained_tickets)
+
+    audit = [
+        event
+        for event in (state.get("account_migration_audit") or [])
+        if isinstance(event, dict)
+        and (
+            _account_migration_datetime(event.get("created_at"))
+            and _account_migration_datetime(event.get("created_at"))
+            >= audit_cutoff
+        )
+    ][-ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX:]
+    removed = {
+        "tickets": len(tickets) - len(state["account_migration_tickets"]),
+        "audit": len(state.get("account_migration_audit") or []) - len(audit),
+    }
+    state["account_migration_audit"] = audit
+    return removed
+
+
+def account_migration_code_digest(code, secret):
+    return hmac.new(
+        str(secret or "").encode("utf-8"),
+        str(code or "").encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def validate_account_migration_ticket(state, code, secret, now=None):
+    """Return a pending ticket or a fixed safe error category.
+
+    This helper only validates ticket state. Task 4 performs consumption and
+    profile mutation together inside the atomic persistence boundary.
+    """
+    raw_code = str(code or "").strip()
+    signing_secret = str(secret or "").strip()
+    if not raw_code or not signing_secret:
+        return None, "invalid_code"
+
+    expected_digest = account_migration_code_digest(raw_code, signing_secret)
+    matched = None
+    for ticket in (state.get("account_migration_tickets") or {}).values():
+        candidate = str((ticket or {}).get("code_digest") or "")
+        if secrets.compare_digest(candidate, expected_digest):
+            matched = ticket
+
+    if not isinstance(matched, dict):
+        return None, "invalid_code"
+    status = str(matched.get("status") or "")
+    if status == "used":
+        return None, "used_code"
+    expires_at = _account_migration_datetime(matched.get("expires_at"))
+    if status == "expired" or not expires_at:
+        return None, "expired_code"
+    if _account_migration_now(now) >= expires_at:
+        return None, "expired_code"
+    if status != "pending":
+        return None, "invalid_code"
+
+    old_line_user_id = str(matched.get("old_line_user_id") or "")
+    users = state.get("users") or {}
+    aliases = state.get("account_migration_aliases") or {}
+    if old_line_user_id not in users or old_line_user_id in aliases:
+        return None, "source_missing"
+    return matched, None
+
+
+def create_account_migration_ticket(
+    data_file,
+    old_line_user_id,
+    config,
+    now=None,
+):
+    if not account_migration_ready(config):
+        return {"ok": False, "error": "migration_unavailable"}, 503
+
+    verified_old_id = str(old_line_user_id or "").strip()
+    current = _account_migration_now(now)
+    current_iso = current.isoformat(timespec="seconds")
+    ttl_seconds = int(config.get("ACCOUNT_MIGRATION_TTL_SECONDS") or 600)
+    raw_code = secrets.token_urlsafe(32)
+    ticket_id = f"amt_{secrets.token_urlsafe(12)}"
+
+    def mutate(state):
+        purge_account_migration_history(state, current)
+        users = state.get("users") or {}
+        aliases = state.get("account_migration_aliases") or {}
+        if (
+            not verified_old_id
+            or verified_old_id not in users
+            or verified_old_id in aliases
+        ):
+            return {"ok": False, "error": "account_not_found"}, 404
+        tickets = state.setdefault("account_migration_tickets", {})
+        recent_cutoff = current - timedelta(
+            seconds=ACCOUNT_MIGRATION_START_WINDOW_SECONDS
+        )
+        recent = [
+            ticket for ticket in tickets.values()
+            if isinstance(ticket, dict)
+            and ticket.get("old_line_user_id") == verified_old_id
+            and (
+                _account_migration_datetime(ticket.get("created_at"))
+                and _account_migration_datetime(ticket.get("created_at"))
+                >= recent_cutoff
+            )
+        ]
+        source_tickets = [
+            ticket for ticket in tickets.values()
+            if isinstance(ticket, dict)
+            and ticket.get("old_line_user_id") == verified_old_id
+        ]
+        if (
+            len(recent) >= ACCOUNT_MIGRATION_START_MAX_PER_WINDOW
+            or len(source_tickets) >= ACCOUNT_MIGRATION_TICKET_MAX_PER_SOURCE
+            or len(tickets) >= ACCOUNT_MIGRATION_TICKET_GLOBAL_MAX
+        ):
+            return {"ok": False, "error": "rate_limited"}, 429
+        for ticket in tickets.values():
+            if (
+                isinstance(ticket, dict)
+                and ticket.get("old_line_user_id") == verified_old_id
+                and ticket.get("status") == "pending"
+            ):
+                ticket["status"] = "expired"
+                ticket["expires_at"] = current_iso
+        tickets[ticket_id] = {
+            "ticket_id": ticket_id,
+            "code_digest": account_migration_code_digest(
+                raw_code,
+                config.get("ACCOUNT_MIGRATION_SECRET"),
+            ),
+            "old_line_user_id": verified_old_id,
+            "created_at": current_iso,
+            "expires_at": (
+                current + timedelta(seconds=ttl_seconds)
+            ).isoformat(timespec="seconds"),
+            "used_at": "",
+            "status": "pending",
+        }
+        return {
+            "ok": True,
+            "migration_code": raw_code,
+            "expires_in": ttl_seconds,
+        }, 200
+
+    return mutate_state_atomically(data_file, mutate)
+
+
+def account_migration_ticket_status(
+    data_file,
+    old_line_user_id,
+    config,
+    now=None,
+):
+    safe_status = {
+        "ok": True,
+        "configured": account_migration_ready(config),
+        "pending": False,
+        "expires_in": 0,
+    }
+    if not safe_status["configured"]:
+        return safe_status
+
+    verified_old_id = str(old_line_user_id or "").strip()
+    state = load_state(data_file)
+    current = _account_migration_now(now)
+    remaining = 0
+    users = state.get("users") or {}
+    aliases = state.get("account_migration_aliases") or {}
+    source_exists = verified_old_id in users and verified_old_id not in aliases
+    for ticket in (state.get("account_migration_tickets") or {}).values():
+        if (
+            not isinstance(ticket, dict)
+            or ticket.get("old_line_user_id") != verified_old_id
+            or ticket.get("status") != "pending"
+        ):
+            continue
+        expires_at = _account_migration_datetime(ticket.get("expires_at"))
+        if not source_exists or not expires_at or current >= expires_at:
+            continue
+        remaining = max(remaining, int((expires_at - current).total_seconds()))
+
+    safe_status["pending"] = remaining > 0
+    safe_status["expires_in"] = remaining
+    return safe_status
+
+
+def admin_create_line_rebind_link(data_file, old_line_user_id, config, now=None):
+    """Issue an operator-controlled, one-time current-LIFF migration link."""
+    data, code = create_account_migration_ticket(
+        data_file,
+        old_line_user_id,
+        config,
+        now=now,
+    )
+    if code >= 400:
+        return data, code
+    liff_id = str(config.get("LIFF_ID") or DEFAULT_LIFF_ID).strip()
+    query = urllib.parse.urlencode({
+        "migration_code": data.pop("migration_code"),
+        "open": "member",
+    })
+    data.update({
+        "status": "pending",
+        "rebind_url": f"https://liff.line.me/{liff_id}?{query}",
+    })
+    return data, code
+
+_MIGRATION_PROFILE_LIST_KEYS = {
+    "contacts": ("id", "accepted_invite_id", "invite_id"),
+    "contacts_archived": ("id", "accepted_invite_id", "invite_id"),
+    "smart_reminders": ("id",),
+    "guarding_details": ("id", "line_user_id"),
+}
+
+_MIGRATION_PREFERENCE_KEYS = {
+    "preferences",
+    "interaction_state",
+    "smart_reminder_defaults",
+    "grace_hours",
+    "reminder_time",
+    "reminder_times",
+    "checkin_mode",
+    "auto_checkin_on_open",
+    "warning_cancel_minutes",
+    "alert_channels",
+    "attach_location_on_alert",
+    "contact_capacity_reminder_enabled",
+    "daily_checkin_reminder_enabled",
+    "guardian_details_reminder_enabled",
+    "expiry_remind_opt_out",
+}
+
+_MIGRATION_ENTITLEMENT_KEYS = {
+    "plan",
+    "membership_source",
+    "trial_started_at",
+    "trial_end",
+    "trial_policy_version",
+    "trial_notice_days_sent",
+    "trial_bonus_days",
+    "payment_status",
+    "paid_until",
+    "billing_cycle",
+    "payment_provider",
+    "payment_method_last4",
+    "next_billing_date",
+    "auto_renew_requested",
+    "auto_renew_enabled",
+    "auto_renew_status",
+    "plan_expired_at",
+    "contacts_retain_until",
+}
+
+
+def _migration_value_blank(value):
+    return value is None or value == "" or value == [] or value == {}
+
+
+def _migration_timestamp(value):
+    if not value:
+        return None
+    return _account_migration_datetime(value)
+
+
+def _migration_record_timestamp(record):
+    if not isinstance(record, dict):
+        return None
+    for key in ("updated_at", "accepted_at", "created_at"):
+        parsed = _migration_timestamp(record.get(key))
+        if parsed:
+            return parsed
+    return None
+
+
+def _migration_preference_timestamp(profile, key, value):
+    if isinstance(value, dict):
+        nested = _migration_timestamp(value.get("updated_at"))
+        if nested:
+            return nested
+    return (
+        _migration_timestamp((profile or {}).get(f"{key}_updated_at"))
+        or _migration_timestamp((profile or {}).get("preferences_updated_at"))
+    )
+
+
+def _migration_choose_record(legacy, current):
+    legacy_time = _migration_record_timestamp(legacy)
+    current_time = _migration_record_timestamp(current)
+    if current_time and (not legacy_time or current_time > legacy_time):
+        return copy.deepcopy(current)
+    return copy.deepcopy(legacy)
+
+
+def _migration_stable_value(record, keys):
+    if not isinstance(record, dict):
+        return ""
+    for key in keys:
+        value = str(record.get(key) or "").strip()
+        if value:
+            return f"{key}:{value}"
+    return ""
+
+
+def _merge_migration_records(legacy_rows, current_rows, keys, prefix):
+    merged = []
+    positions = {}
+    used_ids = {
+        str(row.get("id") or "").strip()
+        for row in [*(legacy_rows or []), *(current_rows or [])]
+        if isinstance(row, dict) and str(row.get("id") or "").strip()
+    }
+    generated_index = 0
+
+    for source_name, rows in (("legacy", legacy_rows or []), ("current", current_rows or [])):
+        for row in rows:
+            if not isinstance(row, dict):
+                row = {"value": copy.deepcopy(row)}
+            else:
+                row = copy.deepcopy(row)
+            stable = _migration_stable_value(row, keys)
+            if stable and stable in positions:
+                position = positions[stable]
+                if source_name == "current":
+                    merged[position] = _migration_choose_record(
+                        merged[position],
+                        row,
+                    )
+                continue
+            if not stable:
+                generated_index += 1
+                generated = f"migration-{prefix}-{generated_index:04d}"
+                while generated in used_ids:
+                    generated_index += 1
+                    generated = f"migration-{prefix}-{generated_index:04d}"
+                row["id"] = generated
+                used_ids.add(generated)
+                stable = f"id:{generated}"
+            positions[stable] = len(merged)
+            merged.append(row)
+    return merged
+
+
+def _migration_history_date(value):
+    if isinstance(value, dict):
+        raw = (
+            value.get("date")
+            or value.get("checkin_date")
+            or value.get("checked_at")
+            or value.get("created_at")
+        )
+    else:
+        raw = value
+    text = str(raw or "").strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return text
+    return date_string_in_taipei(text)
+
+
+def _merge_migration_history(legacy_rows, current_rows):
+    by_date = {}
+    undated = []
+    for row in [*(legacy_rows or []), *(current_rows or [])]:
+        normalized = _migration_history_date(row)
+        if normalized:
+            by_date[normalized] = normalized
+        else:
+            undated.append(copy.deepcopy(row))
+    return [*sorted(by_date), *undated]
+
+
+def _merge_migration_calendar_notes(legacy_notes, current_notes):
+    if isinstance(legacy_notes, dict) or isinstance(current_notes, dict):
+        merged = copy.deepcopy(legacy_notes) if isinstance(legacy_notes, dict) else {}
+        used_ids = set()
+        for notes in (legacy_notes, current_notes):
+            for value in (notes or {}).values() if isinstance(notes, dict) else []:
+                values = value if isinstance(value, list) else [value]
+                for item in values:
+                    if isinstance(item, dict) and item.get("id"):
+                        used_ids.add(str(item["id"]))
+        generated_index = 0
+
+        def normalized_note_records(value):
+            nonlocal generated_index
+            values = value if isinstance(value, list) else [value]
+            records = []
+            for item in values:
+                if isinstance(item, dict):
+                    record = copy.deepcopy(item)
+                else:
+                    record = {"content": str(item or "")}
+                if not str(record.get("id") or "").strip():
+                    generated_index += 1
+                    generated = f"migration-calendar-note-{generated_index:04d}"
+                    while generated in used_ids:
+                        generated_index += 1
+                        generated = f"migration-calendar-note-{generated_index:04d}"
+                    record["id"] = generated
+                    used_ids.add(generated)
+                records.append(record)
+            return records
+
+        for key, current_value in (
+            current_notes.items() if isinstance(current_notes, dict) else []
+        ):
+            if key not in merged:
+                merged[key] = copy.deepcopy(current_value)
+                continue
+            combined = []
+            positions = {}
+            for record in [
+                *normalized_note_records(merged[key]),
+                *normalized_note_records(current_value),
+            ]:
+                stable = str(record["id"])
+                if stable in positions:
+                    position = positions[stable]
+                    combined[position] = _migration_choose_record(
+                        combined[position],
+                        record,
+                    )
+                    continue
+                positions[stable] = len(combined)
+                combined.append(record)
+            merged[key] = combined[0] if len(combined) == 1 else combined
+        return merged
+    return _merge_migration_records(
+        legacy_notes or [],
+        current_notes or [],
+        ("id",),
+        "calendar-note",
+    )
+
+
+def _migration_entitlement_active(profile, now):
+    plan = str((profile or {}).get("plan") or "")
+    if plan not in PLAN_RANK:
+        return False
+    if plan == "trial":
+        expires_at = _migration_timestamp((profile or {}).get("trial_end"))
+        return bool(expires_at and expires_at > now)
+    if str((profile or {}).get("payment_status") or "") != "active":
+        return False
+    expires_at = _migration_timestamp((profile or {}).get("paid_until"))
+    return expires_at is None or expires_at > now
+
+
+def _migration_entitlement_expiry(profile):
+    plan = str((profile or {}).get("plan") or "")
+    key = "trial_end" if plan == "trial" else "paid_until"
+    return _migration_timestamp((profile or {}).get(key))
+
+
+def _migration_choose_entitlement(legacy_profile, current_profile, now):
+    candidates = [
+        profile
+        for profile in (legacy_profile or {}, current_profile or {})
+        if _migration_entitlement_active(profile, now)
+    ]
+    if not candidates:
+        return legacy_profile or current_profile or {}
+
+    def entitlement_key(profile):
+        expiry = _migration_entitlement_expiry(profile)
+        expiry_score = expiry.timestamp() if expiry else float("inf")
+        return (PLAN_RANK.get(str(profile.get("plan") or ""), -1), expiry_score)
+
+    return max(candidates, key=entitlement_key)
+
+
+def _migration_location_active(location, now):
+    if not isinstance(location, dict):
+        return False
+    if not location.get("active") and not location.get("sharing"):
+        return False
+    if location.get("until_stop"):
+        return True
+    expires_at = _migration_timestamp(location.get("expires_at"))
+    return bool(expires_at and expires_at > now)
+
+
+def _merge_migration_location(legacy_location, current_location, now):
+    legacy_active = _migration_location_active(legacy_location, now)
+    current_active = _migration_location_active(current_location, now)
+    if legacy_active and current_active:
+        return _migration_choose_record(legacy_location, current_location)
+    if current_active:
+        return copy.deepcopy(current_location)
+    if legacy_active:
+        return copy.deepcopy(legacy_location)
+    return {}
+
+
+def merge_migration_profiles(old_profile, new_profile, now=None):
+    """Deterministically merge two verified Provider profiles.
+
+    Stable business identifiers drive collection deduplication. Display names
+    and other human-readable attributes are never identity keys.
+    """
+    legacy = copy.deepcopy(old_profile or {})
+    current = copy.deepcopy(new_profile or {})
+    current_now = _account_migration_now(now)
+    merged = copy.deepcopy(legacy)
+
+    for key, value in current.items():
+        if key in {
+            "line_user_id",
+            "history",
+            "calendar_notes",
+            "location",
+            "friends",
+            "guardian_group_ids",
+            "guarding_for",
+            "smart_reminder_sent_keys",
+            *_MIGRATION_PROFILE_LIST_KEYS,
+            *_MIGRATION_ENTITLEMENT_KEYS,
+            *_MIGRATION_PREFERENCE_KEYS,
+        }:
+            continue
+        if key == "display_name" and is_placeholder_display_name(value):
+            continue
+        if _migration_value_blank(value):
+            continue
+        if key in DEFAULT_PROFILE and value == DEFAULT_PROFILE.get(key):
+            continue
+        merged[key] = copy.deepcopy(value)
+
+    merged["history"] = _merge_migration_history(
+        legacy.get("history"),
+        current.get("history"),
+    )
+    for key, stable_keys in _MIGRATION_PROFILE_LIST_KEYS.items():
+        merged[key] = _merge_migration_records(
+            legacy.get(key),
+            current.get(key),
+            stable_keys,
+            key.replace("_", "-"),
+        )
+    merged["calendar_notes"] = _merge_migration_calendar_notes(
+        legacy.get("calendar_notes"),
+        current.get("calendar_notes"),
+    )
+    for key in (
+        "friends",
+        "guardian_group_ids",
+        "guarding_for",
+        "smart_reminder_sent_keys",
+    ):
+        merged[key] = list(
+            dict.fromkeys([*(legacy.get(key) or []), *(current.get(key) or [])])
+        )
+
+    for key in _MIGRATION_PREFERENCE_KEYS:
+        legacy_value = legacy.get(key)
+        current_value = current.get(key)
+        legacy_time = _migration_preference_timestamp(legacy, key, legacy_value)
+        current_time = _migration_preference_timestamp(current, key, current_value)
+        if current_time and (not legacy_time or current_time > legacy_time):
+            merged[key] = copy.deepcopy(current_value)
+        elif key in legacy:
+            merged[key] = copy.deepcopy(legacy_value)
+        elif key in current:
+            merged[key] = copy.deepcopy(current_value)
+
+    entitlement = _migration_choose_entitlement(legacy, current, current_now)
+    for key in _MIGRATION_ENTITLEMENT_KEYS:
+        if key in entitlement:
+            merged[key] = copy.deepcopy(entitlement[key])
+
+    merged["location"] = _merge_migration_location(
+        legacy.get("location"),
+        current.get("location"),
+        current_now,
+    )
+    merged["line_user_id"] = str(current.get("line_user_id") or "").strip()
+    return merged
+
+
+_MIGRATION_REFERENCE_SCALAR_FIELDS = {
+    "line_user_id",
+    "line_id",
+    "owner_line_user_id",
+    "member_line_user_id",
+    "requester_line_user_id",
+    "payer_line_user_id",
+    "recipient_line_user_id",
+    "inviter_line_user_id",
+    "contact_line_user_id",
+    "guardian_line_user_id",
+    "acceptor_line_user_id",
+    "grantee_line_user_id",
+    "accepted_by",
+    "invited_by",
+    "target",
+}
+
+_MIGRATION_REFERENCE_LIST_FIELDS = {
+    "admin_line_user_ids",
+    "member_ids_at_bind",
+    "member_line_user_ids",
+    "member_user_ids",
+    "members",
+    "friends",
+    "guarding_for",
+}
+
+_MIGRATION_TOP_LEVEL_COLLECTION_KEYS = {
+    "orders": ("order_id", "merchant_order_id", "merchant_trade_no"),
+    "payment_records": ("transaction_id", "order_id", "merchant_order_id"),
+    "payments": ("transaction_id", "order_id", "merchant_order_id"),
+    "support_tickets": ("id", "ticket_id"),
+    "privacy_requests": ("id", "request_id"),
+    "notification_logs": ("id", "log_id", "event_id"),
+    "checkin_warnings": ("id", "event_id", "log_id"),
+    "checkin_warning_logs": ("id", "event_id", "log_id"),
+    "sos_logs": ("id", "event_id", "log_id"),
+    "contact_rewards": ("id", "reward_id"),
+}
+
+_MIGRATION_INDEX_KEYS = {
+    "sos_pending",
+    "location_grants",
+    "checkin_warning_index",
+    "location_grant_index",
+}
+
+
+def _reindex_migration_record(record, old_id, new_id, migration_event_id):
+    if not isinstance(record, dict):
+        return False
+    changed = False
+    for key, value in list(record.items()):
+        if key in _MIGRATION_REFERENCE_SCALAR_FIELDS:
+            if str(value or "") == old_id:
+                record[key] = new_id
+                changed = True
+            continue
+        if key in _MIGRATION_REFERENCE_LIST_FIELDS and isinstance(value, list):
+            replaced = []
+            list_changed = False
+            for item in value:
+                if isinstance(item, dict):
+                    nested_changed = _reindex_migration_record(
+                        item,
+                        old_id,
+                        new_id,
+                        migration_event_id,
+                    )
+                    list_changed = list_changed or nested_changed
+                    replaced.append(item)
+                elif str(item or "") == old_id:
+                    replaced.append(new_id)
+                    list_changed = True
+                else:
+                    replaced.append(item)
+            if list_changed:
+                deduped = []
+                seen_scalars = set()
+                for item in replaced:
+                    if isinstance(item, dict):
+                        deduped.append(item)
+                        continue
+                    marker = str(item)
+                    if marker in seen_scalars:
+                        continue
+                    seen_scalars.add(marker)
+                    deduped.append(item)
+                record[key] = deduped
+                changed = True
+            continue
+        if isinstance(value, dict):
+            changed = (
+                _reindex_migration_record(
+                    value,
+                    old_id,
+                    new_id,
+                    migration_event_id,
+                )
+                or changed
+            )
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    changed = (
+                        _reindex_migration_record(
+                            item,
+                            old_id,
+                            new_id,
+                            migration_event_id,
+                        )
+                        or changed
+                    )
+    if changed:
+        record["migration_event_id"] = migration_event_id
+    return changed
+
+
+def _dedupe_migration_collection(rows, stable_keys, prefix, migration_event_id):
+    deduped = []
+    positions = {}
+    used_ids = {
+        str(row.get("id") or "").strip()
+        for row in rows
+        if isinstance(row, dict) and str(row.get("id") or "").strip()
+    }
+    generated_index = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            deduped.append(row)
+            continue
+        stable = _migration_stable_value(row, stable_keys)
+        if not stable:
+            generated_index += 1
+            generated = f"migration-{prefix}-{generated_index:04d}"
+            while generated in used_ids:
+                generated_index += 1
+                generated = f"migration-{prefix}-{generated_index:04d}"
+            row["id"] = generated
+            used_ids.add(generated)
+            deduped.append(row)
+            continue
+        if stable not in positions:
+            positions[stable] = len(deduped)
+            deduped.append(row)
+            continue
+
+        position = positions[stable]
+        previous = deduped[position]
+        winner = _migration_choose_record(previous, row)
+        loser = row if winner == previous else previous
+        combined = copy.deepcopy(loser)
+        combined.update(winner)
+        combined["migration_event_id"] = migration_event_id
+        deduped[position] = combined
+    return deduped
+
+
+def reindex_account_references(
+    state,
+    old_id,
+    new_id,
+    migration_event_id,
+    now=None,
+):
+    """Replace exact account references without rewriting historical prose."""
+    source_id = str(old_id or "").strip()
+    target_id = str(new_id or "").strip()
+    if not source_id or not target_id:
+        raise ValueError("missing_identity")
+    if source_id == target_id:
+        raise ValueError("same_identity")
+
+    event_id = str(migration_event_id or "").strip()
+    if not event_id:
+        raise ValueError("missing_migration_event")
+    reindexed_records = 0
+
+    for user_id, profile in (state.get("users") or {}).items():
+        if user_id in {source_id, target_id} or not isinstance(profile, dict):
+            continue
+        if _reindex_migration_record(profile, source_id, target_id, event_id):
+            reindexed_records += 1
+
+    for group in (state.get("guardian_groups") or {}).values():
+        if isinstance(group, dict) and _reindex_migration_record(
+            group,
+            source_id,
+            target_id,
+            event_id,
+        ):
+            reindexed_records += 1
+
+    for invite in (state.get("friend_invites") or {}).values():
+        if isinstance(invite, dict) and _reindex_migration_record(
+            invite,
+            source_id,
+            target_id,
+            event_id,
+        ):
+            reindexed_records += 1
+
+    for collection_key, stable_keys in _MIGRATION_TOP_LEVEL_COLLECTION_KEYS.items():
+        rows = state.get(collection_key) or []
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if _reindex_migration_record(
+                row,
+                source_id,
+                target_id,
+                event_id,
+            ):
+                reindexed_records += 1
+        state[collection_key] = _dedupe_migration_collection(
+            rows,
+            stable_keys,
+            collection_key.replace("_", "-"),
+            event_id,
+        )
+
+    for index_key in _MIGRATION_INDEX_KEYS:
+        index = state.get(index_key) or {}
+        if not isinstance(index, dict):
+            continue
+        was_rekeyed = source_id in index
+        if source_id in index:
+            source_record = index.pop(source_id)
+            if target_id in index:
+                index[target_id] = _migration_choose_record(
+                    source_record,
+                    index[target_id],
+                )
+            else:
+                index[target_id] = source_record
+        record = index.get(target_id)
+        if isinstance(record, dict):
+            changed = _reindex_migration_record(
+                record,
+                source_id,
+                target_id,
+                event_id,
+            )
+            if changed or was_rekeyed:
+                record["migration_event_id"] = event_id
+                reindexed_records += 1
+        state[index_key] = index
+
+    return {"ok": True, "reindexed_records": reindexed_records}
+
+
+def create_account_migration_alias(state, old_id, new_id, now=None):
+    source_id = str(old_id or "").strip()
+    target_id = str(new_id or "").strip()
+    if not source_id or not target_id:
+        raise ValueError("missing_identity")
+    if source_id == target_id:
+        raise ValueError("same_identity")
+    current_iso = _account_migration_now(now).isoformat(timespec="seconds")
+    state.setdefault("account_migration_aliases", {})[source_id] = {
+        "target_line_user_id": target_id,
+        "created_at": current_iso,
+        "status": "disabled",
+    }
+    return state["account_migration_aliases"][source_id]
+
+
+def _account_migration_record_references(record, line_user_id):
+    if not isinstance(record, dict):
+        return False
+    return any(
+        str(record.get(key) or "") == line_user_id
+        for key in _MIGRATION_REFERENCE_SCALAR_FIELDS
+    )
+
+
+def _account_migration_safe_counts(state, profile, line_user_id):
+    def owned_count(collection_key):
+        return sum(
+            1
+            for record in (state.get(collection_key) or [])
+            if _account_migration_record_references(record, line_user_id)
+        )
+
+    return {
+        "checkins": len(profile.get("history") or []),
+        "contacts": len(profile.get("contacts") or []),
+        "groups": len(profile.get("guardian_group_ids") or []),
+        "reminders": len(profile.get("smart_reminders") or []),
+        "orders": owned_count("orders"),
+        "requests": (
+            owned_count("support_tickets")
+            + owned_count("privacy_requests")
+        ),
+    }
+
+
+def _append_account_migration_failure_audit(state, category, now):
+    purge_account_migration_history(state, now)
+    state.setdefault("account_migration_audit", []).append({
+        "event_id": f"ame_{secrets.token_urlsafe(12)}",
+        "status": "failed",
+        "created_at": now.isoformat(timespec="seconds"),
+        "failure_category": str(category),
+        "counts": {
+            "checkins": 0,
+            "contacts": 0,
+            "groups": 0,
+            "reminders": 0,
+            "orders": 0,
+            "requests": 0,
+        },
+    })
+    state["account_migration_audit"] = state["account_migration_audit"][
+        -ACCOUNT_MIGRATION_AUDIT_GLOBAL_MAX:
+    ]
+
+
+def _account_migration_snapshot(
+    state,
+    ticket,
+    old_line_user_id,
+    new_line_user_id,
+    event_id,
+    now,
+):
+    users = state.get("users") or {}
+    affected_users = {}
+    for user_id, profile in users.items():
+        if (
+            user_id in {old_line_user_id, new_line_user_id}
+            or not isinstance(profile, dict)
+        ):
+            continue
+        reindexed_probe = copy.deepcopy(profile)
+        if _reindex_migration_record(
+            reindexed_probe,
+            old_line_user_id,
+            new_line_user_id,
+            event_id,
+        ):
+            affected_users[user_id] = copy.deepcopy(profile)
+    affected_keys = {
+        "guardian_groups",
+        "friend_invites",
+        "account_migration_aliases",
+        *_MIGRATION_TOP_LEVEL_COLLECTION_KEYS,
+        *_MIGRATION_INDEX_KEYS,
+    }
+    snapshot_id = f"ams_{secrets.token_urlsafe(12)}"
+    return snapshot_id, {
+        "snapshot_id": snapshot_id,
+        "event_id": event_id,
+        "created_at": now.isoformat(timespec="seconds"),
+        "purge_after": (now + timedelta(days=30)).isoformat(timespec="seconds"),
+        "old_profile": copy.deepcopy(users.get(old_line_user_id)),
+        "new_profile": (
+            copy.deepcopy(users.get(new_line_user_id))
+            if new_line_user_id in users
+            else None
+        ),
+        "migration_ticket": copy.deepcopy(ticket),
+        "affected_users": affected_users,
+        "affected_top_level_records": {
+            key: copy.deepcopy(state.get(key))
+            for key in sorted(affected_keys)
+            if key in state
+        },
+    }
+
+
+def redeem_account_migration_ticket(
+    data_file,
+    code,
+    new_line_user_id,
+    config,
+    now=None,
+):
+    if not account_migration_ready(config):
+        return {"ok": False, "error": "migration_unavailable"}, 503
+
+    current = _account_migration_now(now)
+    verified_new_id = str(new_line_user_id or "").strip()
+    raw_code = str(code or "").strip()
+
+    def mutate(state):
+        purge_account_migration_history(state, current)
+        invalid_cutoff = current - timedelta(
+            seconds=ACCOUNT_MIGRATION_INVALID_REDEEM_WINDOW_SECONDS
+        )
+        invalid_recent = sum(
+            1
+            for event in (state.get("account_migration_audit") or [])
+            if isinstance(event, dict)
+            and event.get("failure_category") == "invalid_code"
+            and (
+                _account_migration_datetime(event.get("created_at"))
+                and _account_migration_datetime(event.get("created_at"))
+                >= invalid_cutoff
+            )
+        )
+        if invalid_recent >= ACCOUNT_MIGRATION_INVALID_REDEEM_MAX_PER_WINDOW:
+            return {"ok": False, "error": "rate_limited"}, 429
+        ticket, ticket_error = validate_account_migration_ticket(
+            state,
+            raw_code,
+            config.get("ACCOUNT_MIGRATION_SECRET"),
+            now=current,
+        )
+        error_statuses = {
+            "invalid_code": 404,
+            "expired_code": 410,
+            "used_code": 409,
+            "source_missing": 404,
+        }
+        if ticket_error:
+            _append_account_migration_failure_audit(
+                state,
+                ticket_error,
+                current,
+            )
+            return (
+                {"ok": False, "error": ticket_error},
+                error_statuses.get(ticket_error, 409),
+            )
+
+        old_line_user_id = str(ticket.get("old_line_user_id") or "").strip()
+        aliases = state.get("account_migration_aliases") or {}
+        if (
+            not verified_new_id
+            or old_line_user_id == verified_new_id
+            or verified_new_id in aliases
+        ):
+            _append_account_migration_failure_audit(
+                state,
+                "unsafe_conflict",
+                current,
+            )
+            return {"ok": False, "error": "unsafe_conflict"}, 409
+
+        users = state.setdefault("users", {})
+        old_profile = users.get(old_line_user_id)
+        if not isinstance(old_profile, dict):
+            _append_account_migration_failure_audit(
+                state,
+                "source_missing",
+                current,
+            )
+            return {"ok": False, "error": "source_missing"}, 404
+        new_profile = users.get(verified_new_id)
+        if new_profile is not None and not isinstance(new_profile, dict):
+            _append_account_migration_failure_audit(
+                state,
+                "unsafe_conflict",
+                current,
+            )
+            return {"ok": False, "error": "unsafe_conflict"}, 409
+
+        event_id = f"ame_{secrets.token_urlsafe(12)}"
+        snapshot_id, snapshot = _account_migration_snapshot(
+            state,
+            ticket,
+            old_line_user_id,
+            verified_new_id,
+            event_id,
+            current,
+        )
+        state.setdefault("account_migration_snapshots", {})[snapshot_id] = snapshot
+
+        merged_profile = merge_migration_profiles(
+            old_profile,
+            new_profile or {
+                **DEFAULT_PROFILE,
+                "line_user_id": verified_new_id,
+            },
+            now=current,
+        )
+        reindex_account_references(
+            state,
+            old_line_user_id,
+            verified_new_id,
+            event_id,
+            now=current,
+        )
+        _reindex_migration_record(
+            merged_profile,
+            old_line_user_id,
+            verified_new_id,
+            event_id,
+        )
+        users[verified_new_id] = merged_profile
+        users.pop(old_line_user_id, None)
+        create_account_migration_alias(
+            state,
+            old_line_user_id,
+            verified_new_id,
+            now=current,
+        )
+
+        ticket["status"] = "used"
+        ticket["used_at"] = current.isoformat(timespec="seconds")
+        ticket["migration_event_id"] = event_id
+        counts = _account_migration_safe_counts(
+            state,
+            merged_profile,
+            verified_new_id,
+        )
+        state.setdefault("account_migration_audit", []).append({
+            "event_id": event_id,
+            "status": "success",
+            "created_at": current.isoformat(timespec="seconds"),
+            "failure_category": "",
+            "counts": counts,
+        })
+        return {
+            "ok": True,
+            "status": "migrated",
+            "counts": counts,
+        }, 200
+
+    try:
+        return mutate_state_atomically(data_file, mutate)
+    except Exception:
+        try:
+            mutate_state_atomically(
+                data_file,
+                lambda state: _append_account_migration_failure_audit(
+                    state,
+                    "migration_failed",
+                    current,
+                ),
+            )
+        except Exception:
+            pass
+        return {"ok": False, "error": "migration_failed"}, 500
+
+
+def purge_account_migration_snapshots(state, now=None):
+    current = _account_migration_now(now)
+    snapshots = state.get("account_migration_snapshots") or {}
+    retained = {}
+    removed = 0
+    for snapshot_id, snapshot in snapshots.items():
+        purge_after = _account_migration_datetime(
+            (snapshot or {}).get("purge_after")
+            if isinstance(snapshot, dict)
+            else None
+        )
+        if purge_after and purge_after <= current:
+            removed += 1
+            continue
+        retained[snapshot_id] = snapshot
+    state["account_migration_snapshots"] = retained
+    return removed
+
+
+def admin_password_matches(config, candidate):
+    return admin_role_for_password(config, candidate) is not None
+
+
+ADMIN_ROLE_PERMISSIONS = {
+    "super_admin": {
+        "backup.manage",
+        "beta.manage",
+        "incident.manage",
+        "member.manage",
+        "notification.manage",
+        "order.manage",
+        "privacy.manage",
+        "support.manage",
+        "system.manage",
+    },
+    "operations": {
+        "beta.manage",
+        "incident.manage",
+        "member.manage",
+        "notification.manage",
+        "privacy.manage",
+        "support.manage",
+    },
+    "finance": {"order.manage"},
+    "viewer": set(),
+}
+
+
+def admin_role_for_password(config, candidate):
+    if not admin_security_ready(config):
+        return None
+    got = _normalize_admin_password(candidate)
+    if not got:
+        return None
+    role_passwords = (
+        ("super_admin", "ADMIN_PASSWORD"),
+        ("operations", "ADMIN_OPERATIONS_PASSWORD"),
+        ("finance", "ADMIN_FINANCE_PASSWORD"),
+        ("viewer", "ADMIN_VIEWER_PASSWORD"),
+    )
+    for role, config_name in role_passwords:
+        expected = _normalize_admin_password(config.get(config_name, ""))
+        if expected and secrets.compare_digest(expected, got):
+            return role
+    return None
+
+
+def admin_permissions_for_role(role):
+    return sorted(ADMIN_ROLE_PERMISSIONS.get(str(role or ""), set()))
+
+
+ADMIN_LOGIN_ATTEMPTS = {}
+
+
+def _admin_login_attempts(client_key, now=None):
+    now = now or datetime.now()
+    cutoff = now - timedelta(minutes=10)
+    recent = [
+        value for value in ADMIN_LOGIN_ATTEMPTS.get(client_key, [])
+        if value >= cutoff
+    ]
+    ADMIN_LOGIN_ATTEMPTS[client_key] = recent
+    return recent
+
+
+def admin_login_rate_limited(client_key, now=None):
+    return len(_admin_login_attempts(client_key, now)) >= 5
+
+
+def record_admin_login_failure(client_key, now=None):
+    now = now or datetime.now()
+    recent = _admin_login_attempts(client_key, now)
+    recent.append(now)
+    ADMIN_LOGIN_ATTEMPTS[client_key] = recent[-5:]
+
+
+_ADMIN_AUDIT_SENSITIVE_KEY_PARTS = (
+    "password",
+    "passwd",
+    "token",
+    "secret",
+    "csrf",
+    "authorization",
+    "cookie",
+    "email",
+    "phone",
+    "mobile",
+    "address",
+    "lineuserid",
+    "userid",
+    "displayname",
+    "fullname",
+    "latitude",
+    "longitude",
+    "location",
+    "ipaddress",
+    "remoteaddr",
+)
+
+
+def _sanitize_admin_audit_metadata(value):
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            compact_key = re.sub(r"[^a-z0-9]", "", str(key).casefold())
+            if (
+                compact_key in {"name", "username"}
+                or any(
+                    part in compact_key
+                    for part in _ADMIN_AUDIT_SENSITIVE_KEY_PARTS
+                )
+            ):
+                continue
+            cleaned[str(key)] = _sanitize_admin_audit_metadata(item)
+        return cleaned
+    if isinstance(value, (list, tuple, set)):
+        return [_sanitize_admin_audit_metadata(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def append_admin_audit(data_file, action, status, metadata=None):
+    state = load_state(data_file)
+    logs = list(state.get("admin_audit_logs") or [])
+    logs.append({
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "action": str(action),
+        "status": str(status),
+        "metadata": _sanitize_admin_audit_metadata(dict(metadata or {})),
+    })
+    state["admin_audit_logs"] = logs[-200:]
+    save_state(data_file, state)
+
+
+ADMIN_TEST_CENTER_TESTS = {
+    "daily_greeting": ("每日問候推播", "line"),
+    "trial_14_notice": ("14 天體驗提醒", "line"),
+    "beta_21_notice": ("21 天封測提醒", "line"),
+    "paid_expiry_notice": ("付費方案到期提醒", "line"),
+    "payment_restore": ("付款後恢復原設定", "simulation"),
+    "sos_location": ("SOS、取消與定位通知", "line"),
+    "guardian_invite": ("核心守護人邀請綁定", "line"),
+    "beta_feedback_1900": ("19:00 封測詢問", "line"),
+    "stop_renewal_notice": ("不再提醒我", "simulation"),
+    "r2_backup": ("R2 加密備份", "r2"),
+}
+
+
+def _test_line_user_ids(config):
+    raw = config.get("TEST_LINE_USER_IDS") or ""
+    if isinstance(raw, (list, tuple, set)):
+        values = raw
+    else:
+        values = re.split(r"[,;；\s]+", str(raw))
+    return [str(value).strip() for value in values if str(value).strip()]
+
+
+def _masked_test_account(line_user_id):
+    digest = hashlib.sha256(str(line_user_id).encode("utf-8")).hexdigest()[:8]
+    return {"id": digest, "label": f"測試帳號 …{digest[-4:]}"}
+
+
+def _test_center_integrations(config):
+    configured = lambda key: bool(str(config.get(key) or "").strip())
+    return {
+        "line": {
+            "configured": configured("LINE_CHANNEL_ACCESS_TOKEN"),
+            "label": "LINE 推播",
+        },
+        "r2": {
+            "configured": all(configured(key) for key in (
+                "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY",
+                "R2_BUCKET", "R2_BACKUP_ENCRYPTION_KEY",
+            )),
+            "label": "R2 加密備份",
+        },
+        "ga4": {
+            "configured": configured("GA4_MEASUREMENT_ID")
+            and configured("GA4_PROPERTY_ID")
+            and configured("GA4_SERVICE_ACCOUNT_JSON"),
+            "label": "GA4 報表",
+        },
+        "payment": {
+            "configured": (
+                all(configured(key) for key in (
+                    "ECPAY_MERCHANT_ID", "ECPAY_HASH_KEY", "ECPAY_HASH_IV",
+                ))
+                or all(configured(key) for key in (
+                    "NEWEBPAY_MERCHANT_ID", "NEWEBPAY_HASH_KEY", "NEWEBPAY_HASH_IV",
+                ))
+            ),
+            "live": (
+                str(config.get("ECPAY_STAGE") or "sandbox").lower() == "production"
+                or str(config.get("NEWEBPAY_STAGE") or "sandbox").lower() == "production"
+            ),
+            "label": "金流",
+        },
+    }
+
+
+def admin_test_center_status(data_file, config):
+    state = load_state(data_file)
+    accounts = _test_line_user_ids(config)
+    return {
+        "test_mode": True,
+        "test_accounts": [_masked_test_account(item) for item in accounts],
+        "integrations": _test_center_integrations(config),
+        "tests": [
+            {"id": test_id, "label": label, "kind": kind}
+            for test_id, (label, kind) in ADMIN_TEST_CENTER_TESTS.items()
+        ],
+        "recent_runs": list(reversed(state.get("test_center_runs") or []))[:20],
+    }
+
+
+def _test_center_message(test_id):
+    label = ADMIN_TEST_CENTER_TESTS[test_id][0]
+    details = {
+        "daily_greeting": "這是每日問候推播測試，請確認文字與按鈕顯示正常。",
+        "trial_14_notice": "這是 14 天體驗第 7／12／14 天提醒預覽。",
+        "beta_21_notice": "這是 21 天封測第 18／20／21 天提醒預覽。",
+        "paid_expiry_notice": "這是付費方案到期前 7／3／1 天與到期日提醒預覽。",
+        "sos_location": "這是 SOS、取消 SOS 與定位通知的安全預覽，不會建立真實事件。",
+        "guardian_invite": "這是核心守護人邀請與綁定說明預覽。",
+        "beta_feedback_1900": "這是每天 19:00 封測使用詢問預覽。",
+    }
+    return f"【測試模式】{label}\n{details.get(test_id, '安全測試預覽')}\n不會扣款、不會變更方案。"
+
+
+def run_admin_test(data_file, config, payload):
+    payload = payload if isinstance(payload, dict) else {}
+    test_id = str(payload.get("test_id") or "").strip()
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if test_id not in ADMIN_TEST_CENTER_TESTS:
+        return {"ok": False, "error": "unknown_test"}, 400
+    allowed = _test_line_user_ids(config)
+    account_id = str(payload.get("account_id") or "").strip()
+    if not line_user_id and account_id:
+        line_user_id = next(
+            (
+                item for item in allowed
+                if _masked_test_account(item)["id"] == account_id
+            ),
+            "",
+        )
+    if line_user_id not in allowed:
+        return {"ok": False, "error": "test_recipient_not_allowed"}, 403
+    label, kind = ADMIN_TEST_CENTER_TESTS[test_id]
+    status = "success"
+    error = ""
+    result = {"ok": True, "test_id": test_id, "label": label, "test_mode": True}
+    try:
+        if kind == "line":
+            token = str(config.get("LINE_CHANNEL_ACCESS_TOKEN") or "").strip()
+            if not token:
+                raise ValueError("line_not_configured")
+            sender = config.get("LINE_PUSH_SENDER") or line_push_message
+            sender(token, line_user_id, _test_center_message(test_id))
+            result["sent"] = True
+        elif kind == "r2":
+            backup, code = create_r2_encrypted_backup(config)
+            if code >= 400:
+                raise ValueError(str(backup.get("error") or "r2_backup_failed"))
+            result["backup"] = {
+                "key": str(backup.get("key") or ""),
+                "created_at": str(backup.get("created_at") or ""),
+            }
+        else:
+            result["simulated"] = True
+            result["message"] = (
+                "付款後恢復原設定模擬成功；未呼叫金流、未改方案。"
+                if test_id == "payment_restore"
+                else "不再提醒偏好模擬成功；未修改正式會員資料。"
+            )
+    except Exception as exc:
+        status = "failed"
+        error = classify_line_push_error(exc)
+        result = {
+            "ok": False,
+            "error": error,
+            "test_id": test_id,
+            "test_mode": True,
+        }
+
+    state = load_state(data_file)
+    runs = list(state.get("test_center_runs") or [])
+    runs.append({
+        "id": uuid.uuid4().hex[:12],
+        "test_id": test_id,
+        "label": label,
+        "target": _masked_test_account(line_user_id)["label"],
+        "status": status,
+        "error": error,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    })
+    state["test_center_runs"] = runs[-100:]
+    save_state(data_file, state)
+    return result, (200 if status == "success" else 502)
+
+
+def resolve_admin_incident(data_file, payload, actor_role):
+    kind = str((payload or {}).get("kind") or "").strip().casefold()
+    incident_id = str((payload or {}).get("incident_id") or "").strip()
+    note = str((payload or {}).get("resolution_note") or "").strip()[:500]
+    if kind not in {"sos", "delivery"} or not incident_id:
+        return {"ok": False, "error": "invalid_incident"}, 400
+    state = load_state(data_file)
+    resolved_at = datetime.now().isoformat(timespec="seconds")
+    if kind == "sos":
+        target = (state.get("sos_events") or {}).get(incident_id)
+        if target is None:
+            target = next(
+                (
+                    item
+                    for item in (state.get("sos_pending") or {}).values()
+                    if str(item.get("event_id") or "") == incident_id
+                ),
+                None,
+            )
+    else:
+        target = next(
+            (
+                item
+                for index, item in enumerate(state.get("notification_logs") or [])
+                if str(item.get("incident_id") or f"delivery-{index}") == incident_id
+                and item.get("status") in {"failed", "error"}
+            ),
+            None,
+        )
+    if target is None:
+        return {"ok": False, "error": "incident_not_found"}, 404
+    target["status"] = "resolved"
+    target["resolved_at"] = resolved_at
+    target["resolved_by_role"] = str(actor_role or "unknown")
+    if note:
+        target["resolution_note"] = note
+    save_state(data_file, state)
+    return {"ok": True, "kind": kind, "incident_id": incident_id, "resolved_at": resolved_at}, 200
+
+
+def _line_channel_access_token(config=None):
+    cfg = config or {}
+    return (
+        cfg.get("LINE_CHANNEL_ACCESS_TOKEN")
+        or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+        or os.environ.get("CHANNEL_ACCESS_TOKEN")
+        or ""
+    ).strip()
+
+
+def deploy_default_rich_menu(config=None, root_dir=None):
+    """用伺服器上的 LINE_CHANNEL_ACCESS_TOKEN 建立並設為預設圖文選單。
+
+    不回傳／不 log token。成功回 (payload, 200)；失敗回 (error, http_code)。
+    """
+    token = _line_channel_access_token(config)
+    if not token:
+        return {"ok": False, "error": "LINE_CHANNEL_ACCESS_TOKEN not configured"}, 503
+
+    root = Path(root_dir) if root_dir else Path(__file__).resolve().parent
+    config_path = root / "line-rich-menu-config.json"
+    image_path = root / "line-rich-menu.png"
+    if not config_path.exists():
+        return {"ok": False, "error": f"missing {config_path.name}"}, 500
+    if not image_path.exists():
+        return {"ok": False, "error": f"missing {image_path.name}"}, 500
+
+    menu_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+    def _request(method, url, body=None, content_type="application/json"):
+        data = None
+        headers = {"Authorization": f"Bearer {token}"}
+        if body is not None:
+            if content_type == "application/json":
+                data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            else:
+                data = body
+            headers["Content-Type"] = content_type
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+                code = int(getattr(resp, "status", 200) or 200)
+                parsed = json.loads(raw) if raw.strip() else {}
+                return code, parsed
+        except urllib.error.HTTPError as exc:
+            err_body = exc.read().decode("utf-8", errors="replace")
+            return int(exc.code), {"error": err_body}
+
+    code, created = _request("POST", "https://api.line.me/v2/bot/richmenu", menu_config)
+    if code != 200 or not created.get("richMenuId"):
+        return {
+            "ok": False,
+            "step": "create",
+            "http": code,
+            "error": created.get("error") or created,
+        }, 502
+
+    rich_menu_id = created["richMenuId"]
+    code, uploaded = _request(
+        "POST",
+        f"https://api-data.line.me/v2/bot/richmenu/{rich_menu_id}/content",
+        image_path.read_bytes(),
+        content_type="image/png",
+    )
+    if code not in (200, 204):
+        return {
+            "ok": False,
+            "step": "upload_image",
+            "richMenuId": rich_menu_id,
+            "http": code,
+            "error": uploaded.get("error") or uploaded,
+        }, 502
+
+    code, defaulted = _request(
+        "POST",
+        f"https://api.line.me/v2/bot/user/all/richmenu/{rich_menu_id}",
+    )
+    if code not in (200, 204):
+        return {
+            "ok": False,
+            "step": "set_default",
+            "richMenuId": rich_menu_id,
+            "http": code,
+            "error": defaulted.get("error") or defaulted,
+        }, 502
+
+    return {
+        "ok": True,
+        "richMenuId": rich_menu_id,
+        "name": menu_config.get("name"),
+        "chatBarText": menu_config.get("chatBarText"),
+        "image_bytes": image_path.stat().st_size,
+        "areas": [
+            {
+                "label": (area.get("action") or {}).get("label"),
+                "type": (area.get("action") or {}).get("type"),
+                "uri": (area.get("action") or {}).get("uri"),
+                "text": (area.get("action") or {}).get("text"),
+            }
+            for area in (menu_config.get("areas") or [])
+        ],
+    }, 200
+
+
+def inspect_default_rich_menu(config=None):
+    """查詢目前預設圖文選單（含各區塊 URI）。不回傳 token。"""
+    token = _line_channel_access_token(config)
+    if not token:
+        return {"ok": False, "error": "LINE_CHANNEL_ACCESS_TOKEN not configured"}, 503
+
+    def _request(method, url):
+        req = urllib.request.Request(
+            url, method=method, headers={"Authorization": f"Bearer {token}"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+                code = int(getattr(resp, "status", 200) or 200)
+                parsed = json.loads(raw) if raw.strip() else {}
+                return code, parsed
+        except urllib.error.HTTPError as exc:
+            err_body = exc.read().decode("utf-8", errors="replace")
+            return int(exc.code), {"error": err_body}
+
+    code, default = _request("GET", "https://api.line.me/v2/bot/user/all/richmenu")
+    if code != 200 or not isinstance(default, dict) or not default.get("richMenuId"):
+        return {
+            "ok": False,
+            "step": "get_default",
+            "http": code,
+            "error": default.get("error") if isinstance(default, dict) else default,
+        }, 502
+
+    rich_menu_id = default["richMenuId"]
+    code, detail = _request("GET", f"https://api.line.me/v2/bot/richmenu/{rich_menu_id}")
+    if code != 200 or not isinstance(detail, dict):
+        return {
+            "ok": False,
+            "step": "get_detail",
+            "richMenuId": rich_menu_id,
+            "http": code,
+            "error": detail.get("error") if isinstance(detail, dict) else detail,
+        }, 502
+
+    areas = []
+    invite_uri = None
+    invite_text = None
+    invite_type = None
+    for area in detail.get("areas") or []:
+        action = area.get("action") or {}
+        item = {
+            "label": action.get("label"),
+            "type": action.get("type"),
+            "uri": action.get("uri"),
+            "text": action.get("text"),
+        }
+        areas.append(item)
+        if action.get("label") == "一鍵邀請":
+            invite_uri = action.get("uri")
+            invite_text = action.get("text")
+            invite_type = action.get("type")
+
+    # 圖文選單的一鍵邀請必須進入已登入會員的守護邀請 LIFF；
+    # 14 天安心體驗分享保留在獨立頁面，不可混用。
+    invite_uri_ok = False
+    if invite_uri:
+        try:
+            parsed_invite_uri = urllib.parse.urlparse(str(invite_uri).strip())
+            invite_query = urllib.parse.parse_qs(parsed_invite_uri.query)
+            invite_uri_ok = (
+                parsed_invite_uri.scheme == "https"
+                and parsed_invite_uri.netloc == "liff.line.me"
+                and parsed_invite_uri.path.rstrip("/") == "/2010848330-UAiqPPYD"
+                and invite_query.get("open") == ["share-invite"]
+            )
+        except (TypeError, ValueError):
+            invite_uri_ok = False
+
+    # 仍相容舊版 message「一鍵邀請」→ Bot Flex。
+    invite_ok = invite_uri_ok or (
+        invite_type == "message"
+        and str(invite_text or "").strip() in {"一鍵邀請", "一鍵邀請守護人"}
+    )
+
+    return {
+        "ok": True,
+        "richMenuId": rich_menu_id,
+        "name": detail.get("name"),
+        "chatBarText": detail.get("chatBarText"),
+        "areas": areas,
+        "invite_uri": invite_uri,
         "invite_text": invite_text,
         "invite_type": invite_type,
         "invite_uri_ok": invite_ok,

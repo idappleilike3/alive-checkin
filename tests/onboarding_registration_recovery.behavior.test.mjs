@@ -85,3 +85,24 @@ test("canonical onboarding mutations share one registration recovery path", () =
     assert.match(mainHtml, new RegExp(`apiMemberMutationWithRegistrationRecovery\\(.[^\\n]*${endpoint.replaceAll("/", "\\/")}`));
   }
 });
+
+test("reopening onboarding authenticates the authoritative progress lookup", async () => {
+  const requests = [];
+  const sandbox = expose(["fetchOnboardingProgress"], {
+    API_BASE: "https://example.test",
+    state: {lineUserId: "U-test"},
+    authHeaders: async () => ({
+      "Content-Type": "application/json",
+      "Authorization": "Bearer verified-id-token",
+    }),
+    fetch: async (url, options) => {
+      requests.push({url, options});
+      return {ok: true, json: async () => ({current_step: 5})};
+    },
+  });
+
+  const progress = await sandbox.fetchOnboardingProgress();
+  assert.equal(progress.current_step, 5);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.headers.Authorization, "Bearer verified-id-token");
+});

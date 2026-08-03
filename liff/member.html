@@ -671,7 +671,10 @@ async function init() {
 
     state.lineUserId = (await liff.getProfile()).userId;
 
-    const r1 = await fetch(`${API_BASE}/api/onboarding/state?line_user_id=${state.lineUserId}`);
+    const r1 = await fetch(
+      `${API_BASE}/api/onboarding/state?line_user_id=${encodeURIComponent(state.lineUserId)}`,
+      { headers: lineAuthHeaders() }
+    );
     if (r1.ok) {
       const d = await r1.json();
       state.dailyReminders = Number(d.daily_reminders) || 1;
