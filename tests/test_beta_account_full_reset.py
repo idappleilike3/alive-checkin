@@ -114,6 +114,20 @@ class BetaAccountFullResetTests(unittest.TestCase):
         self.assertEqual(state["sos_events"], {})
         self.assertEqual(state["location_grants"], {})
 
+    def test_reset_member_registration_does_not_restart_public_trial(self):
+        result, status = app.admin_reset_test_account(self.data_file, self.uid, set())
+        self.assertEqual(status, 200)
+        registered, register_status = app.register_line_user(self.data_file, {
+            "line_user_id": self.uid,
+            "display_name": "Jennie",
+        })
+        self.assertEqual(register_status, 200)
+        profile = app.load_state(self.data_file)["users"][self.uid]
+        self.assertTrue(profile["beta_reset_pending"])
+        self.assertFalse(app.membership_access_active(profile))
+        self.assertFalse(profile.get("trial_started_at"))
+        self.assertFalse(profile.get("trial_end"))
+
     def test_version_conflict_changes_nothing(self):
         before = app.load_state(self.data_file)
         result, status = app.admin_reset_test_account(
