@@ -128,6 +128,16 @@ class BetaAccountFullResetTests(unittest.TestCase):
         self.assertFalse(profile.get("trial_started_at"))
         self.assertFalse(profile.get("trial_end"))
 
+    def test_pending_reset_never_has_active_access_even_with_legacy_trial_dates(self):
+        profile = {
+            "plan": "trial",
+            "payment_status": "trial",
+            "trial_started_at": "2026-08-03T00:00:00",
+            "trial_end": "2099-08-17T00:00:00",
+            "beta_reset_pending": True,
+        }
+        self.assertFalse(app.membership_access_active(profile))
+
     def test_version_conflict_changes_nothing(self):
         before = app.load_state(self.data_file)
         result, status = app.admin_reset_test_account(
