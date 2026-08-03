@@ -220,6 +220,15 @@
     }
     .cta.line { background: #06c755; color: #fff; }
     .cta.dark { background: #5b1535; color: #fff; }
+    .cta.blue { background: #1d4ed8; color: #fff; }
+    .plan-list { list-style: none; margin-left: 0 !important; }
+    .plan-list li {
+      padding: 14px;
+      border-radius: 16px;
+      background: #f8fafc;
+      border: 2px solid #cbd5e1;
+    }
+    .plan-list strong { color: #be185d; }
     @media (max-width: 520px) {
       .quick-actions,
       .bottom-actions { grid-template-columns: 1fr; }
@@ -235,8 +244,10 @@
     </section>
 
     <nav class="quick-actions" aria-label="教學快速操作">
+      <a class="nav-btn checkin" href="https://lin.ee/nRc3yxi">先加入每日平安</a>
+      <a class="nav-btn home" href="https://liff.line.me/2010848330-UAiqPPYD?open=home">一鍵登入 LINE</a>
       <a class="nav-btn checkin" href="https://liff.line.me/2010848330-UAiqPPYD?open=checkin">開始報平安</a>
-      <a class="nav-btn invite" href="https://alive-checkin.onrender.com/liff/share-invite.html">一鍵邀請守護人</a>
+      <a class="nav-btn invite" href="https://liff.line.me/2010848330-UAiqPPYD?open=share-invite">一鍵邀請守護人</a>
       <a class="nav-btn upgrade" href="https://alive-checkin.onrender.com/pricing">立即升級守護／查看方案</a>
       <a class="nav-btn faq" href="https://alive-checkin.onrender.com/faq">常見問題／問與答</a>
     </nav>
@@ -256,55 +267,46 @@
 
     <section class="guide-grid" aria-label="使用教學圖文步驟">
       <article class="guide-card">
-        <h2><span class="num">1</span>第一次先綁定守護人</h2>
-        <p>請先邀請一位信任的家人或朋友。完成後，系統才知道緊急時要通知誰。</p>
-        <div class="note">對方需要加入「每日平安」官方帳號，點開你的邀請連結並同意綁定，才算完成。</div>
+        <h2><span class="num">1</span>先加入「每日平安」</h2>
+        <p>第一次使用，請先按下面綠色按鈕，把「每日平安」加入 LINE 好友。加入後，您才能收到每天的報平安提醒。</p>
+        <div class="cta-row"><a class="cta line" href="https://lin.ee/nRc3yxi">加入每日平安官方 LINE</a></div>
       </article>
 
       <article class="guide-card">
-        <h2><span class="num">2</span>一鍵邀請守護人</h2>
-        <p>按下「一鍵邀請守護人」，會直接開啟 LINE 分享給好友，不用再跳到其他設定頁。</p>
-        <div class="note soft">守護人無須另外註冊帳號，只要同意綁定，就能在緊急時收到 LINE 通知。</div>
+        <h2><span class="num">2</span>一鍵登入 LINE</h2>
+        <p>按「一鍵登入 LINE」，同意登入後會回到每日平安的內頁，不需要另外記帳號或密碼。</p>
+        <div class="cta-row"><a class="cta line" href="https://liff.line.me/2010848330-UAiqPPYD?open=home">一鍵登入 LINE</a></div>
       </article>
 
       <article class="guide-card">
-        <h2><span class="num">3</span>每天點我平安</h2>
-        <p>收到「每日平安」LINE 提醒後，開啟首頁，手指點一次「我平安」。畫面顯示成功日期與時間，就完成今天的回報。</p>
-        <div class="note soft">核心守護人會收到「誰已報平安、幾點完成」的 LINE 訊息，雙方都看得到結果。</div>
+        <h2><span class="num">3</span>填寫本人設定</h2>
+        <p>依畫面填寫您的稱呼、地區、每天提醒時間，以及要邀請的守護人姓名、關係與電話。電話可用在緊急狀況或聯絡不上本人時。</p>
+        <div class="note soft">逾期時間可以選 24 小時、36 小時、48 小時或 72 小時；系統預設 48 小時，畫面會用綠色標示。</div>
       </article>
 
       <article class="guide-card">
-        <h2><span class="num">4</span>逾期才通知守護人</h2>
-        <p>如果超過時間沒有簽到，系統會先提醒你。仍未回應時，才通知指定守護人。</p>
-        <div class="note danger">有立即危險請直接撥打 119 或 110。本服務是提醒與通知工具，不取代報警或救護。</div>
+        <h2><span class="num">4</span>一鍵分享守護卡</h2>
+        <p>按「一鍵分享守護卡」，選一位信任的 LINE 好友，再把專屬守護卡傳給對方。</p>
+        <div class="cta-row"><a class="cta blue" href="https://liff.line.me/2010848330-UAiqPPYD?open=share-invite">一鍵分享守護卡</a></div>
       </article>
 
       <article class="guide-card">
-        <h2><span class="num">5</span>安全守護怎麼用</h2>
-        <p>外出、看診、夜歸時，可開啟安全守護。位置只在指定時段分享給守護人，時間到會自動停止。</p>
-      </article>
-
-      <article class="guide-card" id="sos">
-        <h2><span class="num">6</span>SOS 連續按 3 次</h2>
-        <p>SOS／需要幫忙是緊急求助入口。所有會員都可以使用，連續按 3 次才會送出通知，避免誤觸。</p>
-        <p>送出後 10 分鐘內可按「我已安全／取消通知」，系統會通知原本成功收到 SOS 的家人。兩次誤報會進入 3 天加強確認；一週內重複誤報會限制一般群發 7 天，但仍保留 110／119 與一位主要核心守護人。</p>
-        <p>智慧生活提醒預設只通知自己，每日最多 2 則；也可指定一位已綁核心守護人，每日最多 1 則。同一時段會合併，且不會送到守護群。</p>
-        <div class="note danger">如果已經有危險，請先打 119 或 110，再使用 SOS 通知守護人。</div>
+        <h2><span class="num">5</span>守護人接受邀請</h2>
+        <p>對方點開守護卡後，填寫「和您的關係」及電話，再按同意，就完成雙方綁定。</p>
+        <div class="note soft">完成後，雙方都會收到綁定成功訊息；隔天開始收到每日報平安提醒。</div>
       </article>
 
       <article class="guide-card">
-        <h2><span class="num">7</span>LINE 守護群設定</h2>
-        <ol>
-          <li>在 LINE 建立家人群組</li>
-          <li>把「每日平安」官方帳號邀進群</li>
-          <li>由管理員點「點我綁定守護群」</li>
-          <li>看到「我已完成守護群設定」就成功</li>
-        </ol>
-        <div class="note">守護群只接收群內提醒；核心緊急通知仍以你設定的守護人為主。</div>
-        <div class="cta-row">
-          <a class="cta line" href="https://line.me/R/ti/p/%40042kwqib">加入每日平安官方帳號</a>
-          <a class="cta dark" href="index.html#guardians">查看守護群教學</a>
-        </div>
+        <h2><span class="num">6</span>每天按「我平安」</h2>
+        <p>收到 LINE 提醒後，開啟每日平安，按一次綠色的「我平安」。看到成功日期與時間，就完成今天的回報。</p>
+        <div class="note soft">只要完成今天的回報，當天剩餘的每日提醒就會停止，不會一直重複打擾。</div>
+        <div class="cta-row"><a class="cta line" href="https://liff.line.me/2010848330-UAiqPPYD?open=checkin">開始報平安</a></div>
+      </article>
+
+      <article class="guide-card">
+        <h2><span class="num">7</span>逾期才通知守護人</h2>
+        <p>您可以選 24 小時、36 小時、48 小時或 72 小時，預設 48 小時。超過設定時間還沒報平安，系統會先通知本人。</p>
+        <div class="note">本人再過 15 分鐘後仍沒有回應，系統才會依照優先順位通知守護人。</div>
       </article>
 
       <article class="guide-card">
@@ -315,12 +317,42 @@
 
       <article class="guide-card">
         <h2><span class="num">9</span>平安紀錄月曆</h2>
-        <p>進入「平安紀錄」會直接展開月曆，也可以自己收合。重要節日會用紅字標示，點日期可新增記事。</p>
-        <div class="note soft">之後若要串接 Google 日曆，可以把記事同步到自己的行事曆。</div>
+        <ul class="plan-list">
+          <li><strong>199 月費／年費：</strong>可看完整月曆、平安紀錄、日期與節日；不能新增備忘錄。</li>
+          <li><strong>399 月費／年費：</strong>可看完整月曆並新增網頁備忘錄；登入每日平安時會顯示提醒，但不發 LINE 備忘錄推播。</li>
+          <li><strong>799 月費／年費：</strong>可看完整月曆、使用備忘錄、自訂提醒時間；登入網頁會提醒，LINE 推播每天最多 2 則。</li>
+        </ul>
+        <div class="cta-row"><a class="cta dark" href="https://liff.line.me/2010848330-UAiqPPYD?open=history">查看平安紀錄月曆</a></div>
+      </article>
+
+      <article class="guide-card">
+        <h2><span class="num">10</span>799 LINE 守護群</h2>
+        <p><strong>799 月費最多 1 群；799 年費最多 3 群；每群最多 50 人。</strong>可以把重要的家人、已綁定守護人及緊急聯絡人加入群組，一起查看群組內的平安訊息。</p>
+        <ol>
+          <li>先在 LINE 建立家人群組</li>
+          <li>把「每日平安」官方帳號邀進群</li>
+          <li>由方案本人輸入「點我綁定守護群」</li>
+          <li>看到「我已完成守護群設定」才算成功</li>
+        </ol>
+        <div class="note">加入守護群不等於完成個人守護人綁定。要收到個人通知，仍要完成第 4、5 步的一鍵邀請。</div>
+        <div class="cta-row">
+          <a class="cta line" href="https://lin.ee/nRc3yxi">加入每日平安官方 LINE</a>
+          <a class="cta dark" href="https://alive-checkin.onrender.com/liff/guardian-groups.html">查看守護群設定</a>
+        </div>
+      </article>
+
+      <article class="guide-card" id="sos">
+        <h2><span class="num">11</span>安全守護與 SOS</h2>
+        <p><strong>安全守護：</strong>外出、看診或夜歸時，可以在指定時段分享位置；時間到會自動停止。</p>
+        <p><strong>SOS／需要幫忙：</strong>連續按 3 次才會送出，避免誤觸。送出前會取得位置，並通知您選擇的守護人。</p>
+        <div class="note danger">如果已經有立即危險，請先撥打 119 或 110，再使用 SOS 通知守護人。</div>
       </article>
     </section>
     <nav class="bottom-actions" aria-label="教學頁底部操作">
       <a class="nav-btn checkin" href="https://liff.line.me/2010848330-UAiqPPYD?open=checkin">開始報平安</a>
+      <a class="nav-btn invite" href="https://liff.line.me/2010848330-UAiqPPYD?open=share-invite">一鍵邀請守護人</a>
+      <a class="nav-btn home" href="https://liff.line.me/2010848330-UAiqPPYD?open=history">查看平安月曆</a>
+      <a class="nav-btn faq" href="https://alive-checkin.onrender.com/faq">常見問題／問與答</a>
       <a class="nav-btn upgrade" href="https://alive-checkin.onrender.com/pricing">立即升級守護／查看方案</a>
       <a class="nav-btn home" href="https://liff.line.me/2010848330-UAiqPPYD?open=home">回到首頁</a>
     </nav>
