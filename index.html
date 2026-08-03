@@ -4026,6 +4026,19 @@
       </div>
     </div>
 
+    <div class="modal-backdrop" id="guardianBindingCelebrateModal" hidden>
+      <div class="guardian-modal guardian-prompt-card" role="dialog" aria-modal="true" aria-labelledby="guardianBindingCelebrateTitle">
+        <h2 id="guardianBindingCelebrateTitle">🎉 恭喜你完成守護人綁定</h2>
+        <p>首次設定已完成，不需要再填寫五個步驟，也不會再自動要求一鍵分享。</p>
+        <p><strong>恭喜你完成綁定，請點一下「我平安」</strong>，完成今天的平安回報。</p>
+        <div class="actions" style="flex-direction:column;gap:10px;">
+          <button class="action-btn primary" id="guardianBindingCelebrateCheckin" type="button">我平安</button>
+          <button class="action-btn" id="guardianBindingCelebrateMute" type="button">🔊 語音開啟</button>
+          <button class="action-btn" id="guardianBindingCelebrateLater" type="button">稍後再按</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 緊急求助：一個大按鈕連按 3 次；119／110 為小型文字連結 -->
     <div class="modal-backdrop" id="sosConfirmModal" hidden>
       <div class="guardian-modal sos-confirm-card" role="dialog" aria-modal="true" aria-labelledby="sosModalTitle">
@@ -5922,14 +5935,58 @@
         new MutationObserver(syncSos).observe(sosModal, { attributes:true, attributeFilter:["hidden"] });
         syncSos();
       }
+      const celebrationModal = $("guardianBindingCelebrateModal");
+      const celebrationCheckin = $("guardianBindingCelebrateCheckin");
+      const celebrationMute = $("guardianBindingCelebrateMute");
+      const celebrationLater = $("guardianBindingCelebrateLater");
+      const renderCelebrationMute = () => {
+        if (celebrationMute) celebrationMute.textContent = peaceHelperIsMuted() ? "🔇 已靜音" : "🔊 語音開啟";
+      };
+      renderCelebrationMute();
+      if (celebrationMute) celebrationMute.addEventListener("click", () => {
+        const muted = !peaceHelperIsMuted();
+        localStorage.setItem(PEACE_HELPER_MUTED_KEY, String(muted));
+        if (muted && "speechSynthesis" in window) window.speechSynthesis.cancel();
+        renderMute();
+        renderCelebrationMute();
+        if (!muted) speakPeaceHelper("恭喜你完成守護人綁定。現在請點一下我平安。");
+      });
+      if (celebrationLater) celebrationLater.addEventListener("click", () => {
+        celebrationModal.hidden = true;
+        if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      });
+      if (celebrationCheckin) celebrationCheckin.addEventListener("click", async () => {
+        celebrationCheckin.disabled = true;
+        try {
+          await doCheckin();
+          celebrationModal.hidden = true;
+        } catch (error) {
+          showInlineError("回報失敗：" + (error.message || "請稍後再試"));
+        } finally {
+          celebrationCheckin.disabled = false;
+        }
+      });
+    }
+
+    async function acknowledgeBindingCelebration() {
+      const response = await fetch("/api/onboarding/binding-celebration/ack", {
+        method: "POST",
+        headers: await authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ line_user_id: lineUserId })
+      });
+      if (!response.ok) throw new Error("binding celebration acknowledgement failed");
     }
 
     function announceOnboardingCompletion(data) {
-      if (!data || !data.is_onboarding_completed || data.is_today_checked) return;
-      const key = `peace_helper_onboarding_${lineUserId || "local"}`;
-      if (sessionStorage.getItem(key) === "shown") return;
-      sessionStorage.setItem(key, "shown");
-      setPeaceHelperMessage("恭喜你完成綁定，請點一下「我平安」。完成後我會告訴你明天的提醒時間。", true);
+      if (!data || data.show_binding_celebration !== true) return;
+      const modal = $("guardianBindingCelebrateModal");
+      if (!modal || modal.dataset.shown === "true") return;
+      modal.dataset.shown = "true";
+      modal.hidden = false;
+      speakPeaceHelper("恭喜你完成守護人綁定。現在請點一下我平安，完成今天的平安回報。");
+      acknowledgeBindingCelebration().catch(() => {
+        modal.dataset.shown = "";
+      });
     }
 
     function showCheckinSuccessMessage(data) {
@@ -11832,6 +11889,7 @@
     function showOnboardingCompleteStep() {
       const modal = $("onboardingModal");
       if (modal) modal.hidden = true;
+      if (typeof showTab === "function") showTab("home");
     }
 
     function showOnboardingShareStep(inviteSent = false) {
@@ -12269,7 +12327,7 @@
       const source = String(saved.membership_source || "").trim().toLowerCase();
       const cohort = String(saved.beta_cohort || "").trim().toUpperCase();
       const requestedCohort = String(entryCohort || "").trim().toUpperCase();
-      const activeCohort = ["A", "B399", "B799"].includes(cohort)
+      const activeCohort = source === "beta" && ["A", "B399", "B799"].includes(cohort)
         ? cohort
         : (["B399", "B799"].includes(requestedCohort) ? requestedCohort : "");
       if (["A", "B799"].includes(activeCohort)) return "799 守護版｜21 天封測";
@@ -12292,7 +12350,10 @@
       const errorEl = $("onboardingError");
       if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
 
-      setOnboardingCloseVisible(true);
+      const contacts = currentGuardianContacts();
+      const guardianRequired = currentStatusData && currentStatusData.guardian_required === true;
+      const canDismiss = !guardianRequired && contacts.length > 0;
+      setOnboardingCloseVisible(canDismiss);
 
       const onboardingState = await fetchOnboardingState();
       const serverProgress = onboardingState.ok ? (onboardingState.data || {}) : {};
@@ -12309,6 +12370,7 @@
       }
       const resumeView = onboardingResumeView(onboardingState.ok ? serverProgress : null);
       if (resumeView === "complete") {
+        showOnboardingCompleteStep();
         modal.hidden = true;
         return;
       } else if (resumeView === "waiting") {
@@ -12869,6 +12931,9 @@
           || onboardingState.homeReady === true
           || onboardingState.data?.home_ready === true
         );
+        if (homeReady && !inviteeMode) {
+          announceOnboardingCompletion({ ...status, ...(onboardingState.data || {}) });
+        }
         // Compatibility aliases: neither may unlock a route beyond server homeReady.
         const hasGuardians = homeReady;
         const setupDone = homeReady;
