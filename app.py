@@ -186,6 +186,13 @@ DEFAULT_CARD_TEMPLATE = {
     "blessing": "每一天的平安，都是給家人最好的禮物。",
     "hero_url": "https://alive-checkin.onrender.com/assets/daily-care/morning-warm.webp",
     "logo_url": DAILY_PEACE_LOGO_URL,
+    "blessing_style": {
+        "font_family": "rounded",
+        "color": "#166534",
+        "size": 34,
+        "align": "center",
+        "position": "top",
+    },
     "buttons": [
         {"label": "✅ 我平安", "action": "checkin"},
         {"label": "🛡️ 安全守護", "uri": "https://alive-checkin.onrender.com/liff/checkin.html?open=guard"},
@@ -17347,7 +17354,7 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
                             "uri": "https://alive-checkin.onrender.com/daily-care.html",
                         },
                         "style": "primary",
-                        "color": "#7C3AED",
+                        "color": "#D4A017",
                         "height": "md",
                     },
                 ]
@@ -17373,7 +17380,7 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
                 "type": "image",
                 "url": care["hero_url"],
                 "size": "full",
-                "aspectRatio": "20:13" if care["hero_period"] == "morning" else "16:9",
+                "aspectRatio": "4:5",
                 "aspectMode": "cover",
                 "animated": False,
             },
@@ -17903,6 +17910,24 @@ def _normalize_card_template(payload, *, template_id=None):
         raise ValueError("請輸入範本名稱")
     if not blessing:
         raise ValueError("請輸入祝福文字")
+    raw_style = payload.get("blessing_style") or {}
+    font_family = str(raw_style.get("font_family") or "rounded").strip()
+    if font_family not in {"rounded", "system", "serif"}:
+        font_family = "rounded"
+    color = str(raw_style.get("color") or "#166534").strip().upper()
+    if not re.fullmatch(r"#[0-9A-F]{6}", color):
+        raise ValueError("祝福語顏色請使用六位 HEX 色碼")
+    try:
+        font_size = int(raw_style.get("size") or 34)
+    except (TypeError, ValueError):
+        font_size = 34
+    font_size = max(24, min(52, font_size))
+    align = str(raw_style.get("align") or "center").strip()
+    if align not in {"start", "center", "end"}:
+        align = "center"
+    position = str(raw_style.get("position") or "top").strip()
+    if position not in {"top", "bottom"}:
+        position = "top"
     buttons = []
     for raw in list(payload.get("buttons") or [])[:4]:
         label = str((raw or {}).get("label") or "").strip()[:20]
@@ -17921,6 +17946,13 @@ def _normalize_card_template(payload, *, template_id=None):
         "blessing": blessing,
         "hero_url": _validated_https_url(payload.get("hero_url"), "主圖"),
         "logo_url": DAILY_PEACE_LOGO_URL,
+        "blessing_style": {
+            "font_family": font_family,
+            "color": color,
+            "size": font_size,
+            "align": align,
+            "position": position,
+        },
         "buttons": buttons,
         "updated_at": datetime.now(ZoneInfo("Asia/Taipei")).isoformat(timespec="seconds"),
     }
@@ -17954,11 +17986,22 @@ def _apply_card_template(message, template, profile):
     result = copy.deepcopy(message)
     contents = result["contents"]
     contents["hero"]["url"] = template["hero_url"]
+    contents["hero"]["aspectRatio"] = "4:5"
     body = contents["body"]["contents"]
     display_name = str(profile.get("display_name") or "你")
     body[0]["text"] = f"{display_name}，今天一切都好嗎？"
-    body.insert(1, {"type": "text", "text": template["blessing"], "size": "md", "color": "#166534", "wrap": True})
-    colors = ["#16A34A", "#2563EB", "#DC2626", "#7C3AED"]
+    style = {**DEFAULT_CARD_TEMPLATE["blessing_style"], **(template.get("blessing_style") or {})}
+    size_value = int(style.get("size") or 34)
+    flex_size = "lg" if size_value <= 28 else "xl" if size_value <= 36 else "xxl" if size_value <= 44 else "3xl"
+    blessing_node = {
+        "type": "text", "text": template["blessing"], "size": flex_size,
+        "weight": "bold", "color": style["color"], "align": style["align"], "wrap": True,
+    }
+    if style.get("position") == "bottom":
+        body.append(blessing_node)
+    else:
+        body.insert(1, blessing_node)
+    colors = ["#16A34A", "#2563EB", "#DC2626", "#D4A017"]
     rendered_buttons = []
     for index, button in enumerate(template.get("buttons") or []):
         if button.get("action") == "checkin":
@@ -18020,15 +18063,15 @@ def build_holiday_image_prompt(payload):
     elements = str(payload.get("elements") or "家人互相陪伴").strip()[:200]
     notes = str(payload.get("notes") or "").strip()[:300]
     return (
-        f"為台灣 LINE 服務『每日平安』製作 {holiday} 圖文卡的橫式主視覺背景。"
+        f"為台灣 LINE 服務『每日平安』製作 {holiday} 圖文卡的直式主視覺背景。"
         f"氣氛：{mood}。畫面元素：{elements}。補充：{notes or '自然、真實、溫馨'}。"
-        "構圖預留上方與下方乾淨空間供系統疊加品牌與操作元件，16:9，適合手機。"
+        "構圖預留上方與下方乾淨空間供系統疊加品牌與操作元件，直式 4:5，適合手機滿版卡。"
         "只生成背景；不要任何文字、不要 Logo、不要商標、不要按鈕、不要介面截圖、不要浮水印。"
     )
 
 
 def _openai_holiday_image(api_key, prompt):
-    body = json.dumps({"model": "dall-e-3", "prompt": prompt, "size": "1792x1024", "quality": "standard", "n": 1}).encode("utf-8")
+    body = json.dumps({"model": "dall-e-3", "prompt": prompt, "size": "1024x1792", "quality": "standard", "n": 1}).encode("utf-8")
     req = urllib.request.Request("https://api.openai.com/v1/images/generations", data=body, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=90) as response:
         data = json.loads(response.read().decode("utf-8"))

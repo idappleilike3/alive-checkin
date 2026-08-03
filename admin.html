@@ -139,12 +139,19 @@
     .step-box h4 { margin:0 0 6px; color:#075f48; font-size:18px; }
     .step-box p { margin:0 0 10px; color:#52606d; }
     .line-card-preview { max-width:390px; margin:auto; border-radius:22px; overflow:hidden; background:#fff; box-shadow:0 18px 42px #0f3d2e24; border:1px solid #d6e9df; }
-    .line-card-preview .hero { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#e5f5ed; }
+    .line-card-preview .hero { width:100%; aspect-ratio:4 / 5; object-fit:cover; display:block; background:#e5f5ed; }
     .line-card-brand { display:flex; align-items:center; gap:9px; padding:12px 15px; background:#00b900; color:#fff; font-size:20px; font-weight:900; }
     .line-card-brand img { width:38px; height:38px; object-fit:contain; }
     .line-card-body { padding:16px; line-height:1.6; }
     .line-card-actions { display:grid; gap:8px; padding:0 14px 16px; }
-    .line-card-actions span { padding:11px; border-radius:10px; color:#fff; background:#168c65; text-align:center; font-weight:850; }
+    .line-card-actions span { padding:14px; border-radius:12px; color:#fff; text-align:center; font-size:18px; font-weight:900; }
+    .line-card-actions span:nth-child(1) { background:#16A34A; }
+    .line-card-actions span:nth-child(2) { background:#2563EB; }
+    .line-card-actions span:nth-child(3) { background:#DC2626; }
+    .line-card-actions span:nth-child(4) { background:#D4A017; color:#271B00; }
+    .blessing-rounded { font-family:"Noto Sans TC",system-ui,sans-serif; }
+    .blessing-system { font-family:system-ui,sans-serif; }
+    .blessing-serif { font-family:"Noto Serif TC",serif; }
     button:disabled { cursor:not-allowed; opacity:.48; box-shadow:none; }
     .group-send-zone { margin-top:20px; padding:16px; border:2px dashed #f59e0b; border-radius:14px; background:#fffbeb; }
     @media (max-width: 760px) { .card-editor-grid { grid-template-columns:1fr; } .card-editor-tabs { flex-direction:column; } }
@@ -833,6 +840,11 @@
             <label>選擇範本<select id="cardTemplateSelect"><option value="daily-peace-default">每日平安預設卡</option></select></label>
             <label>範本名稱<input id="cardTemplateName" value="每日平安預設卡" maxlength="60"></label>
             <label>祝福文字<textarea id="cardBlessing" rows="3">每一天的平安，都是給家人最好的禮物。</textarea></label>
+            <label>祝福語字體<select id="cardBlessingFont"><option value="rounded">溫暖圓體</option><option value="system">清楚黑體</option><option value="serif">典雅明體</option></select></label>
+            <label>祝福語顏色<input id="cardBlessingColor" type="color" value="#166534"></label>
+            <label>祝福語大小<input id="cardBlessingSize" type="range" min="24" max="52" value="34"><span id="cardBlessingSizeValue">34 px</span></label>
+            <label>祝福語對齊<select id="cardBlessingAlign"><option value="start">靠左</option><option value="center" selected>置中</option><option value="end">靠右</option></select></label>
+            <label>祝福語位置<select id="cardBlessingPosition"><option value="top">問候文字下方</option><option value="bottom">卡片資訊下方</option></select></label>
             <label>主圖 HTTPS 網址<input id="cardHeroUrl" type="url" value="https://alive-checkin.onrender.com/assets/daily-care/morning-warm.webp"></label>
             <label>按鈕 1 文字<input id="cardButton1Label" value="✅ 我平安" maxlength="20"></label>
             <label>按鈕 2 文字<input id="cardButton2Label" value="🛡️ 安全守護" maxlength="20"></label>
@@ -3363,10 +3375,16 @@
     }));
     function updateLocalCardPreview() {
       $("cardPreviewHero").src = $("cardHeroUrl").value.trim() || "/assets/daily-care/morning-warm.webp";
-      $("cardPreviewBlessing").textContent = $("cardBlessing").value.trim() || "請輸入祝福文字";
+      const blessing = $("cardPreviewBlessing");
+      blessing.textContent = $("cardBlessing").value.trim() || "請輸入祝福文字";
+      blessing.className = `blessing-${$("cardBlessingFont").value}`;
+      blessing.style.color = $("cardBlessingColor").value;
+      blessing.style.fontSize = `${$("cardBlessingSize").value}px`;
+      blessing.style.fontWeight = "900";
+      blessing.style.textAlign = ({start:"left",center:"center",end:"right"})[$("cardBlessingAlign").value] || "center";
+      $("cardBlessingSizeValue").textContent = `${$("cardBlessingSize").value} px`;
     }
-    $("cardHeroUrl")?.addEventListener("input", updateLocalCardPreview);
-    $("cardBlessing")?.addEventListener("input", updateLocalCardPreview);
+    ["cardHeroUrl","cardBlessing","cardBlessingFont","cardBlessingColor","cardBlessingSize","cardBlessingAlign","cardBlessingPosition"].forEach((id) => $(id)?.addEventListener("input", updateLocalCardPreview));
     async function loadCardTemplates() {
       const response = await adminFetch("/api/admin/card-templates");
       const data = await response.json().catch(() => ({}));
@@ -3374,7 +3392,11 @@
       $("cardTemplateSelect").innerHTML = (data.templates || []).map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}</option>`).join("");
     }
     $("saveCardTemplateBtn")?.addEventListener("click", async () => {
-      const payload = {name: $("cardTemplateName").value, blessing: $("cardBlessing").value, hero_url: $("cardHeroUrl").value, buttons: [
+      const payload = {name: $("cardTemplateName").value, blessing: $("cardBlessing").value, hero_url: $("cardHeroUrl").value, blessing_style: {
+        font_family: $("cardBlessingFont").value, color: $("cardBlessingColor").value,
+        size: Number($("cardBlessingSize").value), align: $("cardBlessingAlign").value,
+        position: $("cardBlessingPosition").value
+      }, buttons: [
         {label:$("cardButton1Label").value, action:"checkin"}, {label:$("cardButton2Label").value, uri:$("cardButton2Uri").value},
         {label:$("cardButton3Label").value, uri:$("cardButton3Uri").value}, {label:$("cardButton4Label").value, uri:$("cardButton4Uri").value}
       ]};
@@ -3433,7 +3455,9 @@
       if (!response.ok) { $("personalizedPushMessage").textContent = data.message || authErrorText(data, response.status); return; }
       const hero = data.message?.contents?.hero?.url || "/assets/daily-care/morning-warm.webp";
       const blessing = data.template?.blessing || "";
-      $("personalizedCardPreview").innerHTML = `<img class="hero" src="${escapeHtml(hero)}" alt="會員圖文卡主圖"><div class="line-card-brand"><img src="/assets/daily-peace-logo.png" alt="每日平安 Logo"><span>每日平安</span></div><div class="line-card-body"><strong>${escapeHtml(data.member.display_name)}，今天一切都好嗎？</strong><p>${escapeHtml(blessing)}</p><small>${escapeHtml(data.member.masked_line_user_id)}</small></div>`;
+      const style = data.template?.blessing_style || {};
+      const buttons = data.message?.contents?.footer?.contents || [];
+      $("personalizedCardPreview").innerHTML = `<img class="hero" src="${escapeHtml(hero)}" alt="會員圖文卡主圖"><div class="line-card-brand"><img src="/assets/daily-peace-logo.png" alt="每日平安 Logo"><span>每日平安</span></div><div class="line-card-body"><strong>${escapeHtml(data.member.display_name)}，今天一切都好嗎？</strong><p class="blessing-${escapeHtml(style.font_family || "rounded")}" style="color:${escapeHtml(style.color || "#166534")};font-size:${Number(style.size || 34)}px;font-weight:900;text-align:${({start:"left",center:"center",end:"right"})[style.align] || "center"}">${escapeHtml(blessing)}</p><small>${escapeHtml(data.member.masked_line_user_id)}</small></div><div class="line-card-actions">${buttons.map((button) => `<span>${escapeHtml(button.action?.label || "")}</span>`).join("")}</div>`;
       personalizedCardWasPreviewed = true;
       $("personalizedSingleBtn").disabled = false;
       $("personalizedPushMessage").textContent = "預覽完成，尚未發送。確認內容正確後再按發送。";
@@ -3479,6 +3503,7 @@
       $("holidayMessage").textContent = data.message || authErrorText(data,response.status);
     });
     if ($("cardTemplateSelect")) loadCardTemplates().catch((error) => { $("cardTemplateMessage").textContent = `範本載入失敗：${error.message}`; });
+    updateLocalCardPreview();
     if ($("holidaySelect")) loadHolidayCatalog().catch((error) => { $("holidayMessage").textContent = `節日載入失敗：${error.message}`; });
 
     const lineAcceptanceForm = $("lineAcceptanceForm");

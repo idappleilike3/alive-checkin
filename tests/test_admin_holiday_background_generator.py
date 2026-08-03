@@ -18,6 +18,7 @@ class AdminHolidayBackgroundGeneratorTests(unittest.TestCase):
         self.assertIn("不要任何文字", prompt)
         self.assertIn("不要 Logo", prompt)
         self.assertIn("不要按鈕", prompt)
+        self.assertIn("直式 4:5", prompt)
 
     def test_missing_image_api_key_returns_chinese_setup_message(self):
         result, status = alive_app.generate_holiday_background({}, {"holiday": "中秋節"})

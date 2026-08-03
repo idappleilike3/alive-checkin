@@ -181,7 +181,10 @@ class DailyCareContextTests(unittest.TestCase):
         self.assertEqual(footer[1]["height"], "md")
         self.assertIn("查看今日安心提醒", footer[3]["action"]["label"])
         self.assertIn("/assets/daily-care/morning-", flex["contents"]["hero"]["url"])
-        self.assertEqual(flex["contents"]["hero"]["aspectRatio"], "20:13")
+        self.assertEqual(flex["contents"]["hero"]["aspectRatio"], "4:5")
+        self.assertEqual(footer[1]["color"], "#2563EB")
+        self.assertEqual(footer[2]["color"], "#DC2626")
+        self.assertEqual(footer[3]["color"], "#D4A017")
         self.assertEqual(
             flex["contents"]["body"]["contents"][0]["text"],
             "早安，今天一切都還好嗎？點一下「我平安」",

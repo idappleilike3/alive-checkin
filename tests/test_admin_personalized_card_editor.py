@@ -42,11 +42,32 @@ class AdminPersonalizedCardEditorTests(unittest.TestCase):
         saved = alive_app.save_card_template(self.data_file, {
             "name": "父親節", "blessing": "父親節快樂",
             "hero_url": "https://example.com/father.webp",
+            "blessing_style": {
+                "font_family": "rounded",
+                "color": "#FFF4C2",
+                "size": 34,
+                "align": "center",
+                "position": "top",
+            },
             "buttons": [{"label": "我平安", "action": "checkin"}],
         })
         self.assertEqual(saved["name"], "父親節")
         self.assertNotIn("display_name", saved)
+        self.assertEqual(saved["blessing_style"]["font_family"], "rounded")
+        self.assertEqual(saved["blessing_style"]["color"], "#FFF4C2")
+        self.assertEqual(saved["blessing_style"]["size"], 34)
+        self.assertEqual(saved["blessing_style"]["align"], "center")
+        self.assertEqual(saved["blessing_style"]["position"], "top")
         self.assertEqual(len(alive_app.list_card_templates(alive_app.load_state(self.data_file))), 2)
+
+    def test_template_rejects_unsafe_blessing_style(self):
+        with self.assertRaisesRegex(ValueError, "祝福語顏色"):
+            alive_app.save_card_template(self.data_file, {
+                "name": "不安全樣式", "blessing": "平安",
+                "hero_url": "https://example.com/card.webp",
+                "blessing_style": {"color": "url(javascript:alert(1))"},
+                "buttons": [{"label": "我平安", "action": "checkin"}],
+            })
 
     def test_preview_uses_real_member_and_does_not_send(self):
         result = alive_app.preview_personalized_card(
@@ -56,6 +77,9 @@ class AdminPersonalizedCardEditorTests(unittest.TestCase):
         self.assertEqual(result["member"]["display_name"], "寶寶")
         self.assertEqual(result["message"]["type"], "flex")
         self.assertIn("寶寶", result["message"]["contents"]["body"]["contents"][0]["text"])
+        self.assertEqual(result["message"]["contents"]["hero"]["aspectRatio"], "4:5")
+        colors = [row.get("color") for row in result["message"]["contents"]["footer"]["contents"]]
+        self.assertEqual(colors[:4], ["#16A34A", "#2563EB", "#DC2626", "#D4A017"])
 
     def test_confirmed_send_uses_selected_custom_template(self):
         template = alive_app.save_card_template(self.data_file, {
