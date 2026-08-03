@@ -31,7 +31,8 @@ test("required guardian onboarding saves combined data and advances to sharing",
     /"onboardingSaveBtn"/,
     "the required onboarding guardian button must remain clickable while member features are locked",
   );
-  assert.match(saveGuardian, /apiCompleteOnboarding/);
+  assert.match(saveGuardian, /apiSaveOnboardingReminder/);
+  assert.doesNotMatch(saveGuardian, /apiCompleteOnboarding/);
   assert.match(saveGuardian, /showOnboardingShareStep\(\)/);
 });
 

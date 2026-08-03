@@ -11359,6 +11359,21 @@
       });
     }
 
+    async function apiSaveOnboardingReminder(lineUserId, reminderTimes) {
+      const payload = { line_user_id: lineUserId };
+      if (Array.isArray(reminderTimes) && reminderTimes.length) {
+        payload.reminder_times = reminderTimes;
+        payload.reminder_time = reminderTimes[0];
+      } else if (typeof reminderTimes === "string" && reminderTimes) {
+        payload.reminder_time = reminderTimes;
+        payload.reminder_times = [reminderTimes];
+      }
+      return apiMemberMutationWithRegistrationRecovery("/api/onboarding/reminder", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    }
+
     const DEFAULT_REMINDER_TIMES_BY_COUNT = {
       1: ["12:00"],
       2: ["12:00", "18:00"],
@@ -12054,7 +12069,8 @@
         const expected = onboardingDefaultReminderCount(currentStatusData || {});
         let times = readOnboardingReminderTimes().slice(0, expected);
         if (times.length < expected) times = defaultReminderTimesForCount(expected);
-        const onboardingResult = await apiCompleteOnboarding(lineUserId, times);
+        // 邀請尚未被對方接受前，只儲存提醒設定；不能提早標記整個 onboarding 完成。
+        const onboardingResult = await apiSaveOnboardingReminder(lineUserId, times);
         if (onboardingResult.status !== 200 || onboardingResult.data.ok === false) {
           throw new Error((onboardingResult.data && (onboardingResult.data.message || onboardingResult.data.error)) || "提醒時間儲存失敗");
         }

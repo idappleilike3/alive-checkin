@@ -5,7 +5,19 @@ from pathlib import Path
 import app
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 class ContactDualRoleTests(unittest.TestCase):
+    def test_first_setup_saves_reminder_before_guardian_acceptance(self):
+        page = (ROOT / "index.html").read_text(encoding="utf-8")
+        save_start = page.index("async function saveOnboardingGuardian()")
+        save_end = page.index("async function saveOnboardingReminder()", save_start)
+        first_setup_save = page[save_start:save_end]
+
+        self.assertIn("apiSaveOnboardingReminder(lineUserId, times)", first_setup_save)
+        self.assertNotIn("apiCompleteOnboarding(lineUserId, times)", first_setup_save)
+
     def test_same_person_can_be_guardian_and_emergency_contact(self):
         with tempfile.TemporaryDirectory() as directory:
             data_file = str(Path(directory) / "state.json")

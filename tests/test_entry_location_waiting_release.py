@@ -15,6 +15,10 @@ class EntryLocationWaitingReleaseTests(unittest.TestCase):
         self.assertIn("正在準備 14 天安心體驗", page)
         self.assertIn("請稍候 5–10 秒，請不要重複點擊或關閉頁面", page)
         self.assertIn("showEntryLoading", page)
+        handler = page[page.index("function showEntryLoading"):page.index("document.getElementById('startTrialOnboarding')")]
+        self.assertLess(handler.index("event.preventDefault()"), handler.index('hidden=false'))
+        self.assertIn("requestAnimationFrame", handler)
+        self.assertIn("location.assign", handler)
 
     def test_beta_entry_shows_immediate_waiting_feedback_before_liff_navigation(self):
         page = self.read("beta-register.html")
@@ -22,6 +26,10 @@ class EntryLocationWaitingReleaseTests(unittest.TestCase):
         self.assertIn("正在準備 21 天封測註冊", page)
         self.assertIn("請稍候 5–10 秒，請不要重複點擊或關閉頁面", page)
         self.assertIn("showEntryLoading", page)
+        handler = page[page.index("function showEntryLoading"):page.index('continueRegistration.addEventListener')]
+        self.assertLess(handler.index("event.preventDefault()"), handler.index("hidden = false"))
+        self.assertIn("requestAnimationFrame", handler)
+        self.assertIn("location.assign", handler)
 
     def test_share_invite_has_generation_waiting_state_and_duplicate_click_guard(self):
         page = self.read("liff/share-invite.html")

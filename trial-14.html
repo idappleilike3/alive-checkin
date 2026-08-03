@@ -48,7 +48,7 @@
 <a href="/faq.html">常見問答</a>
 </nav>
 </section></main><script>
-function showEntryLoading(event){var link=event.currentTarget;if(link.dataset.opening==='1'){event.preventDefault();return}link.dataset.opening='1';link.setAttribute('aria-disabled','true');document.getElementById("entryLoading").hidden=false}
+function showEntryLoading(event){var link=event.currentTarget;event.preventDefault();if(link.dataset.opening==='1')return;var target=link.href;link.dataset.opening='1';link.setAttribute('aria-disabled','true');document.getElementById("entryLoading").hidden=false;requestAnimationFrame(function(){requestAnimationFrame(function(){location.assign(target)})})}
 document.getElementById('startTrialOnboarding').addEventListener('click',showEntryLoading);
 document.querySelectorAll('.demo-live-button').forEach(function(btn){
   btn.addEventListener('click',function(){

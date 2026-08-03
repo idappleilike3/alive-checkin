@@ -183,9 +183,12 @@
     function showEntryLoading(event) {
       if (!consent.checked) { event.preventDefault(); return; }
       if (continueRegistration.dataset.opening === "1") { event.preventDefault(); return; }
+      event.preventDefault();
+      const target = continueRegistration.href;
       continueRegistration.dataset.opening = "1";
       continueRegistration.setAttribute("aria-disabled", "true");
       document.getElementById("entryLoading").hidden = false;
+      requestAnimationFrame(() => requestAnimationFrame(() => location.assign(target)));
     }
     continueRegistration.addEventListener("click", showEntryLoading);
   </script>

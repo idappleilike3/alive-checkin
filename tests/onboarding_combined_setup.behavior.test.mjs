@@ -37,9 +37,10 @@ test("setup provides a separate optional emergency contact", () => {
   assert.match(save, /contact_role:\s*"emergency"/);
 });
 
-test("saving combined setup completes reminders then reveals one-tap invite", () => {
+test("saving combined setup stores reminders without completing guardian binding, then reveals one-tap invite", () => {
   const save = functionBody("saveOnboardingGuardian");
-  assert.match(save, /apiCompleteOnboarding/);
+  assert.match(save, /apiSaveOnboardingReminder/);
+  assert.doesNotMatch(save, /apiCompleteOnboarding/);
   assert.match(save, /showOnboardingShareStep\(\)/);
   assert.match(html, /id="onboardingShareBtn"[^>]*>一鍵分享邀請守護人</);
   assert.match(html, /一鍵分享邀請最少 1 位守護人/);
