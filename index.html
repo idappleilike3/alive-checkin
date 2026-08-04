@@ -7882,7 +7882,9 @@
       $("memberDisplayName").textContent = displayName;
       $("memberAvatar").textContent = displayName.trim().slice(0, 1) || "我";
       $("memberPlanText").textContent = memberPlanLabel(status);
-      $("memberExpiryText").textContent = status.paid_until
+      $("memberExpiryText").textContent = status.beta_activation_pending
+        ? "完成資料與提醒設定後才開始 21 天"
+        : status.paid_until
         ? `使用期限 ${status.paid_until}`
         : memberPlan === "trial"
           ? (status.trial_days_text || `體驗剩 ${status.trial_days_left ?? 14} 天`)
@@ -12483,10 +12485,9 @@
       const errorEl = $("onboardingError");
       if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
 
-      const contacts = currentGuardianContacts();
-      const guardianRequired = currentStatusData && currentStatusData.guardian_required === true;
-      const canDismiss = !guardianRequired && contacts.length > 0;
-      setOnboardingCloseVisible(canDismiss);
+      // 已登入會員可以先返回會員中心修改電話或新增緊急聯絡人；
+      // 關閉教學不等於完成綁定，「我平安」等守護功能仍由後端攔截。
+      setOnboardingCloseVisible(Boolean(lineUserId));
 
       const onboardingState = await fetchOnboardingState();
       const serverProgress = onboardingState.ok ? (onboardingState.data || {}) : {};
@@ -12901,7 +12902,7 @@
         return false;
       }
 
-      if (memberBootstrapState.guardianRequired) {
+      if (scope === "guardian_service" && memberBootstrapState.guardianRequired) {
         showMemberBootstrapPending("請先完成至少 1 位核心守護人的 LINE 綁定。");
         return false;
       }
@@ -12976,9 +12977,9 @@
       renderStatus(status);
       syncCheckBtn(status);
       memberBootstrapState.guardianRequired = status.guardian_required === true;
-      memberBootstrapState.statusReady = !memberBootstrapState.guardianRequired;
+      memberBootstrapState.statusReady = true;
       memberBootstrapState.error = null;
-      setMemberInteractionLocked(memberBootstrapState.guardianRequired);
+      setMemberInteractionLocked(false);
       if ($("mvpSafeBtn")) {
         $("mvpSafeBtn").disabled = memberBootstrapState.guardianRequired;
         if (!memberBootstrapState.guardianRequired) $("mvpSafeBtn").disabled = false;
@@ -13011,9 +13012,9 @@
         || onboarding.guardianRequired === true
         || onboarding.data?.guardian_required === true
       );
-      memberBootstrapState.statusReady = !memberBootstrapState.guardianRequired;
-      memberBootstrapState.dataReady = !memberBootstrapState.guardianRequired;
-      setMemberInteractionLocked(memberBootstrapState.guardianRequired);
+      memberBootstrapState.statusReady = true;
+      memberBootstrapState.dataReady = true;
+      setMemberInteractionLocked(false);
       document.body.removeAttribute("aria-busy");
       return { status, contacts: contactData, onboarding };
     }
