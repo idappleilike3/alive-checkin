@@ -1502,26 +1502,83 @@ def next_checkin_reminder_info(profile, config=None, now=None):
     }
 
 
+def build_checkin_message_context(profile, now):
+    """本人與守護人共用的祝福、等級及重大安全消息。"""
+    profile = profile if isinstance(profile, dict) else {}
+    streak_days = int(profile.get("streak_days") or 0)
+    if not streak_days:
+        streak_days = compute_streak_days(
+            profile.get("history") or [], now.strftime("%Y-%m-%d")
+        )
+    level = profile.get("streak_level")
+    if not isinstance(level, dict):
+        level = streak_level_context(
+            streak_days, profile.get("highest_streak_days") or streak_days
+        )
+    care_profile = dict(profile)
+    care_profile["streak_days"] = streak_days
+    care = build_daily_care_context(care_profile, now)
+    return {
+        "blessing": str(
+            profile.get("daily_blessing") or checkin_blessing_text(now)
+        ).strip(),
+        "streak_days": streak_days,
+        "level_name": str(level.get("level_name") or "安心啟程").strip(),
+        "safety_news": (
+            str(care.get("news_summary") or "").strip()
+            if care.get("has_important_news")
+            else ""
+        ),
+    }
+
+
 def build_checkin_success_text(status, *, now=None, config=None):
-    """報平安成功回覆：星期、報到時間、祝福語、下次提醒。"""
+    """報平安成功回覆：真實時間、祝福、等級、安全消息與下次提醒。"""
     now = now or current_app_time(config)
     duplicate = bool(status.get("already_checked_today") or status.get("is_duplicate"))
-    header = "✅ 今天已經報過平安了，不用再點一次。" if duplicate else "✅ 報平安成功！"
     check_dt = parse_last_checkin(status.get("last_check_in")) or now
     if getattr(check_dt, "tzinfo", None) is not None:
         try:
             check_dt = check_dt.astimezone(ZoneInfo("Asia/Taipei")).replace(tzinfo=None)
         except Exception:
             check_dt = check_dt.replace(tzinfo=None)
-    blessing = checkin_blessing_text(now)
+    context = build_checkin_message_context(status, now)
     lines = [
-        header,
-        f"📅 今天是 {format_md_weekday(now)}｜報到時間 {format_hm(check_dt)}",
-        f"💌 {blessing}",
+        (
+            "✅ 今天已經報過平安了，不用再點一次。"
+            if duplicate
+            else "✅ 報平安成功"
+        ),
     ]
+    if not duplicate:
+        lines.append(f"✅ 已報平安時間：{check_dt.strftime('%Y/%m/%d %H:%M')}")
+    lines.extend([
+        f"📅 今天是 {format_md_weekday(now)}",
+        f"💌 {context['blessing']}",
+        f"🌱 當前等級：{context['level_name']}｜連續 {context['streak_days']} 天",
+    ])
+    if context["safety_news"]:
+        lines.append(f"📰 安心提醒：{context['safety_news']}")
     next_text = str(status.get("next_reminder_text") or "").strip()
     if next_text:
         lines.append(f"⏰ {next_text}" if next_text.startswith("下次提醒") else f"⏰ 下次提醒 {next_text}")
+    lines.append("今日已報平安，請放心")
+    return "\n".join(lines)
+
+
+def build_guardian_checkin_text(profile, now):
+    """守護人安心通知；不揭露會員的下一次提醒設定。"""
+    owner_name = str(profile.get("display_name") or "您的親友").strip()
+    context = build_checkin_message_context(profile, now)
+    lines = [
+        f"✅ {owner_name} 今日已報平安",
+        f"🕒 完成時間：{now.strftime('%Y/%m/%d %H:%M')}",
+        f"💌 {context['blessing']}",
+        f"🌱 當前等級：{context['level_name']}｜連續 {context['streak_days']} 天",
+    ]
+    if context["safety_news"]:
+        lines.append(f"📰 安心提醒：{context['safety_news']}")
+    lines.append(f"今日已收到 {owner_name} 的平安，請放心")
     return "\n".join(lines)
 
 
@@ -4844,7 +4901,10 @@ def build_status(profile, state=None, now=None):
         },
         "birthday": str(profile.get("birthday") or "").strip(),
         "weather": copy.deepcopy(profile.get("weather") or {}),
-        "daily_blessing": checkin_blessing_text(now),
+        "daily_blessing": str(
+            profile.get("daily_blessing") or checkin_blessing_text(now)
+        ).strip(),
+        "daily_news": copy.deepcopy(profile.get("daily_news") or {}),
         "is_onboarding_completed": bool(access["home_ready"]),
         "onboarding_reminder_configured": bool(
             profile.get("onboarding_reminder_configured")
@@ -5512,11 +5572,7 @@ def notify_guardians_of_checkin(data_file, line_user_id, config=None, now=None):
     failed = 0
     checked_at = now or current_app_time(cfg)
     owner_name = str(profile.get("display_name") or "您的親友").strip()
-    message = (
-        f"✅ {owner_name} 已報平安\n"
-        f"時間：{checked_at.strftime('%Y/%m/%d %H:%M')}\n"
-        "今日平安回報已完成，請放心。"
-    )
+    message = build_guardian_checkin_text(profile, checked_at)
     sender = cfg.get("LINE_PUSH_SENDER") or line_push_message
     for target, _contact in recipients:
         try:
