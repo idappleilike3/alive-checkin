@@ -7,11 +7,51 @@ FUNCTION_MARKER = "def admin_merge_member_accounts("
 ROUTE_MARKER = '@app.post("/api/admin/members/merge")'
 COMPLETION_MARKER = '"is_onboarding_completed": bool(access["home_ready"])'
 BETA_REPAIR_MARKER = '# Repair stale beta identity before rendering admin member rows.'
+STARTUP_REPAIR_MARKER = "def repair_authoritative_beta_onboarding_state("
+STARTUP_CALL_MARKER = "repair_authoritative_beta_onboarding_state,\n    )\n    if Flask is None:"
 
 FUNCTION_ANCHOR = "\ndef purge_account_migration_snapshots(state, now=None):\n"
 ROUTE_ANCHOR = '    @app.post("/api/admin/test-accounts/<line_user_id>/reset")\n'
 COMPLETION_ANCHOR = '"is_onboarding_completed": bool(profile.get("is_onboarding_completed"))'
 BETA_REPAIR_ANCHOR = '    for user in (state.get("users") or {}).values():\n        if (\n            str(user.get("membership_source") or "") == "beta"\n'
+STARTUP_REPAIR_ANCHOR = "\ndef should_show_guardian_prompt(profile, contact_count):\n"
+STARTUP_CALL_ANCHOR = "def create_app(config=None):\n    if Flask is None:\n"
+
+STARTUP_REPAIR_CODE = r'''
+def repair_authoritative_beta_onboarding_state(state):
+    """Persist beta plan and completed binding facts before any page is opened."""
+    changed = 0
+    for profile in (state.get("users") or {}).values():
+        if not isinstance(profile, dict):
+            continue
+        profile_changed = False
+        cohort = str(profile.get("beta_cohort") or "").strip().upper()
+        if (
+            str(profile.get("membership_source") or "") == "beta"
+            and cohort in BETA_COHORT_PLAN
+        ):
+            expected_plan = BETA_COHORT_PLAN[cohort]
+            if profile.get("plan") != expected_plan:
+                profile["plan"] = expected_plan
+                profile_changed = True
+            if profile.get("payment_status") != "beta":
+                profile["payment_status"] = "beta"
+                profile_changed = True
+        if profile_has_bound_line_guardian(profile):
+            if profile.get("beta_reset_pending"):
+                profile["beta_reset_pending"] = False
+                profile_changed = True
+            if ensure_onboarding_completed_flag(profile):
+                profile_changed = True
+            interaction = get_or_create_interaction_state(profile)
+            if interaction.get("guardian_prompt_status") != "accepted":
+                interaction["guardian_prompt_status"] = "accepted"
+                profile_changed = True
+        if profile_changed:
+            changed += 1
+    return changed
+
+'''
 
 FUNCTION_CODE = r'''
 def admin_merge_member_accounts(data_file, old_line_user_id, new_line_user_id, now=None):
@@ -129,6 +169,31 @@ def main():
             '            dirty = True\n'
             '        if (\n'
             '            str(user.get("membership_source") or "") == "beta"\n',
+            1,
+        )
+    if STARTUP_REPAIR_MARKER not in source:
+        if STARTUP_REPAIR_ANCHOR not in source:
+            raise SystemExit("startup beta repair anchor not found")
+        source = source.replace(
+            STARTUP_REPAIR_ANCHOR,
+            "\n" + STARTUP_REPAIR_CODE + STARTUP_REPAIR_ANCHOR,
+            1,
+        )
+    if STARTUP_CALL_MARKER not in source:
+        if STARTUP_CALL_ANCHOR not in source:
+            raise SystemExit("create_app startup repair anchor not found")
+        source = source.replace(
+            STARTUP_CALL_ANCHOR,
+            "def create_app(config=None):\n"
+            "    startup_data_file = (\n"
+            "        (config or {}).get(\"DATA_FILE\")\n"
+            "        or resolve_data_file(os.environ.get(\"DATA_FILE\"))\n"
+            "    )\n"
+            "    mutate_state_atomically(\n"
+            "        startup_data_file,\n"
+            "        repair_authoritative_beta_onboarding_state,\n"
+            "    )\n"
+            "    if Flask is None:\n",
             1,
         )
     compile(source, str(APP_PATH), "exec")

@@ -80,6 +80,21 @@ class JennieMemberRecoveryTests(unittest.TestCase):
         self.assertTrue(status["home_ready"])
         self.assertTrue(status["is_onboarding_completed"])
 
+    def test_app_startup_persists_b799_completion_without_opening_admin(self):
+        app_module.create_app({
+            "TESTING": True,
+            "DATA_FILE": self.data_file,
+            "ADMIN_SESSION_SECRET": "test-secret",
+        })
+
+        saved = app_module.load_state(self.data_file)["users"][self.line_user_id]
+        self.assertEqual(saved["plan"], "paid_799_year")
+        self.assertEqual(saved["payment_status"], "beta")
+        self.assertFalse(saved["beta_reset_pending"])
+        self.assertTrue(saved["is_onboarding_completed"])
+        self.assertTrue(saved["interaction_state"]["onboarding_completed"])
+        self.assertEqual(saved["interaction_state"]["guardian_prompt_status"], "accepted")
+
 
 if __name__ == "__main__":
     unittest.main()
