@@ -12,11 +12,15 @@ test("completed onboarding never renders the five-step invite screen again", () 
   assert.match(html, /if \(resumeView === "complete"\)[\s\S]*?modal\.hidden = true/);
 });
 
-test("binding celebration is a server-backed one-time voice prompt with check-in and mute", () => {
+test("binding celebration is a server-backed one-time voice prompt with optional birthday and mute", () => {
   assert.match(html, /show_binding_celebration/);
   assert.match(html, /\/api\/onboarding\/binding-celebration\/ack/);
   assert.match(html, /恭喜你完成守護人綁定/);
-  assert.match(html, /guardianBindingCelebrateCheckin/);
+  assert.match(html, /guardianBindingBirthday/);
+  assert.match(html, /祝福語與特別驚喜/);
+  assert.match(html, /guardianBindingCelebrateSave/);
+  assert.match(html, /guardianBindingCelebrateSkip/);
   assert.match(html, /guardianBindingCelebrateMute/);
   assert.match(html, /speakPeaceHelper/);
+  assert.doesNotMatch(html, /guardianBindingCelebrateCheckin/);
 });

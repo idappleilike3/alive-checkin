@@ -4107,12 +4107,16 @@
     <div class="modal-backdrop" id="guardianBindingCelebrateModal" hidden>
       <div class="guardian-modal guardian-prompt-card" role="dialog" aria-modal="true" aria-labelledby="guardianBindingCelebrateTitle">
         <h2 id="guardianBindingCelebrateTitle">🎉 恭喜你完成守護人綁定</h2>
-        <p>首次設定已完成，不需要再填寫五個步驟，也不會再自動要求一鍵分享。</p>
-        <p><strong>恭喜你完成綁定，請點一下「我平安」</strong>，完成今天的平安回報。</p>
+        <p>首次設定已完成，五個步驟不會再重複顯示。這份恭喜只會出現一次。</p>
+        <p>生日為選填；填寫後，我們會在生日送上祝福語與特別驚喜，不會公開顯示。</p>
+        <label for="guardianBindingBirthday" style="display:grid;gap:6px;text-align:left;font-weight:800;">
+          我的生日（選填）
+          <input id="guardianBindingBirthday" type="date" autocomplete="bday" style="min-height:48px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--panel);color:var(--text);">
+        </label>
         <div class="actions" style="flex-direction:column;gap:10px;">
-          <button class="action-btn primary" id="guardianBindingCelebrateCheckin" type="button">我平安</button>
+          <button class="action-btn primary" id="guardianBindingCelebrateSave" type="button">儲存生日</button>
+          <button class="action-btn" id="guardianBindingCelebrateSkip" type="button">稍後再說</button>
           <button class="action-btn" id="guardianBindingCelebrateMute" type="button">🔊 語音開啟</button>
-          <button class="action-btn" id="guardianBindingCelebrateLater" type="button">稍後再按</button>
         </div>
       </div>
     </div>
@@ -6140,9 +6144,10 @@
         syncSos();
       }
       const celebrationModal = $("guardianBindingCelebrateModal");
-      const celebrationCheckin = $("guardianBindingCelebrateCheckin");
+      const celebrationBirthday = $("guardianBindingBirthday");
+      const celebrationSave = $("guardianBindingCelebrateSave");
+      const celebrationSkip = $("guardianBindingCelebrateSkip");
       const celebrationMute = $("guardianBindingCelebrateMute");
-      const celebrationLater = $("guardianBindingCelebrateLater");
       const renderCelebrationMute = () => {
         if (celebrationMute) celebrationMute.textContent = peaceHelperIsMuted() ? "🔇 已靜音" : "🔊 語音開啟";
       };
@@ -6153,32 +6158,48 @@
         if (muted && "speechSynthesis" in window) window.speechSynthesis.cancel();
         renderMute();
         renderCelebrationMute();
-        if (!muted) speakPeaceHelper("恭喜你完成守護人綁定。現在請點一下我平安。");
+        if (!muted) speakPeaceHelper("恭喜你完成守護綁定。你可以選擇填寫生日，生日當天會收到特別祝福與驚喜。");
       });
-      if (celebrationLater) celebrationLater.addEventListener("click", () => {
-        celebrationModal.hidden = true;
-        if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-      });
-      if (celebrationCheckin) celebrationCheckin.addEventListener("click", async () => {
-        celebrationCheckin.disabled = true;
+      const finishBindingCelebration = async (birthday = "") => {
+        if (celebrationSave) celebrationSave.disabled = true;
+        if (celebrationSkip) celebrationSkip.disabled = true;
         try {
-          await doCheckin();
+          await acknowledgeBindingCelebration(birthday);
           celebrationModal.hidden = true;
+          if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+          if (birthday) showInlineSuccess("生日已儲存，生日當天會為你準備祝福與驚喜。");
         } catch (error) {
-          showInlineError("回報失敗：" + (error.message || "請稍後再試"));
+          showInlineError(error.message || "儲存失敗，請稍後再試");
         } finally {
-          celebrationCheckin.disabled = false;
+          if (celebrationSave) celebrationSave.disabled = false;
+          if (celebrationSkip) celebrationSkip.disabled = false;
         }
+      };
+      if (celebrationSave) celebrationSave.addEventListener("click", () => {
+        const birthday = String(celebrationBirthday?.value || "").trim();
+        if (!birthday) {
+          showInlineError("請選擇生日，或按「稍後再說」。");
+          return;
+        }
+        finishBindingCelebration(birthday);
       });
+      if (celebrationSkip) celebrationSkip.addEventListener("click", () => finishBindingCelebration(""));
     }
 
-    async function acknowledgeBindingCelebration() {
+    async function acknowledgeBindingCelebration(birthday = "") {
+      const modal = $("guardianBindingCelebrateModal");
       const response = await fetch("/api/onboarding/binding-celebration/ack", {
         method: "POST",
         headers: await authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ line_user_id: lineUserId })
+        body: JSON.stringify({
+          line_user_id: lineUserId,
+          event_id: String(modal?.dataset.eventId || ""),
+          birthday
+        })
       });
-      if (!response.ok) throw new Error("binding celebration acknowledgement failed");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "完成提示儲存失敗");
+      return data;
     }
 
     function announceOnboardingCompletion(data) {
@@ -6186,12 +6207,12 @@
       const modal = $("guardianBindingCelebrateModal");
       if (!modal || modal.dataset.shown === "true") return;
       modal.dataset.shown = "true";
+      modal.dataset.eventId = String(data.binding_celebration?.event_id || "");
+      const birthday = $("guardianBindingBirthday");
+      if (birthday) birthday.value = String(data.birthday || "");
       modal.hidden = false;
       playXiaoPinganSequence(["confetti", "hug", "jump"], "celebration");
-      speakPeaceHelper("恭喜你完成守護人綁定。現在請點一下我平安，完成今天的平安回報。");
-      acknowledgeBindingCelebration().catch(() => {
-        modal.dataset.shown = "";
-      });
+      speakPeaceHelper("恭喜你完成守護綁定。你可以選擇填寫生日，生日當天會收到特別祝福與驚喜。");
     }
 
     function showCheckinSuccessMessage(data) {
