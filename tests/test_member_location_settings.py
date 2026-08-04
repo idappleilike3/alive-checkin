@@ -89,7 +89,7 @@ class MemberLocationUiContractTests(unittest.TestCase):
             'id="memberLocationCard"',
             'id="memberCity"',
             'id="memberDistrict"',
-            "saveMemberLocation",
+            "saveMemberProfile",
         ):
             self.assertIn(marker, self.member)
 

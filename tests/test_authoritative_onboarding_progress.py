@@ -129,8 +129,8 @@ class AuthoritativeOnboardingProgressTest(unittest.TestCase):
     def test_trial_and_both_beta_plans_share_the_same_waiting_step(self):
         plan_cases = (
             ("trial", "", "trial"),
-            ("beta_399", "B399", "paid_399"),
-            ("beta_799", "B799", "paid_799"),
+            ("beta_399", "B399", "paid_399_year"),
+            ("beta_799", "B799", "paid_799_year"),
         )
         for label, cohort, plan in plan_cases:
             with self.subTest(plan=label):

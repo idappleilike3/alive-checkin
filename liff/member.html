@@ -340,13 +340,20 @@
 </div>
 
 <div class="card" id="memberLocationCard">
+  <h2>👤 會員基本資料</h2>
+  <p class="hint">已填寫的資料會自動帶入；新增欄位不會要求你重填其他資料。</p>
+  <label for="memberDisplayName">稱呼</label>
+  <input id="memberDisplayName" type="text" maxlength="40" autocomplete="name" placeholder="例如：珮淩">
+  <label for="memberBirthday">生日（選填）</label>
+  <input id="memberBirthday" type="date" autocomplete="bday">
+  <p class="hint">生日用于生日祝福与重要节日惊喜；未曾填写时先显示今天，方便直接选择年月日。</p>
   <h2>🌤️ 所在地與天氣提醒</h2>
   <p class="hint">只保存縣市與鄉鎮市區，用於首頁天氣及地區安全提醒；不保存詳細地址，也不要求 GPS。</p>
   <label for="memberCity">縣市</label>
   <select id="memberCity"><option value="">請選擇縣市</option></select>
   <label for="memberDistrict">鄉鎮市區</label>
   <select id="memberDistrict"><option value="">請先選擇縣市</option></select>
-  <button class="btn btn-primary" type="button" id="saveMemberLocationBtn">儲存所在地區</button>
+  <button class="btn btn-primary" type="button" id="saveMemberProfileBtn">儲存會員資料</button>
   <p class="hint" id="memberLocationStatus" role="status" aria-live="polite"></p>
 </div>
 
@@ -563,7 +570,9 @@ let state = {
   plan: "trial",
   smartEditingId: null,
   guardingFor: [],
-  guardingDetails: []
+  guardingDetails: [],
+  displayName: "",
+  birthday: ""
 };
 
 function lineAuthHeaders(extra = {}) {
@@ -694,13 +703,15 @@ async function init() {
       state.reminderTimes = (d.reminder_times && d.reminder_times.length)
         ? d.reminder_times
         : (d.default_reminder_times || defaultTimesForCount(state.dailyReminders));
-      document.getElementById("planName").textContent = d.plan || "尚未訂閱";
+      document.getElementById("planName").textContent = d.membership_label || d.plan || "尚未訂閱";
       state.plan = d.plan || "trial";
       state.userLocation = d.user_location || { city: "", district: "" };
+      state.displayName = d.display_name || "";
+      state.birthday = d.birthday || "";
       state.guardingFor = Array.isArray(d.guarding_for) ? d.guarding_for : [];
       state.guardingDetails = Array.isArray(d.guarding_details) ? d.guarding_details : [];
       document.getElementById("planDetail").textContent = d.plan
-        ? `每日提醒 ${state.dailyReminders} 次／逾時 ${state.graceHours} 小時`
+        ? `${d.membership_status_text || ""}${d.membership_status_text ? "｜" : ""}每日提醒 ${state.dailyReminders} 次／逾時 ${state.graceHours} 小時`
         : "免費／試用可綁 1 位守護人；799 進階解鎖多人共守與守護群";
       document.getElementById("reminderHint").textContent =
         `本方案每日可設定 ${state.dailyReminders} 個提醒時段。未自訂時預設：${(d.default_reminder_times || defaultTimesForCount(state.dailyReminders)).join("、")}`;
@@ -735,16 +746,48 @@ function renderMemberLocation() {
   const citySelect = document.getElementById("memberCity");
   citySelect.innerHTML = `<option value="">請選擇縣市</option>${Object.keys(MEMBER_LOCATION_DISTRICTS).map(c => `<option value="${c}" ${c === city ? "selected" : ""}>${c}</option>`).join("")}`;
   renderMemberDistricts(city, district);
+  const displayName = document.getElementById("memberDisplayName");
+  const birthday = document.getElementById("memberBirthday");
+  if (displayName) displayName.value = state.displayName || "";
+  if (birthday) birthday.value = state.birthday || todayLocalIsoDate();
 }
 
-async function saveMemberLocation() {
+function todayLocalIsoDate() {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60000;
+  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+}
+
+async function saveMemberProfile() {
   const city = document.getElementById("memberCity").value;
   const district = document.getElementById("memberDistrict").value;
+  const displayName = document.getElementById("memberDisplayName").value.trim();
+  const birthday = document.getElementById("memberBirthday").value;
   const status = document.getElementById("memberLocationStatus");
+  if (!displayName) { status.textContent = "請填寫稱呼"; return; }
   if (!city || !district) { status.textContent = "請選擇縣市與鄉鎮市區"; return; }
-  const response = await fetch(`${API_BASE}/api/profile/location`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ line_user_id:state.lineUserId, city, district }) });
-  status.textContent = response.ok ? "✓ 所在地區已儲存" : "儲存失敗，請稍後再試";
-  if (response.ok) state.userLocation = { city, district };
+  const button = document.getElementById("saveMemberProfileBtn");
+  button.disabled = true;
+  button.textContent = "儲存中...";
+  try {
+    const response = await fetch(`${API_BASE}/api/profile/location`, {
+      method:"POST",
+      headers:lineAuthHeaders({"Content-Type":"application/json"}),
+      body:JSON.stringify({ line_user_id:state.lineUserId, display_name: displayName, birthday: birthday, city, district })
+    });
+    const data = await response.json().catch(() => ({}));
+    status.textContent = response.ok ? "✓ 會員資料已儲存" : `儲存失敗：${data.message || data.error || "請稍後再試"}`;
+    if (response.ok) {
+      state.userLocation = data.user_location || { city, district };
+      state.displayName = data.display_name || displayName;
+      state.birthday = data.birthday || birthday;
+    }
+  } catch (error) {
+    status.textContent = `儲存失敗：${error.message || "網路錯誤"}`;
+  } finally {
+    button.disabled = false;
+    button.textContent = "儲存會員資料";
+  }
 }
 
 function renderGraceHoursButtons() {
@@ -920,7 +963,10 @@ async function toggleSmartReminder(id, enabled) {
 }
 
 async function refreshGuardians() {
-  const r2 = await fetch(`${API_BASE}/api/contacts?line_user_id=${state.lineUserId}`);
+  const r2 = await fetch(
+    `${API_BASE}/api/contacts?line_user_id=${encodeURIComponent(state.lineUserId)}`,
+    { headers: lineAuthHeaders() }
+  );
   if (r2.ok) {
     const d = await r2.json();
     state.guardians = d.contacts || [];
@@ -1152,7 +1198,7 @@ async function saveEditor() {
     const method = state.editId ? "PUT" : "POST";
     const res = await fetch(url, {
       method,
-      headers: { "Content-Type": "application/json" },
+      headers: lineAuthHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload)
     });
     const data = await res.json();
@@ -1177,7 +1223,8 @@ async function deleteGuardian(contactId) {
   if (!g || !confirm(`確定要刪除守護人「${g.name || "未命名"}」嗎？`)) return;
   try {
     const res = await fetch(`${API_BASE}/api/contacts/${encodeURIComponent(contactId)}?line_user_id=${encodeURIComponent(state.lineUserId)}`, {
-      method: "DELETE"
+      method: "DELETE",
+      headers: lineAuthHeaders()
     });
     const data = await res.json();
     if (!res.ok || data.ok === false) {
@@ -1264,7 +1311,7 @@ document.getElementById("saveEditorBtn").addEventListener("click", saveEditor);
 const saveReminderBtn = document.getElementById("saveBtn");
 if (saveReminderBtn) saveReminderBtn.addEventListener("click", saveReminder);
 document.getElementById("memberCity")?.addEventListener("change", (event) => renderMemberDistricts(event.target.value));
-document.getElementById("saveMemberLocationBtn")?.addEventListener("click", saveMemberLocation);
+document.getElementById("saveMemberProfileBtn")?.addEventListener("click", saveMemberProfile);
 document.getElementById("existingMemberEditBtn")?.addEventListener("click", () => {
   document.getElementById("memberLocationCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
 });

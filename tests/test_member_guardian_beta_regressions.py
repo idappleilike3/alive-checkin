@@ -31,7 +31,7 @@ class MemberGuardianBetaRegressionTests(unittest.TestCase):
         self.assertNotIn("beta_started_at", profile)
         self.assertNotIn("beta_ends_at", profile)
 
-    def test_saving_profile_and_reminder_starts_reserved_beta_clock(self):
+    def test_saving_profile_and_reminder_waits_for_guardian_binding(self):
         with tempfile.TemporaryDirectory() as tmp:
             data_file = Path(tmp) / "state.json"
             state = {"users": {"U-beta": {"line_user_id": "U-beta", "plan": "trial"}}}
@@ -44,10 +44,10 @@ class MemberGuardianBetaRegressionTests(unittest.TestCase):
 
             saved = app.load_state(str(data_file))["users"]["U-beta"]
             self.assertEqual(code, 200)
-            self.assertTrue(result["beta_activated"])
-            self.assertFalse(saved["beta_activation_pending"])
-            self.assertTrue(saved["beta_started_at"])
-            self.assertTrue(saved["beta_ends_at"])
+            self.assertFalse(result["beta_activated"])
+            self.assertTrue(saved["beta_activation_pending"])
+            self.assertFalse(saved.get("beta_started_at"))
+            self.assertFalse(saved.get("beta_ends_at"))
 
     def test_accepted_invite_repairs_both_admin_relationship_indexes(self):
         owner = {"line_user_id": "U-owner", "display_name": "Jennie", "contacts": []}
