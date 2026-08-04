@@ -580,7 +580,7 @@ test("server guardian_required shows onboarding and blocks home, check-in, guard
   }
 });
 
-test("guardian_required keeps member controls locked after bootstrap data arrives", async () => {
+test("guardian_required keeps guarded services disabled but unlocks member data controls", async () => {
   const locks = [];
   const elements = {
     mvpSafeBtn: { disabled: true },
@@ -611,10 +611,11 @@ test("guardian_required keeps member controls locked after bootstrap data arrive
   );
 
   await sandbox.loadInitialMemberData();
-  assert.equal(sandbox.memberBootstrapState.statusReady, false);
+  assert.equal(sandbox.memberBootstrapState.statusReady, true);
+  assert.equal(sandbox.memberBootstrapState.dataReady, true);
   assert.equal(elements.mvpSafeBtn.disabled, true);
   assert.equal(elements.mvpGuardStartBtn.disabled, true);
-  assert.ok(locks.every((locked) => locked === true));
+  assert.equal(locks.at(-1), false);
 });
 
 test("registered B399 member with unfinished guardian setup resumes onboarding progress", async () => {
@@ -664,7 +665,7 @@ test("registered B399 member with unfinished guardian setup resumes onboarding p
   assert.deepEqual(events, ["onboarding"]);
 });
 
-test("guardian-required onboarding cannot be dismissed by an unbound contact", async () => {
+test("registered member can close onboarding to edit contact data", async () => {
   const closeVisibility = [];
   const steps = [];
   const elements = {
@@ -675,6 +676,7 @@ test("guardian-required onboarding cannot be dismissed by an unbound contact", a
     obEmail: { value: "" },
   };
   const sandbox = expose(`${functionSource("onboardingResumeView")}\n${functionSource("showOnboarding")}`, ["showOnboarding"], {
+    lineUserId: "U-member",
     currentStatusData: { guardian_required: true },
     currentGuardianContacts: () => [{ name: "阿媽", binding_status: "unbound" }],
     fetchOnboardingState: async () => ({ guardianRequired: true, homeReady: false, data: {} }),
@@ -688,12 +690,12 @@ test("guardian-required onboarding cannot be dismissed by an unbound contact", a
   });
 
   await sandbox.showOnboarding();
-  assert.deepEqual(closeVisibility, [false]);
+  assert.deepEqual(closeVisibility, [true]);
   assert.deepEqual(steps, ["profile"]);
   assert.equal(elements.onboardingModal.hidden, false);
 });
 
-test("guardian_required blocks status actions even after status data is loaded", () => {
+test("guardian_required permits loaded member data actions while guarded services stay blocked", () => {
   const gateSource = section(
     "function requireMemberActionReady(",
     "function showMemberBootstrapError(",
@@ -707,7 +709,9 @@ test("guardian_required blocks status actions even after status data is loaded",
     readSafeDeepLinkParams: () => ({}),
   });
 
-  assert.equal(sandbox.requireMemberActionReady("status"), false);
+  assert.equal(sandbox.requireMemberActionReady("status"), true);
+  assert.equal(sandbox.requireMemberActionReady("data"), true);
+  assert.equal(sandbox.requireMemberActionReady("guardian_service"), false);
 });
 
 test("legacy handoff parses nested liff.state and drops the old Provider inviter ID", () => {
