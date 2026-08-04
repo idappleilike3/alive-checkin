@@ -25,8 +25,17 @@ class XiaoPinganFrontendContractTests(unittest.TestCase):
         bind_start = self.html.index('function bindPeaceHelper()')
         bind_end = self.html.index('\n    function todayLocalIsoDate()', bind_start)
         implementation = self.html[bind_start:bind_end]
+        self.assertIn('collapsePeaceHelper();', implementation)
+
+    def test_android_page_restore_collapses_helper_until_user_clicks(self):
+        self.assertIn('function collapsePeaceHelper()', self.html)
+        self.assertIn('window.addEventListener("pageshow", collapsePeaceHelper);', self.html)
+        collapse_start = self.html.index('function collapsePeaceHelper()')
+        collapse_end = self.html.index('\n    function bindPeaceHelper()', collapse_start)
+        implementation = self.html[collapse_start:collapse_end]
         self.assertIn('panel.hidden = true;', implementation)
         self.assertIn('launcher.setAttribute("aria-expanded", "false");', implementation)
+        self.assertNotIn('.click()', implementation)
 
     def test_character_has_qilin_diamond_guardian_mark(self):
         self.assertIn('class="xp-diamond"', self.html)

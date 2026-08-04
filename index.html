@@ -6136,14 +6136,23 @@
       });
     }
 
+    function collapsePeaceHelper() {
+      const launcher = $("peaceHelperLauncher");
+      const panel = $("peaceHelperPanel");
+      if (!launcher || !panel) return;
+      panel.hidden = true;
+      launcher.setAttribute("aria-expanded", "false");
+    }
+
+    window.addEventListener("pageshow", collapsePeaceHelper);
+
     function bindPeaceHelper() {
       const launcher = $("peaceHelperLauncher");
       const panel = $("peaceHelperPanel");
       const mute = $("peaceHelperMute");
       if (!launcher || !panel || !mute || launcher.dataset.bound === "true") return;
       launcher.dataset.bound = "true";
-      panel.hidden = true;
-      launcher.setAttribute("aria-expanded", "false");
+      collapsePeaceHelper();
       const renderMute = () => { mute.textContent = peaceHelperIsMuted() ? "🔇 已靜音" : "🔊 語音開啟"; };
       renderMute();
       try {
