@@ -148,6 +148,55 @@ class JennieMemberRecoveryTests(unittest.TestCase):
         self.assertEqual(member["contacts"][0]["line_user_id"], guardian_id)
         self.assertNotIn(self.line_user_id, saved["test_account_tombstones"])
 
+    def test_app_startup_restores_missing_beta_member_when_guardian_link_survived(self):
+        guardian_id = "Ufd7bebdfa2382aeaaf490dd204c2c77a"
+        app_module.save_state(
+            self.data_file,
+            {
+                "users": {
+                    guardian_id: {
+                        **app_module.DEFAULT_PROFILE,
+                        "line_user_id": guardian_id,
+                        "display_name": "❤寶寶❤",
+                        "contacts": [{
+                            "id": "jennie-guards-baby",
+                            "name": "Jennie",
+                            "contact_role": "guardian",
+                            "line_user_id": self.line_user_id,
+                            "binding_status": "accepted",
+                            "recipient_consent": True,
+                        }],
+                    }
+                },
+                "test_account_tombstones": {
+                    self.line_user_id: {
+                        "line_user_id": self.line_user_id,
+                        "display_name": "Jennie",
+                        "last_beta_cohort": "B799",
+                        "reset_at": "2026-08-04T11:16:00",
+                        "status": "beta_reset_pending",
+                    }
+                },
+            },
+        )
+
+        app_module.create_app({
+            "TESTING": True,
+            "DATA_FILE": self.data_file,
+            "ADMIN_SESSION_SECRET": "test-secret",
+        })
+
+        saved = app_module.load_state(self.data_file)
+        member = saved["users"][self.line_user_id]
+        self.assertEqual(member["display_name"], "Jennie")
+        self.assertEqual(member["plan"], "paid_799_year")
+        self.assertEqual(member["payment_status"], "beta")
+        self.assertEqual(member["beta_cohort"], "B799")
+        self.assertTrue(member["is_onboarding_completed"])
+        self.assertTrue(app_module.profile_has_bound_line_guardian(member))
+        self.assertEqual(member["contacts"][0]["line_user_id"], guardian_id)
+        self.assertNotIn(self.line_user_id, saved["test_account_tombstones"])
+
     def test_stale_retired_uid_setting_does_not_delete_restored_beta_member(self):
         state = app_module.load_state(self.data_file)
         member = state["users"][self.line_user_id]

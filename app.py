@@ -3112,10 +3112,107 @@ def ensure_onboarding_completed_flag(profile):
     return changed
 
 
+def _restore_beta_member_profile(state, member_id, guardian_id, tombstone, clock, actor):
+    users = state.setdefault("users", {})
+    guardian = users.get(guardian_id)
+    cohort = str((tombstone or {}).get("last_beta_cohort") or "").upper()
+    if member_id in users or cohort not in BETA_COHORT_PLAN:
+        return None
+    if not isinstance(guardian, dict) or guardian_id == member_id:
+        return None
+    started = parse_datetime((tombstone or {}).get("reset_at")) or clock
+    profile = copy.deepcopy(DEFAULT_PROFILE)
+    profile.update({
+        "line_user_id": member_id,
+        "display_name": str((tombstone or {}).get("display_name") or "LINE 使用者"),
+        "plan": BETA_COHORT_PLAN[cohort],
+        "payment_status": "beta",
+        "membership_source": "beta",
+        "free_eligibility_source": f"beta_{cohort}",
+        "free_eligibility_used_at": started.isoformat(timespec="seconds"),
+        "beta_cohort": cohort,
+        "beta_started_at": started.isoformat(timespec="seconds"),
+        "beta_ends_at": (started + timedelta(days=BETA_TRIAL_DAYS)).isoformat(timespec="seconds"),
+        "beta_activation_pending": False,
+        "beta_reset_pending": False,
+        "onboarding_reminder_configured": True,
+        "is_onboarding_completed": True,
+        "profile_completed_at": started.isoformat(timespec="seconds"),
+        "contacts": [{
+            "id": f"restored-{guardian_id[-10:]}",
+            "name": str(guardian.get("display_name") or "守護人"),
+            "contact_role": "guardian",
+            "relationship": "守護人",
+            "line_user_id": guardian_id,
+            "line_id": guardian_id,
+            "binding_status": "accepted",
+            "consent_status": "accepted",
+            "recipient_consent": True,
+            "is_primary": True,
+            "priority": 1,
+            "accepted_at": started.isoformat(timespec="seconds"),
+        }],
+    })
+    interaction = get_or_create_interaction_state(profile)
+    interaction["onboarding_completed"] = True
+    interaction["guardian_prompt_status"] = "accepted"
+    interaction["completed_steps"] = [
+        "line_joined", "line_verified", "profile_saved",
+        "guardian_invite_sent", "add_first_guardian",
+    ]
+    users[member_id] = profile
+    state.setdefault("test_account_tombstones", {}).pop(member_id, None)
+    state.setdefault("admin_audit_logs", []).append({
+        "action": "beta_member_restore_from_tombstone",
+        "status": "success",
+        "actor": str(actor or "system"),
+        "line_user_id": member_id,
+        "guardian_line_user_id": guardian_id,
+        "beta_cohort": cohort,
+        "created_at": clock.isoformat(timespec="seconds"),
+    })
+    return profile
+
+
+def restore_missing_beta_members_with_surviving_links(state, now=None):
+    """Recover a lost beta row only when an accepted guardian link survived.
+
+    A normal beta reset removes relationship rows. Requiring a surviving accepted
+    reverse link therefore distinguishes an interrupted/lost primary record from
+    an intentional reset and makes startup recovery safe and idempotent.
+    """
+    users = state.setdefault("users", {})
+    tombstones = state.setdefault("test_account_tombstones", {})
+    clock = now or current_app_time({})
+    restored = 0
+    for member_id, tombstone in list(tombstones.items()):
+        if member_id in users or not isinstance(tombstone, dict):
+            continue
+        guardian_id = ""
+        for candidate_id, candidate in users.items():
+            if not isinstance(candidate, dict) or candidate_id == member_id:
+                continue
+            linked = any(
+                isinstance(contact, dict)
+                and get_contact_line_id(contact) == member_id
+                and str(contact.get("binding_status") or "").lower() == "accepted"
+                and bool(contact.get("recipient_consent"))
+                for contact in (candidate.get("contacts") or [])
+            )
+            if linked:
+                guardian_id = candidate_id
+                break
+        if guardian_id and _restore_beta_member_profile(
+            state, member_id, guardian_id, tombstone, clock, "startup_recovery"
+        ):
+            restored += 1
+    return restored
+
+
 
 def repair_authoritative_beta_onboarding_state(state):
     """Persist beta plan and completed binding facts before any page is opened."""
-    changed = 0
+    changed = restore_missing_beta_members_with_surviving_links(state)
     for profile in (state.get("users") or {}).values():
         if not isinstance(profile, dict):
             continue
