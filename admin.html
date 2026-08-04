@@ -1388,6 +1388,16 @@
         </div>
         <p id="memberMergeMessage" class="auth-status" role="status" aria-live="polite"></p>
       </section>
+      <section class="release-status" aria-labelledby="betaRestoreTitle" style="margin-bottom:16px;">
+        <h3 id="betaRestoreTitle">恢復遺失的封測會員主資料</h3>
+        <p class="note">僅在會員主資料遺失、但仍有封測保留紀錄時使用；會恢復原封測班別、期間、守護關係與 5／5。</p>
+        <div class="toolbar">
+          <label>會員完整 UID<input id="betaRestoreMemberId" placeholder="U 開頭的會員 LINE UID"></label>
+          <label>守護人完整 UID<input id="betaRestoreGuardianId" placeholder="U 開頭的守護人 LINE UID"></label>
+          <button id="betaRestoreButton" type="button" class="danger">核對並恢復</button>
+        </div>
+        <p id="betaRestoreMessage" class="auth-status" role="status" aria-live="polite"></p>
+      </section>
       <div class="table-wrap member-table-wrap">
         <table class="member-table">
           <thead>
@@ -2655,6 +2665,36 @@
         await refresh();
       } catch (error) {
         message.textContent = `✗ 合併失敗：${error.message || "請稍後再試"}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function restoreMissingBetaMember() {
+      if (!canManageMembers()) return;
+      const memberId = $("betaRestoreMemberId").value.trim();
+      const guardianId = $("betaRestoreGuardianId").value.trim();
+      const message = $("betaRestoreMessage");
+      if (!/^U[0-9a-f]{32}$/i.test(memberId) || !/^U[0-9a-f]{32}$/i.test(guardianId) || memberId === guardianId) {
+        message.textContent = "請填寫兩個不同的完整 LINE UID。";
+        return;
+      }
+      if (!window.confirm(`確定恢復會員 ${memberId}，並以 ${guardianId} 作為已綁定守護人？`)) return;
+      const button = $("betaRestoreButton");
+      button.disabled = true;
+      message.textContent = "正在核對封測保留紀錄並恢復…";
+      try {
+        const response = await adminFetch("/api/admin/beta-members/restore", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({line_user_id: memberId, guardian_line_user_id: guardianId, confirm: true}),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(adminMutationErrorText(data, response.status));
+        message.textContent = "✓ 已恢復封測會員主資料、守護關係與 5／5。";
+        await refresh();
+      } catch (error) {
+        message.textContent = `✗ 恢復失敗：${error.message || "請稍後再試"}`;
       } finally {
         button.disabled = false;
       }
@@ -4070,6 +4110,7 @@
       }
     });
     $("memberMergeButton")?.addEventListener("click", mergeDuplicateMember);
+    $("betaRestoreButton")?.addEventListener("click", restoreMissingBetaMember);
     const adminNavToggle = $("adminNavToggle");
     const adminNavBackdrop = $("adminNavBackdrop");
     if (adminNavToggle) adminNavToggle.addEventListener("click", () => toggleAdminNav());
