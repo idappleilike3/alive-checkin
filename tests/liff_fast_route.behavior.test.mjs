@@ -302,6 +302,8 @@ test("successful check-in immediately persists today's confirmed state", async (
       MEMBER_STATUS_CACHE_PREFIX: "alive_member_status_v1:",
       CHECK_BTN_LOADING_HTML: "loading",
       requireMemberActionReady: () => true,
+      hasLineBoundGuardian: () => true,
+      currentGuardianContacts: () => [{ line_user_id: "U-guardian", binding_status: "accepted" }],
       useLocalMode: false,
       lineUserId: "U123",
       appBootstrapPromise: null,
@@ -328,6 +330,24 @@ test("successful check-in immediately persists today's confirmed state", async (
   const cached = JSON.parse(storage.get("alive_member_status_v1:U123"));
   assert.equal(cached.status.is_today_checked, true);
   assert.equal(cached.status.checkin_date, "2026-07-30");
+});
+
+test("unbound member is stopped before check-in and sees the guardian invite prompt", async () => {
+  const events = [];
+  const sandbox = expose(functionSource("doCheckin"), ["doCheckin"], {
+    requireMemberActionReady: () => true,
+    hasLineBoundGuardian: () => false,
+    currentGuardianContacts: () => [],
+    showInlineError: (message) => events.push(`error:${message}`),
+    maybeShowGuardianPrompt: (force) => events.push(`prompt:${force}`),
+    $: () => { throw new Error("check-in button must not be reached"); },
+  });
+
+  assert.equal(await sandbox.doCheckin(), false);
+  assert.deepEqual(events, [
+    "error:你還沒有完成守護綁定，請先邀請一位守護人完成綁定。",
+    "prompt:true",
+  ]);
 });
 
 test("canonical action keeps page and open aliases on the requested screen", () => {
@@ -515,7 +535,7 @@ test("server guardian_required shows onboarding and blocks home, check-in, guard
 
   for (const openAction of ["home", "checkin", "guard", "sos"]) {
     const events = [];
-    const sandbox = expose(`${functionSource("memberOnboardingGateDecision")}\n${initSource}`, ["initApp"], {
+    const sandbox = expose(`${functionSource("memberOnboardingGateDecision")}\n${functionSource("guardianViewerAccessDecision")}\n${initSource}`, ["initApp"], {
       lineUserId: "U-member",
       lineRegistrationWasExisting: false,
       pendingMigratedMemberData: null,
@@ -599,7 +619,7 @@ test("guardian_required keeps member controls locked after bootstrap data arrive
 
 test("registered B399 member with unfinished guardian setup resumes onboarding progress", async () => {
   const events = [];
-  const sandbox = expose(`${functionSource("memberOnboardingGateDecision")}\n${functionSource("initApp")}`, ["initApp"], {
+  const sandbox = expose(`${functionSource("memberOnboardingGateDecision")}\n${functionSource("guardianViewerAccessDecision")}\n${functionSource("initApp")}`, ["initApp"], {
     lineUserId: "U-baby",
     lineRegistrationWasExisting: true,
     memberBootstrapState: { inFlight: null },

@@ -4652,7 +4652,7 @@
 
         <div class="member-data-section" id="memberProfileDetailsSection" aria-label="會員基本資料">
           <h3>會員基本資料</h3>
-          <p class="helper">地區用於天氣與安全提醒；住址與生日可自行填寫或修改。</p>
+          <p class="helper">地區用於天氣與安全提醒；生日用於生日祝福與重要節日提醒，不會公開顯示，且可隨時修改或留空。</p>
           <div class="onboarding-fields">
             <label class="onboarding-field" for="memberProfileCity">縣市
               <select id="memberProfileCity"></select>
@@ -4660,11 +4660,9 @@
             <label class="onboarding-field" for="memberProfileDistrict">鄉鎮市區
               <select id="memberProfileDistrict"></select>
             </label>
-            <label class="onboarding-field" for="memberProfileAddress">住址
-              <input id="memberProfileAddress" type="text" maxlength="120" autocomplete="street-address" placeholder="例如：○○路○○號（選填）">
-            </label>
             <label class="onboarding-field" for="memberProfileBirthday">生日
               <input id="memberProfileBirthday" type="date" autocomplete="bday">
+              <small id="memberProfileBirthdayInitialText">尚未填寫生日</small>
             </label>
           </div>
           <p class="onboarding-error" id="memberProfileSaveFeedback" hidden></p>
@@ -5089,11 +5087,11 @@
 
   <div class="modal-backdrop" id="guardianPrompt" hidden>
     <div class="guardian-modal">
-      <h2>添加緊急守護人</h2>
-      <p>註冊完成後，建議先邀請 1 位家人或朋友完成 LINE 綁定。緊急情況可快速觸達，系統會先送測試提醒確認通道正常。</p>
-      <p>對方只要點你的邀請連結，跳轉 LINE 官方授權頁面，一鍵同意綁定，約 10 秒即可完成關聯，無需另外註冊。</p>
+      <h2>請先完成守護綁定</h2>
+      <p><strong>你還沒有完成守護綁定，請先邀請一位守護人完成綁定。</strong></p>
+      <p>對方從你的邀請連結登入 LINE、填寫必要資料並同意後，才算完成守護綁定；完成後即可使用「我平安」。</p>
       <div class="actions">
-        <button class="action-btn" id="promptInviteBtn" type="button">前往綁定頁面</button>
+        <button class="action-btn primary" id="promptInviteBtn" type="button">立即邀請一位守護人</button>
         <button class="action-btn" id="dismissGuardianPromptBtn" type="button">稍後再說</button>
       </div>
     </div>
@@ -8601,14 +8599,14 @@
       if (modal) modal.hidden = true;
     }
 
-    function maybeShowGuardianPrompt() {
+    function maybeShowGuardianPrompt(force = false) {
       // ≥1 位 LINE 已綁守護人：登入首頁不再催「重新綁定／邀請」
       if (hasHomeSetupComplete(currentGuardianContacts())) return;
-      if (localStorage.getItem("guardian_prompt_seen") === "1") return;
       const prompt = $("guardianPrompt");
       if (!prompt) return;
+      if (!force && prompt.dataset.shown === "true") return;
       prompt.hidden = false;
-      localStorage.setItem("guardian_prompt_seen", "1");
+      prompt.dataset.shown = "true";
     }
 
     function hasLineBoundGuardian(contacts) {
@@ -11524,6 +11522,7 @@
       renderCalendar(currentYear, currentMonth, historyData);
       renderMemberCenter();
       announceOnboardingCompletion(data);
+      maybeShowGuardianPrompt();
     }
 
     async function refreshStatus() {
@@ -11644,6 +11643,11 @@
 
     async function doCheckin() {
       if (!requireMemberActionReady("status")) return false;
+      if (!hasLineBoundGuardian(currentGuardianContacts())) {
+        showInlineError("你還沒有完成守護綁定，請先邀請一位守護人完成綁定。");
+        maybeShowGuardianPrompt(true);
+        return false;
+      }
       const checkBtn = $("checkBtn");
       if (!checkBtn) return;
       // 防連點：僅在真正送出中阻擋（勿用初始 aria-busy，否則首次點擊會被吃掉）
@@ -11784,10 +11788,10 @@
         : apiAddGuardian(payload);
     }
 
-    async function apiSaveProfileLocation(city, district, address = "", birthday = "") {
+    async function apiSaveProfileLocation(city, district, birthday = "") {
       return apiMemberMutationWithRegistrationRecovery("/api/profile/location", {
         method: "POST",
-        body: JSON.stringify({ line_user_id: lineUserId, city, district, address, birthday })
+        body: JSON.stringify({ line_user_id: lineUserId, city, district, birthday })
       });
     }
 
@@ -11933,8 +11937,19 @@
       const district = location.district || "";
       citySelect.innerHTML = `<option value="">請選擇縣市</option>${Object.keys(WEB_ONBOARDING_DISTRICTS).map((name) => `<option value="${name}" ${name === city ? "selected" : ""}>${name}</option>`).join("")}`;
       renderMemberProfileDistricts(city, district);
-      if ($("memberProfileAddress")) $("memberProfileAddress").value = status.address || "";
-      if ($("memberProfileBirthday")) $("memberProfileBirthday").value = status.birthday || "";
+      const initialBirthday = String(status.birthday || "").slice(0, 10);
+      const birthdayInput = $("memberProfileBirthday");
+      if (birthdayInput) {
+        birthdayInput.value = initialBirthday;
+        birthdayInput.defaultValue = initialBirthday;
+        birthdayInput.max = getToday();
+      }
+      const birthdayInitialText = $("memberProfileBirthdayInitialText");
+      if (birthdayInitialText) {
+        birthdayInitialText.textContent = initialBirthday
+          ? `目前生日日期：${initialBirthday.replaceAll("-", "/")}`
+          : "尚未填寫生日（選填）";
+      }
       if (citySelect.dataset.bound !== "true") {
         citySelect.dataset.bound = "true";
         citySelect.addEventListener("change", () => renderMemberProfileDistricts(citySelect.value, ""));
@@ -11944,7 +11959,6 @@
     async function saveMemberProfileDetails() {
       const city = $("memberProfileCity")?.value.trim() || "";
       const district = $("memberProfileDistrict")?.value.trim() || "";
-      const address = $("memberProfileAddress")?.value.trim() || "";
       const birthday = $("memberProfileBirthday")?.value || "";
       const feedback = $("memberProfileSaveFeedback");
       const button = $("memberProfileSaveBtn");
@@ -11954,7 +11968,7 @@
       }
       if (button) { button.disabled = true; button.textContent = "儲存中…"; }
       try {
-        const saved = await apiSaveProfileLocation(city, district, address, birthday);
+        const saved = await apiSaveProfileLocation(city, district, birthday);
         currentStatusData = { ...(currentStatusData || {}), ...saved };
         if (feedback) { feedback.hidden = false; feedback.textContent = "✅ 會員資料已儲存"; }
         showInlineSuccess("會員資料已儲存");
