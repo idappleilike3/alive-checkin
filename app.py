@@ -2531,6 +2531,36 @@ def repair_accepted_guardian_invites(state, profile):
             continue
         guardian_id = str(invite.get("invitee_line_user_id") or "").strip()
         if not guardian_id or guardian_id == owner_id:
+        guardian_profile = (state.get("users") or {}).get(guardian_id)
+        if isinstance(guardian_profile, dict):
+            guarding_for = [
+                str(value or "").strip()
+                for value in (guardian_profile.get("guarding_for") or [])
+                if str(value or "").strip()
+            ]
+            if owner_id not in guarding_for:
+                guarding_for.append(owner_id)
+                guardian_profile["guarding_for"] = guarding_for
+                changed = True
+            details = list(guardian_profile.get("guarding_details") or [])
+            detail = next(
+                (
+                    row for row in details
+                    if isinstance(row, dict)
+                    and str(row.get("line_user_id") or "").strip() == owner_id
+                ),
+                None,
+            )
+            if detail is None:
+                details.append({
+                    "line_user_id": owner_id,
+                    "display_name": str(profile.get("display_name") or "邀請人"),
+                    "accepted_at": str(invite.get("accepted_at") or ""),
+                    "role": "guardian",
+                    "picture_url": str(profile.get("picture_url") or ""),
+                })
+                guardian_profile["guarding_details"] = details
+                changed = True
             continue
         if any(contact_is_bound_guardian(row, owner_id) and get_contact_line_id(row) == guardian_id for row in contacts):
             continue
@@ -3297,6 +3327,7 @@ def assign_beta_cohort(
     cohort,
     *,
     now=None,
+    activate=True,
     recruitment_source="",
 ):
     """Assign one real member to a capped 21-day beta cohort without an order."""
@@ -3316,6 +3347,21 @@ def assign_beta_cohort(
         profile.get("membership_source") == "beta"
         and profile.get("beta_cohort") == cohort
         and not profile.get("beta_revoked_at")
+        if activate and profile.get("beta_activation_pending"):
+            started = now or current_app_time({})
+            profile["beta_started_at"] = started.isoformat(timespec="seconds")
+            profile["beta_ends_at"] = (
+                started + timedelta(days=BETA_TRIAL_DAYS)
+            ).isoformat(timespec="seconds")
+            profile["beta_activation_pending"] = False
+            return {
+                "assigned": False,
+                "activated": True,
+                "idempotent": False,
+                "cohort": cohort,
+                "line_user_id": line_user_id,
+                "ends_at": profile["beta_ends_at"],
+            }
     ):
         return {
             "assigned": False,
@@ -3348,10 +3394,16 @@ def assign_beta_cohort(
     profile["plan"] = BETA_COHORT_PLAN[cohort]
     profile["payment_status"] = "beta"
     profile["beta_cohort"] = cohort
-    profile["beta_started_at"] = now.isoformat(timespec="seconds")
-    profile["beta_ends_at"] = (
-        now + timedelta(days=BETA_TRIAL_DAYS)
-    ).isoformat(timespec="seconds")
+    if activate:
+        profile["beta_started_at"] = now.isoformat(timespec="seconds")
+        profile["beta_ends_at"] = (
+            now + timedelta(days=BETA_TRIAL_DAYS)
+        ).isoformat(timespec="seconds")
+        profile["beta_activation_pending"] = False
+    else:
+        profile.pop("beta_started_at", None)
+        profile.pop("beta_ends_at", None)
+        profile["beta_activation_pending"] = True
     if not profile.get("reminder_times"):
         apply_reminder_times_to_profile(profile)
     profile["beta_recruitment_source"] = str(recruitment_source or "").strip()[:80]
@@ -3369,12 +3421,13 @@ def assign_beta_cohort(
         "idempotent": False,
         "cohort": cohort,
         "line_user_id": line_user_id,
-        "ends_at": profile["beta_ends_at"],
+        "activation_pending": bool(profile.get("beta_activation_pending")),
+        "ends_at": profile.get("beta_ends_at"),
     }
 
 
 def claim_beta_link(state, line_user_id, cohort, *, now=None):
-    """Claim a public capped beta link once; never switch an active member's cohort."""
+    """Reserve a public beta place; the 21-day clock starts after profile setup."""
     member_id = str(line_user_id or "").strip()
     normalized = str(cohort or "").strip().upper()
     profile = (state.get("users") or {}).get(member_id)
@@ -3392,6 +3445,7 @@ def claim_beta_link(state, line_user_id, cohort, *, now=None):
         member_id,
         normalized,
         now=now,
+        activate=False,
         recruitment_source=f"public-link-{normalized.lower()}",
     )
 
@@ -4735,6 +4789,7 @@ def build_status(profile, state=None, now=None):
         "membership_source": str(profile.get("membership_source") or ""),
         "beta_cohort": str(profile.get("beta_cohort") or ""),
         "beta_started_at": str(profile.get("beta_started_at") or ""),
+        "beta_activation_pending": bool(profile.get("beta_activation_pending")),
         "beta_ends_at": str(profile.get("beta_ends_at") or ""),
         "beta_reset_pending": bool(profile.get("beta_reset_pending")),
         "account_state_version": str(profile.get("account_state_version") or "legacy"),
@@ -15701,6 +15756,8 @@ def admin_summary(data_file, config=None, now=None):
         if (
             str(user.get("membership_source") or "") == "beta"
             and not str(user.get("beta_ends_at") or "").strip()
+            if user.get("beta_activation_pending"):
+                continue
         ):
             started = parse_datetime(user.get("beta_started_at"))
             if not started:
@@ -15709,6 +15766,9 @@ def admin_summary(data_file, config=None, now=None):
             user["beta_ends_at"] = (
                 started + timedelta(days=BETA_TRIAL_DAYS)
             ).isoformat(timespec="seconds")
+    for user in (state.get("users") or {}).values():
+        if repair_accepted_guardian_invites(state, user):
+            dirty = True
             dirty = True
     for user in (state.get("users") or {}).values():
         if hydrated >= 40:
@@ -19986,6 +20046,19 @@ def update_onboarding_reminder(data_file, line_user_id, payload):
         profile["overdue_wait_minutes"] = normalize_overdue_wait_minutes(
             profile.get("overdue_wait_minutes")
         )
+    beta_activated = False
+    if (
+        profile.get("membership_source") == "beta"
+        and profile.get("beta_cohort") in BETA_COHORT_LIMITS
+        and profile.get("beta_activation_pending")
+    ):
+        activation = assign_beta_cohort(
+            state,
+            line_user_id,
+            profile.get("beta_cohort"),
+            activate=True,
+        )
+        beta_activated = bool(activation.get("activated"))
     profile["onboarding_reminder_configured"] = True
     completed_at = datetime.now().isoformat(timespec="seconds")
     profile.setdefault("profile_completed_at", completed_at)
@@ -20004,6 +20077,7 @@ def update_onboarding_reminder(data_file, line_user_id, payload):
         "reminder_time": times[0],
         "reminder_times": times,
         "daily_reminders": max_count,
+        "beta_activated": beta_activated,
         "onboarding_reminder_configured": True,
         "daily_checkin_reminder_enabled": bool(
             profile.get("daily_checkin_reminder_enabled", True)
