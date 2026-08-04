@@ -9,6 +9,8 @@ COMPLETION_MARKER = '"is_onboarding_completed": bool(access["home_ready"])'
 BETA_REPAIR_MARKER = '# Repair stale beta identity before rendering admin member rows.'
 STARTUP_REPAIR_MARKER = "def repair_authoritative_beta_onboarding_state("
 STARTUP_CALL_MARKER = "repair_authoritative_beta_onboarding_state,\n    )\n    if Flask is None:"
+RESTORE_FUNCTION_MARKER = "def admin_restore_beta_member_from_tombstone("
+RESTORE_ROUTE_MARKER = '@app.post("/api/admin/beta-members/restore")'
 
 FUNCTION_ANCHOR = "\ndef purge_account_migration_snapshots(state, now=None):\n"
 ROUTE_ANCHOR = '    @app.post("/api/admin/test-accounts/<line_user_id>/reset")\n'
@@ -16,6 +18,8 @@ COMPLETION_ANCHOR = '"is_onboarding_completed": bool(profile.get("is_onboarding_
 BETA_REPAIR_ANCHOR = '    for user in (state.get("users") or {}).values():\n        if (\n            str(user.get("membership_source") or "") == "beta"\n'
 STARTUP_REPAIR_ANCHOR = "\ndef should_show_guardian_prompt(profile, contact_count):\n"
 STARTUP_CALL_ANCHOR = "def create_app(config=None):\n    if Flask is None:\n"
+RESTORE_FUNCTION_ANCHOR = "\ndef admin_reset_test_account(\n"
+RESTORE_ROUTE_ANCHOR = '    @app.delete("/api/admin/test-accounts/<line_user_id>")\n'
 
 STARTUP_REPAIR_CODE = r'''
 def repair_authoritative_beta_onboarding_state(state):
@@ -124,6 +128,85 @@ ROUTE_CODE = r'''    @app.post("/api/admin/members/merge")
 
 '''
 
+RESTORE_FUNCTION_CODE = r'''
+def admin_restore_beta_member_from_tombstone(
+    data_file, line_user_id, guardian_line_user_id, *, now=None, actor="super_admin"
+):
+    """Restore a reset beta member whose primary user row was lost."""
+    member_id = str(line_user_id or "").strip()
+    guardian_id = str(guardian_line_user_id or "").strip()
+    clock = now or current_app_time({})
+
+    def restore(state):
+        users = state.setdefault("users", {})
+        if member_id in users:
+            return {"ok": False, "error": "member_already_exists"}, 409
+        tombstones = state.setdefault("test_account_tombstones", {})
+        tombstone = tombstones.get(member_id)
+        guardian = users.get(guardian_id)
+        if not isinstance(tombstone, dict):
+            return {"ok": False, "error": "tombstone_not_found"}, 404
+        cohort = str(tombstone.get("last_beta_cohort") or "").upper()
+        if cohort not in BETA_COHORT_PLAN:
+            return {"ok": False, "error": "beta_cohort_not_found"}, 409
+        if not isinstance(guardian, dict) or guardian_id == member_id:
+            return {"ok": False, "error": "guardian_not_found"}, 404
+        started = parse_datetime(tombstone.get("reset_at")) or clock
+        profile = copy.deepcopy(DEFAULT_PROFILE)
+        profile.update({
+            "line_user_id": member_id,
+            "display_name": str(tombstone.get("display_name") or "LINE 使用者"),
+            "plan": BETA_COHORT_PLAN[cohort], "payment_status": "beta",
+            "membership_source": "beta", "free_eligibility_source": f"beta_{cohort}",
+            "free_eligibility_used_at": started.isoformat(timespec="seconds"),
+            "beta_cohort": cohort, "beta_started_at": started.isoformat(timespec="seconds"),
+            "beta_ends_at": (started + timedelta(days=BETA_TRIAL_DAYS)).isoformat(timespec="seconds"),
+            "beta_activation_pending": False, "beta_reset_pending": False,
+            "onboarding_reminder_configured": True, "is_onboarding_completed": True,
+            "profile_completed_at": started.isoformat(timespec="seconds"),
+            "contacts": [{"id": f"restored-{guardian_id[-10:]}",
+                "name": str(guardian.get("display_name") or "守護人"),
+                "contact_role": "guardian", "relationship": "守護人",
+                "line_user_id": guardian_id, "line_id": guardian_id,
+                "binding_status": "accepted", "consent_status": "accepted",
+                "recipient_consent": True, "is_primary": True, "priority": 1,
+                "accepted_at": started.isoformat(timespec="seconds")}],
+        })
+        interaction = get_or_create_interaction_state(profile)
+        interaction["onboarding_completed"] = True
+        interaction["completed_steps"] = ["line_joined", "line_verified", "profile_saved", "guardian_invite_sent", "add_first_guardian"]
+        users[member_id] = profile
+        tombstones.pop(member_id, None)
+        state.setdefault("admin_audit_logs", []).append({
+            "action": "beta_member_restore_from_tombstone", "status": "success",
+            "actor": str(actor or "super_admin"), "line_user_id": member_id,
+            "guardian_line_user_id": guardian_id, "beta_cohort": cohort,
+            "created_at": clock.isoformat(timespec="seconds"),
+        })
+        return {"ok": True, "line_user_id": member_id, "guardian_line_user_id": guardian_id}, 200
+    return mutate_state_atomically(data_file, restore)
+
+'''
+
+RESTORE_ROUTE_CODE = r'''    @app.post("/api/admin/beta-members/restore")
+    def admin_beta_member_restore_api():
+        denied = _admin_guard(write=True, permission="member.manage")
+        if denied:
+            return denied
+        if str(session.get("admin_role") or "viewer") != "super_admin":
+            return jsonify({"ok": False, "error": "only_super_admin"}), 403
+        payload = request.get_json(silent=True) or {}
+        if payload.get("confirm") is not True:
+            return jsonify({"ok": False, "error": "confirmation_required"}), 400
+        data, code = admin_restore_beta_member_from_tombstone(
+            app.config["DATA_FILE"], payload.get("line_user_id"),
+            payload.get("guardian_line_user_id"),
+            actor=str(session.get("admin_role") or "super_admin"),
+        )
+        return _admin_mutation_response("beta.member.restore", data, code)
+
+'''
+
 
 def main():
     raw = APP_PATH.read_bytes()
@@ -196,6 +279,14 @@ def main():
             "    if Flask is None:\n",
             1,
         )
+    if RESTORE_FUNCTION_MARKER not in source:
+        if RESTORE_FUNCTION_ANCHOR not in source:
+            raise SystemExit("beta restore function anchor not found")
+        source = source.replace(RESTORE_FUNCTION_ANCHOR, "\n" + RESTORE_FUNCTION_CODE + RESTORE_FUNCTION_ANCHOR, 1)
+    if RESTORE_ROUTE_MARKER not in source:
+        if RESTORE_ROUTE_ANCHOR not in source:
+            raise SystemExit("beta restore route anchor not found")
+        source = source.replace(RESTORE_ROUTE_ANCHOR, RESTORE_ROUTE_CODE + RESTORE_ROUTE_ANCHOR, 1)
     compile(source, str(APP_PATH), "exec")
     APP_PATH.write_text(source, encoding="utf-8")
 
