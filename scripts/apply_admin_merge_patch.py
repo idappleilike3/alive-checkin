@@ -5,9 +5,13 @@ APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
 
 FUNCTION_MARKER = "def admin_merge_member_accounts("
 ROUTE_MARKER = '@app.post("/api/admin/members/merge")'
+COMPLETION_MARKER = '"is_onboarding_completed": bool(access["home_ready"])'
+BETA_REPAIR_MARKER = '# Repair stale beta identity before rendering admin member rows.'
 
 FUNCTION_ANCHOR = "\ndef purge_account_migration_snapshots(state, now=None):\n"
 ROUTE_ANCHOR = '    @app.post("/api/admin/test-accounts/<line_user_id>/reset")\n'
+COMPLETION_ANCHOR = '"is_onboarding_completed": bool(profile.get("is_onboarding_completed"))'
+BETA_REPAIR_ANCHOR = '    for user in (state.get("users") or {}).values():\n        if (\n            str(user.get("membership_source") or "") == "beta"\n'
 
 FUNCTION_CODE = r'''
 def admin_merge_member_accounts(data_file, old_line_user_id, new_line_user_id, now=None):
@@ -94,6 +98,39 @@ def main():
         if ROUTE_ANCHOR not in source:
             raise SystemExit("member merge route anchor not found")
         source = source.replace(ROUTE_ANCHOR, ROUTE_CODE + ROUTE_ANCHOR, 1)
+    if COMPLETION_MARKER not in source:
+        if COMPLETION_ANCHOR not in source:
+            raise SystemExit("member completion anchor not found")
+        source = source.replace(
+            COMPLETION_ANCHOR,
+            '"is_onboarding_completed": bool(access["home_ready"])',
+            1,
+        )
+    if BETA_REPAIR_MARKER not in source:
+        if BETA_REPAIR_ANCHOR not in source:
+            raise SystemExit("beta membership repair anchor not found")
+        source = source.replace(
+            BETA_REPAIR_ANCHOR,
+            '    for user in (state.get("users") or {}).values():\n'
+            '        # Repair stale beta identity before rendering admin member rows.\n'
+            '        cohort = str(user.get("beta_cohort") or "").strip().upper()\n'
+            '        if (\n'
+            '            str(user.get("membership_source") or "") == "beta"\n'
+            '            and cohort in BETA_COHORT_PLAN\n'
+            '        ):\n'
+            '            expected_plan = BETA_COHORT_PLAN[cohort]\n'
+            '            if user.get("plan") != expected_plan:\n'
+            '                user["plan"] = expected_plan\n'
+            '                dirty = True\n'
+            '            if user.get("payment_status") != "beta":\n'
+            '                user["payment_status"] = "beta"\n'
+            '                dirty = True\n'
+            '        if ensure_onboarding_completed_flag(user):\n'
+            '            dirty = True\n'
+            '        if (\n'
+            '            str(user.get("membership_source") or "") == "beta"\n',
+            1,
+        )
     compile(source, str(APP_PATH), "exec")
     APP_PATH.write_text(source, encoding="utf-8")
 
