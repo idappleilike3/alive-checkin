@@ -21,6 +21,8 @@ from email.message import EmailMessage
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from assistant_knowledge import answer_xiao_pingan_question
+
 try:
     from flask import Flask, Response, jsonify, redirect, request, send_from_directory, session
 except ModuleNotFoundError:
@@ -669,6 +671,9 @@ def line_auto_reply_text(text, status=None):
         if status and status.get("is_today_checked"):
             return build_checkin_success_text(status)
         return "今天平安簽到成功。系統已幫你留下紀錄，守護人不用擔心。"
+    xiao_pingan = answer_xiao_pingan_question(text, status)
+    if xiao_pingan["topic"] != "fallback":
+        return f"小平安自動回覆：\n{xiao_pingan['answer']}"
     if any(keyword in text for keyword in CONTACT_KEYWORDS):
         return (
             "綁定守護人設定說明\n\n"
@@ -733,30 +738,15 @@ def line_auto_reply_text(text, status=None):
             f"也可以先看問與答：{faq_url}\n\n"
             "提醒：若是立即危險或醫療緊急狀況，請先撥打 119。"
         )
-    return (
-        "我看到了。你可以點下方選單：今日簽到、綁定守護人、我的狀態、查看方案、問與答、聯絡客服。\n\n"
-        "若是立即危險，請優先撥打 119。"
-    )
+    return f"小平安自動回覆：\n{xiao_pingan['answer']}\n\n也可以到會員中心聯絡人工客服。"
 
 
 def should_create_support_ticket(text):
     text = (text or "").strip()
     if len(text) <= 5:
         return False
-    keyword_groups = [
-        CHECKIN_KEYWORDS,
-        CONTACT_KEYWORDS,
-        STATUS_KEYWORDS,
-        DAILY_ROSTER_KEYWORDS,
-        PLAN_KEYWORDS,
-        FAQ_KEYWORDS,
-        SUPPORT_KEYWORDS,
-        INVOICE_KEYWORDS,
-        GROUP_KEYWORDS,
-        ALERT_CHANNEL_KEYWORDS,
-        LARGE_TEXT_KEYWORDS,
-    ]
-    return not any(keyword in text for group in keyword_groups for keyword in group)
+    explicit_handoff = ("人工", "客服", "專人", "回覆我", "聯絡我", "問題回報")
+    return any(keyword in text for keyword in explicit_handoff)
 
 
 def _resolve_db_path(data_file):
@@ -20565,6 +20555,23 @@ def create_app(config=None):
             config=app.config,
         )
 
+    @app.post("/api/xiao-pingan/answer")
+    def xiao_pingan_answer_api():
+        payload = request.get_json(silent=True) or {}
+        question = str(payload.get("question") or "").strip()
+        if not question:
+            return jsonify({"error": "question_required"}), 400
+        public_result = answer_xiao_pingan_question(question)
+        if public_result.get("topic") != "my_plan":
+            return jsonify(public_result)
+        line_user_id, err = _authenticated_line_user(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        state = load_state(app.config["DATA_FILE"])
+        member = build_status(get_profile(state, line_user_id), state=state)
+        result = answer_xiao_pingan_question(question, member)
+        return jsonify(result)
+
     def _should_keep_liff_endpoint_spa():
         """LIFF Endpoint MUST always serve the SPA that runs liff.init().
 
@@ -21895,7 +21902,7 @@ def create_app(config=None):
                 if messages:
                     line_bot_api.reply_message(event.reply_token, messages)
                 return
-            elif any(keyword in text for keyword in STATUS_KEYWORDS):
+            elif any(keyword in text for keyword in STATUS_KEYWORDS + PLAN_KEYWORDS):
                 state = load_state(app.config["DATA_FILE"])
                 status = build_status(get_profile(state, line_user_id))
             if should_create_support_ticket(text):
