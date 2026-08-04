@@ -21,6 +21,13 @@ class XiaoPinganFrontendContractTests(unittest.TestCase):
         self.assertIn('id="peaceHelperPanel"', self.html)
         self.assertIn('class="xiao-pingan-svg"', self.html)
 
+    def test_helper_is_collapsed_each_time_the_page_initializes(self):
+        bind_start = self.html.index('function bindPeaceHelper()')
+        bind_end = self.html.index('\n    function todayLocalIsoDate()', bind_start)
+        implementation = self.html[bind_start:bind_end]
+        self.assertIn('panel.hidden = true;', implementation)
+        self.assertIn('launcher.setAttribute("aria-expanded", "false");', implementation)
+
     def test_character_has_qilin_diamond_guardian_mark(self):
         self.assertIn('class="xp-diamond"', self.html)
         self.assertIn('class="xp-ear xp-ear-left"', self.html)
