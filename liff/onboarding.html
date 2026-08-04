@@ -480,7 +480,7 @@ function renderPublicEntry({ liffReady, liffId }) {
   loading.innerHTML = `
     <h2>${planView.publicEntryTitle || "開始 14 天安心體驗"}</h2>
     <p>系統會完成 LINE 身分確認並取得 UID，接著直接填寫資料，不需要再次按一鍵登入。</p>
-    <p><strong>最少邀請 1 位核心守護人</strong><br>14 天安心體驗最多 2 位；399 安心版 21 天封測最多 6 位；799 守護版 21 天封測最多 7 位。</p>
+    <p><strong>最少邀請 1 位核心守護人</strong><br>14 天安心體驗最多 2 位；399 安心版 21 天封測最多 7 位（年費權益）；799 守護版 21 天封測最多 15 位（年費權益）。</p>
     <button class="btn btn-primary" type="button" onclick="liff.login({ redirectUri: buildOnboardingLoginRedirect() })">加入官方 LINE 並開始填寫資料</button>
     <p class="privacy-note">LINE 登入只用於確認身分、綁定守護人與傳送報平安通知；不會讀取你的聊天內容，也不會自動傳訊息。</p>
   `;
