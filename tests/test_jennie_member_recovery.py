@@ -148,6 +148,26 @@ class JennieMemberRecoveryTests(unittest.TestCase):
         self.assertEqual(member["contacts"][0]["line_user_id"], guardian_id)
         self.assertNotIn(self.line_user_id, saved["test_account_tombstones"])
 
+    def test_stale_retired_uid_setting_does_not_delete_restored_beta_member(self):
+        state = app_module.load_state(self.data_file)
+        member = state["users"][self.line_user_id]
+        member["plan"] = "paid_799_year"
+        member["payment_status"] = "beta"
+        member["membership_source"] = "beta"
+        member["beta_cohort"] = "B799"
+        app_module.save_state(self.data_file, state)
+
+        result = app_module.remove_retired_push_uids(
+            self.data_file,
+            {"RETIRED_LINE_USER_IDS": self.line_user_id},
+        )
+
+        self.assertEqual(result["removed"], 0)
+        self.assertIn(
+            self.line_user_id,
+            app_module.load_state(self.data_file)["users"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

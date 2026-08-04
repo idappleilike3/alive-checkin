@@ -261,7 +261,7 @@ class Day7PinReminderTests(unittest.TestCase):
             self.assertNotIn("U_deploy_smoke_ax", state["users"])
             self.assertIn("U-real", state["users"])
 
-    def test_cancelled_jennie_test_uid_is_retired_by_default(self):
+    def test_restored_jennie_uid_is_not_retired_by_default(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             data_file = Path(temp_dir) / "state.json"
             uid = "Ua723c8919f544d515422f143d1710b74"
@@ -271,8 +271,8 @@ class Day7PinReminderTests(unittest.TestCase):
 
             result = app_module.remove_retired_push_uids(data_file, {})
 
-            self.assertEqual(result["removed"], 1)
-            self.assertNotIn(uid, app_module.load_state(data_file)["users"])
+            self.assertEqual(result["removed"], 0)
+            self.assertIn(uid, app_module.load_state(data_file)["users"])
 
     def test_admin_page_displays_plan_and_scheduled_time_for_push_logs(self):
         source = Path("admin.html").read_text(encoding="utf-8")
