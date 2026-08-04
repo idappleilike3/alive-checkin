@@ -115,6 +115,25 @@ test("stale session restore cannot hide dashboard after successful login", async
   assert.equal(harness.elements.get("loginPanel").hidden, true);
 });
 
+test("a stale 401 response cannot hide a dashboard opened by a newer login", async () => {
+  let resolveOldRequest;
+  const oldRequest = new Promise((resolve) => { resolveOldRequest = resolve; });
+  const harness = createHarness((url) => {
+    if (url === "/api/admin/old-request") return oldRequest;
+    if (url === "/api/admin/login") return Promise.resolve(response({data: {csrf_token: "csrf"}}));
+    if (url === "/api/admin/summary") return Promise.resolve(response({ok: false, status: 500}));
+    throw new Error(`unexpected request: ${url}`);
+  });
+
+  const staleFetch = harness.context.adminFetch("/api/admin/old-request").catch(() => {});
+  await harness.elements.get("adminLoginForm").listeners.submit({preventDefault() {}});
+  resolveOldRequest(response({ok: false, status: 401}));
+  await staleFetch;
+
+  assert.equal(harness.elements.get("adminShell").hidden, false);
+  assert.equal(harness.elements.get("loginPanel").hidden, true);
+});
+
 test("login network error restores the button and shows a friendly message", async () => {
   const harness = createHarness((url) => {
     if (url === "/api/admin/login") return Promise.reject(new Error("network unavailable"));

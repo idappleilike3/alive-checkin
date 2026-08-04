@@ -195,6 +195,26 @@
       margin-bottom: 16px;
       align-items: stretch;
     }
+    .admin-pagination {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin: 14px 0 4px;
+    }
+    .admin-pagination button {
+      min-width: 44px;
+      min-height: 44px;
+      padding: 8px 12px;
+      box-shadow: none;
+    }
+    .admin-pagination button[aria-current="page"] {
+      background: var(--admin-focus);
+      color: #102a43;
+      outline: 2px solid #d9f9e6;
+    }
+    .admin-pagination-summary { width: 100%; text-align: center; color: var(--admin-muted); }
     .auth-bar {
       display: grid;
       grid-template-columns: minmax(200px, 1.4fr) auto auto;
@@ -1024,6 +1044,7 @@
       </form>
       <div class="table-wrap"><table><thead><tr><th>來源</th><th>會員姓名／LINE UID</th><th>當時方案</th><th>預定時間／實際時間</th><th>嘗試次數</th><th>成功／失敗</th><th>中文原因／處理建議</th><th>技術訊息</th></tr></thead>
         <tbody id="pushDeliveryList"><tr><td colspan="8">正在載入永久發送紀錄…</td></tr></tbody></table></div>
+      <nav id="pushDeliveryPagination" class="admin-pagination" aria-label="推播紀錄分頁"></nav>
     </section>
 
     <section class="panel section-heading" id="line-cost" data-admin-page="line-cost" style="margin-bottom:16px;">
@@ -1384,6 +1405,7 @@
           </tbody>
         </table>
       </div>
+      <nav id="memberPagination" class="admin-pagination" aria-label="會員管理分頁"></nav>
       </div>
 
       <div class="plan-reference section-heading" id="orders" data-admin-page="orders" style="margin-top:16px;">
@@ -1592,6 +1614,34 @@
     let adminAuthGeneration = 0;
     let adminRole = "viewer";
     let adminPermissions = [];
+    const ADMIN_PAGE_SIZE = 20;
+    let adminMemberRows = [];
+    let memberRowsRenderer = null;
+    let memberPage = 1;
+    let pushDeliveryPage = 1;
+
+    function renderAdminPagination(containerId, currentPage, totalRows) {
+      const container = $(containerId);
+      if (!container) return;
+      const totalPages = Math.max(1, Math.ceil(Number(totalRows || 0) / ADMIN_PAGE_SIZE));
+      const safePage = Math.min(totalPages, Math.max(1, Number(currentPage || 1)));
+      const pageButtons = Array.from({length: totalPages}, (_, index) => {
+        const page = index + 1;
+        return `<button type="button" data-page="${page}" ${page === safePage ? 'aria-current="page"' : ""}>${page}</button>`;
+      }).join("");
+      const first = totalRows ? ((safePage - 1) * ADMIN_PAGE_SIZE) + 1 : 0;
+      const last = Math.min(Number(totalRows || 0), safePage * ADMIN_PAGE_SIZE);
+      container.innerHTML = `<button type="button" data-page="${safePage - 1}" ${safePage <= 1 ? "disabled" : ""}>上一頁</button>${pageButtons}<button type="button" data-page="${safePage + 1}" ${safePage >= totalPages ? "disabled" : ""}>下一頁</button><small class="admin-pagination-summary">第 ${safePage}／${totalPages} 頁｜顯示 ${first}–${last} 筆，共 ${Number(totalRows || 0)} 筆</small>`;
+    }
+
+    function renderMemberPage() {
+      const totalPages = Math.max(1, Math.ceil(adminMemberRows.length / ADMIN_PAGE_SIZE));
+      memberPage = Math.min(totalPages, Math.max(1, memberPage));
+      const start = (memberPage - 1) * ADMIN_PAGE_SIZE;
+      const visibleMembers = adminMemberRows.slice(start, start + ADMIN_PAGE_SIZE);
+      if (memberRowsRenderer) memberRowsRenderer(visibleMembers);
+      renderAdminPagination("memberPagination", memberPage, adminMemberRows.length);
+    }
 
     function applyAdminAccess(role, permissions) {
       adminRole = role || "viewer";
@@ -1809,7 +1859,10 @@
     }
 
     async function loadPushDeliveries(campaignId = "") {
-      const params = new URLSearchParams({ limit: "100" });
+      const params = new URLSearchParams({
+        limit: String(ADMIN_PAGE_SIZE),
+        offset: String((pushDeliveryPage - 1) * ADMIN_PAGE_SIZE)
+      });
       const filters = {
         campaign_id: campaignId, source: $("pushDeliverySource").value, status: $("pushDeliveryStatus").value,
         member: $("pushDeliveryMember").value.trim(), line_user_id: $("pushDeliveryLineUid").value.trim(),
@@ -1818,7 +1871,14 @@
       Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
       const response = await adminFetch(`/api/admin/push-deliveries?${params}`);
       const data = await response.json().catch(() => ({ deliveries: [] }));
+      const totalRows = Number(data.total || 0);
+      const totalPages = Math.max(1, Math.ceil(totalRows / ADMIN_PAGE_SIZE));
+      if (pushDeliveryPage > totalPages) {
+        pushDeliveryPage = totalPages;
+        return loadPushDeliveries(campaignId);
+      }
       $("pushDeliveryList").innerHTML = (data.deliveries || []).length ? data.deliveries.map((row) => `<tr><td>${escapeHtml(row.source === "campaign" ? "後台活動" : `系統：${row.kind || "其他"}`)}</td><td><strong>${escapeHtml(row.recipient_display_name || "-")}</strong><br><small>${escapeHtml(row.line_user_id || "-")}</small></td><td>${escapeHtml(row.plan || "-")}<br><small>${escapeHtml(row.audience_code || "-")}</small></td><td>預定：${row.scheduled_at ? escapeHtml(formatDate(row.scheduled_at)) : "-"}<br>實際：${escapeHtml(formatDate(row.sent_at || row.failed_at || row.created_at))}</td><td>${Number(row.attempts || 1)}</td><td><span class="badge ${row.status === "sent" ? "ok" : "bad"}">${row.status === "sent" ? "成功" : "失敗"}</span></td><td>${escapeHtml(row.failure_reason_zh || "-")}<br><small>${escapeHtml(row.failure_action_zh || "-")}</small></td><td>${row.technical_detail ? `<details><summary>查看技術訊息</summary><small style="word-break:break-all">${escapeHtml(row.technical_detail)}</small></details>` : "-"}</td></tr>`).join("") : '<tr><td colspan="8">目前沒有符合條件的永久發送紀錄</td></tr>';
+      renderAdminPagination("pushDeliveryPagination", pushDeliveryPage, totalRows);
     }
 
     async function loadPushManagement() {
@@ -1855,6 +1915,7 @@
     }
 
     async function adminFetch(url, options = {}) {
+      const requestGeneration = adminAuthGeneration;
       const method = String(options.method || "GET").toUpperCase();
       const headers = new Headers(options.headers || {});
       if (!["GET", "HEAD", "OPTIONS"].includes(method) && adminCsrfToken) {
@@ -1867,8 +1928,11 @@
         credentials: "same-origin"
       });
       if (response.status === 401) {
-        showLogin("登入已失效，請重新登入。");
-        throw new Error("admin_session_expired");
+        if (requestGeneration === adminAuthGeneration) {
+          showLogin("登入已失效，請重新登入。");
+          throw new Error("admin_session_expired");
+        }
+        throw new Error("stale_admin_request");
       }
       return response;
     }
@@ -3313,8 +3377,10 @@
           </tr>
         `).join("")
         : `<tr><td colspan="5">目前還沒有縣市資料</td></tr>`;
-      $("usersBody").innerHTML = data.users.length
-        ? data.users.map((user) => `
+      adminMemberRows = Array.isArray(data.users) ? data.users : [];
+      memberRowsRenderer = (visibleMembers) => {
+        $("usersBody").innerHTML = visibleMembers.length
+        ? visibleMembers.map((user) => `
           <tr>
             <td>${memberNameCell(user)}</td>
             <td>${user.line_user_id || "-"}</td>
@@ -3366,6 +3432,8 @@
           </tr>
         `).join("")
         : `<tr><td colspan="16">還沒有 LINE 使用者進來簽到。</td></tr>`;
+      };
+      renderMemberPage();
       const selectedBetaMember = $("betaLineUserId").value;
       $("betaLineUserId").innerHTML = `<option value="">請選擇會員</option>` + (data.users || []).map((user) => {
         const lineUserId = String(user.line_user_id || "");
@@ -3646,6 +3714,13 @@
     });
     $("pushDeliveryFilters")?.addEventListener("submit", async (event) => {
       event.preventDefault();
+      pushDeliveryPage = 1;
+      await loadPushDeliveries($("pushCampaignId").value);
+    });
+    $("pushDeliveryPagination")?.addEventListener("click", async (event) => {
+      const button = event.target.closest("button[data-page]");
+      if (!button || button.disabled) return;
+      pushDeliveryPage = Number(button.dataset.page || 1);
       await loadPushDeliveries($("pushCampaignId").value);
     });
     resetPushCampaignEditor();
@@ -4032,6 +4107,13 @@
       } else if (button.dataset.action === "line-rebind") {
         issueLineRebind(button.dataset.lineUserId, button.dataset.displayName);
       }
+    });
+    $("memberPagination")?.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-page]");
+      if (!button || button.disabled) return;
+      memberPage = Number(button.dataset.page || 1);
+      renderMemberPage();
+      $("members")?.scrollIntoView({behavior: "smooth", block: "start"});
     });
     if ($("financeMonth")) $("financeMonth").value = localCalendarDate().slice(0, 7);
     if ($("financeExpenseDate")) $("financeExpenseDate").value = localCalendarDate();

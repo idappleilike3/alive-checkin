@@ -28,6 +28,14 @@ class AdminSessionAuthTests(unittest.TestCase):
         self.assertIn('showLogin("連線失敗，請稍後再試。");', page)
         self.assertIn('$("loginBtn").disabled = false;', page)
 
+    def test_admin_tables_have_twenty_row_pagination_and_stale_401_guard(self):
+        page = Path("admin.html").read_text(encoding="utf-8")
+
+        self.assertIn("const ADMIN_PAGE_SIZE = 20", page)
+        self.assertIn('id="memberPagination"', page)
+        self.assertIn('id="pushDeliveryPagination"', page)
+        self.assertIn("const requestGeneration = adminAuthGeneration", page)
+
     def make_client(self, **overrides):
         alive_app.ADMIN_LOGIN_ATTEMPTS.clear()
         temp = tempfile.TemporaryDirectory()
