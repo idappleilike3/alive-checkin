@@ -2689,7 +2689,12 @@ def onboarding_progress_snapshot(state, profile, now=None):
     completed = {
         "line_joined": bool(profile),
         "line_verified": bool(owner_id),
-        "profile_saved": bool(profile.get("onboarding_reminder_configured")),
+        # A verified accepted guardian is the final onboarding fact.  Legacy
+        # accounts may predate the reminder flag, so the final fact also proves
+        # every prerequisite step instead of reopening the wizard at 3/5.
+        "profile_saved": bool(
+            profile.get("onboarding_reminder_configured") or bound
+        ),
         "invite_sent": bool(live_invites or bound),
         "guardian_bound": bool(bound),
     }
@@ -2753,7 +2758,10 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
     profile = profile or {}
     repaired_beta = False
     cohort = str(profile.get("beta_cohort") or "").strip().upper()
-    if str(profile.get("membership_source") or "") == "beta" and cohort in BETA_COHORT_PLAN:
+    if (
+        str(profile.get("membership_source") or "") == "beta"
+        and cohort in BETA_COHORT_PLAN
+    ):
         expected_plan = BETA_COHORT_PLAN[cohort]
         if profile.get("plan") != expected_plan:
             profile["plan"] = expected_plan
@@ -2809,6 +2817,7 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
         "line_login": bool(profile),
         "profile_and_reminder": bool(
             profile.get("onboarding_reminder_configured")
+            or access["home_ready"]
         ),
         # 後端確實有待接受邀請，或已完成綁定，才算分享步驟完成。
         "guardian_invite_sent": bool(pending_invites or access["home_ready"]),
@@ -2840,7 +2849,7 @@ def onboarding_status_payload(data_file, line_user_id, *, allow_missing_profile=
     beta_pending = bool(profile.get("beta_activation_pending"))
     membership_period = membership_period_summary(profile)
     membership_status_text = (
-        "21 天封測（等待完成守護綁定後起算）"
+        "21 天封测（等待完成守护绑定后起算）"
         if str(profile.get("membership_source") or "") == "beta" and beta_pending
         else membership_period.get("display_text") or _trial_days_text(profile)
     )
@@ -3524,7 +3533,7 @@ def claim_beta_link(state, line_user_id, cohort, *, now=None):
 
 
 def activate_pending_membership_after_setup(state, line_user_id, *, now=None):
-    """Start a reserved trial or beta only after setup and guardian binding."""
+    """Start a reserved free entitlement after setup and guardian binding."""
     member_id = str(line_user_id or "").strip()
     profile = (state.get("users") or {}).get(member_id)
     if not isinstance(profile, dict):
@@ -3550,7 +3559,9 @@ def activate_pending_membership_after_setup(state, line_user_id, *, now=None):
         not profile.get("trial_started_at")
         and not str(profile.get("plan") or "").startswith("paid_")
     ):
-        activated = ensure_membership_trial(profile, now=clock, source="public_trial")
+        activated = ensure_membership_trial(
+            profile, now=clock, source="public_trial"
+        )
         return {
             "activated": bool(activated),
             "reason": "public_trial_started" if activated else "not_eligible",
@@ -5008,7 +5019,10 @@ def membership_period_summary(profile, *, now=None):
     clock = now or current_app_time({})
     comparable_clock, comparable_started = _comparable_datetimes(clock, started)
     _, comparable_ends = _comparable_datetimes(clock, ends)
-    total_days = max(1, int((comparable_ends - comparable_started).total_seconds() // 86400))
+    total_days = max(
+        1,
+        int((comparable_ends - comparable_started).total_seconds() // 86400),
+    )
     if comparable_clock >= comparable_ends:
         current_day = total_days
         remaining_days = 0
@@ -5029,8 +5043,8 @@ def membership_period_summary(profile, *, now=None):
         "current_day": current_day,
         "remaining_days": remaining_days,
         "display_text": (
-            f"開始 {started_date}｜到期 {ends_date}｜"
-            f"目前第 {current_day} 天｜剩餘 {remaining_days} 天"
+            f"开始 {started_date}｜到期 {ends_date}｜"
+            f"目前第 {current_day} 天｜剩余 {remaining_days} 天"
         ),
     }
 

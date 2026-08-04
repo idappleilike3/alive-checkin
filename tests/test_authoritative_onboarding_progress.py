@@ -74,6 +74,34 @@ class AuthoritativeOnboardingProgressTest(unittest.TestCase):
         self.assertEqual(later_status, 200)
         self.assertFalse(later["show_binding_celebration"])
 
+    def test_bound_legacy_member_is_reconciled_to_all_five_steps_complete(self):
+        state = app_module.load_state(self.data_file)
+        owner = state["users"]["U-owner"]
+        owner["onboarding_reminder_configured"] = False
+        owner["contacts"] = [{
+            "id": "guardian-bound",
+            "name": "守護人",
+            "contact_role": "guardian",
+            "line_user_id": "U-guardian",
+            "binding_status": "accepted",
+            "recipient_consent": True,
+        }]
+        app_module.save_state(self.data_file, state)
+
+        payload, status = app_module.onboarding_status_payload(
+            self.data_file, "U-owner"
+        )
+        audit = app_module.onboarding_progress_snapshot(
+            app_module.load_state(self.data_file),
+            app_module.load_state(self.data_file)["users"]["U-owner"],
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["current_step"], 5)
+        self.assertTrue(all(payload["completed_steps"].values()))
+        self.assertEqual(audit["current_step"], 5)
+        self.assertTrue(all(audit["completed_steps"].values()))
+
     def test_pending_invite_is_waiting_not_completed(self):
         state = app_module.load_state(self.data_file)
         state["users"]["U-owner"]["onboarding_reminder_configured"] = True
