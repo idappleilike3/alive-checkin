@@ -4057,7 +4057,7 @@
           <input id="xiaoPinganQuestionInput" maxlength="160" autocomplete="off" aria-label="輸入想問小平安的問題" placeholder="輸入其他問題…">
           <button class="xiao-pingan-send" type="submit" aria-label="傳送問題">➤</button>
         </form>
-        <a class="xiao-pingan-support" href="#member" data-tab="member">需要人工協助？前往客服</a>
+        <a class="xiao-pingan-support" id="xiaoPinganSupportLink" href="#member">需要人工協助？到會員中心填寫「聯絡客服」</a>
       </section></div>
       <button class="peace-helper-launcher" id="peaceHelperLauncher" type="button" aria-expanded="false" aria-controls="peaceHelperPanel" aria-label="開啟小平安對話">
         <span id="xiaoPinganCharacter">
@@ -4067,7 +4067,7 @@
             <ellipse class="xp-body" cx="47" cy="66" rx="29" ry="27"/>
             <path class="xp-fur" d="M23 54 q5-12 12-6 q8-10 15 0 q9-9 17 2 q9-2 8 10 q-9-9-27-8 q-16-2-25 2z"/>
             <path class="xp-ear xp-ear-left" d="M27 31 Q12 25 20 43 L31 43z"/><path class="xp-ear xp-ear-right" d="M66 31 Q82 25 75 43 L64 43z"/>
-            <path class="xp-horn" d="M34 28 Q29 10 41 20 L43 31z"/><path class="xp-horn" d="M55 29 Q62 11 66 25 L62 34z"/>
+            <path class="xp-horn xp-horn-left" d="M24 31 Q17 8 35 23 L38 32z"/><path class="xp-horn xp-horn-right" d="M58 31 Q74 8 69 32 L64 35z"/>
             <path class="xp-mane" d="M27 31 q-7 7-2 13 q-7 7 1 13 q-2 8 8 9 q4-6 3-15 q0-13-10-20z"/>
             <circle class="xp-body" cx="48" cy="40" r="26"/>
             <path class="xp-diamond" d="M48 25 L53 32 L48 38 L43 32 Z"/>
@@ -5988,6 +5988,17 @@
     }
 
     let peaceHelperVoiceUnlocked = false;
+    let peaceHelperVoices = [];
+    function refreshPeaceHelperVoices() {
+      if (!("speechSynthesis" in window) || !window.speechSynthesis.getVoices) return [];
+      const available = window.speechSynthesis.getVoices();
+      if (available.length) peaceHelperVoices = Array.from(available);
+      return peaceHelperVoices;
+    }
+    if ("speechSynthesis" in window) {
+      refreshPeaceHelperVoices();
+      window.speechSynthesis.addEventListener("voiceschanged", refreshPeaceHelperVoices);
+    }
     function unlockPeaceHelperVoice() {
       if (peaceHelperIsMuted() || !("speechSynthesis" in window)) return Promise.resolve(false);
       window.speechSynthesis.resume();
@@ -6000,19 +6011,34 @@
       const taiwanVoices = list.filter((voice) => /zh[-_]TW/i.test(voice.lang));
       const chineseVoices = list.filter((voice) => /^zh/i.test(voice.lang));
       const candidates = taiwanVoices.length ? taiwanVoices : chineseVoices;
-      const natural = candidates.find((voice) => /natural|neural|premium|enhanced|online/i.test(voice.name));
-      const taiwanFemale = candidates.find((voice) => /hsiao|xiaoxiao|meijia|mei-jia|ting|yating|female|女/i.test(voice.name));
-      return natural || taiwanFemale || candidates[0] || null;
+      const ranked = candidates.map((voice, index) => {
+        const name = String(voice.name || "");
+        let score = -index / 1000;
+        if (/natural|neural|premium|enhanced|online/i.test(name)) score += 4;
+        if (/hsiao|xiaoxiao|meijia|mei-jia|ting|yating|female|女/i.test(name)) score += 3;
+        if (/compact|espeak|robot/i.test(name)) score -= 5;
+        return { voice, score };
+      }).sort((a, b) => b.score - a.score);
+      return ranked[0]?.voice || null;
+    }
+
+    function normalizePeaceHelperSpeech(message) {
+      return String(message || "")
+        .replace(/[✅🎉🔊🔈🔇📍🆘]/gu, "")
+        .replace(/[｜|]/g, "，")
+        .replace(/\s+/g, " ")
+        .trim();
     }
 
     function speakPeaceHelper(message) {
       if (peaceHelperIsMuted() || !message || !("speechSynthesis" in window)) return Promise.resolve(false);
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(String(message));
+      const utterance = new SpeechSynthesisUtterance();
+      utterance.text = normalizePeaceHelperSpeech(message);
       utterance.lang = "zh-TW";
-      utterance.rate = 1.04;
-      utterance.pitch = 1.08;
-      const voices = window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      const voices = refreshPeaceHelperVoices();
       utterance.voice = pickNaturalTaiwanVoice(voices);
       return new Promise((resolve) => {
         let settled = false;
@@ -6052,7 +6078,6 @@
       const cleanQuestion = String(question || "").trim();
       if (!cleanQuestion) return;
       addXiaoPinganBubble(cleanQuestion, "user");
-      const thinking = addXiaoPinganBubble("小平安正在想……", "assistant", "thinking");
       playXiaoPinganAnimation("heartbeat", "chatting");
       try {
         const response = await fetch("/api/xiao-pingan/answer", {
@@ -6062,7 +6087,6 @@
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || "answer_failed");
-        thinking?.remove();
         await typeXiaoPinganAnswer(data.answer || "小平安暫時無法回答，請聯絡客服。");
         if (Array.isArray(data.suggestions) && data.suggestions.length) {
           const questions = $("peaceHelperQuestions");
@@ -6071,7 +6095,6 @@
         if (data.action === "start") location.hash = lineUserId ? "#home" : "#onboarding";
         speakPeaceHelper(data.answer || "");
       } catch (_) {
-        thinking?.remove();
         await typeXiaoPinganAnswer("我現在連不上服務，沒有辦法確認答案。請稍後再試，或到會員中心聯絡客服。");
       }
     }
@@ -6084,6 +6107,22 @@
       panel.hidden = false;
       if (launcher) launcher.setAttribute("aria-expanded", "true");
       if (speak) speakPeaceHelper(message);
+    }
+
+    function openMemberSupportFromXiaoPingan(event) {
+      if (event) event.preventDefault();
+      if (typeof showTab === "function") showTab("member");
+      if (typeof setMemberCenterExpanded === "function") setMemberCenterExpanded(true);
+      const supportToggle = $("memberSupportToggleBtn");
+      const supportPanel = $("memberSupportPanel");
+      const supportSection = $("memberSupportSection");
+      if (supportToggle && supportPanel) {
+        supportToggle.setAttribute("aria-expanded", "true");
+        supportPanel.hidden = false;
+      }
+      requestAnimationFrame(() => {
+        if (supportSection) supportSection.scrollIntoView({ behavior:"smooth", block:"start" });
+      });
     }
 
     function bindPeaceHelper() {
@@ -6160,6 +6199,7 @@
         questionInput.value = "";
         askXiaoPingan(question);
       });
+      $("xiaoPinganSupportLink")?.addEventListener("click", openMemberSupportFromXiaoPingan);
       const sosModal = $("sosConfirmModal");
       if (sosModal && "MutationObserver" in window) {
         const syncSos = () => {
@@ -6176,11 +6216,22 @@
         new MutationObserver(syncSos).observe(sosModal, { attributes:true, attributeFilter:["hidden"] });
         syncSos();
       }
+    }
+
+    function todayLocalIsoDate() {
+      const now = new Date();
+      const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+      return local.toISOString().slice(0, 10);
+    }
+
+    function bindGuardianBindingCelebration() {
       const celebrationModal = $("guardianBindingCelebrateModal");
       const celebrationBirthday = $("guardianBindingBirthday");
       const celebrationSave = $("guardianBindingCelebrateSave");
       const celebrationSkip = $("guardianBindingCelebrateSkip");
       const celebrationMute = $("guardianBindingCelebrateMute");
+      if (!celebrationModal || celebrationModal.dataset.bound === "true") return;
+      celebrationModal.dataset.bound = "true";
       const renderCelebrationMute = () => {
         if (celebrationMute) celebrationMute.textContent = peaceHelperIsMuted() ? "🔇 已靜音" : "🔊 語音開啟";
       };
@@ -6189,7 +6240,8 @@
         const muted = !peaceHelperIsMuted();
         localStorage.setItem(PEACE_HELPER_MUTED_KEY, String(muted));
         if (muted && "speechSynthesis" in window) window.speechSynthesis.cancel();
-        renderMute();
+        const helperMute = $("peaceHelperMute");
+        if (helperMute) helperMute.textContent = muted ? "🔇 已靜音" : "🔊 語音開啟";
         renderCelebrationMute();
         if (!muted) speakPeaceHelper("恭喜你完成守護綁定。你可以選擇填寫生日，生日當天會收到特別祝福與驚喜。");
       });
@@ -6204,8 +6256,14 @@
         } catch (error) {
           showInlineError(error.message || "儲存失敗，請稍後再試");
         } finally {
-          if (celebrationSave) celebrationSave.disabled = false;
-          if (celebrationSkip) celebrationSkip.disabled = false;
+          if (celebrationSave) {
+            celebrationSave.disabled = false;
+            celebrationSave.textContent = "儲存生日";
+          }
+          if (celebrationSkip) {
+            celebrationSkip.disabled = false;
+            celebrationSkip.textContent = "稍後再說";
+          }
         }
       };
       if (celebrationSave) celebrationSave.addEventListener("click", () => {
@@ -6214,9 +6272,13 @@
           showInlineError("請選擇生日，或按「稍後再說」。");
           return;
         }
+        celebrationSave.textContent = "儲存中…";
         finishBindingCelebration(birthday);
       });
-      if (celebrationSkip) celebrationSkip.addEventListener("click", () => finishBindingCelebration(""));
+      if (celebrationSkip) celebrationSkip.addEventListener("click", () => {
+        celebrationSkip.textContent = "處理中…";
+        finishBindingCelebration("");
+      });
     }
 
     async function acknowledgeBindingCelebration(birthday = "") {
@@ -6242,7 +6304,9 @@
       modal.dataset.shown = "true";
       modal.dataset.eventId = String(data.binding_celebration?.event_id || "");
       const birthday = $("guardianBindingBirthday");
-      if (birthday) birthday.value = String(data.birthday || "");
+      const savedBirthday = String(data.birthday || data.member?.birthday || "").trim();
+      if (birthday) birthday.value = savedBirthday || todayLocalIsoDate();
+      modal.dataset.hasSavedBirthday = savedBirthday ? "true" : "false";
       modal.hidden = false;
       playXiaoPinganSequence(["confetti", "hug", "jump"], "celebration");
       speakPeaceHelper("恭喜你完成守護綁定。你可以選擇填寫生日，生日當天會收到特別祝福與驚喜。");
@@ -14141,6 +14205,7 @@
       bindGuardianCompletePrompt();
       bindGuardianEvents();
       bindPeaceHelper();
+      bindGuardianBindingCelebration();
       setInterval(() => {
         if (xiaoPinganState !== "idle" || document.hidden) return;
         const idleAnimations = ["smile", "blink", "float", "heartbeat"];

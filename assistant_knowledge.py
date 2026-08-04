@@ -53,7 +53,7 @@ def _answer(topic, member):
             return "我目前讀不到你的會員方案，所以不會猜。請先登入每日平安，或到會員中心查看；若仍沒有顯示，請聯絡客服。"
         suffix = f"，{expiry}" if expiry else ""
         return f"你目前的方案是「{label}」{suffix}。完整權益可在會員中心的「我的方案」查看。"
-    return "小平安還不能確定你想問哪一項，不會隨便猜答案。請選下面最接近的問題，或聯絡人工客服。"
+    return "小平安還不能確定你想問哪一項，不會隨便猜答案。請選下面最接近的問題；如需人工協助，請到會員中心填寫「聯絡客服」表單。"
 
 
 def answer_xiao_pingan_question(text, member=None):

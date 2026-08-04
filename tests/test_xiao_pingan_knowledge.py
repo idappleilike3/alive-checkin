@@ -38,6 +38,8 @@ def test_unknown_question_returns_fallback_and_suggestions():
     assert result["topic"] == "fallback"
     assert result["confidence"] < 0.7
     assert "不能確定" in result["answer"]
+    assert "會員中心" in result["answer"]
+    assert "聯絡客服" in result["answer"]
     assert len(result["suggestions"]) >= 2
 
 
