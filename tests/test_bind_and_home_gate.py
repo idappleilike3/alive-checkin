@@ -303,6 +303,67 @@ class BindAndHomeGateTests(unittest.TestCase):
         self.assertEqual(preview["invite_status"], "pending")
         self.assertNotIn("invite_token", preview)
 
+    def test_invite_preview_returns_authoritative_existing_invitee_profile(self):
+        app_module.save_state(self.data_file, {
+            "users": {
+                "U-owner": {"line_user_id": "U-owner", "display_name": "Jennie", "contacts": []},
+                "U-guardian": {
+                    "line_user_id": "U-guardian",
+                    "display_name": "寶寶",
+                    "phone": "0912345678",
+                    "profile_completed_at": "2026-08-04T08:00:00",
+                    "contacts": [],
+                },
+            },
+            "guardian_invites": [],
+        })
+        invite, _ = app_module.create_guardian_invite(
+            self.data_file, "U-owner", {"display_name": "Jennie"}
+        )
+
+        preview, code = app_module.invite_bind_preview(self.data_file, {
+            "invite_from": "U-owner",
+            "line_user_id": "U-guardian",
+            "invite_token": invite["invite_token"],
+        })
+
+        self.assertEqual(code, 200)
+        self.assertEqual(preview["invitee_profile"]["display_name"], "寶寶")
+        self.assertEqual(preview["invitee_profile"]["phone"], "0912345678")
+        self.assertTrue(preview["invitee_profile"]["profile_completed"])
+
+    def test_invite_preview_treats_an_existing_bound_pair_as_completed(self):
+        app_module.save_state(self.data_file, {
+            "users": {
+                "U-owner": {
+                    "line_user_id": "U-owner",
+                    "display_name": "Jennie",
+                    "contacts": [{
+                        "line_user_id": "U-guardian",
+                        "line_id": "U-guardian",
+                        "name": "寶寶",
+                        "relationship": "家人",
+                        "phone": "0912345678",
+                        "contact_role": "guardian",
+                        "consent_status": "accepted",
+                        "binding_status": "accepted",
+                    }],
+                },
+                "U-guardian": {"line_user_id": "U-guardian", "display_name": "寶寶", "contacts": []},
+            },
+            "guardian_invites": [],
+        })
+
+        preview, code = app_module.invite_bind_preview(self.data_file, {
+            "invite_from": "U-owner",
+            "line_user_id": "U-guardian",
+            "invite_token": "old-consumed-token",
+        })
+
+        self.assertEqual(code, 200)
+        self.assertTrue(preview["already_bound"])
+        self.assertEqual(preview["invite_status"], "accepted")
+
     def test_guardian_bind_rejects_wrong_token_and_consumed_token(self):
         invite, _ = app_module.create_guardian_invite(
             self.data_file, "U-owner", {"display_name": "阿媽"}

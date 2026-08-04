@@ -5109,7 +5109,7 @@
         <label>邀請你的人（系統帶入）
           <output id="inviteGuardianInviterName" class="locked-inviter">邀請人</output>
         </label>
-        <label>你的姓名（本人） <span class="onboarding-required">必填</span>
+        <label id="inviteGuardianNameField">你的姓名（本人） <span class="onboarding-required">必填</span>
           <input id="inviteGuardianName" type="text" maxlength="40" autocomplete="name" required>
         </label>
         <label class="invite-relationship-field">你是邀請人的誰？ <span class="onboarding-required">必選</span>
@@ -5129,7 +5129,7 @@
           </select>
           <input id="inviteGuardianRelationshipOther" class="relationship-other" type="text" maxlength="20" placeholder="選擇「其他」後請自行填寫" hidden>
         </label>
-        <label>你的聯絡電話 <span class="onboarding-required">必填</span>
+        <label id="inviteGuardianPhoneField">你的聯絡電話 <span class="onboarding-required">必填</span>
           <input id="inviteGuardianPhone" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" placeholder="例如：0912345678" required>
         </label>
         <p class="onboarding-note">請填你本人的資料，不是邀請人的資料。緊急狀況或聯絡不上本人時可使用；填寫後邀請人可以看到。</p>
@@ -8791,12 +8791,18 @@
       } catch (_) {}
     }
 
-    function showInviteGuardianProfileForm() {
+    function showInviteGuardianProfileForm({ existingProfile = false } = {}) {
       const modal = $("inviteAcceptPrompt");
       if (!modal) return;
+      const nameInput = $("inviteGuardianName");
+      const phoneInput = $("inviteGuardianPhone");
+      const nameField = $("inviteGuardianNameField");
+      const phoneField = $("inviteGuardianPhoneField");
+      if (nameField) nameField.hidden = existingProfile && Boolean(nameInput?.value);
+      if (phoneField) phoneField.hidden = existingProfile && Boolean(phoneInput?.value);
       modal.hidden = false;
       document.body.classList.add("invite-modal-open");
-      const first = $("inviteGuardianName");
+      const first = existingProfile ? $("inviteGuardianRelationship") : $("inviteGuardianName");
       if (first && typeof first.focus === "function") setTimeout(() => first.focus(), 50);
     }
 
@@ -9005,6 +9011,11 @@
         bodyEl.textContent = "請填寫您的資料，確認後才會完成核心守護綁定。成為核心守護人免費；你將收到邀請人的報平安、逾時、SOS 與安全守護通知。這次只會由您守護邀請人，不會自動互相綁定。";
       }
       const nameInput = $("inviteGuardianName");
+      if (nameInput) nameInput.readOnly = false;
+      const phoneInput = $("inviteGuardianPhone");
+      if (phoneInput) phoneInput.readOnly = false;
+      if ($("inviteGuardianNameField")) $("inviteGuardianNameField").hidden = false;
+      if ($("inviteGuardianPhoneField")) $("inviteGuardianPhoneField").hidden = false;
       if (nameInput && !nameInput.value) nameInput.value = lineDisplayName || "";
       restorePublicGuardianInviteProfile();
       if (btn) {
@@ -9029,6 +9040,23 @@
       } catch (_) {}
     }
 
+    function applyAuthoritativeInviteeProfile(preview) {
+      const invitee_profile = preview?.invitee_profile || {};
+      const nameInput = $("inviteGuardianName");
+      const phoneInput = $("inviteGuardianPhone");
+      if (nameInput && invitee_profile.display_name) nameInput.value = String(invitee_profile.display_name);
+      if (phoneInput && invitee_profile.phone) phoneInput.value = String(invitee_profile.phone);
+      if (!invitee_profile.profile_completed) return false;
+      if (nameInput) nameInput.readOnly = true;
+      if (phoneInput && invitee_profile.phone) phoneInput.readOnly = true;
+      const bodyEl = $("inviteAcceptBody");
+      if (bodyEl) {
+        bodyEl.textContent = "你的會員資料已完成，不需要重新填寫。請只確認你與這位邀請人的關係，再同意本次守護邀請。";
+      }
+      showInviteGuardianProfileForm({ existingProfile: true });
+      return true;
+    }
+
     async function maybeShowInviteAcceptPrompt() {
       if (bindDone || bindInFlight) return;
       const inviteFrom = getAppParam("invite_from");
@@ -9039,13 +9067,22 @@
       if (!modal) return;
       resetInviteAcceptPromptUi();
       rememberPendingGuardianInvite();
-      showInviteGuardianProfileForm();
 
       // 若雙方已有另一方向的守護關係，仍必須以本次新邀請逐次同意。
       try {
         if (lineUserId) {
           const preview = await apiInviteBindPreview(inviteFrom);
+          if (preview?.already_bound) {
+            bindDone = true;
+            clearInviteFromUrl();
+            clearPendingGuardianInvite();
+            closeInviteAcceptPrompt();
+            alert(`你已完成與 ${String(preview.inviter_display_name || "這位親友")} 的守護綁定，不需要再次填寫。`);
+            showTab("member");
+            return;
+          }
           const verifiedInviterName = String(preview?.inviter_display_name || "").trim();
+          applyAuthoritativeInviteeProfile(preview);
           const inviteGuardianInviterName = $("inviteGuardianInviterName");
           if (verifiedInviterName && inviteGuardianInviterName) {
             inviteGuardianInviterName.textContent = verifiedInviterName;
@@ -9056,11 +9093,19 @@
             const bodyEl = $("inviteAcceptBody");
             const btn = $("acceptGuardianInviteBtn");
             if (titleEl) titleEl.textContent = `${name} 邀請你成為核心守護人`;
-            if (bodyEl) bodyEl.textContent = `${name} 已經守護你；這是另一個方向的新邀請。請填寫資料並同意後，才會新增「你守護 ${name}」的關係，不會自動互相綁定。`;
+            if (bodyEl) bodyEl.textContent = preview?.invitee_profile?.profile_completed
+              ? `你的會員資料已完成。${name} 已經守護你；請只確認這次與 ${name} 的關係並同意，才會新增「你守護 ${name}」的關係。`
+              : `${name} 已經守護你；這是另一個方向的新邀請。請填寫資料並同意後，才會新增「你守護 ${name}」的關係，不會自動互相綁定。`;
             if (btn) btn.textContent = "接受成為核心守護人";
           }
+          if (!preview?.invitee_profile?.profile_completed) {
+            showInviteGuardianProfileForm();
+          }
+          return;
         }
       } catch (_) {}
+
+      showInviteGuardianProfileForm();
 
       try {
         requestAnimationFrame(() => {
