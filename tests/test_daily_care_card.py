@@ -75,6 +75,16 @@ class DailyCareContextTests(unittest.TestCase):
                 self.assertIn(f"/{period}-", first["hero_url"])
                 self.assertIn(f"/{period}-", second["hero_url"])
 
+    def test_evening_rotation_includes_the_new_family_video_call_template(self):
+        urls = {
+            build_daily_care_context({}, datetime(2026, 8, day, 20))["hero_url"]
+            for day in range(2, 8)
+        }
+        self.assertIn(
+            "https://alive-checkin.onrender.com/assets/daily-care/evening-03.webp",
+            urls,
+        )
+
     def test_day_100_replaces_daily_information(self):
         context = build_daily_care_context({"streak_days": 100}, datetime(2026, 8, 2, 13))
         self.assertEqual(context["content_kind"], "milestone")
@@ -181,7 +191,8 @@ class DailyCareContextTests(unittest.TestCase):
         self.assertEqual(footer[1]["height"], "md")
         self.assertIn("查看今日安心提醒", footer[3]["action"]["label"])
         self.assertIn("/assets/daily-care/morning-", flex["contents"]["hero"]["url"])
-        self.assertEqual(flex["contents"]["hero"]["aspectRatio"], "4:5")
+        self.assertEqual(flex["contents"]["hero"]["aspectRatio"], "16:9")
+        self.assertEqual(flex["contents"]["hero"]["aspectMode"], "fit")
         self.assertEqual(footer[1]["color"], "#2563EB")
         self.assertEqual(footer[2]["color"], "#DC2626")
         self.assertEqual(footer[3]["color"], "#D4A017")
@@ -190,6 +201,32 @@ class DailyCareContextTests(unittest.TestCase):
             "早安，今天一切都還好嗎？點一下「我平安」",
         )
         self.assertIn("Lv.1 安心啟程", flex["contents"]["body"]["contents"][1]["text"])
+
+    def test_daily_card_personalizes_name_and_keeps_the_habit_value_visible(self):
+        flex = app.build_daily_checkin_flex(
+            datetime(2026, 8, 5, 20),
+            profile={"display_name": "Jennie", "history": ["2026-08-05"]},
+        )
+        body_text = "\n".join(
+            item.get("text", "")
+            for item in flex["contents"]["body"]["contents"]
+            if item.get("type") == "text"
+        )
+        self.assertIn("晚安，Jennie，今天一切都還好嗎？", body_text)
+        self.assertIn("每天只花 10 秒", body_text)
+        self.assertIn("也讓在乎我的人放心", body_text)
+
+    def test_default_daily_card_does_not_fill_the_card_with_non_urgent_news(self):
+        flex = app.build_daily_checkin_flex(
+            datetime(2026, 8, 5, 20), profile={"display_name": "Jennie"}
+        )
+        body_text = "\n".join(
+            item.get("text", "")
+            for item in flex["contents"]["body"]["contents"]
+            if item.get("type") == "text"
+        )
+        self.assertNotIn("今日政府與生活重要消息", body_text)
+        self.assertIn("今天沒有特別提醒", body_text)
 
     def test_flex_uses_same_news_reminders_and_large_bold_copy_as_detail_page(self):
         profile = {

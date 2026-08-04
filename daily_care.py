@@ -20,7 +20,7 @@ DEFAULT_NEWS = {
 HERO_ASSETS = {
     "morning": ("morning-01", "morning-02"),
     "afternoon": ("afternoon-01", "afternoon-02"),
-    "evening": ("evening-01", "evening-02"),
+    "evening": ("evening-01", "evening-02", "evening-03"),
 }
 
 STREAK_LEVELS = (
@@ -192,6 +192,7 @@ def build_daily_care_context(profile, now):
     hero_pool = HERO_ASSETS[hero_period]
     hero_asset = hero_pool[now.date().toordinal() % len(hero_pool)]
     news = profile.get("daily_news") if isinstance(profile.get("daily_news"), dict) else {}
+    has_important_news = bool(news.get("title") and news.get("summary"))
     news_title = str(news.get("title") or DEFAULT_NEWS["title"]).strip()
     news_summary = str(news.get("summary") or DEFAULT_NEWS["summary"]).strip()
     news_source_name = str(news.get("source_name") or DEFAULT_NEWS["source_name"]).strip()
@@ -208,6 +209,7 @@ def build_daily_care_context(profile, now):
         "news_summary": news_summary,
         "news_source_name": news_source_name,
         "news_source_url": news_source_url,
+        "has_important_news": has_important_news,
         "today_reminders": _today_reminders(profile, now.date()),
         "blessing_text": str(
             profile.get("daily_blessing")
@@ -217,6 +219,7 @@ def build_daily_care_context(profile, now):
         "content_kind": content_kind,
         **level_context,
         "checkin_prompt": "今天一切都還好嗎？點一下「我平安」",
+        "habit_value_text": "每天只花 10 秒，看到一個小驚喜，也讓在乎我的人放心。",
         "streak_status_text": "重新開始連續守護" if profile.get("streak_restarted") else "持續連續守護",
         "milestone_day": milestone_day,
         "achievement_url": (

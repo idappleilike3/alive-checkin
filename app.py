@@ -17933,6 +17933,7 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
     care_profile = dict(profile or {})
     care_profile["streak_days"] = compute_streak_days(care_profile.get("history") or [], now.strftime("%Y-%m-%d"))
     care = build_daily_care_context(care_profile, now)
+    display_name = str(care_profile.get("display_name") or "").strip()
     if care["content_kind"] != "milestone" and holiday_name and holiday_blessing:
         care["care_title"] = f"🎉 {holiday_name}"
         care["care_summary"] = holiday_blessing
@@ -17940,7 +17941,7 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
     body_contents = [
         {
             "type": "text",
-            "text": f"{care['greeting']}，{care['checkin_prompt']}",
+            "text": f"{care['greeting']}，{display_name + '，' if display_name else ''}{care['checkin_prompt']}",
             "size": "xl",
             "weight": "bold",
             "color": "#1a1a1a",
@@ -17970,23 +17971,24 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
             "color": "#334155",
             "wrap": True,
         },
-        {
-            "type": "text",
-            "text": f"📰 {care['news_title']}",
-            "size": "lg",
-            "weight": "bold",
-            "color": "#B45309",
-            "wrap": True,
-        },
-        {
-            "type": "text",
-            "text": care["news_summary"],
-            "size": "lg",
-            "weight": "bold",
-            "color": "#475569",
-            "wrap": True,
-        },
     ]
+    if care.get("has_important_news"):
+        body_contents.extend([
+            {
+                "type": "text", "text": f"📰 {care['news_title']}", "size": "lg",
+                "weight": "bold", "color": "#B45309", "wrap": True,
+            },
+            {
+                "type": "text", "text": care["news_summary"], "size": "lg",
+                "weight": "bold", "color": "#475569", "wrap": True,
+            },
+        ])
+    elif not care.get("today_reminders"):
+        body_contents.append({
+            "type": "text",
+            "text": "今天沒有特別提醒，記得照顧好自己，平安就是最好的消息",
+            "size": "lg", "weight": "bold", "color": "#475569", "wrap": True,
+        })
     if care.get("today_reminders"):
         body_contents.extend([
             {
@@ -18017,6 +18019,16 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
             "size": "lg",
             "weight": "bold",
             "color": "#166534",
+            "wrap": True,
+        }
+    )
+    body_contents.append(
+        {
+            "type": "text",
+            "text": care["habit_value_text"],
+            "size": "lg",
+            "weight": "bold",
+            "color": "#92400E",
             "wrap": True,
         }
     )
@@ -18129,8 +18141,8 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
                 "type": "image",
                 "url": care["hero_url"],
                 "size": "full",
-                "aspectRatio": "4:5",
-                "aspectMode": "cover",
+                "aspectRatio": "16:9",
+                "aspectMode": "fit",
                 "animated": False,
             },
             "header": {
@@ -18772,7 +18784,9 @@ def preview_personalized_card(data_file, line_user_id, template_id, now=None):
     if not template:
         raise LookupError("找不到指定的圖文卡範本")
     current = now or current_app_time({})
-    message = _apply_card_template(build_daily_checkin_flex(current, profile=profile), template, profile)
+    message = build_daily_checkin_flex(current, profile=profile)
+    if template["id"] != DEFAULT_CARD_TEMPLATE["id"]:
+        message = _apply_card_template(message, template, profile)
     return {
         "member": {"display_name": str(profile.get("display_name") or "LINE 使用者"), "masked_line_user_id": _mask_line_user_id(line_user_id)},
         "template": template,
@@ -18868,7 +18882,9 @@ def admin_send_personalized_checkin_cards(
     sent = failed = 0
     results = []
     for uid, profile in eligible:
-        message = _apply_card_template(build_daily_checkin_flex(current, profile=profile), template, profile)
+        message = build_daily_checkin_flex(current, profile=profile)
+        if template["id"] != DEFAULT_CARD_TEMPLATE["id"]:
+            message = _apply_card_template(message, template, profile)
         try:
             sender(token, uid, message)
             append_notification_log(state, "admin_personalized_checkin", uid, "sent", message)

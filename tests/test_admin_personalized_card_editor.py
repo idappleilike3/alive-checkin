@@ -73,16 +73,19 @@ class AdminPersonalizedCardEditorTests(unittest.TestCase):
             })
 
     def test_preview_uses_real_member_and_does_not_send(self):
+        now = datetime(2026, 8, 3, 12, 0)
         result = alive_app.preview_personalized_card(
             self.data_file, self.uid, "daily-peace-default",
-            now=datetime(2026, 8, 3, 12, 0),
+            now=now,
         )
         self.assertEqual(result["member"]["display_name"], "寶寶")
         self.assertEqual(result["message"]["type"], "flex")
-        self.assertIn("寶寶", result["message"]["contents"]["body"]["contents"][0]["text"])
-        self.assertEqual(result["message"]["contents"]["hero"]["aspectRatio"], "4:5")
-        colors = [row.get("color") for row in result["message"]["contents"]["footer"]["contents"]]
-        self.assertEqual(colors[:5], ["#16A34A", "#2563EB", "#DC2626", "#D4A017", "#A96508"])
+        self.assertEqual(
+            result["message"],
+            alive_app.build_daily_checkin_flex(now, profile=alive_app.load_state(self.data_file)["users"][self.uid]),
+        )
+        self.assertEqual(result["message"]["contents"]["hero"]["aspectRatio"], "16:9")
+        self.assertEqual(result["message"]["contents"]["hero"]["aspectMode"], "fit")
 
     def test_confirmed_send_uses_selected_custom_template(self):
         template = alive_app.save_card_template(self.data_file, {
