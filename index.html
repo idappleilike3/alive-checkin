@@ -4760,8 +4760,12 @@
             <label class="onboarding-field" for="memberProfileDistrict">鄉鎮市區
               <select id="memberProfileDistrict"></select>
             </label>
-            <label class="onboarding-field" for="memberProfileBirthday">生日
-              <input id="memberProfileBirthday" type="date" autocomplete="bday">
+            <label class="onboarding-field">生日
+              <span class="birthday-fields" role="group" aria-label="生日年月日">
+                <select id="memberProfileBirthdayYear" aria-label="出生年"><option value="">年</option></select>
+                <select id="memberProfileBirthdayMonth" aria-label="出生月"><option value="">月</option></select>
+                <select id="memberProfileBirthdayDay" aria-label="出生日"><option value="">日</option></select>
+              </span>
               <small id="memberProfileBirthdayInitialText">尚未填寫生日</small>
             </label>
           </div>
@@ -12273,11 +12277,25 @@
       citySelect.innerHTML = `<option value="">請選擇縣市</option>${Object.keys(WEB_ONBOARDING_DISTRICTS).map((name) => `<option value="${name}" ${name === city ? "selected" : ""}>${name}</option>`).join("")}`;
       renderMemberProfileDistricts(city, district);
       const initialBirthday = String(status.birthday || "").slice(0, 10);
-      const birthdayInput = $("memberProfileBirthday");
-      if (birthdayInput) {
-        birthdayInput.value = initialBirthday;
-        birthdayInput.defaultValue = initialBirthday;
-        birthdayInput.max = getToday();
+      const [savedYear = "", savedMonth = "", savedDay = ""] = initialBirthday.split("-");
+      const today = new Date();
+      const year = $("memberProfileBirthdayYear");
+      const month = $("memberProfileBirthdayMonth");
+      const day = $("memberProfileBirthdayDay");
+      if (year && month && day) {
+        year.innerHTML = '<option value="">年</option>' + Array.from({length: 121}, (_, index) => String(today.getFullYear() - index)).map((value) => `<option value="${value}" ${value === savedYear ? "selected" : ""}>${value} 年</option>`).join("");
+        month.innerHTML = '<option value="">月</option>' + Array.from({length: 12}, (_, index) => String(index + 1).padStart(2, "0")).map((value) => `<option value="${value}" ${value === savedMonth ? "selected" : ""}>${Number(value)} 月</option>`).join("");
+        const renderDays = () => {
+          const maximum = year.value && month.value ? new Date(Number(year.value), Number(month.value), 0).getDate() : 31;
+          const selected = day.value || savedDay;
+          day.innerHTML = '<option value="">日</option>' + Array.from({length: maximum}, (_, index) => String(index + 1).padStart(2, "0")).map((value) => `<option value="${value}" ${value === selected ? "selected" : ""}>${Number(value)} 日</option>`).join("");
+        };
+        renderDays();
+        if (year.dataset.bound !== "true") {
+          year.dataset.bound = "true";
+          year.addEventListener("change", renderDays);
+          month.addEventListener("change", renderDays);
+        }
       }
       const birthdayInitialText = $("memberProfileBirthdayInitialText");
       if (birthdayInitialText) {
@@ -12291,14 +12309,26 @@
       }
     }
 
+    function memberProfileBirthdayValue() {
+      const year = $("memberProfileBirthdayYear")?.value || "";
+      const month = $("memberProfileBirthdayMonth")?.value || "";
+      const day = $("memberProfileBirthdayDay")?.value || "";
+      if (!year && !month && !day) return "";
+      return year && month && day ? `${year}-${month}-${day}` : null;
+    }
+
     async function saveMemberProfileDetails() {
       const city = $("memberProfileCity")?.value.trim() || "";
       const district = $("memberProfileDistrict")?.value.trim() || "";
-      const birthday = $("memberProfileBirthday")?.value || "";
+      const birthday = memberProfileBirthdayValue();
       const feedback = $("memberProfileSaveFeedback");
       const button = $("memberProfileSaveBtn");
       if (!city || !district) {
         if (feedback) { feedback.hidden = false; feedback.textContent = "請選擇縣市與鄉鎮市區"; }
+        return;
+      }
+      if (birthday === null) {
+        if (feedback) { feedback.hidden = false; feedback.textContent = "生日請完整選擇年、月、日，或三欄都留空"; }
         return;
       }
       if (button) { button.disabled = true; button.textContent = "儲存中…"; }

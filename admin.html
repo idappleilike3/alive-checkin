@@ -1378,6 +1378,16 @@
         </div>
         <p id="betaResetMessage" class="auth-status" role="status" aria-live="polite"></p>
       </section>
+      <section class="release-status" aria-labelledby="memberMergeTitle" style="margin-bottom:16px;">
+        <h3 id="memberMergeTitle">合併重複 LINE 會員</h3>
+        <p class="note">把舊 UID 的方案、守護關係、平安紀錄與排程安全轉到新 UID；完成後舊 UID 停用並保留可稽核的轉移紀錄。</p>
+        <div class="toolbar">
+          <label>要移除的舊 UID<input id="memberMergeOldId" placeholder="U 開頭的舊 LINE UID"></label>
+          <label>要保留的新 UID<input id="memberMergeNewId" placeholder="U 開頭的新 LINE UID"></label>
+          <button id="memberMergeButton" type="button" class="danger">核對並合併</button>
+        </div>
+        <p id="memberMergeMessage" class="auth-status" role="status" aria-live="polite"></p>
+      </section>
       <div class="table-wrap member-table-wrap">
         <table class="member-table">
           <thead>
@@ -2615,6 +2625,38 @@
           button.disabled = false;
           button.textContent = "重設測試帳號";
         }
+      }
+    }
+
+    async function mergeDuplicateMember() {
+      if (!canManageMembers()) return;
+      const oldId = $("memberMergeOldId").value.trim();
+      const newId = $("memberMergeNewId").value.trim();
+      const message = $("memberMergeMessage");
+      if (!/^U[0-9a-f]{32}$/i.test(oldId) || !/^U[0-9a-f]{32}$/i.test(newId) || oldId === newId) {
+        message.textContent = "請填寫兩個不同的完整 LINE UID。";
+        return;
+      }
+      if (!window.confirm(`確定將舊會員 ${oldId} 合併到新會員 ${newId}？\n\n舊 UID 會停用；方案、守護關係、平安紀錄與未送排程會轉到新 UID。`)) return;
+      const button = $("memberMergeButton");
+      button.disabled = true;
+      message.textContent = "正在建立備份並轉移會員資料…";
+      try {
+        const response = await adminFetch("/api/admin/members/merge", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({old_line_user_id: oldId, new_line_user_id: newId, confirm: true}),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(adminMutationErrorText(data, response.status));
+        message.textContent = `✓ 已合併完成：舊 UID 已停用，保留新 UID；轉移簽到 ${Number(data.counts?.checkins || 0)} 筆、守護／聯絡資料 ${Number(data.counts?.contacts || 0)} 筆。`;
+        $("memberMergeOldId").value = "";
+        $("memberMergeNewId").value = "";
+        await refresh();
+      } catch (error) {
+        message.textContent = `✗ 合併失敗：${error.message || "請稍後再試"}`;
+      } finally {
+        button.disabled = false;
       }
     }
 
@@ -4027,6 +4069,7 @@
         await loadBetaResetCandidates();
       }
     });
+    $("memberMergeButton")?.addEventListener("click", mergeDuplicateMember);
     const adminNavToggle = $("adminNavToggle");
     const adminNavBackdrop = $("adminNavBackdrop");
     if (adminNavToggle) adminNavToggle.addEventListener("click", () => toggleAdminNav());
