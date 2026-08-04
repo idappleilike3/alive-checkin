@@ -3963,20 +3963,67 @@
     }
 
     :root { --peace-helper-bottom: calc(100px + env(safe-area-inset-bottom, 0px)); }
-    .peace-helper { position:fixed; right:16px; bottom:var(--peace-helper-bottom); z-index:88; display:grid; justify-items:end; gap:8px; max-width:min(330px,calc(100vw - 32px)); }
-    .peace-helper-launcher { width:60px; height:60px; border:3px solid #fff; border-radius:50%; background:linear-gradient(145deg,#dcfce7,#86efac); box-shadow:0 10px 28px rgba(20,83,45,.3); cursor:grab; touch-action:none; font-size:34px; animation:peaceHelperWave 2.6s ease-in-out infinite; }
-    .peace-helper-panel { width:min(330px,calc(100vw - 32px)); padding:14px; border:1px solid #86efac; border-radius:22px 22px 6px 22px; background:#fffef8; color:#18392a; box-shadow:0 18px 48px rgba(20,50,35,.24); text-align:left; }
+    .peace-helper { position:fixed; right:16px; bottom:var(--peace-helper-bottom); z-index:88; display:grid; justify-items:end; gap:8px; max-width:min(370px,calc(100vw - 24px)); }
+    .peace-helper-launcher { width:84px; height:92px; padding:0; border:0; background:transparent; filter:drop-shadow(0 10px 12px rgba(69,50,19,.22)); cursor:grab; touch-action:none; transition:filter .2s ease; }
+    .peace-helper-launcher:focus-visible { outline:4px solid #0f766e; outline-offset:4px; border-radius:28px; }
+    .xiao-pingan-svg { width:100%; height:100%; overflow:visible; }
+    .xp-body { fill:#fff3c9; stroke:#b8792d; stroke-width:2.5; }
+    .xp-fur { fill:#fffaf0; }
+    .xp-horn { fill:#f4b942; stroke:#a7621f; stroke-width:2; }
+    .xp-eye { fill:#34251d; transform-origin:center; }
+    .xp-cheek { fill:#ff9a9f; opacity:.72; }
+    .xp-mouth { fill:none; stroke:#7a3f34; stroke-width:2.5; stroke-linecap:round; }
+    .xp-arm,.xp-leg { fill:#ffefb6; stroke:#b8792d; stroke-width:2.2; transform-box:fill-box; transform-origin:top center; }
+    .xp-tail { fill:none; stroke:#b6ead7; stroke-width:10; stroke-linecap:round; }
+    .xp-shield { fill:#ff6f7d; stroke:#a73848; stroke-width:2.2; transform-box:fill-box; transform-origin:center; }
+    .xp-heart { fill:#fff8ee; }
+    .xp-prop,.xp-particles { opacity:0; pointer-events:none; }
+    .peace-helper-panel { width:min(370px,calc(100vw - 24px)); max-height:min(620px,calc(100vh - 170px)); overflow:auto; padding:15px; border:1.5px solid #e9bd69; border-radius:24px 24px 8px 24px; background:linear-gradient(165deg,#fffdf6,#f3fff9); color:#18392a; box-shadow:0 20px 56px rgba(55,48,27,.25); text-align:left; }
     .peace-helper-panel[hidden] { display:none; }
     .peace-helper-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:9px; }
     .peace-helper-head strong { font-size:18px; }
     .peace-helper-mute { min-height:42px; padding:7px 11px; border:1px solid #86efac; border-radius:12px; background:#f0fdf4; color:#166534; font-weight:800; cursor:pointer; }
-    .peace-helper-message { margin:0 0 10px; font-size:17px; line-height:1.55; font-weight:700; }
-    .peace-helper-questions { display:grid; gap:7px; }
-    .peace-helper-questions button { min-height:44px; padding:9px 12px; border:1px solid #bbf7d0; border-radius:12px; background:#f0fdf4; color:#14532d; text-align:left; font-weight:800; cursor:pointer; }
+    .peace-helper-subtitle { margin:2px 0 0; color:#64748b; font-size:13px; font-weight:750; }
+    .xiao-pingan-chat-log { display:grid; gap:9px; min-height:92px; max-height:230px; overflow:auto; padding:8px 2px 12px; }
+    .xp-bubble { width:fit-content; max-width:90%; padding:10px 12px; border-radius:16px; font-size:16px; line-height:1.55; font-weight:700; white-space:pre-wrap; }
+    .xp-bubble.assistant { justify-self:start; background:#fff; border:1px solid #d8eedf; border-bottom-left-radius:5px; }
+    .xp-bubble.user { justify-self:end; background:#c9f4df; color:#14532d; border-bottom-right-radius:5px; }
+    .xp-bubble.thinking { color:#64748b; font-weight:650; }
+    .peace-helper-questions { display:flex; gap:7px; overflow-x:auto; padding:2px 0 9px; scrollbar-width:thin; }
+    .peace-helper-questions button { flex:0 0 auto; min-height:44px; padding:9px 12px; border:1px solid #b7e3cd; border-radius:999px; background:#f0fdf4; color:#14532d; text-align:left; font-weight:800; cursor:pointer; }
+    .xiao-pingan-form { display:grid; grid-template-columns:1fr 50px; gap:8px; margin-top:4px; }
+    .xiao-pingan-form input { min-width:0; min-height:50px; padding:10px 13px; border:1.5px solid #9dd6b9; border-radius:15px; background:#fff; color:#17372a; font-size:16px; }
+    .xiao-pingan-send { min-height:50px; border:0; border-radius:15px; background:#15835f; color:#fff; font-size:22px; cursor:pointer; }
+    .xiao-pingan-support { display:inline-flex; margin-top:10px; color:#166534; font-weight:800; }
     body.sos-open .peace-helper { bottom:auto; top:88px; transform:scale(.88); transform-origin:right top; }
-    @keyframes peaceHelperWave { 0%,100%{transform:rotate(0)} 10%{transform:rotate(-8deg)} 20%{transform:rotate(8deg)} 30%{transform:rotate(0)} }
+    .peace-helper-launcher[data-animation="smile"] .xp-mouth { animation:xpSmile .8s ease; }
+    .peace-helper-launcher[data-animation="blink"] .xp-eye { animation:xpBlink .7s ease; }
+    .peace-helper-launcher[data-animation="wave"] .xp-arm-right { animation:xpWave .8s ease 2; }
+    .peace-helper-launcher[data-animation="heartbeat"] .xp-shield { animation:xpHeartbeat .65s ease 2; }
+    .peace-helper-launcher[data-animation="float"] .xiao-pingan-svg { animation:xpFloat 1.6s ease-in-out; }
+    .peace-helper-launcher[data-animation="clap"] .xp-arm { animation:xpClap .38s ease 4 alternate; }
+    .peace-helper-launcher[data-animation="hearts"] .xp-hearts { opacity:1; animation:xpParticles 1.3s ease-out; }
+    .peace-helper-launcher[data-animation="stars"] .xp-stars { opacity:1; animation:xpParticles 1.3s ease-out; }
+    .peace-helper-launcher[data-animation="worried"] .xp-mouth { transform:rotate(180deg); transform-origin:center; }
+    .peace-helper-launcher[data-animation="alert-red"] { filter:drop-shadow(0 0 12px #dc2626); }
+    .peace-helper-launcher[data-animation="alert-red"] .xp-shield { fill:#dc2626; }
+    .peace-helper-launcher[data-animation="point-location"] .xp-map { opacity:1; animation:xpProp .9s ease; }
+    .peace-helper-launcher[data-animation="phone"] .xp-phone { opacity:1; animation:xpProp .9s ease; }
+    .peace-helper-launcher[data-animation="confetti"] .xp-confetti { opacity:1; animation:xpParticles 1.5s ease-out; }
+    .peace-helper-launcher[data-animation="hug"] .xp-arm { animation:xpHug 1s ease; }
+    .peace-helper-launcher[data-animation="jump"] .xiao-pingan-svg { animation:xpJump .8s cubic-bezier(.2,.8,.3,1); }
+    @keyframes xpSmile { 50%{transform:scaleX(1.3)} }
+    @keyframes xpBlink { 45%,55%{transform:scaleY(.08)} }
+    @keyframes xpWave { 50%{transform:rotate(-45deg)} }
+    @keyframes xpHeartbeat { 50%{transform:scale(1.22);filter:drop-shadow(0 0 7px #ff6f7d)} }
+    @keyframes xpFloat { 50%{transform:translateY(-9px) rotate(2deg)} }
+    @keyframes xpClap { to{transform:rotate(42deg) translateX(5px)} }
+    @keyframes xpParticles { 0%{transform:translateY(12px) scale(.6);opacity:0} 30%{opacity:1} 100%{transform:translateY(-25px) scale(1.15);opacity:0} }
+    @keyframes xpProp { 0%{transform:scale(.5);opacity:0} 35%,75%{transform:scale(1);opacity:1} 100%{opacity:0} }
+    @keyframes xpHug { 50%{transform:rotate(52deg) translateX(7px)} }
+    @keyframes xpJump { 45%{transform:translateY(-18px) scaleY(1.05)} 75%{transform:translateY(2px) scaleY(.94)} }
     @media (min-width:760px) { .peace-helper { right:24px; bottom:32px; } }
-    @media (prefers-reduced-motion:reduce) { .peace-helper-launcher { animation:none; } }
+    @media (prefers-reduced-motion: reduce) { .peace-helper-launcher *, .peace-helper-launcher { animation-duration:.01ms!important; animation-iteration-count:1!important; scroll-behavior:auto!important; } }
   </style>
 </head>
 <body class="classic mvp-focus-home">
@@ -3986,19 +4033,50 @@
     <aside class="peace-helper" id="peaceHelper" aria-label="每日平安小幫手">
       <section class="peace-helper-panel" id="peaceHelperPanel" aria-live="polite" hidden>
         <div class="peace-helper-head">
-          <strong>小平安來幫忙</strong>
+          <div><strong>小平安來幫忙</strong><p class="peace-helper-subtitle">不使用付費 AI，不確定時不亂猜</p></div>
           <button class="peace-helper-mute" id="peaceHelperMute" type="button">🔊 語音開啟</button>
         </div>
-        <p class="peace-helper-message" id="peaceHelperMessage">您好，我可以帶你一步一步操作。</p>
-        <div class="peace-helper-questions" id="peaceHelperQuestions">
-          <button type="button" data-answer="每天打開每日平安，按一下綠色的「我平安」就完成了。">怎麼報平安？</button>
-          <button type="button" data-answer="到會員中心的核心守護人區，按「一鍵分享邀請」，對方同意後就完成綁定。">怎麼邀請守護人？</button>
-          <button type="button" data-answer="我會依伺服器裡已生效的資格，顯示你的 14 天體驗、21 天封測或付費方案。">我的方案是什麼？</button>
-          <button type="button" data-answer="請確認已加入官方 LINE、沒有封鎖，並把「每日平安」置頂及開啟通知。">為什麼收不到提醒？</button>
-          <button type="button" data-answer="在 LINE 聊天列表長按「每日平安」，選擇置頂；再到聊天設定確認通知已開啟。">如何把 LINE 置頂？</button>
+        <div class="xiao-pingan-chat-log" id="xiaoPinganChatLog" aria-live="polite" aria-label="與小平安的對話">
+          <div class="xp-bubble assistant" id="peaceHelperMessage">嗨，我是小平安。你可以點問題，也可以自己打字問我。</div>
         </div>
+        <div class="peace-helper-questions" id="peaceHelperQuestions">
+          <button type="button" data-question="這是做什麼的？">這是做什麼的？</button>
+          <button type="button" data-question="如何為我帶來平安？">如何為我帶來平安？</button>
+          <button type="button" data-question="怎麼邀請守護人？">怎麼邀請守護人？</button>
+          <button type="button" data-question="我的方案是什麼？">我的方案是什麼？</button>
+          <button type="button" data-question="為什麼收不到提醒？">為什麼收不到提醒？</button>
+          <button type="button" data-question="如何把 LINE 置頂？">如何把 LINE 置頂？</button>
+          <button type="button" data-question="要花錢嗎？怎麼退？">要花錢嗎？怎麼退？</button>
+          <button type="button" data-question="現在就開始">現在就開始</button>
+        </div>
+        <form class="xiao-pingan-form" id="xiaoPinganChatForm">
+          <input id="xiaoPinganQuestionInput" maxlength="160" autocomplete="off" aria-label="輸入想問小平安的問題" placeholder="輸入其他問題…">
+          <button class="xiao-pingan-send" type="submit" aria-label="傳送問題">➤</button>
+        </form>
+        <a class="xiao-pingan-support" href="#member" data-tab="member">需要人工協助？前往客服</a>
       </section>
-      <button class="peace-helper-launcher" id="peaceHelperLauncher" type="button" aria-expanded="false" aria-controls="peaceHelperPanel" aria-label="開啟每日平安小幫手">🤖</button>
+      <button class="peace-helper-launcher" id="peaceHelperLauncher" type="button" aria-expanded="false" aria-controls="peaceHelperPanel" aria-label="開啟小平安對話">
+        <span id="xiaoPinganCharacter" aria-hidden="true">
+          <svg class="xiao-pingan-svg" viewBox="0 0 92 104" role="img">
+            <path class="xp-tail" d="M70 72 Q88 67 80 53 Q76 47 84 43"/>
+            <path class="xp-leg" d="M31 77 q-5 15 3 18 q8 1 8-14z"/><path class="xp-leg" d="M53 80 q-1 14 7 14 q8-3 2-17z"/>
+            <ellipse class="xp-body" cx="47" cy="66" rx="29" ry="27"/>
+            <path class="xp-fur" d="M23 54 q5-12 12-6 q8-10 15 0 q9-9 17 2 q9-2 8 10 q-9-9-27-8 q-16-2-25 2z"/>
+            <path class="xp-horn" d="M34 28 Q29 10 41 20 L43 31z"/><path class="xp-horn" d="M55 29 Q62 11 66 25 L62 34z"/>
+            <circle class="xp-body" cx="48" cy="40" r="26"/>
+            <circle class="xp-eye" cx="39" cy="39" r="3.8"/><circle class="xp-eye" cx="57" cy="39" r="3.8"/>
+            <circle class="xp-cheek" cx="33" cy="48" r="4"/><circle class="xp-cheek" cx="63" cy="48" r="4"/>
+            <path class="xp-mouth" d="M42 49 Q48 55 54 49"/>
+            <path class="xp-arm xp-arm-left" d="M27 60 q-14 6-9 16 q7 5 17-6z"/><path class="xp-arm xp-arm-right" d="M67 59 q15 2 12 13 q-6 7-17-3z"/>
+            <path class="xp-shield" d="M37 61 Q48 55 59 61 L57 75 Q50 83 48 84 Q39 78 38 74z"/><path class="xp-heart" d="M43 66 q5-5 10 0 q4 5-5 11 q-9-6-5-11z"/>
+            <g class="xp-particles xp-hearts"><text x="14" y="34">♥</text><text x="70" y="28">♥</text></g>
+            <g class="xp-particles xp-stars"><text x="8" y="52">✦</text><text x="75" y="54">✦</text></g>
+            <g class="xp-particles xp-confetti"><text x="10" y="19">🎉</text><text x="67" y="18">✨</text></g>
+            <g class="xp-prop xp-map"><rect x="57" y="56" width="26" height="19" rx="3" fill="#dff8ed"/><text x="64" y="71">📍</text></g>
+            <g class="xp-prop xp-phone"><rect x="63" y="49" width="12" height="23" rx="4" fill="#334155"/><circle cx="69" cy="68" r="1" fill="white"/></g>
+          </svg>
+        </span>
+      </button>
     </aside>
 
     <nav class="bottom-nav" id="bottomNav" aria-label="主導覽">
@@ -5866,6 +5944,34 @@
 
     const PEACE_HELPER_MUTED_KEY = "peace_helper_muted";
     const PEACE_HELPER_POSITION_KEY = "peace_helper_position";
+    const XIAO_PINGAN_ANIMATIONS = new Set([
+      "smile", "blink", "wave", "heartbeat", "float",
+      "clap", "hearts", "stars", "worried", "alert-red",
+      "point-location", "phone", "confetti", "hug", "jump"
+    ]);
+    const XIAO_PINGAN_PRIORITY = { idle:1, chatting:2, celebration:3, sos:4 };
+    let xiaoPinganAnimationTimer = null;
+    let xiaoPinganState = "idle";
+
+    function playXiaoPinganAnimation(name, state = "idle", duration = 1100) {
+      const launcher = $("peaceHelperLauncher");
+      if (!launcher || !XIAO_PINGAN_ANIMATIONS.has(name)) return false;
+      if ((XIAO_PINGAN_PRIORITY[state] || 0) < (XIAO_PINGAN_PRIORITY[xiaoPinganState] || 0)) return false;
+      clearTimeout(xiaoPinganAnimationTimer);
+      xiaoPinganState = state;
+      launcher.dataset.animation = "";
+      void launcher.offsetWidth;
+      launcher.dataset.animation = name;
+      xiaoPinganAnimationTimer = setTimeout(() => {
+        if (xiaoPinganState === state) xiaoPinganState = document.body.classList.contains("sos-open") ? "sos" : "idle";
+        if (xiaoPinganState !== "sos") launcher.dataset.animation = "";
+      }, window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 80 : duration);
+      return true;
+    }
+
+    function playXiaoPinganSequence(names, state) {
+      names.forEach((name, index) => setTimeout(() => playXiaoPinganAnimation(name, state), index * 850));
+    }
     function peaceHelperIsMuted() {
       return localStorage.getItem(PEACE_HELPER_MUTED_KEY) === "true";
     }
@@ -5875,16 +5981,73 @@
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(String(message));
       utterance.lang = "zh-TW";
-      utterance.rate = 0.9;
+      utterance.rate = 0.92;
+      utterance.pitch = 1.22;
+      const voices = window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
+      utterance.voice = voices.find((voice) => /zh[-_]TW/i.test(voice.lang) && /female|女|mei|ting|hsiao/i.test(voice.name))
+        || voices.find((voice) => /zh[-_]TW/i.test(voice.lang))
+        || voices.find((voice) => /^zh/i.test(voice.lang))
+        || null;
       window.speechSynthesis.speak(utterance);
+    }
+
+    function addXiaoPinganBubble(message, role = "assistant", extraClass = "") {
+      const log = $("xiaoPinganChatLog");
+      if (!log) return null;
+      const bubble = document.createElement("div");
+      bubble.className = `xp-bubble ${role} ${extraClass}`.trim();
+      bubble.textContent = message;
+      log.appendChild(bubble);
+      log.scrollTop = log.scrollHeight;
+      return bubble;
+    }
+
+    async function typeXiaoPinganAnswer(message) {
+      const bubble = addXiaoPinganBubble("", "assistant");
+      if (!bubble) return;
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        bubble.textContent = message;
+        return;
+      }
+      for (let index = 0; index < message.length; index += 1) {
+        bubble.textContent += message[index];
+        if (index % 3 === 0) await new Promise((resolve) => setTimeout(resolve, 18));
+      }
+    }
+
+    async function askXiaoPingan(question) {
+      const cleanQuestion = String(question || "").trim();
+      if (!cleanQuestion) return;
+      addXiaoPinganBubble(cleanQuestion, "user");
+      const thinking = addXiaoPinganBubble("小平安正在想……", "assistant", "thinking");
+      playXiaoPinganAnimation("heartbeat", "chatting");
+      try {
+        const response = await fetch("/api/xiao-pingan/answer", {
+          method: "POST",
+          headers: await authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ question: cleanQuestion, line_user_id: lineUserId })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || "answer_failed");
+        thinking?.remove();
+        await typeXiaoPinganAnswer(data.answer || "小平安暫時無法回答，請聯絡客服。");
+        if (Array.isArray(data.suggestions) && data.suggestions.length) {
+          const questions = $("peaceHelperQuestions");
+          questions.innerHTML = data.suggestions.map((item) => `<button type="button" data-question="${escapeHtml(item)}">${escapeHtml(item)}</button>`).join("");
+        }
+        if (data.action === "start") location.hash = lineUserId ? "#home" : "#onboarding";
+        speakPeaceHelper(data.answer || "");
+      } catch (_) {
+        thinking?.remove();
+        await typeXiaoPinganAnswer("我現在連不上服務，沒有辦法確認答案。請稍後再試，或到會員中心聯絡客服。");
+      }
     }
 
     function setPeaceHelperMessage(message, speak = true) {
       const panel = $("peaceHelperPanel");
-      const text = $("peaceHelperMessage");
       const launcher = $("peaceHelperLauncher");
-      if (!panel || !text) return;
-      text.textContent = message;
+      if (!panel) return;
+      addXiaoPinganBubble(message, "assistant");
       panel.hidden = false;
       if (launcher) launcher.setAttribute("aria-expanded", "true");
       if (speak) speakPeaceHelper(message);
@@ -5935,22 +6098,44 @@
         if (launcher.dataset.justDragged === "true") { launcher.dataset.justDragged = "false"; return; }
         panel.hidden = !panel.hidden;
         launcher.setAttribute("aria-expanded", String(!panel.hidden));
-        if (!panel.hidden) speakPeaceHelper($("peaceHelperMessage").textContent);
+        if (!panel.hidden) {
+          playXiaoPinganAnimation("wave", "chatting", 1500);
+          speakPeaceHelper("嗨，我是小平安。你可以點問題，也可以自己打字問我。");
+        }
       });
       mute.addEventListener("click", () => {
         const muted = !peaceHelperIsMuted();
         localStorage.setItem(PEACE_HELPER_MUTED_KEY, String(muted));
         if (muted && "speechSynthesis" in window) window.speechSynthesis.cancel();
         renderMute();
-        if (!muted) speakPeaceHelper($("peaceHelperMessage").textContent);
+        if (!muted) speakPeaceHelper("小平安的語音已開啟。");
       });
       $("peaceHelperQuestions").addEventListener("click", (event) => {
-        const button = event.target.closest("button[data-answer]");
-        if (button) setPeaceHelperMessage(button.dataset.answer || "", true);
+        const button = event.target.closest("button[data-question]");
+        if (button) askXiaoPingan(button.dataset.question || "");
+      });
+      const chatForm = $("xiaoPinganChatForm");
+      const questionInput = $("xiaoPinganQuestionInput");
+      chatForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const question = questionInput.value.trim();
+        if (!question) return;
+        questionInput.value = "";
+        askXiaoPingan(question);
       });
       const sosModal = $("sosConfirmModal");
       if (sosModal && "MutationObserver" in window) {
-        const syncSos = () => document.body.classList.toggle("sos-open", !sosModal.hidden);
+        const syncSos = () => {
+          const active = !sosModal.hidden;
+          document.body.classList.toggle("sos-open", active);
+          if (active) {
+            xiaoPinganState = "sos";
+            playXiaoPinganSequence(["worried", "alert-red", "point-location", "phone"], "sos");
+          } else if (xiaoPinganState === "sos") {
+            xiaoPinganState = "idle";
+            launcher.dataset.animation = "";
+          }
+        };
         new MutationObserver(syncSos).observe(sosModal, { attributes:true, attributeFilter:["hidden"] });
         syncSos();
       }
@@ -6002,6 +6187,7 @@
       if (!modal || modal.dataset.shown === "true") return;
       modal.dataset.shown = "true";
       modal.hidden = false;
+      playXiaoPinganSequence(["confetti", "hug", "jump"], "celebration");
       speakPeaceHelper("恭喜你完成守護人綁定。現在請點一下我平安，完成今天的平安回報。");
       acknowledgeBindingCelebration().catch(() => {
         modal.dataset.shown = "";
@@ -6012,6 +6198,7 @@
       const next = formatNextReminderMessage(data);
       const duplicate = Boolean(data && (data.already_checked_today || data.is_duplicate));
       const base = duplicate ? "✅ 今天已完成平安回報，不用再點一次" : "✅ 今天已完成平安回報";
+      if (!duplicate) playXiaoPinganSequence(["clap", "hearts", "stars"], "celebration");
       showInlineSuccess(next ? `${base}｜${next}` : base);
       const spokenNext = next || "明天會依你設定的時間提醒";
       setPeaceHelperMessage(`${base}。${spokenNext}。請把「每日平安」官方 LINE 置頂，並開啟通知。`, true);
@@ -13899,6 +14086,12 @@
       bindMvpHome();
       bindGuardianCompletePrompt();
       bindGuardianEvents();
+      bindPeaceHelper();
+      setInterval(() => {
+        if (xiaoPinganState !== "idle" || document.hidden) return;
+        const idleAnimations = ["smile", "blink", "float", "heartbeat"];
+        playXiaoPinganAnimation(idleAnimations[Math.floor(Math.random() * idleAnimations.length)], "idle");
+      }, 12000);
       const hasPendingMigration = Boolean(getAppParam("migration_code"));
       if (!hasPendingMigration) {
         const initialRoute = applyInitialDeepLinkRoute();
