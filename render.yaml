@@ -4,7 +4,7 @@ services:
     env: python
     # Persistent Disk requires a paid instance (Starter+). Free cannot attach disks.
     plan: starter
-    buildCommand: pip install -r requirements.txt
+    buildCommand: python scripts/apply_admin_merge_patch.py && pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
     healthCheckPath: /health
     disk:
