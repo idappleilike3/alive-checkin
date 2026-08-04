@@ -3963,13 +3963,17 @@
     }
 
     :root { --peace-helper-bottom: calc(100px + env(safe-area-inset-bottom, 0px)); }
-    .peace-helper { position:fixed; right:16px; bottom:var(--peace-helper-bottom); z-index:88; display:grid; justify-items:end; gap:8px; max-width:min(370px,calc(100vw - 24px)); }
-    .peace-helper-launcher { width:84px; height:92px; padding:0; border:0; background:transparent; filter:drop-shadow(0 10px 12px rgba(69,50,19,.22)); cursor:grab; touch-action:none; transition:filter .2s ease; }
+    .peace-helper { position:fixed; right:16px; bottom:var(--peace-helper-bottom); z-index:88; width:84px; height:92px; pointer-events:none; }
+    .peace-helper-panel-wrap { position:absolute; right:0; bottom:calc(100% + 8px); width:min(370px,calc(100vw - 24px)); pointer-events:none; }
+    .peace-helper-launcher { pointer-events:auto; width:84px; height:92px; padding:0; border:0; background:transparent; filter:drop-shadow(0 10px 12px rgba(69,50,19,.22)); cursor:grab; touch-action:none; transition:filter .2s ease; }
     .peace-helper-launcher:focus-visible { outline:4px solid #0f766e; outline-offset:4px; border-radius:28px; }
     .xiao-pingan-svg { width:100%; height:100%; overflow:visible; }
     .xp-body { fill:#fff3c9; stroke:#b8792d; stroke-width:2.5; }
     .xp-fur { fill:#fffaf0; }
     .xp-horn { fill:#f4b942; stroke:#a7621f; stroke-width:2; }
+    .xp-ear { fill:#ffe9a8; stroke:#b8792d; stroke-width:2.2; }
+    .xp-mane { fill:#fffaf0; stroke:#dfb66d; stroke-width:1.4; }
+    .xp-diamond { fill:#63d7c2; stroke:#167f72; stroke-width:1.8; filter:drop-shadow(0 0 3px rgba(99,215,194,.65)); }
     .xp-eye { fill:#34251d; transform-origin:center; }
     .xp-cheek { fill:#ff9a9f; opacity:.72; }
     .xp-mouth { fill:none; stroke:#7a3f34; stroke-width:2.5; stroke-linecap:round; }
@@ -3978,7 +3982,7 @@
     .xp-shield { fill:#ff6f7d; stroke:#a73848; stroke-width:2.2; transform-box:fill-box; transform-origin:center; }
     .xp-heart { fill:#fff8ee; }
     .xp-prop,.xp-particles { opacity:0; pointer-events:none; }
-    .peace-helper-panel { width:min(370px,calc(100vw - 24px)); max-height:min(620px,calc(100vh - 170px)); overflow:auto; padding:15px; border:1.5px solid #e9bd69; border-radius:24px 24px 8px 24px; background:linear-gradient(165deg,#fffdf6,#f3fff9); color:#18392a; box-shadow:0 20px 56px rgba(55,48,27,.25); text-align:left; }
+    .peace-helper-panel { pointer-events:auto; width:100%; max-height:min(620px,calc(100dvh - 210px)); overflow:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch; padding:15px; border:1.5px solid #e9bd69; border-radius:24px 24px 8px 24px; background:linear-gradient(165deg,#fffdf6,#f3fff9); color:#18392a; box-shadow:0 20px 56px rgba(55,48,27,.25); text-align:left; }
     .peace-helper-panel[hidden] { display:none; }
     .peace-helper-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:9px; }
     .peace-helper-head strong { font-size:18px; }
@@ -4031,7 +4035,7 @@
 
     <!-- D01: 底部導覽列(放這裡確保在 script 之前就 parse) -->
     <aside class="peace-helper" id="peaceHelper" aria-label="每日平安小幫手">
-      <section class="peace-helper-panel" id="peaceHelperPanel" aria-live="polite" hidden>
+      <div class="peace-helper-panel-wrap"><section class="peace-helper-panel" id="peaceHelperPanel" aria-live="polite" hidden>
         <div class="peace-helper-head">
           <div><strong>小平安來幫忙</strong><p class="peace-helper-subtitle">不使用付費 AI，不確定時不亂猜</p></div>
           <button class="peace-helper-mute" id="peaceHelperMute" type="button">🔊 語音開啟</button>
@@ -4054,16 +4058,19 @@
           <button class="xiao-pingan-send" type="submit" aria-label="傳送問題">➤</button>
         </form>
         <a class="xiao-pingan-support" href="#member" data-tab="member">需要人工協助？前往客服</a>
-      </section>
+      </section></div>
       <button class="peace-helper-launcher" id="peaceHelperLauncher" type="button" aria-expanded="false" aria-controls="peaceHelperPanel" aria-label="開啟小平安對話">
-        <span id="xiaoPinganCharacter" aria-hidden="true">
-          <svg class="xiao-pingan-svg" viewBox="0 0 92 104" role="img">
+        <span id="xiaoPinganCharacter">
+          <svg class="xiao-pingan-svg" viewBox="0 0 92 104" role="img" aria-label="小麒麟小平安">
             <path class="xp-tail" d="M70 72 Q88 67 80 53 Q76 47 84 43"/>
             <path class="xp-leg" d="M31 77 q-5 15 3 18 q8 1 8-14z"/><path class="xp-leg" d="M53 80 q-1 14 7 14 q8-3 2-17z"/>
             <ellipse class="xp-body" cx="47" cy="66" rx="29" ry="27"/>
             <path class="xp-fur" d="M23 54 q5-12 12-6 q8-10 15 0 q9-9 17 2 q9-2 8 10 q-9-9-27-8 q-16-2-25 2z"/>
+            <path class="xp-ear xp-ear-left" d="M27 31 Q12 25 20 43 L31 43z"/><path class="xp-ear xp-ear-right" d="M66 31 Q82 25 75 43 L64 43z"/>
             <path class="xp-horn" d="M34 28 Q29 10 41 20 L43 31z"/><path class="xp-horn" d="M55 29 Q62 11 66 25 L62 34z"/>
+            <path class="xp-mane" d="M27 31 q-7 7-2 13 q-7 7 1 13 q-2 8 8 9 q4-6 3-15 q0-13-10-20z"/>
             <circle class="xp-body" cx="48" cy="40" r="26"/>
+            <path class="xp-diamond" d="M48 25 L53 32 L48 38 L43 32 Z"/>
             <circle class="xp-eye" cx="39" cy="39" r="3.8"/><circle class="xp-eye" cx="57" cy="39" r="3.8"/>
             <circle class="xp-cheek" cx="33" cy="48" r="4"/><circle class="xp-cheek" cx="63" cy="48" r="4"/>
             <path class="xp-mouth" d="M42 49 Q48 55 54 49"/>
@@ -5980,19 +5987,48 @@
       return localStorage.getItem(PEACE_HELPER_MUTED_KEY) === "true";
     }
 
+    let peaceHelperVoiceUnlocked = false;
+    function unlockPeaceHelperVoice() {
+      if (peaceHelperIsMuted() || !("speechSynthesis" in window)) return Promise.resolve(false);
+      window.speechSynthesis.resume();
+      peaceHelperVoiceUnlocked = true;
+      return Promise.resolve(true);
+    }
+
+    function pickNaturalTaiwanVoice(voices) {
+      const list = Array.from(voices || []);
+      const taiwanVoices = list.filter((voice) => /zh[-_]TW/i.test(voice.lang));
+      const chineseVoices = list.filter((voice) => /^zh/i.test(voice.lang));
+      const candidates = taiwanVoices.length ? taiwanVoices : chineseVoices;
+      const natural = candidates.find((voice) => /natural|neural|premium|enhanced|online/i.test(voice.name));
+      const taiwanFemale = candidates.find((voice) => /hsiao|xiaoxiao|meijia|mei-jia|ting|yating|female|女/i.test(voice.name));
+      return natural || taiwanFemale || candidates[0] || null;
+    }
+
     function speakPeaceHelper(message) {
-      if (peaceHelperIsMuted() || !message || !("speechSynthesis" in window)) return;
+      if (peaceHelperIsMuted() || !message || !("speechSynthesis" in window)) return Promise.resolve(false);
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(String(message));
       utterance.lang = "zh-TW";
-      utterance.rate = 0.92;
-      utterance.pitch = 1.22;
+      utterance.rate = 1.04;
+      utterance.pitch = 1.08;
       const voices = window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
-      utterance.voice = voices.find((voice) => /zh[-_]TW/i.test(voice.lang) && /female|女|mei|ting|hsiao/i.test(voice.name))
-        || voices.find((voice) => /zh[-_]TW/i.test(voice.lang))
-        || voices.find((voice) => /^zh/i.test(voice.lang))
-        || null;
-      window.speechSynthesis.speak(utterance);
+      utterance.voice = pickNaturalTaiwanVoice(voices);
+      return new Promise((resolve) => {
+        let settled = false;
+        const finish = (ok) => {
+          if (settled) return;
+          settled = true;
+          const mute = $("peaceHelperMute");
+          if (mute && !peaceHelperIsMuted()) mute.textContent = ok ? "🔊 語音開啟" : "🔈 點我重試語音";
+          resolve(ok);
+        };
+        utterance.onstart = () => finish(true);
+        utterance.onerror = () => finish(false);
+        window.speechSynthesis.resume();
+        window.speechSynthesis.speak(utterance);
+        setTimeout(() => finish(window.speechSynthesis.speaking), 1200);
+      });
     }
 
     function addXiaoPinganBubble(message, role = "assistant", extraClass = "") {
@@ -6009,14 +6045,7 @@
     async function typeXiaoPinganAnswer(message) {
       const bubble = addXiaoPinganBubble("", "assistant");
       if (!bubble) return;
-      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-        bubble.textContent = message;
-        return;
-      }
-      for (let index = 0; index < message.length; index += 1) {
-        bubble.textContent += message[index];
-        if (index % 3 === 0) await new Promise((resolve) => setTimeout(resolve, 18));
-      }
+      bubble.textContent = message;
     }
 
     async function askXiaoPingan(question) {
@@ -6078,8 +6107,8 @@
       } catch (_) {}
       let drag = null;
       launcher.addEventListener("pointerdown", (event) => {
-        const rect = $("peaceHelper").getBoundingClientRect();
-        drag = { pointerId:event.pointerId, dx:event.clientX - rect.left, dy:event.clientY - rect.top, moved:false };
+        const launcherRect = launcher.getBoundingClientRect();
+        drag = { pointerId:event.pointerId, dx:event.clientX - launcherRect.left, dy:event.clientY - launcherRect.top, moved:false };
         launcher.setPointerCapture(event.pointerId);
       });
       launcher.addEventListener("pointermove", (event) => {
@@ -6098,21 +6127,25 @@
         launcher.dataset.justDragged = drag.moved ? "true" : "false";
         drag = null;
       });
-      launcher.addEventListener("click", () => {
+      launcher.addEventListener("click", async () => {
         if (launcher.dataset.justDragged === "true") { launcher.dataset.justDragged = "false"; return; }
         panel.hidden = !panel.hidden;
         launcher.setAttribute("aria-expanded", String(!panel.hidden));
         if (!panel.hidden) {
           playXiaoPinganAnimation("wave", "chatting", 1500);
-          speakPeaceHelper("嗨，我是小平安。你可以點問題，也可以自己打字問我。");
+          await unlockPeaceHelperVoice();
+          await speakPeaceHelper("嗨，我是小麒麟小平安。你可以點問題，也可以自己打字問我。");
         }
       });
-      mute.addEventListener("click", () => {
+      mute.addEventListener("click", async () => {
         const muted = !peaceHelperIsMuted();
         localStorage.setItem(PEACE_HELPER_MUTED_KEY, String(muted));
         if (muted && "speechSynthesis" in window) window.speechSynthesis.cancel();
         renderMute();
-        if (!muted) speakPeaceHelper("小平安的語音已開啟。");
+        if (!muted) {
+          await unlockPeaceHelperVoice();
+          await speakPeaceHelper("小麒麟小平安的語音已開啟。");
+        }
       });
       $("peaceHelperQuestions").addEventListener("click", (event) => {
         const button = event.target.closest("button[data-question]");
