@@ -148,6 +148,70 @@ class JennieMemberRecoveryTests(unittest.TestCase):
         self.assertEqual(member["contacts"][0]["line_user_id"], guardian_id)
         self.assertNotIn(self.line_user_id, saved["test_account_tombstones"])
 
+    def test_restore_repairs_incomplete_existing_member_instead_of_rejecting_it(self):
+        guardian_id = "Ufd7bebdfa2382aeaaf490dd204c2c77a"
+        app_module.save_state(
+            self.data_file,
+            {
+                "users": {
+                    self.line_user_id: {
+                        **app_module.DEFAULT_PROFILE,
+                        "line_user_id": self.line_user_id,
+                        "display_name": "JENNIE",
+                        "plan": "trial",
+                        "payment_status": "trial",
+                        "membership_source": "beta",
+                        "beta_cohort": "B799",
+                        "beta_reset_pending": True,
+                        "is_onboarding_completed": False,
+                        "contacts": [],
+                    },
+                    guardian_id: {
+                        **app_module.DEFAULT_PROFILE,
+                        "line_user_id": guardian_id,
+                        "display_name": "❤寶寶❤",
+                        "contacts": [{
+                            "id": "jennie-guards-baby",
+                            "name": "JENNIE",
+                            "contact_role": "guardian",
+                            "line_user_id": self.line_user_id,
+                            "binding_status": "accepted",
+                            "recipient_consent": True,
+                        }],
+                    },
+                },
+                "test_account_tombstones": {
+                    self.line_user_id: {
+                        "line_user_id": self.line_user_id,
+                        "display_name": "JENNIE",
+                        "last_beta_cohort": "B799",
+                        "reset_at": "2026-08-04T11:16:00",
+                        "status": "beta_reset_pending",
+                    }
+                },
+            },
+        )
+
+        result, code = app_module.admin_restore_beta_member_from_tombstone(
+            self.data_file,
+            self.line_user_id,
+            guardian_id,
+            now=datetime.fromisoformat("2026-08-05T12:00:00"),
+        )
+
+        self.assertEqual(code, 200)
+        self.assertTrue(result["ok"])
+        saved = app_module.load_state(self.data_file)
+        member = saved["users"][self.line_user_id]
+        self.assertEqual(member["plan"], "paid_799_year")
+        self.assertEqual(member["payment_status"], "beta")
+        self.assertEqual(member["beta_cohort"], "B799")
+        self.assertFalse(member["beta_reset_pending"])
+        self.assertTrue(member["is_onboarding_completed"])
+        self.assertTrue(app_module.profile_has_bound_line_guardian(member))
+        self.assertEqual(member["contacts"][0]["line_user_id"], guardian_id)
+        self.assertNotIn(self.line_user_id, saved["test_account_tombstones"])
+
     def test_app_startup_restores_missing_beta_member_when_guardian_link_survived(self):
         guardian_id = "Ufd7bebdfa2382aeaaf490dd204c2c77a"
         app_module.save_state(
