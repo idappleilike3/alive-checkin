@@ -89,6 +89,11 @@ class BetaShareFeedbackTests(unittest.TestCase):
                         "beta_cohort": "B399",
                         "beta_started_at": "2026-07-27T10:00:00",
                         "beta_ends_at": "2026-08-17T10:00:00",
+                        "contacts": [{
+                            "contact_role": "guardian",
+                            "line_user_id": "U-guardian",
+                            "binding_status": "accepted",
+                        }],
                     }
                 }
             })
@@ -119,6 +124,51 @@ class BetaShareFeedbackTests(unittest.TestCase):
             self.assertEqual(
                 state["notification_logs"][-1]["kind"], "beta_daily_feedback"
             )
+
+    def test_daily_feedback_skips_beta_members_without_an_accepted_guardian(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_file = str(Path(tmp) / "state.json")
+            app.save_state(data_file, {
+                "users": {
+                    "Uea4e1d8f0b1d8149cc872e3552474556": {
+                        "line_user_id": "Uea4e1d8f0b1d8149cc872e3552474556",
+                        "display_name": "Eros",
+                        "membership_source": "beta",
+                        "beta_cohort": "B799",
+                        "beta_started_at": "2026-08-04T10:00:00",
+                        "beta_ends_at": "2026-08-25T10:00:00",
+                        "contacts": [],
+                    },
+                    "U2d2dac97588c87ebdc0b0c367a753261": {
+                        "line_user_id": "U2d2dac97588c87ebdc0b0c367a753261",
+                        "display_name": "Emily 花花♥",
+                        "membership_source": "beta",
+                        "beta_cohort": "B399",
+                        "beta_started_at": "2026-07-31T10:00:00",
+                        "beta_ends_at": "2026-08-21T10:00:00",
+                        "contacts": [{
+                            "contact_role": "guardian",
+                            "line_user_id": "U-pending-guardian",
+                            "binding_status": "pending",
+                        }],
+                    },
+                }
+            })
+            sent = []
+
+            result, code = app.send_beta_daily_feedback(
+                {
+                    "DATA_FILE": data_file,
+                    "LINE_CHANNEL_ACCESS_TOKEN": "token",
+                    "LINE_PUSH_SENDER": lambda token, target, message: sent.append(target),
+                },
+                now=datetime(2026, 8, 5, 19, 0, 0),
+            )
+
+            self.assertEqual(code, 200)
+            self.assertEqual(result["sent"], 0)
+            self.assertEqual(result["skipped"], 2)
+            self.assertEqual(sent, [])
 
     def test_feedback_postback_updates_member_and_returns_issue_template(self):
         with tempfile.TemporaryDirectory() as tmp:
