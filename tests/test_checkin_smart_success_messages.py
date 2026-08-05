@@ -64,14 +64,14 @@ class CheckinSmartSuccessMessageTests(unittest.TestCase):
         self.assertIn("⏰ 下次提醒 8/6（四） 12:00", text)
         self.assertTrue(text.endswith("今日已報平安，請放心"))
 
-    def test_member_reply_hides_news_line_when_no_important_news(self):
+    def test_member_reply_shows_clear_news_fallback_when_no_important_news(self):
         status = self.checkin(self.profile(with_news=False))
         text = app.build_checkin_success_text(status, now=self.now)
 
-        self.assertNotIn("📰", text)
+        self.assertIn("📰 安心提醒：今日暫無重要安心提醒", text)
         self.assertIn("🌱 當前等級：安心啟程｜連續 1 天", text)
 
-    def test_guardian_receives_blessing_level_and_news_without_next_reminder(self):
+    def test_guardian_receives_checkin_time_and_news_only(self):
         pushes = []
         profile = self.profile()
         profile["history"] = ["2026-08-05"]
@@ -94,11 +94,19 @@ class CheckinSmartSuccessMessageTests(unittest.TestCase):
         text = pushes[0][1]
         self.assertIn("✅ Jennie 今日已報平安", text)
         self.assertIn("🕒 完成時間：2026/08/05 20:36", text)
-        self.assertIn("💌 平凡的一天，也值得慶祝。", text)
-        self.assertIn("🌱 當前等級：安心啟程｜連續 1 天", text)
         self.assertIn("📰 安心提醒：今天有颱風接近，外出請留意風雨。", text)
+        self.assertNotIn("💌", text)
+        self.assertNotIn("當前等級", text)
+        self.assertNotIn("連續 1 天", text)
         self.assertNotIn("下次提醒", text)
         self.assertTrue(text.endswith("今日已收到 Jennie 的平安，請放心"))
+
+    def test_guardian_receives_clear_news_fallback_when_no_important_news(self):
+        text = app.build_guardian_checkin_text(self.profile(with_news=False), self.now)
+
+        self.assertIn("📰 安心提醒：今日暫無重要安心提醒", text)
+        self.assertNotIn("當前等級", text)
+        self.assertNotIn("連續", text)
 
 
 if __name__ == "__main__":
