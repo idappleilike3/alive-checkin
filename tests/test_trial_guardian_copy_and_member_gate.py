@@ -36,7 +36,7 @@ class TrialGuardianCopyAndMemberGateTests(unittest.TestCase):
         self.assertTrue(status["onboarding_reminder_configured"])
 
     def test_binding_direction_copy_is_consistent_on_required_pages(self):
-        required_copy = "綁定是單向的；若要互相守護，雙方需要各邀請一次。"
+        required_copy = "綁定是單向的；若要互相守護，雙方需要各自發出並接受一次邀請。"
         for filename in ("trial-14.html", "beta-register.html", "invite.html", "faq.html"):
             with self.subTest(filename=filename):
                 html = (ROOT / filename).read_text(encoding="utf-8")
@@ -46,8 +46,8 @@ class TrialGuardianCopyAndMemberGateTests(unittest.TestCase):
         for filename in ("trial-14.html", "beta-register.html"):
             with self.subTest(filename=filename):
                 html = (ROOT / filename).read_text(encoding="utf-8")
-                profile_position = html.index("填寫自己的姓名與基本資料")
-                guardian_position = html.index("邀請我的核心守護人")
+                profile_position = html.index("③ 填寫資料與提醒")
+                guardian_position = html.index("④ 一鍵分享邀請守護人")
                 self.assertLess(profile_position, guardian_position)
 
     def test_welcome_message_starts_the_current_trial_flow(self):

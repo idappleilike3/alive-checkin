@@ -57,9 +57,9 @@ class BetaShareFeedbackTests(unittest.TestCase):
         onboarding = (ROOT / "liff" / "onboarding.html").read_text(encoding="utf-8")
         invite = (ROOT / "invite.html").read_text(encoding="utf-8")
         guide = (ROOT / "guardian-guide.html").read_text(encoding="utf-8")
-        self.assertIn("14 天免費體驗｜199 平安版", onboarding)
-        self.assertIn("guardian-story-mother-daughter", onboarding)
-        self.assertIn("guardian-story-mother-daughter", invite)
+        self.assertIn("14 天安心體驗", onboarding)
+        self.assertIn("daily-peace-story-comic.png", onboarding)
+        self.assertIn("每天只要知道一聲平安，就能多一份放心", invite)
         self.assertIn("不會全天偷追蹤", guide)
 
     def test_feedback_flex_uses_caring_copy_and_three_clear_responses(self):

@@ -7471,9 +7471,14 @@ def update_single_contact(data_file, line_user_id, contact_id, contact_payload):
     return {"contact": cleaned, "contacts": existing}, 200
 
 
-def delete_single_contact(data_file, line_user_id, contact_id):
+def delete_single_contact(data_file, line_user_id, contact_id, *, now=None):
     """Atomically remove a contact and the reciprocal guardian relationship."""
     result = {}
+    unbound_at = (
+        now.isoformat(timespec="seconds")
+        if isinstance(now, datetime)
+        else iso_now()
+    )
 
     def remove_relationship(state):
         profile = (state.get("users") or {}).get(line_user_id)
@@ -7533,7 +7538,7 @@ def delete_single_contact(data_file, line_user_id, contact_id):
             if str(contact.get("id") or "") != contact_id
         ]
         if had_bound_guardian and not profile_has_bound_line_guardian(profile):
-            profile["guardian_unbound_since"] = iso_now()
+            profile["guardian_unbound_since"] = unbound_at
             profile["contact_reminder_sent_dates"] = []
         if profile["contacts"] and not any(
             bool(contact.get("is_primary"))
@@ -7569,7 +7574,7 @@ def delete_single_contact(data_file, line_user_id, contact_id):
                     if get_contact_line_id(contact) != line_user_id
                 ]
                 if not profile_has_bound_line_guardian(peer):
-                    peer["guardian_unbound_since"] = iso_now()
+                    peer["guardian_unbound_since"] = unbound_at
                     peer["contact_reminder_sent_dates"] = []
                 peer["guarding_for"] = [
                     value

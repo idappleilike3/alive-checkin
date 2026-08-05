@@ -227,7 +227,7 @@ class GuardianReminderExclusivityTests(unittest.TestCase):
         )
 
         deleted, delete_code = app.delete_single_contact(
-            self.data_file, "U-owner", "guardian-1"
+            self.data_file, "U-owner", "guardian-1", now=now
         )
         self.assertEqual(delete_code, 200)
         self.assertTrue(deleted["deleted"])
