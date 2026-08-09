@@ -205,19 +205,42 @@ class DailyCareContextTests(unittest.TestCase):
         self.assertEqual(footer[0]["type"], "box")
         self.assertIn("daily-peace-logo.png", footer[0]["contents"][0]["url"])
         self.assertEqual(footer[0]["contents"][1]["size"], "xl")
-        self.assertEqual(footer[1]["height"], "md")
+        self.assertTrue(all(button["type"] == "box" for button in footer))
+        self.assertTrue(all(button["paddingAll"] == "lg" for button in footer))
+        self.assertTrue(
+            all(button["contents"][-1]["size"] == "xl" for button in footer)
+        )
         self.assertIn("查看今日安心提醒", footer[3]["action"]["label"])
         self.assertIn("/assets/daily-care/morning-", flex["contents"]["hero"]["url"])
         self.assertEqual(flex["contents"]["hero"]["aspectRatio"], "16:9")
         self.assertEqual(flex["contents"]["hero"]["aspectMode"], "fit")
-        self.assertEqual(footer[1]["color"], "#2563EB")
-        self.assertEqual(footer[2]["color"], "#DC2626")
-        self.assertEqual(footer[3]["color"], "#D4A017")
+        self.assertEqual(footer[1]["backgroundColor"], "#2563EB")
+        self.assertEqual(footer[2]["backgroundColor"], "#DC2626")
+        self.assertEqual(footer[3]["backgroundColor"], "#D4A017")
         self.assertEqual(
             flex["contents"]["body"]["contents"][0]["text"],
             "早安，今天一切都還好嗎？點一下「我平安」",
         )
         self.assertIn("Lv.1 安心啟程", flex["contents"]["body"]["contents"][1]["text"])
+
+    def test_daily_and_holiday_copy_use_large_readable_type(self):
+        profile = {
+            "display_name": "Jennie",
+            "location": {"city": "臺中市", "district": "西屯區"},
+            "weather": {"condition": "多雲", "temperature_range": "26～32°C"},
+        }
+        for now in (datetime(2026, 8, 10, 8), datetime(2026, 8, 8, 20)):
+            with self.subTest(now=now):
+                flex = app.build_daily_checkin_flex(now, profile=profile)
+                body = flex["contents"]["body"]["contents"]
+                self.assertEqual(body[0]["size"], "xxl")
+                self.assertTrue(
+                    all(
+                        item.get("size") in {"xl", "xxl"}
+                        for item in body
+                        if item.get("type") == "text"
+                    )
+                )
 
     def test_daily_card_personalizes_name_and_keeps_the_habit_value_visible(self):
         flex = app.build_daily_checkin_flex(
@@ -261,7 +284,7 @@ class DailyCareContextTests(unittest.TestCase):
         for item in body:
             if item.get("type") == "text":
                 self.assertEqual(item.get("weight"), "bold")
-                self.assertIn(item.get("size"), {"lg", "xl"})
+                self.assertIn(item.get("size"), {"xl", "xxl"})
 
     def test_detail_page_uses_liff_identity_and_has_required_sections(self):
         html = Path("daily-care.html").read_text(encoding="utf-8")
