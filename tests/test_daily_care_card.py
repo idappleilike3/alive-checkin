@@ -22,6 +22,23 @@ class DailyCareContextTests(unittest.TestCase):
         context = build_daily_care_context(profile, datetime(2026, 8, 2, 13))
         self.assertEqual(context["greeting"], "午安")
         self.assertEqual(context["weather_line"], "臺中市｜晴時多雲｜26～32°C｜降雨機率 30%")
+
+    def test_member_saved_weather_schema_is_rendered_on_daily_card(self):
+        profile = {
+            "location": {"city": "臺中市", "district": "西屯區"},
+            "weather": {
+                "condition": "多雲",
+                "temperature_range": "26～32°C",
+                "rain_probability": 30,
+            },
+        }
+
+        context = build_daily_care_context(profile, datetime(2026, 8, 9, 12))
+
+        self.assertEqual(
+            context["weather_line"],
+            "臺中市｜多雲｜26～32°C｜降雨機率 30%",
+        )
         self.assertTrue(30 <= len(context["care_summary"]) <= 50)
 
     def test_today_detail_combines_calendar_note_and_smart_reminder(self):

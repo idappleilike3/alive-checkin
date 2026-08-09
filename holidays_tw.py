@@ -58,6 +58,14 @@ LUNAR_AND_MOVABLE: dict[str, tuple[str, str]] = {
     "2027-12-22": ("冬至", "冬至快樂，願溫暖入心、平安過冬。"),
 }
 
+# One-time service recovery: the 2026-08-08 special card was not delivered.
+ONE_TIME_MAKEUP_HOLIDAYS: dict[str, tuple[str, str]] = {
+    "2026-08-09": (
+        "父親節延續祝福",
+        "父親節的祝福不遲到！謝謝每位爸爸與長輩一直以來的守護。",
+    ),
+}
+
 POSITIVE_QUOTES: list[str] = [
     "每一天的平安，都是給家人最好的禮物。",
     "慢慢來也沒關係，重要的是你今天還在、還好。",
@@ -118,6 +126,10 @@ def holiday_for(day) -> Optional[dict]:
     d = _as_date(day)
     ymd = d.strftime("%Y-%m-%d")
     md = d.strftime("%m-%d")
+
+    if ymd in ONE_TIME_MAKEUP_HOLIDAYS:
+        name, blessing = ONE_TIME_MAKEUP_HOLIDAYS[ymd]
+        return {"key": ymd, "name": name, "blessing": blessing, "kind": "makeup"}
 
     if ymd in LUNAR_AND_MOVABLE:
         name, blessing = LUNAR_AND_MOVABLE[ymd]

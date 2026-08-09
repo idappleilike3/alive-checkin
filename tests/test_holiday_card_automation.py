@@ -18,6 +18,17 @@ class HolidayCardAutomationTests(unittest.TestCase):
         self.assertEqual(holiday["name"], "父親節")
         self.assertEqual(holiday["date"], "2026-08-08")
 
+    def test_august_ninth_2026_is_a_one_day_fathers_day_makeup(self):
+        holiday = holidays_tw.holiday_for(datetime(2026, 8, 9, 9, 0))
+
+        self.assertEqual(holiday["name"], "父親節延續祝福")
+        self.assertIn("祝福不遲到", holiday["blessing"])
+
+    def test_august_ninth_makeup_reuses_fathers_day_portrait(self):
+        url = app.holiday_asset_url_for_date({}, datetime(2026, 8, 9, 9, 0))
+
+        self.assertTrue(url.endswith("holiday-fathers-day.webp"))
+
     def test_preparation_uses_durable_bundled_fathers_day_asset_once(self):
         config = {"DATA_FILE": self.data_file}
         first, first_code = app.prepare_tomorrow_holiday_card(
@@ -63,6 +74,28 @@ class HolidayCardAutomationTests(unittest.TestCase):
             [button["action"]["label"] for button in footer[:4]],
             ["✅ 我平安", "🛡️ 安全守護", "需要幫忙", "🔔 查看今日安心提醒"],
         )
+
+    def test_fathers_day_card_keeps_member_weather_visible(self):
+        flex = app.build_daily_checkin_flex(
+            datetime(2026, 8, 8, 12, 0),
+            profile={
+                "location": {"city": "臺中市", "district": "西屯區"},
+                "weather": {
+                    "condition": "多雲",
+                    "temperature_range": "26～32°C",
+                    "rain_probability": 30,
+                },
+            },
+            holiday_asset_url=(
+                "https://alive-checkin.onrender.com/assets/daily-care/"
+                "holiday-fathers-day.webp"
+            ),
+        )
+        body_text = "\n".join(
+            item.get("text", "") for item in flex["contents"]["body"]["contents"]
+        )
+
+        self.assertIn("🌤️ 臺中市｜多雲｜26～32°C｜降雨機率 30%", body_text)
 
     def test_cron_tick_reports_holiday_preparation(self):
         result, code = app.run_cron_tick({

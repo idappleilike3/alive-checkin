@@ -165,6 +165,19 @@ def build_daily_care_context(profile, now):
     if not city or not district:
         weather_status = "missing_location"
         weather_line = "請設定所在地區"
+    elif (
+        weather.get("condition") is not None
+        and weather.get("temperature_range") is not None
+    ):
+        weather_status = "available"
+        weather_parts = [
+            city,
+            str(weather["condition"]).strip(),
+            str(weather["temperature_range"]).strip(),
+        ]
+        if weather.get("rain_probability") is not None:
+            weather_parts.append(f"降雨機率 {weather['rain_probability']}%")
+        weather_line = "｜".join(weather_parts)
     elif all(weather.get(key) is not None for key in ("description", "min_c", "max_c", "rain_probability")):
         weather_status = "available"
         weather_line = (
