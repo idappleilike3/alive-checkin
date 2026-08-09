@@ -139,6 +139,15 @@ def holiday_for(day) -> Optional[dict]:
     return None
 
 
+def holiday_on_next_day(day) -> Optional[dict]:
+    """Return tomorrow's holiday with its concrete ISO date."""
+    tomorrow = _as_date(day) + timedelta(days=1)
+    holiday = holiday_for(tomorrow)
+    if not holiday:
+        return None
+    return {**holiday, "date": tomorrow.isoformat()}
+
+
 def positive_quote_for(day) -> str:
     """Stable rotating affirmation by day-of-year."""
     d = _as_date(day)

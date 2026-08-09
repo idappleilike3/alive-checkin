@@ -18191,7 +18191,17 @@ def reminder_time_in_window(reminder_time, now, late_minutes=4):
     return timedelta(0) <= delta <= timedelta(minutes=int(late_minutes), seconds=59)
 
 
-def build_daily_checkin_flex(now, target_time="", profile=None):
+def holiday_asset_url_for_date(state, day):
+    """Return only a ready HTTPS holiday asset for the requested date."""
+    key = day.strftime("%Y-%m-%d") if hasattr(day, "strftime") else str(day or "")
+    asset = ((state or {}).get("holiday_card_assets") or {}).get(key) or {}
+    if asset.get("status") != "ready":
+        return ""
+    url = str(asset.get("image_url") or "").strip()
+    return url if url.startswith("https://") else ""
+
+
+def build_daily_checkin_flex(now, target_time="", profile=None, holiday_asset_url=""):
     """Daily check-in Flex: greeting + optional holiday blessing + quote + postback.
 
     Keeps classic green (#00B900) header; 「我平安」 uses postback action=checkin.
@@ -18423,6 +18433,8 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
             "color": "#D97706",
             "height": "md",
         })
+    selected_hero_url = str(holiday_asset_url or "").strip() or care["hero_url"]
+    holiday_visual = bool(holiday_name and str(holiday_asset_url or "").strip())
     return {
         "type": "flex",
         "altText": " ".join(alt_parts)[:400],
@@ -18431,9 +18443,9 @@ def build_daily_checkin_flex(now, target_time="", profile=None):
             "size": "mega",
             "hero": {
                 "type": "image",
-                "url": care["hero_url"],
+                "url": selected_hero_url,
                 "size": "full",
-                "aspectRatio": "16:9",
+                "aspectRatio": "4:5" if holiday_visual else "16:9",
                 "aspectMode": "fit",
                 "animated": False,
             },
@@ -18620,6 +18632,7 @@ def send_checkin_reminders(config):
     if not line_non_emergency_push_allowed(state, config, now):
         return line_budget_blocked_response(state, config, now)
     today = now.strftime("%Y-%m-%d")
+    holiday_asset_url = holiday_asset_url_for_date(state, today)
     sent = 0
     skipped = 0
     results = []
@@ -18680,7 +18693,10 @@ def send_checkin_reminders(config):
         if not push_attempt_allowed(user, delivery_key):
             skipped += 1
             continue
-        message = build_daily_checkin_flex(now, target_time=target_time, profile=user)
+        message = build_daily_checkin_flex(
+            now, target_time=target_time, profile=user,
+            holiday_asset_url=holiday_asset_url,
+        )
         try:
             result = sender(token, line_user_id, message)
             _clear_push_delivery_failure(user, delivery_key)
@@ -18778,6 +18794,7 @@ def broadcast_checkin_reminders(config, *, pause_every=20, pause_seconds=1.0):
     if not line_non_emergency_push_allowed(state, config, now):
         return line_budget_blocked_response(state, config, now)
     today = now.strftime("%Y-%m-%d")
+    holiday_asset_url = holiday_asset_url_for_date(state, today)
     sent = 0
     skipped = 0
     blocked = 0
@@ -18794,7 +18811,10 @@ def broadcast_checkin_reminders(config, *, pause_every=20, pause_seconds=1.0):
             skipped += 1
             continue
         times = reminder_times_for_profile(user)
-        message = build_daily_checkin_flex(now, target_time="", profile=user)
+        message = build_daily_checkin_flex(
+            now, target_time="", profile=user,
+            holiday_asset_url=holiday_asset_url,
+        )
         try:
             result = sender(token, line_user_id, message)
             _mark_checkin_reminder_slots(user, today, times, times)
@@ -18857,6 +18877,7 @@ def send_targeted_checkin_repush(config, line_user_ids):
     sender = config.get("LINE_PUSH_SENDER") or line_push_message
     now = current_app_time(config)
     today = now.strftime("%Y-%m-%d")
+    holiday_asset_url = holiday_asset_url_for_date(state, today)
     sent = failed = 0
     skipped_retired = []
     skipped_inactive = []
@@ -18878,7 +18899,10 @@ def send_targeted_checkin_repush(config, line_user_ids):
         if profile.get("membership_paused") or not membership_access_active(profile, now):
             skipped_inactive.append(uid)
             continue
-        message = build_daily_checkin_flex(now, target_time="", profile=profile)
+        message = build_daily_checkin_flex(
+            now, target_time="", profile=profile,
+            holiday_asset_url=holiday_asset_url,
+        )
         try:
             result = sender(token, uid, message)
             profile["line_push_blocked"] = False
@@ -19145,6 +19169,83 @@ def generate_holiday_background(config, payload):
     except Exception as exc:
         return {"ok": False, "error": "image_generation_failed", "message": "圖片生成失敗，請稍後重試或修改描述。", "detail": str(exc)[:500], "prompt": prompt}, 502
     return {"ok": True, "image_url": image_url, "prompt": prompt, "message": "背景已生成，請先預覽；目前尚未儲存或推播。"}, 200
+
+
+HOLIDAY_BUNDLED_ASSETS = {
+    "父親節": (
+        "https://alive-checkin.onrender.com/assets/daily-care/"
+        "holiday-fathers-day.webp"
+    ),
+}
+
+
+def prepare_tomorrow_holiday_card(config, now=None):
+    """Prepare tomorrow's holiday art once; cron-safe and non-blocking."""
+    current = now or current_app_time(config)
+    holiday = (
+        holidays_tw.holiday_on_next_day(current)
+        if holidays_tw is not None
+        else None
+    )
+    if not holiday:
+        return {"ok": True, "status": "no_holiday_tomorrow"}, 200
+    holiday_date = holiday["date"]
+    existing = holiday_asset_url_for_date(load_state(config["DATA_FILE"]), holiday_date)
+    if existing:
+        return {
+            "ok": True,
+            "status": "already_ready",
+            "holiday": holiday["name"],
+            "holiday_date": holiday_date,
+            "image_url": existing,
+        }, 200
+
+    bundled = HOLIDAY_BUNDLED_ASSETS.get(holiday["name"], "")
+    if bundled:
+        prepared = {
+            "status": "ready",
+            "source": "bundled",
+            "holiday": holiday["name"],
+            "holiday_date": holiday_date,
+            "image_url": bundled,
+            "prepared_at": current.isoformat(timespec="seconds"),
+        }
+        mutate_state_atomically(
+            config["DATA_FILE"],
+            lambda state: state.setdefault("holiday_card_assets", {}).update(
+                {holiday_date: prepared}
+            ),
+        )
+        return {"ok": True, **prepared}, 200
+
+    catalog = next(
+        (row for row in holiday_template_catalog(current.year) if row["name"] == holiday["name"]),
+        {"name": holiday["name"], "elements": "家人互相陪伴", "mood": "溫暖安心"},
+    )
+    generated, code = generate_holiday_background(config, {
+        "holiday": holiday["name"],
+        "elements": catalog.get("elements"),
+        "mood": catalog.get("mood"),
+        "notes": "節日當天自動推播使用；人物與重要場景完整，不裁切。",
+    })
+    status = "ready" if code == 200 else "preparation_failed"
+    prepared = {
+        "status": status,
+        "source": "generated" if code == 200 else "ordinary_card_fallback",
+        "holiday": holiday["name"],
+        "holiday_date": holiday_date,
+        "image_url": str(generated.get("image_url") or ""),
+        "prompt": str(generated.get("prompt") or ""),
+        "message": str(generated.get("message") or ""),
+        "prepared_at": current.isoformat(timespec="seconds"),
+    }
+    mutate_state_atomically(
+        config["DATA_FILE"],
+        lambda state: state.setdefault("holiday_card_assets", {}).update(
+            {holiday_date: prepared}
+        ),
+    )
+    return {"ok": code == 200, **prepared}, code
 
 
 def admin_send_personalized_checkin_cards(
@@ -20389,6 +20490,12 @@ def run_cron_tick(config):
     now = current_app_time(config)
     results = {}
     slot = now.strftime("%H:%M")
+
+    holiday_data, holiday_code = prepare_tomorrow_holiday_card(config, now=now)
+    results["holiday_card_preparation"] = {
+        "status": holiday_code,
+        "result": holiday_data,
+    }
 
     results["retired_push_uids"] = {
         "status": 200,
