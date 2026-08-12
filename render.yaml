@@ -55,6 +55,11 @@ services:
         generateValue: true
       - key: CRON_SECRET
         sync: false
+      # Daily card cron generates tomorrow's new visual and saves it to /var/data.
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: DAILY_CARD_ASSET_DIR
+        value: /var/data/daily-card-assets
       - key: MILESTONE_VIDEO_100_URL
         sync: false
       - key: MILESTONE_VIDEO_365_URL
