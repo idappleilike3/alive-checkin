@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 import app as alive_app
+import cron_ping
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -263,6 +264,34 @@ class SchedulerTickTests(unittest.TestCase):
         source = (ROOT / "cron_ping.py").read_text(encoding="utf-8")
         self.assertIn('"X-Cron-Secret": cron_secret', source)
         self.assertNotIn('urlencode({"secret": cron_secret})', source)
+
+    def test_cron_wakes_sleeping_web_service_before_posting_task(self):
+        calls = []
+
+        class Response:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"ok":true}'
+
+        def open_request(request, timeout):
+            calls.append((request.full_url, request.get_method(), timeout))
+            return Response()
+
+        with mock.patch.object(cron_ping.urllib.request, "urlopen", side_effect=open_request):
+            cron_ping.run("https://alive-checkin.onrender.com", "/api/cron/tick", "secret")
+
+        self.assertEqual(calls[0][0], "https://alive-checkin.onrender.com/health")
+        self.assertEqual(calls[0][1], "GET")
+        self.assertEqual(calls[1][0], "https://alive-checkin.onrender.com/api/cron/tick")
+        self.assertEqual(calls[1][1], "POST")
+        self.assertGreaterEqual(calls[0][2], 60)
 
     def test_tick_purges_expired_sos_records(self):
         with tempfile.TemporaryDirectory() as temp:
