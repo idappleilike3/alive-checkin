@@ -5,7 +5,9 @@ services:
     # Persistent Disk requires a paid instance (Starter+). Free cannot attach disks.
     plan: starter
     buildCommand: python scripts/apply_admin_merge_patch.py && pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    # The cron tick reads the durable member snapshot and can exceed Gunicorn's
+    # 30-second default on a cold Free instance.
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 180
     healthCheckPath: /health
     disk:
       name: alive-checkin-data
