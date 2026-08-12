@@ -26,6 +26,12 @@ class DeployConfigTests(unittest.TestCase):
         self.assertIn("gunicorn app:app", render_config)
         self.assertIn("--timeout 180", render_config)
 
+    def test_render_keeps_login_and_health_responsive_during_cron(self):
+        render_config = (ROOT / "render.yaml").read_text(encoding="utf-8")
+
+        self.assertIn("--worker-class gthread", render_config)
+        self.assertIn("--threads 4", render_config)
+
 
 if __name__ == "__main__":
     unittest.main()
