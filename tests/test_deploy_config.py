@@ -20,6 +20,12 @@ class DeployConfigTests(unittest.TestCase):
         self.assertIn("key: LINE_CHANNEL_ACCESS_TOKEN", render_config)
         self.assertIn("key: LINE_CHANNEL_SECRET", render_config)
 
+    def test_render_allows_long_running_cron_requests_to_finish(self):
+        render_config = (ROOT / "render.yaml").read_text(encoding="utf-8")
+
+        self.assertIn("gunicorn app:app", render_config)
+        self.assertIn("--timeout 180", render_config)
+
 
 if __name__ == "__main__":
     unittest.main()
