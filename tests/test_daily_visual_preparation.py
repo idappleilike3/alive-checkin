@@ -48,6 +48,24 @@ class DailyVisualPreparationTests(unittest.TestCase):
                 "https://alive-checkin.onrender.com/generated-daily-card/"
             ))
 
+    def test_missing_generator_does_not_repeat_two_fallback_images(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data_file = str(Path(folder) / "state.json")
+            image_urls = []
+            for day in range(1, 11):
+                result, code = app.prepare_tomorrow_daily_card(
+                    {
+                        "DATA_FILE": data_file,
+                        "DAILY_CARD_ASSET_DIR": folder,
+                        "OPENAI_API_KEY": "",
+                    },
+                    now=datetime(2026, 8, day, 9, 0),
+                )
+                self.assertEqual(code, 200)
+                image_urls.append(result["image_url"])
+
+            self.assertEqual(len(set(image_urls)), 10)
+
     def test_cron_calls_daily_visual_preparation(self):
         source = inspect.getsource(app.run_cron_tick)
         self.assertIn("prepare_tomorrow_daily_card", source)
