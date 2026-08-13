@@ -3823,7 +3823,15 @@
         });
         const data = await response.json().catch(() => ({}));
         if (generation !== adminAuthGeneration) return;
-        if (!response.ok) return showLogin("密碼不正確，請再試一次。");
+        if (!response.ok) {
+          const loginErrors = {
+            too_many_attempts: "嘗試次數太多，請等 10 分鐘後再試。",
+            admin_not_configured: "後台密碼尚未設定，請到 Render 設定 ADMIN_PASSWORD。",
+            https_required: "登入連線不安全，請使用 HTTPS 網址。",
+            invalid_credentials: "密碼不正確，請再試一次。"
+          };
+          return showLogin(loginErrors[data.error] || `登入失敗（HTTP ${response.status}），請稍後再試。`);
+        }
         $("adminPassword").value = "";
         adminCsrfToken = data.csrf_token || "";
         applyAdminAccess(data.role, data.permissions);
