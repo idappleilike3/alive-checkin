@@ -146,6 +146,29 @@ test("login network error restores the button and shows a friendly message", asy
   assert.equal(harness.elements.get("loginBtn").disabled, false);
 });
 
+test("login displays the real server-side authentication failure", async () => {
+  const cases = [
+    [429, "too_many_attempts", "嘗試次數太多，請等 10 分鐘後再試。"],
+    [503, "admin_not_configured", "後台密碼尚未設定，請到 Render 設定 ADMIN_PASSWORD。"],
+    [400, "https_required", "登入連線不安全，請使用 HTTPS 網址。"],
+    [401, "invalid_credentials", "密碼不正確，請再試一次。"]
+  ];
+
+  for (const [status, error, expected] of cases) {
+    const harness = createHarness((url) => {
+      if (url === "/api/admin/login") {
+        return Promise.resolve(response({ok: false, status, data: {error}}));
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    await harness.elements.get("adminLoginForm").listeners.submit({preventDefault() {}});
+
+    assert.equal(harness.elements.get("loginStatus").textContent, expected);
+    assert.equal(harness.elements.get("loginBtn").disabled, false);
+  }
+});
+
 test("migration card renders server text through textContent only", () => {
   const harness = createHarness(() => {
     throw new Error("fetch is not expected");
