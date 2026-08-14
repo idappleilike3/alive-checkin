@@ -18,7 +18,7 @@ COMPLETION_ANCHOR = '"is_onboarding_completed": bool(profile.get("is_onboarding_
 BETA_REPAIR_ANCHOR = '    for user in (state.get("users") or {}).values():\n        if (\n            str(user.get("membership_source") or "") == "beta"\n'
 STARTUP_REPAIR_ANCHOR = "\ndef should_show_guardian_prompt(profile, contact_count):\n"
 STARTUP_CALL_ANCHOR = "def create_app(config=None):\n    if Flask is None:\n"
-RESTORE_FUNCTION_ANCHOR = "\ndef admin_reset_test_account(\n"
+RESTORE_FUNCTION_ANCHOR = "\ndef restore_missing_beta_members_with_surviving_links(\n"
 RESTORE_ROUTE_ANCHOR = '    @app.delete("/api/admin/test-accounts/<line_user_id>")\n'
 
 STARTUP_REPAIR_CODE = r'''
