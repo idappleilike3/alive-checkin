@@ -12861,9 +12861,538 @@ def _test_reset_row_matches_user(row, line_user_id):
     identity_keys = (
         "line_user_id",
         "line_id",
-        "owner_
-... 23878 bytes omitted ...
+        "owner_line_user_id",
+        "inviter_line_user_id",
+        "invitee_line_user_id",
+        "guardian_line_user_id",
+        "contact_line_user_id",
+        "target_line_user_id",
+        "user_id",
+    )
+    return any(
+        str(row.get(key) or "").strip() == line_user_id
+        for key in identity_keys
+    )
 
+
+def _remove_user_from_group_members(group, line_user_id):
+    if not isinstance(group, dict):
+        return
+    for key in ("members", "member_line_user_ids", "admins"):
+        values = group.get(key)
+        if isinstance(values, list):
+            group[key] = [
+                item for item in values
+                if (
+                    str(item.get("line_user_id") or "").strip()
+                    if isinstance(item, dict)
+                    else str(item or "").strip()
+                ) != line_user_id
+            ]
+
+
+def _mask_line_user_id(line_user_id):
+    value = str(line_user_id or "")
+    if len(value) <= 8:
+        return value[:2] + "***" + value[-2:]
+    return value[:4] + "***" + value[-4:]
+
+
+def _has_active_paid_entitlement(profile):
+    return (
+        str((profile or {}).get("membership_source") or "") == "paid"
+        and str((profile or {}).get("payment_status") or "") == "active"
+    )
+
+
+def _beta_reset_candidate(state, line_user_id, allowed):
+    profile = (state.get("users") or {}).get(line_user_id)
+    tombstone = (state.get("test_account_tombstones") or {}).get(line_user_id)
+    if isinstance(profile, dict) and profile.get("beta_reset_pending"):
+        return None
+    cohort = str((profile or {}).get("beta_cohort") or "").upper()
+    if cohort not in BETA_COHORT_PLAN:
+        cohort = str((tombstone or {}).get("last_beta_cohort") or "").upper()
+    if cohort not in BETA_COHORT_PLAN:
+        if line_user_id not in allowed:
+            return None
+        if not isinstance(profile, dict) or _has_active_paid_entitlement(profile):
+            return None
+        cohort = ""
+    version = str((profile or {}).get("account_state_version") or (tombstone or {}).get("account_state_version") or "legacy")
+    plan = "399" if cohort == "B399" else ("799" if cohort in {"A", "B799"} else "待指派")
+    return {
+        "display_name": str((profile or {}).get("display_name") or (tombstone or {}).get("display_name") or "LINE 使用者"),
+        "cohort": cohort or "待重新封測",
+        "plan": plan,
+        "status": "可重置",
+        "account_state_version": version,
+        "_line_user_id": line_user_id,
+    }
+
+
+def list_beta_reset_candidates(state, allowed_test_user_ids):
+    """Return safe summaries for resettable 21-day beta test accounts."""
+    allowed = {str(value or "").strip() for value in (allowed_test_user_ids or []) if str(value or "").strip()}
+    ids = set((state.get("users") or {}).keys()) | set((state.get("test_account_tombstones") or {}).keys())
+    rows = []
+    for line_user_id in sorted(ids):
+        row = _beta_reset_candidate(state, line_user_id, allowed)
+        if row:
+            row["candidate_id"] = line_user_id
+            row.pop("_line_user_id", None)
+            rows.append(row)
+    return rows
+
+
+
+def admin_restore_beta_member_from_tombstone(
+    data_file, line_user_id, guardian_line_user_id, *, now=None, actor="super_admin"
+):
+    """Restore a reset beta member whose primary user row was lost."""
+    member_id = str(line_user_id or "").strip()
+    guardian_id = str(guardian_line_user_id or "").strip()
+    clock = now or current_app_time({})
+
+    def restore(state):
+        users = state.setdefault("users", {})
+        existing = users.get(member_id)
+        if isinstance(existing, dict) and _has_active_paid_entitlement(existing):
+            return {"ok": False, "error": "member_already_exists"}, 409
+        tombstones = state.setdefault("test_account_tombstones", {})
+        tombstone = tombstones.get(member_id)
+        guardian = users.get(guardian_id)
+        if not isinstance(tombstone, dict):
+            return {"ok": False, "error": "tombstone_not_found"}, 404
+        cohort = str(tombstone.get("last_beta_cohort") or "").upper()
+        if cohort not in BETA_COHORT_PLAN:
+            return {"ok": False, "error": "beta_cohort_not_found"}, 409
+        if not isinstance(guardian, dict) or guardian_id == member_id:
+            return {"ok": False, "error": "guardian_not_found"}, 404
+        started = parse_datetime(tombstone.get("reset_at")) or clock
+        profile = copy.deepcopy(DEFAULT_PROFILE)
+        if isinstance(existing, dict):
+            profile.update(copy.deepcopy(existing))
+        profile.update({
+            "line_user_id": member_id,
+            "display_name": str(
+                (existing or {}).get("display_name")
+                or tombstone.get("display_name")
+                or "LINE 使用者"
+            ),
+            "plan": BETA_COHORT_PLAN[cohort], "payment_status": "beta",
+            "membership_source": "beta", "free_eligibility_source": f"beta_{cohort}",
+            "free_eligibility_used_at": started.isoformat(timespec="seconds"),
+            "beta_cohort": cohort, "beta_started_at": started.isoformat(timespec="seconds"),
+            "beta_ends_at": (started + timedelta(days=BETA_TRIAL_DAYS)).isoformat(timespec="seconds"),
+            "beta_activation_pending": False, "beta_reset_pending": False,
+            "onboarding_reminder_configured": True, "is_onboarding_completed": True,
+            "profile_completed_at": started.isoformat(timespec="seconds"),
+            "contacts": [{"id": f"restored-{guardian_id[-10:]}",
+                "name": str(guardian.get("display_name") or "守護人"),
+                "contact_role": "guardian", "relationship": "守護人",
+                "line_user_id": guardian_id, "line_id": guardian_id,
+                "binding_status": "accepted", "consent_status": "accepted",
+                "recipient_consent": True, "is_primary": True, "priority": 1,
+                "accepted_at": started.isoformat(timespec="seconds")}],
+        })
+        interaction = get_or_create_interaction_state(profile)
+        interaction["onboarding_completed"] = True
+        interaction["completed_steps"] = ["line_joined", "line_verified", "profile_saved", "guardian_invite_sent", "add_first_guardian"]
+        users[member_id] = profile
+        tombstones.pop(member_id, None)
+        state.setdefault("admin_audit_logs", []).append({
+            "action": "beta_member_restore_from_tombstone", "status": "success",
+            "actor": str(actor or "super_admin"), "line_user_id": member_id,
+            "guardian_line_user_id": guardian_id, "beta_cohort": cohort,
+            "created_at": clock.isoformat(timespec="seconds"),
+        })
+        return {"ok": True, "line_user_id": member_id, "guardian_line_user_id": guardian_id}, 200
+    return mutate_state_atomically(data_file, restore)
+
+
+def admin_reset_test_account(
+    data_file,
+    line_user_id,
+    allowed_test_user_ids,
+    *,
+    expected_version=None,
+    actor="super_admin",
+):
+    """Atomically reset an eligible beta member while retaining billing and audit records."""
+    line_user_id = str(line_user_id or "").strip()
+    allowed = {
+        str(value or "").strip()
+        for value in (allowed_test_user_ids or [])
+        if str(value or "").strip()
+    }
+    if not line_user_id:
+        return {"ok": False, "error": "missing_line_user_id"}, 400
+    def reset(state):
+        candidate = _beta_reset_candidate(state, line_user_id, allowed)
+        if not candidate:
+            raise ValueError("not_beta_reset_candidate")
+        existing = (state.get("users") or {}).get(line_user_id)
+        if not isinstance(existing, dict):
+            raise LookupError("member_not_found")
+        current_version = candidate["account_state_version"]
+        if expected_version is not None and str(expected_version) != current_version:
+            raise RuntimeError("account_state_version_conflict")
+        origin_cohort = str(existing.get("beta_cohort") or "").upper()
+        if origin_cohort not in BETA_COHORT_PLAN:
+            origin_cohort = str(((state.get("test_account_tombstones") or {}).get(line_user_id) or {}).get("last_beta_cohort") or "").upper()
+        new_version = uuid.uuid4().hex
+        fresh = copy.deepcopy(DEFAULT_PROFILE)
+        fresh.update({
+            "line_user_id": line_user_id,
+            "display_name": str(existing.get("display_name") or "LINE 使用者"),
+            "picture_url": str(existing.get("picture_url") or ""),
+            "plan": "free",
+            "membership_source": "",
+            "payment_status": "inactive",
+            "reminder_time": "",
+            "reminder_times": [],
+            "daily_checkin_reminder_enabled": False,
+            "guardian_details_reminder_enabled": False,
+            "beta_cohort": "",
+            "beta_started_at": "",
+            "beta_ends_at": "",
+            "trial_started_at": None,
+            "trial_end": None,
+            "free_eligibility_used_at": "",
+            "beta_reset_pending": True,
+            "beta_reset_origin_cohort": origin_cohort,
+            "account_state_version": new_version,
+        })
+        state.setdefault("users", {})[line_user_id] = fresh
+        for other_id, profile in (state.get("users") or {}).items():
+            if other_id == line_user_id or not isinstance(profile, dict):
+                continue
+            for key in ("contacts", "guarding_details", "emergency_contacts", "invites"):
+                if isinstance(profile.get(key), list):
+                    profile[key] = [row for row in profile[key] if not _test_reset_row_matches_user(row, line_user_id)]
+            for key in ("friends", "guarding_for", "guardian_group_ids"):
+                if isinstance(profile.get(key), list):
+                    profile[key] = [value for value in profile[key] if str(value or "").strip() != line_user_id]
+        for key in ("guardian_invites", "beta_program_members", "beta_feedback_reports", "notification_logs", "contact_rewards", "push_delivery_records"):
+            if isinstance(state.get(key), list):
+                state[key] = [row for row in state[key] if not _test_reset_row_matches_user(row, line_user_id)]
+        for key in ("sos_pending", "sos_events", "location_grants", "location_grant_index"):
+            if isinstance(state.get(key), dict):
+                state[key] = {k: row for k, row in state[key].items() if k != line_user_id and not _test_reset_row_matches_user(row, line_user_id)}
+        if isinstance(state.get("guardian_groups"), dict):
+            retained = {}
+            for group_id, group in state["guardian_groups"].items():
+                if _test_reset_row_matches_user(group, line_user_id):
+                    continue
+                _remove_user_from_group_members(group, line_user_id)
+                retained[group_id] = group
+            state["guardian_groups"] = retained
+        reset_at = current_app_time({}).isoformat(timespec="seconds")
+        state.setdefault("test_account_tombstones", {})[line_user_id] = {
+            "line_user_id": line_user_id,
+            "last_beta_cohort": origin_cohort,
+            "display_name": fresh["display_name"],
+            "reset_at": reset_at,
+            "status": "beta_reset_pending",
+            "account_state_version": new_version,
+        }
+        state.setdefault("admin_audit_logs", []).append({
+            "action": "beta_account_full_reset",
+            "status": "success",
+            "actor": str(actor or "super_admin"),
+            "line_user_id": line_user_id,
+            "original_beta_cohort": origin_cohort,
+            "created_at": reset_at,
+            "preserved": ["line_user_id", "orders", "audit", "legal_records"],
+            "cleared": ["membership", "checkins", "reminders", "guardians", "groups", "sos", "location"],
+            "account_state_version": new_version,
+        })
+        return new_version
+
+    try:
+        new_version = mutate_state_atomically(data_file, reset)
+    except LookupError:
+        return {"ok": False, "error": "member_not_found"}, 404
+    except RuntimeError as exc:
+        if str(exc) == "account_state_version_conflict":
+            return {"ok": False, "error": str(exc)}, 409
+        raise
+    except ValueError:
+        return {"ok": False, "error": "not_beta_reset_candidate"}, 403
+    return {
+        "ok": True,
+        "line_user_id": line_user_id,
+        "account_state_version": new_version,
+        "billing_preserved": True,
+        "audit_preserved": True,
+        "message": "已重置，可重新使用 21 天封測連結綁定。",
+    }, 200
+
+
+def admin_delete_test_account(data_file, line_user_id, allowed_test_user_ids):
+    """Delete a whitelisted test member and all non-audit relationship data."""
+    line_user_id = str(line_user_id or "").strip()
+    allowed = {
+        str(value or "").strip()
+        for value in (allowed_test_user_ids or [])
+        if str(value or "").strip()
+    }
+    if not line_user_id:
+        return {"ok": False, "error": "missing_line_user_id"}, 400
+    if line_user_id not in allowed:
+        return {"ok": False, "error": "not_a_test_account"}, 403
+
+    def remove_test_member(state):
+        existing = (state.get("users") or {}).get(line_user_id)
+        if not isinstance(existing, dict):
+            return {"ok": False, "error": "member_not_found"}, 404
+
+        state.setdefault("users", {}).pop(line_user_id, None)
+        for profile in (state.get("users") or {}).values():
+            if not isinstance(profile, dict):
+                continue
+            contacts = profile.get("contacts")
+            if isinstance(contacts, list):
+                profile["contacts"] = [
+                    item for item in contacts
+                    if not _test_reset_row_matches_user(item, line_user_id)
+                ]
+            for key in ("friends", "guarding_for"):
+                values = profile.get(key)
+                if isinstance(values, list):
+                    profile[key] = [
+                        value for value in values
+                        if str(value or "").strip() != line_user_id
+                    ]
+            details = profile.get("guarding_details")
+            if isinstance(details, list):
+                profile["guarding_details"] = [
+                    item for item in details
+                    if not _test_reset_row_matches_user(item, line_user_id)
+                ]
+
+        for key in (
+            "guardian_invites",
+            "beta_program_members",
+            "beta_feedback_reports",
+            "notification_logs",
+            "contact_rewards",
+        ):
+            rows = state.get(key)
+            if isinstance(rows, list):
+                state[key] = [
+                    row for row in rows
+                    if not _test_reset_row_matches_user(row, line_user_id)
+                ]
+
+        for key in ("sos_pending", "location_grants", "location_grant_index"):
+            values = state.get(key)
+            if isinstance(values, dict):
+                values.pop(line_user_id, None)
+                state[key] = {
+                    item_key: item
+                    for item_key, item in values.items()
+                    if not _test_reset_row_matches_user(item, line_user_id)
+                }
+        events = state.get("sos_events")
+        if isinstance(events, dict):
+            state["sos_events"] = {
+                event_id: event
+                for event_id, event in events.items()
+                if not _test_reset_row_matches_user(event, line_user_id)
+            }
+
+        groups = state.get("guardian_groups")
+        if isinstance(groups, dict):
+            retained_groups = {}
+            for group_id, group in groups.items():
+                if _test_reset_row_matches_user(group, line_user_id):
+                    continue
+                _remove_user_from_group_members(group, line_user_id)
+                retained_groups[group_id] = group
+            state["guardian_groups"] = retained_groups
+
+        removed_at = iso_now()
+        for order in state.get("orders") or []:
+            if str(order.get("line_user_id") or "").strip() == line_user_id:
+                order["line_user_id"] = "deleted-test-user"
+                order["display_name"] = "已刪除測試會員"
+                order["personal_data_removed_at"] = removed_at
+
+        return {
+            "ok": True,
+            "deleted": True,
+            "line_user_id": line_user_id,
+            "billing_preserved": True,
+            "audit_preserved": True,
+            "message": "測試帳號、簽到與守護關係已刪除；帳務與後台稽核紀錄已保留。",
+        }, 200
+
+    return mutate_state_atomically(data_file, remove_test_member)
+
+
+def admin_set_core_guardian(data_file, payload):
+    """後台指定／取消核心守護人（is_primary）。可同時指定多位，上限依方案 core_guardian_alert_limit。"""
+    line_user_id = str(payload.get("line_user_id") or "").strip()
+    if not line_user_id:
+        return {"error": "missing line_user_id"}, 400
+    contact_id = str(payload.get("contact_id") or "").strip()
+    contact_line_id = str(
+        payload.get("contact_line_user_id") or payload.get("guardian_line_user_id") or ""
+    ).strip()
+    if not contact_id and not contact_line_id:
+        return {"error": "missing contact_id or contact_line_user_id"}, 400
+    make_core = payload.get("is_primary")
+    if make_core is None:
+        make_core = True
+    make_core = bool(make_core)
+
+    state = load_state(data_file)
+    profile = state.get("users", {}).get(line_user_id)
+    if not profile:
+        return {"error": "member not found"}, 404
+    contacts = list(profile.get("contacts") or [])
+    if not contacts:
+        return {"error": "no contacts"}, 400
+
+    target_idx = None
+    for i, c in enumerate(contacts):
+        cid = str(c.get("id") or "")
+        lid = str(c.get("line_id") or c.get("line_user_id") or "")
+        if contact_id and cid == contact_id:
+            target_idx = i
+            break
+        if contact_line_id and lid == contact_line_id:
+            target_idx = i
+            break
+    if target_idx is None:
+        return {"error": "contact_not_found"}, 404
+
+    limit = int(plan_rules(profile).get("core_guardian_alert_limit") or 1)
+    now = iso_now()
+    if make_core:
+        contacts[target_idx]["is_primary"] = True
+        contacts[target_idx]["updated_at"] = now
+        # 超過方案核心人數時，依 priority 保留較前面的核心
+        core_idxs = [
+            i for i, c in enumerate(contacts)
+            if bool(c.get("is_primary"))
+        ]
+        if len(core_idxs) > limit:
+            core_idxs_sorted = sorted(
+                core_idxs,
+                key=lambda i: int(contacts[i].get("priority") or 9999),
+            )
+            keep = set(core_idxs_sorted[:limit])
+            # 確保剛指定的目標一定留下
+            if target_idx not in keep:
+                keep = set(core_idxs_sorted[: max(0, limit - 1)] + [target_idx])
+                keep = set(list(keep)[:limit])
+            for i, c in enumerate(contacts):
+                if bool(c.get("is_primary")) and i not in keep:
+                    c["is_primary"] = False
+                    c["updated_at"] = now
+    else:
+        contacts[target_idx]["is_primary"] = False
+        contacts[target_idx]["updated_at"] = now
+        # 不可全部沒有核心：若無人是核心，把順位最高者補回
+        if contacts and not any(bool(c.get("is_primary")) for c in contacts):
+            ranked = sorted(range(len(contacts)), key=lambda i: int(contacts[i].get("priority") or 9999))
+            contacts[ranked[0]]["is_primary"] = True
+            contacts[ranked[0]]["updated_at"] = now
+
+    profile["contacts"] = contacts
+    save_state(data_file, state)
+    status = build_status(profile, state)
+    status["ok"] = True
+    status["updated_contact"] = contacts[target_idx]
+    return status, 200
+
+
+def member_refundable_orders(data_file, line_user_id, now=None):
+    """Return only this member's paid, unused orders still inside the 7-day window."""
+    owner_id = str(line_user_id or "").strip()
+    if not owner_id:
+        return {"error": "missing line_user_id"}, 400
+    now = now or current_app_time({})
+    state = load_state(data_file)
+    open_refunds = {
+        str(ticket.get("refund_order_id") or "")
+        for ticket in state.get("support_tickets", [])
+        if ticket.get("request_type") == "refund"
+        and str(ticket.get("line_user_id") or "") == owner_id
+        and str(ticket.get("status") or "").lower() not in {"resolved", "closed", "已結案"}
+    }
+    eligible = []
+    for order in state.get("orders", []):
+        if str(order.get("line_user_id") or "") != owner_id:
+            continue
+        if str(order.get("status") or "").lower() not in {"paid", "partially_refunded"}:
+            continue
+        if order.get("activated_at") or order.get("service_activated_at"):
+            continue
+        paid_at = parse_datetime(str(order.get("paid_at") or order.get("updated_at") or order.get("created_at") or ""))
+        if not paid_at or paid_at > now or now - paid_at > timedelta(days=7):
+            continue
+        order_id = str(order.get("order_id") or "")
+        if not order_id or order_id in open_refunds:
+            continue
+        eligible.append({
+            "order_id": order_id,
+            "plan": order.get("plan"),
+            "amount": order.get("amount"),
+            "currency": order.get("currency") or "TWD",
+            "paid_at": order.get("paid_at"),
+            "refund_deadline": (paid_at + timedelta(days=7)).isoformat(timespec="seconds"),
+        })
+    return {"orders": eligible}, 200
+
+
+def create_member_refund_request(data_file, payload, now=None, config=None):
+    """Create a manual-review refund ticket; this function never refunds money."""
+    owner_id = str(payload.get("line_user_id") or "").strip()
+    order_id = str(payload.get("order_id") or "").strip()
+    email = str(payload.get("email") or "").strip()
+    reason = str(payload.get("reason") or "").strip()
+    if not owner_id or not order_id or not reason:
+        return {"error": "missing_required_fields"}, 400
+    if not payload.get("unused_confirmed"):
+        return {"error": "unused_confirmation_required"}, 400
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return {"error": "valid_email_required"}, 400
+
+    now = now or current_app_time(config or {})
+    eligible, _ = member_refundable_orders(data_file, owner_id, now=now)
+    selected = next((row for row in eligible.get("orders", []) if row.get("order_id") == order_id), None)
+    if not selected:
+        state = load_state(data_file)
+        duplicate = next(
+            (
+                ticket for ticket in state.get("support_tickets", [])
+                if ticket.get("request_type") == "refund"
+                and str(ticket.get("line_user_id") or "") == owner_id
+                and str(ticket.get("refund_order_id") or "") == order_id
+                and str(ticket.get("status") or "").lower() not in {"resolved", "closed", "已結案"}
+            ),
+            None,
+        )
+        if duplicate:
+            return {"error": "refund_request_already_open", "ticket_id": duplicate.get("id")}, 409
+        return {"error": "refund_order_not_eligible"}, 404
+
+    state = load_state(data_file)
+    profile = get_profile(state, owner_id)
+    ticket = {
+        "id": f"AC-{now.strftime('%Y%m%d')}-{secrets.token_hex(3).upper()}",
+        "created_at": now.isoformat(timespec="seconds"),
+        "updated_at": now.isoformat(timespec="seconds"),
+        "line_user_id": owner_id,
+        "display_name": profile.get("display_name") or "LINE 使用者",
+        "email": email,
+        "reply_channel": "email",
+        "category": "會員與付款",
+        "subject": f"退款申請｜{order_id}",
         "message": reason[:1000],
         "status": "submitted",
         "plan": profile.get("plan", "trial"),
